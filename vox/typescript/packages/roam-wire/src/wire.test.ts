@@ -51,14 +51,17 @@ import {
 describe("wire discriminants", () => {
   it("has correct Message discriminants", () => {
     expect(MessageDiscriminant.Hello).toBe(0);
-    expect(MessageDiscriminant.Goodbye).toBe(1);
-    expect(MessageDiscriminant.Request).toBe(2);
-    expect(MessageDiscriminant.Response).toBe(3);
-    expect(MessageDiscriminant.Cancel).toBe(4);
-    expect(MessageDiscriminant.Data).toBe(5);
-    expect(MessageDiscriminant.Close).toBe(6);
-    expect(MessageDiscriminant.Reset).toBe(7);
-    expect(MessageDiscriminant.Credit).toBe(8);
+    expect(MessageDiscriminant.Connect).toBe(1);
+    expect(MessageDiscriminant.Accept).toBe(2);
+    expect(MessageDiscriminant.Reject).toBe(3);
+    expect(MessageDiscriminant.Goodbye).toBe(4);
+    expect(MessageDiscriminant.Request).toBe(5);
+    expect(MessageDiscriminant.Response).toBe(6);
+    expect(MessageDiscriminant.Cancel).toBe(7);
+    expect(MessageDiscriminant.Data).toBe(8);
+    expect(MessageDiscriminant.Close).toBe(9);
+    expect(MessageDiscriminant.Reset).toBe(10);
+    expect(MessageDiscriminant.Credit).toBe(11);
   });
 
   it("has correct MetadataValue discriminants", () => {
@@ -69,6 +72,7 @@ describe("wire discriminants", () => {
 
   it("has correct Hello discriminants", () => {
     expect(HelloDiscriminant.V1).toBe(0);
+    expect(HelloDiscriminant.V2).toBe(1);
   });
 });
 
@@ -205,9 +209,11 @@ describe("factory functions", () => {
 describe("wire schemas", () => {
   it("HelloSchema has correct structure", () => {
     expect(HelloSchema.kind).toBe("enum");
-    expect(HelloSchema.variants).toHaveLength(1);
+    expect(HelloSchema.variants).toHaveLength(2);
     expect(HelloSchema.variants[0].name).toBe("V1");
     expect(HelloSchema.variants[0].discriminant).toBe(0);
+    expect(HelloSchema.variants[1].name).toBe("V2");
+    expect(HelloSchema.variants[1].discriminant).toBe(1);
   });
 
   it("MetadataValueSchema has correct structure", () => {
@@ -230,28 +236,34 @@ describe("wire schemas", () => {
 
   it("MessageSchema has correct structure", () => {
     expect(MessageSchema.kind).toBe("enum");
-    expect(MessageSchema.variants).toHaveLength(9);
+    expect(MessageSchema.variants).toHaveLength(12);
 
     // Check all variant names and discriminants
     const variants = MessageSchema.variants;
     expect(variants[0].name).toBe("Hello");
     expect(variants[0].discriminant).toBe(0);
-    expect(variants[1].name).toBe("Goodbye");
+    expect(variants[1].name).toBe("Connect");
     expect(variants[1].discriminant).toBe(1);
-    expect(variants[2].name).toBe("Request");
+    expect(variants[2].name).toBe("Accept");
     expect(variants[2].discriminant).toBe(2);
-    expect(variants[3].name).toBe("Response");
+    expect(variants[3].name).toBe("Reject");
     expect(variants[3].discriminant).toBe(3);
-    expect(variants[4].name).toBe("Cancel");
+    expect(variants[4].name).toBe("Goodbye");
     expect(variants[4].discriminant).toBe(4);
-    expect(variants[5].name).toBe("Data");
+    expect(variants[5].name).toBe("Request");
     expect(variants[5].discriminant).toBe(5);
-    expect(variants[6].name).toBe("Close");
+    expect(variants[6].name).toBe("Response");
     expect(variants[6].discriminant).toBe(6);
-    expect(variants[7].name).toBe("Reset");
+    expect(variants[7].name).toBe("Cancel");
     expect(variants[7].discriminant).toBe(7);
-    expect(variants[8].name).toBe("Credit");
+    expect(variants[8].name).toBe("Data");
     expect(variants[8].discriminant).toBe(8);
+    expect(variants[9].name).toBe("Close");
+    expect(variants[9].discriminant).toBe(9);
+    expect(variants[10].name).toBe("Reset");
+    expect(variants[10].discriminant).toBe(10);
+    expect(variants[11].name).toBe("Credit");
+    expect(variants[11].discriminant).toBe(11);
   });
 
   it("wireSchemaRegistry contains all wire types", () => {
@@ -420,10 +432,10 @@ describe("Message codec", () => {
       expect(decoded.value).toEqual(msg);
     });
 
-    it("encodes with discriminant 1", () => {
+    it("encodes with discriminant 4", () => {
       const msg = messageGoodbye("bye");
       const encoded = encodeMessage(msg);
-      expect(encoded[0]).toBe(1);
+      expect(encoded[0]).toBe(4);
     });
   });
 
@@ -454,10 +466,10 @@ describe("Message codec", () => {
       expect(decoded.value).toEqual(msg);
     });
 
-    it("encodes with discriminant 2", () => {
+    it("encodes with discriminant 5", () => {
       const msg = messageRequest(1n, 2n, new Uint8Array([]));
       const encoded = encodeMessage(msg);
-      expect(encoded[0]).toBe(2);
+      expect(encoded[0]).toBe(5);
     });
   });
 
@@ -477,10 +489,10 @@ describe("Message codec", () => {
       expect(decoded.value).toEqual(msg);
     });
 
-    it("encodes with discriminant 3", () => {
+    it("encodes with discriminant 6", () => {
       const msg = messageResponse(1n, new Uint8Array([]));
       const encoded = encodeMessage(msg);
-      expect(encoded[0]).toBe(3);
+      expect(encoded[0]).toBe(6);
     });
   });
 
@@ -492,10 +504,10 @@ describe("Message codec", () => {
       expect(decoded.value).toEqual(msg);
     });
 
-    it("encodes with discriminant 4", () => {
+    it("encodes with discriminant 7", () => {
       const msg = messageCancel(1n);
       const encoded = encodeMessage(msg);
-      expect(encoded[0]).toBe(4);
+      expect(encoded[0]).toBe(7);
     });
   });
 
@@ -514,10 +526,10 @@ describe("Message codec", () => {
       expect(decoded.value).toEqual(msg);
     });
 
-    it("encodes with discriminant 5", () => {
+    it("encodes with discriminant 8", () => {
       const msg = messageData(1n, new Uint8Array([]));
       const encoded = encodeMessage(msg);
-      expect(encoded[0]).toBe(5);
+      expect(encoded[0]).toBe(8);
     });
   });
 
@@ -529,10 +541,10 @@ describe("Message codec", () => {
       expect(decoded.value).toEqual(msg);
     });
 
-    it("encodes with discriminant 6", () => {
+    it("encodes with discriminant 9", () => {
       const msg = messageClose(1n);
       const encoded = encodeMessage(msg);
-      expect(encoded[0]).toBe(6);
+      expect(encoded[0]).toBe(9);
     });
   });
 
@@ -544,10 +556,10 @@ describe("Message codec", () => {
       expect(decoded.value).toEqual(msg);
     });
 
-    it("encodes with discriminant 7", () => {
+    it("encodes with discriminant 10", () => {
       const msg = messageReset(1n);
       const encoded = encodeMessage(msg);
-      expect(encoded[0]).toBe(7);
+      expect(encoded[0]).toBe(10);
     });
   });
 
@@ -559,10 +571,10 @@ describe("Message codec", () => {
       expect(decoded.value).toEqual(msg);
     });
 
-    it("encodes with discriminant 8", () => {
+    it("encodes with discriminant 11", () => {
       const msg = messageCredit(1n, 0);
       const encoded = encodeMessage(msg);
-      expect(encoded[0]).toBe(8);
+      expect(encoded[0]).toBe(11);
     });
   });
 });

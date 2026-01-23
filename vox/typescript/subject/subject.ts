@@ -228,7 +228,7 @@ async function runClient() {
 
   const server = new Server();
   const conn = await server.connect(addr);
-  const client = new TestbedClient(conn);
+  const client = new TestbedClient(conn.asCaller());
 
   switch (scenario) {
     case "echo": {

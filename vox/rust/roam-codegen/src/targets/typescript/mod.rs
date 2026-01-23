@@ -121,7 +121,7 @@ fn generate_imports(service: &ServiceDetail, w: &mut CodeWriter<&mut String>) {
         .any(|m| matches!(classify_shape(m.return_type), ShapeKind::Result { .. }));
 
     // Type imports
-    cw_writeln!(w, "import type {{ MethodHandler, Connection, MessageTransport, DecodeResult, MethodSchema }} from \"@bearcove/roam-core\";").unwrap();
+    cw_writeln!(w, "import type {{ MethodHandler, Connection, MessageTransport, DecodeResult, MethodSchema, Caller }} from \"@bearcove/roam-core\";").unwrap();
 
     // Runtime function imports
     cw_writeln!(w, "import {{").unwrap();
@@ -148,6 +148,7 @@ fn generate_imports(service: &ServiceDetail, w: &mut CodeWriter<&mut String>) {
         cw_writeln!(w, "encodeEnumVariant, decodeEnumVariant,").unwrap();
     }
     cw_writeln!(w, "  helloExchangeInitiator, defaultHello,").unwrap();
+    cw_writeln!(w, "  CallBuilder,").unwrap();
     cw_writeln!(w, "}} from \"@bearcove/roam-core\";").unwrap();
 
     // WebSocket transport for connect helper

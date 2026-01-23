@@ -30,6 +30,10 @@ import {
   type TaskSender,
 } from "./channeling/index.ts";
 import { type MessageTransport } from "./transport.ts";
+import type { Caller, CallerRequest } from "./caller.ts";
+import { MiddlewareCaller } from "./caller.ts";
+import type { ClientMiddleware } from "./middleware.ts";
+import { metadataMapToEntries } from "./metadata.ts";
 
 // Note: Role is exported from streaming/index.ts in roam-core's main export
 
@@ -385,6 +389,26 @@ export class Connection<T extends MessageTransport = MessageTransport> {
 
     // Wait for the response to be routed by the message pump
     return responsePromise;
+  }
+
+  /**
+   * Get a Caller interface for this connection.
+   *
+   * The returned Caller can be used with generated clients and supports
+   * middleware composition via the with() method.
+   *
+   * @example
+   * ```typescript
+   * const caller = connection.asCaller();
+   * const client = new TestbedClient(caller);
+   *
+   * // With middleware
+   * const authedCaller = caller.with(authMiddleware);
+   * const authedClient = new TestbedClient(authedCaller);
+   * ```
+   */
+  asCaller(): Caller {
+    return new ConnectionCaller(this);
   }
 
   /**
@@ -971,4 +995,69 @@ async function waitForPeerHello<T extends MessageTransport>(
 /** Default Hello message (V2 for virtual connection support). */
 export function defaultHello(): Hello {
   return helloV2(1024 * 1024, 64 * 1024);
+}
+
+/**
+ * Caller implementation backed by a Connection.
+ *
+ * Converts CallerRequest to wire format and handles metadata conversion.
+ */
+export class ConnectionCaller<T extends MessageTransport = MessageTransport> implements Caller {
+  private conn: Connection<T>;
+
+  constructor(conn: Connection<T>) {
+    this.conn = conn;
+  }
+
+  async call(request: CallerRequest): Promise<Uint8Array> {
+    // Encode the payload using the deferred encoding function
+    const payload = request.encode(request.args);
+
+    // Convert metadata map to wire format entries
+    const metadataEntries = request.metadata
+      ? metadataMapToEntries(request.metadata)
+      : [];
+
+    // Build the wire message
+    const requestId = this.conn["nextRequestId"]++;
+    const channels = request.channels ?? [];
+    const timeoutMs = request.timeoutMs ?? 30000;
+
+    // Create pending request tracking
+    const responsePromise = new Promise<Uint8Array>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.conn["pendingRequests"].delete(requestId);
+        reject(ConnectionError.io("timeout waiting for response"));
+      }, timeoutMs);
+
+      this.conn["pendingRequests"].set(requestId, { resolve, reject, timer });
+    });
+
+    // Start message pump
+    this.conn["startMessagePump"]();
+
+    // Send request with metadata
+    await this.conn["io"].send(
+      encodeMessage(
+        messageRequest(requestId, request.methodId, payload, metadataEntries, channels)
+      )
+    );
+
+    // Flush outgoing streams
+    await this.conn.flushOutgoing();
+
+    return responsePromise;
+  }
+
+  getChannelAllocator(): ChannelIdAllocator {
+    return this.conn.getChannelAllocator();
+  }
+
+  getChannelRegistry(): ChannelRegistry {
+    return this.conn.getChannelRegistry();
+  }
+
+  with(middleware: ClientMiddleware): Caller {
+    return new MiddlewareCaller(this, [middleware]);
+  }
 }

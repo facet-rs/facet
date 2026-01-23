@@ -191,6 +191,7 @@ export { type MessageTransport } from "./transport.ts";
 // Connection and protocol handling
 export {
   Connection,
+  ConnectionCaller,
   ConnectionError,
   type Negotiated,
   type ServiceDispatcher,
@@ -200,6 +201,32 @@ export {
   helloExchangeInitiator,
   defaultHello,
 } from "./connection.ts";
+
+// Client middleware types
+export {
+  type ClientMetadataValue,
+  Extensions,
+  type ClientContext,
+  type CallRequest,
+  type CallOutcome,
+  type RejectionCode,
+  type Rejection,
+  RejectionError,
+  type ClientMiddleware,
+} from "./middleware.ts";
+
+// Caller abstraction
+export {
+  type CallerRequest,
+  type Caller,
+  MiddlewareCaller,
+} from "./caller.ts";
+
+// Call builder for fluent API
+export { CallBuilder, withMeta, type CallExecutor } from "./call_builder.ts";
+
+// Metadata conversion utilities
+export { metadataMapToEntries, metadataEntriesToMap } from "./metadata.ts";
 
 // Type definitions for method handlers
 export type MethodHandler<H> = (handler: H, payload: Uint8Array) => Promise<Uint8Array>;

@@ -161,6 +161,12 @@ jobs:
       - name: Generate TypeScript bindings
         run: cargo xtask codegen --typescript
 
+      - name: Install Playwright browsers
+        run: cd typescript && pnpm exec playwright install --with-deps chromium
+
+      - name: Run TypeScript tests
+        run: cd typescript && pnpm test
+
       - name: Run spec tests
         run: cargo nextest run -p spec-tests
         env:

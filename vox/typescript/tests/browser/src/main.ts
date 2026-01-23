@@ -384,7 +384,7 @@ async function runTests(wsUrl: string): Promise<void> {
     log(`Hello exchange complete. Negotiated maxPayloadSize: ${conn.negotiated().maxPayloadSize}`);
 
     // Create generated client
-    const client = new TestbedClient(conn);
+    const client = new TestbedClient(conn.asCaller());
 
     // Run Echo tests
     await testEcho(client);

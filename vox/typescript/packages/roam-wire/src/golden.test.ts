@@ -13,7 +13,7 @@ import {
   type MetadataValue,
   type MetadataEntry,
   type Message,
-  helloV1,
+  helloV2,
   metadataString,
   messageHello,
   messageGoodbye,
@@ -57,10 +57,10 @@ function hexDump(bytes: Uint8Array): string {
 // ============================================================================
 
 describe("Hello golden vectors", () => {
-  it("encodes Hello V1 (small values) matching Rust", () => {
-    const hello = helloV1(1024, 64);
+  it("encodes Hello V2 (small values) matching Rust", () => {
+    const hello = helloV2(1024, 64);
     const encoded = encodeHello(hello);
-    const expected = loadGoldenVector("wire/hello_v1_small.bin");
+    const expected = loadGoldenVector("wire/hello_v2_small.bin");
 
     if (!arraysEqual(encoded, expected)) {
       console.log("Expected:", hexDump(expected));
@@ -70,10 +70,10 @@ describe("Hello golden vectors", () => {
     expect(Array.from(encoded)).toEqual(Array.from(expected));
   });
 
-  it("encodes Hello V1 (typical values) matching Rust", () => {
-    const hello = helloV1(1024 * 1024, 64 * 1024);
+  it("encodes Hello V2 (typical values) matching Rust", () => {
+    const hello = helloV2(1024 * 1024, 64 * 1024);
     const encoded = encodeHello(hello);
-    const expected = loadGoldenVector("wire/hello_v1_typical.bin");
+    const expected = loadGoldenVector("wire/hello_v2_typical.bin");
 
     if (!arraysEqual(encoded, expected)) {
       console.log("Expected:", hexDump(expected));
@@ -83,17 +83,17 @@ describe("Hello golden vectors", () => {
     expect(Array.from(encoded)).toEqual(Array.from(expected));
   });
 
-  it("decodes Hello V1 (small) from Rust bytes", () => {
-    const bytes = loadGoldenVector("wire/hello_v1_small.bin");
+  it("decodes Hello V2 (small) from Rust bytes", () => {
+    const bytes = loadGoldenVector("wire/hello_v2_small.bin");
     const decoded = decodeHello(bytes);
-    expect(decoded.value).toEqual(helloV1(1024, 64));
+    expect(decoded.value).toEqual(helloV2(1024, 64));
     expect(decoded.next).toBe(bytes.length);
   });
 
-  it("decodes Hello V1 (typical) from Rust bytes", () => {
-    const bytes = loadGoldenVector("wire/hello_v1_typical.bin");
+  it("decodes Hello V2 (typical) from Rust bytes", () => {
+    const bytes = loadGoldenVector("wire/hello_v2_typical.bin");
     const decoded = decodeHello(bytes);
-    expect(decoded.value).toEqual(helloV1(1024 * 1024, 64 * 1024));
+    expect(decoded.value).toEqual(helloV2(1024 * 1024, 64 * 1024));
     expect(decoded.next).toBe(bytes.length);
   });
 });
@@ -104,7 +104,7 @@ describe("Hello golden vectors", () => {
 
 describe("Message::Hello golden vectors", () => {
   it("encodes Message::Hello (small) matching Rust", () => {
-    const msg = messageHello(helloV1(1024, 64));
+    const msg = messageHello(helloV2(1024, 64));
     const encoded = encodeMessage(msg);
     const expected = loadGoldenVector("wire/message_hello_small.bin");
 
@@ -117,7 +117,7 @@ describe("Message::Hello golden vectors", () => {
   });
 
   it("encodes Message::Hello (typical) matching Rust", () => {
-    const msg = messageHello(helloV1(1024 * 1024, 64 * 1024));
+    const msg = messageHello(helloV2(1024 * 1024, 64 * 1024));
     const encoded = encodeMessage(msg);
     const expected = loadGoldenVector("wire/message_hello_typical.bin");
 
@@ -134,7 +134,7 @@ describe("Message::Hello golden vectors", () => {
     const decoded = decodeMessage(bytes);
     expect(decoded.value.tag).toBe("Hello");
     if (decoded.value.tag === "Hello") {
-      expect(decoded.value.value).toEqual(helloV1(1024 * 1024, 64 * 1024));
+      expect(decoded.value.value).toEqual(helloV2(1024 * 1024, 64 * 1024));
     }
     expect(decoded.next).toBe(bytes.length);
   });
@@ -145,10 +145,23 @@ describe("Message::Hello golden vectors", () => {
 // ============================================================================
 
 describe("Message::Goodbye golden vectors", () => {
-  it("encodes Message::Goodbye matching Rust", () => {
-    const msg = messageGoodbye("test");
+  it("encodes Message::Goodbye (conn 0) matching Rust", () => {
+    const msg = messageGoodbye("test", 0n);
     const encoded = encodeMessage(msg);
-    const expected = loadGoldenVector("wire/message_goodbye.bin");
+    const expected = loadGoldenVector("wire/message_goodbye_conn0.bin");
+
+    if (!arraysEqual(encoded, expected)) {
+      console.log("Expected:", hexDump(expected));
+      console.log("Actual:  ", hexDump(encoded));
+    }
+
+    expect(Array.from(encoded)).toEqual(Array.from(expected));
+  });
+
+  it("encodes Message::Goodbye (conn 1) matching Rust", () => {
+    const msg = messageGoodbye("done", 1n);
+    const encoded = encodeMessage(msg);
+    const expected = loadGoldenVector("wire/message_goodbye_conn1.bin");
 
     if (!arraysEqual(encoded, expected)) {
       console.log("Expected:", hexDump(expected));
@@ -159,9 +172,9 @@ describe("Message::Goodbye golden vectors", () => {
   });
 
   it("decodes Message::Goodbye from Rust bytes", () => {
-    const bytes = loadGoldenVector("wire/message_goodbye.bin");
+    const bytes = loadGoldenVector("wire/message_goodbye_conn0.bin");
     const decoded = decodeMessage(bytes);
-    expect(decoded.value).toEqual(messageGoodbye("test"));
+    expect(decoded.value).toEqual(messageGoodbye("test", 0n));
     expect(decoded.next).toBe(bytes.length);
   });
 });
