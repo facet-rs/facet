@@ -3,7 +3,7 @@ name = "strid-examples"
 description = "Examples demonstrating usage of the `strid` crate"
 keywords = [ "string", "newtype", "validation", "normalization" ]
 categories = [ "data-structures", "rust-patterns" ]
-version = "7.0.0"
+version = "8.0.0"
 authors.workspace = true
 edition.workspace = true
 readme = "../../README.md"
@@ -18,7 +18,7 @@ compact_str-facet = []
 smartstring-facet = []
 
 [dependencies]
-strid = { version = "7.0.0", path = "../strid" }
+strid = { version = "8.0.0", path = "../strid" }
 facet.workspace = true
 bytes = "1"
 bytestring = { version = "1.5", features = [ "serde" ] }
