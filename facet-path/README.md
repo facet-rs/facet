@@ -42,8 +42,6 @@ let formatted = path.format_with_shape(my_shape);
 
 
 
-## LLM contribution policy
-
 ## Sponsors
 
 Thanks to all individual sponsors:

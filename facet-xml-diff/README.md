@@ -74,8 +74,6 @@ let options = DiffSerializeOptions {
 - Generating human-readable change logs
 - Testing serialization by comparing expected vs actual output
 
-## LLM contribution policy
-
 ## Sponsors
 
 Thanks to all individual sponsors:

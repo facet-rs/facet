@@ -13,8 +13,6 @@ Sweet helpers for facet deserialization - shared between facet-format and facet-
 Provides common setter functions for handling string, bytes, and scalar values
 when deserializing into facet types.
 
-## LLM contribution policy
-
 ## Sponsors
 
 Thanks to all individual sponsors:

@@ -13,6 +13,7 @@ mod ruint;
 mod rust_decimal;
 mod smartstring;
 mod smol_str;
+mod tendril;
 mod time;
 mod ulid;
 mod url;

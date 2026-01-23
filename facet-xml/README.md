@@ -448,8 +448,6 @@ enum Point {
 # assert_eq!(point, Point::Coords { x: 10, y: 20 });
 ```
 
-## LLM contribution policy
-
 ## Sponsors
 
 Thanks to all individual sponsors:

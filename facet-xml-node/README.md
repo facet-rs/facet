@@ -59,8 +59,6 @@ for child in &element.children {
 | Typed structs with `#[derive(Facet)]` | Known XML schema, compile-time safety |
 | `facet-xml-node::Element` | Unknown/dynamic XML, runtime flexibility |
 
-## LLM contribution policy
-
 ## Sponsors
 
 Thanks to all individual sponsors:

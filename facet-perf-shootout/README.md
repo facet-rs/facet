@@ -41,8 +41,6 @@ To regenerate benchmark code after editing YAML files:
 cargo xtask gen-benchmarks
 ```
 
-## LLM contribution policy
-
 ## Sponsors
 
 Thanks to all individual sponsors:

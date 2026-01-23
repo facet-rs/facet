@@ -41,7 +41,8 @@ mime = { version = "0.3", optional = true }
 
 [dev-dependencies]
 compact_str = { workspace = true }
-facet = { path = "../facet", features = ["doc", "net", "compact_str", "smol_str", "iddqd"] }
+facet = { path = "../facet", features = ["doc", "net", "compact_str", "smol_str", "iddqd", "tendril"] }
+tendril = "0.5.0"
 facet-format = { path = "../facet-format", features = ["jit", "net", "tracing"] }
 facet-reflect = { path = "../facet-reflect", features = ["tracing"] }
 facet-testhelpers = { path = "../facet-testhelpers" }

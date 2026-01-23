@@ -10,8 +10,6 @@
 
 Experimental shared serialization/deserialization core for Facet formats.
 
-## LLM contribution policy
-
 ## Sponsors
 
 Thanks to all individual sponsors:

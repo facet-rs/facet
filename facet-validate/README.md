@@ -61,8 +61,6 @@ facet-json = { version = "0.41", features = ["validate"] }
 facet-validate = "0.41"
 ```
 
-## LLM contribution policy
-
 ## Sponsors
 
 Thanks to all individual sponsors:

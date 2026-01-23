@@ -11,8 +11,6 @@ Unified showcase infrastructure for facet format crates.
 Provides a framework for creating consistent, colorful showcases of format crate
 capabilities, including syntax highlighting, error display, and multiple output
 modes (terminal, HTML, Markdown).
-## LLM contribution policy
-
 ## Sponsors
 
 Thanks to all individual sponsors:

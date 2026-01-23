@@ -11,8 +11,6 @@
 Shared conformance test suite harness for `facet-format-*` crates.
 
 
-## LLM contribution policy
-
 ## Sponsors
 
 Thanks to all individual sponsors:

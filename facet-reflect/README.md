@@ -17,8 +17,6 @@ information about the shape of types to allow:
 This allows, respectively, serialization and deserialization, without risking breaking
 invariants in types that implement `Facet`.
 
-## LLM contribution policy
-
 ## Sponsors
 
 Thanks to all individual sponsors:

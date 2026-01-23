@@ -64,6 +64,7 @@ compact_str = [
 ] # Provide Facet trait implementations for compact_str::CompactString
 uuid = ["facet-core/uuid"] # Provide Facet trait implementations for uuid::Uuid
 ulid = ["facet-core/ulid"] # Provide Facet trait implementations for ulid::Ulid
+tendril = ["facet-core/tendril"] # Provide Facet trait implementations for tendril::Tendril
 ordered-float = [
     "facet-core/ordered-float",
 ] # Provide Facet trait implementations for ordered_float types

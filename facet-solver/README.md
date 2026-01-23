@@ -253,8 +253,6 @@ directly**. No buffering, no loss of fidelity.
 | [serde_json#721](https://github.com/serde-rs/json/issues/721) | `arbitrary_precision` + `flatten` loses precision | No buffering through `serde_json::Value` |
 | [serde_json#1155](https://github.com/serde-rs/json/issues/1155) | `u128` in flattened struct fails | Direct deserialization, no `Value` intermediary |
 
-## LLM contribution policy
-
 ## Sponsors
 
 Thanks to all individual sponsors:

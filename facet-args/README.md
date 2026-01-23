@@ -47,8 +47,6 @@ The behavior of facet-args is still in flux, but here are the broad strokes:
   * After parsing every available argument, uninitialized struct fields are filled with their default value
     if they have `facet(default)` set: this includes `Vec`.
 
-## LLM contribution policy
-
 ## Sponsors
 
 Thanks to all individual sponsors:

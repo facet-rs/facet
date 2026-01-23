@@ -93,8 +93,6 @@ facet-diff uses facet-reflect to traverse values structurally:
 - **facet-reflect**: Reflection API for traversing Facet values
 - **facet-pretty**: Pretty-printing for Facet values
 
-## LLM contribution policy
-
 ## Sponsors
 
 Thanks to all individual sponsors:
