@@ -286,7 +286,7 @@ unsafe fn vec_init_in_place_with_capacity<T>(uninit: PtrUninit, capacity: usize)
     unsafe { uninit.put(Vec::<T>::with_capacity(capacity)) }
 }
 
-unsafe fn vec_push<T: 'static>(ptr: PtrMut, item: PtrMut) {
+unsafe fn vec_push<T>(ptr: PtrMut, item: PtrMut) {
     unsafe {
         let vec = ptr.as_mut::<Vec<T>>();
         let item = item.read::<T>();
@@ -300,7 +300,7 @@ unsafe fn vec_push<T: 'static>(ptr: PtrMut, item: PtrMut) {
 /// - `ptr` must point to an initialized `Vec<T>`
 /// - `len` must not exceed the Vec's capacity
 /// - All elements at indices `0..len` must be properly initialized
-unsafe fn vec_set_len<T: 'static>(ptr: PtrMut, len: usize) {
+unsafe fn vec_set_len<T>(ptr: PtrMut, len: usize) {
     unsafe {
         let vec = ptr.as_mut::<Vec<T>>();
         vec.set_len(len);
@@ -311,7 +311,7 @@ unsafe fn vec_set_len<T: 'static>(ptr: PtrMut, len: usize) {
 ///
 /// # Safety
 /// - `ptr` must point to an initialized `Vec<T>`
-unsafe fn vec_as_mut_ptr_typed<T: 'static>(ptr: PtrMut) -> *mut u8 {
+unsafe fn vec_as_mut_ptr_typed<T>(ptr: PtrMut) -> *mut u8 {
     unsafe {
         let vec = ptr.as_mut::<Vec<T>>();
         vec.as_mut_ptr() as *mut u8
@@ -322,7 +322,7 @@ unsafe fn vec_as_mut_ptr_typed<T: 'static>(ptr: PtrMut) -> *mut u8 {
 ///
 /// # Safety
 /// - `ptr` must point to an initialized `Vec<T>`
-unsafe fn vec_reserve<T: 'static>(ptr: PtrMut, additional: usize) {
+unsafe fn vec_reserve<T>(ptr: PtrMut, additional: usize) {
     unsafe {
         let vec = ptr.as_mut::<Vec<T>>();
         vec.reserve(additional);
@@ -333,14 +333,14 @@ unsafe fn vec_reserve<T: 'static>(ptr: PtrMut, additional: usize) {
 ///
 /// # Safety
 /// - `ptr` must point to an initialized `Vec<T>`
-unsafe fn vec_capacity<T: 'static>(ptr: PtrConst) -> usize {
+unsafe fn vec_capacity<T>(ptr: PtrConst) -> usize {
     unsafe {
         let vec = ptr.get::<Vec<T>>();
         vec.capacity()
     }
 }
 
-unsafe fn vec_iter_init<T: 'static>(ptr: PtrConst) -> PtrMut {
+unsafe fn vec_iter_init<T>(ptr: PtrConst) -> PtrMut {
     unsafe {
         let vec = ptr.get::<Vec<T>>();
         let iter: VecIterator<T> = vec.iter();
@@ -349,17 +349,23 @@ unsafe fn vec_iter_init<T: 'static>(ptr: PtrConst) -> PtrMut {
     }
 }
 
-unsafe fn vec_iter_next<T: 'static>(iter_ptr: PtrMut) -> Option<PtrConst> {
+unsafe fn vec_iter_next<T>(iter_ptr: PtrMut) -> Option<PtrConst> {
+    // SAFETY: The iterator was created from a Vec that must outlive this call.
+    // We transmute to erase the lifetime - the actual memory layout of Iter is
+    // the same regardless of lifetime parameter.
     unsafe {
-        let state = iter_ptr.as_mut::<VecIterator<'static, T>>();
-        state.next().map(|value| PtrConst::new(value as *const T))
+        let state: *mut VecIterator<'_, T> = iter_ptr.as_ptr::<()>() as *mut _;
+        (*state)
+            .next()
+            .map(|value| PtrConst::new(value as *const T))
     }
 }
 
-unsafe fn vec_iter_next_back<T: 'static>(iter_ptr: PtrMut) -> Option<PtrConst> {
+unsafe fn vec_iter_next_back<T>(iter_ptr: PtrMut) -> Option<PtrConst> {
+    // SAFETY: Same as vec_iter_next
     unsafe {
-        let state = iter_ptr.as_mut::<VecIterator<'static, T>>();
-        state
+        let state: *mut VecIterator<'_, T> = iter_ptr.as_ptr::<()>() as *mut _;
+        (*state)
             .next_back()
             .map(|value| PtrConst::new(value as *const T))
     }
@@ -373,14 +379,11 @@ unsafe fn vec_iter_dealloc<T>(iter_ptr: PtrMut) {
     }
 }
 
-unsafe impl<'a, T> Facet<'a> for Vec<T>
-where
-    T: Facet<'a> + 'static,
-{
+unsafe impl<'a, T: Facet<'a>> Facet<'a> for Vec<T> {
     const SHAPE: &'static Shape =
         &const {
             // Per-T operations that must be monomorphized
-            const fn build_list_type_ops<T: 'static>() -> ListTypeOps {
+            const fn build_list_type_ops<T>() -> ListTypeOps {
                 ListTypeOps::builder()
                     .init_in_place_with_capacity(vec_init_in_place_with_capacity::<T>)
                     .push(vec_push::<T>)
