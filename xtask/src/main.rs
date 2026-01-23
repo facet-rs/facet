@@ -123,10 +123,13 @@ fn gen_benchmarks() {
 }
 
 fn gen_types() {
-    // Delegate to the gen-run-types binary
+    // Delegate to the gen-run-types binary (in tools workspace)
+    let manifest = tools_manifest_path();
     let status = Command::new("cargo")
         .args([
             "run",
+            "--manifest-path",
+            manifest.to_str().unwrap(),
             "-p",
             "benchmark-analyzer",
             "--bin",
@@ -145,9 +148,18 @@ fn gen_types() {
 }
 
 fn metrics_tui() {
-    // Delegate to the metrics-tui binary
+    // Delegate to the metrics-tui binary (in tools workspace)
+    let manifest = tools_manifest_path();
     let status = Command::new("cargo")
-        .args(["run", "-p", "metrics-tui", "--release", "--"])
+        .args([
+            "run",
+            "--manifest-path",
+            manifest.to_str().unwrap(),
+            "-p",
+            "metrics-tui",
+            "--release",
+            "--",
+        ])
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .stdin(Stdio::inherit())
@@ -160,9 +172,12 @@ fn metrics_tui() {
 }
 
 fn bench_report(args: benchmark_defs::BenchReportArgs) {
-    // Delegate to the benchmark-analyzer binary
+    // Delegate to the benchmark-analyzer binary (in tools workspace)
+    let manifest = tools_manifest_path();
     let mut cmd_args = vec![
         "run".to_string(),
+        "--manifest-path".to_string(),
+        manifest.to_str().unwrap().to_string(),
         "-p".to_string(),
         "benchmark-analyzer".to_string(),
         "--bin".to_string(),
@@ -345,6 +360,10 @@ fn workspace_root() -> PathBuf {
         .parent()
         .expect("No parent directory")
         .to_path_buf()
+}
+
+fn tools_manifest_path() -> PathBuf {
+    workspace_root().join("tools/Cargo.toml")
 }
 
 // ============================================================================

@@ -1,10 +1,10 @@
 [package]
 name = "perf-index-generator"
 version = "0.43.0"
-edition = "2024"
+edition.workspace = true
 rust-version.workspace = true
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/facet-rs/facet"
+license.workspace = true
+repository.workspace = true
 description = "Performance index generator for facet benchmarks"
 homepage = "https://facet.rs"
 publish = false
@@ -19,9 +19,9 @@ name = "perf-index-generator"
 path = "src/main.rs"
 
 [dependencies]
-facet = { path = "../../facet", version = "0.43.1" }
-facet-json = { path = "../../facet-json", version = "0.43.1" }
-benchmark-analyzer = { path = "../benchmark-analyzer", version = "0.43.0" }
+facet = { workspace = true }
+facet-json = { workspace = true }
+benchmark-analyzer = { workspace = true }
 maud = "0.27"
 chrono = "0.4"
 indexmap = "2"

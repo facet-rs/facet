@@ -1,0 +1,41 @@
+[workspace]
+members = [
+    "benchmark-defs",
+    "benchmark-generator",
+    "benchmark-analyzer",
+    "metrics-tui",
+    "perf-index-generator",
+    "facet-bloatbench",
+    "facet-perf-shootout",
+]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.90"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/facet-rs/facet"
+
+[workspace.dependencies]
+# Facet crates (from parent workspace)
+facet = { path = "../facet", version = "0.43.1", default-features = false }
+facet-args = { path = "../facet-args", version = "0.43.1" }
+facet-format = { path = "../facet-format", version = "0.43.1" }
+facet-json = { path = "../facet-json", version = "0.43.1", default-features = false }
+facet-postcard = { path = "../facet-postcard", version = "0.43.1" }
+facet-typescript = { path = "../facet-typescript", version = "0.43.1" }
+facet-json-schema = { path = "../facet-json-schema", version = "0.43.1" }
+
+# Internal tools
+benchmark-defs = { path = "benchmark-defs", version = "0.43.0" }
+benchmark-analyzer = { path = "benchmark-analyzer", version = "0.43.0" }
+
+# External dependencies
+chrono = { version = "0.4", default-features = false, features = ["alloc"] }
+divan = "0.1"
+serde = { version = "1.0", default-features = false, features = ["alloc", "derive"] }
+serde_json = { version = "1.0", features = ["alloc"] }
+tokio = { version = "1.48", default-features = false, features = ["macros"] }
+
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(facet_no_doc)"] }
