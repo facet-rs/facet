@@ -100,16 +100,16 @@ where
 
         // Check for field-level proxy first (e.g., #[facet(xml::proxy = ProxyType)] on a field)
         // This takes precedence over container-level proxies.
-        if let Some(field) = wip.parent_field() {
-            if field.effective_proxy(format_ns).is_some() {
-                let proxy_wip = wip
-                    .begin_custom_deserialization_with_format(format_ns)
-                    .map_err(DomDeserializeError::Reflect)?;
-                // Deserialize into proxy buffer with the same expected_name
-                let proxy_wip = self.deserialize_into_inner(proxy_wip, expected_name)?;
-                // Convert proxy -> target via TryFrom
-                return proxy_wip.end().map_err(DomDeserializeError::Reflect);
-            }
+        if let Some(field) = wip.parent_field()
+            && field.effective_proxy(format_ns).is_some()
+        {
+            let proxy_wip = wip
+                .begin_custom_deserialization_with_format(format_ns)
+                .map_err(DomDeserializeError::Reflect)?;
+            // Deserialize into proxy buffer with the same expected_name
+            let proxy_wip = self.deserialize_into_inner(proxy_wip, expected_name)?;
+            // Convert proxy -> target via TryFrom
+            return proxy_wip.end().map_err(DomDeserializeError::Reflect);
         }
 
         // Check for container-level proxy (e.g., #[facet(xml::proxy = ProxyType)] on the type)
