@@ -1,8 +1,8 @@
 [package]
 name = "benchmark-defs"
 version = "0.43.0"
-edition = "2024"
-rust-version = "1.90.0"
+edition.workspace = true
+rust-version.workspace = true
 publish = false
 
 [package.metadata]
@@ -11,8 +11,8 @@ publish = false
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-facet = { version = "0.43.1", path = "../../facet" }
-serde = { version = "1.0", features = ["derive"] }
+facet = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
 serde_yaml = "0.9"
 
 [lints]

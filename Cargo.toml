@@ -47,15 +47,8 @@ members = [
     # showcase infrastructure
     "facet-showcase",
 
-    # dev tooling
-    "facet-bloatbench",
-    "facet-perf-shootout",
+    # dev tooling (xtask stays in main workspace)
     "xtask",
-    "tools/benchmark-defs",
-    "tools/benchmark-generator",
-    "tools/benchmark-analyzer",
-    "tools/metrics-tui",
-    "tools/perf-index-generator",
 
     "facet-shapelike",
 
@@ -78,6 +71,8 @@ members = [
 exclude = [
     # proto-attr experiment uses nightly features
     "proto-attr",
+    # tools/ has its own workspace
+    "tools",
 ]
 resolver = "3"
 

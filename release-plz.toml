@@ -203,41 +203,6 @@ release = false
 publish = false
 
 [[package]]
-name = "benchmark-defs"
-release = false
-publish = false
-
-[[package]]
-name = "benchmark-generator"
-release = false
-publish = false
-
-[[package]]
-name = "benchmark-analyzer"
-release = false
-publish = false
-
-[[package]]
-name = "metrics-tui"
-release = false
-publish = false
-
-[[package]]
-name = "perf-index-generator"
-release = false
-publish = false
-
-[[package]]
-name = "facet-bloatbench"
-release = false
-publish = false
-
-[[package]]
-name = "facet-perf-shootout"
-release = false
-publish = false
-
-[[package]]
 name = "facet-showcase"
 release = false
 publish = false

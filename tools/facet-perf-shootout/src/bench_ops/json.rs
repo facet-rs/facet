@@ -1230,7 +1230,7 @@ pub mod options {
 pub mod twitter {
     use super::*;
 
-    static COMPRESSED: &[u8] = include_bytes!("../../../tools/benchmark-generator/corpus/twitter.json.br");
+    static COMPRESSED: &[u8] = include_bytes!("../../../benchmark-generator/corpus/twitter.json.br");
 
     pub static JSON: LazyLock<Vec<u8>> = LazyLock::new(|| {
         let mut decompressed = Vec::new();
@@ -1303,7 +1303,7 @@ pub mod twitter {
 pub mod canada {
     use super::*;
 
-    static COMPRESSED: &[u8] = include_bytes!("../../../tools/benchmark-generator/corpus/canada.json.br");
+    static COMPRESSED: &[u8] = include_bytes!("../../../benchmark-generator/corpus/canada.json.br");
 
     pub static JSON: LazyLock<Vec<u8>> = LazyLock::new(|| {
         let mut decompressed = Vec::new();
@@ -1376,7 +1376,7 @@ pub mod canada {
 pub mod citm_catalog {
     use super::*;
 
-    static COMPRESSED: &[u8] = include_bytes!("../../../tools/benchmark-generator/corpus/citm_catalog.json.br");
+    static COMPRESSED: &[u8] = include_bytes!("../../../benchmark-generator/corpus/citm_catalog.json.br");
 
     pub static JSON: LazyLock<Vec<u8>> = LazyLock::new(|| {
         let mut decompressed = Vec::new();

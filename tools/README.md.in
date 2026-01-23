@@ -1,0 +1,19 @@
+# tools
+
+Internal development and benchmarking tools for the facet workspace. These crates are not published to crates.io.
+
+## Workspace Structure
+
+This is a separate Cargo workspace containing dev-only tools:
+
+- **benchmark-defs** — Common benchmark definitions and argument parsing
+- **benchmark-generator** — Generates unified benchmark code from templates
+- **benchmark-analyzer** — Analyzes benchmark results and generates HTML reports
+- **metrics-tui** — Interactive TUI for exploring compile-time metrics
+- **perf-index-generator** — Generates index pages for perf.facet.rs
+- **facet-bloatbench** — Compile-time and binary size benchmarking harness
+- **facet-perf-shootout** — Performance shootout benchmarks (divan/criterion)
+
+## Why a Separate Workspace?
+
+These tools have heavy dependencies (axum, tokio, ratatui, divan) that would slow down `cargo check` for the main facet crates. By isolating them in their own workspace, we keep the core development loop fast.

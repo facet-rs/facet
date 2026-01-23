@@ -1,8 +1,8 @@
 [package]
 name = "benchmark-analyzer"
 version = "0.43.0"
-edition = "2024"
-rust-version = "1.90.0"
+edition.workspace = true
+rust-version.workspace = true
 publish = false
 
 [package.metadata]
@@ -23,12 +23,12 @@ name = "gen-run-types"
 path = "src/gen_run_types.rs"
 
 [dependencies]
-benchmark-defs = { path = "../benchmark-defs", version = "0.43.0" }
-facet = { path = "../../facet", features = ["indexmap"], version = "0.43.1" }
-facet-args = { path = "../../facet-args", version = "0.43.1" }
-facet-json = { path = "../../facet-json", version = "0.43.1" }
-facet-typescript = { path = "../../facet-typescript", version = "0.43.1" }
-facet-json-schema = { path = "../../facet-json-schema", version = "0.43.1" }
+benchmark-defs = { workspace = true }
+facet = { workspace = true, features = ["indexmap"] }
+facet-args = { workspace = true }
+facet-json = { workspace = true }
+facet-typescript = { workspace = true }
+facet-json-schema = { workspace = true }
 console = "0.16"
 unicode-width = "0.2"
 owo-colors = "4"
