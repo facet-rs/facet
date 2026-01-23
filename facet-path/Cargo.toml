@@ -1,6 +1,6 @@
 [package]
 name = "facet-path"
-version = "0.43.1"
+version = "0.43.2"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -22,7 +22,7 @@ std = ["alloc", "facet-core/std"]
 alloc = ["facet-core/alloc"]
 
 [dependencies]
-facet-core = { path = "../facet-core", version = "0.43.1", default-features = false }
+facet-core = { path = "../facet-core", version = "0.43.2", default-features = false }
 
 [dev-dependencies]
 facet = { path = "../facet" }

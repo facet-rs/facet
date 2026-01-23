@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.2](https://github.com/facet-rs/facet/compare/facet-core-v0.43.1...facet-core-v0.43.2) - 2026-01-23
+
+### Added
+
+- *(facet-core)* Add SmallVec support ([#1884](https://github.com/facet-rs/facet/pull/1884))
+
+### Other
+
+- *(tests)* consolidate integration test binaries ([#1887](https://github.com/facet-rs/facet/pull/1887))
+
 ## [0.43.1](https://github.com/facet-rs/facet/compare/facet-core-v0.43.0...facet-core-v0.43.1) - 2026-01-23
 
 ### Added
