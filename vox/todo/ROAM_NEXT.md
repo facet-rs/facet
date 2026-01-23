@@ -63,17 +63,40 @@ pub async fn send_error_response(
 **Key insight:** Async functions take `SendPeek` (which is `Send+Sync`) instead of raw
 pointers (which are not `Send`). This allows the Future's state to be `Send`.
 
-### Middleware Trait (Peek-based)
+### Middleware Trait (Pre/Post Pattern)
 
 ```rust
+/// Outcome of a method call for post-middleware observation.
+pub enum MethodOutcome<'mem> {
+    Ok(SendPeek<'mem>),   // Handler returned Ok(value)
+    Err(SendPeek<'mem>),  // Handler returned Err(error)
+    Rejected,             // Pre-middleware rejected (handler never ran)
+}
+
 pub trait Middleware: Send + Sync {
-    fn intercept<'a>(
+    /// Before handler - can reject, set up tracing span in extensions
+    fn pre<'a>(
         &'a self,
         ctx: &'a mut Context,
-        args: Peek<'_, 'static>,  // Can inspect args via reflection!
+        args: SendPeek<'a>,
     ) -> Pin<Box<dyn Future<Output = Result<(), Rejection>> + Send + 'a>>;
+
+    /// After handler - observes result, ends span, records metrics
+    fn post<'a>(
+        &'a self,
+        ctx: &'a Context,
+        outcome: MethodOutcome<'a>,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
+        Box::pin(async {}) // default no-op
+    }
 }
 ```
+
+**Execution order for middleware stack [A, B, C]:**
+- Pre runs first-to-last: A.pre() → B.pre() → C.pre() → handler
+- Post runs last-to-first: C.post() → B.post() → A.post()
+
+This mirrors standard "wrap" semantics for proper tracing span nesting.
 
 ### Generated Dispatcher
 
@@ -132,10 +155,12 @@ fn dispatch_echo(&self, cx: Context, payload: Vec<u8>, registry: &mut ChannelReg
     Box::pin(DISPATCH_CONTEXT.scope(dispatch_ctx, async move {
         let mut cx = cx;
 
-        // Run middleware (takes SendPeek, which is Send-safe)
+        // Run pre-middleware (takes SendPeek, which is Send-safe)
         if !middleware.is_empty() {
-            let send_peek = unsafe { SendPeek::new(Peek::unchecked_new(...)) };
-            if let Err(rejection) = run_middleware(send_peek, &mut cx, &middleware).await {
+            let args_peek = unsafe { SendPeek::new(Peek::unchecked_new(...)) };
+            if let Err(rejection) = run_pre_middleware(args_peek, &mut cx, &middleware).await {
+                // Still run post-middleware so it can clean up (e.g., end tracing spans)
+                run_post_middleware(&cx, MethodOutcome::Rejected, &middleware).await;
                 send_prepare_error(PrepareError::Rejected(rejection), &driver_tx, conn_id, request_id).await;
                 return;
             }
@@ -149,10 +174,18 @@ fn dispatch_echo(&self, cx: Context, payload: Vec<u8>, registry: &mut ChannelReg
         match &result {
             Ok(value) => {
                 let send_peek = unsafe { SendPeek::new(Peek::unchecked_new(...)) };
+                // Run post-middleware (observes outcome)
+                if !middleware.is_empty() {
+                    run_post_middleware(&cx, MethodOutcome::Ok(send_peek), &middleware).await;
+                }
                 send_ok_response(send_peek, &driver_tx, conn_id, request_id).await;
             }
             Err(error) => {
                 let send_peek = unsafe { SendPeek::new(Peek::unchecked_new(...)) };
+                // Run post-middleware (observes outcome)
+                if !middleware.is_empty() {
+                    run_post_middleware(&cx, MethodOutcome::Err(send_peek), &middleware).await;
+                }
                 send_error_response(send_peek, &driver_tx, conn_id, request_id).await;
             }
         }
@@ -211,7 +244,16 @@ let client = connect(connector, config, dispatcher);
 - [x] **3.3** Delete `roam-next` crate (concepts moved to roam-session)
 - [x] **3.4** Update any tests - all 329 tests pass
 
-### Phase 4: Future work (not this PR)
+### Phase 4: Server-side pre/post middleware
+
+- [x] **4.1** Update `Middleware` trait to have `pre()` and `post()` methods
+- [x] **4.2** Add `MethodOutcome` enum (Ok/Err/Rejected) for post-middleware
+- [x] **4.3** Add `run_pre_middleware()` and `run_post_middleware()` helpers
+- [x] **4.4** Update macro codegen to call post-middleware after handler
+- [x] **4.5** Call post-middleware even when pre-middleware rejects (for cleanup)
+- [x] **4.6** All 325 tests pass
+
+### Phase 5: Future work
 
 - [ ] Client-side middleware (intercept outgoing calls)
 - [ ] Middleware that can modify args (Poke, not just Peek)
@@ -244,7 +286,8 @@ rust/roam-next/    # Eventually delete or merge
 
 ## Success Criteria
 
-1. All existing tests pass
-2. Middleware can peek at deserialized args
+1. All existing tests pass ✅ (325 tests)
+2. Middleware can peek at deserialized args ✅
 3. `cargo llvm-lines` shows reduced monomorphization
 4. No regression in runtime performance
+5. Middleware can observe method outcomes (pre/post pattern) ✅

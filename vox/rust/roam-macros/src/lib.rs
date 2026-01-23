@@ -403,7 +403,7 @@ fn generate_dispatch_method(method: &ServiceMethod, roam: &TokenStream2) -> Toke
         (return_type.to_token_stream(), None)
     };
 
-    // Generate the response sending code based on fallibility
+    // Generate the post-middleware and response sending code based on fallibility.
     // We create SendPeek before calling the async functions to avoid capturing
     // raw pointers in the Future state (raw pointers are not Send).
     let send_response = if is_fallible {
@@ -420,6 +420,13 @@ fn generate_dispatch_method(method: &ServiceMethod, roam: &TokenStream2) -> Toke
                         );
                         #roam::session::SendPeek::new(peek)
                     };
+
+                    // Run post-middleware (observes outcome)
+                    if !middleware.is_empty() {
+                        let outcome = #roam::session::MethodOutcome::Ok(send_peek);
+                        #roam::session::run_post_middleware(&cx, outcome, &middleware).await;
+                    }
+
                     #roam::session::send_ok_response(
                         send_peek,
                         &driver_tx,
@@ -437,6 +444,13 @@ fn generate_dispatch_method(method: &ServiceMethod, roam: &TokenStream2) -> Toke
                         );
                         #roam::session::SendPeek::new(peek)
                     };
+
+                    // Run post-middleware (observes outcome)
+                    if !middleware.is_empty() {
+                        let outcome = #roam::session::MethodOutcome::Err(send_peek);
+                        #roam::session::run_post_middleware(&cx, outcome, &middleware).await;
+                    }
+
                     #roam::session::send_error_response(
                         send_peek,
                         &driver_tx,
@@ -457,6 +471,13 @@ fn generate_dispatch_method(method: &ServiceMethod, roam: &TokenStream2) -> Toke
                 );
                 #roam::session::SendPeek::new(peek)
             };
+
+            // Run post-middleware (observes outcome)
+            if !middleware.is_empty() {
+                let outcome = #roam::session::MethodOutcome::Ok(send_peek);
+                #roam::session::run_post_middleware(&cx, outcome, &middleware).await;
+            }
+
             #roam::session::send_ok_response(
                 send_peek,
                 &driver_tx,
@@ -510,10 +531,10 @@ fn generate_dispatch_method(method: &ServiceMethod, roam: &TokenStream2) -> Toke
             Box::pin(#roam::session::DISPATCH_CONTEXT.scope(dispatch_ctx, async move {
                 let mut cx = cx;
 
-                // 4. Run middleware (ASYNC)
+                // 4. Run pre-middleware (ASYNC)
                 if !middleware.is_empty() {
                     // SAFETY: args is valid, initialized, and the tuple type is Send
-                    let send_peek = unsafe {
+                    let args_peek = unsafe {
                         let peek = #roam::facet::Peek::unchecked_new(
                             #roam::facet_core::PtrConst::new((&args as *const #tuple_type).cast::<u8>()),
                             <#tuple_type as #roam::facet::Facet>::SHAPE,
@@ -521,11 +542,18 @@ fn generate_dispatch_method(method: &ServiceMethod, roam: &TokenStream2) -> Toke
                         #roam::session::SendPeek::new(peek)
                     };
 
-                    if let Err(rejection) = #roam::session::run_middleware(
-                        send_peek,
+                    if let Err(rejection) = #roam::session::run_pre_middleware(
+                        args_peek,
                         &mut cx,
                         &middleware,
                     ).await {
+                        // Still run post-middleware so it can clean up (e.g., end tracing spans)
+                        #roam::session::run_post_middleware(
+                            &cx,
+                            #roam::session::MethodOutcome::Rejected,
+                            &middleware,
+                        ).await;
+
                         #roam::session::send_prepare_error(
                             #roam::session::PrepareError::Rejected(rejection),
                             &driver_tx,
@@ -537,12 +565,17 @@ fn generate_dispatch_method(method: &ServiceMethod, roam: &TokenStream2) -> Toke
                 }
 
                 // 5. Log, destructure args, call handler
+                // Scope CURRENT_EXTENSIONS so code inside the handler (like TracingCaller)
+                // can access extensions set by middleware.
                 use #roam::facet_pretty::FacetPretty;
                 if #method_name_str != "emit_tracing" {
                     #roam::tracing::debug!(target: "roam::rpc", method = #method_name_str, args = %#args_log, "handling");
                 }
                 #args_binding
-                let result = handler.#method_name(&cx, #args_call).await;
+                let result = #roam::session::CURRENT_EXTENSIONS.scope(
+                    cx.extensions.clone(),
+                    handler.#method_name(&cx, #args_call)
+                ).await;
 
                 // 6. Send response
                 #send_response

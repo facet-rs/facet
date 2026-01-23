@@ -1,0 +1,114 @@
+# roam-telemetry
+
+[![crates.io](https://img.shields.io/crates/v/roam-telemetry.svg)](https://crates.io/crates/roam-telemetry)
+[![documentation](https://docs.rs/roam-telemetry/badge.svg)](https://docs.rs/roam-telemetry)
+[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/roam-telemetry.svg)](./LICENSE)
+
+Lightweight OTLP telemetry for roam RPC.
+
+This crate provides OpenTelemetry-compatible tracing without the heavy `opentelemetry` crate dependency. It sends traces directly to an OTLP HTTP endpoint (like Grafana Tempo) using reqwest and facet-json.
+
+## Features
+
+- **Lightweight** - No opentelemetry dependency, just reqwest + facet-json
+- **OTLP JSON export** - Sends traces to Tempo/Jaeger/any OTLP collector via HTTP
+- **W3C Trace Context** - Extracts/injects `traceparent` for distributed tracing
+- **Batching** - Collects spans and exports in configurable batches
+- **Pre/post middleware** - Uses roam's middleware system to capture request lifecycle
+
+## Usage
+
+```rust
+use roam_telemetry::{TelemetryMiddleware, OtlpExporter};
+
+// Create exporter pointing to your collector
+let exporter = OtlpExporter::new(
+    "http://tempo:4318/v1/traces",
+    "my-service"
+);
+
+// Add to your service dispatcher
+let dispatcher = MyServiceDispatcher::new(handler)
+    .with_middleware(TelemetryMiddleware::new(exporter));
+```
+
+## Trace Context Propagation
+
+### Automatic (Recommended)
+
+Use `TracingCaller` for automatic trace propagation on outgoing calls:
+
+```rust
+use roam_telemetry::{TracingCaller, OtlpExporter};
+
+let exporter = OtlpExporter::new("http://tempo:4318/v1/traces", "my-service");
+
+// Wrap your connection handle with TracingCaller
+let caller = TracingCaller::new(connection_handle, exporter.clone());
+let client = DownstreamServiceClient::new(caller);
+
+// Calls automatically:
+// - Create CLIENT spans
+// - Inject traceparent into metadata
+// - Record success/failure
+client.some_method(args).await?;
+```
+
+When used together with `TelemetryMiddleware` on the server side, traces automatically propagate across service boundaries.
+
+### Manual
+
+For fine-grained control, access the pending span from context extensions:
+
+```rust
+use roam_telemetry::PendingSpan;
+
+async fn my_handler(ctx: &Context, ...) -> Result<...> {
+    if let Some(span) = ctx.extensions.get::<PendingSpan>() {
+        let traceparent = span.traceparent();
+        // Manually add to outgoing call metadata
+        downstream_client
+            .call()
+            .with_metadata(vec![
+                ("traceparent".into(), MetadataValue::String(traceparent))
+            ])
+            .await?;
+    }
+    // ...
+}
+```
+
+## Configuration
+
+```rust
+use roam_telemetry::{OtlpExporter, ExporterConfig, KeyValue};
+use std::time::Duration;
+
+let exporter = OtlpExporter::with_config(ExporterConfig {
+    endpoint: "http://tempo:4318/v1/traces".to_string(),
+    service_name: "my-service".to_string(),
+    resource_attributes: vec![
+        KeyValue::string("deployment.environment", "production"),
+        KeyValue::string("service.version", "1.0.0"),
+    ],
+    max_batch_size: 512,
+    max_batch_delay: Duration::from_secs(5),
+    timeout: Duration::from_secs(10),
+});
+```
+
+## Span Attributes
+
+Each span includes:
+
+- `rpc.system` = "roam"
+- `rpc.method` = method name (e.g., "MyService.my_method")
+- `rpc.request_id` = request ID
+- `network.peer.connection_id` = connection ID
+- `rpc.metadata.*` = request metadata (first 10 entries)
+- `rpc.success` = true/false
+- `rpc.error_type` = "user_error" or "rejected" (on failure)
+
+## License
+
+MIT OR Apache-2.0

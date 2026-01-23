@@ -9,6 +9,7 @@ members = [
     "rust/roam-schema",
     "rust/roam-shm",
     "rust/roam-tracing",
+    "rust/roam-telemetry",
     "rust/roam-codegen",
     "rust/roam-macros",
     "rust/roam-macros-parse",

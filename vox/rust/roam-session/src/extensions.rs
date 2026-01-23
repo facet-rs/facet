@@ -14,6 +14,7 @@ use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::fmt;
 use std::hash::{BuildHasherDefault, Hasher};
+use std::sync::Arc;
 
 /// A type map for storing arbitrary typed values.
 ///
@@ -35,7 +36,10 @@ use std::hash::{BuildHasherDefault, Hasher};
 /// assert_eq!(ext.get::<UserId>().unwrap().0, 42);
 /// assert_eq!(ext.get::<RequestId>().unwrap().0, "abc-123");
 /// ```
-#[derive(Default)]
+/// Note: Extensions uses Arc for value storage, making Clone cheap (just
+/// cloning Arc pointers). This is important for the CURRENT_EXTENSIONS
+/// task-local which needs to clone extensions for async scoping.
+#[derive(Default, Clone)]
 pub struct Extensions {
     // Use Option<Box<...>> so empty Extensions has no allocation.
     // Most requests won't use extensions at all.
@@ -69,7 +73,7 @@ impl Hasher for IdHasher {
     }
 }
 
-type AnyMap = HashMap<TypeId, Box<dyn Any + Send + Sync>, BuildHasherDefault<IdHasher>>;
+type AnyMap = HashMap<TypeId, Arc<dyn Any + Send + Sync>, BuildHasherDefault<IdHasher>>;
 
 impl Extensions {
     /// Create an empty `Extensions`.
@@ -80,12 +84,18 @@ impl Extensions {
 
     /// Insert a value into the extensions.
     ///
-    /// If a value of this type already existed, it is returned.
+    /// If a value of this type already existed and this is the only reference
+    /// to it, it is returned. Otherwise returns `None`.
     pub fn insert<T: Send + Sync + 'static>(&mut self, val: T) -> Option<T> {
         self.map
             .get_or_insert_with(Default::default)
-            .insert(TypeId::of::<T>(), Box::new(val))
-            .and_then(|boxed| boxed.downcast().ok().map(|b| *b))
+            .insert(TypeId::of::<T>(), Arc::new(val))
+            .and_then(|arc| {
+                // Try to unwrap - only succeeds if we have the only reference
+                arc.downcast::<T>()
+                    .ok()
+                    .and_then(|arc| Arc::try_unwrap(arc).ok())
+            })
     }
 
     /// Get a reference to a value of type `T`, if it exists.
@@ -96,42 +106,19 @@ impl Extensions {
             .and_then(|boxed| boxed.downcast_ref())
     }
 
-    /// Get a mutable reference to a value of type `T`, if it exists.
-    pub fn get_mut<T: Send + Sync + 'static>(&mut self) -> Option<&mut T> {
-        self.map
-            .as_mut()
-            .and_then(|map| map.get_mut(&TypeId::of::<T>()))
-            .and_then(|boxed| boxed.downcast_mut())
-    }
-
-    /// Get a value of type `T`, inserting `value` if it doesn't exist.
-    pub fn get_or_insert<T: Clone + Send + Sync + 'static>(&mut self, value: T) -> &mut T {
-        self.get_or_insert_with(|| value)
-    }
-
-    /// Get a value of type `T`, inserting the result of `f` if it doesn't exist.
-    pub fn get_or_insert_with<T: Send + Sync + 'static>(
-        &mut self,
-        f: impl FnOnce() -> T,
-    ) -> &mut T {
-        let map = self.map.get_or_insert_with(Default::default);
-        let boxed = map
-            .entry(TypeId::of::<T>())
-            .or_insert_with(|| Box::new(f()));
-        boxed.downcast_mut().expect("type mismatch in extensions")
-    }
-
-    /// Get a value of type `T`, inserting `T::default()` if it doesn't exist.
-    pub fn get_or_insert_default<T: Default + Send + Sync + 'static>(&mut self) -> &mut T {
-        self.get_or_insert_with(T::default)
-    }
-
-    /// Remove a value of type `T`, returning it if it existed.
+    /// Remove a value of type `T`.
+    ///
+    /// Returns the value if it existed and this is the only reference to it.
+    /// Otherwise returns `None` (the value is still removed from this Extensions).
     pub fn remove<T: Send + Sync + 'static>(&mut self) -> Option<T> {
         self.map
             .as_mut()
             .and_then(|map| map.remove(&TypeId::of::<T>()))
-            .and_then(|boxed| boxed.downcast().ok().map(|b| *b))
+            .and_then(|arc| {
+                arc.downcast::<T>()
+                    .ok()
+                    .and_then(|arc| Arc::try_unwrap(arc).ok())
+            })
     }
 
     /// Clear all extensions.
@@ -209,18 +196,18 @@ mod tests {
     }
 
     #[test]
-    fn test_get_or_insert() {
+    fn test_clone() {
         let mut ext = Extensions::new();
+        ext.insert(42i32);
+        ext.insert("hello");
 
-        let val = ext.get_or_insert(42i32);
-        assert_eq!(*val, 42);
+        // Clone shares the Arc-wrapped values
+        let ext2 = ext.clone();
+        assert_eq!(ext2.get::<i32>(), Some(&42));
+        assert_eq!(ext2.get::<&str>(), Some(&"hello"));
 
-        *val = 100;
-        assert_eq!(ext.get::<i32>(), Some(&100));
-
-        // Doesn't overwrite existing value
-        let val = ext.get_or_insert(999i32);
-        assert_eq!(*val, 100);
+        // Original still works
+        assert_eq!(ext.get::<i32>(), Some(&42));
     }
 
     #[test]

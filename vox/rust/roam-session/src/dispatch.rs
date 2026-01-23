@@ -44,6 +44,15 @@ roam_task_local::task_local! {
     ///
     /// This is public for use by generated dispatchers.
     pub static DISPATCH_CONTEXT: DispatchContext;
+
+    /// Task-local extensions from the current request context.
+    ///
+    /// This allows code running inside a handler (including `Caller` implementations
+    /// like `TracingCaller`) to access extensions set by middleware, without needing
+    /// direct access to the `Context`.
+    ///
+    /// Generated dispatchers scope this around the handler call.
+    pub static CURRENT_EXTENSIONS: Extensions;
 }
 
 /// Get the current dispatch context, if any.
@@ -138,6 +147,16 @@ impl Context {
     /// Get the channel IDs.
     pub fn channels(&self) -> &[u64] {
         &self.channels
+    }
+
+    /// Get the method name for this request, if registered.
+    ///
+    /// Service methods registered via `#[roam::service]` automatically register
+    /// their names. Returns `None` if the method hasn't been registered yet
+    /// (e.g., first call before LazyLock initialization) or if called with a
+    /// forwarding dispatcher that doesn't know the method names.
+    pub fn method_name(&self) -> Option<&'static str> {
+        crate::diagnostic::get_method_name(self.method_id.raw())
     }
 }
 
@@ -745,7 +764,7 @@ pub async fn send_error_response(
         .await;
 }
 
-/// Run middleware on args via SendPeek.
+/// Run pre-middleware on args via SendPeek.
 ///
 /// This is called from the async block in generated dispatchers, after stream
 /// binding has completed synchronously. The caller creates a `SendPeek` from
@@ -754,16 +773,38 @@ pub async fn send_error_response(
 /// Taking `SendPeek` instead of a raw pointer is critical: `SendPeek` is Send,
 /// so capturing it in an async Future is safe. Raw pointers are not Send, so
 /// passing them to an async function would make the Future not Send.
-pub async fn run_middleware(
+///
+/// Pre-middleware runs first-to-last. If any middleware rejects, we return
+/// early with the rejection (the caller should still call `run_post_middleware`
+/// so middleware can clean up).
+pub async fn run_pre_middleware(
     send_peek: SendPeek<'_>,
     ctx: &mut Context,
     middleware: &[Arc<dyn Middleware>],
 ) -> Result<(), Rejection> {
     for mw in middleware {
-        mw.intercept(ctx, send_peek).await?;
+        mw.pre(ctx, send_peek).await?;
     }
 
     Ok(())
+}
+
+/// Run post-middleware after the handler completes.
+///
+/// Post-middleware runs last-to-first (reverse order), mirroring standard
+/// "wrap" semantics where the first middleware added is the outermost wrapper.
+///
+/// This is called after the handler returns (or after a rejection). Middleware
+/// can observe the outcome and clean up resources (e.g., end tracing spans).
+pub async fn run_post_middleware(
+    ctx: &Context,
+    outcome: crate::MethodOutcome<'_>,
+    middleware: &[Arc<dyn Middleware>],
+) {
+    // Post runs last-to-first
+    for mw in middleware.iter().rev() {
+        mw.post(ctx, outcome).await;
+    }
 }
 
 /// Send a prepare error (deserialization, channel mismatch, rejection, etc.) as a response.

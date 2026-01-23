@@ -2449,6 +2449,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "roam-telemetry"
+version = "0.6.0"
+dependencies = [
+ "facet",
+ "facet-json",
+ "facet-pretty",
+ "rand",
+ "reqwest",
+ "roam-session",
+ "roam-wire",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "roam-tracing"
 version = "0.6.0"
 dependencies = [
