@@ -302,7 +302,7 @@ impl PrettyPrinter {
 
         // Handle proxy types by converting to the proxy representation and formatting that
         if let Some(proxy_def) = shape.proxy {
-            return self.format_via_proxy(
+            let result = self.format_via_proxy(
                 value,
                 proxy_def,
                 f,
@@ -311,6 +311,9 @@ impl PrettyPrinter {
                 type_depth,
                 short,
             );
+
+            visited.remove(&value.id());
+            return result;
         }
 
         match (shape.def, shape.ty) {
@@ -2204,10 +2207,22 @@ mod tests {
         // Long string - should truncate middle
         let long = "abcdefghijklmnopqrstuvwxyz0123456789";
         let output = printer.format(&long);
-        assert!(output.contains("..."), "should contain ellipsis: {}", output);
+        assert!(
+            output.contains("..."),
+            "should contain ellipsis: {}",
+            output
+        );
         assert!(output.contains("chars"), "should mention chars: {}", output);
-        assert!(output.starts_with("\"abc"), "should start with beginning: {}", output);
-        assert!(output.ends_with("89\""), "should end with ending: {}", output);
+        assert!(
+            output.starts_with("\"abc"),
+            "should start with beginning: {}",
+            output
+        );
+        assert!(
+            output.ends_with("89\""),
+            "should end with ending: {}",
+            output
+        );
     }
 
     #[test]
@@ -2219,12 +2234,20 @@ mod tests {
         // Short bytes - no truncation
         let short: Vec<u8> = vec![1, 2, 3];
         let output = printer.format(&short);
-        assert!(output.contains("01 02 03"), "should show all bytes: {}", output);
+        assert!(
+            output.contains("01 02 03"),
+            "should show all bytes: {}",
+            output
+        );
 
         // Long bytes - should truncate middle
         let long: Vec<u8> = (0..50).collect();
         let output = printer.format(&long);
-        assert!(output.contains("..."), "should contain ellipsis: {}", output);
+        assert!(
+            output.contains("..."),
+            "should contain ellipsis: {}",
+            output
+        );
         assert!(output.contains("bytes"), "should mention bytes: {}", output);
     }
 }

@@ -129,6 +129,63 @@ fn test_proxy_container_aliasing_format_peek_with_spans() {
     "#);
 }
 
+/// Test that proxy types inside Arc-aliased structures don't trigger false cycle detection.
+/// This reproduces the issue where multiple Arc pointers to the same data containing proxy
+/// fields would incorrectly trigger cycle detection.
+#[test]
+fn test_proxy_inside_arc_aliased_struct() {
+    use facet_reflect::Peek;
+    use std::sync::Arc;
+
+    /// Inner struct that contains a proxy field
+    #[derive(Facet, Debug, Clone)]
+    pub struct InnerWithProxy {
+        pub name: String,
+        #[facet(proxy = IntAsString)]
+        pub count: i32,
+    }
+
+    /// Outer struct that references the same Arc from two different paths
+    #[derive(Facet, Debug, Clone)]
+    pub struct OuterWithArcAliasing {
+        pub direct: Arc<InnerWithProxy>,
+        pub nested: NestedArcRef,
+    }
+
+    #[derive(Facet, Debug, Clone)]
+    pub struct NestedArcRef {
+        pub inner: Arc<InnerWithProxy>,
+    }
+
+    let shared = Arc::new(InnerWithProxy {
+        name: "test".to_string(),
+        count: 42,
+    });
+
+    let value = OuterWithArcAliasing {
+        direct: shared.clone(),
+        nested: NestedArcRef { inner: shared },
+    };
+
+    let formatted = PrettyPrinter::new()
+        .with_colors(false.into())
+        .format_peek_with_spans(Peek::new(&value));
+
+    // The proxy field should NOT trigger cycle detection
+    assert!(
+        !formatted.text.contains("cycle detected"),
+        "proxy fields inside Arc-aliased structs should not trigger false cycle detection. Got:\n{}",
+        formatted.text
+    );
+
+    // Both occurrences of the proxy field should show the actual value
+    assert!(
+        formatted.text.matches("\"42\"").count() == 2,
+        "expected 2 occurrences of the proxied value \"42\", got:\n{}",
+        formatted.text
+    );
+}
+
 #[test]
 fn test_proxy_field_level_format_peek_with_spans() {
     use facet_pretty::PathSegment;
