@@ -1,3 +1,0 @@
-# facet-tokio-postgres
-
-Deserialize tokio-postgres Rows into any type implementing Facet.
