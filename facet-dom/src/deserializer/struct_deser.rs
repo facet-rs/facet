@@ -80,10 +80,11 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
         dom_deser: &'p mut super::DomDeserializer<'de, BORROW, P>,
         struct_def: &'static StructType,
         ns_all: Option<&'static str>,
+        rename_all: Option<&'static str>,
         expected_name: Cow<'static, str>,
         deny_unknown_fields: bool,
     ) -> Self {
-        let field_map = StructFieldMap::new(struct_def, ns_all);
+        let field_map = StructFieldMap::new(struct_def, ns_all, rename_all);
         Self {
             dom_deser,
             field_map,
@@ -1040,10 +1041,12 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
 
             // Create a new StructDeserializer for the inner type, but we've already
             // consumed the NodeStart, so we need to call its internal methods directly.
+            // The "other" field is a regular struct, not an enum variant, so no rename_all override
             let mut inner_deser = StructDeserializer::new(
                 self.dom_deser,
                 inner_struct_def,
                 ns_all,
+                None, // rename_all - none for regular structs
                 expected_name,
                 deny_unknown_fields,
             );

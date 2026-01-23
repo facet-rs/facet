@@ -78,3 +78,42 @@ fn rename_all_sets_effective_name() {
     // effective_name() returns rename if present, else name
     assert_eq!(field.effective_name(), "my-field");
 }
+
+#[test]
+fn rename_all_on_enum_does_not_affect_variant_fields_in_facet_derive() {
+    // Document current behavior: facet-derive does NOT propagate rename_all
+    // to enum variant fields. The facet-dom deserializer handles this at runtime instead.
+    #[derive(Facet)]
+    #[facet(rename_all = "PascalCase")]
+    #[repr(C)]
+    #[allow(dead_code)] // Fields are accessed via reflection, not directly
+    enum MyTag {
+        TagFoo {
+            name: String,
+            value: u32,
+        },
+    }
+
+    let Type::User(UserType::Enum(enum_type)) = MyTag::SHAPE.ty else {
+        panic!("expected enum type");
+    };
+
+    let variant = &enum_type.variants[0];
+    // Variant name IS transformed by rename_all
+    assert_eq!(variant.name, "TagFoo");
+    assert_eq!(variant.rename, Some("TagFoo"));
+    assert_eq!(variant.effective_name(), "TagFoo");
+
+    // However, fields within the variant are NOT transformed by facet-derive
+    // This is the current limitation that facet-dom works around
+    let fields = &variant.data.fields;
+    let name_field = &fields[0];
+    assert_eq!(name_field.name, "name");
+    assert_eq!(name_field.rename, None); // NOT transformed!
+    assert_eq!(name_field.effective_name(), "name");
+
+    let value_field = &fields[1];
+    assert_eq!(value_field.name, "value");
+    assert_eq!(value_field.rename, None); // NOT transformed!
+    assert_eq!(value_field.effective_name(), "value");
+}

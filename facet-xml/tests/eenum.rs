@@ -322,3 +322,117 @@ fn enum_variant_mixed_attributes_and_elements() {
         "Roundtrip should produce identical XML"
     );
 }
+
+// ============================================================================
+// Enum with rename_all and variant attributes (issue #8)
+// ============================================================================
+
+#[test]
+fn enum_rename_all_with_variant_attributes() {
+    // Reproduces issue #8: rename_all on enum should affect attribute names
+    // in struct variants
+
+    #[derive(Debug, PartialEq, Facet)]
+    #[facet(rename_all = "PascalCase")]
+    #[repr(C)]
+    #[allow(clippy::enum_variant_names)] // Reproducing exact issue from GitHub
+    enum MyTag {
+        TagFoo {
+            #[facet(xml::attribute)]
+            name: String,
+            #[facet(xml::attribute)]
+            value: u32,
+        },
+        TagBar {
+            #[facet(xml::attribute)]
+            name: String,
+            #[facet(xml::attribute, rename = "bar_value")]
+            bar_value: String,
+        },
+        TagBaz {
+            #[facet(xml::attribute)]
+            name: String,
+            #[facet(xml::attribute)]
+            baz: Option<String>,
+        },
+    }
+
+    #[derive(Debug, PartialEq, Facet)]
+    #[facet(rename = "Object")]
+    struct Container {
+        #[facet(xml::attribute)]
+        id: String,
+        #[facet(xml::elements)]
+        elements: Vec<MyTag>,
+    }
+
+    #[derive(Debug, PartialEq, Facet)]
+    #[facet(rename = "Outer")]
+    struct Outer {
+        #[facet(xml::elements)]
+        objects: Vec<Container>,
+    }
+
+    // Test deserialization with PascalCase attribute names
+    let result: Outer = facet_xml::from_str(
+        r#"
+<Outer>
+    <Object id="first">
+        <TagFoo Name="Foo" Value="420" />
+        <TagBar Name="Bar" bar_value="Bar Value" />
+        <TagBaz Name="BazNotUsableAsAtag" />
+        <TagBaz Name="BazNotUsableAsAtag" Baz="bazbazbaz" />
+    </Object>
+    <Object id="second">
+    </Object>
+</Outer>
+"#,
+    )
+    .unwrap();
+
+    assert_eq!(result.objects.len(), 2);
+
+    let first = &result.objects[0];
+    assert_eq!(first.id, "first");
+    assert_eq!(first.elements.len(), 4);
+
+    // TagFoo with Name="Foo" Value="420"
+    assert_eq!(
+        first.elements[0],
+        MyTag::TagFoo {
+            name: "Foo".into(),
+            value: 420
+        }
+    );
+
+    // TagBar with Name="Bar" bar_value="Bar Value" (bar_value has explicit rename)
+    assert_eq!(
+        first.elements[1],
+        MyTag::TagBar {
+            name: "Bar".into(),
+            bar_value: "Bar Value".into()
+        }
+    );
+
+    // TagBaz without optional attribute
+    assert_eq!(
+        first.elements[2],
+        MyTag::TagBaz {
+            name: "BazNotUsableAsAtag".into(),
+            baz: None
+        }
+    );
+
+    // TagBaz with optional attribute
+    assert_eq!(
+        first.elements[3],
+        MyTag::TagBaz {
+            name: "BazNotUsableAsAtag".into(),
+            baz: Some("bazbazbaz".into())
+        }
+    );
+
+    let second = &result.objects[1];
+    assert_eq!(second.id, "second");
+    assert_eq!(second.elements.len(), 0);
+}

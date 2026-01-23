@@ -230,17 +230,24 @@ where
             }
         });
 
-        self.deserialize_struct_innards(wip, struct_def, expected_name)
+        // For regular structs, rename_all is handled by facet-derive setting field.rename
+        // So we pass None here - the field map will use field.rename if present
+        self.deserialize_struct_innards(wip, struct_def, expected_name, None)
     }
 
     /// Deserialize the innards of a struct-like thing (struct, tuple, or enum variant data).
     ///
     /// Delegates to `StructDeserializer` for the actual implementation.
+    ///
+    /// The `rename_all` parameter, when provided, overrides any `rename_all` on the struct's shape.
+    /// This is used when deserializing enum variants, where the parent enum's `rename_all` should
+    /// apply to the variant's fields.
     fn deserialize_struct_innards(
         &mut self,
         wip: Partial<'de, BORROW>,
         struct_def: &'static facet_core::StructType,
         expected_name: Cow<'static, str>,
+        rename_all: Option<&'static str>,
     ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
         // Extract xml::ns_all attribute from the shape
         let ns_all = wip
@@ -253,8 +260,15 @@ where
         // Check if deny_unknown_fields is set
         let deny_unknown_fields = wip.shape().has_deny_unknown_fields_attr();
 
-        StructDeserializer::new(self, struct_def, ns_all, expected_name, deny_unknown_fields)
-            .deserialize(wip)
+        StructDeserializer::new(
+            self,
+            struct_def,
+            ns_all,
+            rename_all,
+            expected_name,
+            deny_unknown_fields,
+        )
+        .deserialize(wip)
     }
 
     /// Deserialize an enum type.
@@ -288,7 +302,8 @@ where
         match event {
             DomEvent::NodeStart { tag, .. } => {
                 let tag = tag.clone();
-                let enum_def = match &wip.shape().ty {
+                let enum_shape = wip.shape();
+                let enum_def = match &enum_shape.ty {
                     Type::User(UserType::Enum(def)) => def,
                     _ => {
                         return Err(DomDeserializeError::Unsupported(
@@ -297,9 +312,14 @@ where
                     }
                 };
 
+                // Extract rename_all from the enum shape BEFORE selecting variant
+                // (wip.shape() changes after select_nth_variant)
+                // This propagates the enum's rename_all to variant field names
+                let rename_all = enum_shape.get_builtin_attr_value::<&str>("rename_all");
+
                 // For untagged enums, the element tag is the enum's name (not a variant name)
                 // We need to select the first variant and deserialize the content into it
-                let is_untagged = wip.shape().is_untagged();
+                let is_untagged = enum_shape.is_untagged();
 
                 let variant_idx = if is_untagged {
                     // For untagged enums, select the first (and typically only) variant
@@ -372,8 +392,13 @@ where
                     StructKind::TupleStruct | StructKind::Struct | StructKind::Tuple => {
                         // Struct variant, tuple variant (2+ fields), or tuple type:
                         // deserialize using the variant's data as a StructType
-                        wip =
-                            self.deserialize_struct_innards(wip, &variant.data, variant_element_name)?;
+                        // Pass enum's rename_all to apply to variant field names
+                        wip = self.deserialize_struct_innards(
+                            wip,
+                            &variant.data,
+                            variant_element_name,
+                            rename_all,
+                        )?;
                     }
                 }
             }
