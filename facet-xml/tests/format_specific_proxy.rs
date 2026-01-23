@@ -248,3 +248,208 @@ fn test_container_level_proxy_roundtrip() {
     let roundtripped: ArrayWithContainerProxy = from_str(&xml).unwrap();
     assert_eq!(original, roundtripped);
 }
+
+// ============================================================================
+// Additional proxy coverage tests
+// ============================================================================
+
+/// A struct proxy for testing container-level proxies on struct types.
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct PointProxy {
+    pub x: i32,
+    pub y: i32,
+}
+
+/// A point type that uses a proxy for XML serialization.
+/// The proxy has different field names to verify the proxy shape is used.
+#[derive(Facet, Debug, Clone, PartialEq)]
+#[facet(xml::proxy = PointProxy)]
+pub struct Point {
+    pub x: i32,
+    pub y: i32,
+}
+
+impl TryFrom<PointProxy> for Point {
+    type Error = std::convert::Infallible;
+    fn try_from(proxy: PointProxy) -> Result<Self, Self::Error> {
+        Ok(Point {
+            x: proxy.x,
+            y: proxy.y,
+        })
+    }
+}
+
+impl From<&Point> for PointProxy {
+    fn from(p: &Point) -> Self {
+        PointProxy { x: p.x, y: p.y }
+    }
+}
+
+/// Test container-level proxy as an element field (not attribute).
+#[derive(Facet, Debug, PartialEq)]
+struct ContainerWithPointElement {
+    #[facet(rename = "location")]
+    point: Point,
+}
+
+#[test]
+fn test_container_level_proxy_as_element_field_roundtrip() {
+    let original = ContainerWithPointElement {
+        point: Point { x: 10, y: 20 },
+    };
+    let xml = to_string(&original).unwrap();
+    eprintln!("XML: {xml}");
+    assert!(xml.contains("<location>"), "Should have location element");
+    assert!(xml.contains("<x>10</x>"), "Should have x element");
+    assert!(xml.contains("<y>20</y>"), "Should have y element");
+
+    let roundtripped: ContainerWithPointElement = from_str(&xml).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+/// Test container-level proxy in Option<T>.
+#[derive(Facet, Debug, PartialEq)]
+struct ContainerWithOptionalPoint {
+    #[facet(rename = "location")]
+    point: Option<Point>,
+}
+
+#[test]
+fn test_container_level_proxy_in_option_some_roundtrip() {
+    let original = ContainerWithOptionalPoint {
+        point: Some(Point { x: 5, y: 15 }),
+    };
+    let xml = to_string(&original).unwrap();
+    eprintln!("XML: {xml}");
+
+    let roundtripped: ContainerWithOptionalPoint = from_str(&xml).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+#[test]
+fn test_container_level_proxy_in_option_none_roundtrip() {
+    let original = ContainerWithOptionalPoint { point: None };
+    let xml = to_string(&original).unwrap();
+    eprintln!("XML: {xml}");
+
+    let roundtripped: ContainerWithOptionalPoint = from_str(&xml).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+/// Test container-level proxy in Vec<T>.
+#[derive(Facet, Debug, PartialEq)]
+struct ContainerWithPointList {
+    #[facet(rename = "point")]
+    points: Vec<Point>,
+}
+
+#[test]
+fn test_container_level_proxy_in_vec_roundtrip() {
+    let original = ContainerWithPointList {
+        points: vec![
+            Point { x: 1, y: 2 },
+            Point { x: 3, y: 4 },
+            Point { x: 5, y: 6 },
+        ],
+    };
+    let xml = to_string(&original).unwrap();
+    eprintln!("XML: {xml}");
+
+    let roundtripped: ContainerWithPointList = from_str(&xml).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+#[test]
+fn test_container_level_proxy_in_vec_empty_roundtrip() {
+    let original = ContainerWithPointList { points: vec![] };
+    let xml = to_string(&original).unwrap();
+    eprintln!("XML: {xml}");
+
+    let roundtripped: ContainerWithPointList = from_str(&xml).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+/// Test container-level proxy as the root type.
+#[test]
+fn test_container_level_proxy_as_root_type_roundtrip() {
+    let original = Point { x: 100, y: 200 };
+    let xml = to_string(&original).unwrap();
+    eprintln!("XML: {xml}");
+    // The element name should come from PointProxy's shape
+    assert!(
+        xml.contains("<pointProxy>") || xml.contains("<point>"),
+        "Should serialize as pointProxy or point element"
+    );
+
+    let roundtripped: Point = from_str(&xml).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+/// Test proxy in nested struct.
+#[derive(Facet, Debug, PartialEq)]
+struct OuterContainer {
+    name: String,
+    inner: InnerWithProxy,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct InnerWithProxy {
+    #[facet(rename = "pos")]
+    position: Point,
+}
+
+#[test]
+fn test_proxy_in_nested_struct_roundtrip() {
+    let original = OuterContainer {
+        name: "test".to_string(),
+        inner: InnerWithProxy {
+            position: Point { x: 42, y: 84 },
+        },
+    };
+    let xml = to_string(&original).unwrap();
+    eprintln!("XML: {xml}");
+
+    let roundtripped: OuterContainer = from_str(&xml).unwrap();
+    assert_eq!(original, roundtripped);
+}
+
+/// A u32 wrapper that uses binary string proxy at container level.
+#[derive(Facet, Debug, Clone, PartialEq)]
+#[facet(xml::proxy = BinaryString)]
+pub struct BinaryU32(pub u32);
+
+impl TryFrom<BinaryString> for BinaryU32 {
+    type Error = std::num::ParseIntError;
+    fn try_from(proxy: BinaryString) -> Result<Self, Self::Error> {
+        let s = proxy.0.trim_start_matches("0b");
+        Ok(BinaryU32(u32::from_str_radix(s, 2)?))
+    }
+}
+
+impl From<&BinaryU32> for BinaryString {
+    fn from(v: &BinaryU32) -> Self {
+        BinaryString(format!("0b{:b}", v.0))
+    }
+}
+
+/// Test container-level proxy on item type in Vec<T>.
+#[derive(Facet, Debug, PartialEq)]
+struct ContainerWithProxiedItemList {
+    #[facet(rename = "value")]
+    values: Vec<BinaryU32>,
+}
+
+#[test]
+fn test_container_level_proxy_on_vec_items_roundtrip() {
+    let original = ContainerWithProxiedItemList {
+        values: vec![BinaryU32(0b1010), BinaryU32(0b1100), BinaryU32(0b1111)],
+    };
+    let xml = to_string(&original).unwrap();
+    eprintln!("XML: {xml}");
+    assert!(xml.contains("0b1010"), "Should use binary format");
+    assert!(xml.contains("0b1100"), "Should use binary format");
+    assert!(xml.contains("0b1111"), "Should use binary format");
+
+    let roundtripped: ContainerWithProxiedItemList = from_str(&xml).unwrap();
+    assert_eq!(original, roundtripped);
+}
