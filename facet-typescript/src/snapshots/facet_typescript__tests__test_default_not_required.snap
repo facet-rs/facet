@@ -1,0 +1,14 @@
+---
+source: facet-typescript/src/lib.rs
+assertion_line: 1432
+expression: ts
+---
+export interface Wrapper {
+  a: string;
+  d?: Def;
+}
+
+export interface Def {
+  a: number;
+  b: number;
+}

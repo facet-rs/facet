@@ -1,0 +1,12 @@
+---
+source: facet-typescript/src/lib.rs
+assertion_line: 1455
+expression: ts
+---
+export interface MixedDefaults {
+  required: string;
+  optional?: string;
+  with_default?: number;
+  with_default_expr?: number;
+  option_with_default?: string;
+}
