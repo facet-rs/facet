@@ -18,6 +18,7 @@ pub mod merge;
 pub mod provenance;
 
 pub use builder::builder;
+use config_value::ConfigValue;
 
 pub(crate) mod arg;
 pub(crate) mod error;
@@ -68,12 +69,12 @@ pub fn from_slice_layered<T: Facet<'static>>(args: &[&str]) -> Result<T, ArgsErr
     tracing::debug!(env_prefix, "Using env prefix");
 
     // Build layered config from all sources (CLI args parsed into ConfigValue)
-    let config_value = builder()
+    let mut config_value = builder()
         .cli(|cli| cli.args(args.iter().map(|s| s.to_string())))
         .env(|env| env.prefix(env_prefix))
         .with_env_source(StdEnv)
         .build_value()
-        .map_err(|e| ArgsErrorWithInput {
+        .map_err(|_e| ArgsErrorWithInput {
             inner: ArgsError::new(
                 ArgsErrorKind::ReflectError(facet_reflect::ReflectError::OperationFailed {
                     shape: T::SHAPE,
@@ -85,6 +86,13 @@ pub fn from_slice_layered<T: Facet<'static>>(args: &[&str]) -> Result<T, ArgsErr
         })?;
 
     tracing::debug!(?config_value, "Built merged ConfigValue");
+
+    // Restructure the ConfigValue to match the Args shape:
+    // - Extract top-level fields (like version, verbose) that aren't part of config
+    // - Wrap the config-related fields under the config field name (e.g., settings)
+    config_value = restructure_config_value(config_value, T::SHAPE, config_field);
+
+    tracing::debug!(?config_value, "Restructured ConfigValue");
 
     // Deserialize the merged ConfigValue into the target type
     from_config_value(&config_value).map_err(|e| {
@@ -99,6 +107,72 @@ pub fn from_slice_layered<T: Facet<'static>>(args: &[&str]) -> Result<T, ArgsErr
             ),
             flattened_args: args.join(" "),
         }
+    })
+}
+
+/// Restructure the ConfigValue to match the target shape.
+///
+/// The builder produces a flat ConfigValue with all fields at the root level.
+/// This function:
+/// 1. Separates top-level Args fields (like version, verbose) from config fields
+/// 2. Wraps config-related fields under the config field name (e.g., settings)
+fn restructure_config_value(
+    value: ConfigValue,
+    target_shape: &'static facet_core::Shape,
+    config_field: &'static facet_core::Field,
+) -> ConfigValue {
+    use crate::config_value::Sourced;
+    use facet_core::{Type, UserType};
+    use indexmap::IndexMap;
+
+    // Get all field names from the target shape
+    let struct_def = match &target_shape.ty {
+        Type::User(UserType::Struct(s)) => s,
+        _ => return value, // Not a struct, return as-is
+    };
+
+    // Extract the ConfigValue's map
+    let source_map = match value {
+        ConfigValue::Object(ref sourced) => &sourced.value,
+        _ => return value, // Not an object, return as-is
+    };
+
+    let mut top_level_map = IndexMap::new();
+    let mut config_map = IndexMap::new();
+
+    // Iterate through the source map and categorize fields
+    for (key, val) in source_map.iter() {
+        // Check if this key corresponds to a top-level field (not the config field)
+        let is_top_level_field = struct_def
+            .fields
+            .iter()
+            .any(|f| f.name == key && f.name != config_field.name);
+
+        if is_top_level_field {
+            // Top-level field like version, verbose
+            top_level_map.insert(key.clone(), val.clone());
+        } else {
+            // Config-related field - goes under the config field
+            config_map.insert(key.clone(), val.clone());
+        }
+    }
+
+    // Wrap config fields under the config field name
+    if !config_map.is_empty() || !top_level_map.contains_key(config_field.name) {
+        top_level_map.insert(
+            config_field.name.to_string(),
+            ConfigValue::Object(Sourced {
+                value: config_map,
+                span: None,
+                provenance: None,
+            }),
+        );
+    }
+
+    ConfigValue::Object(Sourced {
+        value: top_level_map,
+        span: None,
+        provenance: None,
     })
 }
 

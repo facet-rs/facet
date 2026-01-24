@@ -5,14 +5,16 @@
 
 use alloc::vec::Vec;
 
-use facet_core::{Def, Facet, Shape, Type, UserType};
+use facet_core::{Facet, Shape, Type, UserType};
 use facet_format::{
     ContainerKind, FieldKey, FieldLocationHint, FormatDeserializer, FormatParser, ParseEvent,
     ScalarValue,
 };
 use facet_reflect::Span;
+use indexmap::IndexMap;
 
 use crate::config_value::{ConfigValue, Sourced};
+use crate::provenance::Provenance;
 
 /// Deserialize a `ConfigValue` into a Facet type.
 ///
@@ -38,11 +40,132 @@ pub fn from_config_value<T>(value: &ConfigValue) -> Result<T, ConfigValueDeseria
 where
     T: Facet<'static>,
 {
-    let parser = ConfigValueParser::new(value, T::SHAPE);
+    // First, fill in defaults for missing fields based on the target shape
+    let value_with_defaults = fill_defaults_from_shape(value, T::SHAPE);
+
+    let parser = ConfigValueParser::new(&value_with_defaults, T::SHAPE);
     let mut deserializer = FormatDeserializer::new_owned(parser);
     deserializer
         .deserialize()
         .map_err(ConfigValueDeserializeError::Deserialize)
+}
+
+/// Walk the shape and insert default values for missing fields in the ConfigValue tree.
+/// This allows proper provenance tracking (defaults are marked as coming from Default).
+fn fill_defaults_from_shape(value: &ConfigValue, shape: &'static Shape) -> ConfigValue {
+    match value {
+        ConfigValue::Object(sourced) => {
+            // Get struct fields from shape
+            let fields = match &shape.ty {
+                Type::User(UserType::Struct(s)) => &s.fields,
+                _ => return value.clone(),
+            };
+
+            let mut new_map = sourced.value.clone();
+
+            // For each field in the struct shape, check if it's missing in the ConfigValue
+            for field in fields.iter() {
+                if !new_map.contains_key(field.name) {
+                    // Field is missing - insert a default
+                    if let Some(default_value) = get_default_config_value(field) {
+                        new_map.insert(field.name.to_string(), default_value);
+                    }
+                }
+            }
+
+            // Recursively process nested objects
+            for (key, val) in new_map.iter_mut() {
+                // Find the corresponding field shape
+                if let Some(field) = fields.iter().find(|f| f.name == key) {
+                    *val = fill_defaults_from_shape(val, field.shape.get());
+                }
+            }
+
+            ConfigValue::Object(Sourced {
+                value: new_map,
+                span: sourced.span,
+                provenance: sourced.provenance.clone(),
+            })
+        }
+        ConfigValue::Array(sourced) => {
+            // Recursively process array items
+            // TODO: get element shape from array def
+            let items: Vec<_> = sourced
+                .value
+                .iter()
+                .map(|item| {
+                    // For now, just pass through arrays without adding defaults
+                    item.clone()
+                })
+                .collect();
+
+            ConfigValue::Array(Sourced {
+                value: items,
+                span: sourced.span,
+                provenance: sourced.provenance.clone(),
+            })
+        }
+        _ => value.clone(),
+    }
+}
+
+/// Get a default ConfigValue for a field, if one should be provided.
+fn get_default_config_value(field: &'static facet_core::Field) -> Option<ConfigValue> {
+    use facet_core::ScalarType;
+
+    let shape = field.shape.get();
+
+    // For scalar types, emit CLI-friendly defaults
+    match shape.scalar_type() {
+        Some(ScalarType::Bool) => {
+            return Some(ConfigValue::Bool(Sourced {
+                value: false,
+                span: None,
+                provenance: Some(Provenance::Default),
+            }));
+        }
+        Some(
+            ScalarType::U8
+            | ScalarType::U16
+            | ScalarType::U32
+            | ScalarType::U64
+            | ScalarType::U128
+            | ScalarType::USize
+            | ScalarType::I8
+            | ScalarType::I16
+            | ScalarType::I32
+            | ScalarType::I64
+            | ScalarType::I128
+            | ScalarType::ISize,
+        ) => {
+            return Some(ConfigValue::Integer(Sourced {
+                value: 0,
+                span: None,
+                provenance: Some(Provenance::Default),
+            }));
+        }
+        _ => {}
+    }
+
+    // For struct types, create an empty object and recursively fill it
+    if let Type::User(UserType::Struct(struct_def)) = &shape.ty {
+        let mut map = IndexMap::new();
+
+        // Recursively add defaults for all struct fields
+        for nested_field in struct_def.fields.iter() {
+            if let Some(default_value) = get_default_config_value(nested_field) {
+                map.insert(nested_field.name.to_string(), default_value);
+            }
+        }
+
+        return Some(ConfigValue::Object(Sourced {
+            value: map,
+            span: None,
+            provenance: Some(Provenance::Default),
+        }));
+    }
+
+    None
 }
 
 /// Errors that can occur during ConfigValue deserialization.
@@ -76,46 +199,31 @@ pub struct ConfigValueParser<'input> {
     last_span: Option<Span>,
     /// Peeked event (cached for peek_event).
     peeked: Option<ParseEvent<'input>>,
-    /// Target shape for emitting defaults for missing fields.
-    target_shape: &'static Shape,
 }
 
 /// A frame on the parsing stack.
 enum StackFrame<'input> {
-    /// Processing an object - need to emit keys and values.
+    /// Processing an object - emit key-value pairs.
     Object {
         entries: Vec<(&'input str, &'input ConfigValue)>,
         index: usize,
-        /// Shape of the struct we're deserializing into (for emitting defaults).
-        shape: Option<&'static Shape>,
     },
-    /// Emitting default values for missing struct fields.
-    EmitDefaults {
-        /// Fields that need defaults emitted.
-        fields: Vec<&'static facet_core::Field>,
-        index: usize,
-    },
-    /// Processing an array - need to emit values.
+    /// Processing an array - emit items in sequence.
     Array {
         items: &'input [ConfigValue],
         index: usize,
     },
-    /// A value that needs to be emitted.
+    /// A single value to emit.
     Value(&'input ConfigValue),
 }
 
 impl<'input> ConfigValueParser<'input> {
-    /// Create a new parser from a `ConfigValue` and target shape.
-    ///
-    /// The target shape is used to emit sensible defaults for fields
-    /// that are missing in the ConfigValue (e.g., bool defaults to false,
-    /// integers default to 0).
-    pub fn new(value: &'input ConfigValue, target_shape: &'static Shape) -> Self {
+    /// Create a new parser from a `ConfigValue`.
+    pub fn new(value: &'input ConfigValue, _target_shape: &'static Shape) -> Self {
         Self {
             stack: alloc::vec![StackFrame::Value(value)],
             last_span: None,
             peeked: None,
-            target_shape,
         }
     }
 
@@ -155,11 +263,7 @@ impl<'input> FormatParser<'input> for ConfigValueParser<'input> {
                 StackFrame::Value(value) => {
                     return Ok(Some(self.emit_value(value)?));
                 }
-                StackFrame::Object {
-                    entries,
-                    index,
-                    shape,
-                } => {
+                StackFrame::Object { entries, index } => {
                     if index < entries.len() {
                         // Emit the next key-value pair
                         let (key, value) = entries[index];
@@ -168,7 +272,6 @@ impl<'input> FormatParser<'input> for ConfigValueParser<'input> {
                         self.stack.push(StackFrame::Object {
                             entries: entries.clone(),
                             index: index + 1,
-                            shape,
                         });
 
                         // Push value to process after key
@@ -180,46 +283,7 @@ impl<'input> FormatParser<'input> for ConfigValueParser<'input> {
                             FieldLocationHint::KeyValue,
                         ))));
                     } else {
-                        // Object entries done - now emit defaults for missing fields
-                        if let Some(shape) = shape {
-                            let missing_fields =
-                                get_missing_fields_needing_defaults(shape, &entries);
-                            if !missing_fields.is_empty() {
-                                self.stack.push(StackFrame::EmitDefaults {
-                                    fields: missing_fields,
-                                    index: 0,
-                                });
-                                continue;
-                            }
-                        }
-                        return Ok(Some(ParseEvent::StructEnd));
-                    }
-                }
-                StackFrame::EmitDefaults { fields, index } => {
-                    if index < fields.len() {
-                        let field = fields[index];
-
-                        // Push continuation for next default
-                        self.stack.push(StackFrame::EmitDefaults {
-                            fields: fields.clone(),
-                            index: index + 1,
-                        });
-
-                        // Emit the default value for this field
-                        if let Some(default_event) = get_default_value_for_field(field) {
-                            // Push the default value event
-                            self.peeked = Some(default_event);
-
-                            // Emit the field key
-                            return Ok(Some(ParseEvent::FieldKey(FieldKey::new(
-                                field.name,
-                                FieldLocationHint::KeyValue,
-                            ))));
-                        }
-                        // Skip fields we can't emit defaults for
-                        continue;
-                    } else {
-                        // Done emitting defaults
+                        // Object entries done
                         return Ok(Some(ParseEvent::StructEnd));
                     }
                 }
@@ -276,88 +340,6 @@ impl<'de> facet_format::ProbeStream<'de> for EmptyProbe {
 }
 
 /// Get struct fields that are missing from the ConfigValue and need CLI-friendly defaults.
-fn get_missing_fields_needing_defaults(
-    shape: &'static Shape,
-    entries: &[(&str, &ConfigValue)],
-) -> Vec<&'static facet_core::Field> {
-    let mut missing = Vec::new();
-
-    // Get struct fields from shape
-    let fields = match &shape.ty {
-        Type::User(UserType::Struct(s)) => &s.fields,
-        _ => return missing,
-    };
-
-    // Find fields that are in the struct but not in the ConfigValue
-    let entry_keys: Vec<&str> = entries.iter().map(|(k, _)| *k).collect();
-
-    for field in fields.iter() {
-        if !entry_keys.contains(&field.name) {
-            // Check if this field type has a CLI-friendly default
-            if field_needs_cli_default(field.shape.get()) {
-                missing.push(field);
-            }
-        }
-    }
-
-    missing
-}
-
-/// Check if a shape type should get a CLI-friendly default (bool=false, int=0).
-fn field_needs_cli_default(shape: &'static Shape) -> bool {
-    use facet_core::ScalarType;
-
-    match shape.scalar_type() {
-        Some(ScalarType::Bool) => true,
-        Some(
-            ScalarType::U8
-            | ScalarType::U16
-            | ScalarType::U32
-            | ScalarType::U64
-            | ScalarType::U128
-            | ScalarType::USize
-            | ScalarType::I8
-            | ScalarType::I16
-            | ScalarType::I32
-            | ScalarType::I64
-            | ScalarType::I128
-            | ScalarType::ISize,
-        ) => true,
-        _ => false,
-    }
-}
-
-/// Get the default ParseEvent for a field with CLI-friendly defaults.
-fn get_default_value_for_field(field: &'static facet_core::Field) -> Option<ParseEvent<'static>> {
-    use facet_core::ScalarType;
-
-    match field.shape.get().scalar_type() {
-        Some(ScalarType::Bool) => Some(ParseEvent::Scalar(ScalarValue::Bool(false))),
-        Some(
-            ScalarType::U8
-            | ScalarType::U16
-            | ScalarType::U32
-            | ScalarType::U64
-            | ScalarType::U128
-            | ScalarType::USize,
-        ) => {
-            // Default to 0 for unsigned integers
-            Some(ParseEvent::Scalar(ScalarValue::U64(0)))
-        }
-        Some(
-            ScalarType::I8
-            | ScalarType::I16
-            | ScalarType::I32
-            | ScalarType::I64
-            | ScalarType::I128
-            | ScalarType::ISize,
-        ) => {
-            // Default to 0 for signed integers
-            Some(ParseEvent::Scalar(ScalarValue::I64(0)))
-        }
-        _ => None,
-    }
-}
 
 impl<'input> ConfigValueParser<'input> {
     /// Emit an event for a single value.
@@ -406,12 +388,8 @@ impl<'input> ConfigValueParser<'input> {
                 let entries: Vec<(&str, &ConfigValue)> =
                     sourced.value.iter().map(|(k, v)| (k.as_str(), v)).collect();
 
-                // Push object processing with target shape for default emission
-                self.stack.push(StackFrame::Object {
-                    entries,
-                    index: 0,
-                    shape: Some(self.target_shape),
-                });
+                // Push object processing
+                self.stack.push(StackFrame::Object { entries, index: 0 });
 
                 Ok(ParseEvent::StructStart(ContainerKind::Object))
             }
