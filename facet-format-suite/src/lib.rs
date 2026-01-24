@@ -413,6 +413,14 @@ pub trait FormatSuite {
     #[cfg(feature = "jiff02")]
     fn jiff_civil_datetime() -> CaseSpec;
 
+    /// Case: jiff::civil::Date type.
+    #[cfg(feature = "jiff02")]
+    fn jiff_civil_date() -> CaseSpec;
+
+    /// Case: jiff::civil::Time type.
+    #[cfg(feature = "jiff02")]
+    fn jiff_civil_time() -> CaseSpec;
+
     /// Case: `chrono::DateTime<Utc>` type.
     #[cfg(feature = "chrono")]
     fn chrono_datetime_utc() -> CaseSpec;
@@ -792,6 +800,10 @@ pub fn all_cases<S: FormatSuite + 'static>() -> Vec<SuiteCase> {
             &CASE_JIFF_CIVIL_DATETIME,
             S::jiff_civil_datetime,
         ),
+        #[cfg(feature = "jiff02")]
+        SuiteCase::new::<S, JiffCivilDateWrapper>(&CASE_JIFF_CIVIL_DATE, S::jiff_civil_date),
+        #[cfg(feature = "jiff02")]
+        SuiteCase::new::<S, JiffCivilTimeWrapper>(&CASE_JIFF_CIVIL_TIME, S::jiff_civil_time),
         #[cfg(feature = "chrono")]
         SuiteCase::new::<S, ChronoDateTimeUtcWrapper>(
             &CASE_CHRONO_DATETIME_UTC,
@@ -3551,6 +3563,24 @@ const CASE_JIFF_CIVIL_DATETIME: CaseDescriptor<JiffCivilDateTimeWrapper> = CaseD
     },
 };
 
+#[cfg(feature = "jiff02")]
+const CASE_JIFF_CIVIL_DATE: CaseDescriptor<JiffCivilDateWrapper> = CaseDescriptor {
+    id: "third_party::jiff_civil_date",
+    description: "jiff::civil::Date type",
+    expected: || JiffCivilDateWrapper {
+        date: "2024-06-19".parse().unwrap(),
+    },
+};
+
+#[cfg(feature = "jiff02")]
+const CASE_JIFF_CIVIL_TIME: CaseDescriptor<JiffCivilTimeWrapper> = CaseDescriptor {
+    id: "third_party::jiff_civil_time",
+    description: "jiff::civil::Time type",
+    expected: || JiffCivilTimeWrapper {
+        time: "15:22:45".parse().unwrap(),
+    },
+};
+
 #[cfg(feature = "chrono")]
 const CASE_CHRONO_DATETIME_UTC: CaseDescriptor<ChronoDateTimeUtcWrapper> = CaseDescriptor {
     id: "third_party::chrono_datetime_utc",
@@ -3868,6 +3898,20 @@ pub struct JiffTimestampWrapper {
 #[derive(Facet, Debug, Clone, PartialEq)]
 pub struct JiffCivilDateTimeWrapper {
     pub created_at: jiff::civil::DateTime,
+}
+
+/// Fixture for jiff::civil::Date test.
+#[cfg(feature = "jiff02")]
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct JiffCivilDateWrapper {
+    pub date: jiff::civil::Date,
+}
+
+/// Fixture for jiff::civil::Time test.
+#[cfg(feature = "jiff02")]
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct JiffCivilTimeWrapper {
+    pub time: jiff::civil::Time,
 }
 
 /// Fixture for `chrono::DateTime<Utc>` test.

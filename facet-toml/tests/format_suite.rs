@@ -658,6 +658,14 @@ impl FormatSuite for TomlSlice {
         CaseSpec::from_str("created_at = 2024-06-19T15:22:45")
     }
 
+    fn jiff_civil_date() -> CaseSpec {
+        CaseSpec::from_str("date = 2024-06-19")
+    }
+
+    fn jiff_civil_time() -> CaseSpec {
+        CaseSpec::from_str("time = 15:22:45")
+    }
+
     fn chrono_datetime_utc() -> CaseSpec {
         CaseSpec::from_str("created_at = 2023-01-15T12:34:56Z")
     }

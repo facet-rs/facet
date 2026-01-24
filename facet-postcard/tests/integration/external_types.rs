@@ -423,7 +423,10 @@ mod chrono_tests {
 #[cfg(feature = "jiff02")]
 mod jiff_tests {
     use super::*;
-    use jiff::{Timestamp, Zoned, civil::DateTime};
+    use jiff::{
+        Timestamp, Zoned,
+        civil::{Date, DateTime, Time},
+    };
 
     #[test]
     fn timestamp_roundtrip() {
@@ -441,6 +444,24 @@ mod jiff_tests {
         let bytes = to_vec(&dt).unwrap();
         let decoded: DateTime = from_slice(&bytes).unwrap();
         assert_eq!(dt, decoded);
+    }
+
+    #[test]
+    fn date_roundtrip() {
+        facet_testhelpers::setup();
+        let date: Date = "2024-06-19".parse().unwrap();
+        let bytes = to_vec(&date).unwrap();
+        let decoded: Date = from_slice(&bytes).unwrap();
+        assert_eq!(date, decoded);
+    }
+
+    #[test]
+    fn time_roundtrip() {
+        facet_testhelpers::setup();
+        let time: Time = "15:22:45".parse().unwrap();
+        let bytes = to_vec(&time).unwrap();
+        let decoded: Time = from_slice(&bytes).unwrap();
+        assert_eq!(time, decoded);
     }
 
     #[test]
