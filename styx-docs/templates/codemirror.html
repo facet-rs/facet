@@ -217,13 +217,18 @@
     </div>
 </div>
 
-<script>
-// Set WASM URL before module loads (will be rewritten to cache-busted path)
-window.STYX_WASM_URL = '/wasm/styx_wasm_bg.wasm';
-</script>
 <script type="module">
-// Import from Vite-bundled CodeMirror playground
-import { EditorView, EditorState, Compartment, Prec, basicSetup, oneDark, json, sql, vim, styx } from '/src/codemirror/main.ts';
+// Load from esm.sh CDN - no bundling required
+import { EditorView, basicSetup } from 'https://esm.sh/codemirror@6.0.1';
+import { EditorState, Compartment, Prec } from 'https://esm.sh/@codemirror/state@6.5.2';
+import { oneDark } from 'https://esm.sh/@codemirror/theme-one-dark@6.1.2';
+import { json } from 'https://esm.sh/@codemirror/lang-json@6.0.1';
+import { sql } from 'https://esm.sh/@codemirror/lang-sql@6.8.0';
+import { vim } from 'https://esm.sh/@replit/codemirror-vim@6.3.0';
+import { styx } from 'https://esm.sh/@bearcove/codemirror-lang-styx@0.1.0';
+
+// Import Styx WASM from esm.sh
+import init, { to_json, from_json, parse, version } from 'https://esm.sh/@bearcove/styx-wasm@0.1.0';
 
 // Wrap vim in highest precedence so it gets keys before basicSetup
 const vimWithPrecedence = (enabled) => enabled ? Prec.highest(vim()) : [];
@@ -234,9 +239,6 @@ const styxWithSql = styx({
         { tag: 'sql', language: sql() }
     ]
 });
-
-// Import Styx WASM
-import init, { to_json, from_json, parse, version } from '/wasm/styx_wasm.js';
 
 const DEFAULT_SOURCE = `// Welcome to the Styx Playground!
 // Edit this document and see the JSON output on the right.
@@ -288,7 +290,7 @@ let updatingFromJson = false;
 
 async function main() {
     // Initialize WASM
-    await init(window.STYX_WASM_URL);
+    await init();
 
     document.getElementById('status').textContent = `v${version()}`;
 

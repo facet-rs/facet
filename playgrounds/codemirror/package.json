@@ -1,0 +1,61 @@
+{
+  "name": "@bearcove/styx-playground-codemirror",
+  "version": "0.1.0",
+  "description": "CodeMirror-based Styx playground with bidirectional JSON conversion",
+  "type": "module",
+  "main": "dist/index.cjs",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+    "dev": "tsup src/index.ts --format esm,cjs --dts --watch"
+  },
+  "keywords": [
+    "codemirror",
+    "styx",
+    "playground",
+    "editor",
+    "vim"
+  ],
+  "author": "Amos Wenger <amos@bearcove.net>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bearcove/styx.git",
+    "directory": "playgrounds/codemirror"
+  },
+  "bugs": {
+    "url": "https://github.com/bearcove/styx/issues"
+  },
+  "homepage": "https://styx.bearcove.net",
+  "dependencies": {
+    "@bearcove/codemirror-lang-styx": "workspace:*",
+    "@codemirror/autocomplete": "^6.18.0",
+    "@codemirror/lang-json": "^6.0.2",
+    "@codemirror/lang-sql": "^6.10.0",
+    "@codemirror/language": "^6.10.0",
+    "@codemirror/state": "^6.5.4",
+    "@codemirror/theme-one-dark": "^6.1.3",
+    "@codemirror/view": "^6.39.11",
+    "@replit/codemirror-vim": "^6.3.0",
+    "codemirror": "^6.0.2"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.3.0"
+  },
+  "peerDependencies": {
+    "@bearcove/styx-wasm": "workspace:*"
+  }
+}

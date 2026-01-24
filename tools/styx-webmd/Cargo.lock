@@ -492,6 +492,7 @@ checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 [[package]]
 name = "marq"
 version = "0.1.0"
+source = "git+https://github.com/bearcove/marq?branch=main#71440adbb6024f5ec44f87a0450d5639727978e3"
 dependencies = [
  "arborium",
  "facet",

@@ -1,0 +1,43 @@
+{
+  "name": "@bearcove/styx-wasm",
+  "version": "0.1.0",
+  "description": "WebAssembly bindings for Styx parser",
+  "type": "module",
+  "main": "./pkg/styx_wasm.js",
+  "types": "./pkg/styx_wasm.d.ts",
+  "exports": {
+    ".": {
+      "types": "./pkg/styx_wasm.d.ts",
+      "import": "./pkg/styx_wasm.js"
+    },
+    "./styx_wasm_bg.wasm": "./pkg/styx_wasm_bg.wasm"
+  },
+  "files": [
+    "pkg"
+  ],
+  "scripts": {
+    "build": "cargo build --release --target wasm32-unknown-unknown && wasm-bindgen --out-dir pkg --target web ../../target/wasm32-unknown-unknown/release/styx_wasm.wasm",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "styx",
+    "wasm",
+    "webassembly",
+    "parser",
+    "configuration"
+  ],
+  "author": "Amos Wenger <amos@bearcove.net>",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bearcove/styx.git",
+    "directory": "crates/styx-wasm"
+  },
+  "bugs": {
+    "url": "https://github.com/bearcove/styx/issues"
+  },
+  "homepage": "https://styx.bearcove.net",
+  "publishConfig": {
+    "access": "public"
+  }
+}

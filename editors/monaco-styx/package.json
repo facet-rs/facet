@@ -1,0 +1,51 @@
+{
+  "name": "@bearcove/monaco-lang-styx",
+  "version": "0.1.0",
+  "description": "Styx language support for Monaco Editor",
+  "type": "module",
+  "main": "dist/index.cjs",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+    "dev": "tsup src/index.ts --format esm,cjs --dts --watch"
+  },
+  "keywords": [
+    "monaco",
+    "styx",
+    "syntax-highlighting",
+    "editor"
+  ],
+  "author": "Amos Wenger <amos@bearcove.net>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bearcove/styx.git",
+    "directory": "editors/monaco-styx"
+  },
+  "bugs": {
+    "url": "https://github.com/bearcove/styx/issues"
+  },
+  "homepage": "https://styx.bearcove.net",
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.3.0"
+  },
+  "peerDependencies": {
+    "monaco-editor": "^0.40.0 || ^0.50.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

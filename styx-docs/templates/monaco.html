@@ -193,15 +193,20 @@
     </div>
 </div>
 
-<script>
-window.STYX_WASM_URL = '/wasm/styx_wasm_bg.wasm';
-</script>
 <script type="module">
-// Import from Vite-bundled Monaco playground
-import { monaco, registerStyxLanguage, initVimMode } from '/src/monaco/main.ts';
+// Load from esm.sh CDN - no bundling required
+import * as monaco from 'https://esm.sh/monaco-editor@0.52.0';
+import { initVimMode } from 'https://esm.sh/monaco-vim@0.4.1?deps=monaco-editor@0.52.0';
+import { registerStyxLanguage } from 'https://esm.sh/@bearcove/monaco-lang-styx@0.1.0?deps=monaco-editor@0.52.0';
 
-// Import Styx WASM
-import init, { to_json, from_json, parse, version } from '/wasm/styx_wasm.js';
+// Import embedded language definitions for heredoc injection
+import * as sqlLang from 'https://esm.sh/monaco-editor@0.52.0/esm/vs/basic-languages/sql/sql';
+import * as javascriptLang from 'https://esm.sh/monaco-editor@0.52.0/esm/vs/basic-languages/javascript/javascript';
+import * as yamlLang from 'https://esm.sh/monaco-editor@0.52.0/esm/vs/basic-languages/yaml/yaml';
+import * as shellLang from 'https://esm.sh/monaco-editor@0.52.0/esm/vs/basic-languages/shell/shell';
+
+// Import Styx WASM from esm.sh
+import init, { to_json, from_json, parse, version } from 'https://esm.sh/@bearcove/styx-wasm@0.1.0';
 
 const DEFAULT_SOURCE = `// Welcome to the Styx Monaco Playground!
 // Edit this document and see the JSON output on the right.
@@ -254,12 +259,20 @@ let vimModeJsonEditor = null;
 
 async function main() {
     // Initialize WASM
-    await init(window.STYX_WASM_URL);
+    await init();
 
     document.getElementById('status').textContent = `v${version()}`;
 
-    // Register Styx language
-    registerStyxLanguage();
+    // Register embedded languages for heredoc injection
+    const embeddedLanguages = [
+        { id: 'sql', def: sqlLang },
+        { id: 'javascript', def: javascriptLang },
+        { id: 'yaml', def: yamlLang },
+        { id: 'shell', def: shellLang },
+    ];
+
+    // Register Styx language with embedded languages
+    registerStyxLanguage(monaco, embeddedLanguages);
 
     // Clear loading states
     document.getElementById('editor').innerHTML = '';
@@ -307,7 +320,6 @@ async function main() {
             vimModeStyxEditor = initVimMode(styxEditor, vimStatusBar);
         }
         if (!vimModeJsonEditor) {
-            // JSON editor shares the same status bar (shows status for focused editor)
             vimModeJsonEditor = initVimMode(jsonEditor, vimStatusBar);
         }
         vimStatusBar.style.display = 'block';

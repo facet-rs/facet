@@ -8,10 +8,6 @@ export default defineConfig({
   plugins: [svelte(), wasm(), topLevelAwait()],
   resolve: {
     alias: {
-      "@bearcove/codemirror-lang-styx": resolve(
-        __dirname,
-        "../editors/codemirror-styx/src/index.ts",
-      ),
       "@bearcove/styx": resolve(__dirname, "../implementations/styx-js/src/index.ts"),
       "@bearcove/styx-webmd": resolve(__dirname, "../tools/styx-webmd/dist/styx_webmd.js"),
     },
@@ -29,8 +25,7 @@ export default defineConfig({
     manifest: true,
     rollupOptions: {
       input: {
-        monaco: resolve(__dirname, "src/monaco/main.ts"),
-        codemirror: resolve(__dirname, "src/codemirror/main.ts"),
+        // Only quiz is bundled; Monaco and CodeMirror playgrounds load from esm.sh
         quiz: resolve(__dirname, "src/quiz/main.ts"),
       },
       output: {
@@ -38,7 +33,6 @@ export default defineConfig({
         chunkFileNames: "chunks/[name]-[hash].js",
         assetFileNames: "assets/[name][extname]",
       },
-      // Preserve all exports from entry points - they're imported dynamically by HTML templates
       preserveEntrySignatures: "exports-only",
     },
     outDir: "dist",

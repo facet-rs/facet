@@ -1,4 +1,4 @@
-import * as monaco from 'monaco-editor';
+import type * as monaco from 'monaco-editor';
 
 // Styx tokenizer state
 type ContextType = 'object' | 'sequence';
@@ -94,19 +94,31 @@ interface Token {
 
 // Regex patterns
 const WHITESPACE = /^[ \t]+/;
-const NEWLINE = /^(\r?\n)/;
 const DOC_COMMENT = /^\/\/\/.*/;
 const LINE_COMMENT = /^\/\/.*/;
 const TAG_IDENT = /^@[A-Za-z_][A-Za-z0-9_-]*/;
 const UNIT = /^@(?![A-Za-z_])/;
 const HEREDOC_START = /^<<([A-Z][A-Z0-9_]*)(?:,([a-z][a-z0-9_.-]*))?/;
 const RAW_STRING_START = /^r(#+)"/;
-const QUOTED_STRING_START = /^"/;
 // Bare scalar: first char not in forbidden set, subsequent chars allow @ and =, but not >
 const BARE_FIRST_CHAR = /^[^\s{}()\,\"=@>\r\n]/;
 const BARE_CONT_CHAR = /^[^\s{}()\,\">\r\n]/;
 
+/**
+ * Monaco tokens provider for Styx language.
+ * Handles context-aware tokenization including heredocs and embedded language injection.
+ */
 export class StyxTokensProvider implements monaco.languages.TokensProvider {
+  private monacoEditor: typeof monaco.editor | undefined;
+
+  /**
+   * @param monacoEditor Optional monaco.editor reference for embedded language tokenization.
+   *                     If not provided, heredocs will be styled as plain heredoc strings.
+   */
+  constructor(monacoEditor?: typeof monaco.editor) {
+    this.monacoEditor = monacoEditor;
+  }
+
   getInitialState(): monaco.languages.IState {
     return createInitialState();
   }
@@ -168,10 +180,10 @@ export class StyxTokensProvider implements monaco.languages.TokensProvider {
 
       // Content line - check for language injection
       const lang = state.heredoc.language;
-      if (lang) {
+      if (lang && this.monacoEditor) {
         // Try to use Monaco's built-in tokenizer for the embedded language
         try {
-          const embeddedTokens = monaco.editor.tokenize(line, lang);
+          const embeddedTokens = this.monacoEditor.tokenize(line, lang);
           if (embeddedTokens.length > 0 && embeddedTokens[0].length > 0) {
             // Use the embedded language's tokens
             for (const token of embeddedTokens[0]) {
@@ -462,17 +474,10 @@ export class StyxTokensProvider implements monaco.languages.TokensProvider {
         while (pos < line.length && line.slice(pos).match(BARE_CONT_CHAR)) {
           pos++;
         }
-        const bareText = line.slice(startPos, pos);
 
         // Check for attribute syntax (key>value)
-        if (bareText.includes('>')) {
-          // Attribute syntax creates an object value
-          addToken(startPos, atomType(false));
-          afterAtom();
-        } else {
-          addToken(startPos, atomType(false));
-          afterAtom();
-        }
+        addToken(startPos, atomType(false));
+        afterAtom();
         continue;
       }
 
