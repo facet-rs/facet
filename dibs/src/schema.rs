@@ -143,6 +143,10 @@ facet::define_attr_grammar! {
         pub name: Option<&'static str>,
         /// Comma-separated column names
         pub columns: &'static str,
+        /// Optional WHERE clause for partial index (PostgreSQL-specific)
+        ///
+        /// Example: `filter = "is_active = true"` creates `CREATE INDEX ... WHERE is_active = true`
+        pub filter: Option<&'static str>,
     }
 
     /// Composite unique constraint for multi-column uniqueness.
@@ -150,11 +154,16 @@ facet::define_attr_grammar! {
     /// Usage:
     /// - `#[facet(dibs::composite_unique(columns = "col1,col2"))]` - auto-named unique constraint
     /// - `#[facet(dibs::composite_unique(name = "uq_foo", columns = "col1,col2"))]` - named constraint
+    /// - `#[facet(dibs::composite_unique(columns = "col", filter = "is_primary = true"))]` - partial unique
     pub struct CompositeUnique {
         /// Optional constraint name (auto-generated if not provided)
         pub name: Option<&'static str>,
         /// Comma-separated column names
         pub columns: &'static str,
+        /// Optional WHERE clause for partial unique index (PostgreSQL-specific)
+        ///
+        /// Example: `filter = "is_active = true"` creates `CREATE UNIQUE INDEX ... WHERE is_active = true`
+        pub filter: Option<&'static str>,
     }
 }
 
@@ -331,6 +340,10 @@ pub struct Index {
     pub columns: Vec<String>,
     /// Whether this is a unique index
     pub unique: bool,
+    /// Optional WHERE clause for partial indexes (PostgreSQL-specific)
+    ///
+    /// Example: `"is_primary = true"` creates `CREATE INDEX ... WHERE is_primary = true`
+    pub where_clause: Option<String>,
 }
 
 /// Source location of a schema element.
@@ -531,12 +544,18 @@ impl Table {
     pub fn to_create_index_sql(&self, idx: &Index) -> String {
         let unique = if idx.unique { "UNIQUE " } else { "" };
         let quoted_cols: Vec<_> = idx.columns.iter().map(|c| crate::quote_ident(c)).collect();
+        let where_clause = idx
+            .where_clause
+            .as_ref()
+            .map(|w| format!(" WHERE {}", w))
+            .unwrap_or_default();
         format!(
-            "CREATE {}INDEX {} ON {} ({});",
+            "CREATE {}INDEX {} ON {} ({}){};",
             unique,
             crate::quote_ident(&idx.name),
             crate::quote_ident(&self.name),
-            quoted_cols.join(", ")
+            quoted_cols.join(", "),
+            where_clause
         )
     }
 }
@@ -764,6 +783,7 @@ impl TableDef {
                     name: idx_name,
                     columns: cols,
                     unique: false,
+                    where_clause: composite.filter.map(|s| s.to_string()),
                 });
             }
             // Collect container-level composite unique constraints
@@ -784,6 +804,7 @@ impl TableDef {
                     name: idx_name,
                     columns: cols,
                     unique: true,
+                    where_clause: composite.filter.map(|s| s.to_string()),
                 });
             }
         }
@@ -909,6 +930,7 @@ impl TableDef {
                     name: idx_name,
                     columns: vec![col_name.clone()],
                     unique: false,
+                    where_clause: None, // Field-level indexes don't support WHERE clause
                 });
             }
         }

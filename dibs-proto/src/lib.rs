@@ -85,6 +85,8 @@ pub struct IndexInfo {
     pub columns: Vec<String>,
     /// Whether this is a unique index
     pub unique: bool,
+    /// Optional WHERE clause for partial indexes
+    pub where_clause: Option<String>,
 }
 
 /// The full schema (list of tables).

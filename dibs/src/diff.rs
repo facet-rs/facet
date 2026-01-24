@@ -258,12 +258,18 @@ impl Change {
             Change::AddIndex(idx) => {
                 let unique = if idx.unique { "UNIQUE " } else { "" };
                 let quoted_cols: Vec<_> = idx.columns.iter().map(|c| quote_ident(c)).collect();
+                let where_clause = idx
+                    .where_clause
+                    .as_ref()
+                    .map(|w| format!(" WHERE {}", w))
+                    .unwrap_or_default();
                 format!(
-                    "CREATE {}INDEX {} ON {} ({});",
+                    "CREATE {}INDEX {} ON {} ({}){};",
                     unique,
                     quote_ident(&idx.name),
                     qt,
-                    quoted_cols.join(", ")
+                    quoted_cols.join(", "),
+                    where_clause
                 )
             }
             Change::DropIndex(name) => {
@@ -337,12 +343,18 @@ impl std::fmt::Display for Change {
             }
             Change::AddIndex(idx) => {
                 let unique = if idx.unique { "UNIQUE " } else { "" };
+                let where_clause = idx
+                    .where_clause
+                    .as_ref()
+                    .map(|w| format!(" WHERE {}", w))
+                    .unwrap_or_default();
                 write!(
                     f,
-                    "+ {}INDEX {} ({})",
+                    "+ {}INDEX {} ({}){}",
                     unique,
                     idx.name,
-                    idx.columns.join(", ")
+                    idx.columns.join(", "),
+                    where_clause
                 )
             }
             Change::DropIndex(name) => write!(f, "- INDEX {}", name),
@@ -986,11 +998,17 @@ fn diff_foreign_keys(
 fn diff_indices(desired: &[Index], current: &[Index]) -> Vec<Change> {
     let mut changes = Vec::new();
 
-    // Compare by columns (not name, since names may differ)
+    // Compare by columns and where_clause (not name, since names may differ)
     let idx_key = |idx: &Index| -> String {
         let mut cols = idx.columns.clone();
         cols.sort();
-        format!("{}:{}", if idx.unique { "U" } else { "" }, cols.join(","))
+        let where_part = idx.where_clause.as_deref().unwrap_or("");
+        format!(
+            "{}:{}:{}",
+            if idx.unique { "U" } else { "" },
+            cols.join(","),
+            where_part
+        )
     };
 
     let desired_keys: HashSet<String> = desired.iter().map(idx_key).collect();
@@ -2011,5 +2029,71 @@ mod tests {
 
         let diff = desired.diff(&current);
         insta::assert_snapshot!(diff.to_sql());
+    }
+
+    #[test]
+    fn test_diff_partial_index() {
+        // Test that partial indexes (with WHERE clause) are detected correctly
+        let desired = vec![Index {
+            name: "uq_product_primary".to_string(),
+            columns: vec!["product_id".to_string()],
+            unique: true,
+            where_clause: Some("is_primary = true".to_string()),
+        }];
+
+        let current = vec![Index {
+            name: "idx_product_product_id".to_string(),
+            columns: vec!["product_id".to_string()],
+            unique: true,
+            where_clause: None, // No WHERE clause - different index
+        }];
+
+        let changes = diff_indices(&desired, &current);
+
+        // Should have 2 changes: drop the old index, add the new one
+        assert_eq!(changes.len(), 2);
+        assert!(
+            matches!(&changes[0], Change::AddIndex(idx) if idx.where_clause == Some("is_primary = true".to_string()))
+        );
+        assert!(matches!(&changes[1], Change::DropIndex(name) if name == "idx_product_product_id"));
+    }
+
+    #[test]
+    fn test_diff_same_partial_index() {
+        // Same partial index should produce no changes
+        let desired = vec![Index {
+            name: "uq_product_primary".to_string(),
+            columns: vec!["product_id".to_string()],
+            unique: true,
+            where_clause: Some("is_primary = true".to_string()),
+        }];
+
+        let current = vec![Index {
+            name: "uq_product_primary".to_string(),
+            columns: vec!["product_id".to_string()],
+            unique: true,
+            where_clause: Some("is_primary = true".to_string()),
+        }];
+
+        let changes = diff_indices(&desired, &current);
+        assert!(changes.is_empty());
+    }
+
+    #[test]
+    fn test_partial_index_sql_generation() {
+        let idx = Index {
+            name: "uq_product_primary".to_string(),
+            columns: vec!["product_id".to_string()],
+            unique: true,
+            where_clause: Some("is_primary = true".to_string()),
+        };
+
+        let change = Change::AddIndex(idx);
+        let sql = change.to_sql("product_category");
+
+        assert_eq!(
+            sql,
+            r#"CREATE UNIQUE INDEX "uq_product_primary" ON "product_category" ("product_id") WHERE is_primary = true;"#
+        );
     }
 }

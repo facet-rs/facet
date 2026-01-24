@@ -410,6 +410,7 @@ fn schema_to_info(schema: &Schema) -> SchemaInfo {
                         name: idx.name.clone(),
                         columns: idx.columns.clone(),
                         unique: idx.unique,
+                        where_clause: idx.where_clause.clone(),
                     })
                     .collect(),
                 source_file: t.source.file.clone(),

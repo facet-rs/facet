@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS __dibs_indices (
     source_column INTEGER,
     columns TEXT[] NOT NULL,
     is_unique BOOLEAN NOT NULL DEFAULT false,
+    where_clause TEXT,
     created_by_migration TEXT,
     modified_by_migration TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -223,17 +224,23 @@ ON CONFLICT (table_name, column_name) DO UPDATE SET
                     .collect::<Vec<_>>()
                     .join(", ")
             );
+            let where_clause_val = idx
+                .where_clause
+                .as_ref()
+                .map(|w| format!("'{}'", w.replace('\'', "''")))
+                .unwrap_or_else(|| "NULL".to_string());
 
             sql.push_str(&format!(
                 r#"
-INSERT INTO __dibs_indices (table_name, index_name, source_file, source_line, source_column, columns, is_unique, created_by_migration, modified_by_migration)
-VALUES ('{}', '{}', {}, {}, {}, {}, {}, {}, {})
+INSERT INTO __dibs_indices (table_name, index_name, source_file, source_line, source_column, columns, is_unique, where_clause, created_by_migration, modified_by_migration)
+VALUES ('{}', '{}', {}, {}, {}, {}, {}, {}, {}, {})
 ON CONFLICT (table_name, index_name) DO UPDATE SET
     source_file = EXCLUDED.source_file,
     source_line = EXCLUDED.source_line,
     source_column = EXCLUDED.source_column,
     columns = EXCLUDED.columns,
     is_unique = EXCLUDED.is_unique,
+    where_clause = EXCLUDED.where_clause,
     modified_by_migration = EXCLUDED.modified_by_migration,
     modified_at = now();
 "#,
@@ -244,6 +251,7 @@ ON CONFLICT (table_name, index_name) DO UPDATE SET
                 source_column,
                 columns_array,
                 idx.unique,
+                where_clause_val,
                 migration,
                 migration
             ));

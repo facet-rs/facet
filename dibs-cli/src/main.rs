@@ -263,6 +263,7 @@ fn schema_info_to_schema(info: dibs_proto::SchemaInfo) -> dibs::Schema {
                     name: idx.name,
                     columns: idx.columns,
                     unique: idx.unique,
+                    where_clause: idx.where_clause,
                 })
                 .collect(),
             source: dibs::SourceLocation {

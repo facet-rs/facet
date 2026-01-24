@@ -285,13 +285,16 @@ async fn introspect_indices(client: &Client, table_name: &str) -> Result<Vec<Ind
         // Parse columns from indexdef
         // Example: "CREATE INDEX idx_users_name ON public.users USING btree (name)"
         // Example: "CREATE UNIQUE INDEX idx_users_email ON public.users USING btree (email)"
+        // Example: "CREATE UNIQUE INDEX uq_product_category_primary ON public.product_category USING btree (product_id) WHERE (is_primary = true)"
         let unique = indexdef.to_uppercase().contains("UNIQUE");
         let columns = parse_index_columns(&indexdef);
+        let where_clause = parse_index_where_clause(&indexdef);
 
         indices.push(Index {
             name,
             columns,
             unique,
+            where_clause,
         });
     }
 
@@ -300,14 +303,43 @@ async fn introspect_indices(client: &Client, table_name: &str) -> Result<Vec<Ind
 
 /// Parse column names from an index definition.
 fn parse_index_columns(indexdef: &str) -> Vec<String> {
-    // Find the part between the last ( and )
-    if let Some(start) = indexdef.rfind('(')
-        && let Some(end) = indexdef.rfind(')')
+    // Find the part between the first ( and ) before any WHERE clause
+    // Example: "CREATE INDEX idx_foo ON public.foo USING btree (col1, col2) WHERE (cond)"
+    //          We want "(col1, col2)" not "(cond)"
+    let indexdef_upper = indexdef.to_uppercase();
+    let where_pos = indexdef_upper.find(" WHERE ");
+    let search_str = if let Some(pos) = where_pos {
+        &indexdef[..pos]
+    } else {
+        indexdef
+    };
+
+    if let Some(start) = search_str.rfind('(')
+        && let Some(end) = search_str.rfind(')')
     {
-        let cols_str = &indexdef[start + 1..end];
+        let cols_str = &search_str[start + 1..end];
         return cols_str.split(',').map(|s| s.trim().to_string()).collect();
     }
     Vec::new()
+}
+
+/// Parse WHERE clause from an index definition.
+fn parse_index_where_clause(indexdef: &str) -> Option<String> {
+    // Example: "CREATE UNIQUE INDEX uq_foo ON public.foo USING btree (col) WHERE (is_primary = true)"
+    // We want to extract "is_primary = true" (without the outer parentheses that PG adds)
+    let indexdef_upper = indexdef.to_uppercase();
+    if let Some(where_pos) = indexdef_upper.find(" WHERE ") {
+        let where_clause = &indexdef[where_pos + 7..]; // Skip " WHERE "
+        let trimmed = where_clause.trim();
+        // PostgreSQL wraps the WHERE clause in parentheses, strip them if present
+        if trimmed.starts_with('(') && trimmed.ends_with(')') {
+            Some(trimmed[1..trimmed.len() - 1].to_string())
+        } else {
+            Some(trimmed.to_string())
+        }
+    } else {
+        None
+    }
 }
 
 /// Map Postgres information_schema types to our PgType enum.
@@ -438,6 +470,48 @@ mod tests {
                 "CREATE INDEX idx_posts_author ON public.posts USING btree (author_id, created_at)"
             ),
             vec!["author_id", "created_at"]
+        );
+        // Partial index - should still parse columns correctly
+        assert_eq!(
+            parse_index_columns(
+                "CREATE UNIQUE INDEX uq_product_primary ON public.product_category USING btree (product_id) WHERE (is_primary = true)"
+            ),
+            vec!["product_id"]
+        );
+    }
+
+    #[test]
+    fn test_parse_index_where_clause() {
+        // No WHERE clause
+        assert_eq!(
+            parse_index_where_clause(
+                "CREATE INDEX idx_users_name ON public.users USING btree (name)"
+            ),
+            None
+        );
+
+        // Simple WHERE clause
+        assert_eq!(
+            parse_index_where_clause(
+                "CREATE UNIQUE INDEX uq_product_primary ON public.product_category USING btree (product_id) WHERE (is_primary = true)"
+            ),
+            Some("is_primary = true".to_string())
+        );
+
+        // WHERE clause with string comparison
+        assert_eq!(
+            parse_index_where_clause(
+                "CREATE UNIQUE INDEX uq_discount_applied ON public.discount_redemption USING btree (order_id) WHERE ((status)::text = 'applied'::text)"
+            ),
+            Some("(status)::text = 'applied'::text".to_string())
+        );
+
+        // WHERE clause without parentheses (edge case)
+        assert_eq!(
+            parse_index_where_clause(
+                "CREATE UNIQUE INDEX uq_test ON public.test USING btree (col) WHERE is_active"
+            ),
+            Some("is_active".to_string())
         );
     }
 

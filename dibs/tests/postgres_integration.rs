@@ -665,6 +665,7 @@ async fn test_table_rename_execution() {
                     name: "idx_post_author_id".to_string(),
                     columns: vec!["author_id".to_string()],
                     unique: false,
+                    where_clause: None,
                 }],
             ),
         ],

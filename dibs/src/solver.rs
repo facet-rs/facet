@@ -2391,6 +2391,7 @@ mod tests {
             name: crate::index_name("users", &["email"]),
             columns: vec!["email".to_string()],
             unique: false,
+            where_clause: None,
         };
 
         let result = schema.apply("users", &Change::AddIndex(idx));
@@ -2405,6 +2406,7 @@ mod tests {
             name: crate::index_name("users", &["email"]),
             columns: vec!["email".to_string()],
             unique: false,
+            where_clause: None,
         };
 
         let result = schema.apply("users", &Change::AddIndex(idx));
@@ -2968,6 +2970,7 @@ mod proptests {
                     name: crate::index_name(table_name, &[*col]),
                     columns: vec![(*col).clone()],
                     unique: false,
+                    where_clause: None,
                 });
             }
         }
