@@ -734,7 +734,17 @@ fn diff_check_constraints(desired: &[CheckConstraint], current: &[CheckConstrain
         }
 
         // Normalize casts that Postgres tends to insert in deparsed expressions.
-        for cast in ["::text", "::character varying", "::varchar", "::bpchar"] {
+        for cast in [
+            "::text",
+            "::character varying",
+            "::varchar",
+            "::bpchar",
+            "::int",
+            "::int4",
+            "::integer",
+            "::bigint",
+            "::int8",
+        ] {
             s = s.replace(cast, "");
         }
 
