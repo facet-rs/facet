@@ -268,7 +268,7 @@ fn extract_crate_names(
         .package
         .as_ref()
         .and_then(|p| p.name.as_ref())
-        .map(|s| s.as_str());
+        .map(|s| s.value.as_str());
 
     // Check if we're building the crate itself
     let root_pkg = package_name.map(|name| {
