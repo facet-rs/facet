@@ -9,6 +9,7 @@
 
 import {
   type Hello,
+  type MetadataEntry,
   helloV2,
   messageHello,
   messageGoodbye,
@@ -153,6 +154,12 @@ export class Connection<T extends MessageTransport = MessageTransport> {
   >();
   private messagePumpRunning = false;
   private messagePumpPromise: Promise<void> | null = null;
+
+  /**
+   * Optional interceptor to add metadata to outgoing requests.
+   * Called before each call() to get additional metadata entries.
+   */
+  public metadataInterceptor?: () => MetadataEntry[];
 
   constructor(
     io: T,
@@ -381,7 +388,8 @@ export class Connection<T extends MessageTransport = MessageTransport> {
 
     // Send request
     // r[impl call.request.channels] - Include channel IDs in Request.
-    await this.io.send(encodeMessage(messageRequest(requestId, methodId, payload, [], channels)));
+    const metadata = this.metadataInterceptor?.() ?? [];
+    await this.io.send(encodeMessage(messageRequest(requestId, methodId, payload, metadata, channels)));
 
     // Flush any pending outgoing stream data (for client-to-server streaming)
     // r[impl channeling.data] - Send queued Data/Close messages after Request.
