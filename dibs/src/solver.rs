@@ -176,7 +176,7 @@ struct VirtualTable {
     foreign_keys: HashSet<ForeignKey>,
     indices: HashSet<String>,
     unique_constraints: HashSet<String>,
-    check_constraints: std::collections::HashMap<String, String>,
+    check_constraints: HashSet<String>,
     trigger_checks: HashSet<String>,
 }
 
@@ -204,7 +204,7 @@ impl VirtualSchema {
                     foreign_keys: HashSet::new(),
                     indices: HashSet::new(),
                     unique_constraints: HashSet::new(),
-                    check_constraints: std::collections::HashMap::new(),
+                    check_constraints: HashSet::new(),
                     trigger_checks: HashSet::new(),
                 },
             );
@@ -236,7 +236,7 @@ impl VirtualSchema {
                     check_constraints: table
                         .check_constraints
                         .iter()
-                        .map(|c| (c.name.clone(), c.expr.clone()))
+                        .map(|c| c.name.clone())
                         .collect(),
                     trigger_checks: table
                         .trigger_checks
@@ -367,17 +367,13 @@ impl VirtualSchema {
                 }
 
                 // CHECK constraints
-                for (ck_name, ck_expr) in &self_table.check_constraints {
-                    match other_table.check_constraints.get(ck_name) {
-                        None => diffs.push(format!("+ {}.check({})", name, ck_name)),
-                        Some(other_expr) if other_expr != ck_expr => {
-                            diffs.push(format!("~ {}.check({})", name, ck_name))
-                        }
-                        Some(_) => {}
+                for ck_name in &self_table.check_constraints {
+                    if !other_table.check_constraints.contains(ck_name) {
+                        diffs.push(format!("+ {}.check({})", name, ck_name));
                     }
                 }
-                for ck_name in other_table.check_constraints.keys() {
-                    if !self_table.check_constraints.contains_key(ck_name) {
+                for ck_name in &other_table.check_constraints {
+                    if !self_table.check_constraints.contains(ck_name) {
                         diffs.push(format!("- {}.check({})", name, ck_name));
                     }
                 }
@@ -447,7 +443,7 @@ impl VirtualSchema {
                         check_constraints: t
                             .check_constraints
                             .iter()
-                            .map(|c| (c.name.clone(), c.expr.clone()))
+                            .map(|c| c.name.clone())
                             .collect(),
                         trigger_checks: t
                             .trigger_checks
@@ -694,16 +690,14 @@ impl VirtualSchema {
                     });
                 }
                 if let Some(table) = self.tables.get_mut(table_context) {
-                    if table.check_constraints.contains_key(&check.name) {
+                    if table.check_constraints.contains(&check.name) {
                         return Err(SolverError::ConflictingOperations {
                             first: change_desc,
                             second: format!("constraint {} already exists", check.name),
                             reason: "check constraint already exists".to_string(),
                         });
                     }
-                    table
-                        .check_constraints
-                        .insert(check.name.clone(), check.expr.clone());
+                    table.check_constraints.insert(check.name.clone());
                 }
             }
 
@@ -715,7 +709,7 @@ impl VirtualSchema {
                     });
                 }
                 if let Some(table) = self.tables.get_mut(table_context) {
-                    if !table.check_constraints.contains_key(name) {
+                    if !table.check_constraints.contains(name) {
                         return Err(SolverError::ConflictingOperations {
                             first: change_desc,
                             second: format!("constraint {} not found", name),
