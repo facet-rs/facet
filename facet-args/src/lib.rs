@@ -23,12 +23,84 @@ pub(crate) mod arg;
 pub(crate) mod error;
 pub(crate) mod span;
 
+use error::ArgsError;
+use facet_core::Facet;
+
 pub use completions::{Shell, generate_completions, generate_completions_for_shape};
 pub use error::{ArgsErrorKind, ArgsErrorWithInput};
 pub use format::from_slice;
 pub use format::from_slice_with_config;
 pub use format::from_std_args;
 pub use help::{HelpConfig, generate_help, generate_help_for_shape};
+
+/// Parse command line arguments with automatic layered configuration support.
+///
+/// This function automatically detects fields marked with `#[facet(args::config)]`
+/// and uses the layered configuration system to populate them from:
+/// - Config files (via --{field_name} <path>)
+/// - Environment variables (with optional prefix from args::env_prefix)
+/// - CLI overrides (via --{field_name}.foo.bar syntax)
+/// - Default values
+///
+/// If no config field is found, falls back to regular CLI-only parsing.
+pub fn from_slice_layered<T: Facet<'static>>(args: &[&str]) -> Result<T, ArgsErrorWithInput> {
+    use config_value_parser::from_config_value;
+    use env::StdEnv;
+
+    tracing::debug!(
+        shape = T::SHAPE.type_identifier,
+        "Checking for config field"
+    );
+
+    // Check if this type has a config field
+    let config_field = find_config_field(T::SHAPE);
+
+    if config_field.is_none() {
+        tracing::debug!("No config field found, using regular parsing");
+        return format::from_slice(args);
+    }
+
+    let config_field = config_field.unwrap();
+    tracing::debug!(field = config_field.name, "Found config field");
+
+    // Get env prefix if specified
+    let env_prefix = get_env_prefix(config_field).unwrap_or("APP");
+    tracing::debug!(env_prefix, "Using env prefix");
+
+    // Build layered config from all sources (CLI args parsed into ConfigValue)
+    let config_value = builder()
+        .cli(|cli| cli.args(args.iter().map(|s| s.to_string())))
+        .env(|env| env.prefix(env_prefix))
+        .with_env_source(StdEnv)
+        .build_value()
+        .map_err(|e| ArgsErrorWithInput {
+            inner: ArgsError::new(
+                ArgsErrorKind::ReflectError(facet_reflect::ReflectError::OperationFailed {
+                    shape: T::SHAPE,
+                    operation: "Failed to build layered config",
+                }),
+                crate::span::Span::new(0, 0),
+            ),
+            flattened_args: args.join(" "),
+        })?;
+
+    tracing::debug!(?config_value, "Built merged ConfigValue");
+
+    // Deserialize the merged ConfigValue into the target type
+    from_config_value(&config_value).map_err(|e| {
+        tracing::error!(?e, "Failed to deserialize config");
+        ArgsErrorWithInput {
+            inner: ArgsError::new(
+                ArgsErrorKind::ReflectError(facet_reflect::ReflectError::OperationFailed {
+                    shape: T::SHAPE,
+                    operation: "Failed to deserialize config",
+                }),
+                crate::span::Span::new(0, 0),
+            ),
+            flattened_args: args.join(" "),
+        }
+    })
+}
 
 // Args extension attributes for use with #[facet(args::attr)] syntax.
 //
@@ -112,4 +184,31 @@ pub const fn is_supported_counted_type(shape: &'static facet_core::Shape) -> boo
         shape.ty,
         Type::Primitive(PrimitiveType::Numeric(NumericType::Integer { .. }))
     )
+}
+
+/// Check if a field is marked with `args::config`.
+pub fn is_config_field(field: &facet_core::Field) -> bool {
+    field.has_attr(Some("args"), "config")
+}
+
+/// Find the config field in a struct shape, if any.
+pub fn find_config_field(shape: &'static facet_core::Shape) -> Option<&'static facet_core::Field> {
+    use facet_core::{Type, UserType};
+
+    match &shape.ty {
+        Type::User(UserType::Struct(s)) => s.fields.iter().find(|field| is_config_field(field)),
+        _ => None,
+    }
+}
+
+/// Get the env_prefix value from a field's attributes.
+pub fn get_env_prefix(field: &facet_core::Field) -> Option<&'static str> {
+    let attr = field.get_attr(Some("args"), "env_prefix")?;
+    let parsed = attr.get_as::<crate::Attr>()?;
+
+    if let Attr::EnvPrefix(prefix_opt) = parsed {
+        *prefix_opt
+    } else {
+        None
+    }
 }

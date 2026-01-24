@@ -30,9 +30,11 @@
 use facet::Facet;
 use facet_args as args;
 use facet_pretty::FacetPretty;
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 /// Application configuration with layered sources.
 #[derive(Facet)]
+#[facet(derive(Default))]
 struct Args {
     /// Show version information.
     #[facet(args::named, args::short = 'v')]
@@ -41,6 +43,10 @@ struct Args {
     /// Verbose output.
     #[facet(args::named, args::counted, args::short = 'V')]
     verbose: u8,
+
+    /// Application settings loaded from multiple sources.
+    #[facet(args::config, args::env_prefix = "MYAPP")]
+    settings: AppConfig,
 }
 
 /// Main application configuration.
@@ -64,9 +70,10 @@ struct AppConfig {
 
 /// Server settings.
 #[derive(Facet)]
+#[facet(derive(Default))]
 struct ServerConfig {
     /// Server host address.
-    #[facet(default = "localhost")]
+    #[facet(default = "localhost".to_string())]
     host: String,
 
     /// Server port.
@@ -78,26 +85,15 @@ struct ServerConfig {
     timeout_secs: u64,
 
     /// Enable TLS.
-    #[facet(default = false)]
     tls_enabled: bool,
-}
-
-impl Default for ServerConfig {
-    fn default() -> Self {
-        Self {
-            host: "localhost".into(),
-            port: 8080,
-            timeout_secs: 30,
-            tls_enabled: false,
-        }
-    }
 }
 
 /// Database settings.
 #[derive(Facet)]
+#[facet(derive(Default))]
 struct DatabaseConfig {
     /// Database URL.
-    #[facet(default = "sqlite::memory:")]
+    #[facet(default = "sqlite::memory:".to_string())]
     url: String,
 
     /// Maximum number of connections.
@@ -105,18 +101,7 @@ struct DatabaseConfig {
     max_connections: u32,
 
     /// Enable query logging.
-    #[facet(default = false)]
     log_queries: bool,
-}
-
-impl Default for DatabaseConfig {
-    fn default() -> Self {
-        Self {
-            url: "sqlite::memory:".into(),
-            max_connections: 10,
-            log_queries: false,
-        }
-    }
 }
 
 /// Email/SMTP configuration.
@@ -141,13 +126,12 @@ struct EmailConfig {
 
 /// Feature flags for experimental features.
 #[derive(Facet)]
+#[facet(derive(Default))]
 struct FeatureFlags {
     /// Enable experimental API.
-    #[facet(default = false)]
     experimental_api: bool,
 
     /// Enable debug mode.
-    #[facet(default = false)]
     debug_mode: bool,
 
     /// Enable metrics collection.
@@ -155,56 +139,20 @@ struct FeatureFlags {
     metrics: bool,
 }
 
-impl Default for FeatureFlags {
-    fn default() -> Self {
-        Self {
-            experimental_api: false,
-            debug_mode: false,
-            metrics: true,
-        }
-    }
-}
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Set up tracing - use RUST_LOG env var to control verbosity
+    // e.g., RUST_LOG=debug cargo run --example layered_config
+    tracing_subscriber::registry()
+        .with(fmt::layer())
+        .with(EnvFilter::from_default_env())
+        .init();
+
     println!("=== Layered Configuration Example ===\n");
 
-    // For now, we'll demonstrate the basic parsing since the full layered
-    // config integration is still in progress.
-    //
-    // Once complete, this will automatically:
-    // 1. Look for --config <path> flag
-    // 2. Load and parse the config file (JSON/YAML/TOML)
-    // 3. Parse MYAPP__* environment variables
-    // 4. Parse --config.* CLI overrides
-    // 5. Merge all layers with correct priority
-    // 6. Deserialize into AppConfig
-
-    println!("Current implementation status:");
-    println!("✅ ConfigValue enum with provenance tracking");
-    println!("✅ Environment variable parsing");
-    println!("✅ Config file loading (JSON)");
-    println!("✅ Deep-merge of configuration layers");
-    println!("✅ CLI override parsing (--config.foo.bar syntax)");
-    println!("✅ Type coercion via FormatDeserializer");
-    println!("✅ args::config and args::env_prefix attributes");
-    println!("🚧 Integration into main parsing flow (next step!)");
-    println!();
-
-    // Demonstrate the builder API that's ready to use
-    println!("Builder API ready for use:");
-    println!();
-    println!("  let config: AppConfig = facet_args::builder()");
-    println!("      .cli(|cli| cli.args(std::env::args_os().skip(1)))");
-    println!("      .env(|env| env.prefix(\"MYAPP\"))");
-    println!("      .file(|file| file");
-    println!("          .format(facet_args::config_format::JsonFormat)");
-    println!("          .default_paths(&[\"config.json\", \"/etc/myapp/config.json\"])");
-    println!("      )");
-    println!("      .build()?;");
-    println!();
-
-    // For demonstration, let's parse basic CLI args
-    let args: Args = facet_args::from_std_args()?;
+    // Use layered config parser that detects args::config fields
+    let args_vec: Vec<String> = std::env::args().skip(1).collect();
+    let args_str: Vec<&str> = args_vec.iter().map(|s| s.as_str()).collect();
+    let args: Args = facet_args::from_slice_layered(&args_str)?;
 
     if args.version {
         println!("myapp v1.0.0");
@@ -220,27 +168,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Verbosity: {}", verbosity);
     println!();
 
-    // Show what the configuration structure would look like
-    println!("Configuration structure (with defaults):");
-    let config = AppConfig {
-        server: ServerConfig::default(),
-        database: DatabaseConfig::default(),
-        email: None,
-        features: FeatureFlags::default(),
-    };
-    println!("{}", config.pretty());
+    println!("Loaded configuration:");
+    println!("{}", args.settings.pretty());
     println!();
 
-    println!("Next steps:");
-    println!("- Integrate args::config attribute into parsing flow");
-    println!("- Auto-detect config field and load file");
-    println!("- Parse env vars with MYAPP__ prefix");
-    println!("- Apply CLI overrides with --config.* syntax");
-    println!("- Merge layers and deserialize into AppConfig");
+    println!("✅ Layered configuration is now working!");
     println!();
-
-    println!("Try the builder API manually:");
-    println!("  cargo run --example layered_config -- --help");
+    println!("Try it out:");
+    println!("  # Override with env vars:");
+    println!("  MYAPP__SERVER__PORT=9000 cargo run --example layered_config");
+    println!();
+    println!("  # Override with CLI:");
+    println!("  cargo run --example layered_config -- --settings.server.port 3000");
+    println!();
+    println!("  # Load from config file:");
+    println!("  cargo run --example layered_config -- --settings examples/config.json");
+    println!();
+    println!("  # Combine all layers (priority: CLI > env > file > defaults):");
+    println!("  MYAPP__SERVER__HOST=example.com cargo run --example layered_config -- \\");
+    println!("    --settings examples/config.json --settings.server.port 4000");
 
     Ok(())
 }

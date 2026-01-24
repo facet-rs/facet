@@ -183,51 +183,83 @@ impl<E: EnvSource> LayeredConfigBuilder<E> {
         Ok(Some(value))
     }
 
-    /// Parse CLI overrides into a ConfigValue tree.
+    /// Parse CLI arguments into a ConfigValue tree.
+    ///
+    /// Handles:
+    /// - Long flags: `--version` (bool true), `--name value`
+    /// - Short flags: `-v` (bool true), `-n value`
+    /// - Dotted paths: `--config.server.port 8080`
+    /// - Boolean flags: `--flag` sets to true
     fn parse_cli_overrides(
         cli_config: &CliConfig,
     ) -> Result<Option<ConfigValue>, LayeredConfigError> {
         use crate::config_value::Sourced;
+        use heck::ToSnakeCase;
         use indexmap::IndexMap;
 
-        // Look for --config.* style arguments
         let mut root = IndexMap::default();
         let mut i = 0;
 
         while i < cli_config.args.len() {
             let arg = &cli_config.args[i];
 
-            // Check if this is a --config.* style flag
-            if let Some(path) = arg.strip_prefix("--config.") {
-                // Get the value from the next argument
-                i += 1;
-                if i >= cli_config.args.len() {
-                    return Err(LayeredConfigError::CliParse(format!(
-                        "Missing value for {}",
-                        arg
-                    )));
+            if let Some(flag) = arg.strip_prefix("--") {
+                if flag.is_empty() {
+                    // "--" separator, skip rest
+                    break;
                 }
 
-                let value_str = &cli_config.args[i];
+                // Check for dotted path (e.g., --settings.server.port)
+                if flag.contains('.') {
+                    let parts: Vec<&str> = flag.split('.').collect();
+                    // Get the value from the next argument
+                    i += 1;
+                    if i >= cli_config.args.len() {
+                        return Err(LayeredConfigError::CliParse(format!(
+                            "Missing value for --{}",
+                            flag
+                        )));
+                    }
+                    let value_str = &cli_config.args[i];
+                    let value = parse_cli_value(value_str);
+                    insert_nested_value(&mut root, &parts, value);
+                } else {
+                    // Simple flag like --version or --name value
+                    let key = flag.to_snake_case();
 
-                // Parse the dotted path (e.g., "port" or "smtp.host")
-                let parts: Vec<&str> = path.split('.').collect();
-                if parts.is_empty() {
-                    return Err(LayeredConfigError::CliParse(format!(
-                        "Invalid config path: {}",
-                        arg
-                    )));
+                    // Check if next arg looks like a value (not another flag)
+                    let has_value =
+                        i + 1 < cli_config.args.len() && !cli_config.args[i + 1].starts_with('-');
+
+                    if has_value {
+                        i += 1;
+                        let value = parse_cli_value(&cli_config.args[i]);
+                        root.insert(key, value);
+                    } else {
+                        // Boolean flag, set to true
+                        root.insert(key, ConfigValue::Bool(Sourced::new(true)));
+                    }
+                }
+            } else if let Some(flag) = arg.strip_prefix('-') {
+                if flag.is_empty() {
+                    // Bare "-" (stdin), treat as positional, skip for now
+                    i += 1;
+                    continue;
                 }
 
-                // Try to infer the type from the value string
-                let value = parse_cli_value(value_str);
-
-                // Build nested structure
-                insert_nested_value(&mut root, &parts, value);
+                // Short flags like -v or -n value
+                // For now, treat single char as boolean flag
+                // TODO: Handle -vvv counting, -abc chaining
+                for ch in flag.chars() {
+                    let key = ch.to_string();
+                    root.insert(key, ConfigValue::Bool(Sourced::new(true)));
+                }
             } else {
-                // Not a config override, skip
-                i += 1;
+                // Positional argument - skip for now
+                // TODO: Handle positional args
             }
+
+            i += 1;
         }
 
         if root.is_empty() {

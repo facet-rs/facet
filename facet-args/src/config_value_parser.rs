@@ -34,14 +34,12 @@ use crate::config_value::{ConfigValue, Sourced};
 /// let config_value = /* ... merged from CLI/env/file ... */;
 /// let config: Config = from_config_value(&config_value)?;
 /// ```
-pub fn from_config_value<'input, T>(
-    value: &'input ConfigValue,
-) -> Result<T, ConfigValueDeserializeError>
+pub fn from_config_value<T>(value: &ConfigValue) -> Result<T, ConfigValueDeserializeError>
 where
-    T: Facet<'input>,
+    T: Facet<'static>,
 {
     let parser = ConfigValueParser::new(value);
-    let mut deserializer = FormatDeserializer::new(parser);
+    let mut deserializer = FormatDeserializer::new_owned(parser);
     deserializer
         .deserialize()
         .map_err(ConfigValueDeserializeError::Deserialize)
