@@ -340,8 +340,13 @@ fn pg_type_from_info_schema(data_type: &str, udt_name: &str) -> PgType {
         }
         "CHARACTER VARYING" | "VARCHAR" | "CHAR" | "CHARACTER" => PgType::Text,
         "ARRAY" => {
-            // For now, treat arrays as JSONB (we could add array types later)
-            PgType::Jsonb
+            // udt_name for arrays is the element type prefixed with underscore
+            match udt_name {
+                "_text" | "_varchar" => PgType::TextArray,
+                "_int8" => PgType::BigIntArray,
+                "_int4" => PgType::IntegerArray,
+                _ => PgType::Jsonb, // Fallback for unsupported array types
+            }
         }
         _ => {
             // Fallback - check udt_name

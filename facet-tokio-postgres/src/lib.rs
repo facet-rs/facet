@@ -299,6 +299,36 @@ fn deserialize_column<'p>(
             partial = partial.set(val)?;
         }
 
+        // Vec<String> for TEXT[] - check if it's a List of String
+        _ if matches!(&shape.def, Def::List(_))
+            && shape
+                .inner
+                .is_some_and(|inner| inner.type_identifier == "String") =>
+        {
+            let val: Vec<String> = get_column(row, column_idx, column_name, shape)?;
+            partial = partial.set(val)?;
+        }
+
+        // Vec<i64> for BIGINT[] - check if it's a List of i64
+        _ if matches!(&shape.def, Def::List(_))
+            && shape
+                .inner
+                .is_some_and(|inner| inner.type_identifier == "i64") =>
+        {
+            let val: Vec<i64> = get_column(row, column_idx, column_name, shape)?;
+            partial = partial.set(val)?;
+        }
+
+        // Vec<i32> for INTEGER[] - check if it's a List of i32
+        _ if matches!(&shape.def, Def::List(_))
+            && shape
+                .inner
+                .is_some_and(|inner| inner.type_identifier == "i32") =>
+        {
+            let val: Vec<i32> = get_column(row, column_idx, column_name, shape)?;
+            partial = partial.set(val)?;
+        }
+
         // rust_decimal::Decimal for NUMERIC columns
         #[cfg(feature = "rust_decimal")]
         _ if shape.type_identifier == "Decimal" => {

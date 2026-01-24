@@ -169,6 +169,12 @@ pub enum PgType {
     Uuid,
     /// JSONB
     Jsonb,
+    /// TEXT[] (array of text)
+    TextArray,
+    /// BIGINT[] (array of bigint)
+    BigIntArray,
+    /// INTEGER[] (array of integer)
+    IntegerArray,
 }
 
 impl std::fmt::Display for PgType {
@@ -188,6 +194,9 @@ impl std::fmt::Display for PgType {
             PgType::Time => write!(f, "TIME"),
             PgType::Uuid => write!(f, "UUID"),
             PgType::Jsonb => write!(f, "JSONB"),
+            PgType::TextArray => write!(f, "TEXT[]"),
+            PgType::BigIntArray => write!(f, "BIGINT[]"),
+            PgType::IntegerArray => write!(f, "INTEGER[]"),
         }
     }
 }
@@ -516,15 +525,17 @@ impl Table {
 ///
 /// Takes a Shape to properly handle generic types like `Vec<u8>`.
 pub fn shape_to_pg_type(shape: &Shape) -> Option<PgType> {
-    // Check for Vec<u8> (bytea) - shape.def is List and inner is u8
+    // Check for Vec<T> types - shape.def is List
     if matches!(&shape.def, facet::Def::List(_)) {
-        if shape
-            .inner
-            .is_some_and(|inner| inner.type_identifier == "u8")
-        {
-            return Some(PgType::Bytea);
+        if let Some(inner) = shape.inner {
+            return match inner.type_identifier {
+                "u8" => Some(PgType::Bytea),
+                "String" => Some(PgType::TextArray),
+                "i64" => Some(PgType::BigIntArray),
+                "i32" => Some(PgType::IntegerArray),
+                _ => None,
+            };
         }
-        // Other Vec types are not supported
         return None;
     }
 
