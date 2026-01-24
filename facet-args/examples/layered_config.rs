@@ -51,20 +51,21 @@ struct Args {
 
 /// Main application configuration.
 #[derive(Facet)]
+#[facet(derive(Default))]
 struct AppConfig {
     /// Server configuration.
-    #[facet(default = "ServerConfig::default()")]
+    #[facet(default)]
     server: ServerConfig,
 
     /// Database configuration.
-    #[facet(default = "DatabaseConfig::default()")]
+    #[facet(default)]
     database: DatabaseConfig,
 
     /// Email configuration (optional).
     email: Option<EmailConfig>,
 
     /// Feature flags.
-    #[facet(default = "FeatureFlags::default()")]
+    #[facet(default)]
     features: FeatureFlags,
 }
 
