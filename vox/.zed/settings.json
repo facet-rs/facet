@@ -15,11 +15,6 @@
     "Jinja": ["**/*.html", "**/*.jinja", "**/*.jinja2", "**/*.j2"],
   },
   "lsp": {
-    "biome": {
-      "settings": {
-        "require_config_file": true,
-      },
-    },
     "vscode-css-language-server": {
       "settings": {
         "css": {

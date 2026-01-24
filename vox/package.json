@@ -4,10 +4,12 @@
   "type": "module",
   "scripts": {
     "check": "pnpm -r run check",
-    "test": "pnpm -r run test"
+    "test": "pnpm -r run test",
+    "lint": "oxlint typescript"
   },
   "devDependencies": {
     "@types/node": "^22",
-    "@typescript/native-preview": "7.0.0-dev.20260109.1"
+    "@typescript/native-preview": "7.0.0-dev.20260109.1",
+    "oxlint": "^1.41.0"
   }
 }
