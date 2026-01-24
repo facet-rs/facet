@@ -10,7 +10,7 @@ dibs is a toolchain for keeping a Postgres schema in sync with a schema you defi
 <p>dibs constantly reconciles <em>intent</em> (your Rust schema) with <em>reality</em> (the live database), then generates and/or runs the steps needed to make them match.</p>
 </div>
 
-## High-level overview
+## How dibs works (in one picture)
 
 At a high level, dibs treats your schema as two things:
 
@@ -74,13 +74,16 @@ Most dibs commands follow the same pipeline:
   </div>
 </div>
 
-The key promise: you spend your time describing the schema and writing migrations as Rust functions; dibs handles introspection, diffing, ordering, SQL generation, and running migrations safely.
+<div class="callout recap">
+<strong>Recap</strong>
+<p>You describe the schema and write migrations as Rust. dibs handles introspection, diffing, ordering, SQL generation, and safe application.</p>
+</div>
 
-## The dibs service (RPC): what talks to what
+## How the pieces fit together
 
-dibs uses a small, dedicated process (your “db crate”) that speaks a narrow RPC protocol to the CLI, implemented using [Roam](https://github.com/bearcove/roam).
+dibs uses a small, dedicated process (your “db crate”) that speaks a narrow RPC protocol to the CLI (implemented using [Roam](https://github.com/bearcove/roam)).
 
-Here’s the typical shape:
+Typical shape:
 
 <div class="callout aside">
 <strong>How the CLI, your db crate, and Postgres interact</strong>
@@ -119,7 +122,7 @@ Here’s the typical shape:
 </div>
 </div>
 
-The CLI spawns this process on demand and asks it questions like:
+A typical exchange looks like:
 
 <div class="chat">
   <div class="bubble bubble-cli">
@@ -169,7 +172,7 @@ The CLI spawns this process on demand and asks it questions like:
 
 <div class="callout info">
 <strong>Why RPC?</strong>
-<p>So you don’t have to boot your entire app (web server, background jobs, caches, config, etc.) just to work with schemas and migrations.</p>
+<p>So you don’t have to boot your entire app just to work with schemas and migrations.</p>
 </div>
 
 <div class="callout aside">
@@ -212,35 +215,19 @@ The CLI spawns this process on demand and asks it questions like:
 <p>Separately, your <strong>myapp</strong> talks to <strong>myapp-queries</strong> for typed query helpers; and <strong>myapp-queries</strong> is generated/validated against what <strong>myapp-db</strong> says the schema is.</p>
 </div>
 
-### Why this architecture helps you
+## Intent, reality, and “the diff”
 
-- **Fast and reliable**: your web server, job runners, caches, and configuration don’t need to boot.
-- **Less coupling**: schema/migration tooling stays separate from application runtime concerns.
-- **Better tooling**: editor integrations can talk to the same service-like interface without re-implementing schema parsing.
-- **Consistent behavior**: the same “source of truth” (your db crate) is used for CLI, CI, and editor features.
+dibs keeps two schema models side-by-side:
 
-Conceptually: the CLI is the UX layer, and your db crate is the “schema/migration brain.” The RPC boundary keeps that brain easy to start, easy to query, and hard to accidentally entangle with the rest of your app.
+- **Intent**: what your Rust schema says should exist.
+- **Reality**: what Postgres actually has.
 
-## Intent vs reality (schema collection and introspection)
-
-### Intent: schema from Rust
-
-Your db crate describes tables, columns, indexes, and relationships in Rust. dibs “collects” that schema into an internal model (tables + columns + constraints + metadata like docs and source locations).
-
-The internal model is the same regardless of how you define it (macros/DSL/codegen): dibs always normalizes it into “a list of tables with structured information.”
-
-### Reality: schema from Postgres
-
-When you point dibs at a database URL, it introspects the DB and builds the same internal model from what it discovers in Postgres.
-
-dibs deliberately ignores its own internal bookkeeping tables (both single-underscore and double-underscore variants), so it doesn’t try to diff or migrate those as part of your application schema.
+When they don’t match, dibs produces a **diff**: a typed list of schema operations (create/alter/drop/rename, constraints, indexes, foreign keys) that can later be ordered and rendered to SQL.
 
 <div class="callout aside">
 <strong>Aside</strong>
-<p>dibs maintains internal tables for tracking migration state and optional metadata. Those tables are treated as “dibs internals,” not part of your app schema.</p>
+<p>dibs keeps some internal bookkeeping tables for migration state and optional metadata. Those are ignored during schema introspection and diffing of your app schema.</p>
 </div>
-
-## Diffing (turning two schemas into a set of changes)
 
 Once dibs has:
 
@@ -299,7 +286,7 @@ After ordering all changes, dibs checks that applying them to the simulated “c
 
 This is an important internal invariant: if the solver produces ordered SQL, dibs wants high confidence that running it will get you where you expected.
 
-## 6) SQL generation: rendering changes into Postgres statements
+## SQL generation (rendering changes into Postgres statements)
 
 Once the solver has an ordered list of changes, dibs renders them into SQL statements. This is where structured operations turn into concrete Postgres DDL like:
 
@@ -310,7 +297,7 @@ Once the solver has an ordered list of changes, dibs renders them into SQL state
 
 Separating “diff” from “SQL text” is a big part of why dibs can provide better errors and tooling: it knows *what* it’s trying to do, not just the final text blob.
 
-## 7) Running migrations: Rust functions, transactions, and tracking
+## Running migrations (Rust functions, transactions, and tracking)
 
 dibs supports migrations as Rust functions registered with the program. At runtime, dibs can:
 
@@ -328,7 +315,7 @@ dibs supports migrations as Rust functions registered with the program. At runti
 
 When a migration fails due to SQL execution, dibs attaches context (what SQL was running, plus caller/source information when available) so the CLI can show you a more actionable error than “postgres said no.”
 
-## 8) Meta tracking: `__dibs_*` tables (optional internal bookkeeping)
+## Meta tracking (`__dibs_*` tables)
 
 In addition to the minimal migrations table, dibs can maintain richer metadata tables under the `__dibs_*` prefix. Conceptually, these are there to record:
 
@@ -341,7 +328,7 @@ This metadata is intentionally separate from your application tables and is igno
 
 You can think of this as dibs building a “catalog” that makes tools (CLI, editors, admin UIs) more informative.
 
-## 9) Code generation: how dibs powers tooling (and why it exists)
+## Code generation (how dibs powers tooling)
 
 dibs has codegen components to avoid making humans hand-maintain repetitive glue:
 
@@ -355,7 +342,7 @@ From a user perspective, codegen exists so:
 - editor tooling can be “schema-aware” without re-implementing your schema DSL,
 - you get typed, consistent behavior instead of stringly-typed hacks.
 
-## 10) Putting it all together (the lifecycle of a typical command)
+## Putting it all together (the lifecycle of a typical command)
 
 When you run a command like “diff” or “generate migration SQL”:
 
