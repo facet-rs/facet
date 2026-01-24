@@ -746,6 +746,60 @@ fn diff_check_constraints(desired: &[CheckConstraint], current: &[CheckConstrain
         s = s.replace("= ANY (ARRAY[", "IN (");
         s = s.replace("])", ")");
 
+        fn strip_simple_group_parens(input: &str) -> String {
+            fn is_group_prefix(ch: char) -> bool {
+                ch.is_whitespace()
+                    || matches!(ch, '(' | '!' | '=' | '<' | '>' | '+' | '-' | '*' | '/')
+            }
+
+            let mut s = input.to_string();
+            loop {
+                let bytes = s.as_bytes();
+                let mut out = String::with_capacity(s.len());
+                let mut changed = false;
+                let mut i = 0usize;
+                while i < bytes.len() {
+                    if bytes[i] == b'(' {
+                        let prev = if i == 0 {
+                            None
+                        } else {
+                            Some(bytes[i - 1] as char)
+                        };
+                        if prev.is_none() || prev.is_some_and(is_group_prefix) {
+                            // Only consider non-nested (...) groups.
+                            if let Some(close) = s[i + 1..].find(')') {
+                                let j = i + 1 + close;
+                                let inner = &s[i + 1..j];
+                                if !inner.contains('(') && !inner.contains(')') {
+                                    let upper = inner.to_uppercase();
+                                    // Don't strip IN lists or boolean compositions.
+                                    if !inner.contains(',')
+                                        && !upper.contains(" OR ")
+                                        && !upper.contains(" AND ")
+                                    {
+                                        out.push_str(inner.trim());
+                                        i = j + 1;
+                                        changed = true;
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    out.push(bytes[i] as char);
+                    i += 1;
+                }
+
+                if !changed {
+                    return s;
+                }
+                s = out;
+            }
+        }
+
+        s = strip_simple_group_parens(&s);
+
         // Normalize whitespace.
         let mut out = String::with_capacity(s.len());
         let mut pending_space = false;
