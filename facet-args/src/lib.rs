@@ -12,6 +12,7 @@ pub mod config_value;
 pub mod env;
 mod format;
 pub mod help;
+pub mod merge;
 pub mod provenance;
 
 pub(crate) mod arg;
