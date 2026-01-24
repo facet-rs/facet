@@ -8,6 +8,8 @@ CREATE TABLE "post_likes" (
     "post_id" BIGINT NOT NULL,
     PRIMARY KEY ("user_id", "post_id")
 );
+ALTER TABLE "post_likes" ADD CONSTRAINT "post_likes_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users" ("id");
+ALTER TABLE "post_likes" ADD CONSTRAINT "post_likes_post_id_fkey" FOREIGN KEY ("post_id") REFERENCES "posts" ("id");
 
 -- Table: posts
 CREATE TABLE "posts" (
@@ -15,6 +17,7 @@ CREATE TABLE "posts" (
     "author_id" BIGINT NOT NULL,
     "title" TEXT NOT NULL
 );
+ALTER TABLE "posts" ADD CONSTRAINT "posts_author_id_fkey" FOREIGN KEY ("author_id") REFERENCES "users" ("id");
 
 -- Table: users
 CREATE TABLE "users" (

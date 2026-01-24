@@ -1,0 +1,12 @@
+---
+source: crates/dibs/src/diff.rs
+expression: diff.to_sql()
+---
+-- Table: category
+CREATE TABLE "category" (
+    "id" BIGINT NOT NULL,
+    "shop_id" BIGINT NOT NULL,
+    "parent_id" BIGINT
+);
+ALTER TABLE "category" ADD CONSTRAINT "category_shop_id_fkey" FOREIGN KEY ("shop_id") REFERENCES "shop" ("id");
+ALTER TABLE "category" ADD CONSTRAINT "category_parent_id_fkey" FOREIGN KEY ("parent_id") REFERENCES "category" ("id");

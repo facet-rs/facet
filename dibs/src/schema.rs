@@ -521,6 +521,35 @@ impl Table {
     }
 }
 
+/// Parse a foreign key reference string.
+///
+/// Supports two formats:
+/// - `table.column` (dot-separated)
+/// - `table(column)` (parentheses)
+///
+/// Returns `Some((table, column))` on success, `None` on parse failure.
+pub fn parse_fk_reference(fk_ref: &str) -> Option<(&str, &str)> {
+    // Try "table.column" format first
+    if let Some((table, col)) = fk_ref.split_once('.') {
+        if !table.is_empty() && !col.is_empty() {
+            return Some((table, col));
+        }
+    }
+
+    // Try "table(column)" format
+    if let Some(paren_idx) = fk_ref.find('(') {
+        if fk_ref.ends_with(')') {
+            let table = &fk_ref[..paren_idx];
+            let col = &fk_ref[paren_idx + 1..fk_ref.len() - 1];
+            if !table.is_empty() && !col.is_empty() {
+                return Some((table, col));
+            }
+        }
+    }
+
+    None
+}
+
 /// Map a Rust type to a Postgres type.
 ///
 /// Takes a Shape to properly handle generic types like `Vec<u8>`.
@@ -802,13 +831,25 @@ impl TableDef {
 
             // Check for foreign key
             if let Some(fk_ref) = field_get_dibs_attr_str(field, "fk") {
-                // Parse "table.column" format
-                if let Some((ref_table, ref_col)) = fk_ref.split_once('.') {
-                    foreign_keys.push(ForeignKey {
-                        columns: vec![field.name.to_string()],
-                        references_table: ref_table.to_string(),
-                        references_columns: vec![ref_col.to_string()],
-                    });
+                // Parse FK reference - supports both "table.column" and "table(column)" formats
+                let parsed = parse_fk_reference(fk_ref);
+                match parsed {
+                    Some((ref_table, ref_col)) => {
+                        foreign_keys.push(ForeignKey {
+                            columns: vec![field.name.to_string()],
+                            references_table: ref_table.to_string(),
+                            references_columns: vec![ref_col.to_string()],
+                        });
+                    }
+                    None => {
+                        eprintln!(
+                            "dibs: invalid FK format '{}' for field '{}' in table '{}' - expected 'table.column' or 'table(column)' ({})",
+                            fk_ref,
+                            field.name,
+                            table_name,
+                            self.shape.source_file.unwrap_or("<unknown>")
+                        );
+                    }
                 }
             }
 
@@ -873,3 +914,40 @@ fn unwrap_option(shape: &'static Shape) -> (&'static Shape, bool) {
 
 // Register TableDef with inventory
 inventory::collect!(TableDef);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_fk_reference_dot_format() {
+        assert_eq!(parse_fk_reference("users.id"), Some(("users", "id")));
+        assert_eq!(parse_fk_reference("shop.id"), Some(("shop", "id")));
+        assert_eq!(
+            parse_fk_reference("category.parent_id"),
+            Some(("category", "parent_id"))
+        );
+    }
+
+    #[test]
+    fn test_parse_fk_reference_paren_format() {
+        assert_eq!(parse_fk_reference("users(id)"), Some(("users", "id")));
+        assert_eq!(parse_fk_reference("shop(id)"), Some(("shop", "id")));
+        assert_eq!(
+            parse_fk_reference("category(parent_id)"),
+            Some(("category", "parent_id"))
+        );
+    }
+
+    #[test]
+    fn test_parse_fk_reference_invalid() {
+        assert_eq!(parse_fk_reference(""), None);
+        assert_eq!(parse_fk_reference("users"), None);
+        assert_eq!(parse_fk_reference(".id"), None);
+        assert_eq!(parse_fk_reference("users."), None);
+        assert_eq!(parse_fk_reference("(id)"), None);
+        assert_eq!(parse_fk_reference("users("), None);
+        assert_eq!(parse_fk_reference("users()"), None);
+        assert_eq!(parse_fk_reference("()"), None);
+    }
+}

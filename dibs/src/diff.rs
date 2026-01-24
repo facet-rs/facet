@@ -589,14 +589,9 @@ impl Schema {
         // Tables to add (not involved in a rename)
         for table in &added_tables {
             if !renamed_to.contains(table.name.as_str()) {
-                let mut changes = vec![Change::AddTable((*table).clone())];
-                // Also add indices for new tables (to_create_table_sql doesn't include them)
-                for idx in &table.indices {
-                    changes.push(Change::AddIndex(idx.clone()));
-                }
                 table_diffs.push(TableDiff {
                     table: table.name.clone(),
-                    changes,
+                    changes: table_creation_changes(table),
                 });
             }
         }
@@ -662,6 +657,34 @@ fn diff_table(
 
     // Diff indices
     changes.extend(diff_indices(&desired.indices, &current.indices));
+
+    changes
+}
+
+/// Generate all changes needed to create a new table.
+///
+/// This is the single source of truth for table creation. It includes:
+/// - The CREATE TABLE statement
+/// - All foreign key constraints (as ALTER TABLE ADD CONSTRAINT)
+/// - All indices (as CREATE INDEX)
+///
+/// By centralizing this logic, we prevent bugs where new table features
+/// (like FKs or indices) are forgotten when adding tables.
+fn table_creation_changes(table: &Table) -> Vec<Change> {
+    let mut changes = Vec::with_capacity(1 + table.foreign_keys.len() + table.indices.len());
+
+    // The table itself
+    changes.push(Change::AddTable(table.clone()));
+
+    // All foreign keys
+    for fk in &table.foreign_keys {
+        changes.push(Change::AddForeignKey(fk.clone()));
+    }
+
+    // All indices
+    for idx in &table.indices {
+        changes.push(Change::AddIndex(idx.clone()));
+    }
 
     changes
 }
@@ -1929,6 +1952,60 @@ mod tests {
                     make_column("email", PgType::Text, false),
                     make_column("name", PgType::Text, true),
                 ],
+            )],
+        };
+
+        let diff = desired.diff(&current);
+        insta::assert_snapshot!(diff.to_sql());
+    }
+
+    #[test]
+    fn snapshot_new_table_with_foreign_key() {
+        // When creating a new table with an FK, the migration should include
+        // both CREATE TABLE and ALTER TABLE ADD CONSTRAINT for the FK.
+        fn make_table_with_fks(name: &str, columns: Vec<Column>, fks: Vec<ForeignKey>) -> Table {
+            Table {
+                name: name.to_string(),
+                columns,
+                foreign_keys: fks,
+                indices: Vec::new(),
+                source: SourceLocation::default(),
+                doc: None,
+                icon: None,
+            }
+        }
+
+        let desired = Schema {
+            tables: vec![
+                make_table("shop", vec![make_column("id", PgType::BigInt, false)]),
+                make_table_with_fks(
+                    "category",
+                    vec![
+                        make_column("id", PgType::BigInt, false),
+                        make_column("shop_id", PgType::BigInt, false),
+                        make_column("parent_id", PgType::BigInt, true),
+                    ],
+                    vec![
+                        ForeignKey {
+                            columns: vec!["shop_id".to_string()],
+                            references_table: "shop".to_string(),
+                            references_columns: vec!["id".to_string()],
+                        },
+                        ForeignKey {
+                            columns: vec!["parent_id".to_string()],
+                            references_table: "category".to_string(),
+                            references_columns: vec!["id".to_string()],
+                        },
+                    ],
+                ),
+            ],
+        };
+
+        // Current: only shop table exists, no category
+        let current = Schema {
+            tables: vec![make_table(
+                "shop",
+                vec![make_column("id", PgType::BigInt, false)],
             )],
         };
 
