@@ -1,6 +1,6 @@
 //! Types for tracking source span information during deserialization.
 
-use core::{mem, ops::Deref};
+use core::mem;
 
 use facet_core::{
     Def, Facet, FieldBuilder, Shape, StructKind, TypeOpsDirect, type_ops_direct, vtable_direct,
@@ -10,6 +10,22 @@ use facet_core::{
 ///
 /// This type tracks a byte offset and length within a source document,
 /// useful for error reporting that can point back to the original source.
+///
+/// To use span tracking in your own types, define a wrapper struct with
+/// `#[facet(metadata_container)]` and a span field marked with `#[facet(metadata = "span")]`:
+///
+/// ```rust
+/// use facet::Facet;
+/// use facet_reflect::Span;
+///
+/// #[derive(Debug, Clone, Facet)]
+/// #[facet(metadata_container)]
+/// pub struct Spanned<T> {
+///     pub value: T,
+///     #[facet(metadata = "span")]
+///     pub span: Option<Span>,
+/// }
+/// ```
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Span {
     /// Byte offset from start of source.
@@ -65,200 +81,20 @@ unsafe impl Facet<'_> for Span {
     };
 }
 
-/// A value with source span information.
+/// Extract the inner value shape from a metadata container.
 ///
-/// This struct wraps a value along with the source location (offset and length)
-/// where it was parsed from. This is useful for error reporting that can point
-/// back to the original source.
-#[derive(Debug)]
-pub struct Spanned<T> {
-    /// The wrapped value.
-    pub value: T,
-    /// The source span (offset and length).
-    pub span: Span,
-}
-
-impl<T> Spanned<T> {
-    /// Create a new spanned value.
-    pub const fn new(value: T, span: Span) -> Self {
-        Self { value, span }
-    }
-
-    /// Get the source span.
-    pub const fn span(&self) -> Span {
-        self.span
-    }
-
-    /// Get a reference to the inner value.
-    pub const fn value(&self) -> &T {
-        &self.value
-    }
-
-    /// Unwrap into the inner value, discarding span information.
-    pub fn into_inner(self) -> T {
-        self.value
-    }
-}
-
-impl<T> Deref for Spanned<T> {
-    type Target = T;
-    fn deref(&self) -> &Self::Target {
-        &self.value
-    }
-}
-
-impl<T: Default> Default for Spanned<T> {
-    fn default() -> Self {
-        Self {
-            value: T::default(),
-            span: Span::default(),
-        }
-    }
-}
-
-impl<T: Clone> Clone for Spanned<T> {
-    fn clone(&self) -> Self {
-        Self {
-            value: self.value.clone(),
-            span: self.span,
-        }
-    }
-}
-
-impl<T: PartialEq> PartialEq for Spanned<T> {
-    fn eq(&self, other: &Self) -> bool {
-        // Only compare the value, not the span
-        self.value == other.value
-    }
-}
-
-impl<T: Eq> Eq for Spanned<T> {}
-
-// SAFETY: Spanned<T> is a simple struct with a value and span field, properly laid out
-unsafe impl<'a, T: Facet<'a>> Facet<'a> for Spanned<T> {
-    const SHAPE: &'static Shape = &const {
-        use facet_core::{TypeOpsIndirect, TypeParam, VTableIndirect};
-
-        unsafe fn drop_in_place<T>(ox: facet_core::OxPtrMut) {
-            // SAFETY: The caller guarantees ox points to a valid Spanned<T>
-            unsafe { core::ptr::drop_in_place(ox.ptr().as_byte_ptr() as *mut Spanned<T>) };
-        }
-
-        Shape::builder_for_sized::<Spanned<T>>("Spanned")
-            .module_path("facet_reflect::spanned")
-            .vtable_indirect(&VTableIndirect::EMPTY)
-            .type_ops_indirect(
-                &const {
-                    TypeOpsIndirect {
-                        drop_in_place: drop_in_place::<T>,
-                        default_in_place: None,
-                        clone_into: None,
-                        is_truthy: None,
-                    }
-                },
-            )
-            .type_params(
-                &const {
-                    [TypeParam {
-                        name: "T",
-                        shape: T::SHAPE,
-                    }]
-                },
-            )
-            .ty(facet_core::Type::struct_builder(
-                StructKind::Struct,
-                &const {
-                    [
-                        FieldBuilder::new(
-                            "value",
-                            facet_core::shape_of::<T>,
-                            mem::offset_of!(Spanned<T>, value),
-                        )
-                        .build(),
-                        FieldBuilder::new(
-                            "span",
-                            facet_core::shape_of::<Span>,
-                            mem::offset_of!(Spanned<T>, span),
-                        )
-                        // Mark span as metadata - excluded from structural hashing/equality
-                        // Deserializers that support span metadata will populate this field
-                        .metadata("span")
-                        .build(),
-                    ]
-                },
-            )
-            .build())
-            .def(Def::Undefined)
-            .type_name(|_shape, f, opts| {
-                write!(f, "Spanned")?;
-                if let Some(opts) = opts.for_children() {
-                    write!(f, "<")?;
-                    if let Some(type_name_fn) = T::SHAPE.type_name {
-                        type_name_fn(T::SHAPE, f, opts)?;
-                    } else {
-                        write!(f, "{}", T::SHAPE.type_identifier)?;
-                    }
-                    write!(f, ">")?;
-                } else {
-                    write!(f, "<…>")?;
-                }
-                Ok(())
-            })
-            .build()
-    };
-}
-
-/// Check if a shape represents a type with span metadata (like `Spanned<T>`).
+/// For a struct marked with `#[facet(metadata_container)]`, this returns
+/// the shape of the first non-metadata field (the actual value being wrapped).
 ///
-/// Returns `true` if the shape is a struct with:
-/// - At least one non-metadata field (the actual value)
-/// - A field with `#[facet(metadata = span)]` for storing source location
+/// This is useful when you need to look through a metadata wrapper (like
+/// a user-defined `Spanned<T>` or `Documented<T>`) to determine the actual type
+/// being wrapped, such as when matching untagged enum variants against scalar values.
 ///
-/// This allows any struct to be "spanned" by adding the metadata attribute,
-/// not just the built-in `Spanned<T>` wrapper.
-pub fn is_spanned_shape(shape: &Shape) -> bool {
+/// Returns `None` if the shape is not a metadata container or has no value fields.
+pub fn get_metadata_container_value_shape(shape: &Shape) -> Option<&'static Shape> {
     use facet_core::{Type, UserType};
 
-    if let Type::User(UserType::Struct(struct_def)) = &shape.ty {
-        let has_span_metadata = struct_def
-            .fields
-            .iter()
-            .any(|f| f.metadata_kind() == Some("span"));
-        let has_value_field = struct_def.fields.iter().any(|f| !f.is_metadata());
-        return has_span_metadata && has_value_field;
-    }
-    false
-}
-
-/// Find the span metadata field in a struct shape.
-///
-/// Returns the field with `#[facet(metadata = span)]` if present.
-pub fn find_span_metadata_field(shape: &Shape) -> Option<&'static facet_core::Field> {
-    use facet_core::{Type, UserType};
-
-    if let Type::User(UserType::Struct(struct_def)) = &shape.ty {
-        return struct_def
-            .fields
-            .iter()
-            .find(|f| f.metadata_kind() == Some("span"));
-    }
-    None
-}
-
-/// Extract the inner value shape from a Spanned-like struct.
-///
-/// For a struct with span metadata, this returns the shape of the first
-/// non-metadata field (typically the `value` field in `Spanned<T>`).
-///
-/// This is useful when you need to look through a Spanned wrapper to
-/// determine the actual type being wrapped, such as when matching
-/// untagged enum variants against scalar values.
-///
-/// Returns `None` if the shape is not spanned or has no value fields.
-pub fn get_spanned_inner_shape(shape: &Shape) -> Option<&'static Shape> {
-    use facet_core::{Type, UserType};
-
-    if !is_spanned_shape(shape) {
+    if !shape.is_metadata_container() {
         return None;
     }
 

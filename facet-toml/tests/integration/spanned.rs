@@ -1,10 +1,41 @@
 //! Tests for Spanned<T> deserialization in TOML.
 //!
 //! Spanned<T> wraps a value with source span information for diagnostics.
+//! With the metadata_container support, spans are now correctly populated
+//! from the parser.
+//!
+//! Users define their own `Spanned<T>` type using `#[facet(metadata_container)]`.
 
 use facet::Facet;
-use facet_reflect::Spanned;
+use facet_reflect::Span;
 use facet_toml::{self as toml, DeserializeError, TomlError};
+use std::ops::Deref;
+
+// ============================================================================
+// Local Spanned<T> definition - users define their own
+// ============================================================================
+
+/// A value with source span information.
+///
+/// This struct wraps a value along with the source location (offset and length)
+/// where it was parsed from. This is useful for error reporting that can point
+/// back to the original source.
+#[derive(Debug, Clone, Facet)]
+#[facet(metadata_container)]
+pub struct Spanned<T> {
+    /// The wrapped value.
+    pub value: T,
+    /// The source span (offset and length), if available.
+    #[facet(metadata = "span")]
+    pub span: Option<Span>,
+}
+
+impl<T> Deref for Spanned<T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        &self.value
+    }
+}
 
 // ============================================================================
 // Basic Spanned types
@@ -17,9 +48,14 @@ fn spanned_string() {
         name: Spanned<String>,
     }
 
-    let config: Config = toml::from_str(r#"name = "foo""#).unwrap();
+    let input = r#"name = "foo""#;
+    let config: Config = toml::from_str(input).unwrap();
     assert_eq!(config.name.value, "foo");
-    assert!(config.name.span.is_unknown());
+
+    // Span should be populated and point to the value
+    let span = config.name.span.expect("span should be populated");
+    let spanned_text = &input[span.offset..span.offset + span.len];
+    assert_eq!(spanned_text, r#""foo""#);
 }
 
 #[test]
@@ -29,9 +65,13 @@ fn spanned_vec() {
         features: Spanned<Vec<String>>,
     }
 
-    let config: Config = toml::from_str(r#"features = ["a", "b", "c"]"#).unwrap();
+    let input = r#"features = ["a", "b", "c"]"#;
+    let config: Config = toml::from_str(input).unwrap();
     assert_eq!(config.features.value, vec!["a", "b", "c"]);
-    assert!(config.features.span.is_unknown());
+
+    // For arrays, the span tracks the last element processed, not the whole array
+    // This is a limitation of how span tracking works - it captures the last scalar
+    assert!(config.features.span.is_some());
 }
 
 #[test]
@@ -41,9 +81,13 @@ fn spanned_bool() {
         enabled: Spanned<bool>,
     }
 
-    let config: Config = toml::from_str(r#"enabled = true"#).unwrap();
+    let input = r#"enabled = true"#;
+    let config: Config = toml::from_str(input).unwrap();
     assert!(config.enabled.value);
-    assert!(config.enabled.span.is_unknown());
+
+    let span = config.enabled.span.expect("span should be populated");
+    let spanned_text = &input[span.offset..span.offset + span.len];
+    assert_eq!(spanned_text, "true");
 }
 
 #[test]
@@ -53,9 +97,13 @@ fn spanned_integer() {
         version: Spanned<u32>,
     }
 
-    let config: Config = toml::from_str(r#"version = 42"#).unwrap();
+    let input = r#"version = 42"#;
+    let config: Config = toml::from_str(input).unwrap();
     assert_eq!(config.version.value, 42);
-    assert!(config.version.span.is_unknown());
+
+    let span = config.version.span.expect("span should be populated");
+    let spanned_text = &input[span.offset..span.offset + span.len];
+    assert_eq!(spanned_text, "42");
 }
 
 #[test]
@@ -67,16 +115,21 @@ fn multiple_spanned_fields() {
         enabled: Spanned<bool>,
     }
 
-    let toml = r#"
+    let input = r#"
 name = "foo"
 features = ["a", "b", "c"]
 enabled = true
 "#;
 
-    let config: Config = toml::from_str(toml).unwrap();
+    let config: Config = toml::from_str(input).unwrap();
     assert_eq!(config.name.value, "foo");
     assert_eq!(config.features.value, vec!["a", "b", "c"]);
     assert!(config.enabled.value);
+
+    // All spans should be populated
+    assert!(config.name.span.is_some());
+    assert!(config.features.span.is_some());
+    assert!(config.enabled.span.is_some());
 }
 
 // ============================================================================
@@ -97,14 +150,14 @@ fn nested_spanned_in_table() {
         default_features: Option<Spanned<bool>>,
     }
 
-    let toml = r#"
+    let input = r#"
 [dependency]
 git = "https://github.com/user/repo"
 features = ["a", "b"]
 default_features = false
 "#;
 
-    let config: Config = toml::from_str(toml).unwrap();
+    let config: Config = toml::from_str(input).unwrap();
     assert_eq!(
         config.dependency.git.as_ref().unwrap().value,
         "https://github.com/user/repo"
@@ -114,6 +167,19 @@ default_features = false
         vec!["a", "b"]
     );
     assert!(!config.dependency.default_features.as_ref().unwrap().value);
+
+    // All spans should be populated
+    assert!(config.dependency.git.as_ref().unwrap().span.is_some());
+    assert!(config.dependency.features.as_ref().unwrap().span.is_some());
+    assert!(
+        config
+            .dependency
+            .default_features
+            .as_ref()
+            .unwrap()
+            .span
+            .is_some()
+    );
 }
 
 #[test]
@@ -129,7 +195,7 @@ fn spanned_in_array_of_tables() {
         version: Spanned<String>,
     }
 
-    let toml = r#"
+    let input = r#"
 [[dependencies]]
 name = "foo"
 version = "1.0"
@@ -139,12 +205,18 @@ name = "bar"
 version = "2.0"
 "#;
 
-    let config: Config = toml::from_str(toml).unwrap();
+    let config: Config = toml::from_str(input).unwrap();
     assert_eq!(config.dependencies.len(), 2);
     assert_eq!(config.dependencies[0].name.value, "foo");
     assert_eq!(config.dependencies[0].version.value, "1.0");
     assert_eq!(config.dependencies[1].name.value, "bar");
     assert_eq!(config.dependencies[1].version.value, "2.0");
+
+    // All spans should be populated
+    assert!(config.dependencies[0].name.span.is_some());
+    assert!(config.dependencies[0].version.span.is_some());
+    assert!(config.dependencies[1].name.span.is_some());
+    assert!(config.dependencies[1].version.span.is_some());
 }
 
 // ============================================================================
@@ -167,9 +239,13 @@ fn spanned_untagged_enum_bool() {
         value: DebugLevel,
     }
 
-    let config: Config = toml::from_str(r#"value = true"#).unwrap();
+    let input = r#"value = true"#;
+    let config: Config = toml::from_str(input).unwrap();
     match config.value {
-        DebugLevel::Bool(spanned_bool) => assert!(*spanned_bool),
+        DebugLevel::Bool(spanned_bool) => {
+            assert!(*spanned_bool);
+            assert!(spanned_bool.span.is_some());
+        }
         _ => panic!("Expected Bool variant"),
     }
 }
@@ -181,9 +257,13 @@ fn spanned_untagged_enum_number() {
         value: DebugLevel,
     }
 
-    let config: Config = toml::from_str(r#"value = 2"#).unwrap();
+    let input = r#"value = 2"#;
+    let config: Config = toml::from_str(input).unwrap();
     match config.value {
-        DebugLevel::Number(spanned_num) => assert_eq!(*spanned_num, 2),
+        DebugLevel::Number(spanned_num) => {
+            assert_eq!(*spanned_num, 2);
+            assert!(spanned_num.span.is_some());
+        }
         _ => panic!("Expected Number variant"),
     }
 }
@@ -195,9 +275,13 @@ fn spanned_untagged_enum_string() {
         value: DebugLevel,
     }
 
-    let config: Config = toml::from_str(r#"value = "full""#).unwrap();
+    let input = r#"value = "full""#;
+    let config: Config = toml::from_str(input).unwrap();
     match config.value {
-        DebugLevel::String(spanned_str) => assert_eq!(*spanned_str, "full"),
+        DebugLevel::String(spanned_str) => {
+            assert_eq!(*spanned_str, "full");
+            assert!(spanned_str.span.is_some());
+        }
         _ => panic!("Expected String variant"),
     }
 }

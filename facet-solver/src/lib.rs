@@ -1623,13 +1623,13 @@ impl VariantFormat {
                     // Dereference through pointers to get the actual inner type
                     let inner_shape = deref_pointer(field_shape);
 
-                    // Check if this is a Spanned<T> wrapper and unwrap it for classification
+                    // Check if this is a metadata container (like Spanned<T>) and unwrap it for classification
                     // This allows untagged enum variants containing Spanned<String> etc.
                     // to match scalar values transparently
-                    let classification_shape = if let Some(spanned_inner) =
-                        facet_reflect::get_spanned_inner_shape(field_shape)
+                    let classification_shape = if let Some(inner) =
+                        facet_reflect::get_metadata_container_value_shape(field_shape)
                     {
-                        spanned_inner
+                        inner
                     } else {
                         field_shape
                     };

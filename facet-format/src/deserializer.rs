@@ -5,7 +5,7 @@ use alloc::format;
 
 use facet_core::{Def, Facet, NumericType, PrimitiveType, Shape, StructKind, Type, UserType};
 pub use facet_path::{Path, PathStep};
-use facet_reflect::{HeapValue, Partial, is_spanned_shape};
+use facet_reflect::{HeapValue, Partial};
 
 use crate::{ContainerKind, FormatParser, ParseEvent, ScalarTypeHint, ScalarValue};
 
@@ -388,26 +388,53 @@ where
             return Ok(wip);
         }
 
-        // Priority 4: Check for metadata-annotated types (like Spanned<T>)
-        if is_spanned_shape(shape) {
-            return self.deserialize_spanned(wip);
-        }
-
-        // Priority 4.5: Check for metadata containers (like Documented<T>)
-        // These deserialize transparently - metadata fields stay at defaults, value field gets the data
+        // Priority 4: Check for metadata containers (like Spanned<T>, Documented<T>)
+        // These deserialize transparently - the value field gets the data,
+        // metadata fields are populated from parser state (span, doc, tag, etc.)
         if shape.is_metadata_container() {
-            trace!("deserialize_into: metadata container detected, deserializing transparently");
+            trace!("deserialize_into: metadata container detected");
             if let Type::User(UserType::Struct(st)) = &shape.ty {
                 for field in st.fields {
-                    if field.metadata_kind().is_none() {
-                        // This is the value field - recurse into it with the current event stream
-                        wip = wip
-                            .begin_field(field.effective_name())
-                            .map_err(DeserializeError::reflect)?;
-                        wip = self.deserialize_into(wip)?;
-                        wip = wip.end().map_err(DeserializeError::reflect)?;
+                    match field.metadata_kind() {
+                        Some("span") => {
+                            // Populate span from parser's current position
+                            wip = wip
+                                .begin_field(field.effective_name())
+                                .map_err(DeserializeError::reflect)?;
+                            if let Some(span) = self.last_span {
+                                wip = wip.begin_some().map_err(DeserializeError::reflect)?;
+                                // Set the span struct fields
+                                wip = wip
+                                    .begin_field("offset")
+                                    .map_err(DeserializeError::reflect)?;
+                                wip = wip.set(span.offset).map_err(DeserializeError::reflect)?;
+                                wip = wip.end().map_err(DeserializeError::reflect)?;
+                                wip = wip.begin_field("len").map_err(DeserializeError::reflect)?;
+                                wip = wip.set(span.len).map_err(DeserializeError::reflect)?;
+                                wip = wip.end().map_err(DeserializeError::reflect)?;
+                                wip = wip.end().map_err(DeserializeError::reflect)?;
+                            } else {
+                                wip = wip.set_default().map_err(DeserializeError::reflect)?;
+                            }
+                            wip = wip.end().map_err(DeserializeError::reflect)?;
+                        }
+                        Some(_other) => {
+                            // Other metadata types (doc, tag) - set to default for now
+                            wip = wip
+                                .begin_field(field.effective_name())
+                                .map_err(DeserializeError::reflect)?;
+                            wip = wip.set_default().map_err(DeserializeError::reflect)?;
+                            wip = wip.end().map_err(DeserializeError::reflect)?;
+                        }
+                        None => {
+                            // This is the value field - recurse into it
+                            wip = wip
+                                .begin_field(field.effective_name())
+                                .map_err(DeserializeError::reflect)?;
+                            wip = self.deserialize_into(wip)?;
+                            wip = wip.end().map_err(DeserializeError::reflect)?;
+                        }
                     }
-                    // Metadata fields stay at their defaults (None for doc)
                 }
             }
             return Ok(wip);
@@ -620,66 +647,6 @@ where
         }
     }
 
-    /// Deserialize into a type with span metadata (like `Spanned<T>`).
-    ///
-    /// This handles structs that have:
-    /// - One or more non-metadata fields (the actual values to deserialize)
-    /// - A field with `#[facet(metadata = span)]` to store source location
-    ///
-    /// The metadata field is populated with a default span since most format parsers
-    /// don't track source locations.
-    fn deserialize_spanned(
-        &mut self,
-        mut wip: Partial<'input, BORROW>,
-    ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
-        let shape = wip.shape();
-
-        // Find the span metadata field and non-metadata fields
-        let Type::User(UserType::Struct(struct_def)) = &shape.ty else {
-            return Err(DeserializeError::Unsupported(format!(
-                "expected struct with span metadata, found {}",
-                shape.type_identifier
-            )));
-        };
-
-        let span_field = struct_def
-            .fields
-            .iter()
-            .find(|f| f.metadata_kind() == Some("span"))
-            .ok_or_else(|| {
-                DeserializeError::Unsupported(format!(
-                    "expected struct with span metadata field, found {}",
-                    shape.type_identifier
-                ))
-            })?;
-
-        let value_fields: alloc::vec::Vec<_> = struct_def
-            .fields
-            .iter()
-            .filter(|f| !f.is_metadata())
-            .collect();
-
-        // Deserialize all non-metadata fields transparently
-        // For the common case (Spanned<T> with a single "value" field), this is just one field
-        for field in value_fields {
-            wip = wip
-                .begin_field(field.name)
-                .map_err(DeserializeError::reflect)?;
-            wip = self.deserialize_into(wip)?;
-            wip = wip.end().map_err(DeserializeError::reflect)?;
-        }
-
-        // Set the span metadata field to default
-        // Most format parsers don't track source spans, so we use a default (unknown) span
-        wip = wip
-            .begin_field(span_field.name)
-            .map_err(DeserializeError::reflect)?;
-        wip = wip.set_default().map_err(DeserializeError::reflect)?;
-        wip = wip.end().map_err(DeserializeError::reflect)?;
-
-        Ok(wip)
-    }
-
     fn deserialize_tuple(
         &mut self,
         mut wip: Partial<'input, BORROW>,
@@ -711,7 +678,12 @@ where
 
         // Special case: unit type () can accept Scalar(Unit) directly
         // This enables patterns like styx bare identifiers: { id, name } -> IndexMap<String, ()>
-        if field_count == 0 && matches!(self.expect_peek("value")?, ParseEvent::Scalar(ScalarValue::Unit)) {
+        if field_count == 0
+            && matches!(
+                self.expect_peek("value")?,
+                ParseEvent::Scalar(ScalarValue::Unit)
+            )
+        {
             self.expect_event("value")?; // consume the unit scalar
             return Ok(wip);
         }
