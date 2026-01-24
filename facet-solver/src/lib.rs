@@ -1645,7 +1645,9 @@ impl VariantFormat {
                         }
                     } else if let Some(arity) = tuple_struct_arity(classification_shape) {
                         VariantFormat::NewtypeTuple { inner_shape, arity }
-                    } else if is_named_struct_shape(classification_shape) {
+                    } else if is_named_struct_shape(classification_shape)
+                        || is_map_shape(classification_shape)
+                    {
                         VariantFormat::NewtypeStruct { inner_shape }
                     } else if is_sequence_shape(classification_shape) {
                         VariantFormat::NewtypeSequence { inner_shape }
@@ -1756,6 +1758,14 @@ fn is_sequence_shape(shape: &'static Shape) -> bool {
         shape.def,
         Def::List(_) | Def::Array(_) | Def::Slice(_) | Def::Set(_)
     )
+}
+
+/// Check if a shape represents a map type (HashMap, BTreeMap, IndexMap, etc.)
+fn is_map_shape(shape: &'static Shape) -> bool {
+    use facet_core::Def;
+
+    let shape = deref_pointer(shape);
+    matches!(shape.def, Def::Map(_))
 }
 
 /// Returns true if the shape is a unit-only enum.

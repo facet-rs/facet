@@ -1,4 +1,5 @@
 mod ariadne;
+mod config_value;
 mod counted;
 mod err;
 mod help;
