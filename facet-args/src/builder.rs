@@ -185,15 +185,124 @@ impl<E: EnvSource> LayeredConfigBuilder<E> {
 
     /// Parse CLI overrides into a ConfigValue tree.
     fn parse_cli_overrides(
-        _cli_config: &CliConfig,
+        cli_config: &CliConfig,
     ) -> Result<Option<ConfigValue>, LayeredConfigError> {
-        // TODO: Parse --config.foo.bar=value style overrides
-        // For now, return None (no CLI overrides)
-        Ok(None)
+        use crate::config_value::Sourced;
+        use indexmap::IndexMap;
+
+        // Look for --config.* style arguments
+        let mut root = IndexMap::default();
+        let mut i = 0;
+
+        while i < cli_config.args.len() {
+            let arg = &cli_config.args[i];
+
+            // Check if this is a --config.* style flag
+            if let Some(path) = arg.strip_prefix("--config.") {
+                // Get the value from the next argument
+                i += 1;
+                if i >= cli_config.args.len() {
+                    return Err(LayeredConfigError::CliParse(format!(
+                        "Missing value for {}",
+                        arg
+                    )));
+                }
+
+                let value_str = &cli_config.args[i];
+
+                // Parse the dotted path (e.g., "port" or "smtp.host")
+                let parts: Vec<&str> = path.split('.').collect();
+                if parts.is_empty() {
+                    return Err(LayeredConfigError::CliParse(format!(
+                        "Invalid config path: {}",
+                        arg
+                    )));
+                }
+
+                // Try to infer the type from the value string
+                let value = parse_cli_value(value_str);
+
+                // Build nested structure
+                insert_nested_value(&mut root, &parts, value);
+            } else {
+                // Not a config override, skip
+                i += 1;
+            }
+        }
+
+        if root.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(ConfigValue::Object(Sourced::new(root))))
+        }
     }
 }
 
 /// Collect provenance from all values in a ConfigValue tree.
+/// Parse a CLI value string and infer its type.
+fn parse_cli_value(s: &str) -> ConfigValue {
+    use crate::config_value::Sourced;
+
+    // Try to parse as different types
+    // 1. Boolean
+    if s == "true" {
+        return ConfigValue::Bool(Sourced::new(true));
+    }
+    if s == "false" {
+        return ConfigValue::Bool(Sourced::new(false));
+    }
+
+    // 2. Integer
+    if let Ok(i) = s.parse::<i64>() {
+        return ConfigValue::Integer(Sourced::new(i));
+    }
+
+    // 3. Float
+    if let Ok(f) = s.parse::<f64>() {
+        return ConfigValue::Float(Sourced::new(f));
+    }
+
+    // 4. Default to string
+    ConfigValue::String(Sourced::new(s.to_string()))
+}
+
+/// Insert a value into a nested map structure using a dotted path.
+fn insert_nested_value(
+    root: &mut indexmap::IndexMap<String, ConfigValue, std::hash::RandomState>,
+    parts: &[&str],
+    value: ConfigValue,
+) {
+    use crate::config_value::Sourced;
+    use alloc::string::ToString;
+    use indexmap::IndexMap;
+
+    if parts.is_empty() {
+        return;
+    }
+
+    if parts.len() == 1 {
+        // Base case: insert the value
+        root.insert(parts[0].to_string(), value);
+    } else {
+        // Recursive case: ensure intermediate object exists
+        let key = parts[0].to_string();
+        let entry = root
+            .entry(key)
+            .or_insert_with(|| ConfigValue::Object(Sourced::new(IndexMap::default())));
+
+        // If it's already an object, recurse into it
+        if let ConfigValue::Object(obj) = entry {
+            insert_nested_value(&mut obj.value, &parts[1..], value);
+        }
+        // If it's not an object, we have a conflict - replace it with an object
+        else {
+            let mut new_map = IndexMap::default();
+            insert_nested_value(&mut new_map, &parts[1..], value);
+            *entry = ConfigValue::Object(Sourced::new(new_map));
+        }
+    }
+}
+
 fn collect_provenance(
     value: &ConfigValue,
     path: &str,

@@ -10,6 +10,7 @@ pub mod builder;
 pub mod completions;
 pub mod config_format;
 pub mod config_value;
+pub mod config_value_parser;
 pub mod env;
 mod format;
 pub mod help;

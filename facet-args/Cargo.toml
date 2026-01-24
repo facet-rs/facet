@@ -21,6 +21,7 @@ ignored = ["facet-pretty"]
 camino = "1.1"
 facet = { path = "../facet", version = "0.43.2", features = ["indexmap", "camino"] }
 facet-core = { path = "../facet-core", version = "0.43.2" }
+facet-format = { path = "../facet-format", version = "0.43.2" }
 facet-json = { path = "../facet-json", version = "0.43.2" }
 facet-reflect = { path = "../facet-reflect", version = "0.43.2" }
 heck = "0.5.0"

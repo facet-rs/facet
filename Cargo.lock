@@ -1069,6 +1069,7 @@ dependencies = [
  "camino",
  "facet",
  "facet-core",
+ "facet-format",
  "facet-json",
  "facet-pretty",
  "facet-reflect",
