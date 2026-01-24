@@ -32,9 +32,7 @@ mod scalar;
 pub use scalar::*;
 
 mod spanned;
-pub use spanned::{
-    Span, Spanned, find_span_metadata_field, get_spanned_inner_shape, is_spanned_shape,
-};
+pub use spanned::{Span, get_metadata_container_value_shape};
 
 #[cfg(feature = "tracing")]
 #[allow(unused_imports)]

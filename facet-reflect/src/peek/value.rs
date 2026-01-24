@@ -1448,9 +1448,28 @@ mod tests {
         assert!(covariant.is_some());
     }
 
+    /// Local Spanned<T> for testing metadata_container behavior.
+    /// Users define their own version using #[facet(metadata_container)].
+    #[derive(Debug, Clone, facet::Facet)]
+    #[facet(metadata_container)]
+    struct Spanned<T> {
+        value: T,
+        #[facet(metadata = "span")]
+        span: Option<crate::Span>,
+    }
+
+    impl<T> Spanned<T> {
+        fn new(value: T, span: crate::Span) -> Self {
+            Self {
+                value,
+                span: Some(span),
+            }
+        }
+    }
+
     #[test]
     fn test_spanned_structural_hash_ignores_span() {
-        use crate::{Span, Spanned};
+        use crate::Span;
         use core::hash::Hasher;
         use std::hash::DefaultHasher;
 
@@ -1475,7 +1494,7 @@ mod tests {
 
     #[test]
     fn test_spanned_structural_hash_differs_for_different_values() {
-        use crate::{Span, Spanned};
+        use crate::Span;
         use core::hash::Hasher;
         use std::hash::DefaultHasher;
 
@@ -1500,7 +1519,6 @@ mod tests {
 
     #[test]
     fn test_spanned_field_metadata() {
-        use crate::Spanned;
         use facet_core::{Type, UserType};
 
         // Get the shape for Spanned<i32>

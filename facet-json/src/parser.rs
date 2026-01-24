@@ -706,6 +706,14 @@ impl<'de> FormatParser<'de> for JsonParser<'de> {
     fn format_namespace(&self) -> Option<&'static str> {
         Some("json")
     }
+
+    fn current_span(&self) -> Option<facet_reflect::Span> {
+        // Return the span of the most recently consumed token
+        // This is used by metadata containers to track source locations
+        let offset = self.last_token_start;
+        let len = self.current_offset.saturating_sub(offset);
+        Some(facet_reflect::Span::new(offset, len))
+    }
 }
 
 // =============================================================================
