@@ -1,0 +1,169 @@
+---
+source: rust/roam-macros-parse/tests/parser.rs
+description: "pub trait LifetimeService {\n    async fn process(&self, data: Patch<'static>);\n}\n"
+---
+ServiceTrait {
+    attributes: DelimitedVec<roam_macros_parse::RawAttribute, unsynn::fundamental::Nothing, unsynn::container::TrailingDelimiter::Optional, 0, 18446744073709551615>(
+        [],
+    ),
+    vis: DelimitedVec<roam_macros_parse::Visibility, unsynn::fundamental::Nothing, unsynn::container::TrailingDelimiter::Optional, 0, 1>(
+        [
+            Delimited<roam_macros_parse::Visibility, unsynn::fundamental::Nothing> {
+                value: Pub(
+                    KPub(
+                        Cached<proc_macro2::Ident> {
+                            value: Ident {
+                                sym: pub,
+                                span: bytes(1..4),
+                            },
+                            string: "pub",
+                        },
+                    ),
+                ),
+                delimiter: Some(
+                    Nothing,
+                ),
+            },
+        ],
+    ),
+    _trait: KTrait(
+        Cached<proc_macro2::Ident> {
+            value: Ident {
+                sym: trait,
+                span: bytes(5..10),
+            },
+            string: "trait",
+        },
+    ),
+    name: Ident {
+        sym: LifetimeService,
+        span: bytes(11..26),
+    },
+    generics: DelimitedVec<roam_macros_parse::GenericParams, unsynn::fundamental::Nothing, unsynn::container::TrailingDelimiter::Optional, 0, 1>(
+        [],
+    ),
+    body: BraceGroupContaining < unsynn::container::DelimitedVec<roam_macros_parse::ServiceMethod, unsynn::fundamental::Nothing, unsynn::container::TrailingDelimiter::Optional, 0, usize::MAX>>(
+        DelimitedVec<roam_macros_parse::ServiceMethod, unsynn::fundamental::Nothing, unsynn::container::TrailingDelimiter::Optional, 0, 18446744073709551615>(
+            [
+                Delimited<roam_macros_parse::ServiceMethod, unsynn::fundamental::Nothing> {
+                    value: ServiceMethod {
+                        attributes: DelimitedVec<roam_macros_parse::RawAttribute, unsynn::fundamental::Nothing, unsynn::container::TrailingDelimiter::Optional, 0, 18446744073709551615>(
+                            [],
+                        ),
+                        _async: KAsync(
+                            Cached<proc_macro2::Ident> {
+                                value: Ident {
+                                    sym: async,
+                                    span: bytes(33..38),
+                                },
+                                string: "async",
+                            },
+                        ),
+                        _fn: KFn(
+                            Cached<proc_macro2::Ident> {
+                                value: Ident {
+                                    sym: fn,
+                                    span: bytes(39..41),
+                                },
+                                string: "fn",
+                            },
+                        ),
+                        name: Ident {
+                            sym: process,
+                            span: bytes(42..49),
+                        },
+                        generics: DelimitedVec<roam_macros_parse::GenericParams, unsynn::fundamental::Nothing, unsynn::container::TrailingDelimiter::Optional, 0, 1>(
+                            [],
+                        ),
+                        params: ParenthesisGroupContaining < roam_macros_parse::MethodParams>(
+                            MethodParams {
+                                receiver: RefSelf {
+                                    _amp: Operator<'&'>,
+                                    mutability: None,
+                                    name: KSelfKw(
+                                        Cached<proc_macro2::Ident> {
+                                            value: Ident {
+                                                sym: self,
+                                                span: bytes(51..55),
+                                            },
+                                            string: "self",
+                                        },
+                                    ),
+                                },
+                                rest: DelimitedVec<unsynn::combinator::Cons<unsynn::operator::Operator<','>, unsynn::container::DelimitedVec<roam_macros_parse::MethodParam, unsynn::operator::Operator<','>, unsynn::container::TrailingDelimiter::Optional, 0, usize::MAX>>, unsynn::fundamental::Nothing, unsynn::container::TrailingDelimiter::Optional, 0, 1>(
+                                    [
+                                        Delimited<unsynn::combinator::Cons<unsynn::operator::Operator<','>, unsynn::container::DelimitedVec<roam_macros_parse::MethodParam, unsynn::operator::Operator<','>, unsynn::container::TrailingDelimiter::Optional, 0, usize::MAX>>, unsynn::fundamental::Nothing> {
+                                            value: Cons<unsynn::operator::Operator<','>, unsynn::container::DelimitedVec<roam_macros_parse::MethodParam, unsynn::operator::Operator<','>, unsynn::container::TrailingDelimiter::Optional, 0, usize::MAX>> {
+                                                first: Operator<','>,
+                                                second: DelimitedVec<roam_macros_parse::MethodParam, unsynn::operator::Operator<','>, unsynn::container::TrailingDelimiter::Optional, 0, 18446744073709551615>(
+                                                    [
+                                                        Delimited<roam_macros_parse::MethodParam, unsynn::operator::Operator<','>> {
+                                                            value: MethodParam {
+                                                                name: Ident {
+                                                                    sym: data,
+                                                                    span: bytes(57..61),
+                                                                },
+                                                                _colon: Operator<':'>,
+                                                                ty: PathWithGenerics(
+                                                                    PathWithGenerics {
+                                                                        path: TypePath {
+                                                                            leading: None,
+                                                                            first: Ident {
+                                                                                sym: Patch,
+                                                                                span: bytes(63..68),
+                                                                            },
+                                                                            rest: DelimitedVec<unsynn::combinator::Cons<unsynn::operator::Operator<':', ':'>, proc_macro2::Ident>, unsynn::fundamental::Nothing, unsynn::container::TrailingDelimiter::Optional, 0, 18446744073709551615>(
+                                                                                [],
+                                                                            ),
+                                                                        },
+                                                                        _lt: Operator<'<'>,
+                                                                        args: DelimitedVec<roam_macros_parse::GenericArgument, unsynn::operator::Operator<','>, unsynn::container::TrailingDelimiter::Optional, 0, 18446744073709551615>(
+                                                                            [
+                                                                                Delimited<roam_macros_parse::GenericArgument, unsynn::operator::Operator<','>> {
+                                                                                    value: Lifetime(
+                                                                                        Lifetime {
+                                                                                            _apo: Operator<'''>,
+                                                                                            ident: Ident {
+                                                                                                sym: static,
+                                                                                                span: bytes(70..76),
+                                                                                            },
+                                                                                        },
+                                                                                    ),
+                                                                                    delimiter: None,
+                                                                                },
+                                                                            ],
+                                                                        ),
+                                                                        _gt: Operator<'>'>,
+                                                                    },
+                                                                ),
+                                                            },
+                                                            delimiter: None,
+                                                        },
+                                                    ],
+                                                ),
+                                            },
+                                            delimiter: Some(
+                                                Nothing,
+                                            ),
+                                        },
+                                    ],
+                                ),
+                            },
+                        ),
+                        return_type: DelimitedVec<roam_macros_parse::ReturnType, unsynn::fundamental::Nothing, unsynn::container::TrailingDelimiter::Optional, 0, 1>(
+                            [],
+                        ),
+                        where_clause: DelimitedVec<roam_macros_parse::WhereClause, unsynn::fundamental::Nothing, unsynn::container::TrailingDelimiter::Optional, 0, 1>(
+                            [],
+                        ),
+                        _semi: Operator<';'>,
+                    },
+                    delimiter: Some(
+                        Nothing,
+                    ),
+                },
+            ],
+        ),
+    ),
+    _eos: EndOfStream,
+}

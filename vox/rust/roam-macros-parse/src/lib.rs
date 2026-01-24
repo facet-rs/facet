@@ -131,6 +131,18 @@ unsynn! {
     }
 
     #[derive(Clone)]
+    pub struct Lifetime {
+        pub _apo: Apostrophe,
+        pub ident: Ident,
+    }
+
+    #[derive(Clone)]
+    pub enum GenericArgument {
+        Lifetime(Lifetime),
+        Type(Type),
+    }
+
+    #[derive(Clone)]
     pub enum Type {
         Reference(TypeRef),
         Tuple(TypeTuple),
@@ -155,7 +167,7 @@ unsynn! {
     pub struct PathWithGenerics {
         pub path: TypePath,
         pub _lt: Lt,
-        pub args: CommaDelimitedVec<Type>,
+        pub args: CommaDelimitedVec<GenericArgument>,
         pub _gt: Gt,
     }
 
@@ -198,6 +210,26 @@ unsynn! {
 }
 
 // ============================================================================
+// Helper methods for GenericArgument
+// ============================================================================
+
+impl GenericArgument {
+    pub fn has_lifetime(&self) -> bool {
+        match self {
+            GenericArgument::Lifetime(_) => true,
+            GenericArgument::Type(ty) => ty.has_lifetime(),
+        }
+    }
+
+    pub fn contains_channel(&self) -> bool {
+        match self {
+            GenericArgument::Lifetime(_) => false,
+            GenericArgument::Type(ty) => ty.contains_channel(),
+        }
+    }
+}
+
+// ============================================================================
 // Helper methods for Type
 // ============================================================================
 
@@ -208,8 +240,11 @@ impl Type {
             Type::PathWithGenerics(PathWithGenerics { path, args, .. })
                 if path.last_segment().as_str() == "Result" && args.len() == 2 =>
             {
-                let types = args.as_slice();
-                Some((&types[0].value, &types[1].value))
+                let args_slice = args.as_slice();
+                match (&args_slice[0].value, &args_slice[1].value) {
+                    (GenericArgument::Type(ok), GenericArgument::Type(err)) => Some((ok, err)),
+                    _ => None,
+                }
             }
             _ => None,
         }

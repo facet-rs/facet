@@ -728,37 +728,41 @@ ServiceTrait {
                                                     ),
                                                 },
                                                 _lt: Operator<'<'>,
-                                                args: DelimitedVec<roam_macros_parse::Type, unsynn::operator::Operator<','>, unsynn::container::TrailingDelimiter::Optional, 0, 18446744073709551615>(
+                                                args: DelimitedVec<roam_macros_parse::GenericArgument, unsynn::operator::Operator<','>, unsynn::container::TrailingDelimiter::Optional, 0, 18446744073709551615>(
                                                     [
-                                                        Delimited<roam_macros_parse::Type, unsynn::operator::Operator<','>> {
-                                                            value: Path(
-                                                                TypePath {
-                                                                    leading: None,
-                                                                    first: Ident {
-                                                                        sym: i32,
-                                                                        span: bytes(437..440),
+                                                        Delimited<roam_macros_parse::GenericArgument, unsynn::operator::Operator<','>> {
+                                                            value: Type(
+                                                                Path(
+                                                                    TypePath {
+                                                                        leading: None,
+                                                                        first: Ident {
+                                                                            sym: i32,
+                                                                            span: bytes(437..440),
+                                                                        },
+                                                                        rest: DelimitedVec<unsynn::combinator::Cons<unsynn::operator::Operator<':', ':'>, proc_macro2::Ident>, unsynn::fundamental::Nothing, unsynn::container::TrailingDelimiter::Optional, 0, 18446744073709551615>(
+                                                                            [],
+                                                                        ),
                                                                     },
-                                                                    rest: DelimitedVec<unsynn::combinator::Cons<unsynn::operator::Operator<':', ':'>, proc_macro2::Ident>, unsynn::fundamental::Nothing, unsynn::container::TrailingDelimiter::Optional, 0, 18446744073709551615>(
-                                                                        [],
-                                                                    ),
-                                                                },
+                                                                ),
                                                             ),
                                                             delimiter: Some(
                                                                 Operator<','>,
                                                             ),
                                                         },
-                                                        Delimited<roam_macros_parse::Type, unsynn::operator::Operator<','>> {
-                                                            value: Path(
-                                                                TypePath {
-                                                                    leading: None,
-                                                                    first: Ident {
-                                                                        sym: String,
-                                                                        span: bytes(442..448),
+                                                        Delimited<roam_macros_parse::GenericArgument, unsynn::operator::Operator<','>> {
+                                                            value: Type(
+                                                                Path(
+                                                                    TypePath {
+                                                                        leading: None,
+                                                                        first: Ident {
+                                                                            sym: String,
+                                                                            span: bytes(442..448),
+                                                                        },
+                                                                        rest: DelimitedVec<unsynn::combinator::Cons<unsynn::operator::Operator<':', ':'>, proc_macro2::Ident>, unsynn::fundamental::Nothing, unsynn::container::TrailingDelimiter::Optional, 0, 18446744073709551615>(
+                                                                            [],
+                                                                        ),
                                                                     },
-                                                                    rest: DelimitedVec<unsynn::combinator::Cons<unsynn::operator::Operator<':', ':'>, proc_macro2::Ident>, unsynn::fundamental::Nothing, unsynn::container::TrailingDelimiter::Optional, 0, 18446744073709551615>(
-                                                                        [],
-                                                                    ),
-                                                                },
+                                                                ),
                                                             ),
                                                             delimiter: None,
                                                         },
