@@ -270,23 +270,43 @@ fn dump_config_with_provenance<T: Facet<'static>>(value: &ConfigValue) {
     println!("==============================================");
     println!();
 
-    // Show config file sources if any
+    // Show sources
+    println!("Sources:");
+
+    // Config files
     if !config_files.is_empty() {
-        println!("Config files:");
         for file in &config_files {
-            println!("  {}", file);
+            let path = std::path::Path::new(file);
+            if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
+                if let Some(parent) = path.parent() {
+                    let parent_str = parent.to_string_lossy();
+                    if !parent_str.is_empty() {
+                        println!("  file {}/{}", parent_str, filename.magenta());
+                    } else {
+                        println!("  file {}", filename.magenta());
+                    }
+                } else {
+                    println!("  file {}", filename.magenta());
+                }
+            } else {
+                println!("  file {}", file.magenta());
+            }
         }
-        println!();
     }
+
+    // Environment variables (get prefix from config field if available)
+    println!("  env {}", "$MYAPP__*".yellow());
+
+    // CLI args
+    println!("  cli {}", "--config.*".cyan());
+
+    // Defaults
+    println!("  defaults");
+
+    println!();
 
     dump_value_recursive_with_sensitive(value, "", 0, &config_files, &widths, T::SHAPE, false);
 
-    println!();
-    println!("Legend:");
-    println!("  {}        Command-line argument", "--flag".cyan());
-    println!("  {}          Environment variable", "$VAR".yellow());
-    println!("  {}     Config file (line number)", "file:line".magenta());
-    println!("  {}       Default value", "DEFAULT".bright_black());
     println!();
 }
 
@@ -454,7 +474,7 @@ fn dump_value_recursive_with_sensitive(
         }
         ConfigValue::String(sourced) => {
             let prov = format_provenance(&sourced.provenance, config_files);
-            let (value_str, colored_value) = if is_sensitive {
+            let (_value_str, colored_value) = if is_sensitive {
                 let len = sourced.value.len();
                 let redacted = format!("🔒 [REDACTED ({} bytes)]", len);
                 let colored = redacted.bright_magenta().to_string();
