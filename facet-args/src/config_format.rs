@@ -14,9 +14,13 @@
 
 use alloc::boxed::Box;
 use alloc::string::String;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 
+use camino::Utf8Path;
+
 use crate::config_value::ConfigValue;
+use crate::provenance::ConfigFile;
 
 /// Error returned when parsing a config file fails.
 #[derive(Debug)]
@@ -170,6 +174,25 @@ impl FormatRegistry {
         format.parse(contents)
     }
 
+    /// Parse a config file and set provenance on all values.
+    ///
+    /// This is the preferred method for loading config files, as it ensures
+    /// all values have proper provenance tracking for error messages.
+    pub fn parse_file(
+        &self,
+        path: &Utf8Path,
+        contents: &str,
+    ) -> Result<ConfigValue, ConfigFormatError> {
+        let extension = path.extension().unwrap_or("");
+        let mut value = self.parse(contents, extension)?;
+
+        // Create config file and set provenance recursively
+        let file = Arc::new(ConfigFile::new(path, contents));
+        value.set_file_provenance_recursive(&file, "");
+
+        Ok(value)
+    }
+
     /// Get all registered extensions.
     pub fn extensions(&self) -> Vec<&str> {
         self.formats
@@ -274,5 +297,41 @@ mod tests {
 
         let err = ConfigFormatError::with_offset("unexpected token", 42);
         assert_eq!(err.to_string(), "at byte 42: unexpected token");
+    }
+
+    #[test]
+    fn test_format_registry_parse_file_with_provenance() {
+        use crate::provenance::Provenance;
+
+        let registry = FormatRegistry::with_defaults();
+        let contents = r#"{"port": 8080, "host": "localhost"}"#;
+        let path = Utf8Path::new("config.json");
+
+        let result = registry.parse_file(path, contents);
+        assert!(result.is_ok(), "parse_file failed: {:?}", result.err());
+
+        let value = result.unwrap();
+        if let ConfigValue::Object(obj) = value {
+            // Root object should have provenance
+            assert!(obj.provenance.is_some());
+            if let Some(Provenance::File { file, key_path, .. }) = &obj.provenance {
+                assert_eq!(file.path.as_str(), "config.json");
+                assert_eq!(key_path, "");
+            } else {
+                panic!("expected File provenance");
+            }
+
+            // "port" field should have provenance with key_path
+            if let Some(ConfigValue::Integer(port)) = obj.value.get("port") {
+                assert!(port.provenance.is_some());
+                if let Some(Provenance::File { key_path, .. }) = &port.provenance {
+                    assert_eq!(key_path, "port");
+                }
+            } else {
+                panic!("expected port field");
+            }
+        } else {
+            panic!("expected object");
+        }
     }
 }

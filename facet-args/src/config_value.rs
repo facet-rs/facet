@@ -69,25 +69,63 @@ impl<T> Sourced<T> {
     }
 }
 
-/// A configuration value with span tracking at every level.
+/// A configuration value with full provenance tracking at every level.
 #[derive(Debug, Clone, Facet)]
 #[repr(u8)]
 #[facet(untagged)]
 pub enum ConfigValue {
     /// A null value.
-    Null(Spanned<()>),
+    Null(Sourced<()>),
     /// A boolean value.
-    Bool(Spanned<bool>),
+    Bool(Sourced<bool>),
     /// An integer value.
-    Integer(Spanned<i64>),
+    Integer(Sourced<i64>),
     /// A floating-point value.
-    Float(Spanned<f64>),
+    Float(Sourced<f64>),
     /// A string value.
-    String(Spanned<String>),
+    String(Sourced<String>),
     /// An array of values.
-    Array(Spanned<Vec<ConfigValue>>),
+    Array(Sourced<Vec<ConfigValue>>),
     /// An object/map of key-value pairs.
-    Object(Spanned<IndexMap<String, ConfigValue, std::hash::RandomState>>),
+    Object(Sourced<IndexMap<String, ConfigValue, std::hash::RandomState>>),
+}
+
+impl ConfigValue {
+    /// Recursively set file provenance on this value and all nested values.
+    ///
+    /// This should be called after parsing a config file to populate provenance
+    /// on the entire tree.
+    pub fn set_file_provenance_recursive(&mut self, file: &Arc<ConfigFile>, path: &str) {
+        match self {
+            ConfigValue::Null(s) => s.set_file_provenance(file.clone(), path),
+            ConfigValue::Bool(s) => s.set_file_provenance(file.clone(), path),
+            ConfigValue::Integer(s) => s.set_file_provenance(file.clone(), path),
+            ConfigValue::Float(s) => s.set_file_provenance(file.clone(), path),
+            ConfigValue::String(s) => s.set_file_provenance(file.clone(), path),
+            ConfigValue::Array(s) => {
+                s.set_file_provenance(file.clone(), path);
+                for (i, item) in s.value.iter_mut().enumerate() {
+                    let item_path = if path.is_empty() {
+                        format!("{i}")
+                    } else {
+                        format!("{path}[{i}]")
+                    };
+                    item.set_file_provenance_recursive(file, &item_path);
+                }
+            }
+            ConfigValue::Object(s) => {
+                s.set_file_provenance(file.clone(), path);
+                for (key, value) in s.value.iter_mut() {
+                    let key_path = if path.is_empty() {
+                        key.clone()
+                    } else {
+                        format!("{path}.{key}")
+                    };
+                    value.set_file_provenance_recursive(file, &key_path);
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -356,6 +394,57 @@ mod tests {
             assert_eq!(*len, 4);
         } else {
             panic!("expected File provenance");
+        }
+    }
+
+    #[test]
+    fn test_set_file_provenance_recursive() {
+        // Parse a nested JSON object
+        let json = r#"{"port": 8080, "smtp": {"host": "mail.example.com", "port": 587}}"#;
+        let mut value: ConfigValue = facet_json::from_str(json).expect("should parse");
+
+        // Create a config file and set provenance recursively
+        let file = Arc::new(ConfigFile::new("config.json", json));
+        value.set_file_provenance_recursive(&file, "");
+
+        // Check root object has provenance
+        if let ConfigValue::Object(ref obj) = value {
+            assert!(obj.provenance.is_some());
+
+            // Check "port" has provenance with correct key_path
+            if let Some(ConfigValue::Integer(port)) = obj.value.get("port") {
+                assert!(port.provenance.is_some());
+                if let Some(Provenance::File { key_path, .. }) = &port.provenance {
+                    assert_eq!(key_path, "port");
+                } else {
+                    panic!("expected File provenance for port");
+                }
+            } else {
+                panic!("expected port field");
+            }
+
+            // Check nested "smtp.host" has correct key_path
+            if let Some(ConfigValue::Object(smtp)) = obj.value.get("smtp") {
+                assert!(smtp.provenance.is_some());
+                if let Some(Provenance::File { key_path, .. }) = &smtp.provenance {
+                    assert_eq!(key_path, "smtp");
+                }
+
+                if let Some(ConfigValue::String(host)) = smtp.value.get("host") {
+                    assert!(host.provenance.is_some());
+                    if let Some(Provenance::File { key_path, .. }) = &host.provenance {
+                        assert_eq!(key_path, "smtp.host");
+                    } else {
+                        panic!("expected File provenance for smtp.host");
+                    }
+                } else {
+                    panic!("expected smtp.host field");
+                }
+            } else {
+                panic!("expected smtp field");
+            }
+        } else {
+            panic!("expected object");
         }
     }
 }
