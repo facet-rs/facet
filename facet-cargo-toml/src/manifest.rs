@@ -3,9 +3,21 @@
 use std::collections::HashMap;
 
 use facet::Facet;
+pub use facet_reflect::Span;
 
-/// Re-export Spanned from facet_reflect.
-pub use facet_reflect::Spanned;
+/// A value with source span tracking.
+///
+/// This wrapper stores the original source location (byte offset and length)
+/// for values parsed from TOML, enabling precise error reporting.
+#[derive(Debug, Clone, Facet)]
+#[facet(metadata_container)]
+pub struct Spanned<T> {
+    /// The wrapped value.
+    pub value: T,
+    /// The source span (offset and length), populated during deserialization.
+    #[facet(metadata = "span")]
+    pub span: Option<Span>,
+}
 
 /// A parsed `Cargo.toml` manifest.
 ///
