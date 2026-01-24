@@ -1,6 +1,6 @@
 {
   "name": "@bearcove/styx-wasm",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "WebAssembly bindings for Styx parser",
   "type": "module",
   "main": "./pkg/styx_wasm.js",
@@ -16,7 +16,7 @@
     "pkg"
   ],
   "scripts": {
-    "build": "cargo build --release --target wasm32-unknown-unknown && wasm-bindgen --out-dir pkg --target web ../../target/wasm32-unknown-unknown/release/styx_wasm.wasm",
+    "build": "cargo build --release --target wasm32-unknown-unknown && wasm-bindgen --out-dir pkg --target web ../../target/wasm32-unknown-unknown/release/styx_wasm.wasm && rm -f pkg/.gitignore",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
