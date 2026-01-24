@@ -1,5 +1,116 @@
 # Design: Layered Configuration for facet-args
 
+## Implementation Status
+
+This section tracks what has been implemented and what remains TODO.
+
+### ✅ Completed
+
+- **`ConfigFormat` trait** (`src/config_format.rs`)
+  - `ConfigFormat` trait with `extensions()` and `parse()` methods
+  - `JsonFormat` built-in implementation
+  - `FormatRegistry` for managing multiple formats
+  - `parse_file()` method that parses and sets provenance
+
+- **`ConfigValue` enum** (`src/config_value.rs`)
+  - `Sourced<T>` wrapper with value, span, and provenance
+  - `Spanned<T>` wrapper for span-only tracking
+  - `ConfigValue` enum (Null, Bool, Integer, Float, String, Array, Object)
+  - All variants use `Sourced<T>` for full provenance tracking
+  - `set_file_provenance_recursive()` to populate provenance on entire tree
+
+- **`Provenance` tracking** (`src/provenance.rs`)
+  - `Provenance` enum: `Cli`, `Env`, `File`, `Default`
+  - `ConfigFile` struct with path and contents (Arc-wrapped for sharing)
+  - `Override` struct for tracking when values are overridden
+  - `ConfigResult<T>` with value, provenance map, and overrides list
+  - `ProvenanceTracker` for accumulating provenance during parsing
+
+- **Environment variable parsing** (`src/env.rs`)
+  - `EnvConfig` with prefix and strict mode
+  - `EnvSource` trait for abstracting env var access
+  - `StdEnv` implementation using `std::env`
+  - `MockEnv` implementation for testing
+  - `parse_env()` and `parse_env_with_source()`
+  - Naming: `PREFIX__FIELD__NESTED` → `field.nested`
+  - SCREAMING_SNAKE_CASE converted to snake_case
+
+- **Deep-merge** (`src/merge.rs`)
+  - `merge()` function for two ConfigValue trees
+  - `merge_layers()` for multiple layers in priority order
+  - Objects merged recursively, scalars/arrays replaced
+  - Override tracking during merge
+
+- **Builder API** (`src/builder.rs`)
+  - `builder()` entry point
+  - `LayeredConfigBuilder` with `.cli()`, `.env()`, `.file()` configuration
+  - `CliConfigBuilder`, `EnvConfigBuilder`, `FileConfigBuilder`
+  - `build_value()` returns merged `ConfigValue`
+  - `build_traced()` returns `ConfigResult` with provenance
+  - `with_env_source()` for testing with `MockEnv`
+  - Layer order: file < env < cli
+
+### 🚧 TODO
+
+- **`#[facet(args::config)]` attribute**
+  - Integrate with existing CLI parsing
+  - Auto-generate `--config <PATH>` flag
+  - Parse `--config.foo.bar <VALUE>` CLI overrides
+  - Convert merged `ConfigValue` to target struct type
+
+- **CLI override parsing**
+  - Parse dotted paths like `--config.smtp.host`
+  - Build `ConfigValue` tree from CLI overrides
+  - Currently `parse_cli_overrides()` returns `None`
+
+- **Type coercion**
+  - Convert string env vars to target types (integers, bools, etc.)
+  - Currently all env values are stored as strings
+
+- **Strict mode enforcement**
+  - Detect unknown keys in each layer
+  - Error or warn based on strict setting
+  - `unknown` field in `EnvParseResult` is always empty
+
+- **Typo detection with strsim**
+  - Suggest corrections for unknown keys
+  - "Did you mean X?" messages
+
+- **Missing required field detection**
+  - Walk target shape to find required fields
+  - Generate helpful error messages
+
+- **Config dump**
+  - Pretty-print resolved config with provenance
+  - Redact `#[facet(sensitive)]` fields
+
+- **Rich diagnostics with ariadne**
+  - Beautiful error messages pointing to config file locations
+  - Use span information from `Sourced<T>`
+
+- **Vec/List handling in env vars**
+  - Split comma-separated values
+  - Handle escaped commas
+
+- **Help generation integration**
+  - Show env var names in help output
+  - Show config file key paths
+
+### 📁 File Structure
+
+```
+facet-args/src/
+├── builder.rs       # Builder API for layered config
+├── config_format.rs # ConfigFormat trait and JsonFormat
+├── config_value.rs  # ConfigValue enum with Sourced<T>
+├── env.rs           # Environment variable parsing
+├── merge.rs         # Deep-merge for ConfigValue trees
+├── provenance.rs    # Provenance tracking types
+└── lib.rs           # Re-exports builder()
+```
+
+---
+
 ## Overview
 
 This document proposes extending `facet-args` to support layered configuration
