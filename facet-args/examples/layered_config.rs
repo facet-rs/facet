@@ -34,7 +34,7 @@ use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 /// Application configuration with layered sources.
 #[derive(Facet)]
-#[facet(derive(Default))]
+#[facet(derive(Default), traits(Default))]
 struct Args {
     /// Show version information.
     #[facet(args::named, args::short = 'v')]
@@ -51,7 +51,7 @@ struct Args {
 
 /// Main application configuration.
 #[derive(Facet)]
-#[facet(derive(Default))]
+#[facet(derive(Default), traits(Default))]
 struct AppConfig {
     /// Server configuration.
     #[facet(default)]
@@ -71,7 +71,7 @@ struct AppConfig {
 
 /// Server settings.
 #[derive(Facet)]
-#[facet(derive(Default))]
+#[facet(derive(Default), traits(Default))]
 struct ServerConfig {
     /// Server host address.
     #[facet(default = "localhost".to_string())]
@@ -95,7 +95,7 @@ struct ServerConfig {
 
 /// Database settings.
 #[derive(Facet)]
-#[facet(derive(Default))]
+#[facet(derive(Default), traits(Default))]
 struct DatabaseConfig {
     /// Database URL.
     #[facet(default = "sqlite::memory:".to_string())]
@@ -131,7 +131,7 @@ struct EmailConfig {
 
 /// Feature flags for experimental features.
 #[derive(Facet)]
-#[facet(derive(Default))]
+#[facet(derive(Default), traits(Default))]
 struct FeatureFlags {
     /// Enable experimental API.
     experimental_api: bool,

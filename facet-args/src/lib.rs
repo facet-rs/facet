@@ -142,23 +142,28 @@ fn restructure_config_value(
 
     // Iterate through the source map and categorize fields
     for (key, val) in source_map.iter() {
-        // Check if this key corresponds to a top-level field (not the config field)
-        let is_top_level_field = struct_def
-            .fields
-            .iter()
-            .any(|f| f.name == key && f.name != config_field.name);
-
-        if is_top_level_field {
-            // Top-level field like version, verbose
+        if key == config_field.name {
+            // The config field is already present at top level - use it as-is
             top_level_map.insert(key.clone(), val.clone());
         } else {
-            // Config-related field - goes under the config field
-            config_map.insert(key.clone(), val.clone());
+            // Check if this key corresponds to a top-level field (not the config field)
+            let is_top_level_field = struct_def
+                .fields
+                .iter()
+                .any(|f| f.name == key && f.name != config_field.name);
+
+            if is_top_level_field {
+                // Top-level field like version, verbose
+                top_level_map.insert(key.clone(), val.clone());
+            } else {
+                // Config-related field - goes under the config field
+                config_map.insert(key.clone(), val.clone());
+            }
         }
     }
 
-    // Wrap config fields under the config field name
-    if !config_map.is_empty() || !top_level_map.contains_key(config_field.name) {
+    // Wrap config fields under the config field name (only if not already present)
+    if !config_map.is_empty() && !top_level_map.contains_key(config_field.name) {
         top_level_map.insert(
             config_field.name.to_string(),
             ConfigValue::Object(Sourced {

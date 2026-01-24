@@ -125,12 +125,31 @@ fn fill_defaults_from_shape(value: &ConfigValue, shape: &'static Shape) -> Confi
 }
 
 /// Get a default ConfigValue for a field, if one should be provided.
+///
+/// Only provides CLI-friendly defaults (false/0) for scalar fields that DON'T have
+/// a #[facet(default)] attribute. For struct fields, always creates an empty Object
+/// so the deserializer can enter and recursively fill defaults via facet-reflect.
 fn get_default_config_value(field: &'static facet_core::Field) -> Option<ConfigValue> {
     use facet_core::ScalarType;
 
     let shape = field.shape.get();
 
-    // For scalar types, emit CLI-friendly defaults
+    // For struct types, create an empty object (even if field has default attribute)
+    // The deserializer needs the Object to enter and recursively fill defaults
+    if let Type::User(UserType::Struct(_)) = &shape.ty {
+        return Some(ConfigValue::Object(Sourced {
+            value: IndexMap::new(),
+            span: None,
+            provenance: Some(Provenance::Default),
+        }));
+    }
+
+    // For scalar types with explicit defaults, let facet-reflect handle them
+    if field.default.is_some() {
+        return None;
+    }
+
+    // For scalar types without explicit defaults, emit CLI-friendly defaults
     match shape.scalar_type() {
         Some(ScalarType::Bool) => {
             return Some(ConfigValue::Bool(Sourced {
@@ -159,28 +178,8 @@ fn get_default_config_value(field: &'static facet_core::Field) -> Option<ConfigV
                 provenance: Some(Provenance::Default),
             }));
         }
-        _ => {}
+        _ => None,
     }
-
-    // For struct types, create an empty object and recursively fill it
-    if let Type::User(UserType::Struct(struct_def)) = &shape.ty {
-        let mut map = IndexMap::new();
-
-        // Recursively add defaults for all struct fields
-        for nested_field in struct_def.fields.iter() {
-            if let Some(default_value) = get_default_config_value(nested_field) {
-                map.insert(nested_field.name.to_string(), default_value);
-            }
-        }
-
-        return Some(ConfigValue::Object(Sourced {
-            value: map,
-            span: None,
-            provenance: Some(Provenance::Default),
-        }));
-    }
-
-    None
 }
 
 /// Errors that can occur during ConfigValue deserialization.
