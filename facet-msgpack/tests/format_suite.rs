@@ -466,6 +466,14 @@ impl FormatSuite for MsgPackSlice {
         CaseSpec::skip("MsgPack is a binary format, requires binary input not JSON strings")
     }
 
+    fn jiff_civil_date() -> CaseSpec {
+        CaseSpec::skip("MsgPack is a binary format, requires binary input not JSON strings")
+    }
+
+    fn jiff_civil_time() -> CaseSpec {
+        CaseSpec::skip("MsgPack is a binary format, requires binary input not JSON strings")
+    }
+
     fn chrono_datetime_utc() -> CaseSpec {
         CaseSpec::skip("MsgPack is a binary format, requires binary input not JSON strings")
     }

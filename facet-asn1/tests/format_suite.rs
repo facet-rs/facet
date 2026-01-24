@@ -453,6 +453,14 @@ impl FormatSuite for Asn1Slice {
         CaseSpec::skip("ASN.1 is a binary format, requires binary input not JSON strings")
     }
 
+    fn jiff_civil_date() -> CaseSpec {
+        CaseSpec::skip("ASN.1 is a binary format, requires binary input not JSON strings")
+    }
+
+    fn jiff_civil_time() -> CaseSpec {
+        CaseSpec::skip("ASN.1 is a binary format, requires binary input not JSON strings")
+    }
+
     fn chrono_datetime_utc() -> CaseSpec {
         CaseSpec::skip("ASN.1 is a binary format, requires binary input not JSON strings")
     }

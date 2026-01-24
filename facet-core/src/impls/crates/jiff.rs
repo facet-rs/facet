@@ -1,7 +1,10 @@
 #![cfg(feature = "jiff02")]
 
 use alloc::string::String;
-use jiff::{Timestamp, Zoned, civil::DateTime};
+use jiff::{
+    Timestamp, Zoned,
+    civil::{Date, DateTime, Time},
+};
 
 use crate::{
     Def, Facet, OxPtrConst, OxPtrUninit, ParseError, PtrConst, Shape, ShapeBuilder, TryFromOutcome,
@@ -248,11 +251,174 @@ unsafe impl Facet<'_> for DateTime {
     };
 }
 
+// ============================================================================
+// Date
+// ============================================================================
+
+const DATE_ERROR: &str = "could not parse civil date";
+
+/// Display for Date
+unsafe fn date_display(
+    source: OxPtrConst,
+    f: &mut core::fmt::Formatter<'_>,
+) -> Option<core::fmt::Result> {
+    unsafe {
+        let date = source.get::<Date>();
+        Some(write!(f, "{date}"))
+    }
+}
+
+/// Parse for Date
+unsafe fn date_parse(s: &str, target: OxPtrUninit) -> Option<Result<(), ParseError>> {
+    let parsed = s
+        .parse::<Date>()
+        .map_err(|_| ParseError::from_str(DATE_ERROR));
+    Some(match parsed {
+        Ok(val) => unsafe {
+            target.put(val);
+            Ok(())
+        },
+        Err(e) => Err(e),
+    })
+}
+
+/// TryFrom for Date (from String)
+unsafe fn date_try_from(
+    target: OxPtrUninit,
+    src_shape: &'static Shape,
+    src: PtrConst,
+) -> TryFromOutcome {
+    if src_shape.id == <String as Facet>::SHAPE.id {
+        unsafe {
+            let source_str = src.read::<String>();
+            match source_str.parse::<Date>() {
+                Ok(val) => {
+                    target.put(val);
+                    TryFromOutcome::Converted
+                }
+                Err(_) => TryFromOutcome::Failed(DATE_ERROR.into()),
+            }
+        }
+    } else {
+        TryFromOutcome::Unsupported
+    }
+}
+
+unsafe fn date_partial_eq(a: OxPtrConst, b: OxPtrConst) -> Option<bool> {
+    unsafe {
+        let a = a.get::<Date>();
+        let b = b.get::<Date>();
+        Some(a == b)
+    }
+}
+
+unsafe impl Facet<'_> for Date {
+    const SHAPE: &'static Shape = &const {
+        const VTABLE: VTableIndirect = VTableIndirect {
+            display: Some(date_display),
+            parse: Some(date_parse),
+            try_from: Some(date_try_from),
+            partial_eq: Some(date_partial_eq),
+            ..VTableIndirect::EMPTY
+        };
+
+        ShapeBuilder::for_sized::<Date>("Date")
+            .module_path("jiff")
+            .ty(Type::User(UserType::Opaque))
+            .def(Def::Scalar)
+            .vtable_indirect(&VTABLE)
+            .build()
+    };
+}
+
+// ============================================================================
+// Time
+// ============================================================================
+
+const TIME_ERROR: &str = "could not parse civil time";
+
+/// Display for Time
+unsafe fn time_display(
+    source: OxPtrConst,
+    f: &mut core::fmt::Formatter<'_>,
+) -> Option<core::fmt::Result> {
+    unsafe {
+        let time = source.get::<Time>();
+        Some(write!(f, "{time}"))
+    }
+}
+
+/// Parse for Time
+unsafe fn time_parse(s: &str, target: OxPtrUninit) -> Option<Result<(), ParseError>> {
+    let parsed = s
+        .parse::<Time>()
+        .map_err(|_| ParseError::from_str(TIME_ERROR));
+    Some(match parsed {
+        Ok(val) => unsafe {
+            target.put(val);
+            Ok(())
+        },
+        Err(e) => Err(e),
+    })
+}
+
+/// TryFrom for Time (from String)
+unsafe fn time_try_from(
+    target: OxPtrUninit,
+    src_shape: &'static Shape,
+    src: PtrConst,
+) -> TryFromOutcome {
+    if src_shape.id == <String as Facet>::SHAPE.id {
+        unsafe {
+            let source_str = src.read::<String>();
+            match source_str.parse::<Time>() {
+                Ok(val) => {
+                    target.put(val);
+                    TryFromOutcome::Converted
+                }
+                Err(_) => TryFromOutcome::Failed(TIME_ERROR.into()),
+            }
+        }
+    } else {
+        TryFromOutcome::Unsupported
+    }
+}
+
+unsafe fn time_partial_eq(a: OxPtrConst, b: OxPtrConst) -> Option<bool> {
+    unsafe {
+        let a = a.get::<Time>();
+        let b = b.get::<Time>();
+        Some(a == b)
+    }
+}
+
+unsafe impl Facet<'_> for Time {
+    const SHAPE: &'static Shape = &const {
+        const VTABLE: VTableIndirect = VTableIndirect {
+            display: Some(time_display),
+            parse: Some(time_parse),
+            try_from: Some(time_try_from),
+            partial_eq: Some(time_partial_eq),
+            ..VTableIndirect::EMPTY
+        };
+
+        ShapeBuilder::for_sized::<Time>("Time")
+            .module_path("jiff")
+            .ty(Type::User(UserType::Opaque))
+            .def(Def::Scalar)
+            .vtable_indirect(&VTABLE)
+            .build()
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use core::fmt;
 
-    use jiff::{Timestamp, civil::DateTime};
+    use jiff::{
+        Timestamp,
+        civil::{Date, DateTime, Time},
+    };
 
     use crate::{Facet, PtrConst};
 
@@ -363,6 +529,69 @@ mod tests {
         // Deallocate the heap allocation to avoid memory leaks under Miri
         unsafe {
             DateTime::SHAPE.deallocate_uninit(target).unwrap();
+        }
+    }
+
+    #[test]
+    fn parse_date() {
+        facet_testhelpers::setup();
+
+        let target = Date::SHAPE.allocate().unwrap();
+        unsafe {
+            Date::SHAPE
+                .call_parse("2024-06-19", target)
+                .unwrap()
+                .unwrap();
+        }
+        let date: Date = unsafe { target.assume_init().read() };
+        assert_eq!(date, "2024-06-19".parse().unwrap());
+
+        {
+            struct DisplayWrapper(PtrConst);
+
+            impl fmt::Display for DisplayWrapper {
+                fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                    unsafe { Date::SHAPE.call_display(self.0, f).unwrap() }
+                }
+            }
+
+            let s = format!("{}", DisplayWrapper(PtrConst::new(&date as *const Date)));
+            assert_eq!(s, "2024-06-19");
+        }
+
+        // Deallocate the heap allocation to avoid memory leaks under Miri
+        unsafe {
+            Date::SHAPE.deallocate_uninit(target).unwrap();
+        }
+    }
+
+    #[test]
+    fn parse_time() {
+        facet_testhelpers::setup();
+
+        let target = Time::SHAPE.allocate().unwrap();
+        unsafe {
+            Time::SHAPE.call_parse("15:22:45", target).unwrap().unwrap();
+        }
+        let time: Time = unsafe { target.assume_init().read() };
+        assert_eq!(time, "15:22:45".parse().unwrap());
+
+        {
+            struct DisplayWrapper(PtrConst);
+
+            impl fmt::Display for DisplayWrapper {
+                fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                    unsafe { Time::SHAPE.call_display(self.0, f).unwrap() }
+                }
+            }
+
+            let s = format!("{}", DisplayWrapper(PtrConst::new(&time as *const Time)));
+            assert_eq!(s, "15:22:45");
+        }
+
+        // Deallocate the heap allocation to avoid memory leaks under Miri
+        unsafe {
+            Time::SHAPE.deallocate_uninit(target).unwrap();
         }
     }
 }

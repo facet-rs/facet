@@ -748,6 +748,14 @@ impl FormatSuite for JsonSlice {
         CaseSpec::from_str(r#"{"created_at":"2024-06-19T15:22:45"}"#)
     }
 
+    fn jiff_civil_date() -> CaseSpec {
+        CaseSpec::from_str(r#"{"date":"2024-06-19"}"#)
+    }
+
+    fn jiff_civil_time() -> CaseSpec {
+        CaseSpec::from_str(r#"{"time":"15:22:45"}"#)
+    }
+
     fn chrono_datetime_utc() -> CaseSpec {
         CaseSpec::from_str(r#"{"created_at":"2023-01-15T12:34:56Z"}"#)
     }
@@ -833,7 +841,9 @@ impl FormatSuite for JsonSlice {
     fn iddqd_tri_hash_map() -> CaseSpec {
         // TriHashMap serializes as array of values (Set semantics)
         // Single element ensures deterministic order for roundtrip
-        CaseSpec::from_str(r#"{"items":[{"id":1,"code":"A001","email":"alice@example.com","name":"Alice"}]}"#)
+        CaseSpec::from_str(
+            r#"{"items":[{"id":1,"code":"A001","email":"alice@example.com","name":"Alice"}]}"#,
+        )
     }
 
     // ── Dynamic value cases ──
