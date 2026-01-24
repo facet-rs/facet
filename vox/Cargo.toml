@@ -1,34 +1,34 @@
 [workspace]
 resolver = "2"
 members = [
-    "rust/roam",
-    "rust/roam-wire",
-    "rust/roam-frame",
-    "rust/roam-session",
-    "rust/roam-hash",
-    "rust/roam-schema",
-    "rust/roam-shm",
-    "rust/roam-tracing",
-    "rust/roam-telemetry",
-    "rust/roam-codegen",
-    "rust/roam-macros",
-    "rust/roam-macros-parse",
-    "rust/roam-stream",
-    "rust/roam-local",
-    "rust/roam-fdpass",
-    "rust/roam-websocket",
-    "rust/roam-http-bridge",
-    "rust/subject-rust",
-    "rust/shm-primitives",
-    "rust/ur-taking-me-with-you",
-    "rust/roam-task-local",
-    # Compliance suite
-    "spec/spec-proto",
-    "spec/spec-tests",
-    # xtask
-    "xtask",
-    # Peer server for TypeScript browser tests
-    "typescript/peer-server",
+  "rust/roam",
+  "rust/roam-wire",
+  "rust/roam-frame",
+  "rust/roam-session",
+  "rust/roam-hash",
+  "rust/roam-schema",
+  "rust/roam-shm",
+  "rust/roam-tracing",
+  "rust/roam-telemetry",
+  "rust/roam-codegen",
+  "rust/roam-macros",
+  "rust/roam-macros-parse",
+  "rust/roam-stream",
+  "rust/roam-local",
+  "rust/roam-fdpass",
+  "rust/roam-websocket",
+  "rust/roam-http-bridge",
+  "rust/subject-rust",
+  "rust/shm-primitives",
+  "rust/ur-taking-me-with-you",
+  "rust/roam-task-local",
+  # Compliance suite
+  "spec/spec-proto",
+  "spec/spec-tests",
+  # xtask
+  "xtask",
+  # Peer server for TypeScript browser tests
+  "typescript/peer-server",
 ]
 exclude = ["fuzz"]
 
@@ -66,9 +66,14 @@ tokio-tungstenite = "0.26"
 libc = "0.2.180"
 
 # facet ecosystem
-facet = { version = "0.43.0", git = "https://github.com/facet-rs/facet", branch = "main", features = ["camino", "reflect"] }
+facet = { version = "0.43.0", git = "https://github.com/facet-rs/facet", branch = "main", features = [
+  "camino",
+  "reflect",
+] }
 facet-core = { version = "0.43.0", git = "https://github.com/facet-rs/facet", branch = "main" }
-facet-postcard = { version = "0.43.0", git = "https://github.com/facet-rs/facet", branch = "main", features = ["camino"] }
+facet-postcard = { version = "0.43.0", git = "https://github.com/facet-rs/facet", branch = "main", features = [
+  "camino",
+] }
 facet-reflect = { version = "0.43.0", git = "https://github.com/facet-rs/facet", branch = "main" }
 facet-format = { version = "0.43.0", git = "https://github.com/facet-rs/facet", branch = "main" }
 facet-pretty = { version = "0.43.0", git = "https://github.com/facet-rs/facet", branch = "main" }
@@ -90,9 +95,6 @@ gloo-timers = { version = "0.3", features = ["futures"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 static_assertions = "1.1.0"
-
-# Test utilities
-ctor = "0.4"
 
 [profile.release]
 debug = 1

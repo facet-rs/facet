@@ -31,8 +31,14 @@ spec-proto = { path = "../spec-proto" }
 cobs.workspace = true
 facet.workspace = true
 facet-postcard.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread", "net", "io-util", "time", "process", "macros"] }
-ctor.workspace = true
+tokio = { workspace = true, features = [
+  "rt-multi-thread",
+  "net",
+  "io-util",
+  "time",
+  "process",
+  "macros",
+] }
 
 [dev-dependencies]
 roam-hash = { path = "../../rust/roam-hash" }

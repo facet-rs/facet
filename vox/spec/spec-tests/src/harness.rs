@@ -1,4 +1,5 @@
 use std::process::Stdio;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
@@ -11,15 +12,15 @@ use tokio::process::{Child, Command};
 /// Enable wire-level message logging for debugging.
 /// Set ROAM_WIRE_SPY=1 to enable.
 static WIRE_SPY_ENABLED: AtomicBool = AtomicBool::new(false);
-
-#[ctor::ctor]
-fn init_wire_spy() {
-    if std::env::var("ROAM_WIRE_SPY").is_ok() {
-        WIRE_SPY_ENABLED.store(true, Ordering::Relaxed);
-    }
-}
+static WIRE_SPY_INIT: OnceLock<()> = OnceLock::new();
 
 fn wire_spy_enabled() -> bool {
+    WIRE_SPY_INIT.get_or_init(|| {
+        if std::env::var("ROAM_WIRE_SPY").is_ok() {
+            WIRE_SPY_ENABLED.store(true, Ordering::Relaxed);
+        }
+    });
+
     WIRE_SPY_ENABLED.load(Ordering::Relaxed)
 }
 

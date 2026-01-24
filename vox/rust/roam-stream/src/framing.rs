@@ -15,6 +15,7 @@
 //! and two passes over the data. Should switch to a streaming encoder that does a single pass.
 
 use std::io;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
@@ -28,14 +29,15 @@ use roam_session::MessageTransport;
 /// Set ROAM_WIRE_SPY=1 to enable.
 static WIRE_SPY_ENABLED: AtomicBool = AtomicBool::new(false);
 
-#[ctor::ctor]
-fn init_wire_spy() {
-    if std::env::var("ROAM_WIRE_SPY").is_ok() {
-        WIRE_SPY_ENABLED.store(true, Ordering::Relaxed);
-    }
-}
+static WIRE_SPY_INIT: OnceLock<()> = OnceLock::new();
 
 fn wire_spy_enabled() -> bool {
+    WIRE_SPY_INIT.get_or_init(|| {
+        if std::env::var("ROAM_WIRE_SPY").is_ok() {
+            WIRE_SPY_ENABLED.store(true, Ordering::Relaxed);
+        }
+    });
+
     WIRE_SPY_ENABLED.load(Ordering::Relaxed)
 }
 
