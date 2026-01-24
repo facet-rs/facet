@@ -870,3 +870,231 @@ async fn test_optional_time() {
     assert_eq!(without_timestamp.id, 2);
     assert_eq!(without_timestamp.modified_at, None);
 }
+
+// =============================================================================
+// JSONB Tests
+// =============================================================================
+
+#[cfg(feature = "jsonb")]
+mod jsonb_tests {
+    use super::*;
+    use facet_tokio_postgres::Jsonb;
+
+    #[tokio::test]
+    async fn test_jsonb_typed_struct() {
+        let pg = setup_postgres().await;
+
+        pg.client
+            .execute(
+                "CREATE TEMP TABLE products (
+                    id INTEGER PRIMARY KEY,
+                    metadata JSONB NOT NULL
+                )",
+                &[],
+            )
+            .await
+            .unwrap();
+
+        pg.client
+            .execute(
+                r#"INSERT INTO products (id, metadata) VALUES
+                    (1, '{"name": "Widget", "price": 29, "in_stock": true}')"#,
+                &[],
+            )
+            .await
+            .unwrap();
+
+        #[derive(Debug, Facet)]
+        struct ProductMetadata {
+            name: String,
+            price: i64,
+            in_stock: bool,
+        }
+
+        #[derive(Debug, Facet)]
+        struct Product {
+            id: i32,
+            metadata: Jsonb<ProductMetadata>,
+        }
+
+        let row = pg
+            .client
+            .query_one("SELECT id, metadata FROM products WHERE id = 1", &[])
+            .await
+            .unwrap();
+
+        let product: Product = from_row(&row).unwrap();
+        assert_eq!(product.id, 1);
+        assert_eq!(product.metadata.name, "Widget");
+        assert_eq!(product.metadata.price, 29);
+        assert!(product.metadata.in_stock);
+    }
+
+    #[tokio::test]
+    async fn test_jsonb_optional() {
+        let pg = setup_postgres().await;
+
+        pg.client
+            .execute(
+                "CREATE TEMP TABLE events (
+                    id INTEGER PRIMARY KEY,
+                    payload JSONB
+                )",
+                &[],
+            )
+            .await
+            .unwrap();
+
+        pg.client
+            .execute(
+                r#"INSERT INTO events (id, payload) VALUES
+                    (1, '{"type": "click", "count": 5}'),
+                    (2, NULL)"#,
+                &[],
+            )
+            .await
+            .unwrap();
+
+        #[derive(Debug, Facet)]
+        struct EventPayload {
+            r#type: String,
+            count: i64,
+        }
+
+        #[derive(Debug, Facet)]
+        struct Event {
+            id: i32,
+            payload: Option<Jsonb<EventPayload>>,
+        }
+
+        let rows = pg
+            .client
+            .query("SELECT id, payload FROM events ORDER BY id", &[])
+            .await
+            .unwrap();
+
+        let with_payload: Event = from_row(&rows[0]).unwrap();
+        assert_eq!(with_payload.id, 1);
+        assert!(with_payload.payload.is_some());
+        let payload = with_payload.payload.unwrap();
+        assert_eq!(payload.r#type, "click");
+        assert_eq!(payload.count, 5);
+
+        let without_payload: Event = from_row(&rows[1]).unwrap();
+        assert_eq!(without_payload.id, 2);
+        assert!(without_payload.payload.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_jsonb_nested() {
+        let pg = setup_postgres().await;
+
+        pg.client
+            .execute(
+                "CREATE TEMP TABLE configs (
+                    id INTEGER PRIMARY KEY,
+                    settings JSONB NOT NULL
+                )",
+                &[],
+            )
+            .await
+            .unwrap();
+
+        pg.client
+            .execute(
+                r#"INSERT INTO configs (id, settings) VALUES
+                    (1, '{"server": {"host": "localhost", "port": 8080}, "debug": false}')"#,
+                &[],
+            )
+            .await
+            .unwrap();
+
+        #[derive(Debug, Facet)]
+        struct ServerConfig {
+            host: String,
+            port: i64,
+        }
+
+        #[derive(Debug, Facet)]
+        struct Settings {
+            server: ServerConfig,
+            debug: bool,
+        }
+
+        #[derive(Debug, Facet)]
+        struct Config {
+            id: i32,
+            settings: Jsonb<Settings>,
+        }
+
+        let row = pg
+            .client
+            .query_one("SELECT id, settings FROM configs WHERE id = 1", &[])
+            .await
+            .unwrap();
+
+        let config: Config = from_row(&row).unwrap();
+        assert_eq!(config.id, 1);
+        assert_eq!(config.settings.server.host, "localhost");
+        assert_eq!(config.settings.server.port, 8080);
+        assert!(!config.settings.debug);
+    }
+
+    #[tokio::test]
+    async fn test_jsonb_with_arrays() {
+        let pg = setup_postgres().await;
+
+        pg.client
+            .execute(
+                "CREATE TEMP TABLE orders (
+                    id INTEGER PRIMARY KEY,
+                    items JSONB NOT NULL
+                )",
+                &[],
+            )
+            .await
+            .unwrap();
+
+        pg.client
+            .execute(
+                r#"INSERT INTO orders (id, items) VALUES
+                    (1, '{"order_id": "ORD-123", "line_items": [{"sku": "A1", "qty": 2}, {"sku": "B2", "qty": 1}]}')"#,
+                &[],
+            )
+            .await
+            .unwrap();
+
+        #[derive(Debug, Facet)]
+        struct LineItem {
+            sku: String,
+            qty: i64,
+        }
+
+        #[derive(Debug, Facet)]
+        struct OrderData {
+            order_id: String,
+            line_items: Vec<LineItem>,
+        }
+
+        #[derive(Debug, Facet)]
+        struct Order {
+            id: i32,
+            items: Jsonb<OrderData>,
+        }
+
+        let row = pg
+            .client
+            .query_one("SELECT id, items FROM orders WHERE id = 1", &[])
+            .await
+            .unwrap();
+
+        let order: Order = from_row(&row).unwrap();
+        assert_eq!(order.id, 1);
+        assert_eq!(order.items.order_id, "ORD-123");
+        assert_eq!(order.items.line_items.len(), 2);
+        assert_eq!(order.items.line_items[0].sku, "A1");
+        assert_eq!(order.items.line_items[0].qty, 2);
+        assert_eq!(order.items.line_items[1].sku, "B2");
+        assert_eq!(order.items.line_items[1].qty, 1);
+    }
+}

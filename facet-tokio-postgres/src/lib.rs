@@ -21,6 +21,13 @@
 //! let user: User = from_row(&row)?;
 //! ```
 
+#[cfg(feature = "jsonb")]
+mod jsonb;
+#[cfg(feature = "jsonb")]
+pub use jsonb::Jsonb;
+#[cfg(feature = "jsonb")]
+use jsonb::{OptionalRawJsonb, RawJsonb};
+
 extern crate alloc;
 
 use alloc::string::{String, ToString};
@@ -61,6 +68,14 @@ pub enum Error {
         /// The shape of the field
         shape: &'static Shape,
     },
+    /// JSONB deserialization error
+    #[cfg(feature = "jsonb")]
+    Jsonb {
+        /// Name of the column
+        column: String,
+        /// Error message
+        message: String,
+    },
 }
 
 impl core::fmt::Display for Error {
@@ -81,6 +96,10 @@ impl core::fmt::Display for Error {
             }
             Error::UnsupportedType { field, shape } => {
                 write!(f, "unsupported type for field '{field}': {shape}")
+            }
+            #[cfg(feature = "jsonb")]
+            Error::Jsonb { column, message } => {
+                write!(f, "JSONB error for column '{column}': {message}")
             }
         }
     }
@@ -126,19 +145,19 @@ pub type Result<T> = core::result::Result<T, Error>;
 /// let row = client.query_one("SELECT id, name, active FROM users LIMIT 1", &[]).await?;
 /// let user: User = from_row(&row)?;
 /// ```
-pub fn from_row<'facet, T: Facet<'facet>>(row: &Row) -> Result<T> {
-    let partial = Partial::alloc::<T>()?;
+pub fn from_row<T: Facet<'static>>(row: &Row) -> Result<T> {
+    let partial = Partial::alloc_owned::<T>()?;
     let partial = deserialize_row_into(row, partial, T::SHAPE)?;
     let heap_value = partial.build()?;
     Ok(heap_value.materialize()?)
 }
 
 /// Internal function to deserialize a row into a Partial.
-fn deserialize_row_into<'p>(
+fn deserialize_row_into(
     row: &Row,
-    partial: Partial<'p>,
+    partial: Partial<'static, false>,
     shape: &'static Shape,
-) -> Result<Partial<'p>> {
+) -> Result<Partial<'static, false>> {
     let struct_def = match &shape.ty {
         Type::User(UserType::Struct(s)) if s.kind == StructKind::Struct => s,
         _ => {
@@ -179,13 +198,13 @@ fn deserialize_row_into<'p>(
 }
 
 /// Deserialize a single column value into a Partial.
-fn deserialize_column<'p>(
+fn deserialize_column(
     row: &Row,
     column_idx: usize,
     column_name: &str,
-    partial: Partial<'p>,
+    partial: Partial<'static, false>,
     shape: &'static Shape,
-) -> Result<Partial<'p>> {
+) -> Result<Partial<'static, false>> {
     use facet_core::{Def, NumericType, PrimitiveType};
 
     let mut partial = partial;
@@ -350,6 +369,12 @@ fn deserialize_column<'p>(
             partial = partial.set(val)?;
         }
 
+        // JSONB columns via Jsonb<T> wrapper
+        #[cfg(feature = "jsonb")]
+        _ if shape.decl_id == Jsonb::<()>::SHAPE.decl_id => {
+            partial = deserialize_jsonb_column(row, column_idx, column_name, partial, shape)?;
+        }
+
         // Fallback: try to use parse if the type supports it
         _ => {
             if shape.vtable.has_parse() {
@@ -369,13 +394,13 @@ fn deserialize_column<'p>(
 }
 
 /// Deserialize an Option column.
-fn deserialize_option_column<'p>(
+fn deserialize_option_column(
     row: &Row,
     column_idx: usize,
     column_name: &str,
-    partial: Partial<'p>,
+    partial: Partial<'static, false>,
     shape: &'static Shape,
-) -> Result<Partial<'p>> {
+) -> Result<Partial<'static, false>> {
     use facet_core::{NumericType, PrimitiveType};
 
     let inner_shape = shape.inner.expect("Option must have inner shape");
@@ -496,6 +521,24 @@ fn deserialize_option_column<'p>(
         {
             try_option!(jiff::civil::DateTime)
         }
+        // Option<Jsonb<T>>
+        #[cfg(feature = "jsonb")]
+        _ if inner_shape.decl_id == Jsonb::<()>::SHAPE.decl_id => {
+            // Read JSONB as optional raw bytes using our custom OptionalRawJsonb type
+            let val: OptionalRawJsonb = get_column(row, column_idx, column_name, shape)?;
+            match val.0 {
+                Some(raw_bytes) => {
+                    partial = partial.begin_some()?;
+                    partial =
+                        deserialize_jsonb_bytes(&raw_bytes, partial, inner_shape, column_name)?;
+                    partial = partial.end()?;
+                }
+                None => {
+                    partial = partial.set_default()?;
+                }
+            }
+            return Ok(partial);
+        }
         _ => {}
     }
 
@@ -531,4 +574,58 @@ where
         expected: shape,
         source: e,
     })
+}
+
+/// Deserialize a JSONB column into a Jsonb<T> wrapper.
+#[cfg(feature = "jsonb")]
+fn deserialize_jsonb_column(
+    row: &Row,
+    column_idx: usize,
+    column_name: &str,
+    partial: Partial<'static, false>,
+    shape: &'static Shape,
+) -> Result<Partial<'static, false>> {
+    // Read JSONB as raw bytes from PostgreSQL using our custom RawJsonb type
+    let raw_jsonb: RawJsonb = get_column(row, column_idx, column_name, shape)?;
+    deserialize_jsonb_bytes(&raw_jsonb.0, partial, shape, column_name)
+}
+
+/// Deserialize JSONB bytes into a Jsonb<T> wrapper.
+#[cfg(feature = "jsonb")]
+fn deserialize_jsonb_bytes(
+    raw_bytes: &[u8],
+    mut partial: Partial<'static, false>,
+    _shape: &'static Shape,
+    column_name: &str,
+) -> Result<Partial<'static, false>> {
+    if raw_bytes.is_empty() {
+        return Err(Error::Jsonb {
+            column: column_name.to_string(),
+            message: "empty JSONB data".to_string(),
+        });
+    }
+
+    // JSONB wire format: 1 byte version (0x01) + JSON text
+    if raw_bytes[0] != 1 {
+        return Err(Error::Jsonb {
+            column: column_name.to_string(),
+            message: format!("unsupported JSONB version: {}", raw_bytes[0]),
+        });
+    }
+
+    // Skip version byte
+    let json_bytes = &raw_bytes[1..];
+
+    // Begin the Jsonb wrapper's inner field (field 0)
+    partial = partial.begin_nth_field(0)?;
+
+    // Use facet-json to deserialize directly into the inner type
+    partial = facet_json::from_slice_into(json_bytes, partial).map_err(|e| Error::Jsonb {
+        column: column_name.to_string(),
+        message: format!("{e}"),
+    })?;
+
+    partial = partial.end()?;
+
+    Ok(partial)
 }

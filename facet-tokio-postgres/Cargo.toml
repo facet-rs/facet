@@ -14,7 +14,9 @@ homepage = "https://facet.rs"
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
+facet = { workspace = true, optional = true }
 facet-core = { workspace = true }
+facet-json = { workspace = true, optional = true }
 facet-reflect = { workspace = true }
 tokio-postgres = { workspace = true }
 postgres-types = { workspace = true }
@@ -23,6 +25,7 @@ jiff = { workspace = true, optional = true }
 
 [dev-dependencies]
 facet = { workspace = true }
+facet-json = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 testcontainers = { workspace = true }
 testcontainers-modules = { workspace = true }
@@ -46,3 +49,5 @@ chrono = ["facet-core/chrono"]
 time = ["facet-core/time"]
 # Enable rust_decimal::Decimal support for NUMERIC columns
 rust_decimal = ["dep:rust_decimal", "facet-core/rust_decimal"]
+# Enable JSONB support with Jsonb<T> wrapper type
+jsonb = ["dep:facet", "dep:facet-json"]
