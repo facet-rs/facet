@@ -87,6 +87,10 @@ struct ServerConfig {
 
     /// Enable TLS.
     tls_enabled: bool,
+
+    /// API key for authentication (sensitive).
+    #[facet(sensitive)]
+    api_key: Option<String>,
 }
 
 /// Database settings.
@@ -172,6 +176,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Loaded configuration:");
     println!("{}", args.settings.pretty());
     println!();
+
+    // Demonstrate that sensitive fields are redacted
+    if args.settings.server.api_key.is_some() {
+        println!("🔒 API key is set (value hidden due to #[facet(sensitive)])");
+        println!();
+    }
 
     println!("✅ Layered configuration is now working!");
     println!();

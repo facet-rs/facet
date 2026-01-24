@@ -53,6 +53,10 @@ where
 /// Walk the shape and insert default values for missing fields in the ConfigValue tree.
 /// This allows proper provenance tracking (defaults are marked as coming from Default).
 fn fill_defaults_from_shape(value: &ConfigValue, shape: &'static Shape) -> ConfigValue {
+    tracing::debug!(
+        shape = shape.type_identifier,
+        "fill_defaults_from_shape: entering"
+    );
     match value {
         ConfigValue::Object(sourced) => {
             // Get struct fields from shape
@@ -68,6 +72,12 @@ fn fill_defaults_from_shape(value: &ConfigValue, shape: &'static Shape) -> Confi
                 if !new_map.contains_key(field.name) {
                     // Field is missing - insert a default
                     if let Some(default_value) = get_default_config_value(field) {
+                        tracing::debug!(
+                            field = field.name,
+                            shape = shape.type_identifier,
+                            ?default_value,
+                            "fill_defaults_from_shape: inserting default for missing field"
+                        );
                         new_map.insert(field.name.to_string(), default_value);
                     }
                 }
@@ -81,11 +91,16 @@ fn fill_defaults_from_shape(value: &ConfigValue, shape: &'static Shape) -> Confi
                 }
             }
 
-            ConfigValue::Object(Sourced {
+            let result = ConfigValue::Object(Sourced {
                 value: new_map,
                 span: sourced.span,
                 provenance: sourced.provenance.clone(),
-            })
+            });
+            tracing::debug!(
+                shape = shape.type_identifier,
+                "fill_defaults_from_shape: completed Object"
+            );
+            result
         }
         ConfigValue::Array(sourced) => {
             // Recursively process array items
