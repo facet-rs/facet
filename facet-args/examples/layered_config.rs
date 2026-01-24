@@ -168,48 +168,53 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("=== Layered Configuration Example ===\n");
 
-    // Use layered config parser that detects args::config fields
     let args_vec: Vec<String> = std::env::args().skip(1).collect();
     let args_str: Vec<&str> = args_vec.iter().map(|s| s.as_str()).collect();
 
-    // Check if --config was specified
-    let config_file = args_str
+    // Check if --config was explicitly provided
+    let explicit_config = args_str
         .iter()
-        .enumerate()
-        .find(|(_, arg)| **arg == "--config")
-        .and_then(|(i, _)| args_str.get(i + 1).copied())
+        .position(|arg| *arg == "--config")
+        .and_then(|i| args_str.get(i + 1).map(|s| s.to_string()))
         .or_else(|| {
             args_str
                 .iter()
                 .find(|arg| arg.starts_with("--config="))
-                .and_then(|arg| arg.strip_prefix("--config="))
+                .and_then(|arg| arg.strip_prefix("--config=").map(|s| s.to_string()))
         });
 
-    if let Some(file) = config_file {
-        println!("📄 Loading configuration from: {}", file);
-        println!();
-    }
+    // Use builder API to demonstrate default config path resolution
+    use facet_args::builder;
+    use facet_args::config_format::JsonFormat;
 
-    let args: Args = facet_args::from_slice_layered(&args_str)?;
+    let result = builder()
+        .cli(|cli| cli.args(args_str.iter().map(|s| s.to_string())))
+        .env(|env| env.prefix("MYAPP"))
+        .file(|file| {
+            let mut file_builder = file.format(JsonFormat).default_paths(&[
+                "./config.json",
+                "~/.config/myapp/config.json",
+                "facet-args/examples/config.json",
+                "/etc/myapp/config.json",
+            ]);
+            if let Some(path) = explicit_config {
+                file_builder = file_builder.path(path);
+            }
+            file_builder
+        })
+        .build_traced()?;
 
-    if args.version {
-        println!("myapp v1.0.0");
+    // Check if --dump-config was requested
+    if args_vec.iter().any(|arg| arg == "--dump-config") {
+        facet_args::dump_config_from_result::<Args>(&result);
         return Ok(());
     }
 
-    if args.dump_config {
-        println!("📊 Final Merged Configuration");
-        println!("================================");
-        println!();
-        println!("{}", args.settings.pretty());
-        println!();
-        println!("Note: Provenance tracking shows where each value came from:");
-        println!("  - CLI arguments (highest priority)");
-        println!("  - Environment variables (MYAPP__*)");
-        println!("  - Config file (--config <path>)");
-        println!("  - Default values (lowest priority)");
-        println!();
-        println!("Use RUST_LOG=debug to see detailed provenance information.");
+    // Deserialize the config value into Args
+    let args: Args = facet_args::config_value_parser::from_config_value(&result.value)?;
+
+    if args.version {
+        println!("myapp v1.0.0");
         return Ok(());
     }
 

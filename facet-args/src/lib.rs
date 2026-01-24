@@ -315,6 +315,14 @@ impl DumpContext {
     }
 }
 
+/// Dump the ConfigValue tree with provenance information from a ConfigResult.
+///
+/// This is useful when using the builder API directly and want to show
+/// the config dump with file resolution info.
+pub fn dump_config_from_result<T: Facet<'static>>(result: &provenance::ConfigResult<ConfigValue>) {
+    dump_config_with_provenance::<T>(&result.value, &result.file_resolution);
+}
+
 /// Dump the ConfigValue tree with provenance information.
 fn dump_config_with_provenance<T: Facet<'static>>(
     value: &ConfigValue,
