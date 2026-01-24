@@ -170,7 +170,7 @@ ON CONFLICT (table_name) DO UPDATE SET
             let is_indexed = table
                 .indices
                 .iter()
-                .any(|idx| idx.columns.len() == 1 && idx.columns[0] == col.name);
+                .any(|idx| idx.columns.len() == 1 && idx.columns[0].name == col.name);
 
             sql.push_str(&format!(
                 r#"
@@ -220,7 +220,10 @@ ON CONFLICT (table_name, column_name) DO UPDATE SET
                 "ARRAY[{}]",
                 idx.columns
                     .iter()
-                    .map(|c| format!("'{}'", c.replace('\'', "''")))
+                    .map(|c| {
+                        let col_spec = format!("{}{}", c.name, c.order.to_sql());
+                        format!("'{}'", col_spec.replace('\'', "''"))
+                    })
                     .collect::<Vec<_>>()
                     .join(", ")
             );

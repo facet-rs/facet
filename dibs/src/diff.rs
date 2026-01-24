@@ -257,7 +257,11 @@ impl Change {
             }
             Change::AddIndex(idx) => {
                 let unique = if idx.unique { "UNIQUE " } else { "" };
-                let quoted_cols: Vec<_> = idx.columns.iter().map(|c| quote_ident(c)).collect();
+                let quoted_cols: Vec<_> = idx
+                    .columns
+                    .iter()
+                    .map(|c| format!("{}{}", quote_ident(&c.name), c.order.to_sql()))
+                    .collect();
                 let where_clause = idx
                     .where_clause
                     .as_ref()
@@ -348,12 +352,17 @@ impl std::fmt::Display for Change {
                     .as_ref()
                     .map(|w| format!(" WHERE {}", w))
                     .unwrap_or_default();
+                let cols: Vec<String> = idx
+                    .columns
+                    .iter()
+                    .map(|c| format!("{}{}", c.name, c.order.to_sql()))
+                    .collect();
                 write!(
                     f,
                     "+ {}INDEX {} ({}){}",
                     unique,
                     idx.name,
-                    idx.columns.join(", "),
+                    cols.join(", "),
                     where_clause
                 )
             }
@@ -998,10 +1007,14 @@ fn diff_foreign_keys(
 fn diff_indices(desired: &[Index], current: &[Index]) -> Vec<Change> {
     let mut changes = Vec::new();
 
-    // Compare by columns and where_clause (not name, since names may differ)
+    // Compare by columns (with order), uniqueness, and where_clause (not name, since names may differ)
+    // Note: column order matters for indexes, so we don't sort them
     let idx_key = |idx: &Index| -> String {
-        let mut cols = idx.columns.clone();
-        cols.sort();
+        let cols: Vec<String> = idx
+            .columns
+            .iter()
+            .map(|c| format!("{}{}", c.name, c.order.to_sql()))
+            .collect();
         let where_part = idx.where_clause.as_deref().unwrap_or("");
         format!(
             "{}:{}:{}",
@@ -1051,7 +1064,7 @@ impl std::fmt::Display for SchemaDiff {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::SourceLocation;
+    use crate::{IndexColumn, SourceLocation};
 
     fn make_column(name: &str, pg_type: PgType, nullable: bool) -> Column {
         Column {
@@ -2036,14 +2049,14 @@ mod tests {
         // Test that partial indexes (with WHERE clause) are detected correctly
         let desired = vec![Index {
             name: "uq_product_primary".to_string(),
-            columns: vec!["product_id".to_string()],
+            columns: vec![IndexColumn::new("product_id")],
             unique: true,
             where_clause: Some("is_primary = true".to_string()),
         }];
 
         let current = vec![Index {
             name: "idx_product_product_id".to_string(),
-            columns: vec!["product_id".to_string()],
+            columns: vec![IndexColumn::new("product_id")],
             unique: true,
             where_clause: None, // No WHERE clause - different index
         }];
@@ -2063,14 +2076,14 @@ mod tests {
         // Same partial index should produce no changes
         let desired = vec![Index {
             name: "uq_product_primary".to_string(),
-            columns: vec!["product_id".to_string()],
+            columns: vec![IndexColumn::new("product_id")],
             unique: true,
             where_clause: Some("is_primary = true".to_string()),
         }];
 
         let current = vec![Index {
             name: "uq_product_primary".to_string(),
-            columns: vec!["product_id".to_string()],
+            columns: vec![IndexColumn::new("product_id")],
             unique: true,
             where_clause: Some("is_primary = true".to_string()),
         }];
@@ -2083,7 +2096,7 @@ mod tests {
     fn test_partial_index_sql_generation() {
         let idx = Index {
             name: "uq_product_primary".to_string(),
-            columns: vec!["product_id".to_string()],
+            columns: vec![IndexColumn::new("product_id")],
             unique: true,
             where_clause: Some("is_primary = true".to_string()),
         };

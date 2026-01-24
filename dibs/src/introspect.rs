@@ -3,7 +3,9 @@
 //! This module queries `information_schema` and `pg_catalog` to build a [`Schema`]
 //! from the current state of a database.
 
-use crate::{Column, ForeignKey, Index, PgType, Result, Schema, SourceLocation, Table};
+use crate::{
+    Column, ForeignKey, Index, IndexColumn, PgType, Result, Schema, SourceLocation, Table,
+};
 use tokio_postgres::Client;
 
 impl Schema {
@@ -301,11 +303,15 @@ async fn introspect_indices(client: &Client, table_name: &str) -> Result<Vec<Ind
     Ok(indices)
 }
 
-/// Parse column names from an index definition.
-fn parse_index_columns(indexdef: &str) -> Vec<String> {
+/// Parse column names and sort orders from an index definition.
+///
+/// PostgreSQL index definitions include sort order like:
+/// - `(col1, col2 DESC)`
+/// - `(col1 ASC, col2 DESC)`
+fn parse_index_columns(indexdef: &str) -> Vec<IndexColumn> {
     // Find the part between the first ( and ) before any WHERE clause
-    // Example: "CREATE INDEX idx_foo ON public.foo USING btree (col1, col2) WHERE (cond)"
-    //          We want "(col1, col2)" not "(cond)"
+    // Example: "CREATE INDEX idx_foo ON public.foo USING btree (col1, col2 DESC) WHERE (cond)"
+    //          We want "(col1, col2 DESC)" not "(cond)"
     let indexdef_upper = indexdef.to_uppercase();
     let where_pos = indexdef_upper.find(" WHERE ");
     let search_str = if let Some(pos) = where_pos {
@@ -318,7 +324,7 @@ fn parse_index_columns(indexdef: &str) -> Vec<String> {
         && let Some(end) = search_str.rfind(')')
     {
         let cols_str = &search_str[start + 1..end];
-        return cols_str.split(',').map(|s| s.trim().to_string()).collect();
+        return cols_str.split(',').map(IndexColumn::parse).collect();
     }
     Vec::new()
 }
@@ -452,31 +458,61 @@ fn is_auto_generated(default: &Option<String>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::SortOrder;
 
     #[test]
     fn test_parse_index_columns() {
         assert_eq!(
             parse_index_columns("CREATE INDEX idx_users_name ON public.users USING btree (name)"),
-            vec!["name"]
+            vec![IndexColumn::new("name")]
         );
         assert_eq!(
             parse_index_columns(
                 "CREATE UNIQUE INDEX idx_users_email ON public.users USING btree (email)"
             ),
-            vec!["email"]
+            vec![IndexColumn::new("email")]
         );
         assert_eq!(
             parse_index_columns(
                 "CREATE INDEX idx_posts_author ON public.posts USING btree (author_id, created_at)"
             ),
-            vec!["author_id", "created_at"]
+            vec![
+                IndexColumn::new("author_id"),
+                IndexColumn::new("created_at")
+            ]
         );
         // Partial index - should still parse columns correctly
         assert_eq!(
             parse_index_columns(
                 "CREATE UNIQUE INDEX uq_product_primary ON public.product_category USING btree (product_id) WHERE (is_primary = true)"
             ),
-            vec!["product_id"]
+            vec![IndexColumn::new("product_id")]
+        );
+        // Test DESC ordering
+        assert_eq!(
+            parse_index_columns(
+                "CREATE INDEX idx_versions ON public.product_version USING btree (product_id, synced_at DESC)"
+            ),
+            vec![
+                IndexColumn::new("product_id"),
+                IndexColumn {
+                    name: "synced_at".to_string(),
+                    order: SortOrder::Desc
+                }
+            ]
+        );
+        // Test explicit ASC
+        assert_eq!(
+            parse_index_columns(
+                "CREATE INDEX idx_test ON public.test USING btree (col1 ASC, col2 DESC)"
+            ),
+            vec![
+                IndexColumn::new("col1"),
+                IndexColumn {
+                    name: "col2".to_string(),
+                    order: SortOrder::Desc
+                }
+            ]
         );
     }
 

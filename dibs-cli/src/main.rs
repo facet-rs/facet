@@ -261,7 +261,18 @@ fn schema_info_to_schema(info: dibs_proto::SchemaInfo) -> dibs::Schema {
                 .into_iter()
                 .map(|idx| dibs::Index {
                     name: idx.name,
-                    columns: idx.columns,
+                    columns: idx
+                        .columns
+                        .into_iter()
+                        .map(|c| dibs::IndexColumn {
+                            name: c.name,
+                            order: if c.order == "desc" {
+                                dibs::SortOrder::Desc
+                            } else {
+                                dibs::SortOrder::Asc
+                            },
+                        })
+                        .collect(),
                     unique: idx.unique,
                     where_clause: idx.where_clause,
                 })
@@ -318,12 +329,12 @@ fn print_schema_plain(schema: &dibs::Schema) {
 
         for idx in &table.indices {
             let unique = if idx.unique { " UNIQUE" } else { "" };
-            println!(
-                "  INDEX {} on ({}){}",
-                idx.name,
-                idx.columns.join(", "),
-                unique
-            );
+            let cols: Vec<String> = idx
+                .columns
+                .iter()
+                .map(|c| format!("{}{}", c.name, c.order.to_sql()))
+                .collect();
+            println!("  INDEX {} on ({}){}", idx.name, cols.join(", "), unique);
         }
         println!();
     }
@@ -896,7 +907,14 @@ impl<'a> SchemaApp<'a> {
                         ),
                         Span::styled(" on ", Style::default().fg(Color::Gray)),
                         Span::styled(
-                            format!("({})", idx.columns.join(", ")),
+                            format!(
+                                "({})",
+                                idx.columns
+                                    .iter()
+                                    .map(|c| format!("{}{}", c.name, c.order.to_sql()))
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            ),
                             Style::default().fg(Color::Cyan),
                         ),
                     ];

@@ -76,13 +76,22 @@ pub struct ForeignKeyInfo {
     pub references_columns: Vec<String>,
 }
 
+/// A column in an index with optional sort order.
+#[derive(Debug, Clone, Facet)]
+pub struct IndexColumnInfo {
+    /// Column name
+    pub name: String,
+    /// Sort order: "asc" or "desc"
+    pub order: String,
+}
+
 /// Index information.
 #[derive(Debug, Clone, Facet)]
 pub struct IndexInfo {
     /// Index name
     pub name: String,
-    /// Columns in the index
-    pub columns: Vec<String>,
+    /// Columns in the index with sort order
+    pub columns: Vec<IndexColumnInfo>,
     /// Whether this is a unique index
     pub unique: bool,
     /// Optional WHERE clause for partial indexes

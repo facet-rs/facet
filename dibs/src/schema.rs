@@ -331,13 +331,82 @@ pub struct ForeignKey {
     pub references_columns: Vec<String>,
 }
 
+/// Sort order for index columns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SortOrder {
+    /// Ascending order (default)
+    #[default]
+    Asc,
+    /// Descending order
+    Desc,
+}
+
+impl SortOrder {
+    /// Returns the SQL keyword for this sort order, or empty string for ASC (default).
+    pub fn to_sql(&self) -> &'static str {
+        match self {
+            SortOrder::Asc => "",
+            SortOrder::Desc => " DESC",
+        }
+    }
+}
+
+/// A column in an index with optional sort order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IndexColumn {
+    /// Column name
+    pub name: String,
+    /// Sort order (ASC or DESC)
+    pub order: SortOrder,
+}
+
+impl IndexColumn {
+    /// Create a new index column with default (ASC) ordering.
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            order: SortOrder::Asc,
+        }
+    }
+
+    /// Create a new index column with DESC ordering.
+    pub fn desc(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            order: SortOrder::Desc,
+        }
+    }
+
+    /// Parse a column specification like "col_name" or "col_name DESC".
+    pub fn parse(spec: &str) -> Self {
+        let spec = spec.trim();
+        let upper = spec.to_uppercase();
+        if upper.ends_with(" DESC") {
+            Self {
+                name: spec[..spec.len() - 5].trim().to_string(),
+                order: SortOrder::Desc,
+            }
+        } else if upper.ends_with(" ASC") {
+            Self {
+                name: spec[..spec.len() - 4].trim().to_string(),
+                order: SortOrder::Asc,
+            }
+        } else {
+            Self {
+                name: spec.to_string(),
+                order: SortOrder::Asc,
+            }
+        }
+    }
+}
+
 /// A database index.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Index {
     /// Index name
     pub name: String,
-    /// Column(s) in the index
-    pub columns: Vec<String>,
+    /// Column(s) in the index with sort order
+    pub columns: Vec<IndexColumn>,
     /// Whether this is a unique index
     pub unique: bool,
     /// Optional WHERE clause for partial indexes (PostgreSQL-specific)
@@ -543,7 +612,11 @@ impl Table {
     /// Generate CREATE INDEX SQL statement for a given index.
     pub fn to_create_index_sql(&self, idx: &Index) -> String {
         let unique = if idx.unique { "UNIQUE " } else { "" };
-        let quoted_cols: Vec<_> = idx.columns.iter().map(|c| crate::quote_ident(c)).collect();
+        let quoted_cols: Vec<_> = idx
+            .columns
+            .iter()
+            .map(|c| format!("{}{}", crate::quote_ident(&c.name), c.order.to_sql()))
+            .collect();
         let where_clause = idx
             .where_clause
             .as_ref()
@@ -770,15 +843,16 @@ impl TableDef {
                 && attr.key == "composite_index"
                 && let Some(Attr::CompositeIndex(composite)) = attr.get_as::<Attr>()
             {
-                let cols: Vec<String> = composite
+                let cols: Vec<IndexColumn> = composite
                     .columns
                     .split(',')
-                    .map(|s| s.trim().to_string())
+                    .map(IndexColumn::parse)
                     .collect();
+                let col_names: Vec<&str> = cols.iter().map(|c| c.name.as_str()).collect();
                 let idx_name = composite
                     .name
                     .map(|s| s.to_string())
-                    .unwrap_or_else(|| crate::index_name(&table_name, &cols));
+                    .unwrap_or_else(|| crate::index_name(&table_name, &col_names));
                 indices.push(Index {
                     name: idx_name,
                     columns: cols,
@@ -791,15 +865,16 @@ impl TableDef {
                 && attr.key == "composite_unique"
                 && let Some(Attr::CompositeUnique(composite)) = attr.get_as::<Attr>()
             {
-                let cols: Vec<String> = composite
+                let cols: Vec<IndexColumn> = composite
                     .columns
                     .split(',')
-                    .map(|s| s.trim().to_string())
+                    .map(IndexColumn::parse)
                     .collect();
+                let col_names: Vec<&str> = cols.iter().map(|c| c.name.as_str()).collect();
                 let idx_name = composite
                     .name
                     .map(|s| s.to_string())
-                    .unwrap_or_else(|| crate::unique_index_name(&table_name, &cols));
+                    .unwrap_or_else(|| crate::unique_index_name(&table_name, &col_names));
                 indices.push(Index {
                     name: idx_name,
                     columns: cols,
@@ -928,7 +1003,7 @@ impl TableDef {
                     .unwrap_or_else(|| crate::index_name(&table_name, &[&col_name]));
                 indices.push(Index {
                     name: idx_name,
-                    columns: vec![col_name.clone()],
+                    columns: vec![IndexColumn::new(col_name.clone())],
                     unique: false,
                     where_clause: None, // Field-level indexes don't support WHERE clause
                 });

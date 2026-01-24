@@ -663,7 +663,7 @@ async fn test_table_rename_execution() {
                 }],
                 vec![dibs::Index {
                     name: "idx_post_author_id".to_string(),
-                    columns: vec!["author_id".to_string()],
+                    columns: vec![dibs::IndexColumn::new("author_id")],
                     unique: false,
                     where_clause: None,
                 }],

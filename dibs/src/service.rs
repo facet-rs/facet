@@ -408,7 +408,17 @@ fn schema_to_info(schema: &Schema) -> SchemaInfo {
                     .iter()
                     .map(|idx| IndexInfo {
                         name: idx.name.clone(),
-                        columns: idx.columns.clone(),
+                        columns: idx
+                            .columns
+                            .iter()
+                            .map(|c| IndexColumnInfo {
+                                name: c.name.clone(),
+                                order: match c.order {
+                                    crate::SortOrder::Asc => "asc".to_string(),
+                                    crate::SortOrder::Desc => "desc".to_string(),
+                                },
+                            })
+                            .collect(),
                         unique: idx.unique,
                         where_clause: idx.where_clause.clone(),
                     })

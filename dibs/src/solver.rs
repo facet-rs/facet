@@ -2389,7 +2389,7 @@ mod tests {
 
         let idx = crate::Index {
             name: crate::index_name("users", &["email"]),
-            columns: vec!["email".to_string()],
+            columns: vec![crate::IndexColumn::new("email")],
             unique: false,
             where_clause: None,
         };
@@ -2404,7 +2404,7 @@ mod tests {
 
         let idx = crate::Index {
             name: crate::index_name("users", &["email"]),
-            columns: vec!["email".to_string()],
+            columns: vec![crate::IndexColumn::new("email")],
             unique: false,
             where_clause: None,
         };
@@ -2968,7 +2968,7 @@ mod proptests {
             if i % 2 == 0 {
                 indices.push(Index {
                     name: crate::index_name(table_name, &[*col]),
-                    columns: vec![(*col).clone()],
+                    columns: vec![crate::IndexColumn::new((*col).clone())],
                     unique: false,
                     where_clause: None,
                 });
