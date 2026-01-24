@@ -1086,6 +1086,7 @@ mod tests {
         Table {
             name: name.to_string(),
             columns,
+            check_constraints: Vec::new(),
             foreign_keys: Vec::new(),
             indices: Vec::new(),
             source: SourceLocation::default(),
@@ -1330,6 +1331,7 @@ mod tests {
                 make_column("bio", PgType::Text, true),
                 make_column_with_default("created_at", PgType::Timestamptz, false, "now()"),
             ],
+            check_constraints: Vec::new(),
             foreign_keys: Vec::new(),
             indices: Vec::new(),
             source: SourceLocation::default(),
@@ -1350,6 +1352,7 @@ mod tests {
                 make_pk_column("post_id", PgType::BigInt),
                 make_column_with_default("created_at", PgType::Timestamptz, false, "now()"),
             ],
+            check_constraints: Vec::new(),
             foreign_keys: Vec::new(),
             indices: Vec::new(),
             source: SourceLocation::default(),
@@ -1371,6 +1374,7 @@ mod tests {
                 make_column("title", PgType::Text, false),
                 make_column("body", PgType::Text, false),
             ],
+            check_constraints: Vec::new(),
             foreign_keys: vec![
                 ForeignKey {
                     columns: vec!["author_id".to_string()],
@@ -1402,6 +1406,7 @@ mod tests {
                 make_pk_column("post_id", PgType::BigInt),
                 make_pk_column("tag_id", PgType::BigInt),
             ],
+            check_constraints: Vec::new(),
             foreign_keys: vec![
                 ForeignKey {
                     columns: vec!["post_id".to_string()],
@@ -1435,6 +1440,7 @@ mod tests {
                         make_unique_column("email", PgType::Text, false),
                         make_column("name", PgType::Text, false),
                     ],
+                    check_constraints: Vec::new(),
                     foreign_keys: Vec::new(),
                     indices: Vec::new(),
                     source: SourceLocation::default(),
@@ -1448,6 +1454,7 @@ mod tests {
                         make_column("author_id", PgType::BigInt, false),
                         make_column("title", PgType::Text, false),
                     ],
+                    check_constraints: Vec::new(),
                     foreign_keys: vec![ForeignKey {
                         columns: vec!["author_id".to_string()],
                         references_table: "users".to_string(),
@@ -1464,6 +1471,7 @@ mod tests {
                         make_pk_column("user_id", PgType::BigInt),
                         make_pk_column("post_id", PgType::BigInt),
                     ],
+                    check_constraints: Vec::new(),
                     foreign_keys: vec![
                         ForeignKey {
                             columns: vec!["user_id".to_string()],
@@ -1647,6 +1655,7 @@ mod tests {
             Table {
                 name: name.to_string(),
                 columns,
+                check_constraints: Vec::new(),
                 foreign_keys: fks,
                 indices: Vec::new(),
                 source: SourceLocation::default(),
@@ -1719,6 +1728,7 @@ mod tests {
             Table {
                 name: name.to_string(),
                 columns,
+                check_constraints: Vec::new(),
                 foreign_keys: fks,
                 indices: Vec::new(),
                 source: SourceLocation::default(),
@@ -1994,6 +2004,7 @@ mod tests {
             Table {
                 name: name.to_string(),
                 columns,
+                check_constraints: Vec::new(),
                 foreign_keys: fks,
                 indices: Vec::new(),
                 source: SourceLocation::default(),

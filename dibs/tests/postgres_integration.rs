@@ -95,6 +95,7 @@ fn test_table(
     dibs::Table {
         name: name.to_string(),
         columns,
+        check_constraints: Vec::new(),
         foreign_keys,
         indices,
         source: dibs::SourceLocation {

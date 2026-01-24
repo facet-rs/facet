@@ -4,7 +4,8 @@
 //! from the current state of a database.
 
 use crate::{
-    Column, ForeignKey, Index, IndexColumn, PgType, Result, Schema, SourceLocation, Table,
+    CheckConstraint, Column, ForeignKey, Index, IndexColumn, PgType, Result, Schema,
+    SourceLocation, Table,
 };
 
 #[cfg(test)]
@@ -64,6 +65,7 @@ async fn introspect_table(client: &Client, table_name: &str) -> Result<Table> {
     let columns = introspect_columns(client, table_name).await?;
     let primary_keys = introspect_primary_keys(client, table_name).await?;
     let unique_columns = introspect_unique_constraints(client, table_name).await?;
+    let check_constraints = introspect_check_constraints(client, table_name).await?;
     let foreign_keys = introspect_foreign_keys(client, table_name).await?;
     let indices = introspect_indices(client, table_name).await?;
 
@@ -80,12 +82,46 @@ async fn introspect_table(client: &Client, table_name: &str) -> Result<Table> {
     Ok(Table {
         name: table_name.to_string(),
         columns,
+        check_constraints,
         foreign_keys,
         indices,
         source: SourceLocation::default(), // DB tables don't have Rust source
         doc: None,
         icon: None, // Not available from introspection
     })
+}
+
+/// Introspect CHECK constraints for a table.
+async fn introspect_check_constraints(
+    client: &Client,
+    table_name: &str,
+) -> Result<Vec<CheckConstraint>> {
+    let rows = client
+        .query(
+            r#"
+            SELECT
+                con.conname,
+                pg_get_expr(con.conbin, con.conrelid) AS expr
+            FROM pg_constraint con
+            JOIN pg_class rel ON rel.oid = con.conrelid
+            JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+            WHERE nsp.nspname = 'public'
+              AND rel.relname = $1
+              AND con.contype = 'c'
+            ORDER BY con.conname
+            "#,
+            &[&table_name],
+        )
+        .await?;
+
+    let mut checks = Vec::new();
+    for row in rows {
+        let name: String = row.get(0);
+        let expr: String = row.get(1);
+        checks.push(CheckConstraint { name, expr });
+    }
+
+    Ok(checks)
 }
 
 /// Introspect columns for a table.

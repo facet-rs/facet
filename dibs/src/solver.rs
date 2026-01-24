@@ -822,6 +822,7 @@ mod tests {
         Table {
             name: name.to_string(),
             columns,
+            check_constraints: Vec::new(),
             foreign_keys: Vec::new(),
             indices: Vec::new(),
             source: SourceLocation::default(),
@@ -834,6 +835,7 @@ mod tests {
         Table {
             name: name.to_string(),
             columns,
+            check_constraints: Vec::new(),
             foreign_keys: fks,
             indices: Vec::new(),
             source: SourceLocation::default(),
@@ -1074,6 +1076,7 @@ mod tests {
                 make_column("id", PgType::BigInt, false),
                 make_column("current_version_id", PgType::BigInt, true),
             ],
+            check_constraints: Vec::new(),
             foreign_keys: vec![ForeignKey {
                 columns: vec!["current_version_id".to_string()],
                 references_table: "product_version".to_string(),
@@ -1091,6 +1094,7 @@ mod tests {
                 make_column("id", PgType::BigInt, false),
                 make_column("product_id", PgType::BigInt, false),
             ],
+            check_constraints: Vec::new(),
             foreign_keys: vec![ForeignKey {
                 columns: vec!["product_id".to_string()],
                 references_table: "product".to_string(),
@@ -3032,6 +3036,7 @@ mod proptests {
                 Table {
                     name,
                     columns,
+                    check_constraints: vec![],
                     foreign_keys: vec![],
                     indices,
                     source: SourceLocation::default(),

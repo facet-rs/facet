@@ -28,6 +28,7 @@ dibs-proto.workspace = true
 dibs-query-gen.workspace = true
 roam.workspace = true
 roam-stream.workspace = true
+blake3.workspace = true
 
 [dev-dependencies]
 insta.workspace = true

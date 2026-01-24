@@ -94,6 +94,13 @@ facet::define_attr_grammar! {
         /// - `#[facet(dibs::composite_unique(name = "uq_foo", columns = "col1,col2"))]` - named constraint
         CompositeUnique(CompositeUnique),
 
+        /// Creates a CHECK constraint (container-level).
+        ///
+        /// Usage:
+        /// - `#[facet(dibs::check(expr = "foo IS NOT NULL"))]` - auto-named constraint
+        /// - `#[facet(dibs::check(name = "ck_foo", expr = "foo IS NOT NULL"))]` - named constraint
+        Check(Check),
+
         /// Marks a field as auto-generated (e.g., SERIAL, sequences).
         ///
         /// Usage: `#[facet(dibs::auto)]`
@@ -164,6 +171,14 @@ facet::define_attr_grammar! {
         ///
         /// Example: `filter = "is_active = true"` creates `CREATE UNIQUE INDEX ... WHERE is_active = true`
         pub filter: Option<&'static str>,
+    }
+
+    /// CHECK constraint definition.
+    pub struct Check {
+        /// Optional constraint name (auto-generated if not provided)
+        pub name: Option<&'static str>,
+        /// SQL expression for CHECK(...)
+        pub expr: &'static str,
     }
 }
 
@@ -518,6 +533,8 @@ pub struct Table {
     pub name: String,
     /// Columns
     pub columns: Vec<Column>,
+    /// CHECK constraints
+    pub check_constraints: Vec<CheckConstraint>,
     /// Foreign keys
     pub foreign_keys: Vec<ForeignKey>,
     /// Indices
@@ -528,6 +545,13 @@ pub struct Table {
     pub doc: Option<String>,
     /// Lucide icon name for display in admin UI
     pub icon: Option<String>,
+}
+
+/// A table CHECK constraint.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CheckConstraint {
+    pub name: String,
+    pub expr: String,
 }
 
 /// A complete database schema.
@@ -625,7 +649,7 @@ impl Table {
         // If there's more than one PK column, we need a table constraint
         let use_table_pk_constraint = pk_columns.len() > 1;
 
-        let col_defs: Vec<String> = self
+        let mut parts: Vec<String> = self
             .columns
             .iter()
             .map(|col| {
@@ -654,15 +678,22 @@ impl Table {
             })
             .collect();
 
-        sql.push_str(&col_defs.join(",\n"));
-
         // Add composite primary key constraint if needed
         if use_table_pk_constraint {
             let quoted_pk_cols: Vec<_> = pk_columns.iter().map(|c| crate::quote_ident(c)).collect();
-            sql.push_str(",\n");
-            sql.push_str(&format!("    PRIMARY KEY ({})", quoted_pk_cols.join(", ")));
+            parts.push(format!("    PRIMARY KEY ({})", quoted_pk_cols.join(", ")));
         }
 
+        // Add CHECK constraints
+        for check in &self.check_constraints {
+            parts.push(format!(
+                "    CONSTRAINT {} CHECK ({})",
+                crate::quote_ident(&check.name),
+                check.expr
+            ));
+        }
+
+        sql.push_str(&parts.join(",\n"));
         sql.push_str("\n);");
 
         sql
@@ -889,6 +920,7 @@ impl TableDef {
         };
 
         let mut columns = Vec::new();
+        let mut check_constraints = Vec::new();
         let mut foreign_keys = Vec::new();
         let mut indices = Vec::new();
 
@@ -935,6 +967,21 @@ impl TableDef {
                     columns: cols,
                     unique: true,
                     where_clause: composite.filter.map(|s| s.to_string()),
+                });
+            }
+
+            // Collect container-level CHECK constraints
+            if attr.ns == Some("dibs")
+                && attr.key == "check"
+                && let Some(Attr::Check(check)) = attr.get_as::<Attr>()
+            {
+                let name = check
+                    .name
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| crate::check_constraint_name(&table_name, check.expr));
+                check_constraints.push(CheckConstraint {
+                    name,
+                    expr: check.expr.to_string(),
                 });
             }
         }
@@ -1085,6 +1132,7 @@ impl TableDef {
         Some(Table {
             name: table_name,
             columns,
+            check_constraints,
             foreign_keys,
             indices,
             source,
