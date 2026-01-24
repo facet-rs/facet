@@ -46,6 +46,12 @@ use core::{marker::PhantomData, ptr::NonNull};
 #[repr(transparent)]
 pub struct Opaque<T: ?Sized>(pub T);
 
+impl<T: Default> Default for Opaque<T> {
+    fn default() -> Self {
+        Opaque(T::default())
+    }
+}
+
 // ============================================================================
 // OxPtrConst - Read-only shaped pointer (no lifetime)
 // ============================================================================

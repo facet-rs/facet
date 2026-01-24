@@ -54,15 +54,34 @@ where
                     false
                 }
             }
-            ScalarValue::U64(_) => matches!(
-                scalar_type,
-                ScalarType::U8
-                    | ScalarType::U16
-                    | ScalarType::U32
-                    | ScalarType::U64
-                    | ScalarType::U128
-                    | ScalarType::USize
-            ),
+            ScalarValue::U64(val) => {
+                // U64 matches unsigned types directly
+                if matches!(
+                    scalar_type,
+                    ScalarType::U8
+                        | ScalarType::U16
+                        | ScalarType::U32
+                        | ScalarType::U64
+                        | ScalarType::U128
+                        | ScalarType::USize
+                ) {
+                    return true;
+                }
+
+                // U64 can also match signed types if the value fits in the signed range
+                // This handles JSON's representation of positive integers as u64
+                if *val <= i64::MAX as u64 {
+                    match scalar_type {
+                        ScalarType::I8 => *val <= i8::MAX as u64,
+                        ScalarType::I16 => *val <= i16::MAX as u64,
+                        ScalarType::I32 => *val <= i32::MAX as u64,
+                        ScalarType::I64 | ScalarType::I128 | ScalarType::ISize => true,
+                        _ => false,
+                    }
+                } else {
+                    false
+                }
+            }
             ScalarValue::U128(_) => matches!(scalar_type, ScalarType::U128 | ScalarType::I128),
             ScalarValue::I128(_) => matches!(scalar_type, ScalarType::I128 | ScalarType::U128),
             ScalarValue::F64(_) => matches!(scalar_type, ScalarType::F32 | ScalarType::F64),

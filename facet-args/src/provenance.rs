@@ -1,0 +1,460 @@
+//! Provenance tracking for layered configuration.
+//!
+//! This module provides types for tracking where configuration values came from,
+//! enabling rich error messages and debugging output.
+//!
+//! # Example
+//!
+//! ```rust,ignore
+//! use facet_args::provenance::{Provenance, ConfigFile};
+//! use std::sync::Arc;
+//!
+//! // Track a value from CLI
+//! let cli_prov = Provenance::Cli {
+//!     arg: "--config.port".into(),
+//!     value: "8080".into(),
+//! };
+//!
+//! // Track a value from environment
+//! let env_prov = Provenance::Env {
+//!     var: "REEF__PORT".into(),
+//!     value: "9000".into(),
+//! };
+//!
+//! // Track a value from a config file
+//! let file = Arc::new(ConfigFile::new("config.json", r#"{"port": 8080}"#));
+//! let file_prov = Provenance::File {
+//!     file: file.clone(),
+//!     key_path: "port".into(),
+//!     offset: 9,
+//!     len: 4,
+//! };
+//! ```
+
+use alloc::string::String;
+use alloc::sync::Arc;
+use alloc::vec::Vec;
+
+use camino::Utf8PathBuf;
+use facet::Facet;
+use indexmap::IndexMap;
+
+/// Type alias for IndexMap with default hasher.
+type ProvenanceMap = IndexMap<String, Provenance, std::hash::RandomState>;
+
+/// Information about a loaded config file.
+///
+/// This is reference-counted so it can be shared across all values
+/// that originated from the same file without duplicating the path
+/// and contents.
+#[derive(Debug, Clone, Facet)]
+pub struct ConfigFile {
+    /// Path to the config file (UTF-8).
+    pub path: Utf8PathBuf,
+    /// Full contents of the file (kept for error reporting with ariadne).
+    pub contents: String,
+}
+
+impl ConfigFile {
+    /// Create a new ConfigFile from a path and contents.
+    pub fn new(path: impl Into<Utf8PathBuf>, contents: impl Into<String>) -> Self {
+        Self {
+            path: path.into(),
+            contents: contents.into(),
+        }
+    }
+}
+
+/// The origin of a configuration value.
+///
+/// This tracks where a value came from in the layered configuration system,
+/// enabling detailed error messages and config dumps.
+#[repr(u8)]
+#[derive(Debug, Clone, Default, facet::Facet)]
+pub enum Provenance {
+    /// Value came from a CLI argument.
+    Cli {
+        /// The CLI argument string, e.g. "--config.port" or "-p".
+        arg: String,
+        /// The raw value provided, e.g. "8080".
+        value: String,
+    },
+
+    /// Value came from an environment variable.
+    Env {
+        /// The environment variable name, e.g. "REEF__PORT".
+        var: String,
+        /// The raw value from the environment.
+        value: String,
+    },
+
+    /// Value came from a config file.
+    File {
+        /// The config file (shared reference).
+        file: Arc<ConfigFile>,
+        /// The key path within the file, e.g. "smtp.host".
+        key_path: String,
+        /// Byte offset in the file where the value starts.
+        offset: usize,
+        /// Length in bytes of the value in the source.
+        len: usize,
+    },
+
+    /// Value came from a `#[facet(default = ...)]` attribute.
+    #[default]
+    Default,
+}
+
+impl Provenance {
+    /// Create a CLI provenance.
+    pub fn cli(arg: impl Into<String>, value: impl Into<String>) -> Self {
+        Self::Cli {
+            arg: arg.into(),
+            value: value.into(),
+        }
+    }
+
+    /// Create an environment variable provenance.
+    pub fn env(var: impl Into<String>, value: impl Into<String>) -> Self {
+        Self::Env {
+            var: var.into(),
+            value: value.into(),
+        }
+    }
+
+    /// Create a file provenance.
+    pub fn file(
+        file: Arc<ConfigFile>,
+        key_path: impl Into<String>,
+        offset: usize,
+        len: usize,
+    ) -> Self {
+        Self::File {
+            file,
+            key_path: key_path.into(),
+            offset,
+            len,
+        }
+    }
+
+    /// Check if this provenance is from CLI.
+    pub fn is_cli(&self) -> bool {
+        matches!(self, Self::Cli { .. })
+    }
+
+    /// Check if this provenance is from environment.
+    pub fn is_env(&self) -> bool {
+        matches!(self, Self::Env { .. })
+    }
+
+    /// Check if this provenance is from a file.
+    pub fn is_file(&self) -> bool {
+        matches!(self, Self::File { .. })
+    }
+
+    /// Check if this provenance is a default value.
+    pub fn is_default(&self) -> bool {
+        matches!(self, Self::Default)
+    }
+
+    /// Get the priority of this provenance source.
+    ///
+    /// Higher numbers mean higher priority:
+    /// - CLI: 3 (highest)
+    /// - Env: 2
+    /// - File: 1
+    /// - Default: 0 (lowest)
+    pub fn priority(&self) -> u8 {
+        match self {
+            Self::Cli { .. } => 3,
+            Self::Env { .. } => 2,
+            Self::File { .. } => 1,
+            Self::Default => 0,
+        }
+    }
+
+    /// Get a human-readable description of the source.
+    pub fn source_description(&self) -> String {
+        match self {
+            Self::Cli { arg, .. } => format!("CLI: {arg}"),
+            Self::Env { var, .. } => format!("env: {var}"),
+            Self::File { file, key_path, .. } => format!("{}: {key_path}", file.path),
+            Self::Default => "default".into(),
+        }
+    }
+}
+
+impl core::fmt::Display for Provenance {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Cli { arg, .. } => write!(f, "from CLI argument {arg}"),
+            Self::Env { var, .. } => write!(f, "from environment variable {var}"),
+            Self::File { file, key_path, .. } => {
+                write!(f, "from {}: {key_path}", file.path)
+            }
+            Self::Default => write!(f, "from default"),
+        }
+    }
+}
+
+/// A record of when a higher-priority layer overrode a lower-priority one.
+#[derive(Debug, Clone)]
+pub struct Override {
+    /// The configuration path that was overridden, e.g. "config.port".
+    pub path: String,
+    /// The winning provenance (higher priority).
+    pub winner: Provenance,
+    /// The losing provenance (lower priority, was overridden).
+    pub loser: Provenance,
+}
+
+impl Override {
+    /// Create a new override record.
+    pub fn new(path: impl Into<String>, winner: Provenance, loser: Provenance) -> Self {
+        Self {
+            path: path.into(),
+            winner,
+            loser,
+        }
+    }
+}
+
+impl core::fmt::Display for Override {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "{}: {} overrides {}",
+            self.path,
+            self.winner.source_description(),
+            self.loser.source_description()
+        )
+    }
+}
+
+/// The result of parsing layered configuration, including provenance tracking.
+#[derive(Debug)]
+pub struct ConfigResult<T> {
+    /// The resolved configuration value.
+    pub value: T,
+    /// Map from config paths to their provenance.
+    ///
+    /// Keys are dot-separated paths like "config.port" or "config.smtp.host".
+    pub provenance: ProvenanceMap,
+    /// Records of values that were overridden by higher-priority layers.
+    pub overrides: Vec<Override>,
+}
+
+impl<T> ConfigResult<T> {
+    /// Create a new config result with just a value (no provenance tracking).
+    pub fn new(value: T) -> Self {
+        Self {
+            value,
+            provenance: ProvenanceMap::default(),
+            overrides: Vec::new(),
+        }
+    }
+
+    /// Create a new config result with provenance tracking.
+    pub fn with_provenance(value: T, provenance: ProvenanceMap, overrides: Vec<Override>) -> Self {
+        Self {
+            value,
+            provenance,
+            overrides,
+        }
+    }
+
+    /// Get the provenance for a specific path.
+    pub fn get_provenance(&self, path: &str) -> Option<&Provenance> {
+        self.provenance.get(path)
+    }
+
+    /// Check if any values were overridden.
+    pub fn has_overrides(&self) -> bool {
+        !self.overrides.is_empty()
+    }
+
+    /// Map the value while preserving provenance.
+    pub fn map<U, F: FnOnce(T) -> U>(self, f: F) -> ConfigResult<U> {
+        ConfigResult {
+            value: f(self.value),
+            provenance: self.provenance,
+            overrides: self.overrides,
+        }
+    }
+}
+
+/// Builder for tracking provenance during config resolution.
+#[derive(Debug, Default)]
+pub struct ProvenanceTracker {
+    /// Current provenance map.
+    provenance: ProvenanceMap,
+    /// Recorded overrides.
+    overrides: Vec<Override>,
+}
+
+impl ProvenanceTracker {
+    /// Create a new empty tracker.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Record a provenance entry, potentially recording an override.
+    ///
+    /// If a value already exists at this path with a lower priority,
+    /// it will be recorded as overridden.
+    pub fn record(&mut self, path: impl Into<String>, provenance: Provenance) {
+        let path = path.into();
+        if let Some(existing) = self.provenance.get(&path) {
+            // Record override if new provenance has higher priority
+            if provenance.priority() > existing.priority() {
+                self.overrides.push(Override::new(
+                    path.clone(),
+                    provenance.clone(),
+                    existing.clone(),
+                ));
+            }
+        }
+        self.provenance.insert(path, provenance);
+    }
+
+    /// Record a provenance entry without checking for overrides.
+    ///
+    /// Use this when you know the entry doesn't exist yet.
+    pub fn record_new(&mut self, path: impl Into<String>, provenance: Provenance) {
+        self.provenance.insert(path.into(), provenance);
+    }
+
+    /// Finish tracking and produce the final maps.
+    pub fn finish(self) -> (ProvenanceMap, Vec<Override>) {
+        (self.provenance, self.overrides)
+    }
+
+    /// Build a ConfigResult with the tracked provenance.
+    pub fn into_result<T>(self, value: T) -> ConfigResult<T> {
+        let (provenance, overrides) = self.finish();
+        ConfigResult::with_provenance(value, provenance, overrides)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_provenance_priority() {
+        assert!(
+            Provenance::cli("--port", "8080").priority()
+                > Provenance::env("PORT", "9000").priority()
+        );
+        assert!(Provenance::env("PORT", "9000").priority() > Provenance::Default.priority());
+
+        let file = Arc::new(ConfigFile::new("config.json", "{}"));
+        let file_prov = Provenance::file(file, "port", 0, 4);
+        assert!(Provenance::env("PORT", "9000").priority() > file_prov.priority());
+        assert!(file_prov.priority() > Provenance::Default.priority());
+    }
+
+    #[test]
+    fn test_provenance_display() {
+        let cli = Provenance::cli("--config.port", "8080");
+        assert!(cli.to_string().contains("--config.port"));
+
+        let env = Provenance::env("REEF__PORT", "9000");
+        assert!(env.to_string().contains("REEF__PORT"));
+
+        let file = Arc::new(ConfigFile::new("config.json", "{}"));
+        let file_prov = Provenance::file(file, "port", 0, 4);
+        assert!(file_prov.to_string().contains("config.json"));
+        assert!(file_prov.to_string().contains("port"));
+
+        let default = Provenance::Default;
+        assert!(default.to_string().contains("default"));
+    }
+
+    #[test]
+    fn test_provenance_is_checks() {
+        assert!(Provenance::cli("--port", "8080").is_cli());
+        assert!(!Provenance::cli("--port", "8080").is_env());
+
+        assert!(Provenance::env("PORT", "9000").is_env());
+        assert!(!Provenance::env("PORT", "9000").is_cli());
+
+        let file = Arc::new(ConfigFile::new("config.json", "{}"));
+        assert!(Provenance::file(file, "port", 0, 4).is_file());
+
+        assert!(Provenance::Default.is_default());
+    }
+
+    #[test]
+    fn test_config_file() {
+        let file = ConfigFile::new("config.json", r#"{"port": 8080}"#);
+        assert_eq!(file.path, "config.json");
+        assert!(file.contents.contains("port"));
+    }
+
+    #[test]
+    fn test_override_display() {
+        let ovr = Override::new(
+            "config.port",
+            Provenance::cli("--config.port", "8080"),
+            Provenance::env("REEF__PORT", "9000"),
+        );
+        let display = ovr.to_string();
+        assert!(display.contains("config.port"));
+        assert!(display.contains("CLI"));
+        assert!(display.contains("env"));
+    }
+
+    #[test]
+    fn test_config_result() {
+        let result = ConfigResult::new(42);
+        assert_eq!(result.value, 42);
+        assert!(result.provenance.is_empty());
+        assert!(!result.has_overrides());
+    }
+
+    #[test]
+    fn test_config_result_map() {
+        let mut provenance = ProvenanceMap::default();
+        provenance.insert("port".into(), Provenance::cli("--port", "8080"));
+
+        let result = ConfigResult::with_provenance(42, provenance, Vec::new());
+        let mapped = result.map(|v| v.to_string());
+
+        assert_eq!(mapped.value, "42");
+        assert!(mapped.get_provenance("port").is_some());
+    }
+
+    #[test]
+    fn test_provenance_tracker() {
+        let mut tracker = ProvenanceTracker::new();
+
+        // First, record a file value
+        let file = Arc::new(ConfigFile::new("config.json", "{}"));
+        tracker.record("config.port", Provenance::file(file, "port", 0, 4));
+
+        // Then override with env
+        tracker.record("config.port", Provenance::env("REEF__PORT", "9000"));
+
+        // Then override with CLI
+        tracker.record("config.port", Provenance::cli("--config.port", "8080"));
+
+        let (provenance, overrides) = tracker.finish();
+
+        // Final provenance should be CLI
+        assert!(provenance.get("config.port").unwrap().is_cli());
+
+        // Should have two override records
+        assert_eq!(overrides.len(), 2);
+    }
+
+    #[test]
+    fn test_provenance_tracker_into_result() {
+        let mut tracker = ProvenanceTracker::new();
+        tracker.record_new("config.port", Provenance::cli("--port", "8080"));
+
+        let result = tracker.into_result(8080u16);
+        assert_eq!(result.value, 8080);
+        assert!(result.get_provenance("config.port").is_some());
+    }
+}

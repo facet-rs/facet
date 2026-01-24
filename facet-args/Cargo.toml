@@ -15,22 +15,32 @@ homepage = "https://facet.rs"
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [package.metadata.cargo-shear]
-ignored = ["facet-pretty"]
+ignored = ["facet-pretty", "facet-default"]
 
 [dependencies]
-facet = { path = "../facet", version = "0.43.2" }
+camino = "1.1"
+facet = { path = "../facet", version = "0.43.2", features = ["indexmap", "camino"] }
 facet-core = { path = "../facet-core", version = "0.43.2" }
+facet-format = { path = "../facet-format", version = "0.43.2" }
+facet-json = { path = "../facet-json", version = "0.43.2" }
 facet-reflect = { path = "../facet-reflect", version = "0.43.2" }
 heck = "0.5.0"
+indexmap = { workspace = true }
 owo-colors = "4"
 tracing = { workspace = true }
 ariadne = { version = "0.6", optional = true }
+unicode-width = "0.2.2"
+strip-ansi-escapes = "0.2.1"
 
 [dev-dependencies]
 facet = { path = "../facet", features = ["all-impls"] }
+facet-default = { path = "../facet-default" }
 facet-pretty = { path = "../facet-pretty" }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 facet-showcase = { path = "../facet-showcase" }
+facet-solver = { path = "../facet-solver" }
 insta = { workspace = true }
+tempfile = "3"
 
 [features]
 default = ["rich-diagnostics"]

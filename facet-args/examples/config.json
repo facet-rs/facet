@@ -1,0 +1,26 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8080,
+    "timeout_secs": 60,
+    "tls_enabled": true
+  },
+  "database": {
+    "url": "postgres://localhost/myapp",
+    "max_connections": 20,
+    "log_queries": true
+  },
+  "email": {
+    "host": "smtp.example.com",
+    "port": 587,
+    "username": "noreply@example.com",
+    "from": "MyApp <noreply@example.com>",
+    "footer": "This email was sent by MyApp. If you have any questions, please visit https://support.myapp.example.com/help/email-preferences or contact us at support@myapp.example.com. To unsubscribe, click here: https://myapp.example.com/unsubscribe?token=abc123",
+    "welcome_message": "Welcome to MyApp!\n\nWe're excited to have you on board.\nHere's what you can do:\n- Set up your profile\n- Connect with friends\n- Start exploring\n\nEnjoy!"
+  },
+  "features": {
+    "experimental_api": false,
+    "debug_mode": false,
+    "metrics": true
+  }
+}
