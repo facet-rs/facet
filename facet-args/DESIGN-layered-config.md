@@ -92,6 +92,18 @@ This section tracks what has been implemented and what remains TODO.
     - CLI: cyan `--settings.server.host`
     - Default: dim `DEFAULT`
 
+- **Vec/List handling in env vars** (`src/env.rs`)
+  - Comma-separated value parsing with `parse_comma_separated()`
+  - Automatic detection: if value contains unescaped commas, parse as array
+  - Escape handling: `\,` becomes literal comma in string value
+  - Empty element skipping
+  - Type coercion via existing `config_value_parser` infrastructure
+  - Works with all target types: `Vec<String>`, `Vec<u16>`, etc.
+  - Examples:
+    - `MYAPP__EMAILS=a@example.com,b@example.com` → `["a@example.com", "b@example.com"]`
+    - `MYAPP__PORTS=8080,8081,8082` → `[8080, 8081, 8082]` (after type coercion)
+    - `MYAPP__DESC=Value with\, comma` → `"Value with, comma"` (single string)
+
 ### 🚧 TODO
 
 - **Strict mode enforcement**
@@ -111,17 +123,9 @@ This section tracks what has been implemented and what remains TODO.
   - Beautiful error messages pointing to config file locations
   - Use span information from `Sourced<T>`
 
-- **Vec/List handling in env vars**
-  - Split comma-separated values
-  - Handle escaped commas
-
 - **Help generation integration**
   - Show env var names in help output
   - Show config file key paths
-
-- **Auto-generate `--config <PATH>` flag**
-  - Currently users must manually add config file path extraction
-  - Should be automatic when `#[facet(args::config)]` is present
 
 ### 📁 File Structure
 

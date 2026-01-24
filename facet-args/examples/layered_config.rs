@@ -71,6 +71,10 @@ struct AppConfig {
     /// Feature flags.
     #[facet(default)]
     features: FeatureFlags,
+
+    /// List of allowed admin email addresses.
+    /// Set via env: MYAPP__ALLOWED_ADMINS=alice@example.com,bob@example.com
+    allowed_admins: Option<Vec<String>>,
 }
 
 /// Server settings.
@@ -248,6 +252,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  # Combine all layers (priority: CLI > env > file > defaults):");
     println!("  MYAPP__SERVER__HOST=example.com cargo run --example layered_config -- \\");
     println!("    --config facet-args/examples/config.json --settings.server.port 4000");
+    println!();
+    println!("  # Test Vec/List handling with comma-separated env vars:");
+    println!("  MYAPP__ALLOWED_ADMINS=alice@example.com,bob@example.com,charlie@example.com \\");
+    println!("    cargo run --example layered_config -- --dump-config");
 
     Ok(())
 }

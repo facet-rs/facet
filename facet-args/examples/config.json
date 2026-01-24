@@ -22,5 +22,6 @@
     "experimental_api": false,
     "debug_mode": false,
     "metrics": true
-  }
+  },
+  "allowed_admins": ["admin@example.com", "superuser@example.com"]
 }

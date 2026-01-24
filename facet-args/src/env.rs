@@ -28,6 +28,39 @@
 //! - Prefix + field path
 //! - All SCREAMING_SNAKE_CASE
 //! - Double underscore (`__`) as separator (to allow single `_` in field names)
+//!
+//! # List/Vec Handling
+//!
+//! For list/array fields, use comma-separated values:
+//!
+//! ```bash
+//! REEF__ALLOWED_EMAILS=alice@example.com,bob@example.com,charlie@example.com
+//! REEF__PORTS=8080,8081,8082
+//! REEF__SCORES=-10,0,42,100
+//! REEF__RATIOS=1.5,2.7,3.14
+//! ```
+//!
+//! Rules:
+//! - Values are split on `,`
+//! - Whitespace around each value is trimmed
+//! - Use `\,` to escape a literal comma within a value (for single string with comma)
+//! - Empty values (e.g., `a,,b`) are skipped
+//!
+//! Type coercion is automatic:
+//! - `Vec<String>`: Comma-separated values become string array
+//! - `Vec<u16>`, `Vec<i32>`, etc.: String values coerced to numeric types
+//! - `Vec<f64>`: Parsed as floating-point numbers
+//! - Single value with escaped comma: `"Value\, with comma"` → `"Value, with comma"`
+//!
+//! Examples:
+//! ```rust,ignore
+//! #[derive(Facet)]
+//! struct Config {
+//!     allowed_emails: Vec<String>,  // REEF__ALLOWED_EMAILS=a@x.com,b@x.com
+//!     ports: Vec<u16>,               // REEF__PORTS=8080,8081,8082
+//!     description: String,           // REEF__DESCRIPTION=Value\, with comma
+//! }
+//! ```
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -207,11 +240,116 @@ pub fn read_env_vars(prefix: &str) -> Vec<EnvVar> {
     read_env_vars_from_source(&StdEnv, prefix)
 }
 
+/// Parse a string value, potentially splitting it into an array if it contains commas.
+///
+/// Rules:
+/// - If the string contains unescaped commas, split into array
+/// - Trim whitespace from each element
+/// - Handle `\,` escaping (replace with literal comma)
+/// - Skip empty elements
+fn parse_value_string(value: &str, var_name: &str) -> ConfigValue {
+    // Check if this looks like a comma-separated list
+    // We need to handle escaping: \, should not be treated as a separator
+    if !value.contains(',') {
+        // Simple string, no commas
+        return ConfigValue::String(Sourced {
+            value: value.to_string(),
+            span: None,
+            provenance: Some(Provenance::env(var_name, value)),
+        });
+    }
+
+    // Parse as comma-separated list
+    let elements = parse_comma_separated(value);
+
+    // If we only got one element, it was probably just escaped commas - treat as string
+    if elements.len() == 1 {
+        return ConfigValue::String(Sourced {
+            value: elements[0].clone(),
+            span: None,
+            provenance: Some(Provenance::env(var_name, value)),
+        });
+    }
+
+    // Multiple elements or escaped commas were handled - return as array
+    let array_elements: Vec<ConfigValue> = elements
+        .into_iter()
+        .map(|s| {
+            ConfigValue::String(Sourced {
+                value: s,
+                span: None,
+                provenance: Some(Provenance::env(var_name, value)),
+            })
+        })
+        .collect();
+
+    ConfigValue::Array(Sourced {
+        value: array_elements,
+        span: None,
+        provenance: Some(Provenance::env(var_name, value)),
+    })
+}
+
+/// Parse a comma-separated string, handling escaping.
+///
+/// Rules:
+/// - Split on unescaped commas
+/// - `\,` becomes a literal comma
+/// - Trim whitespace from each element
+/// - Skip empty elements
+fn parse_comma_separated(input: &str) -> Vec<String> {
+    let mut result = Vec::new();
+    let mut current = String::new();
+    let mut chars = input.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            // Check for escape sequence
+            if let Some(&next) = chars.peek() {
+                if next == ',' {
+                    // Escaped comma - add literal comma
+                    chars.next(); // consume the comma
+                    current.push(',');
+                } else {
+                    // Not an escape we recognize - keep the backslash
+                    current.push(ch);
+                }
+            } else {
+                // Backslash at end of string
+                current.push(ch);
+            }
+        } else if ch == ',' {
+            // Unescaped comma - split here
+            let trimmed = current.trim().to_string();
+            if !trimmed.is_empty() {
+                result.push(trimmed);
+            }
+            current.clear();
+        } else {
+            current.push(ch);
+        }
+    }
+
+    // Don't forget the last element
+    let trimmed = current.trim().to_string();
+    if !trimmed.is_empty() {
+        result.push(trimmed);
+    }
+
+    // If we got nothing, return a vec with the original string
+    if result.is_empty() {
+        result.push(input.to_string());
+    }
+
+    result
+}
+
 /// Build a ConfigValue tree from parsed environment variables.
 ///
 /// Each variable becomes a leaf in the tree. For example:
 /// - `REEF__PORT=8080` → `{"port": 8080}`
 /// - `REEF__SMTP__HOST=mail.example.com` → `{"smtp": {"host": "mail.example.com"}}`
+/// - `REEF__EMAILS=a@example.com,b@example.com` → `{"emails": ["a@example.com", "b@example.com"]}`
 pub fn build_config_value(vars: Vec<EnvVar>) -> ConfigValue {
     let mut root: IndexMap<String, ConfigValue, std::hash::RandomState> = IndexMap::default();
 
@@ -233,13 +371,9 @@ fn insert_at_path(
     }
 
     if path.len() == 1 {
-        // Leaf node - insert the value
+        // Leaf node - parse and insert the value
         let key = &path[0];
-        let value = ConfigValue::String(Sourced {
-            value: var.value.clone(),
-            span: None,
-            provenance: Some(Provenance::env(&var.name, &var.value)),
-        });
+        let value = parse_value_string(&var.value, &var.name);
         root.insert(key.clone(), value);
     } else {
         // Intermediate node - ensure object exists and recurse
@@ -491,5 +625,121 @@ mod tests {
     fn test_env_config_strict() {
         let config = EnvConfig::new("REEF").strict();
         assert!(config.strict);
+    }
+
+    #[test]
+    fn test_parse_comma_separated_simple() {
+        let result = parse_comma_separated("a,b,c");
+        assert_eq!(result, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn test_parse_comma_separated_with_whitespace() {
+        let result = parse_comma_separated("a , b , c ");
+        assert_eq!(result, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn test_parse_comma_separated_with_escaping() {
+        let result = parse_comma_separated(r"a\,b,c");
+        assert_eq!(result, vec!["a,b", "c"]);
+    }
+
+    #[test]
+    fn test_parse_comma_separated_empty_elements() {
+        let result = parse_comma_separated("a,,b");
+        assert_eq!(result, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn test_parse_comma_separated_only_commas() {
+        let result = parse_comma_separated(",,,");
+        // When all elements are empty, we fall back to returning the original string
+        assert_eq!(result, vec![",,,"]);
+    }
+
+    #[test]
+    fn test_parse_comma_separated_single_value() {
+        let result = parse_comma_separated("single");
+        assert_eq!(result, vec!["single"]);
+    }
+
+    #[test]
+    fn test_parse_value_string_no_comma() {
+        let value = parse_value_string("simple", "TEST__VAR");
+        if let ConfigValue::String(s) = value {
+            assert_eq!(s.value, "simple");
+        } else {
+            panic!("expected string");
+        }
+    }
+
+    #[test]
+    fn test_parse_value_string_with_commas() {
+        let value = parse_value_string("a@example.com,b@example.com,c@example.com", "TEST__EMAILS");
+        if let ConfigValue::Array(arr) = value {
+            assert_eq!(arr.value.len(), 3);
+            if let ConfigValue::String(s) = &arr.value[0] {
+                assert_eq!(s.value, "a@example.com");
+            } else {
+                panic!("expected string in array");
+            }
+        } else {
+            panic!("expected array, got {:?}", value);
+        }
+    }
+
+    #[test]
+    fn test_parse_value_string_with_escaped_commas() {
+        let value = parse_value_string(r"value with\, comma", "TEST__VAR");
+        if let ConfigValue::String(s) = value {
+            assert_eq!(s.value, "value with, comma");
+        } else {
+            panic!("expected string for escaped comma value");
+        }
+    }
+
+    #[test]
+    fn test_env_var_with_list() {
+        let env =
+            MockEnv::from_pairs([("REEF__ALLOWED_EMAILS", "alice@example.com,bob@example.com")]);
+        let config = EnvConfig::new("REEF");
+        let result = parse_env_with_source(&config, &env);
+
+        if let ConfigValue::Object(obj) = result.value {
+            if let Some(ConfigValue::Array(emails)) = obj.value.get("allowed_emails") {
+                assert_eq!(emails.value.len(), 2);
+                if let ConfigValue::String(s) = &emails.value[0] {
+                    assert_eq!(s.value, "alice@example.com");
+                } else {
+                    panic!("expected string");
+                }
+            } else {
+                panic!("expected array for allowed_emails");
+            }
+        } else {
+            panic!("expected object");
+        }
+    }
+
+    #[test]
+    fn test_env_var_with_single_value_and_comma() {
+        let env = MockEnv::from_pairs([("REEF__DESCRIPTION", r"This is a value\, with a comma")]);
+        let config = EnvConfig::new("REEF");
+        let result = parse_env_with_source(&config, &env);
+
+        if let ConfigValue::Object(obj) = result.value {
+            if let Some(ConfigValue::String(desc)) = obj.value.get("description") {
+                // Escaped comma should be unescaped in the final value
+                assert_eq!(desc.value, "This is a value, with a comma");
+            } else {
+                panic!(
+                    "expected string for description with escaped comma, got {:?}",
+                    obj.value.get("description")
+                );
+            }
+        } else {
+            panic!("expected object");
+        }
     }
 }
