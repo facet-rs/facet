@@ -157,6 +157,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Use layered config parser that detects args::config fields
     let args_vec: Vec<String> = std::env::args().skip(1).collect();
     let args_str: Vec<&str> = args_vec.iter().map(|s| s.as_str()).collect();
+
+    // Check if --config was specified
+    let config_file = args_str
+        .iter()
+        .enumerate()
+        .find(|(_, arg)| **arg == "--config")
+        .and_then(|(i, _)| args_str.get(i + 1).copied())
+        .or_else(|| {
+            args_str
+                .iter()
+                .find(|arg| arg.starts_with("--config="))
+                .and_then(|arg| arg.strip_prefix("--config="))
+        });
+
+    if let Some(file) = config_file {
+        println!("📄 Loading configuration from: {}", file);
+        println!();
+    }
+
     let args: Args = facet_args::from_slice_layered(&args_str)?;
 
     if args.version {

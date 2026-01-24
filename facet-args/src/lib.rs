@@ -68,22 +68,33 @@ pub fn from_slice_layered<T: Facet<'static>>(args: &[&str]) -> Result<T, ArgsErr
     let env_prefix = get_env_prefix(config_field).unwrap_or("APP");
     tracing::debug!(env_prefix, "Using env prefix");
 
+    // Extract --config file path from CLI args if present
+    let config_file_path = extract_config_file_path(args);
+    if let Some(ref path) = config_file_path {
+        tracing::debug!(path, "Found --config file");
+    }
+
     // Build layered config from all sources (CLI args parsed into ConfigValue)
-    let mut config_value = builder()
+    let mut builder = builder()
         .cli(|cli| cli.args(args.iter().map(|s| s.to_string())))
         .env(|env| env.prefix(env_prefix))
-        .with_env_source(StdEnv)
-        .build_value()
-        .map_err(|_e| ArgsErrorWithInput {
-            inner: ArgsError::new(
-                ArgsErrorKind::ReflectError(facet_reflect::ReflectError::OperationFailed {
-                    shape: T::SHAPE,
-                    operation: "Failed to build layered config",
-                }),
-                crate::span::Span::new(0, 0),
-            ),
-            flattened_args: args.join(" "),
-        })?;
+        .with_env_source(StdEnv);
+
+    // Add file layer if specified
+    if let Some(path) = config_file_path {
+        builder = builder.file(|file| file.path(path));
+    }
+
+    let mut config_value = builder.build_value().map_err(|_e| ArgsErrorWithInput {
+        inner: ArgsError::new(
+            ArgsErrorKind::ReflectError(facet_reflect::ReflectError::OperationFailed {
+                shape: T::SHAPE,
+                operation: "Failed to build layered config",
+            }),
+            crate::span::Span::new(0, 0),
+        ),
+        flattened_args: args.join(" "),
+    })?;
 
     tracing::debug!(?config_value, "Built merged ConfigValue");
 
@@ -199,6 +210,33 @@ fn restructure_config_value(
         span: None,
         provenance: None,
     })
+}
+
+/// Extract the config file path from CLI args if --config is present.
+///
+/// Looks for `--config <path>` or `--config=<path>` and returns the path.
+/// Does not remove it from args (the builder will handle that).
+fn extract_config_file_path(args: &[&str]) -> Option<String> {
+    let mut i = 0;
+    while i < args.len() {
+        let arg = args[i];
+
+        // Check for --config=<path>
+        if let Some(path) = arg.strip_prefix("--config=") {
+            return Some(path.to_string());
+        }
+
+        // Check for --config <path>
+        if arg == "--config" {
+            if i + 1 < args.len() {
+                return Some(args[i + 1].to_string());
+            }
+        }
+
+        i += 1;
+    }
+
+    None
 }
 
 // Args extension attributes for use with #[facet(args::attr)] syntax.
