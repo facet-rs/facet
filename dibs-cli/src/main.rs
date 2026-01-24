@@ -1802,50 +1802,148 @@ pub async fn migrate(ctx: &mut MigrationContext<'_>) -> MigrationResult<()> {{
 /// ctx.execute() calls. Multi-line statements use raw string literals.
 fn parse_sql_to_calls(sql: &str) -> String {
     let mut result = String::new();
-    let mut current_statement = String::new();
 
-    for line in sql.lines() {
-        let trimmed = line.trim();
-
-        // Handle SQL comments - convert to Rust comments
-        if trimmed.starts_with("--") {
-            // Flush any pending statement first
-            if !current_statement.trim().is_empty() {
-                result.push_str(&format_sql_call(&current_statement));
-                current_statement.clear();
+    for chunk in split_sql_into_chunks(sql) {
+        match chunk {
+            SqlChunk::Comment(comment) => {
+                result.push_str(&format!("    // {}\n", comment));
             }
-            // Add as Rust comment
-            result.push_str(&format!(
-                "    // {}\n",
-                trimmed.trim_start_matches("--").trim()
-            ));
-            continue;
+            SqlChunk::Statement(stmt) => {
+                if !stmt.trim().is_empty() {
+                    result.push_str(&format_sql_call(&stmt));
+                }
+            }
         }
-
-        // Skip empty lines between statements
-        if trimmed.is_empty() && current_statement.trim().is_empty() {
-            continue;
-        }
-
-        // Add line to current statement
-        if !current_statement.is_empty() {
-            current_statement.push('\n');
-        }
-        current_statement.push_str(line);
-
-        // Check if statement ends with semicolon
-        if trimmed.ends_with(';') {
-            result.push_str(&format_sql_call(&current_statement));
-            current_statement.clear();
-        }
-    }
-
-    // Flush any remaining statement
-    if !current_statement.trim().is_empty() {
-        result.push_str(&format_sql_call(&current_statement));
     }
 
     result
+}
+
+enum SqlChunk {
+    Comment(String),
+    Statement(String),
+}
+
+/// Split a SQL script into statements and comment lines.
+///
+/// This is *not* a full SQL parser, but it does correctly avoid splitting on
+/// semicolons inside:
+/// - single-quoted strings: `'...'`
+/// - double-quoted identifiers: `"identifier"`
+/// - dollar-quoted strings: `$$ ... $$` or `$tag$ ... $tag$`
+fn split_sql_into_chunks(sql: &str) -> Vec<SqlChunk> {
+    let mut out = Vec::new();
+    let mut current = String::new();
+
+    let mut in_single_quote = false;
+    let mut in_double_quote = false;
+    let mut dollar_quote_tag: Option<String> = None;
+
+    let mut i = 0usize;
+    while i < sql.len() {
+        // Handle exiting a dollar-quoted section.
+        if let Some(tag) = dollar_quote_tag.as_deref()
+            && sql[i..].starts_with(tag)
+        {
+            current.push_str(tag);
+            i += tag.len();
+            dollar_quote_tag = None;
+            continue;
+        }
+
+        let ch = sql[i..]
+            .chars()
+            .next()
+            .expect("i is always a char boundary");
+        let ch_len = ch.len_utf8();
+
+        // SQL line comments: -- ...\n
+        if !in_single_quote
+            && !in_double_quote
+            && dollar_quote_tag.is_none()
+            && ch == '-'
+            && sql.as_bytes().get(i + 1) == Some(&b'-')
+        {
+            // Flush any pending statement first.
+            if !current.trim().is_empty() {
+                out.push(SqlChunk::Statement(std::mem::take(&mut current)));
+            } else {
+                current.clear();
+            }
+
+            let rest = &sql[i..];
+            let end = rest.find('\n').map(|pos| i + pos).unwrap_or(sql.len());
+            let line = sql[i..end].trim_start_matches("--").trim().to_string();
+            out.push(SqlChunk::Comment(line));
+
+            i = if end < sql.len() { end + 1 } else { end };
+            continue;
+        }
+
+        // Entering a dollar-quoted section: $$ ... $$ or $tag$ ... $tag$
+        if !in_single_quote && !in_double_quote && dollar_quote_tag.is_none() && ch == '$' {
+            let rest = &sql[i + 1..];
+            if let Some(end_rel) = rest.find('$') {
+                let tag_body = &rest[..end_rel];
+                if tag_body
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'_')
+                {
+                    let tag_end = i + 1 + end_rel + 1;
+                    let tag = sql[i..tag_end].to_string();
+                    current.push_str(&tag);
+                    i = tag_end;
+                    dollar_quote_tag = Some(tag);
+                    continue;
+                }
+            }
+        }
+
+        // Single-quoted string handling (including '' escaping)
+        if dollar_quote_tag.is_none() && !in_double_quote && ch == '\'' {
+            if in_single_quote && sql.as_bytes().get(i + 1) == Some(&b'\'') {
+                // Escaped single quote: ''
+                current.push_str("''");
+                i += 2;
+                continue;
+            }
+            in_single_quote = !in_single_quote;
+            current.push('\'');
+            i += ch_len;
+            continue;
+        }
+
+        // Double-quoted identifier handling (including "" escaping)
+        if dollar_quote_tag.is_none() && !in_single_quote && ch == '"' {
+            if in_double_quote && sql.as_bytes().get(i + 1) == Some(&b'"') {
+                // Escaped double quote: ""
+                current.push_str("\"\"");
+                i += 2;
+                continue;
+            }
+            in_double_quote = !in_double_quote;
+            current.push('"');
+            i += ch_len;
+            continue;
+        }
+
+        // Statement terminator (only when not inside any quoted context)
+        if !in_single_quote && !in_double_quote && dollar_quote_tag.is_none() && ch == ';' {
+            current.push(';');
+            out.push(SqlChunk::Statement(std::mem::take(&mut current)));
+            i += ch_len;
+            continue;
+        }
+
+        current.push_str(&sql[i..i + ch_len]);
+        i += ch_len;
+    }
+
+    if !current.trim().is_empty() {
+        out.push(SqlChunk::Statement(current));
+    }
+
+    out
 }
 
 /// Format a single SQL statement as a ctx.execute() call.
@@ -1874,4 +1972,32 @@ fn format_sql_call(sql: &str) -> String {
         hashes = hashes,
         sql = trimmed
     )
+}
+
+#[cfg(test)]
+mod sql_split_tests {
+    use super::parse_sql_to_calls;
+
+    #[test]
+    fn dollar_quoted_function_body_does_not_split_on_inner_semicolons() {
+        let sql = r#"
+CREATE OR REPLACE FUNCTION trgfn_test() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NOT (TRUE) THEN
+        RAISE EXCEPTION 'nope';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER trg_test BEFORE INSERT OR UPDATE ON "order" FOR EACH ROW EXECUTE FUNCTION trgfn_test();
+"#;
+
+        let calls = parse_sql_to_calls(sql);
+
+        // One call for function + one call for trigger.
+        assert_eq!(calls.matches("ctx.execute").count(), 2);
+        assert!(calls.contains("CREATE OR REPLACE FUNCTION"));
+        assert!(calls.contains("CREATE TRIGGER"));
+    }
 }
