@@ -30,13 +30,84 @@
 //! - Double underscore (`__`) as separator (to allow single `_` in field names)
 
 use alloc::string::String;
-
 use alloc::vec::Vec;
 
 use indexmap::IndexMap;
 
 use crate::config_value::{ConfigValue, Sourced};
 use crate::provenance::Provenance;
+
+// ============================================================================
+// EnvSource trait
+// ============================================================================
+
+/// Trait for abstracting over environment variable sources.
+///
+/// This allows testing without modifying the actual environment.
+pub trait EnvSource {
+    /// Get the value of an environment variable by name.
+    fn get(&self, name: &str) -> Option<String>;
+
+    /// Iterate over all environment variables.
+    fn vars(&self) -> Box<dyn Iterator<Item = (String, String)> + '_>;
+}
+
+/// Environment source that reads from the actual process environment.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct StdEnv;
+
+impl EnvSource for StdEnv {
+    fn get(&self, name: &str) -> Option<String> {
+        std::env::var(name).ok()
+    }
+
+    fn vars(&self) -> Box<dyn Iterator<Item = (String, String)> + '_> {
+        Box::new(std::env::vars())
+    }
+}
+
+/// Environment source backed by a map (for testing).
+#[derive(Debug, Clone, Default)]
+pub struct MockEnv {
+    vars: IndexMap<String, String, std::hash::RandomState>,
+}
+
+impl MockEnv {
+    /// Create a new empty mock environment.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create a mock environment from an iterator of key-value pairs.
+    pub fn from_pairs<I, K, V>(iter: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<String>,
+        V: Into<String>,
+    {
+        Self {
+            vars: iter
+                .into_iter()
+                .map(|(k, v)| (k.into(), v.into()))
+                .collect(),
+        }
+    }
+
+    /// Set an environment variable.
+    pub fn set(&mut self, name: impl Into<String>, value: impl Into<String>) {
+        self.vars.insert(name.into(), value.into());
+    }
+}
+
+impl EnvSource for MockEnv {
+    fn get(&self, name: &str) -> Option<String> {
+        self.vars.get(name).cloned()
+    }
+
+    fn vars(&self) -> Box<dyn Iterator<Item = (String, String)> + '_> {
+        Box::new(self.vars.iter().map(|(k, v)| (k.clone(), v.clone())))
+    }
+}
 
 /// A parsed environment variable.
 #[derive(Debug, Clone)]
@@ -113,12 +184,10 @@ fn parse_env_var_name(name: &str, prefix: &str) -> Option<Vec<String>> {
     Some(segments)
 }
 
-/// Read all environment variables with the given prefix.
-///
-/// This function reads from `std::env::vars()` and filters for variables
-/// starting with `{prefix}__`.
-pub fn read_env_vars(prefix: &str) -> Vec<EnvVar> {
-    std::env::vars()
+/// Read all environment variables with the given prefix from an env source.
+pub fn read_env_vars_from_source(source: &impl EnvSource, prefix: &str) -> Vec<EnvVar> {
+    source
+        .vars()
         .filter_map(|(name, value)| {
             let key_path = parse_env_var_name(&name, prefix)?;
             Some(EnvVar {
@@ -130,24 +199,12 @@ pub fn read_env_vars(prefix: &str) -> Vec<EnvVar> {
         .collect()
 }
 
-/// Read environment variables from a custom iterator (for testing).
-pub fn read_env_vars_from<I, K, V>(vars: I, prefix: &str) -> Vec<EnvVar>
-where
-    I: IntoIterator<Item = (K, V)>,
-    K: AsRef<str>,
-    V: Into<String>,
-{
-    vars.into_iter()
-        .filter_map(|(name, value)| {
-            let name = name.as_ref();
-            let key_path = parse_env_var_name(name, prefix)?;
-            Some(EnvVar {
-                name: name.to_string(),
-                value: value.into(),
-                key_path,
-            })
-        })
-        .collect()
+/// Read all environment variables with the given prefix.
+///
+/// This function reads from `std::env::vars()` and filters for variables
+/// starting with `{prefix}__`.
+pub fn read_env_vars(prefix: &str) -> Vec<EnvVar> {
+    read_env_vars_from_source(&StdEnv, prefix)
 }
 
 /// Build a ConfigValue tree from parsed environment variables.
@@ -216,26 +273,18 @@ fn insert_at_path(
 /// // result.unknown contains any unrecognized variables
 /// ```
 pub fn parse_env(config: &EnvConfig) -> EnvParseResult {
-    let vars = read_env_vars(&config.prefix);
+    parse_env_with_source(config, &StdEnv)
+}
+
+/// Parse environment variables from a custom source.
+///
+/// This allows using a [`MockEnv`] for testing without modifying the real environment.
+pub fn parse_env_with_source(config: &EnvConfig, source: &impl EnvSource) -> EnvParseResult {
+    let vars = read_env_vars_from_source(source, &config.prefix);
     let value = build_config_value(vars);
     EnvParseResult {
         value,
         unknown: Vec::new(), // TODO: validate against schema to find unknown vars
-    }
-}
-
-/// Parse environment variables from a custom source (for testing).
-pub fn parse_env_from<I, K, V>(config: &EnvConfig, vars: I) -> EnvParseResult
-where
-    I: IntoIterator<Item = (K, V)>,
-    K: AsRef<str>,
-    V: Into<String>,
-{
-    let vars = read_env_vars_from(vars, &config.prefix);
-    let value = build_config_value(vars);
-    EnvParseResult {
-        value,
-        unknown: Vec::new(),
     }
 }
 
@@ -287,14 +336,14 @@ mod tests {
 
     #[test]
     fn test_read_env_vars_from() {
-        let vars = vec![
+        let env = MockEnv::from_pairs([
             ("REEF__PORT", "8080"),
             ("REEF__HOST", "localhost"),
             ("OTHER__VAR", "ignored"),
             ("REEF_NOPE", "also ignored"),
-        ];
+        ]);
 
-        let parsed = read_env_vars_from(vars, "REEF");
+        let parsed = read_env_vars_from_source(&env, "REEF");
         assert_eq!(parsed.len(), 2);
 
         let port = parsed.iter().find(|v| v.name == "REEF__PORT").unwrap();
@@ -387,15 +436,15 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_env_from() {
-        let vars = vec![
+    fn test_parse_env_with_source() {
+        let env = MockEnv::from_pairs([
             ("REEF__PORT", "8080"),
             ("REEF__SMTP__HOST", "mail.example.com"),
             ("REEF__SMTP__PORT", "587"),
-        ];
+        ]);
 
         let config = EnvConfig::new("REEF");
-        let result = parse_env_from(&config, vars);
+        let result = parse_env_with_source(&config, &env);
 
         if let ConfigValue::Object(obj) = result.value {
             assert_eq!(obj.value.len(), 2); // port and smtp
@@ -418,9 +467,9 @@ mod tests {
 
     #[test]
     fn test_provenance_is_set() {
-        let vars = vec![("REEF__PORT", "8080")];
+        let env = MockEnv::from_pairs([("REEF__PORT", "8080")]);
         let config = EnvConfig::new("REEF");
-        let result = parse_env_from(&config, vars);
+        let result = parse_env_with_source(&config, &env);
 
         if let ConfigValue::Object(obj) = result.value {
             if let Some(ConfigValue::String(port)) = obj.value.get("port") {

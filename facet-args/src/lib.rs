@@ -6,6 +6,7 @@
 
 extern crate alloc;
 
+pub mod builder;
 pub mod completions;
 pub mod config_format;
 pub mod config_value;
@@ -14,6 +15,8 @@ mod format;
 pub mod help;
 pub mod merge;
 pub mod provenance;
+
+pub use builder::builder;
 
 pub(crate) mod arg;
 pub(crate) mod error;

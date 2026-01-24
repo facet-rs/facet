@@ -36,6 +36,7 @@ facet-showcase = { path = "../facet-showcase" }
 facet-solver = { path = "../facet-solver" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 insta = { workspace = true }
+tempfile = "3"
 
 [features]
 default = ["rich-diagnostics"]
