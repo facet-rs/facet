@@ -37,6 +37,23 @@ pub use format::from_slice_with_config;
 pub use format::from_std_args;
 pub use help::{HelpConfig, generate_help, generate_help_for_shape};
 
+/// Result of parsing with provenance and file resolution tracking.
+pub struct ParseResult<T> {
+    /// The parsed value.
+    pub value: T,
+    /// File resolution information (which paths were tried, which was picked).
+    pub file_resolution: provenance::FileResolution,
+    /// Configuration value tree (for dumping).
+    config_value: ConfigValue,
+}
+
+impl<T: Facet<'static>> ParseResult<T> {
+    /// Dump the configuration with provenance information.
+    pub fn dump(&self) {
+        dump_config_with_provenance::<T>(&self.config_value, &self.file_resolution);
+    }
+}
+
 /// Parse command line arguments with automatic layered configuration support.
 ///
 /// This function automatically detects fields marked with `#[facet(args::config)]`
@@ -46,8 +63,13 @@ pub use help::{HelpConfig, generate_help, generate_help_for_shape};
 /// - CLI overrides (via --{field_name}.foo.bar syntax)
 /// - Default values
 ///
+/// Returns a `ParseResult` which includes the parsed value and methods for
+/// dumping configuration with provenance tracking.
+///
 /// If no config field is found, falls back to regular CLI-only parsing.
-pub fn from_slice_layered<T: Facet<'static>>(args: &[&str]) -> Result<T, ArgsErrorWithInput> {
+pub fn from_slice_layered<T: Facet<'static>>(
+    args: &[&str],
+) -> Result<ParseResult<T>, ArgsErrorWithInput> {
     use config_value_parser::from_config_value;
     use env::StdEnv;
 
@@ -61,7 +83,12 @@ pub fn from_slice_layered<T: Facet<'static>>(args: &[&str]) -> Result<T, ArgsErr
 
     if config_field.is_none() {
         tracing::debug!("No config field found, using regular parsing");
-        return format::from_slice(args);
+        let value = format::from_slice(args)?;
+        return Ok(ParseResult {
+            value,
+            file_resolution: provenance::FileResolution::new(),
+            config_value: ConfigValue::Object(Sourced::new(indexmap::IndexMap::default())),
+        });
     }
 
     let config_field = config_field.unwrap();
@@ -71,21 +98,45 @@ pub fn from_slice_layered<T: Facet<'static>>(args: &[&str]) -> Result<T, ArgsErr
     let env_prefix = get_env_prefix(config_field).unwrap_or("APP");
     tracing::debug!(env_prefix, "Using env prefix");
 
-    // Extract --config file path from CLI args if present
-    let config_file_path = extract_config_file_path(args);
+    // Extract config file path from CLI args if present (using field name)
+    let config_flag = format!("--{}", config_field.name);
+    let config_file_path = extract_config_file_path(args, &config_flag);
     if let Some(ref path) = config_file_path {
-        tracing::debug!(path, "Found --config file");
+        tracing::debug!(path = %path, field = config_field.name, "Found config file path");
     }
+
+    // Filter out the config file flag and its value from CLI args
+    // These are handled separately via the file builder
+    let config_flag = format!("--{}", config_field.name);
+    let filtered_args: Vec<String> = args
+        .iter()
+        .enumerate()
+        .filter_map(|(i, &arg)| {
+            // Skip the --config flag
+            if arg == config_flag {
+                return None;
+            }
+            // Skip the value after --config flag
+            if i > 0 && args[i - 1] == config_flag {
+                return None;
+            }
+            // Skip --config=value format
+            if arg.starts_with(&format!("{}=", config_flag)) {
+                return None;
+            }
+            Some(arg.to_string())
+        })
+        .collect();
 
     // Build layered config from all sources (CLI args parsed into ConfigValue)
     let mut builder = builder()
-        .cli(|cli| cli.args(args.iter().map(|s| s.to_string())))
+        .cli(|cli| cli.args(filtered_args))
         .env(|env| env.prefix(env_prefix))
         .with_env_source(StdEnv);
 
     // Add file layer if specified
     if let Some(path) = config_file_path {
-        builder = builder.file(|file| file.path(path));
+        builder = builder.file(|file| file.format(config_format::JsonFormat).path(path));
     }
 
     let config_result = builder.build_traced().map_err(|e| {
@@ -115,14 +166,11 @@ pub fn from_slice_layered<T: Facet<'static>>(args: &[&str]) -> Result<T, ArgsErr
 
     tracing::debug!(?config_value, "Restructured ConfigValue");
 
-    // Check if --dump-config was requested before deserializing
-    if should_dump_config(args) {
-        dump_config_with_provenance::<T>(&config_value, &file_resolution);
-        std::process::exit(0);
-    }
+    // Keep a copy for dumping
+    let config_value_for_dump = config_value.clone();
 
     // Deserialize the merged ConfigValue into the target type
-    from_config_value(&config_value).map_err(|e| {
+    let value = from_config_value(&config_value).map_err(|e| {
         tracing::error!(?e, "Failed to deserialize config");
         ArgsErrorWithInput {
             inner: ArgsError::new(
@@ -134,6 +182,12 @@ pub fn from_slice_layered<T: Facet<'static>>(args: &[&str]) -> Result<T, ArgsErr
             ),
             flattened_args: args.join(" "),
         }
+    })?;
+
+    Ok(ParseResult {
+        value,
+        file_resolution,
+        config_value: config_value_for_dump,
     })
 }
 
@@ -228,22 +282,24 @@ fn restructure_config_value(
     })
 }
 
-/// Extract the config file path from CLI args if --config is present.
+/// Extract the config file path from CLI args if the config flag is present.
 ///
-/// Looks for `--config <path>` or `--config=<path>` and returns the path.
+/// Looks for `--{field_name} <path>` or `--{field_name}=<path>` and returns the path.
 /// Does not remove it from args (the builder will handle that).
-fn extract_config_file_path(args: &[&str]) -> Option<String> {
+fn extract_config_file_path(args: &[&str], flag: &str) -> Option<String> {
+    let flag_with_eq = format!("{}=", flag);
+
     let mut i = 0;
     while i < args.len() {
         let arg = args[i];
 
-        // Check for --config=<path>
-        if let Some(path) = arg.strip_prefix("--config=") {
+        // Check for --flag=<path>
+        if let Some(path) = arg.strip_prefix(&flag_with_eq) {
             return Some(path.to_string());
         }
 
-        // Check for --config <path>
-        if arg == "--config" && i + 1 < args.len() {
+        // Check for --flag <path>
+        if arg == flag && i + 1 < args.len() {
             return Some(args[i + 1].to_string());
         }
 
@@ -251,12 +307,6 @@ fn extract_config_file_path(args: &[&str]) -> Option<String> {
     }
 
     None
-}
-
-/// Check if --dump-config flag is present in CLI args.
-fn should_dump_config(args: &[&str]) -> bool {
-    args.iter()
-        .any(|arg| *arg == "--dump-config" || *arg == "--dump_config")
 }
 
 /// A line to be printed in the config dump.

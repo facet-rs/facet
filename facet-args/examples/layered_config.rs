@@ -48,9 +48,9 @@ struct Args {
     #[facet(args::named)]
     dump_config: bool,
 
-    /// Application settings loaded from multiple sources.
+    /// Application configuration loaded from multiple sources.
     #[facet(args::config, args::env_prefix = "MYAPP")]
-    settings: AppConfig,
+    config: AppConfig,
 }
 
 /// Main application configuration.
@@ -171,54 +171,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args_vec: Vec<String> = std::env::args().skip(1).collect();
     let args_str: Vec<&str> = args_vec.iter().map(|s| s.as_str()).collect();
 
-    // Check if --config was explicitly provided
-    let explicit_config = args_str
-        .iter()
-        .position(|arg| *arg == "--config")
-        .and_then(|i| args_str.get(i + 1).map(|s| s.to_string()))
-        .or_else(|| {
-            args_str
-                .iter()
-                .find(|arg| arg.starts_with("--config="))
-                .and_then(|arg| arg.strip_prefix("--config=").map(|s| s.to_string()))
-        });
+    // Parse arguments - automatically handles --config field
+    let result = facet_args::from_slice_layered::<Args>(&args_str)?;
 
-    // Use builder API to demonstrate default config path resolution
-    use facet_args::builder;
-    use facet_args::config_format::JsonFormat;
-
-    let result = builder()
-        .cli(|cli| cli.args(args_str.iter().map(|s| s.to_string())))
-        .env(|env| env.prefix("MYAPP"))
-        .file(|file| {
-            let mut file_builder = file.format(JsonFormat).default_paths(&[
-                "./config.json",
-                "~/.config/myapp/config.json",
-                "facet-args/examples/config.json",
-                "/etc/myapp/config.json",
-            ]);
-            if let Some(path) = explicit_config {
-                file_builder = file_builder.path(path);
-            }
-            file_builder
-        })
-        .build_traced()?;
-
-    // Check if --dump-config was requested
-    if args_vec.iter().any(|arg| arg == "--dump-config") {
-        facet_args::dump_config_from_result::<Args>(&result);
+    // Handle --dump-config flag
+    if result.value.dump_config {
+        result.dump();
         return Ok(());
     }
 
-    // Deserialize the config value into Args
-    let args: Args = facet_args::config_value_parser::from_config_value(&result.value)?;
-
-    if args.version {
+    if result.value.version {
         println!("myapp v1.0.0");
         return Ok(());
     }
 
-    let verbosity = match args.verbose {
+    let verbosity = match result.value.verbose {
         0 => "normal",
         1 => "verbose",
         2 => "very verbose",
@@ -228,11 +195,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
 
     println!("Loaded configuration:");
-    println!("{}", args.settings.pretty());
+    println!("{}", result.value.config.pretty());
     println!();
 
     // Demonstrate that sensitive fields are redacted
-    if args.settings.server.api_key.is_some() {
+    if result.value.config.server.api_key.is_some() {
         println!("🔒 API key is set (value hidden due to #[facet(sensitive)])");
         println!();
     }
@@ -244,7 +211,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  MYAPP__SERVER__PORT=9000 cargo run --example layered_config");
     println!();
     println!("  # Override with CLI:");
-    println!("  cargo run --example layered_config -- --settings.server.port 3000");
+    println!("  cargo run --example layered_config -- --config.server.port 3000");
     println!();
     println!("  # Load from config file:");
     println!("  cargo run --example layered_config -- --config facet-args/examples/config.json");
@@ -256,7 +223,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
     println!("  # Combine all layers (priority: CLI > env > file > defaults):");
     println!("  MYAPP__SERVER__HOST=example.com cargo run --example layered_config -- \\");
-    println!("    --config facet-args/examples/config.json --settings.server.port 4000");
+    println!("    --config facet-args/examples/config.json --config.server.port 4000");
     println!();
     println!("  # Test Vec/List handling with comma-separated env vars:");
     println!("  MYAPP__ALLOWED_ADMINS=alice@example.com,bob@example.com,charlie@example.com \\");
