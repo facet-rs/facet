@@ -109,7 +109,7 @@ pub fn from_slice_layered<T: Facet<'static>>(args: &[&str]) -> Result<T, ArgsErr
 
     // Check if --dump-config was requested before deserializing
     if should_dump_config(args) {
-        dump_config_with_provenance(&config_value);
+        dump_config_with_provenance::<T>(&config_value);
         std::process::exit(0);
     }
 
@@ -254,7 +254,7 @@ fn should_dump_config(args: &[&str]) -> bool {
 }
 
 /// Dump the ConfigValue tree with provenance information.
-fn dump_config_with_provenance(value: &ConfigValue) {
+fn dump_config_with_provenance<T: Facet<'static>>(value: &ConfigValue) {
     use std::collections::{HashMap, HashSet};
 
     // Collect all config file sources
@@ -278,7 +278,7 @@ fn dump_config_with_provenance(value: &ConfigValue) {
         println!();
     }
 
-    dump_value_recursive(value, "", 0, &config_files, &widths);
+    dump_value_recursive_with_sensitive(value, "", 0, &config_files, &widths, T::SHAPE, false);
 
     println!();
     println!("Legend:");
@@ -393,12 +393,14 @@ fn calculate_widths(
 }
 
 /// Recursively dump a ConfigValue showing provenance.
-fn dump_value_recursive(
+fn dump_value_recursive_with_sensitive(
     value: &ConfigValue,
     path: &str,
     indent: usize,
     config_files: &std::collections::HashSet<String>,
     widths: &std::collections::HashMap<usize, (usize, usize)>,
+    shape: &'static facet_core::Shape,
+    is_sensitive: bool,
 ) {
     let indent_str = "  ".repeat(indent);
     let (max_key, max_val) = widths.get(&indent).copied().unwrap_or((0, 0));
@@ -410,18 +412,52 @@ fn dump_value_recursive(
             }
 
             for (key, val) in sourced.value.iter() {
-                dump_value_recursive(val, key, indent + 1, config_files, widths);
+                // Find the corresponding field and shape
+                let (field_shape, is_sensitive) =
+                    if let facet_core::Type::User(facet_core::UserType::Struct(s)) = &shape.ty {
+                        if let Some(field) = s.fields.iter().find(|f| f.name == key) {
+                            let sensitive = field.flags.contains(facet_core::FieldFlags::SENSITIVE);
+                            (field.shape.get(), sensitive)
+                        } else {
+                            (shape, false)
+                        }
+                    } else {
+                        (shape, false)
+                    };
+                dump_value_recursive_with_sensitive(
+                    val,
+                    key,
+                    indent + 1,
+                    config_files,
+                    widths,
+                    field_shape,
+                    is_sensitive,
+                );
             }
         }
         ConfigValue::Array(sourced) => {
             println!("{}{}", indent_str, path.white());
             for (i, item) in sourced.value.iter().enumerate() {
-                dump_value_recursive(item, &format!("[{}]", i), indent + 1, config_files, widths);
+                // For arrays, use the element shape if available
+                let element_shape = shape.inner.unwrap_or(shape);
+                dump_value_recursive_with_sensitive(
+                    item,
+                    &format!("[{}]", i),
+                    indent + 1,
+                    config_files,
+                    widths,
+                    element_shape,
+                    false,
+                );
             }
         }
         ConfigValue::String(sourced) => {
             let prov = format_provenance(&sourced.provenance, config_files);
-            let value_str = format!("\"{}\"", sourced.value);
+            let value_str = if is_sensitive {
+                "\"[REDACTED]\"".to_string()
+            } else {
+                format!("\"{}\"", sourced.value)
+            };
             let key_len = path.len();
             let padding = if key_len < max_key {
                 ".".repeat(max_key - key_len)
@@ -433,7 +469,7 @@ fn dump_value_recursive(
                 indent_str,
                 path.white(),
                 padding.bright_black(),
-                value_str.green(),
+                value_str.cyan(), // strings are cyan
                 prov,
                 val_width = max_val
             );
@@ -452,7 +488,7 @@ fn dump_value_recursive(
                 indent_str,
                 path.white(),
                 padding.bright_black(),
-                value_str.green(),
+                value_str.blue(), // integers are blue
                 prov,
                 val_width = max_val
             );
@@ -471,7 +507,7 @@ fn dump_value_recursive(
                 indent_str,
                 path.white(),
                 padding.bright_black(),
-                value_str.green(),
+                value_str.bright_blue(), // floats are bright blue
                 prov,
                 val_width = max_val
             );
@@ -490,7 +526,7 @@ fn dump_value_recursive(
                 indent_str,
                 path.white(),
                 padding.bright_black(),
-                value_str.green(),
+                value_str.yellow(), // booleans are yellow
                 prov,
                 val_width = max_val
             );
@@ -508,7 +544,7 @@ fn dump_value_recursive(
                 indent_str,
                 path.white(),
                 padding.bright_black(),
-                "null".green(),
+                "null".bright_black(), // null is dim
                 prov,
                 val_width = max_val
             );
