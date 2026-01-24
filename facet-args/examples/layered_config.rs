@@ -29,9 +29,10 @@
 
 use facet::Facet;
 use facet_args as args;
+use facet_pretty::FacetPretty;
 
 /// Application configuration with layered sources.
-#[derive(Debug, Facet)]
+#[derive(Facet)]
 struct Args {
     /// Show version information.
     #[facet(args::named, args::short = 'v')]
@@ -43,7 +44,7 @@ struct Args {
 }
 
 /// Main application configuration.
-#[derive(Debug, Facet)]
+#[derive(Facet)]
 struct AppConfig {
     /// Server configuration.
     #[facet(default = "ServerConfig::default()")]
@@ -62,7 +63,7 @@ struct AppConfig {
 }
 
 /// Server settings.
-#[derive(Debug, Facet)]
+#[derive(Facet)]
 struct ServerConfig {
     /// Server host address.
     #[facet(default = "localhost")]
@@ -93,7 +94,7 @@ impl Default for ServerConfig {
 }
 
 /// Database settings.
-#[derive(Debug, Facet)]
+#[derive(Facet)]
 struct DatabaseConfig {
     /// Database URL.
     #[facet(default = "sqlite::memory:")]
@@ -119,7 +120,7 @@ impl Default for DatabaseConfig {
 }
 
 /// Email/SMTP configuration.
-#[derive(Debug, Facet)]
+#[derive(Facet)]
 struct EmailConfig {
     /// SMTP host.
     host: String,
@@ -139,7 +140,7 @@ struct EmailConfig {
 }
 
 /// Feature flags for experimental features.
-#[derive(Debug, Facet)]
+#[derive(Facet)]
 struct FeatureFlags {
     /// Enable experimental API.
     #[facet(default = false)]
@@ -227,7 +228,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         email: None,
         features: FeatureFlags::default(),
     };
-    println!("{:#?}", config);
+    println!("{}", config.pretty());
     println!();
 
     println!("Next steps:");
