@@ -138,7 +138,7 @@ fn get_default_config_value(field: &'static facet_core::Field) -> Option<ConfigV
     // The deserializer needs the Object to enter and recursively fill defaults
     if let Type::User(UserType::Struct(_)) = &shape.ty {
         return Some(ConfigValue::Object(Sourced {
-            value: IndexMap::new(),
+            value: IndexMap::default(),
             span: None,
             provenance: Some(Provenance::Default),
         }));

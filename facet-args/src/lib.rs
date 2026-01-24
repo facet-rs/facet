@@ -157,8 +157,8 @@ fn restructure_config_value(
         _ => return value, // Not an object, return as-is
     };
 
-    let mut top_level_map = IndexMap::new();
-    let mut config_map = IndexMap::new();
+    let mut top_level_map = IndexMap::default();
+    let mut config_map = IndexMap::default();
 
     // Separate top-level fields from config fields, and extract existing config field if present
     let mut existing_config_value: Option<ConfigValue> = None;
