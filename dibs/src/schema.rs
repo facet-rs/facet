@@ -26,6 +26,7 @@
 //! }
 //! ```
 
+use crate::Jsonb;
 use facet::{Facet, Shape, Type, UserType};
 
 // Define the dibs attribute grammar using facet's macro.
@@ -572,8 +573,13 @@ pub fn parse_fk_reference(fk_ref: &str) -> Option<(&str, &str)> {
 
 /// Map a Rust type to a Postgres type.
 ///
-/// Takes a Shape to properly handle generic types like `Vec<u8>`.
+/// Takes a Shape to properly handle generic types like `Vec<u8>` and `Jsonb<T>`.
 pub fn shape_to_pg_type(shape: &Shape) -> Option<PgType> {
+    // Check for Jsonb<T> using decl_id (works for all generic instantiations)
+    if shape.decl_id == Jsonb::<()>::SHAPE.decl_id {
+        return Some(PgType::Jsonb);
+    }
+
     // Check for Vec<T> types - shape.def is List
     if matches!(&shape.def, facet::Def::List(_)) {
         if let Some(inner) = shape.inner {
