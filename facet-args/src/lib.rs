@@ -204,7 +204,7 @@ fn restructure_config_value(
     } else {
         // No config fields at all - create empty object
         ConfigValue::Object(Sourced {
-            value: IndexMap::new(),
+            value: IndexMap::default(),
             span: None,
             provenance: None,
         })
@@ -422,64 +422,94 @@ fn dump_value_recursive(
         ConfigValue::String(sourced) => {
             let prov = format_provenance(&sourced.provenance, config_files);
             let value_str = format!("\"{}\"", sourced.value);
+            let key_len = path.len();
+            let padding = if key_len < max_key {
+                ".".repeat(max_key - key_len)
+            } else {
+                String::new()
+            };
             println!(
-                "{}{:>key_width$}  {:<val_width$}  {}",
+                "{}{}{}  {:<val_width$}  {}",
                 indent_str,
                 path.white(),
+                padding.bright_black(),
                 value_str.green(),
                 prov,
-                key_width = max_key,
                 val_width = max_val
             );
         }
         ConfigValue::Integer(sourced) => {
             let prov = format_provenance(&sourced.provenance, config_files);
             let value_str = sourced.value.to_string();
+            let key_len = path.len();
+            let padding = if key_len < max_key {
+                ".".repeat(max_key - key_len)
+            } else {
+                String::new()
+            };
             println!(
-                "{}{:>key_width$}  {:<val_width$}  {}",
+                "{}{}{}  {:<val_width$}  {}",
                 indent_str,
                 path.white(),
+                padding.bright_black(),
                 value_str.green(),
                 prov,
-                key_width = max_key,
                 val_width = max_val
             );
         }
         ConfigValue::Float(sourced) => {
             let prov = format_provenance(&sourced.provenance, config_files);
             let value_str = sourced.value.to_string();
+            let key_len = path.len();
+            let padding = if key_len < max_key {
+                ".".repeat(max_key - key_len)
+            } else {
+                String::new()
+            };
             println!(
-                "{}{:>key_width$}  {:<val_width$}  {}",
+                "{}{}{}  {:<val_width$}  {}",
                 indent_str,
                 path.white(),
+                padding.bright_black(),
                 value_str.green(),
                 prov,
-                key_width = max_key,
                 val_width = max_val
             );
         }
         ConfigValue::Bool(sourced) => {
             let prov = format_provenance(&sourced.provenance, config_files);
             let value_str = sourced.value.to_string();
+            let key_len = path.len();
+            let padding = if key_len < max_key {
+                ".".repeat(max_key - key_len)
+            } else {
+                String::new()
+            };
             println!(
-                "{}{:>key_width$}  {:<val_width$}  {}",
+                "{}{}{}  {:<val_width$}  {}",
                 indent_str,
                 path.white(),
+                padding.bright_black(),
                 value_str.green(),
                 prov,
-                key_width = max_key,
                 val_width = max_val
             );
         }
         ConfigValue::Null(sourced) => {
             let prov = format_provenance(&sourced.provenance, config_files);
+            let key_len = path.len();
+            let padding = if key_len < max_key {
+                ".".repeat(max_key - key_len)
+            } else {
+                String::new()
+            };
             println!(
-                "{}{:>key_width$}  {:<val_width$}  {}",
+                "{}{}{}  {:<val_width$}  {}",
                 indent_str,
                 path.white(),
+                padding.bright_black(),
                 "null".green(),
                 prov,
-                key_width = max_key,
                 val_width = max_val
             );
         }
