@@ -393,20 +393,20 @@ Validation runs after all layers are merged, using `facet-validate`:
 
 ```rust
 use facet::Facet;
-use facet_validate::Validate;
+use facet_validate as validate;
 
-#[derive(Facet, Validate, Debug)]
+#[derive(Facet, Debug)]
 struct ServerConfig {
     /// Port to listen on
-    #[validate(range(1..=65535))]
+    #[facet(validate::min = 1, validate::max = 65535)]
     port: u16,
     
     /// Database URL
-    #[validate(non_empty)]
+    #[facet(validate::min_length = 1)]
     database_url: String,
     
     /// Log level
-    #[validate(one_of("trace", "debug", "info", "warn", "error"))]
+    #[facet(validate::regex = r"^(trace|debug|info|warn|error)$")]
     log_level: String,
 }
 ```
