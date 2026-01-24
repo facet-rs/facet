@@ -1,0 +1,24 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8080,
+    "timeout_secs": 60,
+    "tls_enabled": true
+  },
+  "database": {
+    "url": "postgres://localhost/myapp",
+    "max_connections": 20,
+    "log_queries": true
+  },
+  "email": {
+    "host": "smtp.example.com",
+    "port": 587,
+    "username": "noreply@example.com",
+    "from": "MyApp <noreply@example.com>"
+  },
+  "features": {
+    "experimental_api": false,
+    "debug_mode": false,
+    "metrics": true
+  }
+}
