@@ -242,6 +242,8 @@ pub struct ConfigResult<T> {
     pub provenance: ProvenanceMap,
     /// Records of values that were overridden by higher-priority layers.
     pub overrides: Vec<Override>,
+    /// Information about config file path resolution.
+    pub file_resolution: FileResolution,
 }
 
 impl<T> ConfigResult<T> {
@@ -251,6 +253,7 @@ impl<T> ConfigResult<T> {
             value,
             provenance: ProvenanceMap::default(),
             overrides: Vec::new(),
+            file_resolution: FileResolution::new(),
         }
     }
 
@@ -260,6 +263,22 @@ impl<T> ConfigResult<T> {
             value,
             provenance,
             overrides,
+            file_resolution: FileResolution::new(),
+        }
+    }
+
+    /// Create a new config result with full tracking.
+    pub fn with_full_tracking(
+        value: T,
+        provenance: ProvenanceMap,
+        overrides: Vec<Override>,
+        file_resolution: FileResolution,
+    ) -> Self {
+        Self {
+            value,
+            provenance,
+            overrides,
+            file_resolution,
         }
     }
 
@@ -279,6 +298,79 @@ impl<T> ConfigResult<T> {
             value: f(self.value),
             provenance: self.provenance,
             overrides: self.overrides,
+            file_resolution: self.file_resolution,
+        }
+    }
+}
+
+/// Status of a config file path during resolution.
+#[derive(Debug, Clone)]
+pub enum FilePathStatus {
+    /// Path was picked and loaded successfully.
+    Picked,
+    /// Path exists but was not tried (explicit --config was provided).
+    NotTried,
+    /// Path does not exist.
+    Absent,
+}
+
+/// Information about config file path resolution.
+#[derive(Debug, Clone)]
+pub struct FilePathResolution {
+    /// The path that was checked.
+    pub path: Utf8PathBuf,
+    /// The status of this path.
+    pub status: FilePathStatus,
+    /// Whether this path came from explicit --config flag.
+    pub explicit: bool,
+}
+
+/// Result of config file resolution, tracking all paths that were considered.
+#[derive(Debug, Clone, Default)]
+pub struct FileResolution {
+    /// All paths that were considered, in order.
+    pub paths: Vec<FilePathResolution>,
+    /// Whether an explicit --config path was provided.
+    pub had_explicit: bool,
+}
+
+impl FileResolution {
+    /// Create a new empty file resolution.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Add an explicit path that was provided via --config.
+    pub fn add_explicit(&mut self, path: Utf8PathBuf, exists: bool) {
+        self.had_explicit = true;
+        self.paths.push(FilePathResolution {
+            path,
+            status: if exists {
+                FilePathStatus::Picked
+            } else {
+                FilePathStatus::Absent
+            },
+            explicit: true,
+        });
+    }
+
+    /// Add a default path that was checked.
+    pub fn add_default(&mut self, path: Utf8PathBuf, status: FilePathStatus) {
+        self.paths.push(FilePathResolution {
+            path,
+            status,
+            explicit: false,
+        });
+    }
+
+    /// Mark remaining default paths as not tried (because explicit was used).
+    pub fn mark_defaults_not_tried(&mut self, default_paths: &[Utf8PathBuf]) {
+        for path in default_paths {
+            self.paths.push(FilePathResolution {
+                path: path.clone(),
+                status: FilePathStatus::NotTried,
+                explicit: false,
+            });
         }
     }
 }

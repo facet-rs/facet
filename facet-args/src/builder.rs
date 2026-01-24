@@ -24,7 +24,7 @@ use crate::config_format::{ConfigFormatError, FormatRegistry};
 use crate::config_value::ConfigValue;
 use crate::env::{EnvConfig, EnvSource, StdEnv, parse_env_with_source};
 use crate::merge::merge_layers;
-use crate::provenance::{ConfigResult, Override, Provenance};
+use crate::provenance::{ConfigResult, FilePathStatus, FileResolution, Override, Provenance};
 
 /// Create a new layered configuration builder.
 pub fn builder() -> LayeredConfigBuilder {
@@ -111,12 +111,15 @@ impl<E: EnvSource> LayeredConfigBuilder<E> {
     pub fn build_traced(self) -> Result<ConfigResult<ConfigValue>, LayeredConfigError> {
         let mut layers: Vec<ConfigValue> = Vec::new();
         let mut all_overrides: Vec<Override> = Vec::new();
+        let mut file_resolution = FileResolution::new();
 
         // Layer 1: Config file (lowest priority after defaults)
-        if let Some(ref file_config) = self.file_config
-            && let Some(value) = Self::load_config_file(file_config)?
-        {
-            layers.push(value);
+        if let Some(ref file_config) = self.file_config {
+            let (value_opt, resolution) = Self::load_config_file(file_config)?;
+            file_resolution = resolution;
+            if let Some(value) = value_opt {
+                layers.push(value);
+            }
         }
 
         // Layer 2: Environment variables
@@ -139,48 +142,82 @@ impl<E: EnvSource> LayeredConfigBuilder<E> {
         // Build provenance map by walking the merged tree
         let provenance = collect_provenance(&merge_result.value, "");
 
-        Ok(ConfigResult {
-            value: merge_result.value,
+        Ok(ConfigResult::with_full_tracking(
+            merge_result.value,
             provenance,
-            overrides: all_overrides,
-        })
+            all_overrides,
+            file_resolution,
+        ))
     }
 
     /// Load and parse the config file if specified.
     fn load_config_file(
         file_config: &FileConfig,
-    ) -> Result<Option<ConfigValue>, LayeredConfigError> {
-        // Determine which path to use
-        let path = if let Some(ref explicit) = file_config.explicit_path {
-            // Explicit path must exist
-            if !std::path::Path::new(explicit.as_str()).exists() {
-                return Err(LayeredConfigError::FileNotFound(explicit.clone()));
+    ) -> Result<(Option<ConfigValue>, FileResolution), LayeredConfigError> {
+        let mut resolution = FileResolution::new();
+
+        // Check if explicit path was provided
+        if let Some(ref explicit) = file_config.explicit_path {
+            let exists = std::path::Path::new(explicit.as_str()).exists();
+            resolution.add_explicit(explicit.clone(), exists);
+
+            if !exists {
+                return Err(LayeredConfigError::FileNotFound {
+                    path: explicit.clone(),
+                    resolution: resolution.clone(),
+                });
             }
-            Some(explicit.clone())
-        } else {
-            // Try default paths in order, first existing one wins
-            file_config
-                .default_paths
-                .iter()
-                .find(|p| std::path::Path::new(p.as_str()).exists())
-                .cloned()
+
+            // Mark default paths as not tried
+            resolution.mark_defaults_not_tried(&file_config.default_paths);
+
+            // Read and parse the explicit file
+            let contents = std::fs::read_to_string(explicit.as_str())
+                .map_err(|e| LayeredConfigError::FileRead(explicit.clone(), e.to_string()))?;
+
+            let value = file_config
+                .registry
+                .parse_file(explicit, &contents)
+                .map_err(|e| LayeredConfigError::FileParse(explicit.clone(), e))?;
+
+            return Ok((Some(value), resolution));
+        }
+
+        // No explicit path, try defaults in order
+        let mut found_path: Option<Utf8PathBuf> = None;
+
+        for path in &file_config.default_paths {
+            let exists = std::path::Path::new(path.as_str()).exists();
+
+            if exists && found_path.is_none() {
+                // This is the first one that exists - pick it
+                resolution.add_default(path.clone(), FilePathStatus::Picked);
+                found_path = Some(path.clone());
+            } else {
+                // Either doesn't exist, or we already found one
+                let status = if exists {
+                    FilePathStatus::NotTried // Exists but we picked an earlier one
+                } else {
+                    FilePathStatus::Absent
+                };
+                resolution.add_default(path.clone(), status);
+            }
+        }
+
+        let Some(path) = found_path else {
+            return Ok((None, resolution));
         };
 
-        let Some(path) = path else {
-            return Ok(None);
-        };
-
-        // Read file contents
+        // Read and parse the picked file
         let contents = std::fs::read_to_string(path.as_str())
             .map_err(|e| LayeredConfigError::FileRead(path.clone(), e.to_string()))?;
 
-        // Parse using the format registry
         let value = file_config
             .registry
             .parse_file(&path, &contents)
             .map_err(|e| LayeredConfigError::FileParse(path, e))?;
 
-        Ok(Some(value))
+        Ok((Some(value), resolution))
     }
 
     /// Parse CLI arguments into a ConfigValue tree.
@@ -608,7 +645,12 @@ impl FileConfigBuilder {
 #[derive(Debug)]
 pub enum LayeredConfigError {
     /// Config file not found at the specified path.
-    FileNotFound(Utf8PathBuf),
+    FileNotFound {
+        /// The path that was explicitly requested.
+        path: Utf8PathBuf,
+        /// File resolution information showing what was tried.
+        resolution: FileResolution,
+    },
     /// Error reading config file.
     FileRead(Utf8PathBuf, String),
     /// Error parsing config file.
@@ -631,7 +673,33 @@ pub enum LayeredConfigError {
 impl core::fmt::Display for LayeredConfigError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::FileNotFound(path) => write!(f, "config file not found: {path}"),
+            Self::FileNotFound { path, resolution } => {
+                writeln!(f, "config file not found: {path}")?;
+                writeln!(f)?;
+                writeln!(f, "File resolution:")?;
+
+                if resolution.had_explicit {
+                    writeln!(f, "  Explicit --config flag was used")?;
+                } else {
+                    writeln!(f, "  No --config flag provided, checked default paths:")?;
+                }
+
+                for path_info in &resolution.paths {
+                    let status_str = match path_info.status {
+                        FilePathStatus::Picked => "(picked)",
+                        FilePathStatus::NotTried => "(not tried)",
+                        FilePathStatus::Absent => "(absent)",
+                    };
+                    let explicit_str = if path_info.explicit {
+                        " [via --config]"
+                    } else {
+                        ""
+                    };
+                    writeln!(f, "    {} {}{}", status_str, path_info.path, explicit_str)?;
+                }
+
+                Ok(())
+            }
             Self::FileRead(path, err) => write!(f, "error reading {path}: {err}"),
             Self::FileParse(path, err) => write!(f, "error parsing {path}: {err}"),
             Self::CliParse(msg) => write!(f, "CLI parse error: {msg}"),
@@ -772,7 +840,10 @@ mod tests {
             .file(|f| f.path("/nonexistent/path.json"))
             .build_value();
 
-        assert!(matches!(result, Err(LayeredConfigError::FileNotFound(_))));
+        assert!(matches!(
+            result,
+            Err(LayeredConfigError::FileNotFound { .. })
+        ));
     }
 
     #[test]

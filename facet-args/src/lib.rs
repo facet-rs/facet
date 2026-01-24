@@ -88,16 +88,23 @@ pub fn from_slice_layered<T: Facet<'static>>(args: &[&str]) -> Result<T, ArgsErr
         builder = builder.file(|file| file.path(path));
     }
 
-    let mut config_value = builder.build_value().map_err(|_e| ArgsErrorWithInput {
-        inner: ArgsError::new(
-            ArgsErrorKind::ReflectError(facet_reflect::ReflectError::OperationFailed {
-                shape: T::SHAPE,
-                operation: "Failed to build layered config",
-            }),
-            crate::span::Span::new(0, 0),
-        ),
-        flattened_args: args.join(" "),
+    let config_result = builder.build_traced().map_err(|e| {
+        // For FileNotFound errors, the error message already includes resolution info
+        eprintln!("Error: {}", e);
+        ArgsErrorWithInput {
+            inner: ArgsError::new(
+                ArgsErrorKind::ReflectError(facet_reflect::ReflectError::OperationFailed {
+                    shape: T::SHAPE,
+                    operation: "Failed to build layered config",
+                }),
+                crate::span::Span::new(0, 0),
+            ),
+            flattened_args: args.join(" "),
+        }
     })?;
+
+    let mut config_value = config_result.value;
+    let file_resolution = config_result.file_resolution;
 
     tracing::debug!(?config_value, "Built merged ConfigValue");
 
@@ -110,7 +117,7 @@ pub fn from_slice_layered<T: Facet<'static>>(args: &[&str]) -> Result<T, ArgsErr
 
     // Check if --dump-config was requested before deserializing
     if should_dump_config(args) {
-        dump_config_with_provenance::<T>(&config_value);
+        dump_config_with_provenance::<T>(&config_value, &file_resolution);
         std::process::exit(0);
     }
 
@@ -309,15 +316,15 @@ impl DumpContext {
 }
 
 /// Dump the ConfigValue tree with provenance information.
-fn dump_config_with_provenance<T: Facet<'static>>(value: &ConfigValue) {
-    use std::collections::{HashMap, HashSet};
+fn dump_config_with_provenance<T: Facet<'static>>(
+    value: &ConfigValue,
+    file_resolution: &provenance::FileResolution,
+) {
+    use provenance::FilePathStatus;
+    use std::collections::HashMap;
 
     // Extract context from shape
     let ctx = DumpContext::from_shape::<T>();
-
-    // Collect all config file sources
-    let mut config_files = HashSet::new();
-    collect_config_files(value, &mut config_files);
 
     println!("Final Merged Configuration (with provenance)");
     println!("==============================================");
@@ -326,25 +333,52 @@ fn dump_config_with_provenance<T: Facet<'static>>(value: &ConfigValue) {
     // Show sources
     println!("Sources:");
 
-    // Config files
-    if !config_files.is_empty() {
-        for file in &config_files {
-            let path = std::path::Path::new(file);
-            if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
-                if let Some(parent) = path.parent() {
-                    let parent_str = parent.to_string_lossy();
-                    if !parent_str.is_empty() {
-                        println!("  file {}/{}", parent_str, filename.magenta());
-                    } else {
-                        println!("  file {}", filename.magenta());
-                    }
-                } else {
-                    println!("  file {}", filename.magenta());
-                }
+    // Config files - show resolution info with alignment
+    if !file_resolution.paths.is_empty() {
+        println!("  file:");
+
+        // Find max path length for alignment
+        let max_path_len = file_resolution
+            .paths
+            .iter()
+            .map(|p| p.path.as_str().len())
+            .max()
+            .unwrap_or(0);
+
+        for path_info in &file_resolution.paths {
+            let status_label = match path_info.status {
+                FilePathStatus::Picked => "  (picked)",
+                FilePathStatus::NotTried => "(not tried)",
+                FilePathStatus::Absent => "  (absent)",
+            };
+
+            // Calculate dots needed for alignment
+            let path_str = path_info.path.as_str();
+            let dots_needed = max_path_len.saturating_sub(path_str.len());
+            let dots = ".".repeat(dots_needed);
+
+            let suffix = if path_info.explicit {
+                " (via --config)"
             } else {
-                println!("  file {}", file.magenta());
-            }
+                ""
+            };
+
+            // Color the path (purple/magenta for picked, dimmed for others)
+            let colored_path = match path_info.status {
+                FilePathStatus::Picked => path_str.magenta().to_string(),
+                _ => path_str.dimmed().to_string(),
+            };
+
+            // Color the status
+            let colored_status = match path_info.status {
+                FilePathStatus::Picked => status_label.to_string(),
+                _ => status_label.dimmed().to_string(),
+            };
+
+            println!("    {} {}{} {}", colored_status, colored_path, dots, suffix);
         }
+    } else if file_resolution.had_explicit {
+        println!("  file: (none - explicit --config not provided)");
     }
 
     // Environment variables - show actual prefix from shape
@@ -378,7 +412,6 @@ fn dump_config_with_provenance<T: Facet<'static>>(value: &ConfigValue) {
                     val,
                     key,
                     0,
-                    &config_files,
                     field_shape,
                     is_sensitive,
                     &mut lines,
@@ -590,60 +623,12 @@ fn coerce_types_from_shape(value: &ConfigValue, shape: &'static facet_core::Shap
     }
 }
 
-/// Recursively collect all config file paths from the tree.
-fn collect_config_files(value: &ConfigValue, files: &mut std::collections::HashSet<String>) {
-    match value {
-        ConfigValue::Object(sourced) => {
-            if let Some(Provenance::File { file, .. }) = &sourced.provenance {
-                files.insert(file.path.to_string());
-            }
-            for val in sourced.value.values() {
-                collect_config_files(val, files);
-            }
-        }
-        ConfigValue::Array(sourced) => {
-            if let Some(Provenance::File { file, .. }) = &sourced.provenance {
-                files.insert(file.path.to_string());
-            }
-            for item in &sourced.value {
-                collect_config_files(item, files);
-            }
-        }
-        ConfigValue::String(sourced) => {
-            if let Some(Provenance::File { file, .. }) = &sourced.provenance {
-                files.insert(file.path.to_string());
-            }
-        }
-        ConfigValue::Integer(sourced) => {
-            if let Some(Provenance::File { file, .. }) = &sourced.provenance {
-                files.insert(file.path.to_string());
-            }
-        }
-        ConfigValue::Float(sourced) => {
-            if let Some(Provenance::File { file, .. }) = &sourced.provenance {
-                files.insert(file.path.to_string());
-            }
-        }
-        ConfigValue::Bool(sourced) => {
-            if let Some(Provenance::File { file, .. }) = &sourced.provenance {
-                files.insert(file.path.to_string());
-            }
-        }
-        ConfigValue::Null(sourced) => {
-            if let Some(Provenance::File { file, .. }) = &sourced.provenance {
-                files.insert(file.path.to_string());
-            }
-        }
-    }
-}
-
 /// Recursively collect lines to be printed.
 #[allow(clippy::too_many_arguments)]
 fn collect_dump_lines(
     value: &ConfigValue,
     path: &str,
     indent: usize,
-    config_files: &std::collections::HashSet<String>,
     shape: &'static facet_core::Shape,
     is_sensitive: bool,
     lines: &mut Vec<DumpLine>,
@@ -674,7 +659,6 @@ fn collect_dump_lines(
                             val,
                             key,
                             indent + 1,
-                            config_files,
                             field_shape,
                             is_sensitive,
                             lines,
@@ -686,17 +670,7 @@ fn collect_dump_lines(
             } else {
                 // Fallback: iterate in insertion order
                 for (key, val) in sourced.value.iter() {
-                    collect_dump_lines(
-                        val,
-                        key,
-                        indent + 1,
-                        config_files,
-                        shape,
-                        false,
-                        lines,
-                        ctx,
-                        state,
-                    );
+                    collect_dump_lines(val, key, indent + 1, shape, false, lines, ctx, state);
                 }
             }
         }
@@ -716,7 +690,6 @@ fn collect_dump_lines(
                     item,
                     &format!("[{}]", i),
                     indent + 1,
-                    config_files,
                     element_shape,
                     false,
                     lines,
@@ -744,7 +717,7 @@ fn collect_dump_lines(
                 indent,
                 key: path.to_string(),
                 value: colored_value,
-                provenance: format_provenance(&sourced.provenance, config_files),
+                provenance: format_provenance(&sourced.provenance),
                 is_header: false,
             });
         }
@@ -754,7 +727,7 @@ fn collect_dump_lines(
                 indent,
                 key: path.to_string(),
                 value: colored_value,
-                provenance: format_provenance(&sourced.provenance, config_files),
+                provenance: format_provenance(&sourced.provenance),
                 is_header: false,
             });
         }
@@ -764,7 +737,7 @@ fn collect_dump_lines(
                 indent,
                 key: path.to_string(),
                 value: colored_value,
-                provenance: format_provenance(&sourced.provenance, config_files),
+                provenance: format_provenance(&sourced.provenance),
                 is_header: false,
             });
         }
@@ -778,7 +751,7 @@ fn collect_dump_lines(
                 indent,
                 key: path.to_string(),
                 value: colored_value,
-                provenance: format_provenance(&sourced.provenance, config_files),
+                provenance: format_provenance(&sourced.provenance),
                 is_header: false,
             });
         }
@@ -788,7 +761,7 @@ fn collect_dump_lines(
                 indent,
                 key: path.to_string(),
                 value: colored_value,
-                provenance: format_provenance(&sourced.provenance, config_files),
+                provenance: format_provenance(&sourced.provenance),
                 is_header: false,
             });
         }
@@ -887,10 +860,7 @@ fn wrap_value(value: &str, max_width: usize) -> Vec<String> {
 }
 
 /// Format provenance with colors.
-fn format_provenance(
-    prov: &Option<Provenance>,
-    _config_files: &std::collections::HashSet<String>,
-) -> String {
+fn format_provenance(prov: &Option<Provenance>) -> String {
     match prov {
         Some(Provenance::Cli { arg, .. }) => format!("{}", arg.cyan()),
         Some(Provenance::Env { var, .. }) => format!("{}", format!("${}", var).yellow()),
