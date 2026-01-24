@@ -973,6 +973,39 @@ fn extract_enum_variants(_shape: &'static Shape) -> Vec<String> {
     Vec::new()
 }
 
+fn unescape_rust_string_escapes(value: &str) -> String {
+    if !value.contains('\\') {
+        return value.to_string();
+    }
+
+    let mut out = String::with_capacity(value.len());
+    let mut chars = value.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            out.push(ch);
+            continue;
+        }
+
+        match chars.next() {
+            Some('\\') => out.push('\\'),
+            Some('"') => out.push('"'),
+            Some('\'') => out.push('\''),
+            Some('n') => out.push('\n'),
+            Some('r') => out.push('\r'),
+            Some('t') => out.push('\t'),
+            Some('0') => out.push('\0'),
+            Some(other) => {
+                // Unknown escape - keep it as-is.
+                out.push('\\');
+                out.push(other);
+            }
+            None => out.push('\\'),
+        }
+    }
+
+    out
+}
+
 // =============================================================================
 // Table definition registration
 // =============================================================================
@@ -1063,14 +1096,12 @@ impl TableDef {
                 && attr.key == "check"
                 && let Some(Attr::Check(check)) = attr.get_as::<Attr>()
             {
+                let expr = unescape_rust_string_escapes(check.expr);
                 let name = check
                     .name
                     .map(|s| s.to_string())
-                    .unwrap_or_else(|| crate::check_constraint_name(&table_name, check.expr));
-                check_constraints.push(CheckConstraint {
-                    name,
-                    expr: check.expr.to_string(),
-                });
+                    .unwrap_or_else(|| crate::check_constraint_name(&table_name, &expr));
+                check_constraints.push(CheckConstraint { name, expr });
             }
 
             // Collect container-level trigger-enforced checks
@@ -1078,14 +1109,15 @@ impl TableDef {
                 && attr.key == "trigger_check"
                 && let Some(Attr::TriggerCheck(trig)) = attr.get_as::<Attr>()
             {
+                let expr = unescape_rust_string_escapes(trig.expr);
                 let name = trig
                     .name
                     .map(|s| s.to_string())
-                    .unwrap_or_else(|| crate::trigger_check_name(&table_name, trig.expr));
+                    .unwrap_or_else(|| crate::trigger_check_name(&table_name, &expr));
                 trigger_checks.push(TriggerCheckConstraint {
                     name,
-                    expr: trig.expr.to_string(),
-                    message: trig.message.map(|s| s.to_string()),
+                    expr,
+                    message: trig.message.map(unescape_rust_string_escapes),
                 });
             }
         }
