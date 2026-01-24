@@ -38,7 +38,7 @@
 //! ALTER TABLE categories RENAME TO category;
 //! ```
 
-use crate::{Column, ForeignKey, Index, PgType, Schema, Table, quote_ident};
+use crate::{CheckConstraint, Column, ForeignKey, Index, PgType, Schema, Table, quote_ident};
 use std::collections::HashSet;
 
 /// A diff between two schemas.
@@ -128,6 +128,10 @@ pub enum Change {
     AddUnique(String),
     /// Drop a unique constraint.
     DropUnique(String),
+    /// Add a CHECK constraint.
+    AddCheck(CheckConstraint),
+    /// Drop a CHECK constraint (by name).
+    DropCheck(String),
 }
 
 impl Change {
@@ -292,6 +296,15 @@ impl Change {
                     quote_ident(&constraint_name)
                 )
             }
+            Change::AddCheck(check) => format!(
+                "ALTER TABLE {} ADD CONSTRAINT {} CHECK ({});",
+                qt,
+                quote_ident(&check.name),
+                check.expr
+            ),
+            Change::DropCheck(name) => {
+                format!("ALTER TABLE {} DROP CONSTRAINT {};", qt, quote_ident(name))
+            }
         }
     }
 }
@@ -365,6 +378,8 @@ impl std::fmt::Display for Change {
             Change::DropIndex(name) => write!(f, "- INDEX {}", name),
             Change::AddUnique(col) => write!(f, "+ UNIQUE ({})", col),
             Change::DropUnique(col) => write!(f, "- UNIQUE ({})", col),
+            Change::AddCheck(check) => write!(f, "+ CHECK {}: {}", check.name, check.expr),
+            Change::DropCheck(name) => write!(f, "- CHECK {}", name),
         }
     }
 }
@@ -665,6 +680,12 @@ fn diff_table(
     // Diff columns
     changes.extend(diff_columns(&desired.columns, &current.columns));
 
+    // Diff CHECK constraints
+    changes.extend(diff_check_constraints(
+        &desired.check_constraints,
+        &current.check_constraints,
+    ));
+
     // Diff foreign keys
     changes.extend(diff_foreign_keys(
         &desired.foreign_keys,
@@ -674,6 +695,36 @@ fn diff_table(
 
     // Diff indices
     changes.extend(diff_indices(&desired.indices, &current.indices));
+
+    changes
+}
+
+fn diff_check_constraints(desired: &[CheckConstraint], current: &[CheckConstraint]) -> Vec<Change> {
+    let mut changes = Vec::new();
+
+    let desired_by_name: std::collections::HashMap<&str, &CheckConstraint> =
+        desired.iter().map(|c| (c.name.as_str(), c)).collect();
+    let current_by_name: std::collections::HashMap<&str, &CheckConstraint> =
+        current.iter().map(|c| (c.name.as_str(), c)).collect();
+
+    // Drops
+    for c in current {
+        if !desired_by_name.contains_key(c.name.as_str()) {
+            changes.push(Change::DropCheck(c.name.clone()));
+        }
+    }
+
+    // Adds / modifications
+    for d in desired {
+        match current_by_name.get(d.name.as_str()) {
+            None => changes.push(Change::AddCheck(d.clone())),
+            Some(c) if c.expr != d.expr => {
+                changes.push(Change::DropCheck(d.name.clone()));
+                changes.push(Change::AddCheck(d.clone()));
+            }
+            Some(_) => {}
+        }
+    }
 
     changes
 }

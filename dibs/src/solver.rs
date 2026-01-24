@@ -176,6 +176,7 @@ struct VirtualTable {
     foreign_keys: HashSet<ForeignKey>,
     indices: HashSet<String>,
     unique_constraints: HashSet<String>,
+    check_constraints: std::collections::HashMap<String, String>,
 }
 
 /// Virtual schema state for simulating migrations.
@@ -201,6 +202,7 @@ impl VirtualSchema {
                     foreign_keys: HashSet::new(),
                     indices: HashSet::new(),
                     unique_constraints: HashSet::new(),
+                    check_constraints: std::collections::HashMap::new(),
                 },
             );
         }
@@ -222,6 +224,11 @@ impl VirtualSchema {
                         .iter()
                         .filter(|c| c.unique)
                         .map(|c| c.name.clone())
+                        .collect(),
+                    check_constraints: table
+                        .check_constraints
+                        .iter()
+                        .map(|c| (c.name.clone(), c.expr.clone()))
                         .collect(),
                 },
             );
@@ -333,6 +340,34 @@ impl VirtualSchema {
                         diffs.push(format!("- {}.index({})", name, idx));
                     }
                 }
+
+                // Unique constraints
+                for col in &self_table.unique_constraints {
+                    if !other_table.unique_constraints.contains(col) {
+                        diffs.push(format!("+ {}.unique({})", name, col));
+                    }
+                }
+                for col in &other_table.unique_constraints {
+                    if !self_table.unique_constraints.contains(col) {
+                        diffs.push(format!("- {}.unique({})", name, col));
+                    }
+                }
+
+                // CHECK constraints
+                for (ck_name, ck_expr) in &self_table.check_constraints {
+                    match other_table.check_constraints.get(ck_name) {
+                        None => diffs.push(format!("+ {}.check({})", name, ck_name)),
+                        Some(other_expr) if other_expr != ck_expr => {
+                            diffs.push(format!("~ {}.check({})", name, ck_name))
+                        }
+                        Some(_) => {}
+                    }
+                }
+                for ck_name in other_table.check_constraints.keys() {
+                    if !self_table.check_constraints.contains_key(ck_name) {
+                        diffs.push(format!("- {}.check({})", name, ck_name));
+                    }
+                }
             }
         }
 
@@ -371,6 +406,11 @@ impl VirtualSchema {
                             .iter()
                             .filter(|c| c.unique)
                             .map(|c| c.name.clone())
+                            .collect(),
+                        check_constraints: t
+                            .check_constraints
+                            .iter()
+                            .map(|c| (c.name.clone(), c.expr.clone()))
                             .collect(),
                     },
                 );
@@ -600,6 +640,47 @@ impl VirtualSchema {
                 }
                 if let Some(table) = self.tables.get_mut(table_context) {
                     table.unique_constraints.remove(col);
+                }
+            }
+
+            // CHECK constraint operations
+            Change::AddCheck(check) => {
+                if !self.table_exists(table_context) {
+                    return Err(SolverError::TableNotFound {
+                        change: change_desc,
+                        table: table_context.to_string(),
+                    });
+                }
+                if let Some(table) = self.tables.get_mut(table_context) {
+                    if table.check_constraints.contains_key(&check.name) {
+                        return Err(SolverError::ConflictingOperations {
+                            first: change_desc,
+                            second: format!("constraint {} already exists", check.name),
+                            reason: "check constraint already exists".to_string(),
+                        });
+                    }
+                    table
+                        .check_constraints
+                        .insert(check.name.clone(), check.expr.clone());
+                }
+            }
+
+            Change::DropCheck(name) => {
+                if !self.table_exists(table_context) {
+                    return Err(SolverError::TableNotFound {
+                        change: change_desc,
+                        table: table_context.to_string(),
+                    });
+                }
+                if let Some(table) = self.tables.get_mut(table_context) {
+                    if !table.check_constraints.contains_key(name) {
+                        return Err(SolverError::ConflictingOperations {
+                            first: change_desc,
+                            second: format!("constraint {} not found", name),
+                            reason: "check constraint not found".to_string(),
+                        });
+                    }
+                    table.check_constraints.remove(name);
                 }
             }
         }

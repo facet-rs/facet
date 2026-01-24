@@ -455,13 +455,15 @@ fn diff_to_result(diff: &crate::SchemaDiff) -> DiffResult {
                             | Change::AddPrimaryKey(_)
                             | Change::AddForeignKey(_)
                             | Change::AddIndex(_)
-                            | Change::AddUnique(_) => ChangeKind::Add,
+                            | Change::AddUnique(_)
+                            | Change::AddCheck(_) => ChangeKind::Add,
                             Change::DropTable(_)
                             | Change::DropColumn(_)
                             | Change::DropPrimaryKey
                             | Change::DropForeignKey(_)
                             | Change::DropIndex(_)
-                            | Change::DropUnique(_) => ChangeKind::Drop,
+                            | Change::DropUnique(_)
+                            | Change::DropCheck(_) => ChangeKind::Drop,
                             Change::RenameTable { .. }
                             | Change::RenameColumn { .. }
                             | Change::AlterColumnType { .. }
