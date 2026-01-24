@@ -21,6 +21,7 @@ pub use builder::builder;
 use config_value::ConfigValue;
 use owo_colors::OwoColorize;
 use provenance::Provenance;
+use unicode_width::UnicodeWidthStr;
 
 pub(crate) mod arg;
 pub(crate) mod error;
@@ -458,58 +459,82 @@ fn dump_value_recursive_with_sensitive(
             } else {
                 format!("\"{}\"", sourced.value)
             };
+            let colored_value = value_str.cyan().to_string();
+            let visual_len = visual_width(&colored_value);
+            let padding_needed = if max_val > visual_len {
+                max_val - visual_len
+            } else {
+                0
+            };
+
             let key_len = path.len();
-            let padding = if key_len < max_key {
+            let key_padding = if key_len < max_key {
                 ".".repeat(max_key - key_len)
             } else {
                 String::new()
             };
             println!(
-                "{}{}{}  {:<val_width$}  {}",
+                "{}{}{}  {}{}  {}",
                 indent_str,
                 path.white(),
-                padding.bright_black(),
-                value_str.cyan(), // strings are cyan
+                key_padding.bright_black(),
+                colored_value,
+                " ".repeat(padding_needed),
                 prov,
-                val_width = max_val
             );
         }
         ConfigValue::Integer(sourced) => {
             let prov = format_provenance(&sourced.provenance, config_files);
             let value_str = sourced.value.to_string();
+            let colored_value = value_str.blue().to_string();
+            let visual_len = visual_width(&colored_value);
+            let padding_needed = if max_val > visual_len {
+                max_val - visual_len
+            } else {
+                0
+            };
+
             let key_len = path.len();
-            let padding = if key_len < max_key {
+            let key_padding = if key_len < max_key {
                 ".".repeat(max_key - key_len)
             } else {
                 String::new()
             };
             println!(
-                "{}{}{}  {:<val_width$}  {}",
+                "{}{}{}  {}{}  {}",
                 indent_str,
                 path.white(),
-                padding.bright_black(),
-                value_str.blue(), // integers are blue
+                key_padding.bright_black(),
+                colored_value,
+                " ".repeat(padding_needed),
                 prov,
-                val_width = max_val
             );
         }
         ConfigValue::Float(sourced) => {
             let prov = format_provenance(&sourced.provenance, config_files);
             let value_str = sourced.value.to_string();
+            let colored_value = value_str.bright_blue().to_string();
+            let visual_len = visual_width(&colored_value);
+            let padding_needed = if max_val > visual_len {
+                max_val - visual_len
+            } else {
+                0
+            };
+
             let key_len = path.len();
-            let padding = if key_len < max_key {
+            let key_padding = if key_len < max_key {
                 ".".repeat(max_key - key_len)
             } else {
                 String::new()
             };
             println!(
-                "{}{}{}  {:<val_width$}  {}",
+                "{}{}{}  {}{}  {}",
                 indent_str,
                 path.white(),
-                padding.bright_black(),
-                value_str.bright_blue(), // floats are bright blue
+                key_padding.bright_black(),
+                colored_value,
+                " ".repeat(padding_needed),
                 prov,
-                val_width = max_val
             );
         }
         ConfigValue::Bool(sourced) => {
@@ -520,41 +545,64 @@ fn dump_value_recursive_with_sensitive(
             } else {
                 format!("{}", value_str.red()) // false is red
             };
+            let visual_len = visual_width(&colored_value);
+            let padding_needed = if max_val > visual_len {
+                max_val - visual_len
+            } else {
+                0
+            };
+
             let key_len = path.len();
-            let padding = if key_len < max_key {
+            let key_padding = if key_len < max_key {
                 ".".repeat(max_key - key_len)
             } else {
                 String::new()
             };
             println!(
-                "{}{}{}  {:<val_width$}  {}",
+                "{}{}{}  {}{}  {}",
                 indent_str,
                 path.white(),
-                padding.bright_black(),
+                key_padding.bright_black(),
                 colored_value,
+                " ".repeat(padding_needed),
                 prov,
-                val_width = max_val
             );
         }
         ConfigValue::Null(sourced) => {
             let prov = format_provenance(&sourced.provenance, config_files);
+            let colored_value = "null".bright_black().to_string();
+            let visual_len = visual_width(&colored_value);
+            let padding_needed = if max_val > visual_len {
+                max_val - visual_len
+            } else {
+                0
+            };
+
             let key_len = path.len();
-            let padding = if key_len < max_key {
+            let key_padding = if key_len < max_key {
                 ".".repeat(max_key - key_len)
             } else {
                 String::new()
             };
             println!(
-                "{}{}{}  {:<val_width$}  {}",
+                "{}{}{}  {}{}  {}",
                 indent_str,
                 path.white(),
-                padding.bright_black(),
-                "null".bright_black(), // null is dim
+                key_padding.bright_black(),
+                colored_value,
+                " ".repeat(padding_needed),
                 prov,
-                val_width = max_val
             );
         }
     }
+}
+
+/// Calculate visual width of a string after stripping ANSI codes.
+fn visual_width(s: &str) -> usize {
+    let bytes = s.as_bytes();
+    let stripped = strip_ansi_escapes::strip(bytes);
+    let stripped_str = std::str::from_utf8(&stripped).unwrap_or(s);
+    stripped_str.width()
 }
 
 /// Format provenance with colors.

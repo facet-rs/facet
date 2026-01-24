@@ -29,6 +29,8 @@ indexmap = { workspace = true }
 owo-colors = "4"
 tracing = { workspace = true }
 ariadne = { version = "0.6", optional = true }
+unicode-width = "0.2.2"
+strip-ansi-escapes = "0.2.1"
 
 [dev-dependencies]
 facet = { path = "../facet", features = ["all-impls"] }
