@@ -248,6 +248,7 @@ fn schema_info_to_schema(info: dibs_proto::SchemaInfo) -> dibs::Schema {
                 })
                 .collect(),
             check_constraints: Vec::new(),
+            trigger_checks: Vec::new(),
             foreign_keys: t
                 .foreign_keys
                 .into_iter()
