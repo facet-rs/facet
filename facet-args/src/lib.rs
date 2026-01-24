@@ -454,12 +454,16 @@ fn dump_value_recursive_with_sensitive(
         }
         ConfigValue::String(sourced) => {
             let prov = format_provenance(&sourced.provenance, config_files);
-            let value_str = if is_sensitive {
-                "\"[REDACTED]\"".to_string()
+            let (value_str, colored_value) = if is_sensitive {
+                let len = sourced.value.len();
+                let redacted = format!("🔒 [REDACTED ({} bytes)]", len);
+                let colored = redacted.bright_magenta().to_string();
+                (redacted, colored)
             } else {
-                format!("\"{}\"", sourced.value)
+                let val = format!("\"{}\"", sourced.value);
+                let colored = val.cyan().to_string();
+                (val, colored)
             };
-            let colored_value = value_str.cyan().to_string();
             let visual_len = visual_width(&colored_value);
             let padding_needed = if max_val > visual_len {
                 max_val - visual_len
