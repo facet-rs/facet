@@ -255,11 +255,15 @@ fn should_dump_config(args: &[&str]) -> bool {
 
 /// Dump the ConfigValue tree with provenance information.
 fn dump_config_with_provenance(value: &ConfigValue) {
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
 
     // Collect all config file sources
     let mut config_files = HashSet::new();
     collect_config_files(value, &mut config_files);
+
+    // Calculate max widths for alignment at each indent level
+    let mut widths: HashMap<usize, (usize, usize)> = HashMap::new();
+    calculate_widths(value, "", 0, &mut widths);
 
     println!("Final Merged Configuration (with provenance)");
     println!("==============================================");
@@ -274,7 +278,7 @@ fn dump_config_with_provenance(value: &ConfigValue) {
         println!();
     }
 
-    dump_value_recursive(value, "", 0, &config_files);
+    dump_value_recursive(value, "", 0, &config_files, &widths);
 
     println!();
     println!("Legend:");
@@ -332,14 +336,72 @@ fn collect_config_files(value: &ConfigValue, files: &mut std::collections::HashS
     }
 }
 
+/// Calculate maximum key and value widths at each indent level.
+fn calculate_widths(
+    value: &ConfigValue,
+    path: &str,
+    indent: usize,
+    widths: &mut std::collections::HashMap<usize, (usize, usize)>,
+) {
+    match value {
+        ConfigValue::Object(sourced) => {
+            for (key, val) in sourced.value.iter() {
+                calculate_widths(val, key, indent + 1, widths);
+            }
+        }
+        ConfigValue::Array(sourced) => {
+            for (i, item) in sourced.value.iter().enumerate() {
+                calculate_widths(item, &format!("[{}]", i), indent + 1, widths);
+            }
+        }
+        ConfigValue::String(sourced) => {
+            let key_len = path.len();
+            let val_len = format!("\"{}\"", sourced.value).len();
+            let entry = widths.entry(indent).or_insert((0, 0));
+            entry.0 = entry.0.max(key_len);
+            entry.1 = entry.1.max(val_len);
+        }
+        ConfigValue::Integer(sourced) => {
+            let key_len = path.len();
+            let val_len = sourced.value.to_string().len();
+            let entry = widths.entry(indent).or_insert((0, 0));
+            entry.0 = entry.0.max(key_len);
+            entry.1 = entry.1.max(val_len);
+        }
+        ConfigValue::Float(sourced) => {
+            let key_len = path.len();
+            let val_len = sourced.value.to_string().len();
+            let entry = widths.entry(indent).or_insert((0, 0));
+            entry.0 = entry.0.max(key_len);
+            entry.1 = entry.1.max(val_len);
+        }
+        ConfigValue::Bool(sourced) => {
+            let key_len = path.len();
+            let val_len = sourced.value.to_string().len();
+            let entry = widths.entry(indent).or_insert((0, 0));
+            entry.0 = entry.0.max(key_len);
+            entry.1 = entry.1.max(val_len);
+        }
+        ConfigValue::Null(_) => {
+            let key_len = path.len();
+            let val_len = 4; // "null"
+            let entry = widths.entry(indent).or_insert((0, 0));
+            entry.0 = entry.0.max(key_len);
+            entry.1 = entry.1.max(val_len);
+        }
+    }
+}
+
 /// Recursively dump a ConfigValue showing provenance.
 fn dump_value_recursive(
     value: &ConfigValue,
     path: &str,
     indent: usize,
     config_files: &std::collections::HashSet<String>,
+    widths: &std::collections::HashMap<usize, (usize, usize)>,
 ) {
     let indent_str = "  ".repeat(indent);
+    let (max_key, max_val) = widths.get(&indent).copied().unwrap_or((0, 0));
 
     match value {
         ConfigValue::Object(sourced) => {
@@ -348,63 +410,77 @@ fn dump_value_recursive(
             }
 
             for (key, val) in sourced.value.iter() {
-                dump_value_recursive(val, key, indent + 1, config_files);
+                dump_value_recursive(val, key, indent + 1, config_files, widths);
             }
         }
         ConfigValue::Array(sourced) => {
             println!("{}{}", indent_str, path.white());
             for (i, item) in sourced.value.iter().enumerate() {
-                dump_value_recursive(item, &format!("[{}]", i), indent + 1, config_files);
+                dump_value_recursive(item, &format!("[{}]", i), indent + 1, config_files, widths);
             }
         }
         ConfigValue::String(sourced) => {
             let prov = format_provenance(&sourced.provenance, config_files);
+            let value_str = format!("\"{}\"", sourced.value);
             println!(
-                "{}{}  {}  {}",
+                "{}{:>key_width$}  {:<val_width$}  {}",
                 indent_str,
                 path.white(),
-                format!("\"{}\"", sourced.value).green(),
-                prov
+                value_str.green(),
+                prov,
+                key_width = max_key,
+                val_width = max_val
             );
         }
         ConfigValue::Integer(sourced) => {
             let prov = format_provenance(&sourced.provenance, config_files);
+            let value_str = sourced.value.to_string();
             println!(
-                "{}{}  {}  {}",
+                "{}{:>key_width$}  {:<val_width$}  {}",
                 indent_str,
                 path.white(),
-                sourced.value.to_string().green(),
-                prov
+                value_str.green(),
+                prov,
+                key_width = max_key,
+                val_width = max_val
             );
         }
         ConfigValue::Float(sourced) => {
             let prov = format_provenance(&sourced.provenance, config_files);
+            let value_str = sourced.value.to_string();
             println!(
-                "{}{}  {}  {}",
+                "{}{:>key_width$}  {:<val_width$}  {}",
                 indent_str,
                 path.white(),
-                sourced.value.to_string().green(),
-                prov
+                value_str.green(),
+                prov,
+                key_width = max_key,
+                val_width = max_val
             );
         }
         ConfigValue::Bool(sourced) => {
             let prov = format_provenance(&sourced.provenance, config_files);
+            let value_str = sourced.value.to_string();
             println!(
-                "{}{}  {}  {}",
+                "{}{:>key_width$}  {:<val_width$}  {}",
                 indent_str,
                 path.white(),
-                sourced.value.to_string().green(),
-                prov
+                value_str.green(),
+                prov,
+                key_width = max_key,
+                val_width = max_val
             );
         }
         ConfigValue::Null(sourced) => {
             let prov = format_provenance(&sourced.provenance, config_files);
             println!(
-                "{}{}  {}  {}",
+                "{}{:>key_width$}  {:<val_width$}  {}",
                 indent_str,
                 path.white(),
                 "null".green(),
-                prov
+                prov,
+                key_width = max_key,
+                val_width = max_val
             );
         }
     }
