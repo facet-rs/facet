@@ -105,14 +105,7 @@ fn fill_defaults_from_shape(value: &ConfigValue, shape: &'static Shape) -> Confi
         ConfigValue::Array(sourced) => {
             // Recursively process array items
             // TODO: get element shape from array def
-            let items: Vec<_> = sourced
-                .value
-                .iter()
-                .map(|item| {
-                    // For now, just pass through arrays without adding defaults
-                    item.clone()
-                })
-                .collect();
+            let items: Vec<_> = sourced.value.to_vec();
 
             ConfigValue::Array(Sourced {
                 value: items,
@@ -151,13 +144,11 @@ fn get_default_config_value(field: &'static facet_core::Field) -> Option<ConfigV
 
     // For scalar types without explicit defaults, emit CLI-friendly defaults
     match shape.scalar_type() {
-        Some(ScalarType::Bool) => {
-            return Some(ConfigValue::Bool(Sourced {
-                value: false,
-                span: None,
-                provenance: Some(Provenance::Default),
-            }));
-        }
+        Some(ScalarType::Bool) => Some(ConfigValue::Bool(Sourced {
+            value: false,
+            span: None,
+            provenance: Some(Provenance::Default),
+        })),
         Some(
             ScalarType::U8
             | ScalarType::U16
@@ -171,13 +162,11 @@ fn get_default_config_value(field: &'static facet_core::Field) -> Option<ConfigV
             | ScalarType::I64
             | ScalarType::I128
             | ScalarType::ISize,
-        ) => {
-            return Some(ConfigValue::Integer(Sourced {
-                value: 0,
-                span: None,
-                provenance: Some(Provenance::Default),
-            }));
-        }
+        ) => Some(ConfigValue::Integer(Sourced {
+            value: 0,
+            span: None,
+            provenance: Some(Provenance::Default),
+        })),
         _ => None,
     }
 }
@@ -354,7 +343,6 @@ impl<'de> facet_format::ProbeStream<'de> for EmptyProbe {
 }
 
 /// Get struct fields that are missing from the ConfigValue and need CLI-friendly defaults.
-
 impl<'input> ConfigValueParser<'input> {
     /// Emit an event for a single value.
     fn emit_value(
@@ -436,19 +424,19 @@ mod tests {
     #[test]
     fn test_parse_null() {
         let value = ConfigValue::Null(Sourced::new(()));
-        let mut parser = ConfigValueParser::new(&value);
+        let mut parser = ConfigValueParser::new(&value, <()>::SHAPE);
 
         let event = parser.next_event().unwrap();
         assert!(matches!(event, Some(ParseEvent::Scalar(ScalarValue::Null))));
 
         let event = parser.next_event().unwrap();
-        assert!(matches!(event, None));
+        assert!(event.is_none());
     }
 
     #[test]
     fn test_parse_bool() {
         let value = ConfigValue::Bool(Sourced::new(true));
-        let mut parser = ConfigValueParser::new(&value);
+        let mut parser = ConfigValueParser::new(&value, <bool>::SHAPE);
 
         let event = parser.next_event().unwrap();
         assert!(matches!(
@@ -460,7 +448,7 @@ mod tests {
     #[test]
     fn test_parse_integer() {
         let value = ConfigValue::Integer(Sourced::new(42));
-        let mut parser = ConfigValueParser::new(&value);
+        let mut parser = ConfigValueParser::new(&value, <i64>::SHAPE);
 
         let event = parser.next_event().unwrap();
         assert!(matches!(
@@ -472,7 +460,7 @@ mod tests {
     #[test]
     fn test_parse_string() {
         let value = ConfigValue::String(Sourced::new("hello".to_string()));
-        let mut parser = ConfigValueParser::new(&value);
+        let mut parser = ConfigValueParser::new(&value, <String>::SHAPE);
 
         let event = parser.next_event().unwrap();
         if let Some(ParseEvent::Scalar(ScalarValue::Str(s))) = event {
@@ -485,7 +473,7 @@ mod tests {
     #[test]
     fn test_parse_empty_array() {
         let value = ConfigValue::Array(Sourced::new(alloc::vec![]));
-        let mut parser = ConfigValueParser::new(&value);
+        let mut parser = ConfigValueParser::new(&value, <Vec<i32>>::SHAPE);
 
         // Should emit SequenceStart, then SequenceEnd
         let event = parser.next_event().unwrap();
@@ -498,7 +486,7 @@ mod tests {
         assert!(matches!(event, Some(ParseEvent::SequenceEnd)));
 
         let event = parser.next_event().unwrap();
-        assert!(matches!(event, None));
+        assert!(event.is_none());
     }
 
     #[test]
@@ -508,7 +496,7 @@ mod tests {
             ConfigValue::Integer(Sourced::new(2)),
             ConfigValue::Integer(Sourced::new(3)),
         ]));
-        let mut parser = ConfigValueParser::new(&value);
+        let mut parser = ConfigValueParser::new(&value, <Vec<i64>>::SHAPE);
 
         let event = parser.next_event().unwrap();
         assert!(matches!(event, Some(ParseEvent::SequenceStart(_))));
@@ -535,13 +523,13 @@ mod tests {
         assert!(matches!(event, Some(ParseEvent::SequenceEnd)));
 
         let event = parser.next_event().unwrap();
-        assert!(matches!(event, None));
+        assert!(event.is_none());
     }
 
     #[test]
     fn test_parse_empty_object() {
         let value = ConfigValue::Object(Sourced::new(indexmap::IndexMap::default()));
-        let mut parser = ConfigValueParser::new(&value);
+        let mut parser = ConfigValueParser::new(&value, <()>::SHAPE);
 
         let event = parser.next_event().unwrap();
         assert!(matches!(
@@ -553,7 +541,7 @@ mod tests {
         assert!(matches!(event, Some(ParseEvent::StructEnd)));
 
         let event = parser.next_event().unwrap();
-        assert!(matches!(event, None));
+        assert!(event.is_none());
     }
 
     #[test]
@@ -566,7 +554,7 @@ mod tests {
         map.insert("age".to_string(), ConfigValue::Integer(Sourced::new(30)));
 
         let value = ConfigValue::Object(Sourced::new(map));
-        let mut parser = ConfigValueParser::new(&value);
+        let mut parser = ConfigValueParser::new(&value, <()>::SHAPE);
 
         let event = parser.next_event().unwrap();
         assert!(matches!(event, Some(ParseEvent::StructStart(_))));
@@ -604,7 +592,7 @@ mod tests {
         assert!(matches!(event, Some(ParseEvent::StructEnd)));
 
         let event = parser.next_event().unwrap();
-        assert!(matches!(event, None));
+        assert!(event.is_none());
     }
 
     #[test]
@@ -625,7 +613,7 @@ mod tests {
         let config: SimpleConfig = from_config_value(&value).expect("should deserialize");
 
         assert_eq!(config.port, 8080);
-        assert_eq!(config.enabled, true);
+        assert!(config.enabled);
     }
 
     #[test]

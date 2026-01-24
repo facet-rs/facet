@@ -131,6 +131,12 @@ struct EmailConfig {
 
     /// From address.
     from: String,
+
+    /// Email footer text (can be very long).
+    footer: Option<String>,
+
+    /// Welcome message (can have newlines).
+    welcome_message: Option<String>,
 }
 
 /// Feature flags for experimental features.

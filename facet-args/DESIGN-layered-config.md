@@ -64,13 +64,35 @@ This section tracks what has been implemented and what remains TODO.
   - Handles nested structs, primitives, collections, Options, etc.
   - No manual type coercion needed - leverages existing deserialization infrastructure
 
-### 🚧 TODO
+- **`#[facet(args::config)]` attribute** (`src/lib.rs`)
+  - Integrated with existing CLI parsing via `from_slice_layered()`
+  - Auto-detects config field marked with `args::config` attribute
+  - Extracts `args::env_prefix` from config field
+  - Automatically calls `from_config_value()` to convert merged result to target type
+  - `restructure_config_value()` wraps config-related fields under config field
 
-- **`#[facet(args::config)]` attribute**
-  - Integrate with existing CLI parsing
-  - Auto-generate `--config <PATH>` flag
-  - Wire up CLI override parsing to work with the attribute
-  - Call `from_config_value()` to convert merged result to target struct type
+- **Config dump with `--dump-config`** (`src/lib.rs`)
+  - `dump_config_with_provenance()` pretty-prints resolved config
+  - Colored output with visual hierarchy (keys, values, provenance sources)
+  - Dot-padding for alignment between columns
+  - Field order preserved from struct definition (not insertion order)
+  - Sensitive fields automatically redacted as `🔒 [REDACTED (N bytes)]`
+  - Dynamic extraction of env prefix and config field name from Shape
+  - Type coercion for env vars (strings converted to int/bool/float based on target type)
+  - String value features:
+    - Middle truncation for long strings (default 50 chars)
+    - Multi-line wrapping within value column (max 50 chars wide)
+    - Newline escaping with `↵` symbol
+    - ANSI color preservation across wrapped lines
+  - `FACET_ARGS_BLAST_IT=1` env var to disable truncation and show full values
+  - Truncation notice with hint to use `FACET_ARGS_BLAST_IT=1`
+  - Provenance sources shown with colors:
+    - File: magenta `config.json:5`
+    - Env: yellow `$MYAPP__SERVER__PORT`
+    - CLI: cyan `--settings.server.host`
+    - Default: dim `DEFAULT`
+
+### 🚧 TODO
 
 - **Strict mode enforcement**
   - Detect unknown keys in each layer
@@ -85,10 +107,6 @@ This section tracks what has been implemented and what remains TODO.
   - Walk target shape to find required fields
   - Generate helpful error messages
 
-- **Config dump**
-  - Pretty-print resolved config with provenance
-  - Redact `#[facet(sensitive)]` fields
-
 - **Rich diagnostics with ariadne**
   - Beautiful error messages pointing to config file locations
   - Use span information from `Sourced<T>`
@@ -100,6 +118,10 @@ This section tracks what has been implemented and what remains TODO.
 - **Help generation integration**
   - Show env var names in help output
   - Show config file key paths
+
+- **Auto-generate `--config <PATH>` flag**
+  - Currently users must manually add config file path extraction
+  - Should be automatic when `#[facet(args::config)]` is present
 
 ### 📁 File Structure
 
@@ -482,26 +504,49 @@ note: CLI argument --config.port=9000 overrides env var REEF__PORT=8080
 
 ## Config Dump
 
-Dump the resolved configuration for debugging/inspection. Fields marked with
-`#[facet(sensitive)]` are automatically redacted:
+✅ **IMPLEMENTED** - Dump the resolved configuration for debugging/inspection.
 
-```rust
-let args: Args = facet_args::from_env()?;
+Use `--dump-config` flag to trigger the dump:
 
-// Dump config to stderr (respects sensitive fields)
-facet_args::dump_config(&args.config)?;
+```bash
+# Normal dump with truncation
+./myapp --dump-config
+
+# Show full values (no truncation)
+FACET_ARGS_BLAST_IT=1 ./myapp --dump-config
 ```
 
-Output:
+Output shows:
+- Colored, aligned output with dot-padding
+- Field order matching struct definition
+- Provenance for each value (file/env/CLI/default)
+- Sensitive fields automatically redacted
+- Long strings truncated (middle ellipsis) or wrapped (multi-line)
+- Newlines shown as `↵` symbol
+
+Example output:
 
 ```
-Resolved configuration:
-  port = 8080 (from env: REEF__PORT)
-  database_url = "postgres://localhost/mydb" (from file: config.json)
-  smtp.host = "smtp.example.com" (from CLI: --config.smtp.host)
-  smtp.port = 587 (from default)
-  smtp.password = *** (from env: REEF__SMTP__PASSWORD) [sensitive]
-  log_level = "info" (from default)
+Final Merged Configuration (with provenance)
+==============================================
+
+Sources:
+  file facet-args/examples/config.json
+  env $MYAPP__*
+  cli --settings.* / --config.*
+  defaults
+
+dump_config true --dump-config
+settings
+  server
+    host............ "0.0.0.0".................... config.json:3
+    port............ 9000......................... $MYAPP__SERVER__PORT
+    timeout_secs.... 60........................... config.json:5
+  email
+    password........ 🔒 [REDACTED (16 bytes)]     config.json:14
+    welcome_message. "Welcome to MyApp!↵↵We're...Start exploring↵↵Enjoy!" config.json:19
+
+Some values were truncated. To show full values, rerun with FACET_ARGS_BLAST_IT=1
 ```
 
 ## Validation (facet-validate)

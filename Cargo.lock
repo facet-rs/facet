@@ -1076,7 +1076,6 @@ dependencies = [
  "facet-reflect",
  "facet-showcase",
  "facet-solver",
- "facet-testhelpers",
  "heck",
  "indexmap",
  "insta",

@@ -18,7 +18,7 @@ pub mod merge;
 pub mod provenance;
 
 pub use builder::builder;
-use config_value::ConfigValue;
+use config_value::{ConfigValue, Sourced};
 use owo_colors::OwoColorize;
 use provenance::Provenance;
 use unicode_width::UnicodeWidthStr;
@@ -41,7 +41,7 @@ pub use help::{HelpConfig, generate_help, generate_help_for_shape};
 ///
 /// This function automatically detects fields marked with `#[facet(args::config)]`
 /// and uses the layered configuration system to populate them from:
-/// - Config files (via --{field_name} <path>)
+/// - Config files (via --{field_name} \<path\>)
 /// - Environment variables (with optional prefix from args::env_prefix)
 /// - CLI overrides (via --{field_name}.foo.bar syntax)
 /// - Default values
@@ -236,10 +236,8 @@ fn extract_config_file_path(args: &[&str]) -> Option<String> {
         }
 
         // Check for --config <path>
-        if arg == "--config" {
-            if i + 1 < args.len() {
-                return Some(args[i + 1].to_string());
-            }
+        if arg == "--config" && i + 1 < args.len() {
+            return Some(args[i + 1].to_string());
         }
 
         i += 1;
@@ -254,17 +252,72 @@ fn should_dump_config(args: &[&str]) -> bool {
         .any(|arg| *arg == "--dump-config" || *arg == "--dump_config")
 }
 
+/// A line to be printed in the config dump.
+#[derive(Debug)]
+struct DumpLine {
+    indent: usize,
+    key: String,
+    value: String,
+    provenance: String,
+    is_header: bool,
+}
+
+/// Context for dumping configuration with provenance.
+#[derive(Debug)]
+struct DumpContext {
+    config_field_name: &'static str,
+    env_prefix: Option<&'static str>,
+    max_string_length: usize,
+    max_value_width: usize, // Max width for value column before wrapping
+}
+
+/// State tracking for the dump operation.
+struct DumpState {
+    had_truncation: bool,
+}
+
+impl DumpState {
+    fn new() -> Self {
+        Self {
+            had_truncation: false,
+        }
+    }
+}
+
+impl DumpContext {
+    /// Extract dump context from the shape.
+    fn from_shape<T: Facet<'static>>() -> Self {
+        let config_field = find_config_field(T::SHAPE);
+        let (config_field_name, env_prefix) = if let Some(field) = config_field {
+            (field.name, get_env_prefix(field))
+        } else {
+            ("settings", None)
+        };
+
+        // Check for FACET_ARGS_BLAST_IT env var to disable truncation
+        let blast_it = std::env::var("FACET_ARGS_BLAST_IT")
+            .map(|v| v == "1" || v.to_lowercase() == "true")
+            .unwrap_or(false);
+
+        Self {
+            config_field_name,
+            env_prefix,
+            max_string_length: if blast_it { usize::MAX } else { 50 },
+            max_value_width: 50, // Maximum width for value column
+        }
+    }
+}
+
 /// Dump the ConfigValue tree with provenance information.
 fn dump_config_with_provenance<T: Facet<'static>>(value: &ConfigValue) {
     use std::collections::{HashMap, HashSet};
 
+    // Extract context from shape
+    let ctx = DumpContext::from_shape::<T>();
+
     // Collect all config file sources
     let mut config_files = HashSet::new();
     collect_config_files(value, &mut config_files);
-
-    // Calculate max widths for alignment at each indent level
-    let mut widths: HashMap<usize, (usize, usize)> = HashMap::new();
-    calculate_widths(value, "", 0, &mut widths);
 
     println!("Final Merged Configuration (with provenance)");
     println!("==============================================");
@@ -294,20 +347,250 @@ fn dump_config_with_provenance<T: Facet<'static>>(value: &ConfigValue) {
         }
     }
 
-    // Environment variables (get prefix from config field if available)
-    println!("  env {}", "$MYAPP__*".yellow());
+    // Environment variables - show actual prefix from shape
+    if let Some(env_prefix) = ctx.env_prefix {
+        println!("  env {}", format!("${}__*", env_prefix).yellow());
+    }
 
-    // CLI args
-    println!("  cli {}", "--config.*".cyan());
+    // CLI args - show pattern for config field overrides
+    println!(
+        "  cli {}",
+        format!("--{}.* / --config.*", ctx.config_field_name).cyan()
+    );
 
     // Defaults
     println!("  defaults");
 
     println!();
 
-    dump_value_recursive_with_sensitive(value, "", 0, &config_files, &widths, T::SHAPE, false);
+    // Step 1: Coerce string values to their target types (for env vars)
+    let coerced_value = coerce_types_from_shape(value, T::SHAPE);
+
+    // Step 2: Collect all lines
+    let mut lines = Vec::new();
+    let mut state = DumpState::new();
+    if let ConfigValue::Object(sourced) = &coerced_value
+        && let facet_core::Type::User(facet_core::UserType::Struct(s)) = &T::SHAPE.ty
+    {
+        for field in s.fields {
+            let key = field.name;
+            if let Some(val) = sourced.value.get(key) {
+                let is_sensitive = field.flags.contains(facet_core::FieldFlags::SENSITIVE);
+                let field_shape = field.shape.get();
+                collect_dump_lines(
+                    val,
+                    key,
+                    0,
+                    &config_files,
+                    field_shape,
+                    is_sensitive,
+                    &mut lines,
+                    &ctx,
+                    &mut state,
+                );
+            }
+        }
+    }
+
+    // Step 3: Calculate max widths per indent level
+    let mut max_key_per_indent: HashMap<usize, usize> = HashMap::new();
+    let mut max_val_per_indent: HashMap<usize, usize> = HashMap::new();
+
+    for line in &lines {
+        if !line.is_header {
+            let key_width = visual_width(&line.key);
+            let val_width = visual_width(&line.value);
+
+            let key_max = max_key_per_indent.entry(line.indent).or_insert(0);
+            *key_max = (*key_max).max(key_width);
+
+            let val_max = max_val_per_indent.entry(line.indent).or_insert(0);
+            *val_max = (*val_max).max(val_width);
+        }
+    }
+
+    // Step 4: Print all lines with proper alignment
+    for line in &lines {
+        let indent_str = "  ".repeat(line.indent);
+
+        if line.is_header {
+            println!("{}{}", indent_str, line.key);
+        } else {
+            let key_width = visual_width(&line.key);
+            let val_width = visual_width(&line.value);
+
+            let max_key = max_key_per_indent.get(&line.indent).copied().unwrap_or(0);
+            let max_val = max_val_per_indent.get(&line.indent).copied().unwrap_or(0);
+
+            let key_padding = if key_width < max_key {
+                ".".repeat(max_key - key_width)
+            } else {
+                String::new()
+            };
+
+            // Check if value needs wrapping
+            if val_width > ctx.max_value_width {
+                // Wrap value within its column
+                let wrapped_lines = wrap_value(&line.value, ctx.max_value_width);
+
+                for (i, wrapped_line) in wrapped_lines.iter().enumerate() {
+                    if i == 0 {
+                        // First line: show key, dots, value start, and provenance
+                        let wrap_width = visual_width(wrapped_line);
+                        let val_padding = if wrap_width < ctx.max_value_width {
+                            ".".repeat(ctx.max_value_width - wrap_width)
+                        } else {
+                            String::new()
+                        };
+                        println!(
+                            "{}{}{}  {}{} {}",
+                            indent_str,
+                            line.key,
+                            key_padding.bright_black(),
+                            wrapped_line,
+                            val_padding.bright_black(),
+                            line.provenance,
+                        );
+                    } else {
+                        // Continuation lines: indent to value column
+                        let continuation_indent = indent_str.len() + max_key + 2;
+                        let spaces = " ".repeat(continuation_indent);
+                        println!("{}{}", spaces, wrapped_line);
+                    }
+                }
+            } else {
+                // Normal single-line format with dot padding
+                let val_padding = if val_width < max_val.min(ctx.max_value_width) {
+                    ".".repeat(max_val.min(ctx.max_value_width) - val_width)
+                } else {
+                    String::new()
+                };
+
+                println!(
+                    "{}{}{}  {}{} {}",
+                    indent_str,
+                    line.key,
+                    key_padding.bright_black(),
+                    line.value,
+                    val_padding.bright_black(),
+                    line.provenance,
+                );
+            }
+        }
+    }
 
     println!();
+
+    // Show truncation notice if any values were truncated
+    if state.had_truncation {
+        println!();
+        println!(
+            "Some values were truncated. To show full values, rerun with {}=1",
+            "FACET_ARGS_BLAST_IT".yellow()
+        );
+    }
+}
+
+/// Coerce ConfigValue types based on the target shape.
+/// This is needed because environment variables always come in as strings,
+/// but we want to display them with their proper types (int, bool, etc).
+fn coerce_types_from_shape(value: &ConfigValue, shape: &'static facet_core::Shape) -> ConfigValue {
+    match value {
+        ConfigValue::Object(sourced) => {
+            let mut new_map = sourced.value.clone();
+
+            if let facet_core::Type::User(facet_core::UserType::Struct(s)) = &shape.ty {
+                for field in s.fields {
+                    if let Some(val) = new_map.get(field.name) {
+                        let coerced = coerce_types_from_shape(val, field.shape.get());
+                        new_map.insert(field.name.to_string(), coerced);
+                    }
+                }
+            } else {
+                // No struct info, just recurse on all values
+                for (key, val) in sourced.value.iter() {
+                    let coerced = coerce_types_from_shape(val, shape);
+                    new_map.insert(key.clone(), coerced);
+                }
+            }
+
+            ConfigValue::Object(Sourced {
+                value: new_map,
+                span: sourced.span,
+                provenance: sourced.provenance.clone(),
+            })
+        }
+        ConfigValue::Array(sourced) => {
+            let element_shape = shape.inner.unwrap_or(shape);
+            let new_items: Vec<ConfigValue> = sourced
+                .value
+                .iter()
+                .map(|item| coerce_types_from_shape(item, element_shape))
+                .collect();
+
+            ConfigValue::Array(Sourced {
+                value: new_items,
+                span: sourced.span,
+                provenance: sourced.provenance.clone(),
+            })
+        }
+        ConfigValue::String(sourced) => {
+            // Try to coerce string to the target type
+            if let Some(scalar) = shape.scalar_type() {
+                match scalar {
+                    facet_core::ScalarType::I8
+                    | facet_core::ScalarType::I16
+                    | facet_core::ScalarType::I32
+                    | facet_core::ScalarType::I64
+                    | facet_core::ScalarType::I128 => {
+                        if let Ok(num) = sourced.value.parse::<i64>() {
+                            return ConfigValue::Integer(Sourced {
+                                value: num,
+                                span: sourced.span,
+                                provenance: sourced.provenance.clone(),
+                            });
+                        }
+                    }
+                    facet_core::ScalarType::U8
+                    | facet_core::ScalarType::U16
+                    | facet_core::ScalarType::U32
+                    | facet_core::ScalarType::U64
+                    | facet_core::ScalarType::U128 => {
+                        if let Ok(num) = sourced.value.parse::<i64>() {
+                            return ConfigValue::Integer(Sourced {
+                                value: num,
+                                span: sourced.span,
+                                provenance: sourced.provenance.clone(),
+                            });
+                        }
+                    }
+                    facet_core::ScalarType::F32 | facet_core::ScalarType::F64 => {
+                        if let Ok(num) = sourced.value.parse::<f64>() {
+                            return ConfigValue::Float(Sourced {
+                                value: num,
+                                span: sourced.span,
+                                provenance: sourced.provenance.clone(),
+                            });
+                        }
+                    }
+                    facet_core::ScalarType::Bool => {
+                        if let Ok(b) = sourced.value.parse::<bool>() {
+                            return ConfigValue::Bool(Sourced {
+                                value: b,
+                                span: sourced.span,
+                                provenance: sourced.provenance.clone(),
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            // Keep as string if coercion fails or not needed
+            value.clone()
+        }
+        // Other types don't need coercion
+        _ => value.clone(),
+    }
 }
 
 /// Recursively collect all config file paths from the tree.
@@ -357,266 +640,160 @@ fn collect_config_files(value: &ConfigValue, files: &mut std::collections::HashS
     }
 }
 
-/// Calculate maximum key and value widths at each indent level.
-fn calculate_widths(
-    value: &ConfigValue,
-    path: &str,
-    indent: usize,
-    widths: &mut std::collections::HashMap<usize, (usize, usize)>,
-) {
-    match value {
-        ConfigValue::Object(sourced) => {
-            for (key, val) in sourced.value.iter() {
-                calculate_widths(val, key, indent + 1, widths);
-            }
-        }
-        ConfigValue::Array(sourced) => {
-            for (i, item) in sourced.value.iter().enumerate() {
-                calculate_widths(item, &format!("[{}]", i), indent + 1, widths);
-            }
-        }
-        ConfigValue::String(sourced) => {
-            let key_len = path.len();
-            let val_len = format!("\"{}\"", sourced.value).len();
-            let entry = widths.entry(indent).or_insert((0, 0));
-            entry.0 = entry.0.max(key_len);
-            entry.1 = entry.1.max(val_len);
-        }
-        ConfigValue::Integer(sourced) => {
-            let key_len = path.len();
-            let val_len = sourced.value.to_string().len();
-            let entry = widths.entry(indent).or_insert((0, 0));
-            entry.0 = entry.0.max(key_len);
-            entry.1 = entry.1.max(val_len);
-        }
-        ConfigValue::Float(sourced) => {
-            let key_len = path.len();
-            let val_len = sourced.value.to_string().len();
-            let entry = widths.entry(indent).or_insert((0, 0));
-            entry.0 = entry.0.max(key_len);
-            entry.1 = entry.1.max(val_len);
-        }
-        ConfigValue::Bool(sourced) => {
-            let key_len = path.len();
-            let val_len = sourced.value.to_string().len();
-            let entry = widths.entry(indent).or_insert((0, 0));
-            entry.0 = entry.0.max(key_len);
-            entry.1 = entry.1.max(val_len);
-        }
-        ConfigValue::Null(_) => {
-            let key_len = path.len();
-            let val_len = 4; // "null"
-            let entry = widths.entry(indent).or_insert((0, 0));
-            entry.0 = entry.0.max(key_len);
-            entry.1 = entry.1.max(val_len);
-        }
-    }
-}
-
-/// Recursively dump a ConfigValue showing provenance.
-fn dump_value_recursive_with_sensitive(
+/// Recursively collect lines to be printed.
+#[allow(clippy::too_many_arguments)]
+fn collect_dump_lines(
     value: &ConfigValue,
     path: &str,
     indent: usize,
     config_files: &std::collections::HashSet<String>,
-    widths: &std::collections::HashMap<usize, (usize, usize)>,
     shape: &'static facet_core::Shape,
     is_sensitive: bool,
+    lines: &mut Vec<DumpLine>,
+    ctx: &DumpContext,
+    state: &mut DumpState,
 ) {
-    let indent_str = "  ".repeat(indent);
-    let (max_key, max_val) = widths.get(&indent).copied().unwrap_or((0, 0));
-
     match value {
         ConfigValue::Object(sourced) => {
+            // Add header line for this object
             if !path.is_empty() {
-                println!("{}{}", indent_str, path.white());
+                lines.push(DumpLine {
+                    indent,
+                    key: path.to_string(),
+                    value: String::new(),
+                    provenance: String::new(),
+                    is_header: true,
+                });
             }
 
-            for (key, val) in sourced.value.iter() {
-                // Find the corresponding field and shape
-                let (field_shape, is_sensitive) =
-                    if let facet_core::Type::User(facet_core::UserType::Struct(s)) = &shape.ty {
-                        if let Some(field) = s.fields.iter().find(|f| f.name == key) {
-                            let sensitive = field.flags.contains(facet_core::FieldFlags::SENSITIVE);
-                            (field.shape.get(), sensitive)
-                        } else {
-                            (shape, false)
-                        }
-                    } else {
-                        (shape, false)
-                    };
-                dump_value_recursive_with_sensitive(
-                    val,
-                    key,
-                    indent + 1,
-                    config_files,
-                    widths,
-                    field_shape,
-                    is_sensitive,
-                );
+            // Iterate in struct field order
+            if let facet_core::Type::User(facet_core::UserType::Struct(s)) = &shape.ty {
+                for field in s.fields {
+                    let key = field.name;
+                    if let Some(val) = sourced.value.get(key) {
+                        let is_sensitive = field.flags.contains(facet_core::FieldFlags::SENSITIVE);
+                        let field_shape = field.shape.get();
+                        collect_dump_lines(
+                            val,
+                            key,
+                            indent + 1,
+                            config_files,
+                            field_shape,
+                            is_sensitive,
+                            lines,
+                            ctx,
+                            state,
+                        );
+                    }
+                }
+            } else {
+                // Fallback: iterate in insertion order
+                for (key, val) in sourced.value.iter() {
+                    collect_dump_lines(
+                        val,
+                        key,
+                        indent + 1,
+                        config_files,
+                        shape,
+                        false,
+                        lines,
+                        ctx,
+                        state,
+                    );
+                }
             }
         }
         ConfigValue::Array(sourced) => {
-            println!("{}{}", indent_str, path.white());
+            // Add header for array
+            lines.push(DumpLine {
+                indent,
+                key: path.to_string(),
+                value: String::new(),
+                provenance: String::new(),
+                is_header: true,
+            });
+
             for (i, item) in sourced.value.iter().enumerate() {
-                // For arrays, use the element shape if available
                 let element_shape = shape.inner.unwrap_or(shape);
-                dump_value_recursive_with_sensitive(
+                collect_dump_lines(
                     item,
                     &format!("[{}]", i),
                     indent + 1,
                     config_files,
-                    widths,
                     element_shape,
                     false,
+                    lines,
+                    ctx,
+                    state,
                 );
             }
         }
         ConfigValue::String(sourced) => {
-            let prov = format_provenance(&sourced.provenance, config_files);
-            let (_value_str, colored_value) = if is_sensitive {
+            let colored_value = if is_sensitive {
                 let len = sourced.value.len();
-                let redacted = format!("🔒 [REDACTED ({} bytes)]", len);
-                let colored = redacted.bright_magenta().to_string();
-                (redacted, colored)
+                format!("🔒 [REDACTED ({} bytes)]", len)
+                    .bright_magenta()
+                    .to_string()
             } else {
-                let val = format!("\"{}\"", sourced.value);
-                let colored = val.cyan().to_string();
-                (val, colored)
+                // Replace newlines with visual indicator
+                let escaped = sourced.value.replace('\n', "↵");
+                let (truncated, was_truncated) = truncate_middle(&escaped, ctx.max_string_length);
+                if was_truncated {
+                    state.had_truncation = true;
+                }
+                format!("\"{}\"", truncated).green().to_string()
             };
-            let visual_len = visual_width(&colored_value);
-            let padding_needed = if max_val > visual_len {
-                max_val - visual_len
-            } else {
-                0
-            };
-
-            let key_len = path.len();
-            let key_padding = if key_len < max_key {
-                ".".repeat(max_key - key_len)
-            } else {
-                String::new()
-            };
-            println!(
-                "{}{}{}  {}{}  {}",
-                indent_str,
-                path.white(),
-                key_padding.bright_black(),
-                colored_value,
-                " ".repeat(padding_needed),
-                prov,
-            );
+            lines.push(DumpLine {
+                indent,
+                key: path.to_string(),
+                value: colored_value,
+                provenance: format_provenance(&sourced.provenance, config_files),
+                is_header: false,
+            });
         }
         ConfigValue::Integer(sourced) => {
-            let prov = format_provenance(&sourced.provenance, config_files);
-            let value_str = sourced.value.to_string();
-            let colored_value = value_str.blue().to_string();
-            let visual_len = visual_width(&colored_value);
-            let padding_needed = if max_val > visual_len {
-                max_val - visual_len
-            } else {
-                0
-            };
-
-            let key_len = path.len();
-            let key_padding = if key_len < max_key {
-                ".".repeat(max_key - key_len)
-            } else {
-                String::new()
-            };
-            println!(
-                "{}{}{}  {}{}  {}",
-                indent_str,
-                path.white(),
-                key_padding.bright_black(),
-                colored_value,
-                " ".repeat(padding_needed),
-                prov,
-            );
+            let colored_value = sourced.value.to_string().blue().to_string();
+            lines.push(DumpLine {
+                indent,
+                key: path.to_string(),
+                value: colored_value,
+                provenance: format_provenance(&sourced.provenance, config_files),
+                is_header: false,
+            });
         }
         ConfigValue::Float(sourced) => {
-            let prov = format_provenance(&sourced.provenance, config_files);
-            let value_str = sourced.value.to_string();
-            let colored_value = value_str.bright_blue().to_string();
-            let visual_len = visual_width(&colored_value);
-            let padding_needed = if max_val > visual_len {
-                max_val - visual_len
-            } else {
-                0
-            };
-
-            let key_len = path.len();
-            let key_padding = if key_len < max_key {
-                ".".repeat(max_key - key_len)
-            } else {
-                String::new()
-            };
-            println!(
-                "{}{}{}  {}{}  {}",
-                indent_str,
-                path.white(),
-                key_padding.bright_black(),
-                colored_value,
-                " ".repeat(padding_needed),
-                prov,
-            );
+            let colored_value = sourced.value.to_string().bright_blue().to_string();
+            lines.push(DumpLine {
+                indent,
+                key: path.to_string(),
+                value: colored_value,
+                provenance: format_provenance(&sourced.provenance, config_files),
+                is_header: false,
+            });
         }
         ConfigValue::Bool(sourced) => {
-            let prov = format_provenance(&sourced.provenance, config_files);
-            let value_str = sourced.value.to_string();
             let colored_value = if sourced.value {
-                format!("{}", value_str.green()) // true is green
+                sourced.value.to_string().green().to_string()
             } else {
-                format!("{}", value_str.red()) // false is red
+                sourced.value.to_string().red().to_string()
             };
-            let visual_len = visual_width(&colored_value);
-            let padding_needed = if max_val > visual_len {
-                max_val - visual_len
-            } else {
-                0
-            };
-
-            let key_len = path.len();
-            let key_padding = if key_len < max_key {
-                ".".repeat(max_key - key_len)
-            } else {
-                String::new()
-            };
-            println!(
-                "{}{}{}  {}{}  {}",
-                indent_str,
-                path.white(),
-                key_padding.bright_black(),
-                colored_value,
-                " ".repeat(padding_needed),
-                prov,
-            );
+            lines.push(DumpLine {
+                indent,
+                key: path.to_string(),
+                value: colored_value,
+                provenance: format_provenance(&sourced.provenance, config_files),
+                is_header: false,
+            });
         }
         ConfigValue::Null(sourced) => {
-            let prov = format_provenance(&sourced.provenance, config_files);
             let colored_value = "null".bright_black().to_string();
-            let visual_len = visual_width(&colored_value);
-            let padding_needed = if max_val > visual_len {
-                max_val - visual_len
-            } else {
-                0
-            };
-
-            let key_len = path.len();
-            let key_padding = if key_len < max_key {
-                ".".repeat(max_key - key_len)
-            } else {
-                String::new()
-            };
-            println!(
-                "{}{}{}  {}{}  {}",
-                indent_str,
-                path.white(),
-                key_padding.bright_black(),
-                colored_value,
-                " ".repeat(padding_needed),
-                prov,
-            );
+            lines.push(DumpLine {
+                indent,
+                key: path.to_string(),
+                value: colored_value,
+                provenance: format_provenance(&sourced.provenance, config_files),
+                is_header: false,
+            });
         }
     }
 }
@@ -625,8 +802,91 @@ fn dump_value_recursive_with_sensitive(
 fn visual_width(s: &str) -> usize {
     let bytes = s.as_bytes();
     let stripped = strip_ansi_escapes::strip(bytes);
-    let stripped_str = std::str::from_utf8(&stripped).unwrap_or(s);
+    let stripped_str = core::str::from_utf8(&stripped).unwrap_or(s);
     stripped_str.width()
+}
+
+/// Truncate a string in the middle if it exceeds max_length.
+/// For example: "this is a very long string" -> "this is a...g string"
+/// Returns (truncated_string, was_truncated)
+fn truncate_middle(s: &str, max_length: usize) -> (String, bool) {
+    if s.len() <= max_length {
+        return (s.to_string(), false);
+    }
+
+    // Reserve 3 chars for "..."
+    if max_length < 3 {
+        return ("...".to_string(), true);
+    }
+
+    let available = max_length - 3;
+    let start_len = available.div_ceil(2); // Round up for start
+    let end_len = available / 2;
+
+    let start = s.chars().take(start_len).collect::<String>();
+    let end = s
+        .chars()
+        .rev()
+        .take(end_len)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect::<String>();
+
+    (format!("{}...{}", start, end), true)
+}
+
+/// Wrap a value string to fit within max_width, preserving ANSI color codes.
+/// Returns a vector of lines with color codes reapplied to each line.
+fn wrap_value(value: &str, max_width: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut current_line = String::new();
+    let mut current_width = 0;
+    let mut in_ansi = false;
+    let mut ansi_buffer = String::new();
+    let mut active_color = String::new(); // Track the last color code
+
+    for ch in value.chars() {
+        if ch == '\x1b' {
+            // Start of ANSI escape sequence
+            in_ansi = true;
+            ansi_buffer.push(ch);
+        } else if in_ansi {
+            ansi_buffer.push(ch);
+            if ch == 'm' {
+                // End of ANSI escape sequence
+                current_line.push_str(&ansi_buffer);
+                active_color = ansi_buffer.clone(); // Save this color
+                ansi_buffer.clear();
+                in_ansi = false;
+            }
+        } else {
+            // Regular character
+            if current_width >= max_width {
+                // Need to wrap - close current line and start new one with same color
+                lines.push(current_line);
+                current_line = String::new();
+                if !active_color.is_empty() {
+                    current_line.push_str(&active_color); // Reapply color to new line
+                }
+                current_width = 0;
+            }
+            current_line.push(ch);
+            current_width += 1;
+        }
+    }
+
+    // Push remaining content
+    if !current_line.is_empty() || !ansi_buffer.is_empty() {
+        current_line.push_str(&ansi_buffer);
+        lines.push(current_line);
+    }
+
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+
+    lines
 }
 
 /// Format provenance with colors.

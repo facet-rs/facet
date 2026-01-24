@@ -15,7 +15,7 @@ homepage = "https://facet.rs"
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [package.metadata.cargo-shear]
-ignored = ["facet-pretty"]
+ignored = ["facet-pretty", "facet-default"]
 
 [dependencies]
 camino = "1.1"
@@ -39,7 +39,6 @@ facet-pretty = { path = "../facet-pretty" }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 facet-showcase = { path = "../facet-showcase" }
 facet-solver = { path = "../facet-solver" }
-facet-testhelpers = { path = "../facet-testhelpers" }
 insta = { workspace = true }
 tempfile = "3"
 
