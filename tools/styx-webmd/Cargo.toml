@@ -9,7 +9,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 marq = { git = "https://github.com/bearcove/marq", branch = "main", default-features = false, features = ["highlight", "lang-rust", "lang-markdown", "lang-styx", "lang-json"] }
-wasm-bindgen = "=0.2.106"
+wasm-bindgen = "=0.2.108"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
 
