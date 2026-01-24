@@ -18,8 +18,10 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 ignored = ["facet-pretty"]
 
 [dependencies]
-facet = { path = "../facet", version = "0.43.2", features = ["indexmap"] }
+camino = "1.1"
+facet = { path = "../facet", version = "0.43.2", features = ["indexmap", "camino"] }
 facet-core = { path = "../facet-core", version = "0.43.2" }
+facet-json = { path = "../facet-json", version = "0.43.2" }
 facet-reflect = { path = "../facet-reflect", version = "0.43.2" }
 heck = "0.5.0"
 indexmap = { workspace = true }
@@ -29,7 +31,6 @@ ariadne = { version = "0.6", optional = true }
 
 [dev-dependencies]
 facet = { path = "../facet", features = ["all-impls"] }
-facet-json = { path = "../facet-json" }
 facet-pretty = { path = "../facet-pretty" }
 facet-showcase = { path = "../facet-showcase" }
 facet-solver = { path = "../facet-solver" }

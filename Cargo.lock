@@ -1066,6 +1066,7 @@ name = "facet-args"
 version = "0.43.2"
 dependencies = [
  "ariadne",
+ "camino",
  "facet",
  "facet-core",
  "facet-json",

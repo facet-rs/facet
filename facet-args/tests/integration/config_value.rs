@@ -4,21 +4,7 @@ use facet::Facet;
 use facet_testhelpers::test;
 use tracing::info;
 
-/// A span in source text.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Facet)]
-pub struct Span {
-    pub offset: usize,
-    pub len: usize,
-}
-
-/// A string value with span tracking.
-#[derive(Debug, Clone, Facet)]
-#[facet(metadata_container)]
-pub struct Spanned<T> {
-    pub value: T,
-    #[facet(metadata = "span")]
-    pub span: Option<Span>,
-}
+use facet_args::config_value::Spanned;
 
 #[test]
 fn test_spanned_string_from_json() {

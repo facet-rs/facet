@@ -1,11 +1,14 @@
 //! Configuration value with span tracking throughout the tree.
 
 use alloc::string::String;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use facet::Facet;
 use facet_reflect::Span;
 use indexmap::IndexMap;
+
+use crate::provenance::{ConfigFile, Provenance};
 
 /// A value with source span information.
 #[derive(Debug, Clone, Facet)]
@@ -16,6 +19,54 @@ pub struct Spanned<T> {
     /// The source span (offset and length), if available.
     #[facet(metadata = "span")]
     pub span: Option<Span>,
+}
+
+/// A value with full provenance tracking (experimental).
+///
+/// This is like `Spanned<T>` but stores full `Provenance` instead of just a `Span`.
+/// The provenance field is skipped during deserialization and must be set afterwards.
+#[derive(Debug, Clone, Facet)]
+#[facet(metadata_container)]
+pub struct Sourced<T> {
+    /// The wrapped value.
+    pub value: T,
+    /// The source span (offset and length), populated during deserialization.
+    #[facet(metadata = "span")]
+    pub span: Option<Span>,
+    /// Full provenance information (user-managed metadata, not filled by deserializer).
+    #[facet(metadata = "other")]
+    pub provenance: Option<Provenance>,
+}
+
+impl<T> Sourced<T> {
+    /// Create a new Sourced value with no provenance.
+    pub fn new(value: T) -> Self {
+        Self {
+            value,
+            span: None,
+            provenance: None,
+        }
+    }
+
+    /// Create a new Sourced value with provenance.
+    pub fn with_provenance(value: T, provenance: Provenance) -> Self {
+        let span = match &provenance {
+            Provenance::File { offset, len, .. } => Some(Span::new(*offset, *len)),
+            _ => None,
+        };
+        Self {
+            value,
+            span,
+            provenance: Some(provenance),
+        }
+    }
+
+    /// Set the provenance from a config file, using the span if available.
+    pub fn set_file_provenance(&mut self, file: Arc<ConfigFile>, key_path: impl Into<String>) {
+        if let Some(span) = self.span {
+            self.provenance = Some(Provenance::file(file, key_path, span.offset, span.len));
+        }
+    }
 }
 
 /// A configuration value with span tracking at every level.
@@ -230,6 +281,81 @@ mod tests {
             assert!(matches!(arr.value[3], ConfigValue::Null(_)));
         } else {
             panic!("expected array");
+        }
+    }
+
+    // === Sourced<T> tests (experimental provenance tracking) ===
+
+    #[test]
+    fn test_sourced_deserialize_integer() {
+        // Test that Sourced<i64> deserializes correctly with #[facet(skip)] on provenance
+        let json = "42";
+        let result: Result<Sourced<i64>, _> = facet_json::from_str(json);
+        assert!(
+            result.is_ok(),
+            "Sourced<i64> should deserialize: {:?}",
+            result.err()
+        );
+        let sourced = result.unwrap();
+        assert_eq!(sourced.value, 42);
+        assert!(
+            sourced.provenance.is_none(),
+            "provenance should be None after deserialization"
+        );
+    }
+
+    #[test]
+    fn test_sourced_deserialize_string() {
+        let json = r#""hello""#;
+        let result: Result<Sourced<String>, _> = facet_json::from_str(json);
+        assert!(
+            result.is_ok(),
+            "Sourced<String> should deserialize: {:?}",
+            result.err()
+        );
+        let sourced = result.unwrap();
+        assert_eq!(sourced.value, "hello");
+        assert!(sourced.provenance.is_none());
+    }
+
+    #[test]
+    fn test_sourced_with_provenance() {
+        let file = Arc::new(ConfigFile::new("config.json", r#"{"port": 8080}"#));
+        let sourced = Sourced::with_provenance(8080i64, Provenance::file(file, "port", 9, 4));
+
+        assert_eq!(sourced.value, 8080);
+        assert!(sourced.provenance.is_some());
+        assert!(sourced.provenance.as_ref().unwrap().is_file());
+        // Span should be derived from provenance
+        assert_eq!(sourced.span, Some(Span::new(9, 4)));
+    }
+
+    #[test]
+    fn test_sourced_set_file_provenance() {
+        // Simulate what happens after deserialization: we have a span, then add file provenance
+        let mut sourced = Sourced {
+            value: 8080i64,
+            span: Some(Span::new(9, 4)),
+            provenance: None,
+        };
+
+        let file = Arc::new(ConfigFile::new("config.json", r#"{"port": 8080}"#));
+        sourced.set_file_provenance(file.clone(), "port");
+
+        assert!(sourced.provenance.is_some());
+        if let Some(Provenance::File {
+            file: f,
+            key_path,
+            offset,
+            len,
+        }) = &sourced.provenance
+        {
+            assert_eq!(f.path.as_str(), "config.json");
+            assert_eq!(key_path, "port");
+            assert_eq!(*offset, 9);
+            assert_eq!(*len, 4);
+        } else {
+            panic!("expected File provenance");
         }
     }
 }
