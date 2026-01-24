@@ -74,6 +74,7 @@ pub use dibs_proto::*;
 pub use schema::{
     Attr, Check, CheckConstraint, Column, CompositeIndex, CompositeUnique, ForeignKey, Index,
     IndexColumn, NullsOrder, PgType, Schema, SortOrder, SourceLocation, Table, TableDef,
+    TriggerCheck, TriggerCheckConstraint,
 };
 
 // Re-export inventory for the proc macro
@@ -153,6 +154,42 @@ pub fn check_constraint_name(table: &str, expr: &str) -> String {
     };
 
     format!("ck_{}_{}", table_part, suffix)
+}
+
+/// Generate a deterministic trigger name for a trigger-enforced check.
+///
+/// Trigger names are scoped to a table in Postgres, but we still include the table name
+/// and a stable hash of the expression for readability and determinism.
+pub fn trigger_check_name(table: &str, expr: &str) -> String {
+    let normalized = normalize_sql_expr_for_hash(expr);
+    let hex = blake3::hash(normalized.as_bytes()).to_hex().to_string();
+    let suffix = &hex[..16];
+
+    const PG_IDENT_MAX: usize = 63;
+    let prefix_overhead = "trgck__".len(); // "trgck_" + "_" between table and suffix
+    let suffix_len = suffix.len();
+    let max_table_len = PG_IDENT_MAX.saturating_sub(prefix_overhead + suffix_len);
+
+    let table_part = if table.len() <= max_table_len {
+        table
+    } else {
+        let mut len = max_table_len.min(table.len());
+        while len > 0 && !table.is_char_boundary(len) {
+            len -= 1;
+        }
+        &table[..len]
+    };
+
+    format!("trgck_{}_{}", table_part, suffix)
+}
+
+/// Derive the trigger function name for a trigger-enforced check.
+///
+/// The function name is derived from the trigger name (hashed) so we don't
+/// accidentally exceed Postgres' identifier length limit.
+pub fn trigger_check_function_name(trigger_name: &str) -> String {
+    let hex = blake3::hash(trigger_name.as_bytes()).to_hex().to_string();
+    format!("trgfn_{}", &hex[..20])
 }
 
 fn normalize_sql_expr_for_hash(expr: &str) -> String {

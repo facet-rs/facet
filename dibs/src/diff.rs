@@ -38,7 +38,10 @@
 //! ALTER TABLE categories RENAME TO category;
 //! ```
 
-use crate::{CheckConstraint, Column, ForeignKey, Index, PgType, Schema, Table, quote_ident};
+use crate::{
+    CheckConstraint, Column, ForeignKey, Index, PgType, Schema, Table, TriggerCheckConstraint,
+    quote_ident,
+};
 use std::collections::HashSet;
 
 /// A diff between two schemas.
@@ -132,6 +135,14 @@ pub enum Change {
     AddCheck(CheckConstraint),
     /// Drop a CHECK constraint (by name).
     DropCheck(String),
+    /// Create/replace a trigger function for a trigger-enforced check.
+    AddTriggerCheckFunction(TriggerCheckConstraint),
+    /// Create a trigger for a trigger-enforced check.
+    AddTriggerCheck(TriggerCheckConstraint),
+    /// Drop a trigger for a trigger-enforced check (by name).
+    DropTriggerCheck(String),
+    /// Drop the trigger function for a trigger-enforced check (by trigger name).
+    DropTriggerCheckFunction(String),
 }
 
 impl Change {
@@ -305,6 +316,43 @@ impl Change {
             Change::DropCheck(name) => {
                 format!("ALTER TABLE {} DROP CONSTRAINT {};", qt, quote_ident(name))
             }
+            Change::AddTriggerCheckFunction(trig) => {
+                let fn_name = crate::trigger_check_function_name(&trig.name);
+                let message = trig
+                    .message
+                    .as_deref()
+                    .unwrap_or("trigger check failed")
+                    .replace('\'', "''");
+                format!(
+                    "CREATE OR REPLACE FUNCTION {}() RETURNS trigger LANGUAGE plpgsql AS $$\n\
+                     BEGIN\n\
+                         IF NOT ({}) THEN\n\
+                             RAISE EXCEPTION '{}' USING ERRCODE = '23514';\n\
+                         END IF;\n\
+                         RETURN NEW;\n\
+                     END;\n\
+                     $$;",
+                    quote_ident(&fn_name),
+                    trig.expr,
+                    message
+                )
+            }
+            Change::AddTriggerCheck(trig) => {
+                let fn_name = crate::trigger_check_function_name(&trig.name);
+                format!(
+                    "CREATE TRIGGER {} BEFORE INSERT OR UPDATE ON {} FOR EACH ROW EXECUTE FUNCTION {}();",
+                    quote_ident(&trig.name),
+                    qt,
+                    quote_ident(&fn_name)
+                )
+            }
+            Change::DropTriggerCheck(name) => {
+                format!("DROP TRIGGER {} ON {};", quote_ident(name), qt)
+            }
+            Change::DropTriggerCheckFunction(trigger_name) => {
+                let fn_name = crate::trigger_check_function_name(trigger_name);
+                format!("DROP FUNCTION IF EXISTS {}();", quote_ident(&fn_name))
+            }
         }
     }
 }
@@ -380,6 +428,20 @@ impl std::fmt::Display for Change {
             Change::DropUnique(col) => write!(f, "- UNIQUE ({})", col),
             Change::AddCheck(check) => write!(f, "+ CHECK {}: {}", check.name, check.expr),
             Change::DropCheck(name) => write!(f, "- CHECK {}", name),
+            Change::AddTriggerCheckFunction(trig) => {
+                write!(
+                    f,
+                    "+ TRIGGER FUNCTION {}",
+                    crate::trigger_check_function_name(&trig.name)
+                )
+            }
+            Change::AddTriggerCheck(trig) => write!(f, "+ TRIGGER {}", trig.name),
+            Change::DropTriggerCheck(name) => write!(f, "- TRIGGER {}", name),
+            Change::DropTriggerCheckFunction(name) => write!(
+                f,
+                "- TRIGGER FUNCTION {}",
+                crate::trigger_check_function_name(name)
+            ),
         }
     }
 }
@@ -686,6 +748,12 @@ fn diff_table(
         &current.check_constraints,
     ));
 
+    // Diff trigger-enforced checks
+    changes.extend(diff_trigger_checks(
+        &desired.trigger_checks,
+        &current.trigger_checks,
+    ));
+
     // Diff foreign keys
     changes.extend(diff_foreign_keys(
         &desired.foreign_keys,
@@ -716,9 +784,38 @@ fn diff_check_constraints(desired: &[CheckConstraint], current: &[CheckConstrain
 
     // Adds / modifications
     for d in desired {
-        match current_by_name.get(d.name.as_str()) {
-            None => changes.push(Change::AddCheck(d.clone())),
-            Some(_) => {}
+        if !current_by_name.contains_key(d.name.as_str()) {
+            changes.push(Change::AddCheck(d.clone()));
+        }
+    }
+
+    changes
+}
+
+fn diff_trigger_checks(
+    desired: &[TriggerCheckConstraint],
+    current: &[TriggerCheckConstraint],
+) -> Vec<Change> {
+    let mut changes = Vec::new();
+
+    let desired_names: HashSet<&str> = desired.iter().map(|t| t.name.as_str()).collect();
+    let current_names: HashSet<&str> = current.iter().map(|t| t.name.as_str()).collect();
+
+    // Drops
+    //
+    // We only ever introspect dibs-managed trigger checks, so dropping by name here is safe.
+    for trig in current {
+        if !desired_names.contains(trig.name.as_str()) {
+            changes.push(Change::DropTriggerCheck(trig.name.clone()));
+            changes.push(Change::DropTriggerCheckFunction(trig.name.clone()));
+        }
+    }
+
+    // Adds
+    for trig in desired {
+        if !current_names.contains(trig.name.as_str()) {
+            changes.push(Change::AddTriggerCheckFunction(trig.clone()));
+            changes.push(Change::AddTriggerCheck(trig.clone()));
         }
     }
 
@@ -735,7 +832,9 @@ fn diff_check_constraints(desired: &[CheckConstraint], current: &[CheckConstrain
 /// By centralizing this logic, we prevent bugs where new table features
 /// (like FKs or indices) are forgotten when adding tables.
 fn table_creation_changes(table: &Table) -> Vec<Change> {
-    let mut changes = Vec::with_capacity(1 + table.foreign_keys.len() + table.indices.len());
+    let mut changes = Vec::with_capacity(
+        1 + table.foreign_keys.len() + table.indices.len() + (table.trigger_checks.len() * 2),
+    );
 
     // The table itself
     changes.push(Change::AddTable(table.clone()));
@@ -748,6 +847,12 @@ fn table_creation_changes(table: &Table) -> Vec<Change> {
     // All indices
     for idx in &table.indices {
         changes.push(Change::AddIndex(idx.clone()));
+    }
+
+    // All trigger checks (functions first, then triggers)
+    for trig in &table.trigger_checks {
+        changes.push(Change::AddTriggerCheckFunction(trig.clone()));
+        changes.push(Change::AddTriggerCheck(trig.clone()));
     }
 
     changes
@@ -1194,6 +1299,7 @@ mod tests {
             name: name.to_string(),
             columns,
             check_constraints: Vec::new(),
+            trigger_checks: Vec::new(),
             foreign_keys: Vec::new(),
             indices: Vec::new(),
             source: SourceLocation::default(),
@@ -1439,6 +1545,7 @@ mod tests {
                 make_column_with_default("created_at", PgType::Timestamptz, false, "now()"),
             ],
             check_constraints: Vec::new(),
+            trigger_checks: Vec::new(),
             foreign_keys: Vec::new(),
             indices: Vec::new(),
             source: SourceLocation::default(),
@@ -1460,6 +1567,7 @@ mod tests {
                 make_column_with_default("created_at", PgType::Timestamptz, false, "now()"),
             ],
             check_constraints: Vec::new(),
+            trigger_checks: Vec::new(),
             foreign_keys: Vec::new(),
             indices: Vec::new(),
             source: SourceLocation::default(),
@@ -1482,6 +1590,7 @@ mod tests {
                 make_column("body", PgType::Text, false),
             ],
             check_constraints: Vec::new(),
+            trigger_checks: Vec::new(),
             foreign_keys: vec![
                 ForeignKey {
                     columns: vec!["author_id".to_string()],
@@ -1514,6 +1623,7 @@ mod tests {
                 make_pk_column("tag_id", PgType::BigInt),
             ],
             check_constraints: Vec::new(),
+            trigger_checks: Vec::new(),
             foreign_keys: vec![
                 ForeignKey {
                     columns: vec!["post_id".to_string()],
@@ -1548,6 +1658,7 @@ mod tests {
                         make_column("name", PgType::Text, false),
                     ],
                     check_constraints: Vec::new(),
+                    trigger_checks: Vec::new(),
                     foreign_keys: Vec::new(),
                     indices: Vec::new(),
                     source: SourceLocation::default(),
@@ -1562,6 +1673,7 @@ mod tests {
                         make_column("title", PgType::Text, false),
                     ],
                     check_constraints: Vec::new(),
+                    trigger_checks: Vec::new(),
                     foreign_keys: vec![ForeignKey {
                         columns: vec!["author_id".to_string()],
                         references_table: "users".to_string(),
@@ -1579,6 +1691,7 @@ mod tests {
                         make_pk_column("post_id", PgType::BigInt),
                     ],
                     check_constraints: Vec::new(),
+                    trigger_checks: Vec::new(),
                     foreign_keys: vec![
                         ForeignKey {
                             columns: vec!["user_id".to_string()],
@@ -1763,6 +1876,7 @@ mod tests {
                 name: name.to_string(),
                 columns,
                 check_constraints: Vec::new(),
+                trigger_checks: Vec::new(),
                 foreign_keys: fks,
                 indices: Vec::new(),
                 source: SourceLocation::default(),
@@ -1836,6 +1950,7 @@ mod tests {
                 name: name.to_string(),
                 columns,
                 check_constraints: Vec::new(),
+                trigger_checks: Vec::new(),
                 foreign_keys: fks,
                 indices: Vec::new(),
                 source: SourceLocation::default(),
@@ -2112,6 +2227,7 @@ mod tests {
                 name: name.to_string(),
                 columns,
                 check_constraints: Vec::new(),
+                trigger_checks: Vec::new(),
                 foreign_keys: fks,
                 indices: Vec::new(),
                 source: SourceLocation::default(),

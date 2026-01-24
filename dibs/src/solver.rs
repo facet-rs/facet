@@ -177,12 +177,14 @@ struct VirtualTable {
     indices: HashSet<String>,
     unique_constraints: HashSet<String>,
     check_constraints: std::collections::HashMap<String, String>,
+    trigger_checks: HashSet<String>,
 }
 
 /// Virtual schema state for simulating migrations.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct VirtualSchema {
     tables: HashMap<String, VirtualTable>,
+    trigger_check_functions: HashSet<String>,
 }
 
 impl VirtualSchema {
@@ -203,6 +205,7 @@ impl VirtualSchema {
                     indices: HashSet::new(),
                     unique_constraints: HashSet::new(),
                     check_constraints: std::collections::HashMap::new(),
+                    trigger_checks: HashSet::new(),
                 },
             );
         }
@@ -213,6 +216,11 @@ impl VirtualSchema {
     pub fn from_tables(tables: &[crate::Table]) -> Self {
         let mut schema = Self::new();
         for table in tables {
+            for trig in &table.trigger_checks {
+                schema
+                    .trigger_check_functions
+                    .insert(crate::trigger_check_function_name(&trig.name));
+            }
             schema.tables.insert(
                 table.name.clone(),
                 VirtualTable {
@@ -229,6 +237,11 @@ impl VirtualSchema {
                         .check_constraints
                         .iter()
                         .map(|c| (c.name.clone(), c.expr.clone()))
+                        .collect(),
+                    trigger_checks: table
+                        .trigger_checks
+                        .iter()
+                        .map(|t| t.name.clone())
                         .collect(),
                 },
             );
@@ -368,6 +381,30 @@ impl VirtualSchema {
                         diffs.push(format!("- {}.check({})", name, ck_name));
                     }
                 }
+
+                // Trigger checks
+                for trig in &self_table.trigger_checks {
+                    if !other_table.trigger_checks.contains(trig) {
+                        diffs.push(format!("+ {}.trigger_check({})", name, trig));
+                    }
+                }
+                for trig in &other_table.trigger_checks {
+                    if !self_table.trigger_checks.contains(trig) {
+                        diffs.push(format!("- {}.trigger_check({})", name, trig));
+                    }
+                }
+            }
+        }
+
+        // Trigger check functions (global)
+        for fn_name in &self.trigger_check_functions {
+            if !other.trigger_check_functions.contains(fn_name) {
+                diffs.push(format!("+ function '{}'", fn_name));
+            }
+        }
+        for fn_name in &other.trigger_check_functions {
+            if !self.trigger_check_functions.contains(fn_name) {
+                diffs.push(format!("- function '{}'", fn_name));
             }
         }
 
@@ -411,6 +448,11 @@ impl VirtualSchema {
                             .check_constraints
                             .iter()
                             .map(|c| (c.name.clone(), c.expr.clone()))
+                            .collect(),
+                        trigger_checks: t
+                            .trigger_checks
+                            .iter()
+                            .map(|trig| trig.name.clone())
                             .collect(),
                     },
                 );
@@ -683,6 +725,61 @@ impl VirtualSchema {
                     table.check_constraints.remove(name);
                 }
             }
+
+            // Trigger check operations
+            Change::AddTriggerCheckFunction(trig) => {
+                if !self.table_exists(table_context) {
+                    return Err(SolverError::TableNotFound {
+                        change: change_desc,
+                        table: table_context.to_string(),
+                    });
+                }
+                self.trigger_check_functions
+                    .insert(crate::trigger_check_function_name(&trig.name));
+            }
+
+            Change::AddTriggerCheck(trig) => {
+                if !self.table_exists(table_context) {
+                    return Err(SolverError::TableNotFound {
+                        change: change_desc,
+                        table: table_context.to_string(),
+                    });
+                }
+                let fn_name = crate::trigger_check_function_name(&trig.name);
+                if !self.trigger_check_functions.contains(&fn_name) {
+                    return Err(SolverError::ConflictingOperations {
+                        first: change_desc,
+                        second: format!("function {} not found", fn_name),
+                        reason: "trigger check function not created yet".to_string(),
+                    });
+                }
+                if let Some(table) = self.tables.get_mut(table_context) {
+                    table.trigger_checks.insert(trig.name.clone());
+                }
+            }
+
+            Change::DropTriggerCheck(name) => {
+                if !self.table_exists(table_context) {
+                    return Err(SolverError::TableNotFound {
+                        change: change_desc,
+                        table: table_context.to_string(),
+                    });
+                }
+                if let Some(table) = self.tables.get_mut(table_context) {
+                    table.trigger_checks.remove(name);
+                }
+            }
+
+            Change::DropTriggerCheckFunction(trigger_name) => {
+                if !self.table_exists(table_context) {
+                    return Err(SolverError::TableNotFound {
+                        change: change_desc,
+                        table: table_context.to_string(),
+                    });
+                }
+                self.trigger_check_functions
+                    .remove(&crate::trigger_check_function_name(trigger_name));
+            }
         }
 
         Ok(())
@@ -904,6 +1001,7 @@ mod tests {
             name: name.to_string(),
             columns,
             check_constraints: Vec::new(),
+            trigger_checks: Vec::new(),
             foreign_keys: Vec::new(),
             indices: Vec::new(),
             source: SourceLocation::default(),
@@ -917,6 +1015,7 @@ mod tests {
             name: name.to_string(),
             columns,
             check_constraints: Vec::new(),
+            trigger_checks: Vec::new(),
             foreign_keys: fks,
             indices: Vec::new(),
             source: SourceLocation::default(),
@@ -1158,6 +1257,7 @@ mod tests {
                 make_column("current_version_id", PgType::BigInt, true),
             ],
             check_constraints: Vec::new(),
+            trigger_checks: Vec::new(),
             foreign_keys: vec![ForeignKey {
                 columns: vec!["current_version_id".to_string()],
                 references_table: "product_version".to_string(),
@@ -1176,6 +1276,7 @@ mod tests {
                 make_column("product_id", PgType::BigInt, false),
             ],
             check_constraints: Vec::new(),
+            trigger_checks: Vec::new(),
             foreign_keys: vec![ForeignKey {
                 columns: vec!["product_id".to_string()],
                 references_table: "product".to_string(),
@@ -3118,6 +3219,7 @@ mod proptests {
                     name,
                     columns,
                     check_constraints: vec![],
+                    trigger_checks: vec![],
                     foreign_keys: vec![],
                     indices,
                     source: SourceLocation::default(),

@@ -101,6 +101,15 @@ facet::define_attr_grammar! {
         /// - `#[facet(dibs::check(name = "ck_foo", expr = "foo IS NOT NULL"))]` - named constraint
         Check(Check),
 
+        /// Creates a trigger-enforced invariant check (container-level).
+        ///
+        /// This is for cross-row or cross-table invariants that cannot be expressed as
+        /// a SQL CHECK constraint (which is limited to the current row).
+        ///
+        /// Usage:
+        /// - `#[facet(dibs::trigger_check(name = "trg_my_check", expr = "NEW.foo IS NULL OR EXISTS (...)"))]`
+        TriggerCheck(TriggerCheck),
+
         /// Marks a field as auto-generated (e.g., SERIAL, sequences).
         ///
         /// Usage: `#[facet(dibs::auto)]`
@@ -179,6 +188,18 @@ facet::define_attr_grammar! {
         pub name: Option<&'static str>,
         /// SQL expression for CHECK(...)
         pub expr: &'static str,
+    }
+
+    /// Trigger-enforced check definition.
+    pub struct TriggerCheck {
+        /// Optional trigger name (auto-generated if not provided)
+        pub name: Option<&'static str>,
+        /// Boolean SQL expression evaluated in a `BEFORE INSERT OR UPDATE` trigger.
+        ///
+        /// Use `NEW.<column>` to reference the new row, and `OLD.<column>` for updates.
+        pub expr: &'static str,
+        /// Optional error message raised when the expression evaluates to false.
+        pub message: Option<&'static str>,
     }
 }
 
@@ -549,6 +570,8 @@ pub struct Table {
     pub columns: Vec<Column>,
     /// CHECK constraints
     pub check_constraints: Vec<CheckConstraint>,
+    /// Trigger-enforced checks
+    pub trigger_checks: Vec<TriggerCheckConstraint>,
     /// Foreign keys
     pub foreign_keys: Vec<ForeignKey>,
     /// Indices
@@ -566,6 +589,14 @@ pub struct Table {
 pub struct CheckConstraint {
     pub name: String,
     pub expr: String,
+}
+
+/// A trigger-enforced invariant check (BEFORE INSERT OR UPDATE).
+#[derive(Debug, Clone, PartialEq)]
+pub struct TriggerCheckConstraint {
+    pub name: String,
+    pub expr: String,
+    pub message: Option<String>,
 }
 
 /// A complete database schema.
@@ -636,6 +667,16 @@ impl Schema {
         for table in &self.tables {
             for idx in &table.indices {
                 sql.push_str(&table.to_create_index_sql(idx));
+                sql.push('\n');
+            }
+        }
+
+        // Create trigger checks
+        for table in &self.tables {
+            for trig in &table.trigger_checks {
+                sql.push_str(&table.to_create_trigger_check_function_sql(trig));
+                sql.push('\n');
+                sql.push_str(&table.to_create_trigger_check_sql(trig));
                 sql.push('\n');
             }
         }
@@ -729,6 +770,38 @@ impl Table {
             crate::quote_ident(&self.name),
             quoted_cols.join(", "),
             where_clause
+        )
+    }
+
+    pub fn to_create_trigger_check_function_sql(&self, trig: &TriggerCheckConstraint) -> String {
+        let fn_name = crate::trigger_check_function_name(&trig.name);
+        let message = trig
+            .message
+            .as_deref()
+            .unwrap_or("trigger check failed")
+            .replace('\'', "''");
+        format!(
+            "CREATE OR REPLACE FUNCTION {}() RETURNS trigger LANGUAGE plpgsql AS $$\n\
+             BEGIN\n\
+                 IF NOT ({}) THEN\n\
+                     RAISE EXCEPTION '{}' USING ERRCODE = '23514';\n\
+                 END IF;\n\
+                 RETURN NEW;\n\
+             END;\n\
+             $$;",
+            crate::quote_ident(&fn_name),
+            trig.expr,
+            message
+        )
+    }
+
+    pub fn to_create_trigger_check_sql(&self, trig: &TriggerCheckConstraint) -> String {
+        let fn_name = crate::trigger_check_function_name(&trig.name);
+        format!(
+            "CREATE TRIGGER {} BEFORE INSERT OR UPDATE ON {} FOR EACH ROW EXECUTE FUNCTION {}();",
+            crate::quote_ident(&trig.name),
+            crate::quote_ident(&self.name),
+            crate::quote_ident(&fn_name)
         )
     }
 }
@@ -935,6 +1008,7 @@ impl TableDef {
 
         let mut columns = Vec::new();
         let mut check_constraints = Vec::new();
+        let mut trigger_checks = Vec::new();
         let mut foreign_keys = Vec::new();
         let mut indices = Vec::new();
 
@@ -996,6 +1070,22 @@ impl TableDef {
                 check_constraints.push(CheckConstraint {
                     name,
                     expr: check.expr.to_string(),
+                });
+            }
+
+            // Collect container-level trigger-enforced checks
+            if attr.ns == Some("dibs")
+                && attr.key == "trigger_check"
+                && let Some(Attr::TriggerCheck(trig)) = attr.get_as::<Attr>()
+            {
+                let name = trig
+                    .name
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| crate::trigger_check_name(&table_name, trig.expr));
+                trigger_checks.push(TriggerCheckConstraint {
+                    name,
+                    expr: trig.expr.to_string(),
+                    message: trig.message.map(|s| s.to_string()),
                 });
             }
         }
@@ -1147,6 +1237,7 @@ impl TableDef {
             name: table_name,
             columns,
             check_constraints,
+            trigger_checks,
             foreign_keys,
             indices,
             source,

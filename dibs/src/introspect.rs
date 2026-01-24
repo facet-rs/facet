@@ -5,7 +5,7 @@
 
 use crate::{
     CheckConstraint, Column, ForeignKey, Index, IndexColumn, PgType, Result, Schema,
-    SourceLocation, Table,
+    SourceLocation, Table, TriggerCheckConstraint,
 };
 
 #[cfg(test)]
@@ -66,6 +66,7 @@ async fn introspect_table(client: &Client, table_name: &str) -> Result<Table> {
     let primary_keys = introspect_primary_keys(client, table_name).await?;
     let unique_columns = introspect_unique_constraints(client, table_name).await?;
     let check_constraints = introspect_check_constraints(client, table_name).await?;
+    let trigger_checks = introspect_trigger_checks(client, table_name).await?;
     let foreign_keys = introspect_foreign_keys(client, table_name).await?;
     let indices = introspect_indices(client, table_name).await?;
 
@@ -83,12 +84,46 @@ async fn introspect_table(client: &Client, table_name: &str) -> Result<Table> {
         name: table_name.to_string(),
         columns,
         check_constraints,
+        trigger_checks,
         foreign_keys,
         indices,
         source: SourceLocation::default(), // DB tables don't have Rust source
         doc: None,
         icon: None, // Not available from introspection
     })
+}
+
+/// Introspect trigger-enforced checks for a table.
+async fn introspect_trigger_checks(
+    client: &Client,
+    table_name: &str,
+) -> Result<Vec<TriggerCheckConstraint>> {
+    let rows = client
+        .query(
+            r#"
+            SELECT tg.tgname
+            FROM pg_trigger tg
+            JOIN pg_class rel ON rel.oid = tg.tgrelid
+            JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+            JOIN pg_proc pr ON pr.oid = tg.tgfoid
+            WHERE nsp.nspname = 'public'
+              AND rel.relname = $1
+              AND tg.tgisinternal = false
+              AND pr.proname LIKE 'trgfn\_%' ESCAPE '\'
+            ORDER BY tg.tgname
+            "#,
+            &[&table_name],
+        )
+        .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| TriggerCheckConstraint {
+            name: row.get::<_, String>(0),
+            expr: String::new(),
+            message: None,
+        })
+        .collect())
 }
 
 /// Introspect CHECK constraints for a table.
