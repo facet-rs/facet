@@ -344,7 +344,7 @@ fn dump_value_recursive(
     match value {
         ConfigValue::Object(sourced) => {
             if !path.is_empty() {
-                println!("{}{}:", indent_str, path);
+                println!("{}{}", indent_str, path.white());
             }
 
             for (key, val) in sourced.value.iter() {
@@ -352,30 +352,60 @@ fn dump_value_recursive(
             }
         }
         ConfigValue::Array(sourced) => {
-            println!("{}{}:", indent_str, path);
+            println!("{}{}", indent_str, path.white());
             for (i, item) in sourced.value.iter().enumerate() {
                 dump_value_recursive(item, &format!("[{}]", i), indent + 1, config_files);
             }
         }
         ConfigValue::String(sourced) => {
             let prov = format_provenance(&sourced.provenance, config_files);
-            println!("{}{}: \"{}\" {}", indent_str, path, sourced.value, prov);
+            println!(
+                "{}{}  {}  {}",
+                indent_str,
+                path.white(),
+                format!("\"{}\"", sourced.value).green(),
+                prov
+            );
         }
         ConfigValue::Integer(sourced) => {
             let prov = format_provenance(&sourced.provenance, config_files);
-            println!("{}{}: {} {}", indent_str, path, sourced.value, prov);
+            println!(
+                "{}{}  {}  {}",
+                indent_str,
+                path.white(),
+                sourced.value.to_string().green(),
+                prov
+            );
         }
         ConfigValue::Float(sourced) => {
             let prov = format_provenance(&sourced.provenance, config_files);
-            println!("{}{}: {} {}", indent_str, path, sourced.value, prov);
+            println!(
+                "{}{}  {}  {}",
+                indent_str,
+                path.white(),
+                sourced.value.to_string().green(),
+                prov
+            );
         }
         ConfigValue::Bool(sourced) => {
             let prov = format_provenance(&sourced.provenance, config_files);
-            println!("{}{}: {} {}", indent_str, path, sourced.value, prov);
+            println!(
+                "{}{}  {}  {}",
+                indent_str,
+                path.white(),
+                sourced.value.to_string().green(),
+                prov
+            );
         }
         ConfigValue::Null(sourced) => {
             let prov = format_provenance(&sourced.provenance, config_files);
-            println!("{}{}: null {}", indent_str, path, prov);
+            println!(
+                "{}{}  {}  {}",
+                indent_str,
+                path.white(),
+                "null".green(),
+                prov
+            );
         }
     }
 }
