@@ -702,6 +702,68 @@ fn diff_table(
 fn diff_check_constraints(desired: &[CheckConstraint], current: &[CheckConstraint]) -> Vec<Change> {
     let mut changes = Vec::new();
 
+    fn normalize_check_expr(expr: &str) -> String {
+        let mut s = expr.trim().to_string();
+
+        // Strip redundant outer parentheses.
+        loop {
+            let t = s.trim();
+            if t.starts_with('(') && t.ends_with(')') {
+                let inner = &t[1..t.len() - 1];
+                let mut depth = 0i32;
+                let mut ok = true;
+                for ch in inner.chars() {
+                    match ch {
+                        '(' => depth += 1,
+                        ')' => {
+                            depth -= 1;
+                            if depth < 0 {
+                                ok = false;
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                if ok && depth == 0 {
+                    s = inner.to_string();
+                    continue;
+                }
+            }
+            break;
+        }
+
+        // Normalize casts that Postgres tends to insert in deparsed expressions.
+        for cast in ["::text", "::character varying", "::varchar", "::bpchar"] {
+            s = s.replace(cast, "");
+        }
+
+        // Normalize Postgres' `= ANY (ARRAY[...])` back to `IN (...)` for stable diffing.
+        //
+        // Example: `status = ANY (ARRAY['reserved', 'applied'])` ≈ `status IN ('reserved', 'applied')`
+        // This is not a full SQL parser; it's just enough to make round-trips stable.
+        s = s.replace(" = ANY (ARRAY[", " IN (");
+        s = s.replace("= ANY (ARRAY[", "IN (");
+        s = s.replace("])", ")");
+
+        // Normalize whitespace.
+        let mut out = String::with_capacity(s.len());
+        let mut pending_space = false;
+        for ch in s.chars() {
+            if ch.is_whitespace() {
+                pending_space = true;
+                continue;
+            }
+            if pending_space && !out.is_empty() {
+                out.push(' ');
+            }
+            pending_space = false;
+            out.push(ch);
+        }
+
+        out.trim().to_string()
+    }
+
     let desired_by_name: std::collections::HashMap<&str, &CheckConstraint> =
         desired.iter().map(|c| (c.name.as_str(), c)).collect();
     let current_by_name: std::collections::HashMap<&str, &CheckConstraint> =
@@ -718,7 +780,7 @@ fn diff_check_constraints(desired: &[CheckConstraint], current: &[CheckConstrain
     for d in desired {
         match current_by_name.get(d.name.as_str()) {
             None => changes.push(Change::AddCheck(d.clone())),
-            Some(c) if c.expr != d.expr => {
+            Some(c) if normalize_check_expr(&c.expr) != normalize_check_expr(&d.expr) => {
                 changes.push(Change::DropCheck(d.name.clone()));
                 changes.push(Change::AddCheck(d.clone()));
             }
