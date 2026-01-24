@@ -355,9 +355,10 @@ impl VirtualSchema {
                         table: t.name.clone(),
                     });
                 }
-                // Check FK targets exist
+                // Check FK targets exist (self-referential FKs are allowed)
                 for fk in &t.foreign_keys {
-                    if !self.table_exists(&fk.references_table) {
+                    // Allow self-referential FKs - the table being created IS the target
+                    if fk.references_table != t.name && !self.table_exists(&fk.references_table) {
                         return Err(SolverError::ForeignKeyTargetNotFound {
                             change: change_desc,
                             source_table: t.name.clone(),
@@ -958,6 +959,35 @@ mod tests {
             result
         );
         assert!(!schema.table_exists("category"));
+    }
+
+    #[test]
+    fn test_self_referential_fk_allowed_on_add() {
+        // A table with a self-referential FK (like category.parent_id -> category.id)
+        // should be creatable - the FK target IS the table being created.
+        let category_table = make_table_with_fks(
+            "category",
+            vec![
+                make_column("id", PgType::BigInt, false),
+                make_column("parent_id", PgType::BigInt, true),
+            ],
+            vec![ForeignKey {
+                columns: vec!["parent_id".to_string()],
+                references_table: "category".to_string(), // SELF-REFERENCE
+                references_columns: vec!["id".to_string()],
+            }],
+        );
+
+        let mut schema = VirtualSchema::new();
+
+        // Should be able to add category with self-referential FK
+        let result = schema.apply("category", &Change::AddTable(category_table));
+        assert!(
+            result.is_ok(),
+            "Self-referential FK should not block table creation: {:?}",
+            result
+        );
+        assert!(schema.table_exists("category"));
     }
 
     #[test]
