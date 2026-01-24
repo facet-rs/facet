@@ -122,6 +122,7 @@ fn restructure_config_value(
     config_field: &'static facet_core::Field,
 ) -> ConfigValue {
     use crate::config_value::Sourced;
+    use crate::merge::merge;
     use facet_core::{Type, UserType};
     use indexmap::IndexMap;
 
@@ -140,11 +141,13 @@ fn restructure_config_value(
     let mut top_level_map = IndexMap::new();
     let mut config_map = IndexMap::new();
 
-    // Iterate through the source map and categorize fields
+    // Separate top-level fields from config fields, and extract existing config field if present
+    let mut existing_config_value: Option<ConfigValue> = None;
+
     for (key, val) in source_map.iter() {
         if key == config_field.name {
-            // The config field is already present at top level - use it as-is
-            top_level_map.insert(key.clone(), val.clone());
+            // The config field is already present at top level
+            existing_config_value = Some(val.clone());
         } else {
             // Check if this key corresponds to a top-level field (not the config field)
             let is_top_level_field = struct_def
@@ -162,17 +165,34 @@ fn restructure_config_value(
         }
     }
 
-    // Wrap config fields under the config field name (only if not already present)
-    if !config_map.is_empty() && !top_level_map.contains_key(config_field.name) {
-        top_level_map.insert(
-            config_field.name.to_string(),
-            ConfigValue::Object(Sourced {
-                value: config_map,
-                span: None,
-                provenance: None,
-            }),
-        );
-    }
+    // Create the config field value, merging if necessary
+    let config_value = if !config_map.is_empty() {
+        let new_config = ConfigValue::Object(Sourced {
+            value: config_map,
+            span: None,
+            provenance: None,
+        });
+
+        // If we already had a config field, deep merge them
+        if let Some(existing) = existing_config_value {
+            merge(new_config, existing, "").value
+        } else {
+            new_config
+        }
+    } else if let Some(existing) = existing_config_value {
+        // No new config fields, but we have an existing config field
+        existing
+    } else {
+        // No config fields at all - create empty object
+        ConfigValue::Object(Sourced {
+            value: IndexMap::new(),
+            span: None,
+            provenance: None,
+        })
+    };
+
+    // Insert the final config field
+    top_level_map.insert(config_field.name.to_string(), config_value);
 
     ConfigValue::Object(Sourced {
         value: top_level_map,
