@@ -373,7 +373,11 @@ fn collect_doc_string(attrs: &Any<RawAttribute>) -> Option<String> {
     for attr in attrs.iter() {
         let mut body_iter = attr.value.body.content.clone().to_token_iter();
         if let Ok(doc_attr) = DocAttribute::parse(&mut body_iter) {
-            let line = doc_attr.value.as_str().replace("\\\"", "\"");
+            let line = doc_attr
+                .value
+                .as_str()
+                .replace("\\\"", "\"")
+                .replace("\\'", "'");
             docs.push(line);
         }
     }

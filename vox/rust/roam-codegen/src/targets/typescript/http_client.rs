@@ -11,6 +11,33 @@ use roam_schema::{ServiceDetail, is_rx, is_tx};
 
 use super::types::ts_type;
 
+/// Format a doc comment for TypeScript/JSDoc.
+fn format_doc_comment(doc: &str, indent: &str) -> String {
+    let lines: Vec<&str> = doc.lines().collect();
+
+    if lines.is_empty() {
+        return String::new();
+    }
+
+    if lines.len() == 1 {
+        // Single line: /** doc */
+        format!("{}/** {} */\n", indent, lines[0].trim())
+    } else {
+        // Multi-line: proper JSDoc format
+        let mut out = format!("{}/**\n", indent);
+        for line in lines {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                out.push_str(&format!("{} *\n", indent));
+            } else {
+                out.push_str(&format!("{} * {}\n", indent, trimmed));
+            }
+        }
+        out.push_str(&format!("{} */\n", indent));
+        out
+    }
+}
+
 /// Generate HTTP client for a service.
 ///
 /// The generated client uses fetch() to call methods via the HTTP bridge.
@@ -45,7 +72,7 @@ pub fn generate_http_client(service: &ServiceDetail) -> String {
         };
 
         if let Some(doc) = &method.doc {
-            out.push_str(&format!("  /** {} */\n", doc));
+            out.push_str(&format_doc_comment(doc, "  "));
         }
         if has_channels {
             out.push_str("  /** @throws Channel methods require WebSocket */\n");

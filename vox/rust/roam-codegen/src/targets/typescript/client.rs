@@ -7,6 +7,33 @@ use roam_schema::{ServiceDetail, ShapeKind, classify_shape, is_rx, is_tx};
 
 use super::types::{ts_type_client_arg, ts_type_client_return};
 
+/// Format a doc comment for TypeScript/JSDoc.
+fn format_doc_comment(doc: &str, indent: &str) -> String {
+    let lines: Vec<&str> = doc.lines().collect();
+
+    if lines.is_empty() {
+        return String::new();
+    }
+
+    if lines.len() == 1 {
+        // Single line: /** doc */
+        format!("{}/** {} */\n", indent, lines[0].trim())
+    } else {
+        // Multi-line: proper JSDoc format
+        let mut out = format!("{}/**\n", indent);
+        for line in lines {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                out.push_str(&format!("{} *\n", indent));
+            } else {
+                out.push_str(&format!("{} * {}\n", indent, trimmed));
+            }
+        }
+        out.push_str(&format!("{} */\n", indent));
+        out
+    }
+}
+
 /// Generate caller interface (for making calls to the service).
 ///
 /// r[impl channeling.caller-pov] - Caller uses Tx for args, Rx for returns.
@@ -36,7 +63,7 @@ pub fn generate_caller_interface(service: &ServiceDetail) -> String {
         let ret_ty = ts_type_client_return(method.return_type);
 
         if let Some(doc) = &method.doc {
-            out.push_str(&format!("  /** {} */\n", doc));
+            out.push_str(&format_doc_comment(doc, "  "));
         }
         out.push_str(&format!(
             "  {method_name}({args}): CallBuilder<{ret_ty}>;\n"
@@ -104,7 +131,7 @@ pub fn generate_client_impl(service: &ServiceDetail) -> String {
         };
 
         if let Some(doc) = &method.doc {
-            out.push_str(&format!("  /** {} */\n", doc));
+            out.push_str(&format_doc_comment(doc, "  "));
         }
         out.push_str(&format!(
             "  {method_name}({args}): CallBuilder<{ret_ty}> {{\n"
