@@ -126,5 +126,8 @@ fn pg_type_to_rust(pg_type: &dibs::PgType) -> String {
         PgType::Time => "Time".to_string(),
         PgType::Uuid => "Uuid".to_string(),
         PgType::Jsonb => "JsonValue".to_string(),
+        PgType::TextArray => "Vec<String>".to_string(),
+        PgType::BigIntArray => "Vec<i64>".to_string(),
+        PgType::IntegerArray => "Vec<i32>".to_string(),
     }
 }

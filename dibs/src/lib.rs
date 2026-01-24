@@ -70,8 +70,8 @@ pub use service::{DibsServiceImpl, run_service};
 // Re-export proto types for convenience
 pub use dibs_proto::*;
 pub use schema::{
-    Attr, Column, CompositeIndex, ForeignKey, Index, PgType, Schema, SourceLocation, Table,
-    TableDef,
+    Attr, Column, CompositeIndex, CompositeUnique, ForeignKey, Index, PgType, Schema,
+    SourceLocation, Table, TableDef,
 };
 
 // Re-export inventory for the proc macro
@@ -108,6 +108,21 @@ pub fn quote_ident(name: &str) -> String {
 pub fn index_name(table: &str, columns: &[impl AsRef<str>]) -> String {
     let cols: Vec<&str> = columns.iter().map(|c| c.as_ref()).collect();
     format!("idx_{}_{}", table, cols.join("_"))
+}
+
+/// Generate a standard unique index name for a table and columns.
+///
+/// Uses the convention `uq_{table}_{columns}` where columns are joined by underscore.
+///
+/// # Examples
+///
+/// ```
+/// assert_eq!(dibs::unique_index_name("user", &["email"]), "uq_user_email");
+/// assert_eq!(dibs::unique_index_name("category", &["shop_id", "handle"]), "uq_category_shop_id_handle");
+/// ```
+pub fn unique_index_name(table: &str, columns: &[impl AsRef<str>]) -> String {
+    let cols: Vec<&str> = columns.iter().map(|c| c.as_ref()).collect();
+    format!("uq_{}_{}", table, cols.join("_"))
 }
 
 /// Derive migration version from filename.

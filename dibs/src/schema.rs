@@ -86,6 +86,13 @@ facet::define_attr_grammar! {
         /// - `#[facet(dibs::index(name = "idx_foo", columns = "col1,col2"))]` - named composite index
         CompositeIndex(CompositeIndex),
 
+        /// Creates a unique constraint on one or more columns (container-level).
+        ///
+        /// Usage:
+        /// - `#[facet(dibs::composite_unique(columns = "col1,col2"))]` - auto-named unique constraint
+        /// - `#[facet(dibs::composite_unique(name = "uq_foo", columns = "col1,col2"))]` - named constraint
+        CompositeUnique(CompositeUnique),
+
         /// Marks a field as auto-generated (e.g., SERIAL, sequences).
         ///
         /// Usage: `#[facet(dibs::auto)]`
@@ -132,6 +139,18 @@ facet::define_attr_grammar! {
     /// Composite index definition for multi-column indices.
     pub struct CompositeIndex {
         /// Optional index name (auto-generated if not provided)
+        pub name: Option<&'static str>,
+        /// Comma-separated column names
+        pub columns: &'static str,
+    }
+
+    /// Composite unique constraint for multi-column uniqueness.
+    ///
+    /// Usage:
+    /// - `#[facet(dibs::composite_unique(columns = "col1,col2"))]` - auto-named unique constraint
+    /// - `#[facet(dibs::composite_unique(name = "uq_foo", columns = "col1,col2"))]` - named constraint
+    pub struct CompositeUnique {
+        /// Optional constraint name (auto-generated if not provided)
         pub name: Option<&'static str>,
         /// Comma-separated column names
         pub columns: &'static str,
@@ -530,20 +549,21 @@ impl Table {
 /// Returns `Some((table, column))` on success, `None` on parse failure.
 pub fn parse_fk_reference(fk_ref: &str) -> Option<(&str, &str)> {
     // Try "table.column" format first
-    if let Some((table, col)) = fk_ref.split_once('.') {
-        if !table.is_empty() && !col.is_empty() {
-            return Some((table, col));
-        }
+    if let Some((table, col)) = fk_ref.split_once('.')
+        && !table.is_empty()
+        && !col.is_empty()
+    {
+        return Some((table, col));
     }
 
     // Try "table(column)" format
-    if let Some(paren_idx) = fk_ref.find('(') {
-        if fk_ref.ends_with(')') {
-            let table = &fk_ref[..paren_idx];
-            let col = &fk_ref[paren_idx + 1..fk_ref.len() - 1];
-            if !table.is_empty() && !col.is_empty() {
-                return Some((table, col));
-            }
+    if let Some(paren_idx) = fk_ref.find('(')
+        && fk_ref.ends_with(')')
+    {
+        let table = &fk_ref[..paren_idx];
+        let col = &fk_ref[paren_idx + 1..fk_ref.len() - 1];
+        if !table.is_empty() && !col.is_empty() {
+            return Some((table, col));
         }
     }
 
@@ -721,24 +741,44 @@ impl TableDef {
 
         // Collect container-level composite indices
         for attr in self.shape.attributes.iter() {
-            if attr.ns == Some("dibs") && attr.key == "composite_index" {
-                // The attribute data is Attr::CompositeIndex(CompositeIndex{...})
-                if let Some(Attr::CompositeIndex(composite)) = attr.get_as::<Attr>() {
-                    let cols: Vec<String> = composite
-                        .columns
-                        .split(',')
-                        .map(|s| s.trim().to_string())
-                        .collect();
-                    let idx_name = composite
-                        .name
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| crate::index_name(&table_name, &cols));
-                    indices.push(Index {
-                        name: idx_name,
-                        columns: cols,
-                        unique: false,
-                    });
-                }
+            if attr.ns == Some("dibs")
+                && attr.key == "composite_index"
+                && let Some(Attr::CompositeIndex(composite)) = attr.get_as::<Attr>()
+            {
+                let cols: Vec<String> = composite
+                    .columns
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .collect();
+                let idx_name = composite
+                    .name
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| crate::index_name(&table_name, &cols));
+                indices.push(Index {
+                    name: idx_name,
+                    columns: cols,
+                    unique: false,
+                });
+            }
+            // Collect container-level composite unique constraints
+            if attr.ns == Some("dibs")
+                && attr.key == "composite_unique"
+                && let Some(Attr::CompositeUnique(composite)) = attr.get_as::<Attr>()
+            {
+                let cols: Vec<String> = composite
+                    .columns
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .collect();
+                let idx_name = composite
+                    .name
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| crate::unique_index_name(&table_name, &cols));
+                indices.push(Index {
+                    name: idx_name,
+                    columns: cols,
+                    unique: true,
+                });
             }
         }
 
