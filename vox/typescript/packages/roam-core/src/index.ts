@@ -216,14 +216,13 @@ export {
 } from "./middleware.ts";
 
 // Caller abstraction
-export {
-  type CallerRequest,
-  type Caller,
-  MiddlewareCaller,
-} from "./caller.ts";
+export { type CallerRequest, type Caller, MiddlewareCaller } from "./caller.ts";
 
 // Call builder for fluent API
 export { CallBuilder, withMeta, type CallExecutor } from "./call_builder.ts";
+
+// Logging middleware
+export { loggingMiddleware, type LoggingOptions } from "./logging.ts";
 
 // Metadata conversion utilities
 export { metadataMapToEntries, metadataEntriesToMap } from "./metadata.ts";
