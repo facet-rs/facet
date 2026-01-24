@@ -50,22 +50,27 @@ This section tracks what has been implemented and what remains TODO.
   - `with_env_source()` for testing with `MockEnv`
   - Layer order: file < env < cli
 
+- **CLI override parsing** (`src/builder.rs`)
+  - `parse_cli_overrides()` parses `--config.foo.bar <value>` style arguments
+  - Builds nested `ConfigValue` trees from dotted paths
+  - Type inference: detects booleans, integers, floats, strings automatically
+  - Example: `--config.port 8080 --config.smtp.host smtp.example.com`
+
+- **Type coercion** (`src/config_value_parser.rs`)
+  - `ConfigValueParser` implements `FormatParser<'input>` trait
+  - Converts `ConfigValue` trees to `ParseEvent` streams
+  - `from_config_value<T>()` deserializes into arbitrary Facet types
+  - Uses `facet-format::FormatDeserializer` for automatic type conversion
+  - Handles nested structs, primitives, collections, Options, etc.
+  - No manual type coercion needed - leverages existing deserialization infrastructure
+
 ### 🚧 TODO
 
 - **`#[facet(args::config)]` attribute**
   - Integrate with existing CLI parsing
   - Auto-generate `--config <PATH>` flag
-  - Parse `--config.foo.bar <VALUE>` CLI overrides
-  - Convert merged `ConfigValue` to target struct type
-
-- **CLI override parsing**
-  - Parse dotted paths like `--config.smtp.host`
-  - Build `ConfigValue` tree from CLI overrides
-  - Currently `parse_cli_overrides()` returns `None`
-
-- **Type coercion**
-  - Convert string env vars to target types (integers, bools, etc.)
-  - Currently all env values are stored as strings
+  - Wire up CLI override parsing to work with the attribute
+  - Call `from_config_value()` to convert merged result to target struct type
 
 - **Strict mode enforcement**
   - Detect unknown keys in each layer
@@ -100,13 +105,14 @@ This section tracks what has been implemented and what remains TODO.
 
 ```
 facet-args/src/
-├── builder.rs       # Builder API for layered config
-├── config_format.rs # ConfigFormat trait and JsonFormat
-├── config_value.rs  # ConfigValue enum with Sourced<T>
-├── env.rs           # Environment variable parsing
-├── merge.rs         # Deep-merge for ConfigValue trees
-├── provenance.rs    # Provenance tracking types
-└── lib.rs           # Re-exports builder()
+├── builder.rs            # Builder API for layered config + CLI override parsing
+├── config_format.rs      # ConfigFormat trait and JsonFormat
+├── config_value.rs       # ConfigValue enum with Sourced<T>
+├── config_value_parser.rs # Parser that converts ConfigValue to ParseEvents
+├── env.rs                # Environment variable parsing
+├── merge.rs              # Deep-merge for ConfigValue trees
+├── provenance.rs         # Provenance tracking types
+└── lib.rs                # Re-exports builder()
 ```
 
 ---
