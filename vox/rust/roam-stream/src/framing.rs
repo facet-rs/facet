@@ -10,16 +10,13 @@
 //! - `TcpStream` (TCP sockets)
 //! - `UnixStream` (Unix domain sockets)
 //! - Any other async byte stream
-//!
-//! TODO: Currently we do facet_postcard::to_vec() then cobs_encode_vec() - two allocations
-//! and two passes over the data. Should switch to a streaming encoder that does a single pass.
 
 use std::io;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use cobs::{decode_vec as cobs_decode_vec, encode_vec as cobs_encode_vec};
+use cobs::decode_vec as cobs_decode_vec;
 use roam_wire::Message;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
@@ -70,6 +67,8 @@ pub struct CobsFramed<S> {
     buf: Vec<u8>,
     /// Last successfully decoded frame bytes (for error recovery/debugging).
     pub last_decoded: Vec<u8>,
+    /// Buffer for encoding messages to avoid reallocations.
+    encode_buf: Vec<u8>,
 }
 
 impl<S> CobsFramed<S> {
@@ -79,6 +78,7 @@ impl<S> CobsFramed<S> {
             stream,
             buf: Vec::new(),
             last_decoded: Vec::new(),
+            encode_buf: Vec::with_capacity(1024),
         }
     }
 
@@ -98,6 +98,59 @@ impl<S> CobsFramed<S> {
     }
 }
 
+struct CobsWriter<'a> {
+    out: &'a mut Vec<u8>,
+    code_idx: usize,
+    block_len: u8,
+}
+
+impl<'a> CobsWriter<'a> {
+    fn new(out: &'a mut Vec<u8>) -> Self {
+        let code_idx = out.len();
+        out.push(0);
+        Self {
+            out,
+            code_idx,
+            block_len: 0,
+        }
+    }
+
+    fn finalize(self) {
+        self.out[self.code_idx] = self.block_len + 1;
+    }
+}
+
+impl facet_postcard::Writer for CobsWriter<'_> {
+    fn write_byte(&mut self, byte: u8) -> Result<(), facet_postcard::SerializeError> {
+        if self.block_len == 254 {
+            self.code_idx = self.out.len();
+            self.out.push(0);
+            self.block_len = 0;
+        }
+
+        if byte == 0 {
+            self.out[self.code_idx] = self.block_len + 1;
+            self.code_idx = self.out.len();
+            self.out.push(0);
+            self.block_len = 0;
+        } else {
+            self.out.push(byte);
+            self.block_len += 1;
+            if self.block_len == 254 {
+                self.out[self.code_idx] = 0xFF;
+            }
+        }
+        Ok(())
+    }
+
+    fn write_bytes(&mut self, bytes: &[u8]) -> Result<(), facet_postcard::SerializeError> {
+        for &b in bytes {
+            self.write_byte(b)?;
+        }
+        Ok(())
+    }
+}
+
 impl<S> CobsFramed<S>
 where
     S: AsyncRead + AsyncWrite + Unpin,
@@ -107,12 +160,16 @@ where
     /// r[impl transport.bytestream.cobs] - COBS encode with 0x00 delimiter.
     pub async fn send(&mut self, msg: &Message) -> io::Result<()> {
         wire_spy_log("-->", msg);
-        let payload = facet_postcard::to_vec(msg)
+
+        self.encode_buf.clear();
+        let mut writer = CobsWriter::new(&mut self.encode_buf);
+        facet_postcard::to_writer_fallible(msg, &mut writer)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
-        let mut framed = cobs_encode_vec(&payload);
-        framed.push(0x00);
-        wire_spy_bytes("-->", &framed);
-        self.stream.write_all(&framed).await?;
+        writer.finalize();
+        self.encode_buf.push(0x00); // Delimiter
+
+        wire_spy_bytes("-->", &self.encode_buf);
+        self.stream.write_all(&self.encode_buf).await?;
         self.stream.flush().await?;
         Ok(())
     }
@@ -193,5 +250,45 @@ where
 
     fn last_decoded(&self) -> &[u8] {
         &self.last_decoded
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cobs::encode_vec as cobs_encode_vec;
+
+    #[test]
+    fn test_cobs_writer_matches_cobs_crate() {
+        let mut input_254_zero = vec![0x11; 254];
+        input_254_zero.push(0x00);
+
+        let mut input_254_11 = vec![0x11; 254];
+        input_254_11.push(0x11);
+
+        let cases = vec![
+            vec![],
+            vec![0x00],
+            vec![0x11, 0x00, 0x22],
+            vec![0x11; 253],
+            vec![0x11; 254],
+            vec![0x11; 255],
+            input_254_zero,
+            input_254_11,
+            vec![0x00; 10],
+            (0..500).map(|i| (i % 256) as u8).collect::<Vec<_>>(),
+        ];
+
+        for input in cases {
+            let mut out = Vec::new();
+            let mut writer = CobsWriter::new(&mut out);
+            for &b in &input {
+                facet_postcard::Writer::write_byte(&mut writer, b).unwrap();
+            }
+            writer.finalize();
+
+            let expected = cobs_encode_vec(&input);
+            assert_eq!(out, expected, "Failed for input of length {}", input.len());
+        }
     }
 }
