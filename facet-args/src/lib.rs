@@ -9,6 +9,7 @@ extern crate alloc;
 pub mod completions;
 pub mod config_format;
 pub mod config_value;
+pub mod env;
 mod format;
 pub mod help;
 pub mod provenance;
