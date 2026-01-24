@@ -353,10 +353,7 @@ fn dump_config_with_provenance<T: Facet<'static>>(value: &ConfigValue) {
     }
 
     // CLI args - show pattern for config field overrides
-    println!(
-        "  cli {}",
-        format!("--{}.* / --config.*", ctx.config_field_name).cyan()
-    );
+    println!("  cli {}", format!("--{}.*", ctx.config_field_name).cyan());
 
     // Defaults
     println!("  defaults");
