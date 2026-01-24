@@ -37,65 +37,41 @@ We can do much better by:
 2. **Good error messages** - Show what's missing, what's unused, where values came from
 3. **Composable** - Mix CLI args, env vars, and config files naturally
 4. **Traceable** - Know where each value came from (for debugging)
+5. **Pluggable** - Config file format is not hardcoded (JSON built-in, others via trait)
+6. **Override tracking** - Track when a higher-priority layer overrides a lower one
+7. **Config dump** - Ability to dump resolved config (with sensitive fields redacted)
+8. **Validation** - Integrate with `facet-validate` from day one
+9. **Typo detection** - Use `strsim` to suggest corrections for unknown keys
+10. **Strict mode** - Error immediately on unknown keys (configurable per-layer)
+11. **Rich diagnostics** - Use `ariadne` for beautiful error reporting in config files
+12. **Paths** - Use `camino` (`Utf8PathBuf`) for all paths
 
 ## Proposed API
 
-### Basic Usage (env vars only)
+### Core Concept: The `#[facet(args::config)]` Field
 
-For simple cases where you just want env vars with a prefix:
-
-```rust
-use facet::Facet;
-use facet_args::ConfigBuilder;
-
-#[derive(Facet, Debug)]
-struct AuthConfig {
-    /// Comma-separated list of allowed admin emails
-    allowed_emails: Vec<String>,
-    
-    /// WebAuthn relying party ID (domain)
-    rp_id: String,
-    
-    /// SMTP server port
-    #[facet(default = 587)]
-    smtp_port: u16,
-}
-
-fn main() -> Result<(), facet_args::Error> {
-    let config: AuthConfig = ConfigBuilder::new()
-        .env_prefix("REEF")
-        .build()?;
-    
-    // Reads from:
-    //   REEF__ALLOWED_EMAILS
-    //   REEF__RP_ID  
-    //   REEF__SMTP_PORT (optional, defaults to 587)
-}
-```
-
-### Full Layered Config (CLI + env + config file)
-
-For CLI tools that need all layers:
+The top-level struct parsed by `facet-args` is a regular CLI args struct.
+It contains ONE special field marked with `#[facet(args::config)]` which
+represents the layered configuration block:
 
 ```rust
 use facet::Facet;
-use facet_args::{self as args, ConfigBuilder};
+use facet_args as args;
 
 #[derive(Facet, Debug)]
-struct ServerArgs {
+struct Args {
     /// Show version and exit
     #[facet(args::named, args::short = 'V')]
     version: bool,
 
-    /// Server configuration
-    #[facet(args::config)]
-    server: ServerConfig,
+    /// Server configuration (layered: CLI > env > config file > defaults)
+    #[facet(args::config, env_prefix = "REEF")]
+    config: ServerConfig,
 }
 
 #[derive(Facet, Debug)]
 struct ServerConfig {
     /// Port to listen on
-    #[facet(args::named, args::short = 'p')]
     port: u16,
     
     /// Database connection string
@@ -104,61 +80,348 @@ struct ServerConfig {
     /// Log level
     #[facet(default = "info")]
     log_level: String,
+    
+    /// SMTP configuration
+    smtp: SmtpConfig,
 }
 
-fn main() -> Result<(), facet_args::Error> {
-    let args: ServerArgs = ConfigBuilder::new()
-        .cli_args(std::env::args_os().skip(1))
-        .env_prefix("MYAPP")
-        .config_file("config.toml")  // optional
-        .build()?;
+#[derive(Facet, Debug)]
+struct SmtpConfig {
+    /// SMTP server host
+    host: String,
     
-    // For `server.port`, checks in order:
-    //   1. --port / -p from CLI
-    //   2. MYAPP__SERVER__PORT from env
-    //   3. server.port from config.toml
-    //   4. default value (if any)
+    /// SMTP server port
+    #[facet(default = 587)]
+    port: u16,
 }
 ```
 
-### Env-Only Structs (no CLI args)
+### Implicit Config File Flag
 
-Structs without any `args::named` or `args::positional` annotations are
-treated as "config-only" - they won't generate CLI flags:
+The `#[facet(args::config)]` field automatically gets a CLI flag for specifying
+the config file path, using the field name:
+
+- `--{field_name} <PATH>` or `-c <PATH>` for the config file
+- `--{field_name}.{key} <VALUE>` for overrides
+
+So with `config: ServerConfig`, you get:
+
+```bash
+# Load config from file
+my_app --config ./config.json
+
+# Or with short flag
+my_app -c ./config.json
+
+# Override specific values via CLI (dotted paths)
+my_app --config ./config.json --config.port 8080 --config.smtp.host smtp.example.com
+
+# Or use env vars (no file needed)
+REEF__PORT=8080 REEF__SMTP__HOST=smtp.example.com my_app
+
+# Or combine: file as base, env overrides, CLI overrides on top
+REEF__LOG_LEVEL=debug my_app -c ./config.json --config.port 9000
+```
+
+If you prefer a different field name:
 
 ```rust
-#[derive(Facet, Debug)]
-struct DatabaseConfig {
-    /// PostgreSQL connection URL
-    url: String,
+#[facet(args::config, env_prefix = "REEF")]
+settings: ServerConfig,  // --settings <PATH>, --settings.port 8080
+```
+
+### Layer Resolution
+
+For `config.port`, the value is resolved in order:
+
+1. `--config.port 8080` from CLI
+2. `REEF__PORT` from environment
+3. `port` from config file (if `--config <PATH>` was provided)
+4. `#[facet(default = ...)]` value (if any)
+5. Error: missing required configuration
+
+### Parsing Flow
+
+```rust
+fn main() -> Result<(), facet_args::Error> {
+    // Simple API (backwards compat for CLI-only parsing)
+    let args: Args = facet_args::from_slice(&["--version"])?;
     
-    /// Connection pool size
-    #[facet(default = 10)]
-    pool_size: u32,
+    // Full builder API for layered config, grouped by concern
+    let args: Args = facet_args::builder()
+        .cli(|cli| cli
+            .args(std::env::args_os().skip(1))
+            .strict()
+        )
+        .env(|env| env
+            .prefix("REEF")
+            .strict()
+        )
+        .file(|file| file
+            .format(JsonFormat)
+            .format(StyxFormat)
+            .strict()
+        )
+        .build()?;
+    
+    // The builder:
+    // 1. Parses CLI args (version, --config path, --config.* overrides)
+    // 2. For the #[facet(args::config)] field:
+    //    a. If --config was provided, load and parse that file
+    //    b. Read all REEF__* env vars
+    //    c. Apply --config.* CLI overrides
+    //    d. Merge layers: CLI > env > file > defaults
+    //    e. Report any missing required fields
+    //    f. Report any unused keys (warnings or errors in strict mode)
+    
+    if args.version {
+        println!("my_app v1.0.0");
+        return Ok(());
+    }
+    
+    println!("Listening on port {}", args.config.port);
+    Ok(())
 }
-// Only reads from env vars and config file, no CLI flags
 ```
 
 ## Environment Variable Naming
 
-Given prefix `MYAPP` and nested structs:
+Given `env_prefix = "REEF"` and nested structs:
 
 ```rust
-struct Config {
-    database: DatabaseConfig,
+struct ServerConfig {
+    port: u16,
+    smtp: SmtpConfig,
 }
 
-struct DatabaseConfig {
-    connection_url: String,
+struct SmtpConfig {
+    host: String,
+    connection_timeout: u64,
 }
 ```
 
-The env var name is: `MYAPP__DATABASE__CONNECTION_URL`
+The env var names are:
+- `REEF__PORT`
+- `REEF__SMTP__HOST`
+- `REEF__SMTP__CONNECTION_TIMEOUT`
 
 Rules:
-- Prefix + struct path + field name
+- Prefix + field path
 - All SCREAMING_SNAKE_CASE
-- Double underscore (`__`) as separator (to allow single `_` in names)
+- Double underscore (`__`) as separator (to allow single `_` in field names)
+
+## Config File Format (Pluggable)
+
+Built-in support for JSON. Other formats implement a trait:
+
+```rust
+/// Trait for config file parsers
+pub trait ConfigFormat {
+    /// File extensions this format handles (e.g., ["json"], ["styx"])
+    fn extensions(&self) -> &[&str];
+    
+    /// Parse file contents into a SpannedValue
+    fn parse(&self, contents: &str) -> Result<SpannedValue, ConfigFormatError>;
+}
+```
+
+### SpannedValue
+
+`SpannedValue` wraps a `Value` with source location information. It has a
+custom `Facet` impl that delegates to the inner `Value`'s `DynamicValueVTable`.
+
+```rust
+use facet_value::Value;
+
+/// A dynamic value with source location tracking.
+/// Custom Facet impl delegates to inner Value's DynamicValueVTable.
+pub struct SpannedValue {
+    pub value: Value,
+    pub span: Span,
+}
+
+/// Source location in a config file
+#[derive(Clone, Copy, Debug)]
+pub struct Span {
+    pub start: usize,  // byte offset
+    pub end: usize,    // byte offset
+}
+```
+
+This enables rich error messages with source locations, rendered using `ariadne`:
+
+```
+error: invalid value for 'port'
+   ╭─[config.json:12:14]
+   │
+12 │     "port": "not-a-number"
+   │             ───────┬──────
+   │                    ╰── expected u16, got string
+───╯
+```
+
+### Registering Custom Formats
+
+```rust
+use facet_styx::StyxFormat;
+use camino::Utf8PathBuf;
+
+let args: Args = facet_args::builder()
+    .env(|env| env.prefix("REEF"))
+    .file(|file| file
+        .format(JsonFormat)
+        .format(StyxFormat)  // Now .styx files work
+        .default_paths(&[
+            "./config.json",                    // Check first (project local)
+            "~/.config/myapp/config.json",      // Then user config
+            "/etc/myapp/config.json",           // Then system config
+        ])
+    )
+    .build()?;
+```
+
+**Default paths behavior:**
+- Checked in order, first one that exists wins (no merging across files)
+- If `--config <PATH>` is explicitly provided, it overrides default paths entirely
+- Provenance tracks which file was actually used
+
+## Provenance Tracking
+
+Track where each value came from using `HashMap<Path, Provenance>`.
+
+We use `camino::Utf8PathBuf` for all paths, and file provenance is refcounted
+to avoid cloning paths for every field that came from the same file:
+
+```rust
+use std::sync::Arc;
+use camino::Utf8PathBuf;
+
+/// Information about a loaded config file (shared across all values from that file)
+pub struct ConfigFile {
+    pub path: Utf8PathBuf,
+    pub contents: String,  // Kept for error reporting with ariadne
+}
+
+pub enum Provenance {
+    Cli(String),              // The CLI arg string, e.g. "--config.port"
+    Env(String),              // The env var name, e.g. "REEF__PORT"
+    File {
+        file: Arc<ConfigFile>,  // Refcounted - shared across all values from this file
+        key_path: String,       // e.g. "smtp.host"
+        span: Span,             // Location in file for error reporting
+    },
+    Default,                  // From #[facet(default = ...)]
+}
+
+pub struct ConfigResult<T> {
+    pub value: T,
+    pub provenance: HashMap<String, Provenance>,  // "config.port" -> Provenance::Env("REEF__PORT")
+}
+```
+
+For debugging, print where each value came from:
+
+```rust
+let result = facet_args::builder()
+    .cli(|cli| cli.args(std::env::args_os().skip(1)))
+    .env(|env| env.prefix("REEF"))
+    .build_traced()?;
+
+for (path, source) in &result.provenance {
+    match source {
+        Provenance::Cli(arg) => println!("{} = ... (from CLI: {})", path, arg),
+        Provenance::Env(var) => println!("{} = ... (from env: {})", path, var),
+        Provenance::File { file, key_path, .. } => {
+            println!("{} = ... (from {}: {})", path, file.path, key_path)
+        }
+        Provenance::Default => println!("{} = ... (from default)", path),
+    }
+}
+```
+
+## Override Tracking
+
+Track when a value from a higher-priority layer overrides a lower one:
+
+```rust
+pub struct Override {
+    pub path: String,
+    pub winner: Provenance,
+    pub loser: Provenance,
+}
+
+pub struct ConfigResult<T> {
+    pub value: T,
+    pub provenance: HashMap<String, Provenance>,
+    pub overrides: Vec<Override>,  // What got overridden by what
+}
+```
+
+This enables warnings like:
+
+```
+note: CLI argument --config.port=9000 overrides env var REEF__PORT=8080
+```
+
+## Config Dump
+
+Dump the resolved configuration for debugging/inspection. Fields marked with
+`#[facet(sensitive)]` are automatically redacted:
+
+```rust
+let args: Args = facet_args::from_env()?;
+
+// Dump config to stderr (respects sensitive fields)
+facet_args::dump_config(&args.config)?;
+```
+
+Output:
+
+```
+Resolved configuration:
+  port = 8080 (from env: REEF__PORT)
+  database_url = "postgres://localhost/mydb" (from file: config.json)
+  smtp.host = "smtp.example.com" (from CLI: --config.smtp.host)
+  smtp.port = 587 (from default)
+  smtp.password = *** (from env: REEF__SMTP__PASSWORD) [sensitive]
+  log_level = "info" (from default)
+```
+
+## Validation (facet-validate)
+
+Validation runs after all layers are merged, using `facet-validate`:
+
+```rust
+use facet::Facet;
+use facet_validate::Validate;
+
+#[derive(Facet, Validate, Debug)]
+struct ServerConfig {
+    /// Port to listen on
+    #[validate(range(1..=65535))]
+    port: u16,
+    
+    /// Database URL
+    #[validate(non_empty)]
+    database_url: String,
+    
+    /// Log level
+    #[validate(one_of("trace", "debug", "info", "warn", "error"))]
+    log_level: String,
+}
+```
+
+Validation errors include provenance:
+
+```
+error: validation failed
+
+  config.port = 0 (from env: REEF__PORT)
+  │ Port must be in range 1..=65535
+  
+  config.log_level = "verbose" (from file: config.json:8:14)
+  │ Must be one of: trace, debug, info, warn, error
+```
 
 ## Error Messages
 
@@ -169,17 +432,23 @@ error: missing required configuration
 
 The following values are required but not set:
 
-  REEF__ALLOWED_EMAILS (Vec<String>)
-  │ Comma-separated list of allowed admin emails
+  REEF__DATABASE_URL (String)
+  │ Database connection string
   │ 
-  │ Set via: environment variable or config file
+  │ Can be set via:
+  │   • CLI: --config.database-url <VALUE>
+  │   • Env: REEF__DATABASE_URL=<VALUE>
+  │   • Config file: { "database_url": "<VALUE>" }
   
-  REEF__RP_ID (String)
-  │ WebAuthn relying party ID (domain)
+  REEF__SMTP__HOST (String)
+  │ SMTP server host
   │ 
-  │ Set via: environment variable or config file
+  │ Can be set via:
+  │   • CLI: --config.smtp.host <VALUE>
+  │   • Env: REEF__SMTP__HOST=<VALUE>
+  │   • Config file: { "smtp": { "host": "<VALUE>" } }
 
-hint: you can also use --help to see CLI options
+hint: use --help to see all options
 ```
 
 ### Unused Environment Variables
@@ -189,150 +458,315 @@ When we see `REEF__*` variables that don't match any field:
 ```
 warning: unused environment variables with prefix REEF__
 
-  REEF__ALLOWED_EMAIL (did you mean REEF__ALLOWED_EMAILS?)
-  REEF__RP_IDD (did you mean REEF__RP_ID?)
+  REEF__DATABSE_URL (did you mean REEF__DATABASE_URL?)
+  REEF__STMP__HOST (did you mean REEF__SMTP__HOST?)
   REEF__UNKNOWN_FIELD
 ```
 
-### Value Origin Tracing
+## Typo Detection (strsim)
 
-For debugging, show where each value came from:
+Use `strsim` (string similarity) to suggest corrections for unknown keys.
+This applies to all layers:
+
+- **Env vars**: `REEF__DATABSE_URL` → "did you mean REEF__DATABASE_URL?"
+- **Config file keys**: `databse_url` → "did you mean database_url?"
+- **CLI args**: `--config.databse-url` → "did you mean --config.database-url?"
+
+Suggestions are shown when the edit distance is small enough to be a likely typo.
+
+## Strict Mode
+
+By default, unknown keys generate warnings. Strict mode can be enabled per-layer:
 
 ```rust
-let config = ConfigBuilder::new()
-    .env_prefix("MYAPP")
-    .config_file("config.toml")
-    .trace(true)  // Enable tracing
+let args: Args = facet_args::builder()
+    .cli(|cli| cli.args(std::env::args_os().skip(1)).strict())
+    .env(|env| env.prefix("REEF").strict())
+    .file(|file| file.format(JsonFormat))  // not strict - allow forward-compat
     .build()?;
 ```
 
-Outputs:
+This allows fine-grained control. For example, you might want:
+- `.env(|e| e.strict())` in production (catch typos in deployment)
+- `.file(|f| f...)` without `.strict()` to allow forward-compatible config files
+
+Strict mode errors on unknown keys:
+
 ```
-configuration loaded:
-  port = 8080 (from CLI: --port 8080)
-  database_url = "postgres://..." (from env: MYAPP__DATABASE_URL)
-  log_level = "info" (from default)
-  pool_size = 20 (from file: config.toml)
+error: unknown configuration key
+
+  REEF__DATABSE_URL
+  │ Unknown environment variable with prefix REEF__
+  │ 
+  │ Did you mean: REEF__DATABASE_URL?
+
+error: unknown configuration key
+
+  config.json:5:3
+    │
+  5 │   "databse_url": "postgres://..."
+    │   ^^^^^^^^^^^^ Unknown key in config file
+    │ 
+    │ Did you mean: database_url?
+
+error: unknown argument
+
+  --config.databse-url
+  │ Unknown configuration path
+  │ 
+  │ Did you mean: --config.database-url?
 ```
 
-## Implementation Strategy
+This is useful for CI/production to catch typos that would otherwise silently
+use default values.
 
-### Phase 1: Environment Variables Only (`facet-env`)
+## Builder API
 
-Start simple - just env var parsing with good errors:
+All configuration goes through `facet_args::builder()`. The only standalone function
+is `facet_args::from_slice()` for backwards compatibility (CLI-only parsing):
 
 ```rust
-// facet-env crate (or part of facet-args)
-let config: AuthConfig = facet_env::from_prefix("REEF")?;
-```
+// Backwards compat: CLI args only, no env/file support
+let args: Args = facet_args::from_slice(&["--verbose", "file.txt"])?;
 
-This gives us:
-- ✅ Good error messages for missing vars
-- ✅ Unused variable detection  
-- ✅ Type conversion with helpful errors
-- ✅ Doc comments as help text
+// Full layered config via builder, grouped by concern
+let args: Args = facet_args::builder()
+    .cli(|cli| cli
+        .args(std::env::args_os().skip(1))
+        .strict()
+    )
+    .env(|env| env
+        .prefix("MYAPP")
+        .strict()
+    )
+    .file(|file| file
+        .format(JsonFormat)
+        .format(StyxFormat)
+        .strict()
+    )
+    .build()?;
 
-### Phase 2: Layered Config
+// Builder with tracing enabled
+let result = facet_args::builder()
+    .cli(|cli| cli.args(std::env::args_os().skip(1)))
+    .env(|env| env.prefix("MYAPP"))
+    .build_traced()?;
 
-Extend `ConfigBuilder` to support multiple layers with proper merging.
-
-Key question: How to track provenance?
-
-Option A: **Use `facet_value::Value` with metadata**
-```rust
-enum ValueSource {
-    Cli(String),        // "--port 8080"
-    Env(String),        // "MYAPP__PORT"
-    File(PathBuf, String), // ("config.toml", "port")
-    Default,
+println!("Config: {:?}", result.value);
+for (path, prov) in &result.provenance {
+    println!("  {} from {:?}", path, prov);
 }
+for ovr in &result.overrides {
+    println!("  {} overrode {}", ovr.winner, ovr.loser);
+}
+
+## Help Generation
+
+Help output shows both CLI flags and environment variables together. For config
+file format, users should refer to the schema (Styx has built-in schema support,
+JSON has JSON Schema, etc.)
+
+```
+my_app 1.0.0
+
+USAGE:
+    my_app [OPTIONS]
+
+OPTIONS:
+    -V, --version          Show version and exit
+    -c, --config <PATH>    Path to config file
+
+CONFIGURATION:
+    The following can be set via CLI or environment variables.
+    Priority: CLI > env > config file > defaults
+
+    --config.port <u16> [required]
+        Port to listen on
+        ($REEF__PORT)
+
+    --config.database-url <String> [required]
+        Database connection string
+        ($REEF__DATABASE_URL)
+
+    --config.smtp.host <String> [required]
+        SMTP server host
+        ($REEF__SMTP__HOST)
+
+    --config.smtp.port <u16> [default: 587]
+        SMTP server port
+        ($REEF__SMTP__PORT)
+
+    --config.smtp.password <String> [required, sensitive]
+        SMTP password
+        ($REEF__SMTP__PASSWORD)
 ```
 
-Option B: **Two-pass approach**
-1. Parse each layer into `facet_value::Value`
-2. Merge with precedence, tracking what overwrote what
-3. Convert final `Value` to target type
+The `[sensitive]` marker indicates fields that are redacted in config dumps and logs.
 
-### Phase 3: Config File Support
+## Sensitive Fields
 
-Support common formats:
-- TOML (primary)
-- JSON
-- YAML (optional, heavier dependency)
-
-Config file path itself can come from:
-1. CLI flag (`--config path/to/config.toml`)
-2. Env var (`MYAPP__CONFIG_FILE`)
-3. Default locations (`./config.toml`, `~/.config/myapp/config.toml`)
-
-## Open Questions
-
-### 1. Nested Prefix Handling
-
-For deeply nested structs, env var names get long:
-`MYAPP__DATABASE__CONNECTION__POOL__MAX_SIZE`
-
-Should we support a `#[facet(env_prefix = "DB")]` override?
+Use the existing `#[facet(sensitive)]` attribute to mask values in logs/traces:
 
 ```rust
 #[derive(Facet)]
-struct Config {
-    #[facet(env_prefix = "DB")]  // Uses DB__* instead of MYAPP__DATABASE__*
-    database: DatabaseConfig,
+struct SmtpConfig {
+    host: String,
+    
+    #[facet(sensitive)]
+    password: String,  // Shown as "***" in trace output
 }
 ```
 
-### 2. Secret Masking
+## Vec/List Handling in Env Vars
 
-Should we have a way to mark fields as secrets (for logging)?
+For `Vec<String>` fields, use comma-separated values:
 
-```rust
-#[derive(Facet)]
-struct Config {
-    #[facet(secret)]
-    api_key: String,  // Shown as "***" in trace output
-}
+```bash
+REEF__ALLOWED_EMAILS=alice@example.com,bob@example.com
 ```
 
-### 3. Validation
+Rules:
+- Split on `,`
+- Trim whitespace from each element
+- Use `\,` to escape a literal comma
 
-Where does validation fit in?
+## Required vs Optional
 
-```rust
-#[derive(Facet)]
-struct Config {
-    #[facet(validate = "1..=65535")]
-    port: u16,
-}
-```
-
-Or should validation be a separate concern (facet-validate)?
-
-### 4. Required vs Optional
-
-How to distinguish "required" from "optional with no default"?
+- `Option<T>` → optional, can be `None`
+- `T` with `#[facet(default = ...)]` → optional, uses default if not set
+- `T` without default → required, error if not set anywhere
 
 ```rust
 struct Config {
-    required: String,           // Must be set somewhere
+    required: String,           // Must be set in CLI, env, or file
     optional: Option<String>,   // Can be None
-    defaulted: String,          // Has #[facet(default = "...")]
+    defaulted: String,          // Uses default if not set
 }
 ```
 
-Current thinking: `Option<T>` means optional, everything else is required
-unless it has a `default`.
+## Implementation Notes
 
-### 5. List/Vec Handling in Env Vars
+### Config File Path Bootstrapping
 
-How to represent `Vec<String>` in an env var?
+The `--{field_name}` flag (e.g., `--config`) is implicitly created for the
+`#[facet(args::config)]` field. When a bare path is provided (not a dotted
+override), it's interpreted as the config file path.
 
-Options:
-- Comma-separated: `MYAPP__EMAILS=a@b.com,c@d.com`
-- JSON array: `MYAPP__EMAILS=["a@b.com","c@d.com"]`
-- Repeated vars: `MYAPP__EMAILS__0=a@b.com` `MYAPP__EMAILS__1=c@d.com`
+Parsing order:
+1. Parse CLI args, separating:
+   - `--config <PATH>` → config file path
+   - `--config.foo.bar <VALUE>` → CLI overrides
+2. If config path provided, load and parse the file → base layer
+3. Read env vars with prefix → middle layer  
+4. Apply CLI overrides → top layer
+5. Fill defaults for any remaining unset fields
+6. Error on missing required fields
 
-Recommendation: Comma-separated by default, with escape for literal commas.
+### Merging Strategy
+
+Use `facet_value::Value` for merging:
+
+1. Start with empty `Value::Map`
+2. Deep-merge config file values (if any)
+3. Deep-merge env var values
+4. Deep-merge CLI override values
+5. Convert final `Value` to target type
+
+"Deep merge" means nested maps are merged recursively, not replaced entirely.
+
+## Example: Full AuthConfig
+
+```rust
+use facet::Facet;
+use facet_args as args;
+use std::path::PathBuf;
+use std::time::Duration;
+
+#[derive(Facet, Debug)]
+struct Args {
+    #[facet(args::config, env_prefix = "REEF")]
+    config: AuthConfig,
+}
+
+#[derive(Facet, Debug)]
+struct AuthConfig {
+    /// Comma-separated list of allowed admin emails
+    allowed_emails: Vec<String>,
+
+    /// WebAuthn relying party ID (domain)
+    rp_id: String,
+
+    /// WebAuthn relying party origin URL
+    rp_origin: String,
+
+    /// WebAuthn relying party display name
+    rp_name: String,
+
+    /// SMTP configuration
+    smtp: SmtpConfig,
+
+    /// From email address for magic links
+    email_from: String,
+
+    /// Base URL for magic links
+    magic_link_base_url: String,
+
+    /// Magic link validity duration in seconds
+    #[facet(default = 900)]  // 15 minutes
+    magic_link_ttl_secs: u64,
+
+    /// Session validity duration in seconds
+    #[facet(default = 604800)]  // 7 days
+    session_ttl_secs: u64,
+}
+
+#[derive(Facet, Debug)]
+struct SmtpConfig {
+    /// SMTP server host
+    host: String,
+
+    /// SMTP server port
+    #[facet(default = 587)]
+    port: u16,
+
+    /// SMTP username
+    username: String,
+
+    /// SMTP password
+    #[facet(sensitive)]
+    password: String,
+}
+```
+
+Running with missing config:
+
+```
+$ my_app
+
+error: missing required configuration
+
+The following values are required but not set:
+
+  REEF__ALLOWED_EMAILS (Vec<String>)
+  │ Comma-separated list of allowed admin emails
+  │ 
+  │ Can be set via:
+  │   • CLI: --config.allowed-emails <VALUE>
+  │   • Env: REEF__ALLOWED_EMAILS=<VALUE>
+  │   • Config file: { "allowed_emails": [...] }
+
+  REEF__RP_ID (String)
+  │ WebAuthn relying party ID (domain)
+  │ 
+  │ Can be set via:
+  │   • CLI: --config.rp-id <VALUE>
+  │   • Env: REEF__RP_ID=<VALUE>
+  │   • Config file: { "rp_id": "<VALUE>" }
+
+  ... (and 6 more)
+
+hint: use --help to see all options
+```
 
 ## Related Work
 
@@ -343,13 +777,6 @@ Recommendation: Comma-separated by default, with escape for literal commas.
 
 Our advantage: Integration with facet's reflection system means we can:
 - Use doc comments as help text automatically
-- Generate better error messages
+- Generate better error messages with field-level context
 - Share type definitions between CLI, env, and config
-
-## Next Steps
-
-1. [ ] Implement `facet-env` as proof of concept
-2. [ ] Test with `AuthConfig` in reef
-3. [ ] Design `ConfigBuilder` API in detail
-4. [ ] Implement layered merging with `facet_value::Value`
-5. [ ] Add config file support
+- No proc macro needed beyond `#[derive(Facet)]`
