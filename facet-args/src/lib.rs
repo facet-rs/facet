@@ -76,6 +76,27 @@ facet::define_attr_grammar! {
         ///
         /// Usage: `#[facet(args::named, args::short = 'v', args::counted)]`
         Counted,
+        /// Marks a field as a layered configuration field.
+        ///
+        /// The field will be populated from merged configuration sources (CLI overrides,
+        /// environment variables, config files) in priority order: CLI > env > file > default.
+        ///
+        /// This automatically generates:
+        /// - `--{field_name} <PATH>` flag to specify config file path
+        /// - `--{field_name}.foo.bar <VALUE>` style CLI overrides
+        /// - Environment variable parsing
+        /// - Config file loading with multiple format support
+        ///
+        /// Usage: `#[facet(args::config)]`
+        Config,
+        /// Specifies the environment variable prefix for a config field.
+        ///
+        /// Must be used together with `#[facet(args::config)]`.
+        ///
+        /// Usage: `#[facet(args::env_prefix = "MYAPP")]`
+        ///
+        /// Example: `env_prefix = "MYAPP"` results in `MYAPP__FIELD__NAME` env vars.
+        EnvPrefix(Option<&'static str>),
     }
 }
 
