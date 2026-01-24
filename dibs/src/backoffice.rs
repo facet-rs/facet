@@ -188,6 +188,11 @@ fn schema_to_info(schema: &Schema) -> SchemaInfo {
                                     crate::SortOrder::Asc => "asc".to_string(),
                                     crate::SortOrder::Desc => "desc".to_string(),
                                 },
+                                nulls: match c.nulls {
+                                    crate::NullsOrder::Default => "default".to_string(),
+                                    crate::NullsOrder::First => "first".to_string(),
+                                    crate::NullsOrder::Last => "last".to_string(),
+                                },
                             })
                             .collect(),
                         unique: idx.unique,

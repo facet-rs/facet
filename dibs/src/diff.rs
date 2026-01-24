@@ -257,11 +257,7 @@ impl Change {
             }
             Change::AddIndex(idx) => {
                 let unique = if idx.unique { "UNIQUE " } else { "" };
-                let quoted_cols: Vec<_> = idx
-                    .columns
-                    .iter()
-                    .map(|c| format!("{}{}", quote_ident(&c.name), c.order.to_sql()))
-                    .collect();
+                let quoted_cols: Vec<_> = idx.columns.iter().map(|c| c.to_sql()).collect();
                 let where_clause = idx
                     .where_clause
                     .as_ref()
@@ -355,7 +351,7 @@ impl std::fmt::Display for Change {
                 let cols: Vec<String> = idx
                     .columns
                     .iter()
-                    .map(|c| format!("{}{}", c.name, c.order.to_sql()))
+                    .map(|c| format!("{}{}{}", c.name, c.order.to_sql(), c.nulls.to_sql()))
                     .collect();
                 write!(
                     f,
@@ -1007,13 +1003,13 @@ fn diff_foreign_keys(
 fn diff_indices(desired: &[Index], current: &[Index]) -> Vec<Change> {
     let mut changes = Vec::new();
 
-    // Compare by columns (with order), uniqueness, and where_clause (not name, since names may differ)
+    // Compare by columns (with order and nulls), uniqueness, and where_clause (not name, since names may differ)
     // Note: column order matters for indexes, so we don't sort them
     let idx_key = |idx: &Index| -> String {
         let cols: Vec<String> = idx
             .columns
             .iter()
-            .map(|c| format!("{}{}", c.name, c.order.to_sql()))
+            .map(|c| format!("{}{}{}", c.name, c.order.to_sql(), c.nulls.to_sql()))
             .collect();
         let where_part = idx.where_clause.as_deref().unwrap_or("");
         format!(

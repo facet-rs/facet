@@ -6,6 +6,9 @@
 use crate::{
     Column, ForeignKey, Index, IndexColumn, PgType, Result, Schema, SourceLocation, Table,
 };
+
+#[cfg(test)]
+use crate::{NullsOrder, SortOrder};
 use tokio_postgres::Client;
 
 impl Schema {
@@ -458,7 +461,6 @@ fn is_auto_generated(default: &Option<String>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::SortOrder;
 
     #[test]
     fn test_parse_index_columns() {
@@ -497,7 +499,8 @@ mod tests {
                 IndexColumn::new("product_id"),
                 IndexColumn {
                     name: "synced_at".to_string(),
-                    order: SortOrder::Desc
+                    order: SortOrder::Desc,
+                    nulls: NullsOrder::Default,
                 }
             ]
         );
@@ -510,9 +513,32 @@ mod tests {
                 IndexColumn::new("col1"),
                 IndexColumn {
                     name: "col2".to_string(),
-                    order: SortOrder::Desc
+                    order: SortOrder::Desc,
+                    nulls: NullsOrder::Default,
                 }
             ]
+        );
+        // Test NULLS FIRST
+        assert_eq!(
+            parse_index_columns(
+                "CREATE INDEX idx_reminder ON public.cart USING btree (reminder_sent_at NULLS FIRST)"
+            ),
+            vec![IndexColumn {
+                name: "reminder_sent_at".to_string(),
+                order: SortOrder::Asc,
+                nulls: NullsOrder::First,
+            }]
+        );
+        // Test DESC NULLS LAST (non-default for DESC)
+        assert_eq!(
+            parse_index_columns(
+                "CREATE INDEX idx_test ON public.test USING btree (col DESC NULLS LAST)"
+            ),
+            vec![IndexColumn {
+                name: "col".to_string(),
+                order: SortOrder::Desc,
+                nulls: NullsOrder::Last,
+            }]
         );
     }
 

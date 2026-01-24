@@ -271,6 +271,11 @@ fn schema_info_to_schema(info: dibs_proto::SchemaInfo) -> dibs::Schema {
                             } else {
                                 dibs::SortOrder::Asc
                             },
+                            nulls: match c.nulls.as_str() {
+                                "first" => dibs::NullsOrder::First,
+                                "last" => dibs::NullsOrder::Last,
+                                _ => dibs::NullsOrder::Default,
+                            },
                         })
                         .collect(),
                     unique: idx.unique,
@@ -332,7 +337,7 @@ fn print_schema_plain(schema: &dibs::Schema) {
             let cols: Vec<String> = idx
                 .columns
                 .iter()
-                .map(|c| format!("{}{}", c.name, c.order.to_sql()))
+                .map(|c| format!("{}{}{}", c.name, c.order.to_sql(), c.nulls.to_sql()))
                 .collect();
             println!("  INDEX {} on ({}){}", idx.name, cols.join(", "), unique);
         }
@@ -911,7 +916,12 @@ impl<'a> SchemaApp<'a> {
                                 "({})",
                                 idx.columns
                                     .iter()
-                                    .map(|c| format!("{}{}", c.name, c.order.to_sql()))
+                                    .map(|c| format!(
+                                        "{}{}{}",
+                                        c.name,
+                                        c.order.to_sql(),
+                                        c.nulls.to_sql()
+                                    ))
                                     .collect::<Vec<_>>()
                                     .join(", ")
                             ),

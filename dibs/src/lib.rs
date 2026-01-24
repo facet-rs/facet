@@ -72,8 +72,8 @@ pub use service::{DibsServiceImpl, run_service};
 // Re-export proto types for convenience
 pub use dibs_proto::*;
 pub use schema::{
-    Attr, Column, CompositeIndex, CompositeUnique, ForeignKey, Index, IndexColumn, PgType, Schema,
-    SortOrder, SourceLocation, Table, TableDef,
+    Attr, Column, CompositeIndex, CompositeUnique, ForeignKey, Index, IndexColumn, NullsOrder,
+    PgType, Schema, SortOrder, SourceLocation, Table, TableDef,
 };
 
 // Re-export inventory for the proc macro

@@ -351,52 +351,111 @@ impl SortOrder {
     }
 }
 
-/// A column in an index with optional sort order.
+/// Nulls ordering for index columns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum NullsOrder {
+    /// Use database default (NULLS LAST for ASC, NULLS FIRST for DESC)
+    #[default]
+    Default,
+    /// Sort nulls before non-null values
+    First,
+    /// Sort nulls after non-null values
+    Last,
+}
+
+impl NullsOrder {
+    /// Returns the SQL clause for this nulls ordering, or empty string for default.
+    pub fn to_sql(&self) -> &'static str {
+        match self {
+            NullsOrder::Default => "",
+            NullsOrder::First => " NULLS FIRST",
+            NullsOrder::Last => " NULLS LAST",
+        }
+    }
+}
+
+/// A column in an index with optional sort order and nulls ordering.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IndexColumn {
     /// Column name
     pub name: String,
     /// Sort order (ASC or DESC)
     pub order: SortOrder,
+    /// Nulls ordering (NULLS FIRST, NULLS LAST, or default)
+    pub nulls: NullsOrder,
 }
 
 impl IndexColumn {
-    /// Create a new index column with default (ASC) ordering.
+    /// Create a new index column with default (ASC) ordering and default nulls.
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
             order: SortOrder::Asc,
+            nulls: NullsOrder::Default,
         }
     }
 
-    /// Create a new index column with DESC ordering.
+    /// Create a new index column with DESC ordering and default nulls.
     pub fn desc(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
             order: SortOrder::Desc,
+            nulls: NullsOrder::Default,
         }
     }
 
-    /// Parse a column specification like "col_name" or "col_name DESC".
+    /// Create a new index column with NULLS FIRST ordering.
+    pub fn nulls_first(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            order: SortOrder::Asc,
+            nulls: NullsOrder::First,
+        }
+    }
+
+    /// Returns the SQL fragment for this column (name + order + nulls).
+    pub fn to_sql(&self) -> String {
+        format!(
+            "{}{}{}",
+            crate::quote_ident(&self.name),
+            self.order.to_sql(),
+            self.nulls.to_sql()
+        )
+    }
+
+    /// Parse a column specification like "col_name", "col_name DESC", or "col_name DESC NULLS FIRST".
     pub fn parse(spec: &str) -> Self {
         let spec = spec.trim();
         let upper = spec.to_uppercase();
-        if upper.ends_with(" DESC") {
-            Self {
-                name: spec[..spec.len() - 5].trim().to_string(),
-                order: SortOrder::Desc,
-            }
-        } else if upper.ends_with(" ASC") {
-            Self {
-                name: spec[..spec.len() - 4].trim().to_string(),
-                order: SortOrder::Asc,
-            }
+
+        // Parse nulls ordering first (it comes at the end)
+        let (spec_without_nulls, nulls) = if upper.ends_with(" NULLS FIRST") {
+            (&spec[..spec.len() - 12], NullsOrder::First)
+        } else if upper.ends_with(" NULLS LAST") {
+            (&spec[..spec.len() - 11], NullsOrder::Last)
         } else {
-            Self {
-                name: spec.to_string(),
-                order: SortOrder::Asc,
-            }
-        }
+            (spec, NullsOrder::Default)
+        };
+
+        let trimmed = spec_without_nulls.trim();
+        let upper_trimmed = trimmed.to_uppercase();
+
+        // Parse sort order
+        let (name, order) = if upper_trimmed.ends_with(" DESC") {
+            (
+                trimmed[..trimmed.len() - 5].trim().to_string(),
+                SortOrder::Desc,
+            )
+        } else if upper_trimmed.ends_with(" ASC") {
+            (
+                trimmed[..trimmed.len() - 4].trim().to_string(),
+                SortOrder::Asc,
+            )
+        } else {
+            (trimmed.to_string(), SortOrder::Asc)
+        };
+
+        Self { name, order, nulls }
     }
 }
 
@@ -612,11 +671,7 @@ impl Table {
     /// Generate CREATE INDEX SQL statement for a given index.
     pub fn to_create_index_sql(&self, idx: &Index) -> String {
         let unique = if idx.unique { "UNIQUE " } else { "" };
-        let quoted_cols: Vec<_> = idx
-            .columns
-            .iter()
-            .map(|c| format!("{}{}", crate::quote_ident(&c.name), c.order.to_sql()))
-            .collect();
+        let quoted_cols: Vec<_> = idx.columns.iter().map(|c| c.to_sql()).collect();
         let where_clause = idx
             .where_clause
             .as_ref()
@@ -1092,5 +1147,92 @@ mod tests {
         assert_eq!(parse_fk_reference("users("), None);
         assert_eq!(parse_fk_reference("users()"), None);
         assert_eq!(parse_fk_reference("()"), None);
+    }
+
+    #[test]
+    fn test_index_column_parse_simple() {
+        let col = IndexColumn::parse("name");
+        assert_eq!(col.name, "name");
+        assert_eq!(col.order, SortOrder::Asc);
+        assert_eq!(col.nulls, NullsOrder::Default);
+    }
+
+    #[test]
+    fn test_index_column_parse_desc() {
+        let col = IndexColumn::parse("created_at DESC");
+        assert_eq!(col.name, "created_at");
+        assert_eq!(col.order, SortOrder::Desc);
+        assert_eq!(col.nulls, NullsOrder::Default);
+    }
+
+    #[test]
+    fn test_index_column_parse_asc() {
+        let col = IndexColumn::parse("id ASC");
+        assert_eq!(col.name, "id");
+        assert_eq!(col.order, SortOrder::Asc);
+        assert_eq!(col.nulls, NullsOrder::Default);
+    }
+
+    #[test]
+    fn test_index_column_parse_nulls_first() {
+        let col = IndexColumn::parse("reminder_sent_at NULLS FIRST");
+        assert_eq!(col.name, "reminder_sent_at");
+        assert_eq!(col.order, SortOrder::Asc);
+        assert_eq!(col.nulls, NullsOrder::First);
+    }
+
+    #[test]
+    fn test_index_column_parse_nulls_last() {
+        let col = IndexColumn::parse("score NULLS LAST");
+        assert_eq!(col.name, "score");
+        assert_eq!(col.order, SortOrder::Asc);
+        assert_eq!(col.nulls, NullsOrder::Last);
+    }
+
+    #[test]
+    fn test_index_column_parse_desc_nulls_first() {
+        let col = IndexColumn::parse("priority DESC NULLS FIRST");
+        assert_eq!(col.name, "priority");
+        assert_eq!(col.order, SortOrder::Desc);
+        assert_eq!(col.nulls, NullsOrder::First);
+    }
+
+    #[test]
+    fn test_index_column_parse_desc_nulls_last() {
+        let col = IndexColumn::parse("updated_at DESC NULLS LAST");
+        assert_eq!(col.name, "updated_at");
+        assert_eq!(col.order, SortOrder::Desc);
+        assert_eq!(col.nulls, NullsOrder::Last);
+    }
+
+    #[test]
+    fn test_index_column_parse_asc_nulls_first() {
+        let col = IndexColumn::parse("nullable_col ASC NULLS FIRST");
+        assert_eq!(col.name, "nullable_col");
+        assert_eq!(col.order, SortOrder::Asc);
+        assert_eq!(col.nulls, NullsOrder::First);
+    }
+
+    #[test]
+    fn test_index_column_to_sql() {
+        // Simple column
+        let col = IndexColumn::new("name");
+        assert_eq!(col.to_sql(), "\"name\"");
+
+        // DESC
+        let col = IndexColumn::desc("created_at");
+        assert_eq!(col.to_sql(), "\"created_at\" DESC");
+
+        // NULLS FIRST
+        let col = IndexColumn::nulls_first("reminder_sent_at");
+        assert_eq!(col.to_sql(), "\"reminder_sent_at\" NULLS FIRST");
+
+        // DESC NULLS LAST
+        let col = IndexColumn {
+            name: "priority".to_string(),
+            order: SortOrder::Desc,
+            nulls: NullsOrder::Last,
+        };
+        assert_eq!(col.to_sql(), "\"priority\" DESC NULLS LAST");
     }
 }
