@@ -470,7 +470,21 @@ impl IndexColumn {
             (trimmed.to_string(), SortOrder::Asc)
         };
 
-        Self { name, order, nulls }
+        fn unquote_pg_ident_if_quoted(s: &str) -> String {
+            let s = s.trim();
+            if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
+                // PostgreSQL double-quotes identifiers and escapes embedded quotes as "".
+                let inner = &s[1..s.len() - 1];
+                return inner.replace("\"\"", "\"");
+            }
+            s.to_string()
+        }
+
+        Self {
+            name: unquote_pg_ident_if_quoted(&name),
+            order,
+            nulls,
+        }
     }
 }
 

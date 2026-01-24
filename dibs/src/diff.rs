@@ -1054,6 +1054,62 @@ fn diff_foreign_keys(
 fn diff_indices(desired: &[Index], current: &[Index]) -> Vec<Change> {
     let mut changes = Vec::new();
 
+    fn normalize_where_clause(where_clause: &str) -> String {
+        let mut s = where_clause.trim().to_string();
+
+        // Strip redundant outer parentheses.
+        loop {
+            let t = s.trim();
+            if t.starts_with('(') && t.ends_with(')') {
+                let inner = &t[1..t.len() - 1];
+                // Only strip if the inner string doesn't obviously unbalance parens.
+                // (Cheap guard; this is normalization, not a parser.)
+                let mut depth = 0i32;
+                let mut ok = true;
+                for ch in inner.chars() {
+                    match ch {
+                        '(' => depth += 1,
+                        ')' => {
+                            depth -= 1;
+                            if depth < 0 {
+                                ok = false;
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                if ok && depth == 0 {
+                    s = inner.to_string();
+                    continue;
+                }
+            }
+            break;
+        }
+
+        // PostgreSQL often inserts casts in stored index predicates (e.g. "'applied'::text").
+        // Strip the most common ones so round-tripping doesn't cause diff churn.
+        for cast in ["::text", "::character varying", "::varchar", "::bpchar"] {
+            s = s.replace(cast, "");
+        }
+
+        // Normalize whitespace.
+        let mut out = String::with_capacity(s.len());
+        let mut pending_space = false;
+        for ch in s.chars() {
+            if ch.is_whitespace() {
+                pending_space = true;
+                continue;
+            }
+            if pending_space && !out.is_empty() {
+                out.push(' ');
+            }
+            pending_space = false;
+            out.push(ch);
+        }
+        out.trim().to_string()
+    }
+
     // Compare by columns (with order and nulls), uniqueness, and where_clause (not name, since names may differ)
     // Note: column order matters for indexes, so we don't sort them
     let idx_key = |idx: &Index| -> String {
@@ -1062,7 +1118,11 @@ fn diff_indices(desired: &[Index], current: &[Index]) -> Vec<Change> {
             .iter()
             .map(|c| format!("{}{}{}", c.name, c.order.to_sql(), c.nulls.to_sql()))
             .collect();
-        let where_part = idx.where_clause.as_deref().unwrap_or("");
+        let where_part = idx
+            .where_clause
+            .as_deref()
+            .map(normalize_where_clause)
+            .unwrap_or_default();
         format!(
             "{}:{}:{}",
             if idx.unique { "U" } else { "" },
