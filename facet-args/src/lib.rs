@@ -19,6 +19,7 @@ pub mod provenance;
 
 pub use builder::builder;
 use config_value::ConfigValue;
+use owo_colors::OwoColorize;
 use provenance::Provenance;
 
 pub(crate) mod arg;
@@ -254,93 +255,167 @@ fn should_dump_config(args: &[&str]) -> bool {
 
 /// Dump the ConfigValue tree with provenance information.
 fn dump_config_with_provenance(value: &ConfigValue) {
-    println!("📊 Final Merged Configuration (with provenance)");
-    println!("=================================================");
+    use std::collections::HashSet;
+
+    // Collect all config file sources
+    let mut config_files = HashSet::new();
+    collect_config_files(value, &mut config_files);
+
+    println!("Final Merged Configuration (with provenance)");
+    println!("==============================================");
     println!();
 
-    dump_value_recursive(value, "", 0);
+    // Show config file sources if any
+    if !config_files.is_empty() {
+        println!("Config files:");
+        for file in &config_files {
+            println!("  {}", file);
+        }
+        println!();
+    }
+
+    dump_value_recursive(value, "", 0, &config_files);
 
     println!();
     println!("Legend:");
-    println!("  🖥️  CLI    - Command-line argument");
-    println!("  🌍 ENV    - Environment variable");
-    println!("  📄 FILE   - Config file");
-    println!("  ⚙️  DEFAULT - Default value");
+    println!("  {}        Command-line argument", "--flag".cyan());
+    println!("  {}          Environment variable", "$VAR".yellow());
+    println!("  {}     Config file (line number)", "file:line".magenta());
+    println!("  {}       Default value", "DEFAULT".bright_black());
     println!();
 }
 
+/// Recursively collect all config file paths from the tree.
+fn collect_config_files(value: &ConfigValue, files: &mut std::collections::HashSet<String>) {
+    match value {
+        ConfigValue::Object(sourced) => {
+            if let Some(Provenance::File { file, .. }) = &sourced.provenance {
+                files.insert(file.path.to_string());
+            }
+            for val in sourced.value.values() {
+                collect_config_files(val, files);
+            }
+        }
+        ConfigValue::Array(sourced) => {
+            if let Some(Provenance::File { file, .. }) = &sourced.provenance {
+                files.insert(file.path.to_string());
+            }
+            for item in &sourced.value {
+                collect_config_files(item, files);
+            }
+        }
+        ConfigValue::String(sourced) => {
+            if let Some(Provenance::File { file, .. }) = &sourced.provenance {
+                files.insert(file.path.to_string());
+            }
+        }
+        ConfigValue::Integer(sourced) => {
+            if let Some(Provenance::File { file, .. }) = &sourced.provenance {
+                files.insert(file.path.to_string());
+            }
+        }
+        ConfigValue::Float(sourced) => {
+            if let Some(Provenance::File { file, .. }) = &sourced.provenance {
+                files.insert(file.path.to_string());
+            }
+        }
+        ConfigValue::Bool(sourced) => {
+            if let Some(Provenance::File { file, .. }) = &sourced.provenance {
+                files.insert(file.path.to_string());
+            }
+        }
+        ConfigValue::Null(sourced) => {
+            if let Some(Provenance::File { file, .. }) = &sourced.provenance {
+                files.insert(file.path.to_string());
+            }
+        }
+    }
+}
+
 /// Recursively dump a ConfigValue showing provenance.
-fn dump_value_recursive(value: &ConfigValue, path: &str, indent: usize) {
+fn dump_value_recursive(
+    value: &ConfigValue,
+    path: &str,
+    indent: usize,
+    config_files: &std::collections::HashSet<String>,
+) {
     let indent_str = "  ".repeat(indent);
 
     match value {
         ConfigValue::Object(sourced) => {
             if !path.is_empty() {
-                println!("{}{}: {{", indent_str, path);
+                println!("{}{}:", indent_str, path);
             }
 
             for (key, val) in sourced.value.iter() {
-                dump_value_recursive(val, key, indent + 1);
-            }
-
-            if !path.is_empty() {
-                println!("{}}}", indent_str);
+                dump_value_recursive(val, key, indent + 1, config_files);
             }
         }
         ConfigValue::Array(sourced) => {
-            println!("{}{}: [", indent_str, path);
+            println!("{}{}:", indent_str, path);
             for (i, item) in sourced.value.iter().enumerate() {
-                dump_value_recursive(item, &format!("[{}]", i), indent + 1);
+                dump_value_recursive(item, &format!("[{}]", i), indent + 1, config_files);
             }
-            println!("{}]", indent_str);
         }
         ConfigValue::String(sourced) => {
-            let prov = format_provenance(&sourced.provenance);
+            let prov = format_provenance(&sourced.provenance, config_files);
             println!("{}{}: \"{}\" {}", indent_str, path, sourced.value, prov);
         }
         ConfigValue::Integer(sourced) => {
-            let prov = format_provenance(&sourced.provenance);
+            let prov = format_provenance(&sourced.provenance, config_files);
             println!("{}{}: {} {}", indent_str, path, sourced.value, prov);
         }
         ConfigValue::Float(sourced) => {
-            let prov = format_provenance(&sourced.provenance);
+            let prov = format_provenance(&sourced.provenance, config_files);
             println!("{}{}: {} {}", indent_str, path, sourced.value, prov);
         }
         ConfigValue::Bool(sourced) => {
-            let prov = format_provenance(&sourced.provenance);
+            let prov = format_provenance(&sourced.provenance, config_files);
             println!("{}{}: {} {}", indent_str, path, sourced.value, prov);
         }
         ConfigValue::Null(sourced) => {
-            let prov = format_provenance(&sourced.provenance);
+            let prov = format_provenance(&sourced.provenance, config_files);
             println!("{}{}: null {}", indent_str, path, prov);
         }
     }
 }
 
-/// Format provenance as a colored emoji + text.
-fn format_provenance(prov: &Option<Provenance>) -> String {
+/// Format provenance with colors.
+fn format_provenance(
+    prov: &Option<Provenance>,
+    _config_files: &std::collections::HashSet<String>,
+) -> String {
     match prov {
-        Some(Provenance::Cli { arg, .. }) => format!("🖥️  CLI ({})", arg),
-        Some(Provenance::Env { var, .. }) => format!("🌍 ENV ({})", var),
-        Some(Provenance::File {
-            file,
-            key_path,
-            offset,
-            len,
-            ..
-        }) => {
-            // Convert byte offset to line:column if possible
-            let position = if *offset > 0 {
-                // For now, just show byte offset
-                format!("{}:{}", key_path, offset)
-            } else {
-                key_path.to_string()
-            };
-            format!("📄 {}:{}", file.path, position)
+        Some(Provenance::Cli { arg, .. }) => format!("{}", arg.cyan()),
+        Some(Provenance::Env { var, .. }) => format!("{}", format!("${}", var).yellow()),
+        Some(Provenance::File { file, offset, .. }) => {
+            // Calculate line number from byte offset
+            let line_num = calculate_line_number(&file.contents, *offset);
+            // Extract just filename if full path was shown at start
+            let filename = std::path::Path::new(file.path.as_str())
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(file.path.as_str());
+            format!("{}:{}", filename, line_num).magenta().to_string()
         }
-        Some(Provenance::Default) => "⚙️  DEFAULT".to_string(),
+        Some(Provenance::Default) => "DEFAULT".bright_black().to_string(),
         None => "".to_string(),
     }
+}
+
+/// Calculate line number (1-based) from byte offset in file contents.
+fn calculate_line_number(contents: &str, offset: usize) -> usize {
+    if offset == 0 {
+        return 1;
+    }
+
+    // Count newlines before the offset
+    let line_count = contents[..offset.min(contents.len())]
+        .chars()
+        .filter(|&c| c == '\n')
+        .count();
+
+    line_count + 1
 }
 
 // Args extension attributes for use with #[facet(args::attr)] syntax.
