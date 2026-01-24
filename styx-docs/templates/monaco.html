@@ -3,6 +3,7 @@
 {% block title %}Monaco Playground - {{ config.title }}{% endblock title %}
 
 {% block head %}
+<link rel="stylesheet" href="https://esm.sh/monaco-editor@0.52.0/min/vs/editor/editor.main.css">
 <style>
 .playground-container {
     display: grid;
@@ -206,7 +207,7 @@ import * as yamlLang from 'https://esm.sh/monaco-editor@0.52.0/esm/vs/basic-lang
 import * as shellLang from 'https://esm.sh/monaco-editor@0.52.0/esm/vs/basic-languages/shell/shell';
 
 // Import Styx WASM from esm.sh
-import init, { to_json, from_json, parse, version } from 'https://esm.sh/@bearcove/styx-wasm@0.1.0';
+import init, { to_json, from_json, parse, version } from 'https://esm.sh/@bearcove/styx-wasm@0.1.1';
 
 const DEFAULT_SOURCE = `// Welcome to the Styx Monaco Playground!
 // Edit this document and see the JSON output on the right.
@@ -293,10 +294,10 @@ async function main() {
         fontFamily: "'SF Mono', 'Monaco', 'Menlo', 'Consolas', monospace",
     });
 
-    // Create JSON editor
+    // Create JSON editor (use javascript language - highlights JSON fine)
     jsonEditor = monaco.editor.create(document.getElementById('output'), {
         value: '',
-        language: 'json',
+        language: 'javascript',
         theme: 'catppuccin-mocha',
         automaticLayout: true,
         minimap: { enabled: false },

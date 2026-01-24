@@ -218,17 +218,40 @@
 </div>
 
 <script type="module">
-// Load from esm.sh CDN - no bundling required
-import { EditorView, basicSetup } from 'https://esm.sh/codemirror@6.0.1';
-import { EditorState, Compartment, Prec } from 'https://esm.sh/@codemirror/state@6.5.2';
-import { oneDark } from 'https://esm.sh/@codemirror/theme-one-dark@6.1.2';
-import { json } from 'https://esm.sh/@codemirror/lang-json@6.0.1';
-import { sql } from 'https://esm.sh/@codemirror/lang-sql@6.8.0';
-import { vim } from 'https://esm.sh/@replit/codemirror-vim@6.3.0';
-import { styx } from 'https://esm.sh/@bearcove/codemirror-lang-styx@0.1.0';
+// Load from esm.sh CDN - pin shared deps to avoid multiple @codemirror/state instances
+const CM_STATE = '@codemirror/state@6.5.4';
+const CM_VIEW = '@codemirror/view@6.39.11';
+const CM_DEPS = `?deps=${CM_STATE},${CM_VIEW}`;
+const imports = {
+    codemirror: `https://esm.sh/codemirror@6.0.1${CM_DEPS}`,
+    state: `https://esm.sh/${CM_STATE}`,
+    view: `https://esm.sh/${CM_VIEW}`,
+    oneDark: `https://esm.sh/@codemirror/theme-one-dark@6.1.2${CM_DEPS}`,
+    json: `https://esm.sh/@codemirror/lang-json@6.0.1${CM_DEPS}`,
+    sql: `https://esm.sh/@codemirror/lang-sql@6.8.0${CM_DEPS}`,
+    vim: `https://esm.sh/@replit/codemirror-vim@6.3.0${CM_DEPS}`,
+    styx: `https://esm.sh/@bearcove/codemirror-lang-styx@0.1.0${CM_DEPS}`,
+};
+const [
+    { EditorView, basicSetup },
+    { EditorState, Compartment, Prec },
+    { oneDark },
+    { json },
+    { sql },
+    { vim },
+    { styx },
+] = await Promise.all([
+    import(imports.codemirror),
+    import(imports.state),
+    import(imports.oneDark),
+    import(imports.json),
+    import(imports.sql),
+    import(imports.vim),
+    import(imports.styx),
+]);
 
 // Import Styx WASM from esm.sh
-import init, { to_json, from_json, parse, version } from 'https://esm.sh/@bearcove/styx-wasm@0.1.0';
+import init, { to_json, from_json, parse, version } from 'https://esm.sh/@bearcove/styx-wasm@0.1.1';
 
 // Wrap vim in highest precedence so it gets keys before basicSetup
 const vimWithPrecedence = (enabled) => enabled ? Prec.highest(vim()) : [];
