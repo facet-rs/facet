@@ -125,24 +125,45 @@ The CLI spawns this process on demand and asks it questions like:
   <div class="bubble bubble-cli">
     <div class="bubble-who">dibs-cli</div>
     <div class="bubble-text">What’s the intended schema?</div>
-    <div class="bubble-meta">collect it from Rust</div>
+  </div>
+
+  <div class="bubble bubble-service">
+    <div class="bubble-who">myapp-db</div>
+    <div class="bubble-text">Here are the tables and columns I collected from your Rust schema.</div>
+    <div class="bubble-meta">Under the hood: dibs scans your crate for registered tables (Facet/dibs annotations), builds an internal schema model, and returns it over RPC.</div>
   </div>
 
   <div class="bubble bubble-cli">
     <div class="bubble-who">dibs-cli</div>
     <div class="bubble-text">Given this database URL, what changes are needed?</div>
-    <div class="bubble-meta">connect + introspect + diff</div>
+  </div>
+
+  <div class="bubble bubble-service">
+    <div class="bubble-who">myapp-db</div>
+    <div class="bubble-text">I connected to Postgres, introspected the current schema, and computed the diff against your Rust schema.</div>
+    <div class="bubble-meta">Result: a structured list of changes (add/alter/drop/rename) per table — not just raw SQL.</div>
   </div>
 
   <div class="bubble bubble-cli">
     <div class="bubble-who">dibs-cli</div>
     <div class="bubble-text">What SQL should we run, in what order?</div>
-    <div class="bubble-meta">solve + generate ordered SQL</div>
+  </div>
+
+  <div class="bubble bubble-service">
+    <div class="bubble-who">myapp-db</div>
+    <div class="bubble-text">Here’s ordered SQL that should execute cleanly.</div>
+    <div class="bubble-meta">Under the hood: the solver simulates the migration on a virtual schema, orders operations to satisfy dependencies, then verifies the final simulated state matches the desired schema.</div>
   </div>
 
   <div class="bubble bubble-cli">
     <div class="bubble-who">dibs-cli</div>
     <div class="bubble-text">Run migrations and stream logs back to me.</div>
+  </div>
+
+  <div class="bubble bubble-service">
+    <div class="bubble-who">myapp-db</div>
+    <div class="bubble-text">Running pending migrations in transactions — streaming progress as they apply.</div>
+    <div class="bubble-meta">If a migration fails, dibs rolls back that migration’s transaction and reports the error with SQL context (and source location when available).</div>
   </div>
 </div>
 
