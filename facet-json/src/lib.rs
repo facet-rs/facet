@@ -1,4 +1,5 @@
-#![cfg_attr(not(feature = "jit"), forbid(unsafe_code))]
+// Note: unsafe code is used for lifetime transmutes in from_slice_into/from_str_into
+// when BORROW=false, mirroring the approach used in facet-format's FormatDeserializer.
 
 //! JSON parser and serializer using facet-format.
 //!
@@ -224,6 +225,186 @@ where
     let parser = JsonParser::new(input);
     let mut de = FormatDeserializer::new(parser);
     de.deserialize_root()
+}
+
+/// Deserialize JSON from a string into an existing Partial.
+///
+/// This is useful for reflection-based deserialization where you don't have
+/// a concrete type `T` at compile time, only its Shape metadata. The Partial
+/// must already be allocated for the target type.
+///
+/// This version produces owned strings (no borrowing from input).
+///
+/// # Example
+///
+/// ```
+/// use facet::Facet;
+/// use facet_json::from_str_into;
+/// use facet_reflect::Partial;
+///
+/// #[derive(Facet, Debug, PartialEq)]
+/// struct Person {
+///     name: String,
+///     age: u32,
+/// }
+///
+/// let json = r#"{"name": "Alice", "age": 30}"#;
+/// let partial = Partial::alloc_owned::<Person>().unwrap();
+/// let partial = from_str_into(json, partial).unwrap();
+/// let value = partial.build().unwrap();
+/// let person: Person = value.materialize().unwrap();
+/// assert_eq!(person.name, "Alice");
+/// assert_eq!(person.age, 30);
+/// ```
+pub fn from_str_into<'facet>(
+    input: &str,
+    partial: facet_reflect::Partial<'facet, false>,
+) -> Result<facet_reflect::Partial<'facet, false>, DeserializeError<JsonError>> {
+    from_slice_into(input.as_bytes(), partial)
+}
+
+/// Deserialize JSON from bytes into an existing Partial.
+///
+/// This is useful for reflection-based deserialization where you don't have
+/// a concrete type `T` at compile time, only its Shape metadata. The Partial
+/// must already be allocated for the target type.
+///
+/// This version produces owned strings (no borrowing from input).
+///
+/// # Example
+///
+/// ```
+/// use facet::Facet;
+/// use facet_json::from_slice_into;
+/// use facet_reflect::Partial;
+///
+/// #[derive(Facet, Debug, PartialEq)]
+/// struct Point {
+///     x: i32,
+///     y: i32,
+/// }
+///
+/// let json = br#"{"x": 10, "y": 20}"#;
+/// let partial = Partial::alloc_owned::<Point>().unwrap();
+/// let partial = from_slice_into(json, partial).unwrap();
+/// let value = partial.build().unwrap();
+/// let point: Point = value.materialize().unwrap();
+/// assert_eq!(point.x, 10);
+/// assert_eq!(point.y, 20);
+/// ```
+pub fn from_slice_into<'facet>(
+    input: &[u8],
+    partial: facet_reflect::Partial<'facet, false>,
+) -> Result<facet_reflect::Partial<'facet, false>, DeserializeError<JsonError>> {
+    use facet_format::FormatDeserializer;
+    let parser = JsonParser::new(input);
+    let mut de = FormatDeserializer::new_owned(parser);
+
+    // SAFETY: The deserializer expects Partial<'input, false> where 'input is the
+    // lifetime of the JSON bytes. Since BORROW=false, no data is borrowed from the
+    // input, so the actual 'facet lifetime of the Partial is independent of 'input.
+    // We transmute to satisfy the type system, then transmute back after deserialization.
+    #[allow(unsafe_code)]
+    let partial: facet_reflect::Partial<'_, false> = unsafe {
+        core::mem::transmute::<
+            facet_reflect::Partial<'facet, false>,
+            facet_reflect::Partial<'_, false>,
+        >(partial)
+    };
+
+    let partial = de.deserialize_into(partial)?;
+
+    // SAFETY: Same reasoning - no borrowed data since BORROW=false.
+    #[allow(unsafe_code)]
+    let partial: facet_reflect::Partial<'facet, false> = unsafe {
+        core::mem::transmute::<
+            facet_reflect::Partial<'_, false>,
+            facet_reflect::Partial<'facet, false>,
+        >(partial)
+    };
+
+    Ok(partial)
+}
+
+/// Deserialize JSON from a string into an existing Partial, allowing zero-copy borrowing.
+///
+/// This variant requires the input to outlive the Partial's lifetime (`'input: 'facet`),
+/// enabling zero-copy deserialization of string fields as `&str` or `Cow<str>`.
+///
+/// This is useful for reflection-based deserialization where you don't have
+/// a concrete type `T` at compile time, only its Shape metadata.
+///
+/// # Example
+///
+/// ```
+/// use facet::Facet;
+/// use facet_json::from_str_into_borrowed;
+/// use facet_reflect::Partial;
+///
+/// #[derive(Facet, Debug, PartialEq)]
+/// struct Person<'a> {
+///     name: &'a str,
+///     age: u32,
+/// }
+///
+/// let json = r#"{"name": "Alice", "age": 30}"#;
+/// let partial = Partial::alloc::<Person>().unwrap();
+/// let partial = from_str_into_borrowed(json, partial).unwrap();
+/// let value = partial.build().unwrap();
+/// let person: Person = value.materialize().unwrap();
+/// assert_eq!(person.name, "Alice");
+/// assert_eq!(person.age, 30);
+/// ```
+pub fn from_str_into_borrowed<'input, 'facet>(
+    input: &'input str,
+    partial: facet_reflect::Partial<'facet, true>,
+) -> Result<facet_reflect::Partial<'facet, true>, DeserializeError<JsonError>>
+where
+    'input: 'facet,
+{
+    from_slice_into_borrowed(input.as_bytes(), partial)
+}
+
+/// Deserialize JSON from bytes into an existing Partial, allowing zero-copy borrowing.
+///
+/// This variant requires the input to outlive the Partial's lifetime (`'input: 'facet`),
+/// enabling zero-copy deserialization of string fields as `&str` or `Cow<str>`.
+///
+/// This is useful for reflection-based deserialization where you don't have
+/// a concrete type `T` at compile time, only its Shape metadata.
+///
+/// # Example
+///
+/// ```
+/// use facet::Facet;
+/// use facet_json::from_slice_into_borrowed;
+/// use facet_reflect::Partial;
+///
+/// #[derive(Facet, Debug, PartialEq)]
+/// struct Point<'a> {
+///     label: &'a str,
+///     x: i32,
+///     y: i32,
+/// }
+///
+/// let json = br#"{"label": "origin", "x": 0, "y": 0}"#;
+/// let partial = Partial::alloc::<Point>().unwrap();
+/// let partial = from_slice_into_borrowed(json, partial).unwrap();
+/// let value = partial.build().unwrap();
+/// let point: Point = value.materialize().unwrap();
+/// assert_eq!(point.label, "origin");
+/// ```
+pub fn from_slice_into_borrowed<'input, 'facet>(
+    input: &'input [u8],
+    partial: facet_reflect::Partial<'facet, true>,
+) -> Result<facet_reflect::Partial<'facet, true>, DeserializeError<JsonError>>
+where
+    'input: 'facet,
+{
+    use facet_format::FormatDeserializer;
+    let parser = JsonParser::new(input);
+    let mut de = FormatDeserializer::new(parser);
+    de.deserialize_into(partial)
 }
 
 #[cfg(feature = "streaming")]
