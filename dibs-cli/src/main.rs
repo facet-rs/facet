@@ -19,7 +19,6 @@ mod config;
 mod highlight;
 mod lsp_extension;
 mod service;
-mod tables;
 mod tui;
 
 // Embed Styx schemas for LSP extraction via `styx extract $(which dibs)`
@@ -118,12 +117,43 @@ fn run(cli: Cli) {
             run_generate_from_diff(&name);
         }
         Some(Commands::Schema { plain, sql }) => {
-            let schema = dibs::Schema::collect();
+            // Try to load config - if present, use roam to get schema from db crate
+            let schema = if let Ok((cfg, config_path)) = config::load() {
+                let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+                rt.block_on(async {
+                    use owo_colors::OwoColorize as _;
+                    eprintln!(
+                        "{}",
+                        format!("Using config: {}", config_path.display())
+                            .as_str()
+                            .dimmed()
+                    );
+
+                    let conn = match service::connect_to_service(&cfg).await {
+                        Ok(conn) => conn,
+                        Err(e) => {
+                            eprintln!("Failed to connect to db service: {}", e);
+                            std::process::exit(1);
+                        }
+                    };
+
+                    match conn.client().schema().await {
+                        Ok(schema_info) => schema_info_to_schema(schema_info),
+                        Err(e) => {
+                            eprintln!("Failed to get schema: {:?}", e);
+                            std::process::exit(1);
+                        }
+                    }
+                })
+            } else {
+                // No config - fall back to local collection (will be empty without tables defined)
+                dibs::Schema::collect()
+            };
 
             if schema.tables.is_empty() {
                 println!("No tables registered.");
                 println!();
-                println!("Define tables using #[facet(dibs::table = \"name\")] on Facet structs.");
+                println!("Make sure dibs.toml points to your db crate.");
                 return;
             }
 
@@ -163,6 +193,89 @@ fn run(cli: Cli) {
             }
         }
     }
+}
+
+/// Parse PgType from SQL type string
+fn parse_pg_type(s: &str) -> dibs::PgType {
+    match s.to_uppercase().as_str() {
+        "SMALLINT" | "INT2" => dibs::PgType::SmallInt,
+        "INTEGER" | "INT4" | "INT" => dibs::PgType::Integer,
+        "BIGINT" | "INT8" => dibs::PgType::BigInt,
+        "REAL" | "FLOAT4" => dibs::PgType::Real,
+        "DOUBLE PRECISION" | "FLOAT8" => dibs::PgType::DoublePrecision,
+        "NUMERIC" | "DECIMAL" => dibs::PgType::Numeric,
+        "BOOLEAN" | "BOOL" => dibs::PgType::Boolean,
+        "TEXT" | "VARCHAR" | "CHAR" | "CHARACTER VARYING" => dibs::PgType::Text,
+        "BYTEA" => dibs::PgType::Bytea,
+        "TIMESTAMPTZ" | "TIMESTAMP WITH TIME ZONE" => dibs::PgType::Timestamptz,
+        "DATE" => dibs::PgType::Date,
+        "TIME" => dibs::PgType::Time,
+        "UUID" => dibs::PgType::Uuid,
+        "JSONB" => dibs::PgType::Jsonb,
+        "TEXT[]" => dibs::PgType::TextArray,
+        "BIGINT[]" | "INT8[]" => dibs::PgType::BigIntArray,
+        "INTEGER[]" | "INT4[]" | "INT[]" => dibs::PgType::IntegerArray,
+        _ => dibs::PgType::Text, // fallback
+    }
+}
+
+/// Convert proto SchemaInfo to dibs::Schema
+fn schema_info_to_schema(info: dibs_proto::SchemaInfo) -> dibs::Schema {
+    let tables = info
+        .tables
+        .into_iter()
+        .map(|t| dibs::Table {
+            name: t.name,
+            columns: t
+                .columns
+                .into_iter()
+                .map(|c| dibs::Column {
+                    name: c.name,
+                    pg_type: parse_pg_type(&c.sql_type),
+                    rust_type: c.rust_type,
+                    nullable: c.nullable,
+                    default: c.default,
+                    primary_key: c.primary_key,
+                    unique: c.unique,
+                    auto_generated: c.auto_generated,
+                    long: c.long,
+                    label: c.label,
+                    enum_variants: c.enum_variants,
+                    doc: c.doc,
+                    lang: c.lang,
+                    icon: c.icon,
+                    subtype: c.subtype,
+                })
+                .collect(),
+            foreign_keys: t
+                .foreign_keys
+                .into_iter()
+                .map(|fk| dibs::ForeignKey {
+                    columns: fk.columns,
+                    references_table: fk.references_table,
+                    references_columns: fk.references_columns,
+                })
+                .collect(),
+            indices: t
+                .indices
+                .into_iter()
+                .map(|idx| dibs::Index {
+                    name: idx.name,
+                    columns: idx.columns,
+                    unique: idx.unique,
+                })
+                .collect(),
+            source: dibs::SourceLocation {
+                file: t.source_file,
+                line: t.source_line,
+                column: None,
+            },
+            doc: t.doc,
+            icon: t.icon,
+        })
+        .collect();
+
+    dibs::Schema { tables }
 }
 
 /// Print schema as plain text (for piping)
