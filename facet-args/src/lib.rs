@@ -19,6 +19,7 @@ pub mod provenance;
 
 pub use builder::builder;
 use config_value::ConfigValue;
+use provenance::Provenance;
 
 pub(crate) mod arg;
 pub(crate) mod error;
@@ -104,6 +105,12 @@ pub fn from_slice_layered<T: Facet<'static>>(args: &[&str]) -> Result<T, ArgsErr
     config_value = restructure_config_value(config_value, T::SHAPE, config_field);
 
     tracing::debug!(?config_value, "Restructured ConfigValue");
+
+    // Check if --dump-config was requested before deserializing
+    if should_dump_config(args) {
+        dump_config_with_provenance(&config_value);
+        std::process::exit(0);
+    }
 
     // Deserialize the merged ConfigValue into the target type
     from_config_value(&config_value).map_err(|e| {
@@ -237,6 +244,103 @@ fn extract_config_file_path(args: &[&str]) -> Option<String> {
     }
 
     None
+}
+
+/// Check if --dump-config flag is present in CLI args.
+fn should_dump_config(args: &[&str]) -> bool {
+    args.iter()
+        .any(|arg| *arg == "--dump-config" || *arg == "--dump_config")
+}
+
+/// Dump the ConfigValue tree with provenance information.
+fn dump_config_with_provenance(value: &ConfigValue) {
+    println!("📊 Final Merged Configuration (with provenance)");
+    println!("=================================================");
+    println!();
+
+    dump_value_recursive(value, "", 0);
+
+    println!();
+    println!("Legend:");
+    println!("  🖥️  CLI    - Command-line argument");
+    println!("  🌍 ENV    - Environment variable");
+    println!("  📄 FILE   - Config file");
+    println!("  ⚙️  DEFAULT - Default value");
+    println!();
+}
+
+/// Recursively dump a ConfigValue showing provenance.
+fn dump_value_recursive(value: &ConfigValue, path: &str, indent: usize) {
+    let indent_str = "  ".repeat(indent);
+
+    match value {
+        ConfigValue::Object(sourced) => {
+            if !path.is_empty() {
+                println!("{}{}: {{", indent_str, path);
+            }
+
+            for (key, val) in sourced.value.iter() {
+                dump_value_recursive(val, key, indent + 1);
+            }
+
+            if !path.is_empty() {
+                println!("{}}}", indent_str);
+            }
+        }
+        ConfigValue::Array(sourced) => {
+            println!("{}{}: [", indent_str, path);
+            for (i, item) in sourced.value.iter().enumerate() {
+                dump_value_recursive(item, &format!("[{}]", i), indent + 1);
+            }
+            println!("{}]", indent_str);
+        }
+        ConfigValue::String(sourced) => {
+            let prov = format_provenance(&sourced.provenance);
+            println!("{}{}: \"{}\" {}", indent_str, path, sourced.value, prov);
+        }
+        ConfigValue::Integer(sourced) => {
+            let prov = format_provenance(&sourced.provenance);
+            println!("{}{}: {} {}", indent_str, path, sourced.value, prov);
+        }
+        ConfigValue::Float(sourced) => {
+            let prov = format_provenance(&sourced.provenance);
+            println!("{}{}: {} {}", indent_str, path, sourced.value, prov);
+        }
+        ConfigValue::Bool(sourced) => {
+            let prov = format_provenance(&sourced.provenance);
+            println!("{}{}: {} {}", indent_str, path, sourced.value, prov);
+        }
+        ConfigValue::Null(sourced) => {
+            let prov = format_provenance(&sourced.provenance);
+            println!("{}{}: null {}", indent_str, path, prov);
+        }
+    }
+}
+
+/// Format provenance as a colored emoji + text.
+fn format_provenance(prov: &Option<Provenance>) -> String {
+    match prov {
+        Some(Provenance::Cli { arg, .. }) => format!("🖥️  CLI ({})", arg),
+        Some(Provenance::Env { var, .. }) => format!("🌍 ENV ({})", var),
+        Some(Provenance::File {
+            file,
+            key_path,
+            offset,
+            len,
+            ..
+        }) => {
+            // Convert byte offset to line:column if possible
+            let position = if *offset > 0 {
+                // For now, just show byte offset
+                format!("{}:{}", key_path, offset)
+            } else {
+                key_path.to_string()
+            };
+            format!("📄 {}:{}", file.path, position)
+        }
+        Some(Provenance::Default) => "⚙️  DEFAULT".to_string(),
+        None => "".to_string(),
+    }
 }
 
 // Args extension attributes for use with #[facet(args::attr)] syntax.

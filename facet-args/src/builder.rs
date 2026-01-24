@@ -221,7 +221,8 @@ impl<E: EnvSource> LayeredConfigBuilder<E> {
                         )));
                     }
                     let value_str = &cli_config.args[i];
-                    let value = parse_cli_value(value_str);
+                    let arg_name = format!("--{}", flag);
+                    let value = parse_cli_value(value_str, &arg_name);
                     insert_nested_value(&mut root, &parts, value);
                 } else {
                     // Simple flag like --version or --name value
@@ -233,11 +234,20 @@ impl<E: EnvSource> LayeredConfigBuilder<E> {
 
                     if has_value {
                         i += 1;
-                        let value = parse_cli_value(&cli_config.args[i]);
+                        let arg_name = format!("--{}", flag);
+                        let value = parse_cli_value(&cli_config.args[i], &arg_name);
                         root.insert(key, value);
                     } else {
                         // Boolean flag, set to true
-                        root.insert(key, ConfigValue::Bool(Sourced::new(true)));
+                        let arg_name = format!("--{}", flag);
+                        root.insert(
+                            key,
+                            ConfigValue::Bool(Sourced {
+                                value: true,
+                                span: None,
+                                provenance: Some(Provenance::cli(arg_name, "true")),
+                            }),
+                        );
                     }
                 }
             } else if let Some(flag) = arg.strip_prefix('-') {
@@ -252,7 +262,15 @@ impl<E: EnvSource> LayeredConfigBuilder<E> {
                 // TODO: Handle -vvv counting, -abc chaining
                 for ch in flag.chars() {
                     let key = ch.to_string();
-                    root.insert(key, ConfigValue::Bool(Sourced::new(true)));
+                    let arg_name = format!("-{}", ch);
+                    root.insert(
+                        key,
+                        ConfigValue::Bool(Sourced {
+                            value: true,
+                            span: None,
+                            provenance: Some(Provenance::cli(arg_name, "true")),
+                        }),
+                    );
                 }
             } else {
                 // Positional argument - skip for now
@@ -272,30 +290,52 @@ impl<E: EnvSource> LayeredConfigBuilder<E> {
 
 /// Collect provenance from all values in a ConfigValue tree.
 /// Parse a CLI value string and infer its type.
-fn parse_cli_value(s: &str) -> ConfigValue {
+fn parse_cli_value(s: &str, arg_name: &str) -> ConfigValue {
     use crate::config_value::Sourced;
+
+    let prov = Some(Provenance::cli(arg_name, s));
 
     // Try to parse as different types
     // 1. Boolean
     if s == "true" {
-        return ConfigValue::Bool(Sourced::new(true));
+        return ConfigValue::Bool(Sourced {
+            value: true,
+            span: None,
+            provenance: prov,
+        });
     }
     if s == "false" {
-        return ConfigValue::Bool(Sourced::new(false));
+        return ConfigValue::Bool(Sourced {
+            value: false,
+            span: None,
+            provenance: prov,
+        });
     }
 
     // 2. Integer
     if let Ok(i) = s.parse::<i64>() {
-        return ConfigValue::Integer(Sourced::new(i));
+        return ConfigValue::Integer(Sourced {
+            value: i,
+            span: None,
+            provenance: prov,
+        });
     }
 
     // 3. Float
     if let Ok(f) = s.parse::<f64>() {
-        return ConfigValue::Float(Sourced::new(f));
+        return ConfigValue::Float(Sourced {
+            value: f,
+            span: None,
+            provenance: prov,
+        });
     }
 
     // 4. Default to string
-    ConfigValue::String(Sourced::new(s.to_string()))
+    ConfigValue::String(Sourced {
+        value: s.to_string(),
+        span: None,
+        provenance: prov,
+    })
 }
 
 /// Insert a value into a nested map structure using a dotted path.

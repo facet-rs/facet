@@ -44,6 +44,10 @@ struct Args {
     #[facet(args::named, args::counted, args::short = 'V')]
     verbose: u8,
 
+    /// Dump the final merged configuration and exit.
+    #[facet(args::named)]
+    dump_config: bool,
+
     /// Application settings loaded from multiple sources.
     #[facet(args::config, args::env_prefix = "MYAPP")]
     settings: AppConfig,
@@ -183,6 +187,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
+    if args.dump_config {
+        println!("📊 Final Merged Configuration");
+        println!("================================");
+        println!();
+        println!("{}", args.settings.pretty());
+        println!();
+        println!("Note: Provenance tracking shows where each value came from:");
+        println!("  - CLI arguments (highest priority)");
+        println!("  - Environment variables (MYAPP__*)");
+        println!("  - Config file (--config <path>)");
+        println!("  - Default values (lowest priority)");
+        println!();
+        println!("Use RUST_LOG=debug to see detailed provenance information.");
+        return Ok(());
+    }
+
     let verbosity = match args.verbose {
         0 => "normal",
         1 => "verbose",
@@ -212,11 +232,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  cargo run --example layered_config -- --settings.server.port 3000");
     println!();
     println!("  # Load from config file:");
-    println!("  cargo run --example layered_config -- --settings examples/config.json");
+    println!("  cargo run --example layered_config -- --config facet-args/examples/config.json");
+    println!();
+    println!("  # Dump final merged config:");
+    println!(
+        "  cargo run --example layered_config -- --config facet-args/examples/config.json --dump-config"
+    );
     println!();
     println!("  # Combine all layers (priority: CLI > env > file > defaults):");
     println!("  MYAPP__SERVER__HOST=example.com cargo run --example layered_config -- \\");
-    println!("    --settings examples/config.json --settings.server.port 4000");
+    println!("    --config facet-args/examples/config.json --settings.server.port 4000");
 
     Ok(())
 }
