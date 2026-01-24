@@ -1072,6 +1072,7 @@ dependencies = [
  "facet-pretty",
  "facet-reflect",
  "facet-showcase",
+ "facet-solver",
  "facet-testhelpers",
  "heck",
  "indexmap",

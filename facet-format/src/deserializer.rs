@@ -676,15 +676,16 @@ where
             return Ok(wip);
         }
 
-        // Special case: unit type () can accept Scalar(Unit) directly
+        // Special case: unit type () can accept Scalar(Unit) or Scalar(Null) directly
         // This enables patterns like styx bare identifiers: { id, name } -> IndexMap<String, ()>
+        // and JSON null values for unit types (e.g., ConfigValue::Null(Spanned<()>))
         if field_count == 0
             && matches!(
                 self.expect_peek("value")?,
-                ParseEvent::Scalar(ScalarValue::Unit)
+                ParseEvent::Scalar(ScalarValue::Unit | ScalarValue::Null)
             )
         {
-            self.expect_event("value")?; // consume the unit scalar
+            self.expect_event("value")?; // consume the unit/null scalar
             return Ok(wip);
         }
 

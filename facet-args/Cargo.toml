@@ -32,6 +32,7 @@ facet = { path = "../facet", features = ["all-impls"] }
 facet-json = { path = "../facet-json" }
 facet-pretty = { path = "../facet-pretty" }
 facet-showcase = { path = "../facet-showcase" }
+facet-solver = { path = "../facet-solver" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 insta = { workspace = true }
 

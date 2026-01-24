@@ -45,6 +45,71 @@ mod tests {
     use facet_core::Facet;
 
     #[test]
+    fn test_unit_is_scalar() {
+        let shape = <() as Facet>::SHAPE;
+        assert!(
+            shape.scalar_type().is_some(),
+            "() should have a scalar type: {:?}",
+            shape.scalar_type()
+        );
+    }
+
+    #[test]
+    fn test_spanned_unit_unwraps_to_scalar() {
+        let shape = <Spanned<()> as Facet>::SHAPE;
+        assert!(
+            shape.is_metadata_container(),
+            "Spanned<()> should be a metadata container"
+        );
+
+        let inner = facet_reflect::get_metadata_container_value_shape(shape);
+        assert!(inner.is_some(), "should get inner shape from Spanned<()>");
+
+        let inner = inner.unwrap();
+        assert!(
+            inner.scalar_type().is_some(),
+            "inner shape should be scalar (unit): {:?}",
+            inner.scalar_type()
+        );
+    }
+
+    #[test]
+    fn test_null_variant_classification() {
+        use facet_core::Facet;
+        use facet_solver::VariantsByFormat;
+
+        let shape = <ConfigValue as Facet>::SHAPE;
+        let variants = VariantsByFormat::from_shape(shape).expect("should get variants");
+
+        // Check that we have a scalar variant for Null
+        let null_variant = variants
+            .scalar_variants
+            .iter()
+            .find(|(v, _)| v.name == "Null");
+        assert!(
+            null_variant.is_some(),
+            "Null should be in scalar_variants. Found: {:?}",
+            variants
+                .scalar_variants
+                .iter()
+                .map(|(v, _)| v.name)
+                .collect::<Vec<_>>()
+        );
+
+        let (_, inner_shape) = null_variant.unwrap();
+        assert!(
+            inner_shape.scalar_type().is_some(),
+            "Null's inner_shape should have a scalar type: {:?}",
+            inner_shape.scalar_type()
+        );
+        assert_eq!(
+            inner_shape.scalar_type(),
+            Some(facet_core::ScalarType::Unit),
+            "Null's inner_shape should be Unit type"
+        );
+    }
+
+    #[test]
     fn test_spanned_is_metadata_container() {
         let shape = <Spanned<i64> as Facet>::SHAPE;
         assert!(
