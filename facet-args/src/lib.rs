@@ -515,6 +515,11 @@ fn dump_value_recursive_with_sensitive(
         ConfigValue::Bool(sourced) => {
             let prov = format_provenance(&sourced.provenance, config_files);
             let value_str = sourced.value.to_string();
+            let colored_value = if sourced.value {
+                format!("{}", value_str.green()) // true is green
+            } else {
+                format!("{}", value_str.red()) // false is red
+            };
             let key_len = path.len();
             let padding = if key_len < max_key {
                 ".".repeat(max_key - key_len)
@@ -526,7 +531,7 @@ fn dump_value_recursive_with_sensitive(
                 indent_str,
                 path.white(),
                 padding.bright_black(),
-                value_str.yellow(), // booleans are yellow
+                colored_value,
                 prov,
                 val_width = max_val
             );
