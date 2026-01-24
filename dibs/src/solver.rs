@@ -355,17 +355,11 @@ impl VirtualSchema {
                         table: t.name.clone(),
                     });
                 }
-                // Check FK targets exist (self-referential FKs are allowed)
-                for fk in &t.foreign_keys {
-                    // Allow self-referential FKs - the table being created IS the target
-                    if fk.references_table != t.name && !self.table_exists(&fk.references_table) {
-                        return Err(SolverError::ForeignKeyTargetNotFound {
-                            change: change_desc,
-                            source_table: t.name.clone(),
-                            target_table: fk.references_table.clone(),
-                        });
-                    }
-                }
+                // Note: We don't validate FK targets here. The FKs in the Table struct
+                // are metadata for tracking. The actual FK constraints are created by
+                // AddForeignKey changes, which validate targets when applied.
+                // This allows circular/mutually-referential tables (A -> B and B -> A)
+                // to be created in the same migration.
                 self.tables.insert(
                     t.name.clone(),
                     VirtualTable {
@@ -988,6 +982,417 @@ mod tests {
             result
         );
         assert!(schema.table_exists("category"));
+    }
+
+    #[test]
+    fn test_mutually_referential_tables_can_be_created() {
+        // Two tables that reference each other:
+        // - product.current_version_id -> product_version.id
+        // - product_version.product_id -> product.id
+        // Both should be creatable in the same migration.
+        let product_table = make_table_with_fks(
+            "product",
+            vec![
+                make_column("id", PgType::BigInt, false),
+                make_column("current_version_id", PgType::BigInt, true),
+            ],
+            vec![ForeignKey {
+                columns: vec!["current_version_id".to_string()],
+                references_table: "product_version".to_string(),
+                references_columns: vec!["id".to_string()],
+            }],
+        );
+
+        let product_version_table = make_table_with_fks(
+            "product_version",
+            vec![
+                make_column("id", PgType::BigInt, false),
+                make_column("product_id", PgType::BigInt, false),
+            ],
+            vec![ForeignKey {
+                columns: vec!["product_id".to_string()],
+                references_table: "product".to_string(),
+                references_columns: vec!["id".to_string()],
+            }],
+        );
+
+        let mut schema = VirtualSchema::new();
+
+        // Both tables can be added (AddTable doesn't validate FK targets)
+        let result1 = schema.apply("product", &Change::AddTable(product_table));
+        assert!(
+            result1.is_ok(),
+            "Product table should be creatable: {:?}",
+            result1
+        );
+
+        let result2 = schema.apply("product_version", &Change::AddTable(product_version_table));
+        assert!(
+            result2.is_ok(),
+            "Product version table should be creatable: {:?}",
+            result2
+        );
+
+        // Both tables exist
+        assert!(schema.table_exists("product"));
+        assert!(schema.table_exists("product_version"));
+
+        // Now the FK constraints can be added (they validate at this point)
+        let fk1 = ForeignKey {
+            columns: vec!["current_version_id".to_string()],
+            references_table: "product_version".to_string(),
+            references_columns: vec!["id".to_string()],
+        };
+        let result3 = schema.apply("product", &Change::AddForeignKey(fk1));
+        assert!(
+            result3.is_ok(),
+            "FK from product to product_version should work: {:?}",
+            result3
+        );
+
+        let fk2 = ForeignKey {
+            columns: vec!["product_id".to_string()],
+            references_table: "product".to_string(),
+            references_columns: vec!["id".to_string()],
+        };
+        let result4 = schema.apply("product_version", &Change::AddForeignKey(fk2));
+        assert!(
+            result4.is_ok(),
+            "FK from product_version to product should work: {:?}",
+            result4
+        );
+    }
+
+    #[test]
+    fn test_mutually_referential_tables_ordering() {
+        // Test that order_changes can handle mutually-referential tables
+        // by generating a valid ordering.
+
+        let product_table = Table {
+            name: "product".to_string(),
+            columns: vec![
+                make_column("id", PgType::BigInt, false),
+                make_column("current_version_id", PgType::BigInt, true),
+            ],
+            foreign_keys: vec![ForeignKey {
+                columns: vec!["current_version_id".to_string()],
+                references_table: "product_version".to_string(),
+                references_columns: vec!["id".to_string()],
+            }],
+            indices: Vec::new(),
+            source: SourceLocation::default(),
+            doc: None,
+            icon: None,
+        };
+
+        let product_version_table = Table {
+            name: "product_version".to_string(),
+            columns: vec![
+                make_column("id", PgType::BigInt, false),
+                make_column("product_id", PgType::BigInt, false),
+            ],
+            foreign_keys: vec![ForeignKey {
+                columns: vec!["product_id".to_string()],
+                references_table: "product".to_string(),
+                references_columns: vec!["id".to_string()],
+            }],
+            indices: Vec::new(),
+            source: SourceLocation::default(),
+            doc: None,
+            icon: None,
+        };
+
+        let desired = Schema {
+            tables: vec![product_table.clone(), product_version_table.clone()],
+        };
+        let current = Schema { tables: vec![] };
+
+        let diff = desired.diff(&current);
+        let current_virtual = VirtualSchema::new();
+        let desired_virtual = VirtualSchema::from_tables(&desired.tables);
+
+        let result = order_changes(&diff, &current_virtual, &desired_virtual);
+        assert!(
+            result.is_ok(),
+            "Mutually referential tables should be orderable: {:?}",
+            result
+        );
+
+        let ordered = result.unwrap();
+        // Should have: 2 AddTable + 2 AddForeignKey = 4 changes minimum
+        assert!(
+            ordered.changes.len() >= 4,
+            "Expected at least 4 changes, got {}",
+            ordered.changes.len()
+        );
+
+        // Verify both tables are created before their FKs are added
+        let mut product_created = false;
+        let mut product_version_created = false;
+
+        for change in &ordered.changes {
+            match &change.change {
+                Change::AddTable(t) if t.name == "product" => {
+                    product_created = true;
+                }
+                Change::AddTable(t) if t.name == "product_version" => {
+                    product_version_created = true;
+                }
+                Change::AddForeignKey(fk) if fk.references_table == "product_version" => {
+                    assert!(
+                        product_version_created,
+                        "FK to product_version added before product_version was created"
+                    );
+                }
+                Change::AddForeignKey(fk) if fk.references_table == "product" => {
+                    assert!(
+                        product_created,
+                        "FK to product added before product was created"
+                    );
+                }
+                _ => {}
+            }
+        }
+    }
+
+    #[test]
+    fn test_triple_circular_dependency() {
+        // A -> B -> C -> A
+        // All three tables reference each other in a cycle.
+        let table_a = make_table_with_fks(
+            "table_a",
+            vec![
+                make_column("id", PgType::BigInt, false),
+                make_column("b_id", PgType::BigInt, true),
+            ],
+            vec![ForeignKey {
+                columns: vec!["b_id".to_string()],
+                references_table: "table_b".to_string(),
+                references_columns: vec!["id".to_string()],
+            }],
+        );
+
+        let table_b = make_table_with_fks(
+            "table_b",
+            vec![
+                make_column("id", PgType::BigInt, false),
+                make_column("c_id", PgType::BigInt, true),
+            ],
+            vec![ForeignKey {
+                columns: vec!["c_id".to_string()],
+                references_table: "table_c".to_string(),
+                references_columns: vec!["id".to_string()],
+            }],
+        );
+
+        let table_c = make_table_with_fks(
+            "table_c",
+            vec![
+                make_column("id", PgType::BigInt, false),
+                make_column("a_id", PgType::BigInt, true),
+            ],
+            vec![ForeignKey {
+                columns: vec!["a_id".to_string()],
+                references_table: "table_a".to_string(),
+                references_columns: vec!["id".to_string()],
+            }],
+        );
+
+        let mut schema = VirtualSchema::new();
+
+        // All tables can be added
+        assert!(schema.apply("table_a", &Change::AddTable(table_a)).is_ok());
+        assert!(schema.apply("table_b", &Change::AddTable(table_b)).is_ok());
+        assert!(schema.apply("table_c", &Change::AddTable(table_c)).is_ok());
+
+        // All FKs can be added after tables exist
+        assert!(
+            schema
+                .apply(
+                    "table_a",
+                    &Change::AddForeignKey(ForeignKey {
+                        columns: vec!["b_id".to_string()],
+                        references_table: "table_b".to_string(),
+                        references_columns: vec!["id".to_string()],
+                    })
+                )
+                .is_ok()
+        );
+        assert!(
+            schema
+                .apply(
+                    "table_b",
+                    &Change::AddForeignKey(ForeignKey {
+                        columns: vec!["c_id".to_string()],
+                        references_table: "table_c".to_string(),
+                        references_columns: vec!["id".to_string()],
+                    })
+                )
+                .is_ok()
+        );
+        assert!(
+            schema
+                .apply(
+                    "table_c",
+                    &Change::AddForeignKey(ForeignKey {
+                        columns: vec!["a_id".to_string()],
+                        references_table: "table_a".to_string(),
+                        references_columns: vec!["id".to_string()],
+                    })
+                )
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn test_fk_to_nonexistent_table_still_fails_on_add_fk() {
+        // AddForeignKey should still fail if the target table doesn't exist.
+        // This is the correct place to catch this error (not in AddTable).
+        let mut schema = VirtualSchema::new();
+
+        // Add a table without the FK target
+        let product = make_table(
+            "product",
+            vec![
+                make_column("id", PgType::BigInt, false),
+                make_column("category_id", PgType::BigInt, true),
+            ],
+        );
+        schema.apply("product", &Change::AddTable(product)).unwrap();
+
+        // Try to add FK to non-existent table
+        let fk = ForeignKey {
+            columns: vec!["category_id".to_string()],
+            references_table: "category".to_string(), // doesn't exist!
+            references_columns: vec!["id".to_string()],
+        };
+
+        let result = schema.apply("product", &Change::AddForeignKey(fk));
+        assert!(
+            matches!(result, Err(SolverError::ForeignKeyTargetNotFound { .. })),
+            "FK to non-existent table should fail: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_complex_ecommerce_schema_ordering() {
+        // Test a realistic ecommerce schema with multiple circular dependencies:
+        // - product <-> product_version (mutual)
+        // - category -> category (self-ref)
+        // - product_translation -> product_version (version tracking)
+        let shop = make_table("shop", vec![make_column("id", PgType::BigInt, false)]);
+
+        let category = make_table_with_fks(
+            "category",
+            vec![
+                make_column("id", PgType::BigInt, false),
+                make_column("shop_id", PgType::BigInt, false),
+                make_column("parent_id", PgType::BigInt, true),
+            ],
+            vec![
+                ForeignKey {
+                    columns: vec!["shop_id".to_string()],
+                    references_table: "shop".to_string(),
+                    references_columns: vec!["id".to_string()],
+                },
+                ForeignKey {
+                    columns: vec!["parent_id".to_string()],
+                    references_table: "category".to_string(), // self-ref
+                    references_columns: vec!["id".to_string()],
+                },
+            ],
+        );
+
+        let product = make_table_with_fks(
+            "product",
+            vec![
+                make_column("id", PgType::BigInt, false),
+                make_column("shop_id", PgType::BigInt, false),
+                make_column("current_version_id", PgType::BigInt, true),
+            ],
+            vec![
+                ForeignKey {
+                    columns: vec!["shop_id".to_string()],
+                    references_table: "shop".to_string(),
+                    references_columns: vec!["id".to_string()],
+                },
+                ForeignKey {
+                    columns: vec!["current_version_id".to_string()],
+                    references_table: "product_version".to_string(), // mutual with product_version
+                    references_columns: vec!["id".to_string()],
+                },
+            ],
+        );
+
+        let product_version = make_table_with_fks(
+            "product_version",
+            vec![
+                make_column("id", PgType::BigInt, false),
+                make_column("product_id", PgType::BigInt, false),
+            ],
+            vec![ForeignKey {
+                columns: vec!["product_id".to_string()],
+                references_table: "product".to_string(), // mutual with product
+                references_columns: vec!["id".to_string()],
+            }],
+        );
+
+        let product_translation = make_table_with_fks(
+            "product_translation",
+            vec![
+                make_column("product_id", PgType::BigInt, false),
+                make_column("locale", PgType::Text, false),
+                make_column("source_version_id", PgType::BigInt, true),
+            ],
+            vec![
+                ForeignKey {
+                    columns: vec!["product_id".to_string()],
+                    references_table: "product".to_string(),
+                    references_columns: vec!["id".to_string()],
+                },
+                ForeignKey {
+                    columns: vec!["source_version_id".to_string()],
+                    references_table: "product_version".to_string(),
+                    references_columns: vec!["id".to_string()],
+                },
+            ],
+        );
+
+        let desired = Schema {
+            tables: vec![
+                shop.clone(),
+                category.clone(),
+                product.clone(),
+                product_version.clone(),
+                product_translation.clone(),
+            ],
+        };
+        let current = Schema { tables: vec![] };
+
+        let diff = desired.diff(&current);
+        let current_virtual = VirtualSchema::new();
+        let desired_virtual = VirtualSchema::from_tables(&desired.tables);
+
+        let result = order_changes(&diff, &current_virtual, &desired_virtual);
+        assert!(
+            result.is_ok(),
+            "Complex ecommerce schema should be orderable: {:?}",
+            result
+        );
+
+        // Verify the result produces valid SQL
+        let ordered = result.unwrap();
+        let mut test_schema = VirtualSchema::new();
+        for change in &ordered.changes {
+            let apply_result = test_schema.apply(&change.table, &change.change);
+            assert!(
+                apply_result.is_ok(),
+                "Ordered change should apply: {:?} - error: {:?}",
+                change,
+                apply_result
+            );
+        }
     }
 
     #[test]
