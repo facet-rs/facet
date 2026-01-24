@@ -94,14 +94,6 @@ enum StackFrame<'input> {
     },
     /// A value that needs to be emitted.
     Value(&'input ConfigValue),
-    /// End marker for a container.
-    End(EndMarker),
-}
-
-#[derive(Debug, Clone, Copy)]
-enum EndMarker {
-    Struct,
-    Sequence,
 }
 
 impl<'input> ConfigValueParser<'input> {
@@ -192,12 +184,6 @@ impl<'input> FormatParser<'input> for ConfigValueParser<'input> {
                         return Ok(Some(ParseEvent::SequenceEnd));
                     }
                 }
-                StackFrame::End(marker) => {
-                    return Ok(Some(match marker {
-                        EndMarker::Struct => ParseEvent::StructEnd,
-                        EndMarker::Sequence => ParseEvent::SequenceEnd,
-                    }));
-                }
             }
         }
     }
@@ -264,9 +250,6 @@ impl<'input> ConfigValueParser<'input> {
             ConfigValue::Array(sourced) => {
                 self.update_span(sourced);
 
-                // Push end marker first (will be popped last)
-                self.stack.push(StackFrame::End(EndMarker::Sequence));
-
                 // Push array processing
                 self.stack.push(StackFrame::Array {
                     items: &sourced.value,
@@ -281,9 +264,6 @@ impl<'input> ConfigValueParser<'input> {
                 // Collect entries as borrowed slices
                 let entries: Vec<(&str, &ConfigValue)> =
                     sourced.value.iter().map(|(k, v)| (k.as_str(), v)).collect();
-
-                // Push end marker first (will be popped last)
-                self.stack.push(StackFrame::End(EndMarker::Struct));
 
                 // Push object processing
                 self.stack.push(StackFrame::Object { entries, index: 0 });
