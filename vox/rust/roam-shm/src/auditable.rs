@@ -319,6 +319,11 @@ impl<T> AuditableDeque<T> {
     pub fn len(&self) -> usize {
         self.inner.len()
     }
+
+    /// Get the capacity.
+    pub fn capacity(&self) -> usize {
+        self.state.capacity
+    }
 }
 
 // ============================================================================

@@ -2661,14 +2661,58 @@ impl MultiPeerHostDriver {
         peer_id: PeerId,
         msg: &Message,
     ) -> Result<(), ShmConnectionError> {
+        // Enforce queue limits to prevent infinite buffering and memory exhaustion.
+        // If the queue is full, we drop the message and perform a clean abort if possible.
+        // This corresponds to "Clean Abort" strategy for slot exhaustion.
+        let check_queue_and_push = |driver: &mut MultiPeerHostDriver,
+                                    msg: &Message|
+         -> Result<(), ShmConnectionError> {
+            let pending = driver.pending_sends.entry(peer_id);
+            if pending.len() >= pending.capacity() {
+                match msg {
+                    Message::Data {
+                        conn_id,
+                        channel_id,
+                        ..
+                    } => {
+                        warn!(
+                            "Backpressure queue full ({}) for peer {:?}, checking aborting stream {}/{}",
+                            pending.len(),
+                            peer_id,
+                            conn_id,
+                            channel_id
+                        );
+                        // Send Reset to cleanly abort the stream on the peer side
+                        pending.push_back(Message::Reset {
+                            conn_id: *conn_id,
+                            channel_id: *channel_id,
+                        });
+                        return Ok(());
+                    }
+                    _ => {
+                        warn!(
+                            "Backpressure queue full ({}) for peer {:?}, dropping message {:?}",
+                            pending.len(),
+                            peer_id,
+                            msg_type_name(msg)
+                        );
+                        // For other messages, we just drop them to avoid growing the queue forever.
+                        // Ideally we'd notify the caller, but send_to_peer is often fire-and-forget.
+                        return Ok(());
+                    }
+                }
+            }
+            pending.push_back(msg.clone());
+            Ok(())
+        };
+
         // If there are pending messages, queue this one too to preserve ordering
         if self.pending_sends.has_pending(&peer_id) {
             trace!(
                 "send_to_peer: peer {:?} has pending messages, queuing to preserve order",
                 peer_id
             );
-            self.pending_sends.entry(peer_id).push_back(msg.clone());
-            return Ok(());
+            return check_queue_and_push(self, msg);
         }
 
         match self.try_send_to_peer(peer_id, msg).await {
@@ -2679,8 +2723,7 @@ impl MultiPeerHostDriver {
                     "send_to_peer: backpressure for peer {:?}, queuing message",
                     peer_id
                 );
-                self.pending_sends.entry(peer_id).push_back(msg.clone());
-                Ok(())
+                check_queue_and_push(self, msg)
             }
             Err(e) => Err(e),
         }
