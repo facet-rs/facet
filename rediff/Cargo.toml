@@ -12,6 +12,11 @@ keywords = ["diff", "compare", "testing", "facet", "assertion"]
 categories = ["development-tools::testing", "rust-patterns"]
 homepage = "https://github.com/bearcove/rediff"
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [features]
 default = []
 tracing = ["dep:tracing"]
