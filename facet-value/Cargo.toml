@@ -29,9 +29,6 @@ indexmap = { version = "2", optional = true }
 bolero = { workspace = true }
 divan = { workspace = true }
 facet = { path = "../facet", features = ["all-impls", "doc"] }
-facet-assert = { path = "../facet-assert" }
-facet-diff = { path = "../facet-diff" }
-facet-pretty = { path = "../facet-pretty" }
 facet-reflect = { path = "../facet-reflect" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 indexmap = { workspace = true }

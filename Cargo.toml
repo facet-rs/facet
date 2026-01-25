@@ -37,9 +37,6 @@ members = [
   "facet-urlencoded",
 
   # utilities
-  "facet-diff-core",
-  "facet-diff",
-  "facet-assert",
   "facet-value",
   "facet-path",
   "facet-validate",
@@ -86,7 +83,6 @@ facet-pretty = { path = "facet-pretty" }
 arborium = { version = "^2.4.5", default-features = false, features = ["lang-json"] }
 autocfg = "^1.5.0"
 bolero = "^0.13.4"
-boxen = "^0.1.3"
 bytes = { version = "^1.11.0", default-features = false }
 bytestring = { version = "^1.4.0", default-features = false }
 camino = "^1.2.1"
@@ -96,7 +92,6 @@ divan = "^0.1.21"
 eyre = "^0.6.12"
 http = "^1.4.0"
 indexmap = { version = "^2.12.1", default-features = false }
-indextree = "^4.7.4"
 indoc = "^2.0.7"
 insta = "^1.44.3"
 jiff = "^0.2.16"
