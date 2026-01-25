@@ -15,7 +15,7 @@ struct Config {
 }
 ```
 
-That single derive works with `facet-json`, `facet-yaml`, `facet-args`, `facet-pretty`, `facet-diff`, `facet-assert`, and any future tools built on facet.
+That single derive works with `facet-json`, `facet-yaml`, `figue`, `facet-pretty`, `facet-diff`, `facet-assert`, and any future tools built on facet.
 
 ## Data, not code
 
@@ -94,7 +94,7 @@ struct Args {
 }
 ```
 
-That type works with `facet-json` for config files, `facet-args` for CLI parsing, and `facet-pretty` for debug output (with `token` redacted). Same derive, same attributes, many uses.
+That type works with `facet-json` for config files, `figue` for CLI parsing, and `facet-pretty` for debug output (with `token` redacted). Same derive, same attributes, many uses.
 
 ## Extension attributes without proc-macros
 
@@ -126,7 +126,7 @@ facet's goal is not speed. It's expressiveness, diagnostics, and flexibility. If
 
 - The **attribute grammar system** allows extension crates to define custom attributes without proc-macros
 - Format crates cover JSON, YAML, TOML, MessagePack, CSV, XDR, and more
-- facet-args handles CLI parsing, facet-pretty handles debug output, facet-diff handles structural comparison
+- figue handles CLI parsing, facet-pretty handles debug output, facet-diff handles structural comparison
 
 ## Next steps
 

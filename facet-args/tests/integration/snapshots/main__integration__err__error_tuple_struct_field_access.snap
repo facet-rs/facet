@@ -1,7 +1,0 @@
----
-source: facet-args/tests/err.rs
-expression: err.to_string()
----
-error: unknown flag `--point.0`
-
-did you mean `--point`?

@@ -1,78 +1,72 @@
 [workspace]
 members = [
-    # core
-    "facet-core",
-    "facet",
+  # core
+  "facet-core",
+  "facet",
 
-    # derive macro
-    "facet-macros-impl",
-    "facet-macros",
+  # derive macro
+  "facet-macros-impl",
+  "facet-macros",
 
-    # macro ecosystem (plugin support)
-    "facet-macro-types",
-    "facet-macro-parse",
-    # "facet-macro-template",  # TODO: re-enable when plugin system is ready
+  # macro ecosystem (plugin support)
+  "facet-macro-types",
+  "facet-macro-parse",
+  # "facet-macro-template",  # TODO: re-enable when plugin system is ready
 
-    # error derive plugin
-    "facet-error",
+  # error derive plugin
+  "facet-error",
 
-    # default derive plugin
-    "facet-default",
+  # default derive plugin
+  "facet-default",
 
-    # reflection
-    "facet-reflect",
+  # reflection
+  "facet-reflect",
 
-    # constraint solver
-    "facet-solver",
+  # constraint solver
+  "facet-solver",
 
-    # test helpers
-    "facet-testhelpers",
-    "facet-testhelpers-macros",
+  # test helpers
+  "facet-testhelpers",
+  "facet-testhelpers-macros",
+  "facet-testattrs",
 
-    # pretty printing
-    "facet-pretty",
+  # pretty printing
+  "facet-pretty",
 
-    # misc.
-    "facet-args",
-    "facet-urlencoded",
+  # misc.
+  "facet-urlencoded",
 
-    # utilities
-    "facet-diff-core",
-    "facet-diff",
-    "facet-assert",
-    "facet-value",
-    "facet-path",
-    "facet-validate",
+  # utilities
+  "facet-value",
+  "facet-path",
+  "facet-validate",
 
-    # showcase infrastructure
-    "facet-showcase",
+  # showcase infrastructure
+  "facet-showcase",
 
-    # dev tooling (xtask stays in main workspace)
-    "xtask",
+  "facet-shapelike",
 
-    "facet-shapelike",
-
-    # format crates
-    "facet-dessert",
-    "facet-format",
-    "facet-json",
-    "facet-postcard",
-    "facet-msgpack",
-    "facet-toml",
-    "facet-yaml",
-    "facet-format-suite",
-    "facet-asn1",
-    "facet-csv",
-    "facet-xdr",
-    "facet-json-schema",
-    "facet-typescript",
-    "facet-python",
+  # format crates
+  "facet-dessert",
+  "facet-format",
+  "facet-json",
+  "facet-postcard",
+  "facet-msgpack",
+  "facet-toml",
+  "facet-yaml",
+  "facet-format-suite",
+  "facet-asn1",
+  "facet-csv",
+  "facet-xdr",
+  "facet-json-schema",
+  "facet-typescript",
+  "facet-python",
 ]
 exclude = [
-    # proto-attr experiment uses nightly features
-    "proto-attr",
-    # tools/ has its own workspace
-    "tools",
+  # proto-attr experiment uses nightly features
+  "proto-attr",
+  # tools/ has its own workspace
+  "tools",
 ]
 resolver = "3"
 
@@ -89,7 +83,6 @@ facet-pretty = { path = "facet-pretty" }
 arborium = { version = "^2.4.5", default-features = false, features = ["lang-json"] }
 autocfg = "^1.5.0"
 bolero = "^0.13.4"
-boxen = "^0.1.3"
 bytes = { version = "^1.11.0", default-features = false }
 bytestring = { version = "^1.4.0", default-features = false }
 camino = "^1.2.1"
@@ -99,7 +92,6 @@ divan = "^0.1.21"
 eyre = "^0.6.12"
 http = "^1.4.0"
 indexmap = { version = "^2.12.1", default-features = false }
-indextree = "^4.7.4"
 indoc = "^2.0.7"
 insta = "^1.44.3"
 jiff = "^0.2.16"

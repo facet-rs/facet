@@ -155,6 +155,10 @@ pub struct FormattedShape {
     pub spans: BTreeMap<Path, FieldSpan>,
     /// Span of the type name (e.g., "Server" in "struct Server {")
     pub type_name_span: Option<Span>,
+    /// Span covering the whole type definition
+    pub type_span: Option<Span>,
+    /// Span of the end token for the type definition (e.g., "}" or ";")
+    pub type_end_span: Option<Span>,
 }
 
 /// Strip ANSI escape codes from a string
@@ -214,6 +218,8 @@ pub fn format_shape_with_spans_and_config(
         text: ctx.output,
         spans: ctx.spans,
         type_name_span: ctx.type_name_span,
+        type_span: ctx.type_span,
+        type_end_span: ctx.type_end_span,
     }
 }
 
@@ -733,6 +739,10 @@ struct SpanTrackingContext<'a> {
     spans: BTreeMap<Path, FieldSpan>,
     /// Span of the type name (struct/enum identifier)
     type_name_span: Option<Span>,
+    /// Span covering the whole type definition
+    type_span: Option<Span>,
+    /// Span of the end token for the type definition (e.g., "}" or ";")
+    type_end_span: Option<Span>,
     /// Current path prefix (for nested types)
     current_type: Option<&'static str>,
     /// Configuration for what to include
@@ -745,6 +755,8 @@ impl<'a> SpanTrackingContext<'a> {
             output: String::new(),
             spans: BTreeMap::new(),
             type_name_span: None,
+            type_span: None,
+            type_end_span: None,
             current_type: None,
             config,
         }
@@ -895,7 +907,10 @@ fn format_struct_with_spans(
                 );
                 writeln!(ctx.output, ",")?;
             }
+            let type_end_start = ctx.len();
             write!(ctx.output, "}}")?;
+            let type_end_end = ctx.len();
+            ctx.type_end_span = Some((type_end_start, type_end_end));
         }
         StructKind::Tuple | StructKind::TupleStruct => {
             write!(ctx.output, "struct ")?;
@@ -925,7 +940,10 @@ fn format_struct_with_spans(
                     (type_start, type_end),
                 );
             }
+            let type_end_start = ctx.len();
             write!(ctx.output, ");")?;
+            let type_end_end = ctx.len();
+            ctx.type_end_span = Some((type_end_start, type_end_end));
         }
         StructKind::Unit => {
             write!(ctx.output, "struct ")?;
@@ -933,12 +951,16 @@ fn format_struct_with_spans(
             write!(ctx.output, "{}", shape.type_identifier)?;
             let type_name_end = ctx.len();
             ctx.type_name_span = Some((type_name_start, type_name_end));
+            let type_end_start = ctx.len();
             write!(ctx.output, ";")?;
+            let type_end_end = ctx.len();
+            ctx.type_end_span = Some((type_end_start, type_end_end));
         }
     }
 
     // Record span for the root (empty path) covering the whole type
     let type_end = ctx.len();
+    ctx.type_span = Some((type_start, type_end));
     ctx.record_field_span(vec![], (type_start, type_end), (type_start, type_end));
 
     Ok(())
@@ -1102,10 +1124,14 @@ fn format_enum_with_spans(
         }
     }
 
+    let type_end_start = ctx.len();
     write!(ctx.output, "}}")?;
+    let type_end_end = ctx.len();
+    ctx.type_end_span = Some((type_end_start, type_end_end));
 
     // Record span for the root (empty path) covering the whole type
     let type_end = ctx.len();
+    ctx.type_span = Some((type_start, type_end));
     ctx.record_field_span(vec![], (type_start, type_end), (type_start, type_end));
 
     Ok(())

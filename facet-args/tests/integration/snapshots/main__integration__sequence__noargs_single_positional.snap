@@ -1,7 +1,0 @@
----
-source: facet-args/tests/sequence.rs
-expression: err.to_string()
----
-error: missing required argument `<strings>`
-
-provide a value for `<strings>`

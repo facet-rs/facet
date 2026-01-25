@@ -6,7 +6,6 @@ use std::any::Any;
 use std::panic::{self, AssertUnwindSafe};
 
 use facet::Facet;
-use facet_assert::assert_same;
 use facet_pretty::{FacetPretty, PrettyPrinter};
 use indoc::formatdoc;
 
@@ -872,23 +871,12 @@ pub fn all_cases<S: FormatSuite + 'static>() -> Vec<SuiteCase> {
     ]
 }
 
-/// How to compare the deserialized value against the expected value.
-#[derive(Debug, Clone, Copy, Default)]
-pub enum CompareMode {
-    /// Use `assert_same!` (reflection-based comparison) - default for most types.
-    #[default]
-    Reflection,
-    /// Use `assert_eq!` (PartialEq comparison) - required for types containing opaque fields.
-    PartialEq,
-}
-
 /// Specification returned by each trait method.
 #[derive(Debug, Clone)]
 pub struct CaseSpec {
     payload: CasePayload,
     note: Option<&'static str>,
     roundtrip: RoundtripSpec,
-    compare_mode: CompareMode,
 }
 
 impl CaseSpec {
@@ -898,7 +886,6 @@ impl CaseSpec {
             payload: CasePayload::Input(input),
             note: None,
             roundtrip: RoundtripSpec::Enabled,
-            compare_mode: CompareMode::Reflection,
         }
     }
 
@@ -914,7 +901,6 @@ impl CaseSpec {
             payload: CasePayload::Skip { reason },
             note: None,
             roundtrip: RoundtripSpec::Enabled,
-            compare_mode: CompareMode::Reflection,
         }
     }
 
@@ -932,8 +918,9 @@ impl CaseSpec {
 
     /// Use PartialEq comparison instead of reflection-based comparison.
     /// Required for types containing opaque fields that can't be compared via reflection.
-    pub const fn with_partial_eq(mut self) -> Self {
-        self.compare_mode = CompareMode::PartialEq;
+    #[allow(clippy::unused_self)]
+    pub const fn with_partial_eq(self) -> Self {
+        // Now always uses PartialEq, this method is kept for API compatibility
         self
     }
 
@@ -948,7 +935,6 @@ impl CaseSpec {
             roundtrip: RoundtripSpec::Disabled {
                 reason: "error case",
             },
-            compare_mode: CompareMode::Reflection,
         }
     }
 
@@ -961,7 +947,6 @@ impl CaseSpec {
             payload: CasePayload::DynamicInput(input),
             note: None,
             roundtrip: RoundtripSpec::Enabled,
-            compare_mode: CompareMode::Reflection,
         }
     }
 }
@@ -1095,7 +1080,6 @@ where
     T: Debug + PartialEq,
 {
     let note = spec.note;
-    let compare_mode = spec.compare_mode;
     let roundtrip_disabled_reason = match spec.roundtrip {
         RoundtripSpec::Enabled => None,
         RoundtripSpec::Disabled { reason } => Some(reason),
@@ -1123,23 +1107,12 @@ where
 
             tracing::info!("=================== Comparing deserialized value");
             // Compare deserialized value against expected
-            let first_assert = panic::catch_unwind(AssertUnwindSafe(|| match compare_mode {
-                CompareMode::Reflection => {
-                    assert_same!(
-                        actual,
-                        expected,
-                        "facet-format-suite {} ({}) produced unexpected value",
-                        desc.id,
-                        desc.description
-                    );
-                }
-                CompareMode::PartialEq => {
-                    assert_eq!(
-                        actual, expected,
-                        "facet-format-suite {} ({}) produced unexpected value",
-                        desc.id, desc.description
-                    );
-                }
+            let first_assert = panic::catch_unwind(AssertUnwindSafe(|| {
+                assert_eq!(
+                    actual, expected,
+                    "facet-format-suite {} ({}) produced unexpected value",
+                    desc.id, desc.description
+                );
             }));
             if let Err(payload) = first_assert {
                 return CaseOutcome::Failed(format_panic(payload));
@@ -1179,23 +1152,12 @@ where
             };
 
             // Compare round-tripped value against original
-            match panic::catch_unwind(AssertUnwindSafe(|| match compare_mode {
-                CompareMode::Reflection => {
-                    assert_same!(
-                        roundtripped,
-                        actual,
-                        "facet-format-suite {} ({}) round-trip mismatch",
-                        desc.id,
-                        desc.description
-                    );
-                }
-                CompareMode::PartialEq => {
-                    assert_eq!(
-                        roundtripped, actual,
-                        "facet-format-suite {} ({}) round-trip mismatch",
-                        desc.id, desc.description
-                    );
-                }
+            match panic::catch_unwind(AssertUnwindSafe(|| {
+                assert_eq!(
+                    roundtripped, actual,
+                    "facet-format-suite {} ({}) round-trip mismatch",
+                    desc.id, desc.description
+                );
             })) {
                 Ok(_) => CaseOutcome::Passed,
                 Err(payload) => CaseOutcome::Failed(format_panic(payload)),
@@ -1217,23 +1179,12 @@ where
             );
 
             // Compare deserialized value against expected
-            let first_assert = panic::catch_unwind(AssertUnwindSafe(|| match compare_mode {
-                CompareMode::Reflection => {
-                    assert_same!(
-                        actual,
-                        expected,
-                        "facet-format-suite {} ({}) produced unexpected value",
-                        desc.id,
-                        desc.description
-                    );
-                }
-                CompareMode::PartialEq => {
-                    assert_eq!(
-                        actual, expected,
-                        "facet-format-suite {} ({}) produced unexpected value",
-                        desc.id, desc.description
-                    );
-                }
+            let first_assert = panic::catch_unwind(AssertUnwindSafe(|| {
+                assert_eq!(
+                    actual, expected,
+                    "facet-format-suite {} ({}) produced unexpected value",
+                    desc.id, desc.description
+                );
             }));
             if let Err(payload) = first_assert {
                 return CaseOutcome::Failed(format_panic(payload));
@@ -1268,23 +1219,12 @@ where
             };
 
             // Compare round-tripped value against original
-            match panic::catch_unwind(AssertUnwindSafe(|| match compare_mode {
-                CompareMode::Reflection => {
-                    assert_same!(
-                        roundtripped,
-                        actual,
-                        "facet-format-suite {} ({}) round-trip mismatch",
-                        desc.id,
-                        desc.description
-                    );
-                }
-                CompareMode::PartialEq => {
-                    assert_eq!(
-                        roundtripped, actual,
-                        "facet-format-suite {} ({}) round-trip mismatch",
-                        desc.id, desc.description
-                    );
-                }
+            match panic::catch_unwind(AssertUnwindSafe(|| {
+                assert_eq!(
+                    roundtripped, actual,
+                    "facet-format-suite {} ({}) round-trip mismatch",
+                    desc.id, desc.description
+                );
             })) {
                 Ok(_) => CaseOutcome::Passed,
                 Err(payload) => CaseOutcome::Failed(format_panic(payload)),
@@ -1341,7 +1281,6 @@ where
     for<'facet> T: Facet<'facet>,
     T: Debug + PartialEq,
 {
-    let compare_mode = spec.compare_mode;
     match spec.payload {
         CasePayload::Skip { reason } => CaseOutcome::Skipped(reason),
         CasePayload::Input(input) => {
@@ -1359,23 +1298,12 @@ where
             let expected = (desc.expected)();
 
             // Compare deserialized value against expected
-            let first_assert = panic::catch_unwind(AssertUnwindSafe(|| match compare_mode {
-                CompareMode::Reflection => {
-                    assert_same!(
-                        actual,
-                        expected,
-                        "facet-format-suite {} ({}) async produced unexpected value",
-                        desc.id,
-                        desc.description
-                    );
-                }
-                CompareMode::PartialEq => {
-                    assert_eq!(
-                        actual, expected,
-                        "facet-format-suite {} ({}) async produced unexpected value",
-                        desc.id, desc.description
-                    );
-                }
+            let first_assert = panic::catch_unwind(AssertUnwindSafe(|| {
+                assert_eq!(
+                    actual, expected,
+                    "facet-format-suite {} ({}) async produced unexpected value",
+                    desc.id, desc.description
+                );
             }));
             if let Err(payload) = first_assert {
                 return CaseOutcome::Failed(format_panic(payload));
@@ -1399,23 +1327,12 @@ where
             let expected = (desc.expected)();
 
             // Compare deserialized value against expected
-            let first_assert = panic::catch_unwind(AssertUnwindSafe(|| match compare_mode {
-                CompareMode::Reflection => {
-                    assert_same!(
-                        actual,
-                        expected,
-                        "facet-format-suite {} ({}) async produced unexpected value",
-                        desc.id,
-                        desc.description
-                    );
-                }
-                CompareMode::PartialEq => {
-                    assert_eq!(
-                        actual, expected,
-                        "facet-format-suite {} ({}) async produced unexpected value",
-                        desc.id, desc.description
-                    );
-                }
+            let first_assert = panic::catch_unwind(AssertUnwindSafe(|| {
+                assert_eq!(
+                    actual, expected,
+                    "facet-format-suite {} ({}) async produced unexpected value",
+                    desc.id, desc.description
+                );
             }));
             if let Err(payload) = first_assert {
                 return CaseOutcome::Failed(format_panic(payload));

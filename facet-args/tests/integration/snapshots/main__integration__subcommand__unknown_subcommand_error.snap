@@ -1,9 +1,0 @@
----
-source: facet-args/tests/subcommand.rs
-expression: err.to_string()
----
-error: unknown subcommand `unknown`
-
-available subcommands:
-  start  Start the service
-  stop   Stop the service

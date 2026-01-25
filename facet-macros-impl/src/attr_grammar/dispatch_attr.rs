@@ -49,7 +49,7 @@ unsynn! {
         rest_section: RestSection,
     }
 
-    /// @crate_path { ... } - the crate path (e.g., ::facet_args)
+    /// @crate_path { ... } - the crate path (e.g., ::figue)
     struct CratePathSection {
         _at: At,
         _kw: KCratePath,

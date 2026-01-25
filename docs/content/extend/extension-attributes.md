@@ -27,7 +27,7 @@ The namespace (`xml`) comes from how you import the crate:
 
 ```rust,noexec
 use facet_xml as xml;  // Enables xml:: prefix
-use facet_args as args;  // Enables args:: prefix
+use figue as args;  // Enables args:: prefix
 ```
 
 ## Declaring attributes with `define_attr_grammar!`
@@ -228,14 +228,14 @@ for attr in field.attributes {
 
 ## Real-World examples
 
-### facet-args
+### figue
 
-[`facet-args`](https://docs.rs/facet-args) provides CLI argument parsing:
+[`figue`](https://docs.rs/figue) provides CLI argument parsing:
 
 ```rust,noexec
 facet::define_attr_grammar! {
     ns "args";
-    crate_path ::facet_args;
+    crate_path ::figue;
 
     pub enum Attr {
         /// Marks a field as a positional argument
@@ -253,7 +253,7 @@ facet::define_attr_grammar! {
 Usage:
 
 ```rust,noexec
-use facet_args as args;
+use figue as args;
 
 #[derive(Facet)]
 struct Cli {

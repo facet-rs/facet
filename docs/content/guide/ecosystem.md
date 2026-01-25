@@ -136,7 +136,7 @@ facet = { version = "{{ data.versions.facet }}", features = ["doc"] }
 ```
 
 This is useful for:
-- **facet-args**: Including doc comments in CLI help text generation
+- **figue**: Including doc comments in CLI help text generation
 - **facet-pretty**: Showing doc comments in pretty-printed output
 - **Custom tooling**: Building documentation generators or IDE integrations
 
@@ -163,79 +163,11 @@ Without it:
 error: unknown attribute `renam`; expected one of: rename, skip, default, ...
 ```
 
-## facet-args: CLI argument parsing
+## figue: CLI argument parsing
 
-Beyond basic argument parsing, `facet-args` provides utilities for help generation and shell completions.
+[figue](https://github.com/bearcove/figue) (previously facet-args) provides CLI argument parsing, environment variable parsing, and config file support.
 
-### Help generation
-
-Generate formatted help text from your type's structure and doc comments:
-
-```rust,noexec
-use facet::Facet;
-use facet_args::{generate_help, HelpConfig};
-
-/// A file processing tool.
-#[derive(Facet)]
-struct Args {
-    /// Enable verbose output
-    #[facet(args::named, args::short)]
-    verbose: bool,
-
-    /// Input file to process
-    #[facet(args::positional)]
-    input: String,
-}
-
-fn main() {
-    let config = HelpConfig {
-        program_name: Some("mytool".into()),
-        version: Some("1.0.0".into()),
-        ..Default::default()
-    };
-
-    println!("{}", generate_help::<Args>(&config));
-}
-```
-
-### Shell completions
-
-Generate completion scripts for bash, zsh, and fish:
-
-```rust,noexec
-use facet_args::{generate_completions, Shell};
-
-// Generate bash completions
-let bash = generate_completions::<Args>(Shell::Bash, "mytool");
-println!("{}", bash);
-
-// Generate zsh completions
-let zsh = generate_completions::<Args>(Shell::Zsh, "mytool");
-
-// Generate fish completions
-let fish = generate_completions::<Args>(Shell::Fish, "mytool");
-```
-
-Install completions by writing to the appropriate location:
-- **Bash:** `~/.local/share/bash-completion/completions/mytool`
-- **Zsh:** `~/.zsh/completions/_mytool`
-- **Fish:** `~/.config/fish/completions/mytool.fish`
-
-### Parsing from std::env
-
-For quick CLI tools:
-
-```rust,noexec
-use facet_args::from_std_args;
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Args = from_std_args()?;
-    // ...
-    Ok(())
-}
-```
-
-See the [Args showcase](@/showcases/args.md) for comprehensive examples including subcommands, error messages, and more.
+See the [figue documentation](https://docs.rs/figue) for usage examples including help generation, shell completions, subcommands, layered configuration, and more.
 
 ## When a type doesn't implement Facet
 

@@ -24,8 +24,10 @@ bytestring = { workspace = true, optional = true }
 camino = { workspace = true, optional = true }
 chrono = { workspace = true, optional = true, features = ["clock"] }
 compact_str = { workspace = true, optional = true }
-facet = { path = "../facet", version = "0.43.2", features = ["doc", "all-impls"] } # facet-format-suite is meant to be comprehensive
-facet-assert = { path = "../facet-assert", version = "0.43.2" }
+facet = { path = "../facet", version = "0.43.2", features = [
+  "doc",
+  "all-impls",
+] } # facet-format-suite is meant to be comprehensive
 facet-pretty = { path = "../facet-pretty", version = "0.43.2" }
 facet-value = { path = "../facet-value", version = "0.43.2", optional = true }
 indoc = { workspace = true }
@@ -68,7 +70,23 @@ facet-value = ["dep:facet-value"]
 # Standard library net types (SocketAddr, IpAddr, etc.)
 net = ["facet/net"]
 # All third-party types
-third-party = ["uuid", "ulid", "camino", "ordered-float", "time", "jiff02", "chrono", "bytes", "bytestring", "compact_str", "smartstring", "smol_str", "rust_decimal", "iddqd", "facet-value"]
+third-party = [
+  "uuid",
+  "ulid",
+  "camino",
+  "ordered-float",
+  "time",
+  "jiff02",
+  "chrono",
+  "bytes",
+  "bytestring",
+  "compact_str",
+  "smartstring",
+  "smol_str",
+  "rust_decimal",
+  "iddqd",
+  "facet-value",
+]
 
 # Binary format reference implementations
 msgpack = ["dep:rmp-serde", "dep:serde"]

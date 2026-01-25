@@ -2191,7 +2191,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     };
 
     // Generate code to suppress dead_code warnings on structs constructed via reflection.
-    // When structs are constructed via reflection (e.g., facet_args::from_std_args()),
+    // When structs are constructed via reflection (e.g., figue::from_std_args()),
     // the compiler doesn't see them being used and warns about dead code.
     // This function ensures the struct type is "used" from the compiler's perspective.
     // See: https://github.com/facet-rs/facet/issues/996

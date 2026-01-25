@@ -1,8 +1,0 @@
----
-source: facet-args/tests/subcommand.rs
-expression: err.to_string()
----
-error: expected a subcommand
-
-available subcommands:
-  generate  Generate CI workflow files from Rust code

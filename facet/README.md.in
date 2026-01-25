@@ -48,7 +48,7 @@ In terms of data formats, we have:
 Still adjacent to serialization/deserialization, we have:
 
 - [facet-urlencoded](https://github.com/facet-rs/facet/tree/main/facet-urlencoded): URL-encoded form data deserialization
-- [facet-args](https://github.com/facet-rs/facet/tree/main/facet-args): CLI arguments (a-la clap)
+- [figue](https://github.com/bearcove/figue): CLI arguments, config files, and environment variables (external crate)
 
 As far as utilities go:
 

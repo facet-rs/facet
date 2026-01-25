@@ -11,8 +11,8 @@
         },
         "check": {
           "command": "clippy",
-          "workspace": false,
-          "allTargets": false,
+          "workspace": true,
+          "allTargets": true,
         },
         "diagnostics": {
           "experimental": {

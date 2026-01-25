@@ -1,7 +1,0 @@
----
-source: facet-args/tests/sequence.rs
-expression: err.to_string()
----
-error: unknown flag `--baz`
-
-did you mean `--bar`?

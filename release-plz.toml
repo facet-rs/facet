@@ -82,11 +82,6 @@ changelog_path = "CHANGELOG.md"
 
 # CLI & Web
 [[package]]
-name = "facet-args"
-version_group = "facet"
-changelog_path = "CHANGELOG.md"
-
-[[package]]
 name = "facet-urlencoded"
 version_group = "facet"
 changelog_path = "CHANGELOG.md"
