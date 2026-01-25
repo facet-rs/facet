@@ -11,7 +11,7 @@ use facet_reflect::{Partial, ReflectError};
 use crate::{
     config_format::{ConfigFormat, ConfigFormatError, FormatRegistry},
     config_value::ConfigValue,
-    env::{self, EnvConfig, EnvSource, StdEnv, parse_env_with_source},
+    env::{EnvConfig, EnvSource, StdEnv, parse_env_with_source},
     merge::merge_layers,
     provenance::{ConfigResult, FilePathStatus, FileResolution, Override, Provenance},
     schema::{Schema, SchemaError},
@@ -58,7 +58,7 @@ pub struct ConfigBuilder<T> {
     env_source: Box<dyn EnvSource>,
 }
 
-impl<E: EnvSource> ConfigBuilder<E> {
+impl<T> ConfigBuilder<T> {
     /// Use a custom environment source (for testing).
     pub fn with_env_source(mut self, source: impl EnvSource + 'static) -> Self {
         self.env_source = Box::new(source);
@@ -320,149 +320,8 @@ impl<E: EnvSource> ConfigBuilder<E> {
     }
 }
 
-/// Collect provenance from all values in a ConfigValue tree.
-/// Parse a CLI value string and infer its type.
-fn parse_cli_value(s: &str, arg_name: &str) -> ConfigValue {
-    use crate::config_value::Sourced;
-
-    let prov = Some(Provenance::cli(arg_name, s));
-
-    // Try to parse as different types
-    // 1. Boolean
-    if s == "true" {
-        return ConfigValue::Bool(Sourced {
-            value: true,
-            span: None,
-            provenance: prov,
-        });
-    }
-    if s == "false" {
-        return ConfigValue::Bool(Sourced {
-            value: false,
-            span: None,
-            provenance: prov,
-        });
-    }
-
-    // 2. Integer
-    if let Ok(i) = s.parse::<i64>() {
-        return ConfigValue::Integer(Sourced {
-            value: i,
-            span: None,
-            provenance: prov,
-        });
-    }
-
-    // 3. Float
-    if let Ok(f) = s.parse::<f64>() {
-        return ConfigValue::Float(Sourced {
-            value: f,
-            span: None,
-            provenance: prov,
-        });
-    }
-
-    // 4. Default to string
-    ConfigValue::String(Sourced {
-        value: s.to_string(),
-        span: None,
-        provenance: prov,
-    })
-}
-
-/// Insert a value into a nested map structure using a dotted path.
-fn insert_nested_value(
-    root: &mut indexmap::IndexMap<String, ConfigValue, std::hash::RandomState>,
-    parts: &[&str],
-    value: ConfigValue,
-) {
-    use crate::config_value::Sourced;
-    use alloc::string::ToString;
-    use indexmap::IndexMap;
-
-    if parts.is_empty() {
-        return;
-    }
-
-    if parts.len() == 1 {
-        // Base case: insert the value
-        root.insert(parts[0].to_string(), value);
-    } else {
-        // Recursive case: ensure intermediate object exists
-        let key = parts[0].to_string();
-        let entry = root
-            .entry(key)
-            .or_insert_with(|| ConfigValue::Object(Sourced::new(IndexMap::default())));
-
-        // If it's already an object, recurse into it
-        if let ConfigValue::Object(obj) = entry {
-            insert_nested_value(&mut obj.value, &parts[1..], value);
-        }
-        // If it's not an object, we have a conflict - replace it with an object
-        else {
-            let mut new_map = IndexMap::default();
-            insert_nested_value(&mut new_map, &parts[1..], value);
-            *entry = ConfigValue::Object(Sourced::new(new_map));
-        }
-    }
-}
-
-fn collect_provenance(
-    value: &ConfigValue,
-    path: &str,
-) -> indexmap::IndexMap<String, Provenance, std::hash::RandomState> {
-    let mut map = indexmap::IndexMap::default();
-    collect_provenance_inner(value, path, &mut map);
-    map
-}
-
-fn collect_provenance_inner(
-    value: &ConfigValue,
-    path: &str,
-    map: &mut indexmap::IndexMap<String, Provenance, std::hash::RandomState>,
-) {
-    let prov = match value {
-        ConfigValue::Null(s) => s.provenance.as_ref(),
-        ConfigValue::Bool(s) => s.provenance.as_ref(),
-        ConfigValue::Integer(s) => s.provenance.as_ref(),
-        ConfigValue::Float(s) => s.provenance.as_ref(),
-        ConfigValue::String(s) => s.provenance.as_ref(),
-        ConfigValue::Array(s) => s.provenance.as_ref(),
-        ConfigValue::Object(s) => s.provenance.as_ref(),
-        ConfigValue::Missing(_) => None, // Missing values have no provenance
-    };
-
-    if let Some(prov) = prov
-        && !path.is_empty()
-    {
-        map.insert(path.to_string(), prov.clone());
-    }
-
-    // Recurse into children
-    match value {
-        ConfigValue::Array(arr) => {
-            for (i, item) in arr.value.iter().enumerate() {
-                let item_path = if path.is_empty() {
-                    format!("{i}")
-                } else {
-                    format!("{path}[{i}]")
-                };
-                collect_provenance_inner(item, &item_path, map);
-            }
-        }
-        ConfigValue::Object(obj) => {
-            for (key, val) in &obj.value {
-                let key_path = if path.is_empty() {
-                    key.clone()
-                } else {
-                    format!("{path}.{key}")
-                };
-                collect_provenance_inner(val, &key_path, map);
-            }
-        }
-        _ => {}
-    }
-}
+use crate::config_value::{insert_nested_value, parse_cli_value};
+use crate::provenance::collect_provenance;
 
 // ============================================================================
 // CLI Configuration

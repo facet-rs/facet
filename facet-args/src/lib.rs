@@ -201,7 +201,7 @@ pub fn from_slice_layered<T: Facet<'static>>(
         .collect();
 
     // Build layered config from all sources (CLI args parsed into ConfigValue)
-    let mut builder = builder::<T>()
+    let mut builder = builder::<T>()?
         .cli(|cli| cli.args(filtered_args))
         .env(|env| env.prefix(env_prefix))
         .with_env_source(StdEnv);

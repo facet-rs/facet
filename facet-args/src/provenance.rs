@@ -39,6 +39,8 @@ use camino::Utf8PathBuf;
 use facet::Facet;
 use indexmap::IndexMap;
 
+use crate::config_value::ConfigValue;
+
 /// Type alias for IndexMap with default hasher.
 type ProvenanceMap = IndexMap<String, Provenance, std::hash::RandomState>;
 
@@ -428,6 +430,64 @@ impl ProvenanceTracker {
     pub fn into_result<T>(self, value: T) -> ConfigResult<T> {
         let (provenance, overrides) = self.finish();
         ConfigResult::with_provenance(value, provenance, overrides)
+    }
+}
+
+/// Collect provenance from all values in a ConfigValue tree.
+pub(crate) fn collect_provenance(
+    value: &ConfigValue,
+    path: &str,
+) -> indexmap::IndexMap<String, Provenance, std::hash::RandomState> {
+    let mut map = indexmap::IndexMap::default();
+    collect_provenance_inner(value, path, &mut map);
+    map
+}
+
+fn collect_provenance_inner(
+    value: &ConfigValue,
+    path: &str,
+    map: &mut indexmap::IndexMap<String, Provenance, std::hash::RandomState>,
+) {
+    let prov = match value {
+        ConfigValue::Null(s) => s.provenance.as_ref(),
+        ConfigValue::Bool(s) => s.provenance.as_ref(),
+        ConfigValue::Integer(s) => s.provenance.as_ref(),
+        ConfigValue::Float(s) => s.provenance.as_ref(),
+        ConfigValue::String(s) => s.provenance.as_ref(),
+        ConfigValue::Array(s) => s.provenance.as_ref(),
+        ConfigValue::Object(s) => s.provenance.as_ref(),
+        ConfigValue::Missing(_) => None, // Missing values have no provenance
+    };
+
+    if let Some(prov) = prov
+        && !path.is_empty()
+    {
+        map.insert(path.to_string(), prov.clone());
+    }
+
+    // Recurse into children
+    match value {
+        ConfigValue::Array(arr) => {
+            for (i, item) in arr.value.iter().enumerate() {
+                let item_path = if path.is_empty() {
+                    format!("{i}")
+                } else {
+                    format!("{path}[{i}]")
+                };
+                collect_provenance_inner(item, &item_path, map);
+            }
+        }
+        ConfigValue::Object(obj) => {
+            for (key, val) in &obj.value {
+                let key_path = if path.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{path}.{key}")
+                };
+                collect_provenance_inner(val, &key_path, map);
+            }
+        }
+        _ => {}
     }
 }
 

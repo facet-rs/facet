@@ -91,6 +91,89 @@ pub enum ConfigValue {
     Missing(MissingFieldInfo),
 }
 
+/// Parse a CLI value string and infer its type.
+pub(crate) fn parse_cli_value(s: &str, arg_name: &str) -> ConfigValue {
+    let prov = Some(Provenance::cli(arg_name, s));
+
+    // Try to parse as different types
+    // 1. Boolean
+    if s == "true" {
+        return ConfigValue::Bool(Sourced {
+            value: true,
+            span: None,
+            provenance: prov,
+        });
+    }
+    if s == "false" {
+        return ConfigValue::Bool(Sourced {
+            value: false,
+            span: None,
+            provenance: prov,
+        });
+    }
+
+    // 2. Integer
+    if let Ok(i) = s.parse::<i64>() {
+        return ConfigValue::Integer(Sourced {
+            value: i,
+            span: None,
+            provenance: prov,
+        });
+    }
+
+    // 3. Float
+    if let Ok(f) = s.parse::<f64>() {
+        return ConfigValue::Float(Sourced {
+            value: f,
+            span: None,
+            provenance: prov,
+        });
+    }
+
+    // 4. Default to string
+    ConfigValue::String(Sourced {
+        value: s.to_string(),
+        span: None,
+        provenance: prov,
+    })
+}
+
+/// Insert a value into a nested map structure using a dotted path.
+pub(crate) fn insert_nested_value(
+    root: &mut indexmap::IndexMap<String, ConfigValue, std::hash::RandomState>,
+    parts: &[&str],
+    value: ConfigValue,
+) {
+    use alloc::string::ToString;
+    use indexmap::IndexMap;
+
+    if parts.is_empty() {
+        return;
+    }
+
+    if parts.len() == 1 {
+        // Base case: insert the value
+        root.insert(parts[0].to_string(), value);
+    } else {
+        // Recursive case: ensure intermediate object exists
+        let key = parts[0].to_string();
+        let entry = root
+            .entry(key)
+            .or_insert_with(|| ConfigValue::Object(Sourced::new(IndexMap::default())));
+
+        // If it's already an object, recurse into it
+        if let ConfigValue::Object(obj) = entry {
+            insert_nested_value(&mut obj.value, &parts[1..], value);
+        }
+        // If it's not an object, we have a conflict - replace it with an object
+        else {
+            let mut new_map = IndexMap::default();
+            insert_nested_value(&mut new_map, &parts[1..], value);
+            *entry = ConfigValue::Object(Sourced::new(new_map));
+        }
+    }
+}
+
 impl ConfigValue {
     /// Recursively set file provenance on this value and all nested values.
     ///
