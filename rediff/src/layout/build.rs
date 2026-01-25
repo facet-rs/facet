@@ -89,13 +89,13 @@ fn should_skip_falsy(peek: Peek<'_, '_>) -> bool {
         // Empty lists are falsy
         Def::List(_) => {
             if let Ok(list) = peek.into_list() {
-                return list.len() == 0;
+                return list.is_empty();
             }
         }
         // Empty maps are falsy
         Def::Map(_) => {
             if let Ok(map) = peek.into_map() {
-                return map.len() == 0;
+                return map.is_empty();
             }
         }
         _ => {}
