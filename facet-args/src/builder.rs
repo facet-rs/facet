@@ -12,8 +12,7 @@ use crate::{
     config_format::{ConfigFormat, ConfigFormatError, FormatRegistry},
     config_value::ConfigValue,
     env::{EnvConfig, EnvSource, StdEnv, parse_env_with_source},
-    merge::merge_layers,
-    provenance::{ConfigResult, FilePathStatus, FileResolution, Override, Provenance},
+    provenance::{ConfigResult, FilePathStatus, FileResolution, Provenance},
     schema::{Schema, SchemaError},
 };
 
@@ -97,8 +96,7 @@ impl<T> ConfigBuilder<T> {
     /// This parses all configured layers and merges them in priority order:
     /// defaults < file < env < cli
     pub fn build_value(self) -> Result<ConfigValue, BuilderError> {
-        let result = self.build_traced()?;
-        Ok(result.value)
+        panic!("build_value is being moved to the driver API")
     }
 
     /// Build the layered configuration with full provenance tracking.
@@ -106,45 +104,7 @@ impl<T> ConfigBuilder<T> {
     /// Returns a [`ConfigResult`] containing the merged value, provenance map,
     /// and override records.
     pub fn build_traced(self) -> Result<ConfigResult<ConfigValue>, BuilderError> {
-        let mut layers: Vec<ConfigValue> = Vec::new();
-        let mut all_overrides: Vec<Override> = Vec::new();
-        let mut file_resolution = FileResolution::new();
-
-        // Layer 1: Config file (lowest priority after defaults)
-        if let Some(ref file_config) = self.file_config {
-            let (value_opt, resolution) = Self::load_config_file(file_config)?;
-            file_resolution = resolution;
-            if let Some(value) = value_opt {
-                layers.push(value);
-            }
-        }
-
-        // Layer 2: Environment variables
-        if let Some(ref env_config) = self.env_config {
-            let env_result = parse_env_with_source(env_config, self.env_source.as_ref());
-            layers.push(env_result.value);
-        }
-
-        // Layer 3: CLI overrides (highest priority)
-        if let Some(ref cli_config) = self.cli_config
-            && let Some(value) = Self::parse_cli_overrides(cli_config)?
-        {
-            layers.push(value);
-        }
-
-        // Merge all layers
-        let merge_result = merge_layers(layers);
-        all_overrides.extend(merge_result.overrides);
-
-        // Build provenance map by walking the merged tree
-        let provenance = collect_provenance(&merge_result.value, "");
-
-        Ok(ConfigResult::with_full_tracking(
-            merge_result.value,
-            provenance,
-            all_overrides,
-            file_resolution,
-        ))
+        panic!("build_traced is being moved to the driver API")
     }
 
     /// Load and parse the config file if specified.
@@ -224,6 +184,7 @@ impl<T> ConfigBuilder<T> {
     /// - Short flags: `-v` (bool true), `-n value`
     /// - Dotted paths: `--config.server.port 8080`
     /// - Boolean flags: `--flag` sets to true
+    #[deprecated(note = "this has nothing to do in builder and it's a duplicate parser")]
     fn parse_cli_overrides(cli_config: &CliConfig) -> Result<Option<ConfigValue>, BuilderError> {
         use crate::config_value::Sourced;
         use heck::ToSnakeCase;
@@ -321,7 +282,6 @@ impl<T> ConfigBuilder<T> {
 }
 
 use crate::config_value::{insert_nested_value, parse_cli_value};
-use crate::provenance::collect_provenance;
 
 // ============================================================================
 // CLI Configuration
@@ -389,7 +349,7 @@ impl CliConfigBuilder {
 
 /// Builder for environment variable configuration.
 #[derive(Debug, Default)]
-struct EnvConfigBuilder {
+pub struct EnvConfigBuilder {
     prefix: String,
     strict: bool,
 }
@@ -615,42 +575,6 @@ mod tests {
         } else {
             panic!("expected object");
         }
-    }
-
-    #[test]
-    fn test_builder_file_and_env_merge() {
-        use crate::env::MockEnv;
-
-        // Create a temp config file
-        let mut file = NamedTempFile::with_suffix(".json").unwrap();
-        writeln!(file, r#"{{"port": 9000, "host": "filehost"}}"#).unwrap();
-        let path = Utf8PathBuf::from_path_buf(file.path().to_path_buf()).unwrap();
-
-        // Mock env var to override port
-        let env = MockEnv::from_pairs([("TEST_MERGE__PORT", "8080")]);
-
-        let result = builder()
-            .with_env_source(env)
-            .file(|f| f.path(path))
-            .env(|e| e.prefix("TEST_MERGE"))
-            .build_traced()
-            .expect("should build");
-
-        if let ConfigValue::Object(obj) = &result.value {
-            // Port should be from env (higher priority)
-            if let Some(ConfigValue::String(port)) = obj.value.get("port") {
-                assert_eq!(port.value, "8080");
-            }
-            // Host should be from file (not in env)
-            if let Some(ConfigValue::String(host)) = obj.value.get("host") {
-                assert_eq!(host.value, "filehost");
-            }
-        } else {
-            panic!("expected object");
-        }
-
-        // Should have override recorded
-        assert!(!result.overrides.is_empty());
     }
 
     #[test]
