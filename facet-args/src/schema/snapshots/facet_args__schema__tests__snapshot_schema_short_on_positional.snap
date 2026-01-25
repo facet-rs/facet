@@ -2,7 +2,7 @@
 source: facet-args/src/schema/tests.rs
 expression: stripped
 ---
-Error: field `value` is positional and cannot have a short flag
+Error: #[facet(args::positional)] is not compatible with #[facet(args::short)]
    ╭─[ <unknown>:4:5 ]
    │
  2 │ struct ShortOnPositional {
@@ -11,7 +11,7 @@ Error: field `value` is positional and cannot have a short flag
    │ 
  4 │     value: String,
    │     ──────┬──────  
-   │           ╰──────── field `value` is positional and cannot have a short flag
+   │           ╰──────── has both attributes
  5 │ }
    │ ┬  
    │ ╰── end of definition

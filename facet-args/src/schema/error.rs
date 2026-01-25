@@ -24,20 +24,30 @@ pub struct SecondaryLabel {
 pub struct SchemaError {
     /// Primary error context.
     pub ctx: SchemaErrorContext,
-    /// Primary error message.
+    /// Error message (shown at top of diagnostic).
     pub message: Cow<'static, str>,
+    /// Primary label text (shown at the primary span). If None, uses message.
+    pub primary_label: Option<Cow<'static, str>>,
     /// Additional labeled locations to highlight.
     pub secondary_labels: Vec<SecondaryLabel>,
 }
 
 impl SchemaError {
     /// Create a simple error with just a context and message.
+    /// The message is used both as the error message and the primary label.
     pub fn new(ctx: SchemaErrorContext, message: impl Into<Cow<'static, str>>) -> Self {
         Self {
             ctx,
             message: message.into(),
+            primary_label: None,
             secondary_labels: Vec::new(),
         }
+    }
+
+    /// Set a different label for the primary span (instead of repeating the message).
+    pub fn with_primary_label(mut self, label: impl Into<Cow<'static, str>>) -> Self {
+        self.primary_label = Some(label.into());
+        self
     }
 
     /// Add a secondary label to this error.
@@ -151,10 +161,14 @@ impl Diagnostic for SchemaError {
                 }
 
                 // Primary label
+                let primary_message = self
+                    .primary_label
+                    .clone()
+                    .unwrap_or_else(|| self.message.clone());
                 labels.push(LabelSpec {
                     source: SourceId::Schema,
                     span: span.clone(),
-                    message: self.message.clone(),
+                    message: primary_message,
                     is_primary: true,
                     color: Some(ColorHint::Red),
                 });

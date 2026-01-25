@@ -2,7 +2,7 @@
 source: facet-args/src/schema/tests.rs
 expression: stripped
 ---
-Error: `--dup` first defined here
+Error: duplicate flag `--dup`
    ╭─[ <unknown>:4:5 ]
    │
  2 │ struct ConflictingLongFlags {

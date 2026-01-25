@@ -37,12 +37,13 @@ impl Schema {
             let field_ctx = ctx_root.with_field(field.name);
 
             if is_config_field(field) {
-                if let Some((first_field, first_ctx)) = &config_field {
+                if let Some((_, first_ctx)) = &config_field {
                     return Err(SchemaError::new(
                         first_ctx.clone(),
-                        format!("config field `{}` first defined here", first_field.name),
+                        "only one field may be marked with #[facet(args::config)]",
                     )
-                    .with_label(field_ctx, "defined again here"));
+                    .with_primary_label("first marked here")
+                    .with_label(field_ctx, "also marked here"));
                 }
                 config_field = Some((field, field_ctx.clone()));
             }
@@ -282,7 +283,7 @@ fn arg_level_from_fields(
     let mut seen_short: HashMap<char, SchemaErrorContext> = HashMap::new();
     let mut seen_subcommands: HashMap<String, SchemaErrorContext> = HashMap::new();
 
-    let mut saw_subcommand = false;
+    let mut first_subcommand_field: Option<SchemaErrorContext> = None;
 
     for field in fields {
         if is_config_field(field) {
@@ -317,11 +318,9 @@ fn arg_level_from_fields(
         if field.has_attr(Some("args"), "short") && is_positional {
             return Err(SchemaError::new(
                 field_ctx,
-                format!(
-                    "field `{}` is positional and cannot have a short flag",
-                    field.name
-                ),
-            ));
+                "#[facet(args::positional)] is not compatible with #[facet(args::short)]",
+            )
+            .with_primary_label("has both attributes"));
         }
 
         if is_counted_field(field) && !is_supported_counted_type(field.shape()) {
@@ -335,13 +334,15 @@ fn arg_level_from_fields(
         }
 
         if is_subcommand {
-            if saw_subcommand {
+            if let Some(first_ctx) = &first_subcommand_field {
                 return Err(SchemaError::new(
-                    field_ctx,
+                    first_ctx.clone(),
                     "only one field may be marked with #[facet(args::subcommand)] at this level",
-                ));
+                )
+                .with_primary_label("first marked here")
+                .with_label(field_ctx, "also marked here"));
             }
-            saw_subcommand = true;
+            first_subcommand_field = Some(field_ctx.clone());
 
             let field_shape = field.shape();
             let (enum_shape, enum_type) = match field_shape.def {
@@ -388,9 +389,10 @@ fn arg_level_from_fields(
                 if let Some(existing_ctx) = seen_subcommands.get(&name) {
                     return Err(SchemaError::new(
                         existing_ctx.clone(),
-                        format!("subcommand `{name}` first defined here"),
+                        format!("duplicate subcommand name `{name}`"),
                     )
-                    .with_label(variant_ctx, format!("defined again here")));
+                    .with_primary_label("first defined here")
+                    .with_label(variant_ctx, "defined again here"));
                 }
                 seen_subcommands.insert(name.clone(), variant_ctx.clone());
                 subcommands.insert(name.clone(), sub);
@@ -427,8 +429,9 @@ fn arg_level_from_fields(
             if let Some(existing_ctx) = seen_long.get(&long) {
                 return Err(SchemaError::new(
                     existing_ctx.clone(),
-                    format!("`--{long}` first defined here"),
+                    format!("duplicate flag `--{long}`"),
                 )
+                .with_primary_label(format!("`--{long}` first defined here"))
                 .with_label(field_ctx.clone(), "defined again here"));
             }
             seen_long.insert(long.clone(), field_ctx.clone());
@@ -437,8 +440,9 @@ fn arg_level_from_fields(
                 if let Some(existing_ctx) = seen_short.get(&c) {
                     return Err(SchemaError::new(
                         existing_ctx.clone(),
-                        format!("`-{c}` first defined here"),
+                        format!("duplicate flag `-{c}`"),
                     )
+                    .with_primary_label(format!("`-{c}` first defined here"))
                     .with_label(field_ctx.clone(), "defined again here"));
                 }
                 seen_short.insert(c, field_ctx.clone());
