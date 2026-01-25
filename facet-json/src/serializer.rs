@@ -358,11 +358,15 @@ impl FormatSerializer for JsonSerializer {
                 self.out.extend_from_slice(v.to_string().as_bytes());
             }
             ScalarValue::F64(v) => {
-                #[cfg(feature = "fast")]
-                self.out
-                    .extend_from_slice(zmij::Buffer::new().format(v).as_bytes());
-                #[cfg(not(feature = "fast"))]
-                self.out.extend_from_slice(v.to_string().as_bytes());
+                if v.is_nan() || v.is_infinite() {
+                    self.out.extend_from_slice(b"null");
+                } else {
+                    #[cfg(feature = "fast")]
+                    self.out
+                        .extend_from_slice(zmij::Buffer::new().format(v).as_bytes());
+                    #[cfg(not(feature = "fast"))]
+                    self.out.extend_from_slice(v.to_string().as_bytes());
+                }
             }
             ScalarValue::Str(s) => self.write_json_string(&s),
             ScalarValue::Bytes(_) => {
