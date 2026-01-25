@@ -1,8 +1,14 @@
 ---
 source: facet-args/src/schema.rs
-assertion_line: 916
-expression: "Schema::from_shape(TopLevelEnum::SHAPE)"
+assertion_line: 1264
+expression: stripped
 ---
-Err(
-    TopLevelNotStruct,
-)
+[schema::top_level_not_struct] Error: top-level shape must be a struct
+   ╭─[ <unknown>:1:1 ]
+   │
+ 1 │ ╭─▶ #[derive(Facet)]
+   ┆ ┆   
+ 5 │ ├─▶ }
+   │ │      
+   │ ╰────── top-level shape must be a struct
+───╯

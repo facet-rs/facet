@@ -1,45 +1,165 @@
 ---
 source: facet-args/src/schema.rs
-assertion_line: 911
-expression: "Schema::from_shape(BasicArgs::SHAPE)"
+assertion_line: 1259
+expression: value
 ---
-Ok(
-    Schema {
-        args: ArgLevelSchema {
-            args: {
-                "verbose": ArgSchema {
-                    name: "verbose",
-                    docs: Docs {
-                        summary: Some(
-                            "Verbose output",
+Schema {
+    args: ArgLevelSchema {
+        args: {
+            "verbose": ArgSchema {
+                name: "verbose",
+                docs: Docs {
+                    summary: Some(
+                        "Verbose output",
+                    ),
+                    details: None,
+                },
+                kind: Named {
+                    short: Some(
+                        'v',
+                    ),
+                    counted: false,
+                },
+                value: Leaf(
+                    LeafSchema {
+                        kind: Scalar(
+                            Bool,
                         ),
-                        details: None,
                     },
-                    kind: Named {
-                        short: Some(
-                            'v',
+                ),
+                required: false,
+                multiple: false,
+            },
+            "input": ArgSchema {
+                name: "input",
+                docs: Docs {
+                    summary: Some(
+                        "Input file",
+                    ),
+                    details: None,
+                },
+                kind: Positional,
+                value: Leaf(
+                    LeafSchema {
+                        kind: Scalar(
+                            String,
                         ),
-                        counted: false,
                     },
-                    value: Leaf(
+                ),
+                required: true,
+                multiple: false,
+            },
+            "include": ArgSchema {
+                name: "include",
+                docs: Docs {
+                    summary: Some(
+                        "Include list",
+                    ),
+                    details: None,
+                },
+                kind: Named {
+                    short: None,
+                    counted: false,
+                },
+                value: Vec {
+                    element: Leaf(
                         LeafSchema {
                             kind: Scalar(
-                                Bool,
+                                String,
                             ),
                         },
                     ),
-                    required: false,
-                    multiple: false,
                 },
-                "input": ArgSchema {
-                    name: "input",
-                    docs: Docs {
-                        summary: Some(
-                            "Input file",
+                required: true,
+                multiple: true,
+            },
+            "quiet": ArgSchema {
+                name: "quiet",
+                docs: Docs {
+                    summary: Some(
+                        "Quiet count",
+                    ),
+                    details: None,
+                },
+                kind: Named {
+                    short: Some(
+                        'q',
+                    ),
+                    counted: true,
+                },
+                value: Leaf(
+                    LeafSchema {
+                        kind: Scalar(
+                            Integer,
                         ),
+                    },
+                ),
+                required: false,
+                multiple: true,
+            },
+        },
+        subcommands: {
+            "build": Subcommand {
+                name: "build",
+                docs: Docs {
+                    summary: Some(
+                        "Build stuff",
+                    ),
+                    details: None,
+                },
+                args: ArgLevelSchema {
+                    args: {
+                        "release": ArgSchema {
+                            name: "release",
+                            docs: Docs {
+                                summary: Some(
+                                    "Release build",
+                                ),
+                                details: None,
+                            },
+                            kind: Named {
+                                short: Some(
+                                    'r',
+                                ),
+                                counted: false,
+                            },
+                            value: Leaf(
+                                LeafSchema {
+                                    kind: Scalar(
+                                        Bool,
+                                    ),
+                                },
+                            ),
+                            required: false,
+                            multiple: false,
+                        },
+                    },
+                    subcommands: {},
+                },
+            },
+            "clean-all": Subcommand {
+                name: "clean-all",
+                docs: Docs {
+                    summary: Some(
+                        "Clean",
+                    ),
+                    details: None,
+                },
+                args: ArgLevelSchema {
+                    args: {},
+                    subcommands: {},
+                },
+            },
+        },
+    },
+    config: Some(
+        ConfigStructSchema {
+            fields: {
+                "host": ConfigFieldSchema {
+                    docs: Docs {
+                        summary: None,
                         details: None,
                     },
-                    kind: Positional,
                     value: Leaf(
                         LeafSchema {
                             kind: Scalar(
@@ -47,46 +167,11 @@ Ok(
                             ),
                         },
                     ),
-                    required: true,
-                    multiple: false,
                 },
-                "include": ArgSchema {
-                    name: "include",
+                "port": ConfigFieldSchema {
                     docs: Docs {
-                        summary: Some(
-                            "Include list",
-                        ),
+                        summary: None,
                         details: None,
-                    },
-                    kind: Named {
-                        short: None,
-                        counted: false,
-                    },
-                    value: Vec {
-                        element: Leaf(
-                            LeafSchema {
-                                kind: Scalar(
-                                    String,
-                                ),
-                            },
-                        ),
-                    },
-                    required: true,
-                    multiple: true,
-                },
-                "quiet": ArgSchema {
-                    name: "quiet",
-                    docs: Docs {
-                        summary: Some(
-                            "Quiet count",
-                        ),
-                        details: None,
-                    },
-                    kind: Named {
-                        short: Some(
-                            'q',
-                        ),
-                        counted: true,
                     },
                     value: Leaf(
                         LeafSchema {
@@ -95,95 +180,8 @@ Ok(
                             ),
                         },
                     ),
-                    required: false,
-                    multiple: true,
-                },
-            },
-            subcommands: {
-                "build": Subcommand {
-                    name: "build",
-                    docs: Docs {
-                        summary: Some(
-                            "Build stuff",
-                        ),
-                        details: None,
-                    },
-                    args: ArgLevelSchema {
-                        args: {
-                            "release": ArgSchema {
-                                name: "release",
-                                docs: Docs {
-                                    summary: Some(
-                                        "Release build",
-                                    ),
-                                    details: None,
-                                },
-                                kind: Named {
-                                    short: Some(
-                                        'r',
-                                    ),
-                                    counted: false,
-                                },
-                                value: Leaf(
-                                    LeafSchema {
-                                        kind: Scalar(
-                                            Bool,
-                                        ),
-                                    },
-                                ),
-                                required: false,
-                                multiple: false,
-                            },
-                        },
-                        subcommands: {},
-                    },
-                },
-                "clean-all": Subcommand {
-                    name: "clean-all",
-                    docs: Docs {
-                        summary: Some(
-                            "Clean",
-                        ),
-                        details: None,
-                    },
-                    args: ArgLevelSchema {
-                        args: {},
-                        subcommands: {},
-                    },
                 },
             },
         },
-        config: Some(
-            ConfigStructSchema {
-                fields: {
-                    "host": ConfigFieldSchema {
-                        docs: Docs {
-                            summary: None,
-                            details: None,
-                        },
-                        value: Leaf(
-                            LeafSchema {
-                                kind: Scalar(
-                                    String,
-                                ),
-                            },
-                        ),
-                    },
-                    "port": ConfigFieldSchema {
-                        docs: Docs {
-                            summary: None,
-                            details: None,
-                        },
-                        value: Leaf(
-                            LeafSchema {
-                                kind: Scalar(
-                                    Integer,
-                                ),
-                            },
-                        ),
-                    },
-                },
-            },
-        ),
-    },
-)
+    ),
+}

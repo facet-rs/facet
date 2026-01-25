@@ -1,10 +1,12 @@
 ---
 source: facet-args/src/schema.rs
-assertion_line: 921
-expression: "Schema::from_shape(MissingArgsAnnotation::SHAPE)"
+assertion_line: 1269
+expression: stripped
 ---
-Err(
-    MissingArgsAnnotation {
-        field: "foo",
-    },
-)
+[schema::missing_args_annotation] Error: field `foo` is missing a #[facet(args::...)] annotation
+   ╭─[ <unknown>:3:5 ]
+   │
+ 3 │     foo: String,
+   │     ─────┬─────  
+   │          ╰─────── field `foo` is missing a #[facet(args::...)] annotation
+───╯

@@ -1,10 +1,12 @@
 ---
 source: facet-args/src/schema.rs
-assertion_line: 941
-expression: "Schema::from_shape(ShortOnPositional::SHAPE)"
+assertion_line: 1289
+expression: stripped
 ---
-Err(
-    ShortOnPositional {
-        field: "value",
-    },
-)
+[schema::short_on_positional] Error: field `value` is positional and cannot have a short flag
+   ╭─[ <unknown>:4:5 ]
+   │
+ 4 │     value: String,
+   │     ──────┬──────  
+   │           ╰──────── field `value` is positional and cannot have a short flag
+───╯

@@ -1,10 +1,12 @@
 ---
 source: facet-args/src/schema.rs
-assertion_line: 946
-expression: "Schema::from_shape(EnvPrefixWithoutConfig::SHAPE)"
+assertion_line: 1294
+expression: stripped
 ---
-Err(
-    EnvPrefixWithoutConfig {
-        field: "value",
-    },
-)
+[schema::env_prefix_without_config] Error: field `value` uses args::env_prefix without args::config
+   ╭─[ <unknown>:4:5 ]
+   │
+ 4 │     value: String,
+   │     ──────┬──────  
+   │           ╰──────── field `value` uses args::env_prefix without args::config
+───╯

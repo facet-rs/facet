@@ -1,10 +1,12 @@
 ---
 source: facet-args/src/schema.rs
-assertion_line: 951
-expression: "Schema::from_shape(ConflictingLongFlags::SHAPE)"
+assertion_line: 1299
+expression: stripped
 ---
-Err(
-    ConflictingFlagNames {
-        name: "--dup",
-    },
-)
+[schema::conflicting_flag_names] Error: duplicate flag name `--dup` at this level
+   ╭─[ <unknown>:6:5 ]
+   │
+ 6 │     b: bool,
+   │     ───┬───  
+   │        ╰───── duplicate flag name `--dup` at this level
+───╯

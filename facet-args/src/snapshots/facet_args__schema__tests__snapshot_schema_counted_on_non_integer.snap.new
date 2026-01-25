@@ -1,10 +1,12 @@
 ---
 source: facet-args/src/schema.rs
-assertion_line: 936
-expression: "Schema::from_shape(CountedOnNonInteger::SHAPE)"
+assertion_line: 1284
+expression: stripped
 ---
-Err(
-    CountedOnNonInteger {
-        field: "value",
-    },
-)
+[schema::counted_on_non_integer] Error: field `value` marked as counted must be an integer
+   ╭─[ <unknown>:4:5 ]
+   │
+ 4 │     value: bool,
+   │     ─────┬─────  
+   │          ╰─────── field `value` marked as counted must be an integer
+───╯
