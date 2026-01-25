@@ -12,10 +12,9 @@ From those, dibs generates migrations (also Rust), so you can do backfills and d
 
 ## Start here
 
-- [How dibs works](/guide/model/) (model + workspace layout + deployment)
-- [Getting started](/guide/getting-started/)
-- [Queries](/guide/queries/)
-- [Migrations](/guide/migrations/)
+- [How dibs works](/internals/) (model + workspace layout + deployment)
+- [The Guide](/guide/)
+- [Reference](/reference/)
 
 ## Links
 
