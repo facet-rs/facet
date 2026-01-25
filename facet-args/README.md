@@ -33,7 +33,7 @@ Ok(())
 # }
 ```
 
-The entry point of facet_args is [`crate::builder`] — let yourself be guided from there.
+The entry point of facet_args is [`builder`] — let yourself be guided from there.
 
 ## Sponsors
 
