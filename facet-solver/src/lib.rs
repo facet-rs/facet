@@ -158,6 +158,15 @@ impl ResolutionSet {
         }
     }
 
+    /// Check if intersection with another set would be non-empty.
+    /// Does not modify either set.
+    fn intersects(&self, other: &ResolutionSet) -> bool {
+        self.bits
+            .iter()
+            .zip(other.bits.iter())
+            .any(|(a, b)| (*a & *b) != 0)
+    }
+
     /// Get the number of resolutions in the set.
     const fn len(&self) -> usize {
         self.count
@@ -633,11 +642,15 @@ impl<'a> Solver<'a> {
             None => return KeyResult::Unknown,
         };
 
-        self.candidates.intersect_with(resolutions_with_key);
-
-        if self.candidates.is_empty() {
+        // Check if this key exists in any current candidate.
+        // If not, treat it as unknown without modifying candidates.
+        // This ensures that extra/unknown fields don't eliminate valid candidates,
+        // which is important for "ignore unknown fields" semantics.
+        if !self.candidates.intersects(resolutions_with_key) {
             return KeyResult::Unknown;
         }
+
+        self.candidates.intersect_with(resolutions_with_key);
 
         // Check if we've disambiguated to exactly one
         if self.candidates.len() == 1 {

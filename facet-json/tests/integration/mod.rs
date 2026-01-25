@@ -8,6 +8,7 @@ mod issue_1791;
 mod issue_1852;
 mod issue_1896;
 mod issue_1900;
+mod issue_1904;
 mod jit_deserialize;
 mod nested_flatten_map;
 mod opaque_proxy_enum;

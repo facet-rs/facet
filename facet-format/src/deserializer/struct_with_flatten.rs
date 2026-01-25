@@ -72,27 +72,22 @@ where
             .map_err(DeserializeError::Parser)?;
         let evidence = Self::collect_evidence(probe).map_err(DeserializeError::Parser)?;
 
-        // Feed keys to solver to narrow down resolutions
         let mut solver = Solver::new(&schema);
+
+        // First pass: process tag hints BEFORE field-based narrowing.
+        // For internally-tagged enums we must apply it first
         for ev in &evidence {
-            solver.see_key(ev.name.clone());
+            if let Some(ScalarValue::Str(variant_name)) = &ev.scalar_value {
+                solver.hint_variant_for_tag(&ev.name, variant_name);
+            }
         }
 
-        // If still ambiguous, try to disambiguate using tag values from
-        // internally-tagged enums. The evidence captures scalar values,
-        // so we can look for tag fields and use their values to select variants.
-        // We use hint_variant_for_tag to ensure we only consider string values
-        // from actual tag fields, not arbitrary string fields that happen to
-        // match a variant name.
-        if solver.candidates().len() > 1 {
-            for ev in &evidence {
-                if let Some(ScalarValue::Str(variant_name)) = &ev.scalar_value
-                    && solver.hint_variant_for_tag(&ev.name, variant_name)
-                    && solver.candidates().len() == 1
-                {
-                    break;
-                }
-            }
+        // Second pass: feed keys to solver to narrow down resolutions.
+        // After tag hints have been applied, field-based narrowing will
+        // only eliminate candidates that don't have the given field AND
+        // are still in the candidate set.
+        for ev in &evidence {
+            solver.see_key(ev.name.clone());
         }
 
         // Get the resolved configuration
