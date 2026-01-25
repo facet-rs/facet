@@ -8,6 +8,7 @@ use facet::Facet;
 use facet_reflect::Span;
 use indexmap::IndexMap;
 
+use crate::path::Path;
 use crate::provenance::{ConfigFile, Provenance};
 
 /// A value with full provenance tracking
@@ -174,7 +175,71 @@ pub(crate) fn insert_nested_value(
     }
 }
 
+pub trait ConfigValueVisitor {
+    fn enter_value(&mut self, _path: &Path, _value: &ConfigValue) {}
+    fn exit_value(&mut self, _path: &Path, _value: &ConfigValue) {}
+}
+
 impl ConfigValue {
+    /// Visit all ConfigValue nodes in depth-first order.
+    pub fn visit(&self, visitor: &mut impl ConfigValueVisitor, path: &mut Path) {
+        visitor.enter_value(path, self);
+        match self {
+            ConfigValue::Array(arr) => {
+                for (i, item) in arr.value.iter().enumerate() {
+                    path.push(i.to_string());
+                    item.visit(visitor, path);
+                    path.pop();
+                }
+            }
+            ConfigValue::Object(obj) => {
+                for (key, value) in &obj.value {
+                    path.push(key.clone());
+                    value.visit(visitor, path);
+                    path.pop();
+                }
+            }
+            _ => {}
+        }
+        visitor.exit_value(path, self);
+    }
+
+    /// Navigate to a value by path.
+    pub fn get_by_path(&self, path: &Path) -> Option<&ConfigValue> {
+        let mut current = self;
+        for segment in path {
+            match current {
+                ConfigValue::Object(obj) => {
+                    current = obj.value.get(segment)?;
+                }
+                ConfigValue::Array(arr) => {
+                    let index: usize = segment.parse().ok()?;
+                    current = arr.value.get(index)?;
+                }
+                _ => return None,
+            }
+        }
+        Some(current)
+    }
+
+    /// Navigate to a value by path (mutable).
+    pub fn get_by_path_mut(&mut self, path: &Path) -> Option<&mut ConfigValue> {
+        let mut current = self;
+        for segment in path {
+            match current {
+                ConfigValue::Object(obj) => {
+                    current = obj.value.get_mut(segment)?;
+                }
+                ConfigValue::Array(arr) => {
+                    let index: usize = segment.parse().ok()?;
+                    current = arr.value.get_mut(index)?;
+                }
+                _ => return None,
+            }
+        }
+        Some(current)
+    }
+
     /// Recursively set file provenance on this value and all nested values.
     ///
     /// This should be called after parsing a config file to populate provenance

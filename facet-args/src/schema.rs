@@ -5,6 +5,8 @@ use facet_core::Shape;
 use facet_error as _;
 use indexmap::IndexMap;
 
+use crate::path::Path;
+
 /// The struct passed into facet_args::builder has some problems: some fields are not
 /// annotated, etc.
 #[derive(Facet, Debug)]
@@ -165,6 +167,112 @@ pub enum ConfigValueSchema {
     Leaf(LeafSchema),
 }
 
+/// Visitor for walking schema structures.
+pub trait SchemaVisitor {
+    fn enter_schema(&mut self, _path: &Path, _schema: &Schema) {}
+    fn enter_arg_level(&mut self, _path: &Path, _args: &ArgLevelSchema) {}
+    fn enter_arg(&mut self, _path: &Path, _arg: &ArgSchema) {}
+    fn enter_subcommand(&mut self, _path: &Path, _subcommand: &Subcommand) {}
+    fn enter_value(&mut self, _path: &Path, _value: &ValueSchema) {}
+    fn enter_config_struct(&mut self, _path: &Path, _config: &ConfigStructSchema) {}
+    fn enter_config_value(&mut self, _path: &Path, _value: &ConfigValueSchema) {}
+}
+
+impl Schema {
+    /// Visit all schema nodes in depth-first order.
+    pub fn visit(&self, visitor: &mut impl SchemaVisitor) {
+        let mut path: Path = Vec::new();
+        visitor.enter_schema(&path, self);
+
+        self.args.visit(visitor, &mut path);
+
+        if let Some(config) = &self.config {
+            path.push("config".to_string());
+            config.visit(visitor, &mut path);
+            path.pop();
+        }
+    }
+}
+
+impl ArgLevelSchema {
+    fn visit(&self, visitor: &mut impl SchemaVisitor, path: &mut Path) {
+        visitor.enter_arg_level(path, self);
+
+        for (name, arg) in &self.args {
+            path.push(name.clone());
+            visitor.enter_arg(path, arg);
+            arg.value.visit(visitor, path);
+            path.pop();
+        }
+
+        for (name, sub) in &self.subcommands {
+            path.push(name.clone());
+            visitor.enter_subcommand(path, sub);
+            sub.args.visit(visitor, path);
+            path.pop();
+        }
+    }
+}
+
+impl ValueSchema {
+    fn visit(&self, visitor: &mut impl SchemaVisitor, path: &mut Path) {
+        visitor.enter_value(path, self);
+
+        match self {
+            ValueSchema::Leaf(_) => {}
+            ValueSchema::Option { value, .. } => value.visit(visitor, path),
+            ValueSchema::Vec { element, .. } => element.visit(visitor, path),
+            ValueSchema::Struct { fields, .. } => fields.visit(visitor, path),
+        }
+    }
+}
+
+impl ConfigStructSchema {
+    fn visit(&self, visitor: &mut impl SchemaVisitor, path: &mut Path) {
+        visitor.enter_config_struct(path, self);
+
+        for (name, field) in &self.fields {
+            path.push(name.clone());
+            field.value.visit(visitor, path);
+            path.pop();
+        }
+    }
+
+    /// Navigate to a config value schema by path.
+    pub fn get_by_path(&self, path: &Path) -> Option<&ConfigValueSchema> {
+        let mut iter = path.iter();
+        let first = iter.next()?;
+        let mut current = self.fields.get(first)?.value.as_ref();
+
+        for segment in iter {
+            current = match current {
+                ConfigValueSchema::Struct(s) => s.fields.get(segment)?.value.as_ref(),
+                ConfigValueSchema::Vec(v) => {
+                    segment.parse::<usize>().ok()?;
+                    v.element.as_ref()
+                }
+                ConfigValueSchema::Option { value, .. } => value.as_ref(),
+                ConfigValueSchema::Leaf(_) => return None,
+            };
+        }
+
+        Some(current)
+    }
+}
+
+impl ConfigValueSchema {
+    fn visit(&self, visitor: &mut impl SchemaVisitor, path: &mut Path) {
+        visitor.enter_config_value(path, self);
+
+        match self {
+            ConfigValueSchema::Struct(s) => s.visit(visitor, path),
+            ConfigValueSchema::Vec(v) => v.element.visit(visitor, path),
+            ConfigValueSchema::Option { value, .. } => value.visit(visitor, path),
+            ConfigValueSchema::Leaf(_) => {}
+        }
+    }
+}
+
 impl Schema {
     /// Parse a schema from a given shape
     pub(crate) fn from_shape(_shape: &'static Shape) -> Result<Self, SchemaError> {
@@ -188,6 +296,7 @@ mod tests {
         }
 
         #[derive(Facet)]
+        #[repr(u8)]
         enum Cmd {
             #[facet(rename = "do-thing")]
             DoThing {

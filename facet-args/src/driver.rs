@@ -18,23 +18,15 @@
 //! and types we want to stabilize while moving orchestration out of `builder`.
 
 use alloc::string::String;
-use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use crate::builder::Config;
 use crate::config_value::ConfigValue;
+use crate::path::Path;
 use crate::provenance::{FileResolution, Provenance};
+use crate::span::Span;
 use facet_core::Facet;
-
-/// Input data for running the driver.
-///
-/// This is produced by the builder and already includes schema information.
-#[derive(Debug)]
-pub struct DriverInput<T> {
-    /// Fully built config (schema + sources).
-    pub config: Config<T>,
-}
 
 /// Diagnostics for a single layer.
 #[derive(Debug, Default)]
@@ -50,8 +42,8 @@ pub struct LayerOutput {
 /// A key that was unused by the schema, with provenance.
 #[derive(Debug)]
 pub struct UnusedKey {
-    /// The unused key.
-    pub key: String,
+    /// The unused key path.
+    pub key: Path,
     /// Provenance for where it came from (CLI/env/file/default).
     pub provenance: Provenance,
 }
@@ -72,7 +64,6 @@ pub struct ConfigLayers {
 /// Primary driver type that orchestrates parsing and validation.
 ///
 /// This is generic over `T`, with a non-generic core for future optimization.
-#[derive(Debug)]
 pub struct Driver<T> {
     config: Config<T>,
     core: DriverCore,
@@ -153,20 +144,11 @@ pub struct Diagnostic {
     /// Human-readable message.
     pub message: String,
     /// Optional path within the schema or config.
-    pub path: Option<String>,
+    pub path: Option<Path>,
     /// Optional byte span within a formatted shape or source file.
-    pub span: Option<DriverSpan>,
+    pub span: Option<Span>,
     /// Diagnostic severity.
     pub severity: Severity,
-}
-
-/// A byte span used for pretty error rendering.
-#[derive(Debug, Clone, Copy)]
-pub struct DriverSpan {
-    /// Start offset (bytes).
-    pub start: usize,
-    /// Length in bytes.
-    pub len: usize,
 }
 
 /// Severity for diagnostics.

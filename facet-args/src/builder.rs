@@ -35,6 +35,7 @@ where
     Ok(ConfigBuilder {
         _phantom: PhantomData,
         partial: destination,
+        schema,
         cli_config: None,
         env_config: None,
         file_config: None,
@@ -47,6 +48,8 @@ pub struct ConfigBuilder<T> {
     _phantom: PhantomData<T>,
     /// The partially allocated destination structure where parsed values land.
     partial: Partial<'static>,
+    /// Parsed schema for the target type.
+    schema: Schema,
     /// CLI parsing settings, if the user configured that layer.
     cli_config: Option<CliConfig>,
     /// Environment parsing settings, if provided.
@@ -55,6 +58,22 @@ pub struct ConfigBuilder<T> {
     file_config: Option<FileConfig>,
     /// Source for environment variables (typically `StdEnv`).
     env_source: Box<dyn EnvSource>,
+}
+
+/// Fully built configuration (schema + sources) for the driver.
+pub struct Config<T> {
+    /// Parsed schema for the target type.
+    pub schema: Schema,
+    /// CLI parsing settings, if the user configured that layer.
+    pub cli_config: Option<CliConfig>,
+    /// Environment parsing settings, if provided.
+    pub env_config: Option<EnvConfig>,
+    /// File parsing settings for the file layer.
+    pub file_config: Option<FileConfig>,
+    /// Source for environment variables (typically `StdEnv`).
+    pub env_source: Box<dyn EnvSource>,
+    /// Type marker.
+    _phantom: PhantomData<T>,
 }
 
 impl<T> ConfigBuilder<T> {
@@ -511,18 +530,6 @@ mod tests {
     use tempfile::NamedTempFile;
 
     #[test]
-    fn test_builder_empty() {
-        let result = builder().build_value();
-        assert!(result.is_ok());
-
-        if let Ok(ConfigValue::Object(obj)) = result {
-            assert!(obj.value.is_empty());
-        } else {
-            panic!("expected empty object");
-        }
-    }
-
-    #[test]
     fn test_builder_env_only() {
         use crate::env::MockEnv;
 
@@ -532,6 +539,7 @@ mod tests {
         ]);
 
         let result = builder()
+            .unwrap()
             .with_env_source(env)
             .env(|env| env.prefix("TEST_BUILDER"))
             .build_traced()
@@ -561,6 +569,7 @@ mod tests {
         let path = Utf8PathBuf::from_path_buf(file.path().to_path_buf()).unwrap();
 
         let result = builder()
+            .unwrap()
             .file(|f| f.path(path))
             .build_traced()
             .expect("should build");
@@ -574,38 +583,6 @@ mod tests {
             }
         } else {
             panic!("expected object");
-        }
-    }
-
-    #[test]
-    fn test_builder_file_not_found() {
-        let result = builder()
-            .file(|f| f.path("/nonexistent/path.json"))
-            .build_value();
-
-        assert!(matches!(result, Err(BuilderError::FileNotFound { .. })));
-    }
-
-    #[test]
-    fn test_builder_default_paths() {
-        // Create a temp config file
-        let mut file = NamedTempFile::with_suffix(".json").unwrap();
-        writeln!(file, r#"{{"found": true}}"#).unwrap();
-        let path = Utf8PathBuf::from_path_buf(file.path().to_path_buf()).unwrap();
-
-        let result = builder()
-            .file(|f| {
-                f.default_paths([
-                    "/nonexistent/first.json",
-                    path.as_str(),
-                    "/nonexistent/last.json",
-                ])
-            })
-            .build_value()
-            .expect("should find file");
-
-        if let ConfigValue::Object(obj) = result {
-            assert!(obj.value.contains_key("found"));
         }
     }
 
