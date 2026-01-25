@@ -75,7 +75,7 @@ pub trait Diagnostic {
     fn code(&self) -> &'static str;
 
     /// Short primary message.
-    fn label(&self) -> &'static str;
+    fn label(&self) -> Cow<'static, str>;
 
     /// Optional help text.
     fn help(&self) -> Option<Cow<'static, str>> {

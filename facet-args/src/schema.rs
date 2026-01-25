@@ -1,3 +1,4 @@
+use alloc::borrow::Cow;
 use std::collections::HashSet;
 use std::hash::RandomState;
 
@@ -6,11 +7,13 @@ use facet_core::{
     Def, EnumType, Field, ScalarType as FacetScalarType, Shape, StructKind, Type, UserType, Variant,
 };
 use facet_error as _;
+use facet_pretty::{PathSegment, format_shape_with_spans};
 use heck::ToKebabCase;
 use indexmap::IndexMap;
 
 use crate::{
     Attr,
+    diagnostics::{ColorHint, Diagnostic, LabelSpec, SourceBundle, SourceId},
     path::Path,
     reflection::{is_config_field, is_counted_field, is_supported_counted_type},
 };
@@ -22,24 +25,218 @@ use crate::{
 #[repr(u8)]
 pub enum SchemaError {
     /// Top-level shape must be a struct.
-    TopLevelNotStruct,
+    TopLevelNotStruct {
+        #[facet(opaque)]
+        ctx: SchemaErrorContext,
+    },
     /// A field was not annotated with any args attribute (positional/named/subcommand/config).
-    MissingArgsAnnotation { field: &'static str },
+    MissingArgsAnnotation {
+        #[facet(opaque)]
+        ctx: SchemaErrorContext,
+        field: &'static str,
+    },
 
     /// More than one field marked as `#[facet(args::subcommand)]` at the same level.
-    MultipleSubcommandFields,
+    MultipleSubcommandFields {
+        #[facet(opaque)]
+        ctx: SchemaErrorContext,
+        field: &'static str,
+    },
     /// `#[facet(args::subcommand)]` used on a non-enum field.
-    SubcommandOnNonEnum { field: &'static str },
+    SubcommandOnNonEnum {
+        #[facet(opaque)]
+        ctx: SchemaErrorContext,
+        field: &'static str,
+    },
     /// `#[facet(args::counted)]` used on a non-integer type.
-    CountedOnNonInteger { field: &'static str },
+    CountedOnNonInteger {
+        #[facet(opaque)]
+        ctx: SchemaErrorContext,
+        field: &'static str,
+    },
     /// `#[facet(args::short)]` used on a positional-only argument.
-    ShortOnPositional { field: &'static str },
+    ShortOnPositional {
+        #[facet(opaque)]
+        ctx: SchemaErrorContext,
+        field: &'static str,
+    },
     /// `#[facet(args::env_prefix)]` used without `#[facet(args::config)]`.
-    EnvPrefixWithoutConfig { field: &'static str },
+    EnvPrefixWithoutConfig {
+        #[facet(opaque)]
+        ctx: SchemaErrorContext,
+        field: &'static str,
+    },
     /// Duplicate CLI flag name or short at the same level.
-    ConflictingFlagNames { name: String },
-    /// Generic schema validation failure.
-    BadSchema(&'static str),
+    ConflictingFlagNames {
+        #[facet(opaque)]
+        ctx: SchemaErrorContext,
+        name: String,
+    },
+    /// Unsupported leaf type (non-scalar, non-enum).
+    UnsupportedLeafType {
+        #[facet(opaque)]
+        ctx: SchemaErrorContext,
+    },
+    /// Config field must be a struct.
+    ConfigFieldMustBeStruct {
+        #[facet(opaque)]
+        ctx: SchemaErrorContext,
+    },
+    /// More than one field marked as `#[facet(args::config)]`.
+    MultipleConfigFields {
+        #[facet(opaque)]
+        ctx: SchemaErrorContext,
+        field: &'static str,
+    },
+}
+
+/// Context for schema errors, retained for late diagnostic formatting.
+#[derive(Clone, Debug)]
+pub struct SchemaErrorContext {
+    /// Shape where the error occurred (root for formatting).
+    pub shape: &'static Shape,
+    /// Path to the offending node.
+    pub path: Path,
+}
+
+impl SchemaErrorContext {
+    fn root(shape: &'static Shape) -> Self {
+        Self {
+            shape,
+            path: Vec::new(),
+        }
+    }
+
+    fn with_field(&self, field: &'static str) -> Self {
+        let mut path = self.path.clone();
+        path.push(field.to_string());
+        Self {
+            shape: self.shape,
+            path,
+        }
+    }
+
+    fn with_variant(&self, variant: impl Into<String>) -> Self {
+        let mut path = self.path.clone();
+        path.push(variant.into());
+        Self {
+            shape: self.shape,
+            path,
+        }
+    }
+}
+
+fn schema_path_to_segments(path: &Path) -> Vec<PathSegment> {
+    path.iter()
+        .map(|segment| PathSegment::Field(Cow::Owned(segment.clone())))
+        .collect()
+}
+
+impl SchemaError {
+    fn ctx(&self) -> &SchemaErrorContext {
+        match self {
+            SchemaError::TopLevelNotStruct { ctx } => ctx,
+            SchemaError::MissingArgsAnnotation { ctx, .. } => ctx,
+            SchemaError::MultipleSubcommandFields { ctx, .. } => ctx,
+            SchemaError::SubcommandOnNonEnum { ctx, .. } => ctx,
+            SchemaError::CountedOnNonInteger { ctx, .. } => ctx,
+            SchemaError::ShortOnPositional { ctx, .. } => ctx,
+            SchemaError::EnvPrefixWithoutConfig { ctx, .. } => ctx,
+            SchemaError::ConflictingFlagNames { ctx, .. } => ctx,
+            SchemaError::UnsupportedLeafType { ctx } => ctx,
+            SchemaError::ConfigFieldMustBeStruct { ctx } => ctx,
+            SchemaError::MultipleConfigFields { ctx, .. } => ctx,
+        }
+    }
+}
+
+impl Diagnostic for SchemaError {
+    fn code(&self) -> &'static str {
+        match self {
+            SchemaError::TopLevelNotStruct { .. } => "schema::top_level_not_struct",
+            SchemaError::MissingArgsAnnotation { .. } => "schema::missing_args_annotation",
+            SchemaError::MultipleSubcommandFields { .. } => "schema::multiple_subcommand_fields",
+            SchemaError::SubcommandOnNonEnum { .. } => "schema::subcommand_on_non_enum",
+            SchemaError::CountedOnNonInteger { .. } => "schema::counted_on_non_integer",
+            SchemaError::ShortOnPositional { .. } => "schema::short_on_positional",
+            SchemaError::EnvPrefixWithoutConfig { .. } => "schema::env_prefix_without_config",
+            SchemaError::ConflictingFlagNames { .. } => "schema::conflicting_flag_names",
+            SchemaError::UnsupportedLeafType { .. } => "schema::unsupported_leaf_type",
+            SchemaError::ConfigFieldMustBeStruct { .. } => "schema::config_field_must_be_struct",
+            SchemaError::MultipleConfigFields { .. } => "schema::multiple_config_fields",
+        }
+    }
+
+    fn label(&self) -> Cow<'static, str> {
+        match self {
+            SchemaError::TopLevelNotStruct { .. } => {
+                Cow::Borrowed("top-level shape must be a struct")
+            }
+            SchemaError::MissingArgsAnnotation { field, .. } => Cow::Owned(format!(
+                "field `{field}` is missing a #[facet(args::...)] annotation"
+            )),
+            SchemaError::MultipleSubcommandFields { .. } => Cow::Borrowed(
+                "only one field may be marked with #[facet(args::subcommand)] at this level",
+            ),
+            SchemaError::SubcommandOnNonEnum { field, .. } => Cow::Owned(format!(
+                "field `{field}` marked as subcommand must be an enum"
+            )),
+            SchemaError::CountedOnNonInteger { field, .. } => Cow::Owned(format!(
+                "field `{field}` marked as counted must be an integer"
+            )),
+            SchemaError::ShortOnPositional { field, .. } => Cow::Owned(format!(
+                "field `{field}` is positional and cannot have a short flag"
+            )),
+            SchemaError::EnvPrefixWithoutConfig { field, .. } => Cow::Owned(format!(
+                "field `{field}` uses args::env_prefix without args::config"
+            )),
+            SchemaError::ConflictingFlagNames { name, .. } => {
+                Cow::Owned(format!("duplicate flag name `{name}` at this level"))
+            }
+            SchemaError::UnsupportedLeafType { .. } => Cow::Borrowed("unsupported leaf type"),
+            SchemaError::ConfigFieldMustBeStruct { .. } => {
+                Cow::Borrowed("config field must be a struct")
+            }
+            SchemaError::MultipleConfigFields { field, .. } => Cow::Owned(format!(
+                "multiple config fields (already saw another before `{field}`)"
+            )),
+        }
+    }
+
+    fn sources(&self) -> Vec<SourceBundle> {
+        let ctx = self.ctx();
+        let formatted = format_shape_with_spans(ctx.shape);
+        vec![SourceBundle {
+            id: SourceId::Schema,
+            name: Some(Cow::Borrowed("schema definition")),
+            text: Cow::Owned(formatted.text),
+        }]
+    }
+
+    fn labels(&self) -> Vec<LabelSpec> {
+        let ctx = self.ctx();
+        let formatted = format_shape_with_spans(ctx.shape);
+        let path = schema_path_to_segments(&ctx.path);
+        let span = formatted
+            .spans
+            .get(&path)
+            .map(|span| span.key.0..span.value.1)
+            .or_else(|| formatted.type_name_span.map(|(start, end)| start..end));
+
+        match span {
+            Some(span) => {
+                let message = self.label();
+                vec![LabelSpec {
+                    source: SourceId::Schema,
+                    span,
+                    message,
+                    is_primary: true,
+                    color: Some(ColorHint::Red),
+                }]
+            }
+            None => Vec::new(),
+        }
+    }
 }
 
 /// A schema "parsed" from
@@ -358,7 +555,10 @@ fn variant_cli_name(variant: &Variant) -> String {
         .unwrap_or_else(|| variant.name.to_kebab_case())
 }
 
-fn leaf_schema_from_shape(shape: &'static Shape) -> Result<LeafSchema, SchemaError> {
+fn leaf_schema_from_shape(
+    shape: &'static Shape,
+    ctx: &SchemaErrorContext,
+) -> Result<LeafSchema, SchemaError> {
     if let Some(scalar) = scalar_kind_from_shape(shape) {
         return Ok(LeafSchema {
             kind: LeafKind::Scalar(scalar),
@@ -373,61 +573,69 @@ fn leaf_schema_from_shape(shape: &'static Shape) -> Result<LeafSchema, SchemaErr
             },
             shape,
         }),
-        _ => Err(SchemaError::BadSchema("unsupported leaf type")),
+        _ => Err(SchemaError::UnsupportedLeafType { ctx: ctx.clone() }),
     }
 }
 
-fn value_schema_from_shape(shape: &'static Shape) -> Result<ValueSchema, SchemaError> {
+fn value_schema_from_shape(
+    shape: &'static Shape,
+    ctx: &SchemaErrorContext,
+) -> Result<ValueSchema, SchemaError> {
     match shape.def {
         Def::Option(opt) => Ok(ValueSchema::Option {
-            value: Box::new(value_schema_from_shape(opt.t)?),
+            value: Box::new(value_schema_from_shape(opt.t, ctx)?),
             shape,
         }),
         Def::List(list) => Ok(ValueSchema::Vec {
-            element: Box::new(value_schema_from_shape(list.t)?),
+            element: Box::new(value_schema_from_shape(list.t, ctx)?),
             shape,
         }),
         _ => match &shape.ty {
             Type::User(UserType::Struct(_)) => Ok(ValueSchema::Struct {
-                fields: config_struct_schema_from_shape(shape)?,
+                fields: config_struct_schema_from_shape(shape, ctx)?,
                 shape,
             }),
-            _ => Ok(ValueSchema::Leaf(leaf_schema_from_shape(shape)?)),
+            _ => Ok(ValueSchema::Leaf(leaf_schema_from_shape(shape, ctx)?)),
         },
     }
 }
 
-fn config_value_schema_from_shape(shape: &'static Shape) -> Result<ConfigValueSchema, SchemaError> {
+fn config_value_schema_from_shape(
+    shape: &'static Shape,
+    ctx: &SchemaErrorContext,
+) -> Result<ConfigValueSchema, SchemaError> {
     match shape.def {
         Def::Option(opt) => Ok(ConfigValueSchema::Option {
-            value: Box::new(config_value_schema_from_shape(opt.t)?),
+            value: Box::new(config_value_schema_from_shape(opt.t, ctx)?),
             shape,
         }),
         Def::List(list) => Ok(ConfigValueSchema::Vec(ConfigVecSchema {
-            element: Box::new(config_value_schema_from_shape(list.t)?),
+            element: Box::new(config_value_schema_from_shape(list.t, ctx)?),
             shape,
         })),
         _ => match &shape.ty {
             Type::User(UserType::Struct(_)) => Ok(ConfigValueSchema::Struct(
-                config_struct_schema_from_shape(shape)?,
+                config_struct_schema_from_shape(shape, ctx)?,
             )),
-            _ => Ok(ConfigValueSchema::Leaf(leaf_schema_from_shape(shape)?)),
+            _ => Ok(ConfigValueSchema::Leaf(leaf_schema_from_shape(shape, ctx)?)),
         },
     }
 }
 
 fn config_struct_schema_from_shape(
     shape: &'static Shape,
+    ctx: &SchemaErrorContext,
 ) -> Result<ConfigStructSchema, SchemaError> {
     let struct_type = match &shape.ty {
         Type::User(UserType::Struct(s)) => *s,
-        _ => return Err(SchemaError::BadSchema("config field must be a struct")),
+        _ => return Err(SchemaError::ConfigFieldMustBeStruct { ctx: ctx.clone() }),
     };
 
     let mut fields_map: IndexMap<String, ConfigFieldSchema, RandomState> = IndexMap::default();
     for field in struct_type.fields {
         let docs = docs_from_lines(field.doc);
-        let value = config_value_schema_from_shape(field.shape())?;
+        let field_ctx = ctx.with_field(field.name);
+        let value = config_value_schema_from_shape(field.shape(), &field_ctx)?;
         fields_map.insert(field.name.to_string(), ConfigFieldSchema { docs, value });
     }
 
@@ -461,7 +669,10 @@ fn variant_fields_for_schema(variant: &Variant) -> &'static [Field] {
     fields
 }
 
-fn arg_level_from_fields(fields: &'static [Field]) -> Result<ArgLevelSchema, SchemaError> {
+fn arg_level_from_fields(
+    fields: &'static [Field],
+    ctx: &SchemaErrorContext,
+) -> Result<ArgLevelSchema, SchemaError> {
     let mut args: IndexMap<String, ArgSchema, RandomState> = IndexMap::default();
     let mut subcommands: IndexMap<String, Subcommand, RandomState> = IndexMap::default();
 
@@ -475,28 +686,45 @@ fn arg_level_from_fields(fields: &'static [Field]) -> Result<ArgLevelSchema, Sch
             continue;
         }
 
+        let field_ctx = ctx.with_field(field.name);
+
         if !has_any_args_attr(field) {
-            return Err(SchemaError::MissingArgsAnnotation { field: field.name });
+            return Err(SchemaError::MissingArgsAnnotation {
+                ctx: field_ctx,
+                field: field.name,
+            });
         }
 
         if field.has_attr(Some("args"), "env_prefix") && !field.has_attr(Some("args"), "config") {
-            return Err(SchemaError::EnvPrefixWithoutConfig { field: field.name });
+            return Err(SchemaError::EnvPrefixWithoutConfig {
+                ctx: field_ctx,
+                field: field.name,
+            });
         }
 
         let is_positional = field.has_attr(Some("args"), "positional");
         let is_subcommand = field.has_attr(Some("args"), "subcommand");
 
         if field.has_attr(Some("args"), "short") && is_positional {
-            return Err(SchemaError::ShortOnPositional { field: field.name });
+            return Err(SchemaError::ShortOnPositional {
+                ctx: field_ctx,
+                field: field.name,
+            });
         }
 
         if is_counted_field(field) && !is_supported_counted_type(field.shape()) {
-            return Err(SchemaError::CountedOnNonInteger { field: field.name });
+            return Err(SchemaError::CountedOnNonInteger {
+                ctx: field_ctx,
+                field: field.name,
+            });
         }
 
         if is_subcommand {
             if saw_subcommand {
-                return Err(SchemaError::MultipleSubcommandFields);
+                return Err(SchemaError::MultipleSubcommandFields {
+                    ctx: field_ctx,
+                    field: field.name,
+                });
             }
             saw_subcommand = true;
 
@@ -504,11 +732,21 @@ fn arg_level_from_fields(fields: &'static [Field]) -> Result<ArgLevelSchema, Sch
             let (enum_shape, enum_type) = match field_shape.def {
                 Def::Option(opt) => match opt.t.ty {
                     Type::User(UserType::Enum(enum_type)) => (opt.t, enum_type),
-                    _ => return Err(SchemaError::SubcommandOnNonEnum { field: field.name }),
+                    _ => {
+                        return Err(SchemaError::SubcommandOnNonEnum {
+                            ctx: field_ctx,
+                            field: field.name,
+                        });
+                    }
                 },
                 _ => match field_shape.ty {
                     Type::User(UserType::Enum(enum_type)) => (field_shape, enum_type),
-                    _ => return Err(SchemaError::SubcommandOnNonEnum { field: field.name }),
+                    _ => {
+                        return Err(SchemaError::SubcommandOnNonEnum {
+                            ctx: field_ctx,
+                            field: field.name,
+                        });
+                    }
                 },
             };
 
@@ -516,7 +754,8 @@ fn arg_level_from_fields(fields: &'static [Field]) -> Result<ArgLevelSchema, Sch
                 let name = variant_cli_name(variant);
                 let docs = docs_from_lines(variant.doc);
                 let variant_fields = variant_fields_for_schema(variant);
-                let args_schema = arg_level_from_fields(variant_fields)?;
+                let variant_ctx = SchemaErrorContext::root(enum_shape).with_variant(name.clone());
+                let args_schema = arg_level_from_fields(variant_fields, &variant_ctx)?;
 
                 let sub = Subcommand {
                     name: name.clone(),
@@ -526,7 +765,10 @@ fn arg_level_from_fields(fields: &'static [Field]) -> Result<ArgLevelSchema, Sch
                 };
 
                 if subcommands.insert(name.clone(), sub).is_some() {
-                    return Err(SchemaError::ConflictingFlagNames { name });
+                    return Err(SchemaError::ConflictingFlagNames {
+                        ctx: variant_ctx,
+                        name,
+                    });
                 }
             }
 
@@ -546,7 +788,7 @@ fn arg_level_from_fields(fields: &'static [Field]) -> Result<ArgLevelSchema, Sch
             ArgKind::Named { short, counted }
         };
 
-        let value = value_schema_from_shape(field.shape())?;
+        let value = value_schema_from_shape(field.shape(), &field_ctx)?;
         let required = {
             let shape = field.shape();
             !matches!(shape.def, Def::Option(_))
@@ -560,12 +802,14 @@ fn arg_level_from_fields(fields: &'static [Field]) -> Result<ArgLevelSchema, Sch
             let long = field.effective_name().to_kebab_case();
             if !seen_long.insert(long.clone()) {
                 return Err(SchemaError::ConflictingFlagNames {
+                    ctx: field_ctx.clone(),
                     name: format!("--{long}"),
                 });
             }
             if let Some(c) = short {
                 if !seen_short.insert(c) {
                     return Err(SchemaError::ConflictingFlagNames {
+                        ctx: field_ctx.clone(),
                         name: format!("-{c}"),
                     });
                 }
@@ -593,34 +837,48 @@ impl Schema {
     pub(crate) fn from_shape(shape: &'static Shape) -> Result<Self, SchemaError> {
         let struct_type = match &shape.ty {
             Type::User(UserType::Struct(s)) => *s,
-            _ => return Err(SchemaError::TopLevelNotStruct),
+            _ => {
+                return Err(SchemaError::TopLevelNotStruct {
+                    ctx: SchemaErrorContext::root(shape),
+                });
+            }
         };
 
+        let ctx_root = SchemaErrorContext::root(shape);
         let mut config_field: Option<&'static Field> = None;
 
         for field in struct_type.fields {
+            let field_ctx = ctx_root.with_field(field.name);
+
             if is_config_field(field) {
                 if config_field.is_some() {
-                    return Err(SchemaError::BadSchema("multiple config fields"));
+                    return Err(SchemaError::MultipleConfigFields {
+                        ctx: field_ctx,
+                        field: field.name,
+                    });
                 }
                 config_field = Some(field);
             }
 
             if field.has_attr(Some("args"), "env_prefix") && !field.has_attr(Some("args"), "config")
             {
-                return Err(SchemaError::EnvPrefixWithoutConfig { field: field.name });
+                return Err(SchemaError::EnvPrefixWithoutConfig {
+                    ctx: field_ctx,
+                    field: field.name,
+                });
             }
         }
 
-        let args = arg_level_from_fields(struct_type.fields)?;
+        let args = arg_level_from_fields(struct_type.fields, &ctx_root)?;
 
         let config = if let Some(field) = config_field {
+            let field_ctx = ctx_root.with_field(field.name);
             let shape = field.shape();
             let config_shape = match shape.def {
                 Def::Option(opt) => opt.t,
                 _ => shape,
             };
-            Some(config_struct_schema_from_shape(config_shape)?)
+            Some(config_struct_schema_from_shape(config_shape, &field_ctx)?)
         } else {
             None
         };
