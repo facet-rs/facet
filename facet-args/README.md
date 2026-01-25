@@ -6,7 +6,8 @@
 [![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-args.svg)](./LICENSE)
 [![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
 
-Provides CLI argument parsing (WIP).
+Provides configuration parsing from CLI arguments, environment variables, and config files,
+a bit like [figment](https://docs.rs/figment/latest/figment/) but based on facet reflection:
 
 ```rust
 use facet_pretty::FacetPretty;
@@ -32,20 +33,7 @@ Ok(())
 # }
 ```
 
-## Behavior
-
-The behavior of facet-args is still in flux, but here are the broad strokes:
-
-  * We're always parsing to a struct (not an enum, vec etc.)
-  * The struct we're parsing to is always owned — no borrowing happening here, it
-    gets too complicated with `&'slice [&'text str]`
-  * Arguments are either `positional` or `named` — fields lacking either annotation are ignored
-  * Accepted syntaxes for short flags are: `args::short = 'v'` and `args::short = "v"` (where v can be any letter)
-  * `positional` args of type `Vec` (or anything that has a `Def::List`) will soak up all the positional
-    arguments — if followed by `positional` arguments of type `String` for example, those will never
-    get filled
-  * After parsing every available argument, uninitialized struct fields are filled with their default value
-    if they have `facet(default)` set: this includes `Vec`.
+The entry point of facet_args is [`crate::builder`] — let yourself be guided from there.
 
 ## Sponsors
 

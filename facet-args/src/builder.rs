@@ -1,24 +1,8 @@
-//! Builder API for layered configuration parsing.
-//!
-//! This module provides the main entry point for parsing layered configuration
-//! from CLI arguments, environment variables, and config files.
-//!
-//! # Example
-//!
-//! ```rust,ignore
-//! use facet_args::builder;
-//!
-//! let args: Args = builder()
-//!     .cli(|cli| cli.args(std::env::args_os().skip(1)))
-//!     .env(|env| env.prefix("REEF"))
-//!     .file(|file| file.format(JsonFormat))
-//!     .build()?;
-//! ```
-
 use alloc::string::String;
 use alloc::vec::Vec;
 
 use camino::Utf8PathBuf;
+use facet::Facet;
 
 use crate::config_format::{ConfigFormatError, FormatRegistry};
 use crate::config_value::ConfigValue;
@@ -26,8 +10,15 @@ use crate::env::{EnvConfig, EnvSource, StdEnv, parse_env_with_source};
 use crate::merge::merge_layers;
 use crate::provenance::{ConfigResult, FilePathStatus, FileResolution, Override, Provenance};
 
-/// Create a new layered configuration builder.
-pub fn builder() -> ConfigBuilder {
+/// Start configuring an args/config parser for a given type.
+///
+/// The `T` passed to this should derive `Facet` and must be a struct
+/// whose fields and subfields are all properly annotated with `#[facet(args::positional)]`,
+/// `#[facet(args::named)]`, etc. — see [`crate::Attr`]
+pub fn builder<T>() -> ConfigBuilder
+where
+    T: Facet<'static>,
+{
     ConfigBuilder::new()
 }
 
