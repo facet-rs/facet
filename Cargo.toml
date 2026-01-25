@@ -47,9 +47,6 @@ members = [
   # showcase infrastructure
   "facet-showcase",
 
-  # dev tooling (xtask stays in main workspace)
-  "xtask",
-
   "facet-shapelike",
 
   # format crates
