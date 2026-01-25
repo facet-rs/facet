@@ -10,10 +10,7 @@ use indexmap::IndexMap;
 
 use crate::provenance::{ConfigFile, Provenance};
 
-/// A value with full provenance tracking (experimental).
-///
-/// This is like `Spanned<T>` but stores full `Provenance` instead of just a `Span`.
-/// The provenance field is skipped during deserialization and must be set afterwards.
+/// A value with full provenance tracking
 #[derive(Debug, Clone, Facet)]
 #[facet(metadata_container)]
 pub struct Sourced<T> {
@@ -58,6 +55,19 @@ impl<T> Sourced<T> {
     }
 }
 
+/// Information about a missing required field.
+#[derive(Debug, Clone, Facet)]
+pub struct MissingFieldInfo {
+    /// Field name (e.g., "email" or "host")
+    pub field_name: String,
+    /// Full path (e.g., "config.server.host")
+    pub field_path: String,
+    /// Type name
+    pub type_name: String,
+    /// Documentation comment if available
+    pub doc_comment: Option<String>,
+}
+
 /// A configuration value with full provenance tracking at every level.
 #[derive(Debug, Clone, Facet)]
 #[repr(u8)]
@@ -77,6 +87,8 @@ pub enum ConfigValue {
     Array(Sourced<Vec<ConfigValue>>),
     /// An object/map of key-value pairs.
     Object(Sourced<IndexMap<String, ConfigValue, std::hash::RandomState>>),
+    /// A missing required field (used for error reporting)
+    Missing(MissingFieldInfo),
 }
 
 impl ConfigValue {
@@ -112,6 +124,9 @@ impl ConfigValue {
                     };
                     value.set_file_provenance_recursive(file, &key_path);
                 }
+            }
+            ConfigValue::Missing(_) => {
+                // Missing values don't have file provenance - they're synthetic markers
             }
         }
     }

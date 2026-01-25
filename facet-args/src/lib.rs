@@ -166,23 +166,98 @@ pub fn from_slice_layered<T: Facet<'static>>(
 
     tracing::debug!(?config_value, "Restructured ConfigValue");
 
+    // Fill in defaults before checking for missing fields
+    let config_value_with_defaults =
+        config_value_parser::fill_defaults_from_shape(&config_value, T::SHAPE);
+
     // Keep a copy for dumping
-    let config_value_for_dump = config_value.clone();
+    let config_value_for_dump = config_value_with_defaults.clone();
+
+    // Check for missing required fields after defaults are filled
+    let missing_fields = find_missing_required_fields(&config_value_with_defaults, T::SHAPE);
+
+    if !missing_fields.is_empty() {
+        // 1. Show error first
+        eprintln!();
+        eprintln!(
+            "❌ Missing {} required field(s)",
+            missing_fields.len().to_string().red().bold()
+        );
+        eprintln!();
+
+        // 2. Dump config with missing field markers
+        dump_config_with_missing_fields::<T>(
+            &config_value_with_defaults,
+            &file_resolution,
+            &missing_fields,
+            env_prefix,
+        );
+
+        // 3. Show actionable info (how to set each missing field)
+        for field_info in &missing_fields {
+            // Show key with first line of doc comment on same line
+            if let Some(doc) = &field_info.doc_comment {
+                let first_line = doc.lines().next().unwrap_or("").trim();
+                if !first_line.is_empty() {
+                    eprintln!(
+                        "  • {} {}",
+                        field_info.field_path.bold().red(),
+                        format!("/// {}", first_line).dimmed()
+                    );
+                } else {
+                    eprintln!("  • {}", field_info.field_path.bold().red());
+                }
+            } else {
+                eprintln!("  • {}", field_info.field_path.bold().red());
+            }
+
+            eprintln!(
+                "    Set via CLI: {}=...",
+                format!("--{}", field_info.field_path).cyan()
+            );
+            let env_var = format!(
+                "{}__{}",
+                env_prefix,
+                field_info.field_path.replace('.', "__").to_uppercase()
+            );
+            eprintln!("    Or via environment: export {}=...", env_var.yellow());
+            eprintln!();
+        }
+
+        // 4. Remind error
+        eprintln!(
+            "❌ Missing {} required field(s)",
+            missing_fields.len().to_string().red().bold()
+        );
+        eprintln!();
+
+        // 5. Exit
+        std::process::exit(1);
+    }
 
     // Deserialize the merged ConfigValue into the target type
-    let value = from_config_value(&config_value).map_err(|e| {
-        tracing::error!(?e, "Failed to deserialize config");
-        ArgsErrorWithInput {
-            inner: ArgsError::new(
-                ArgsErrorKind::ReflectError(facet_reflect::ReflectError::OperationFailed {
-                    shape: T::SHAPE,
-                    operation: "Failed to deserialize config",
-                }),
-                crate::span::Span::new(0, 0),
-            ),
-            flattened_args: args.join(" "),
+    let value = match from_config_value(&config_value_with_defaults) {
+        Ok(v) => v,
+        Err(e) => {
+            // 1. Show error first
+            eprintln!();
+            eprintln!("❌ Failed to deserialize configuration");
+            eprintln!();
+            eprintln!("  {}", format!("{:?}", e).dimmed());
+            eprintln!();
+
+            // 2. Dump config
+            dump_config_with_provenance::<T>(&config_value_with_defaults, &file_resolution);
+            eprintln!();
+
+            // 3. Remind error
+            eprintln!("❌ Failed to deserialize configuration");
+            eprintln!();
+
+            // 4. Exit
+            std::process::exit(1);
         }
-    })?;
+    };
 
     Ok(ParseResult {
         value,
@@ -309,6 +384,55 @@ fn extract_config_file_path(args: &[&str], flag: &str) -> Option<String> {
     None
 }
 
+/// Find all required fields that are missing from the config value.
+///
+/// This is called AFTER defaults have been filled in by fill_defaults_from_shape.
+/// So if a field is truly missing at this point, it means:
+/// - No default was provided
+/// - Not an Option type
+/// - No value from CLI/env/file
+fn find_missing_required_fields(
+    value: &ConfigValue,
+    _shape: &'static facet_core::Shape,
+) -> Vec<crate::config_value::MissingFieldInfo> {
+    let mut missing = Vec::new();
+    collect_missing_values(value, &mut missing);
+    missing
+}
+
+fn collect_missing_values(
+    value: &ConfigValue,
+    missing: &mut Vec<crate::config_value::MissingFieldInfo>,
+) {
+    match value {
+        ConfigValue::Missing(info) => {
+            missing.push(info.clone());
+        }
+        ConfigValue::Object(sourced) => {
+            for (_key, val) in &sourced.value {
+                collect_missing_values(val, missing);
+            }
+        }
+        ConfigValue::Array(sourced) => {
+            for val in &sourced.value {
+                collect_missing_values(val, missing);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Dump config with special markers for missing required fields.
+fn dump_config_with_missing_fields<T: Facet<'static>>(
+    value: &ConfigValue,
+    file_resolution: &provenance::FileResolution,
+    _missing_fields: &[crate::config_value::MissingFieldInfo],
+    _env_prefix: &str,
+) {
+    // Just show the normal dump - it already has header and sources
+    dump_config_with_provenance::<T>(value, file_resolution);
+}
+
 /// A line to be printed in the config dump.
 #[derive(Debug)]
 struct DumpLine {
@@ -383,10 +507,6 @@ fn dump_config_with_provenance<T: Facet<'static>>(
 
     // Extract context from shape
     let ctx = DumpContext::from_shape::<T>();
-
-    println!("Final Merged Configuration (with provenance)");
-    println!("==============================================");
-    println!();
 
     // Show sources
     println!("Sources:");
@@ -822,6 +942,20 @@ fn collect_dump_lines(
                 provenance: format_provenance(&sourced.provenance),
                 is_header: false,
             });
+        }
+        ConfigValue::Missing(_info) => {
+            // Show big red MISSING marker
+            let colored_value = "❌ MISSING (required)".red().bold().to_string();
+            lines.push(DumpLine {
+                indent,
+                key: path.to_string(),
+                value: colored_value,
+                provenance: String::new(),
+                is_header: false,
+            });
+
+            // TODO: Add help text showing CLI/env/file options
+            // For now, just mark it as missing - we can enhance this later
         }
     }
 }

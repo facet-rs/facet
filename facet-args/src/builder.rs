@@ -434,6 +434,7 @@ fn collect_provenance_inner(
         ConfigValue::String(s) => s.provenance.as_ref(),
         ConfigValue::Array(s) => s.provenance.as_ref(),
         ConfigValue::Object(s) => s.provenance.as_ref(),
+        ConfigValue::Missing(_) => None, // Missing values have no provenance
     };
 
     if let Some(prov) = prov

@@ -52,11 +52,27 @@ where
 
 /// Walk the shape and insert default values for missing fields in the ConfigValue tree.
 /// This allows proper provenance tracking (defaults are marked as coming from Default).
-fn fill_defaults_from_shape(value: &ConfigValue, shape: &'static Shape) -> ConfigValue {
+pub(crate) fn fill_defaults_from_shape(value: &ConfigValue, shape: &'static Shape) -> ConfigValue {
+    fill_defaults_from_shape_recursive(value, shape, "")
+}
+
+fn fill_defaults_from_shape_recursive(
+    value: &ConfigValue,
+    shape: &'static Shape,
+    path_prefix: &str,
+) -> ConfigValue {
     tracing::debug!(
         shape = shape.type_identifier,
-        "fill_defaults_from_shape: entering"
+        path_prefix,
+        "fill_defaults_from_shape_recursive: entering"
     );
+
+    // Special handling for Option types: unwrap to inner type
+    if let Ok(option_def) = shape.def.into_option() {
+        // For Option types, if the value is an Object, recurse with the inner type
+        return fill_defaults_from_shape_recursive(value, option_def.t, path_prefix);
+    }
+
     match value {
         ConfigValue::Object(sourced) => {
             // Get struct fields from shape
@@ -70,16 +86,15 @@ fn fill_defaults_from_shape(value: &ConfigValue, shape: &'static Shape) -> Confi
             // For each field in the struct shape, check if it's missing in the ConfigValue
             for field in fields.iter() {
                 if !new_map.contains_key(field.name) {
-                    // Field is missing - insert a default
-                    if let Some(default_value) = get_default_config_value(field) {
-                        tracing::debug!(
-                            field = field.name,
-                            shape = shape.type_identifier,
-                            ?default_value,
-                            "fill_defaults_from_shape: inserting default for missing field"
-                        );
-                        new_map.insert(field.name.to_string(), default_value);
-                    }
+                    // Field is missing - get default or create Missing marker
+                    let default_value = get_default_config_value(field, path_prefix);
+                    tracing::debug!(
+                        field = field.name,
+                        shape = shape.type_identifier,
+                        ?default_value,
+                        "fill_defaults_from_shape_recursive: inserting default for missing field"
+                    );
+                    new_map.insert(field.name.to_string(), default_value);
                 }
             }
 
@@ -87,7 +102,12 @@ fn fill_defaults_from_shape(value: &ConfigValue, shape: &'static Shape) -> Confi
             for (key, val) in new_map.iter_mut() {
                 // Find the corresponding field shape
                 if let Some(field) = fields.iter().find(|f| f.name == key) {
-                    *val = fill_defaults_from_shape(val, field.shape.get());
+                    let field_path = if path_prefix.is_empty() {
+                        key.to_string()
+                    } else {
+                        format!("{}.{}", path_prefix, key)
+                    };
+                    *val = fill_defaults_from_shape_recursive(val, field.shape.get(), &field_path);
                 }
             }
 
@@ -117,39 +137,67 @@ fn fill_defaults_from_shape(value: &ConfigValue, shape: &'static Shape) -> Confi
     }
 }
 
-/// Get a default ConfigValue for a field, if one should be provided.
+/// Get a default ConfigValue for a field.
 ///
-/// Only provides CLI-friendly defaults (false/0) for scalar fields that DON'T have
-/// a #[facet(default)] attribute. For struct fields, always creates an empty Object
-/// so the deserializer can enter and recursively fill defaults via facet-reflect.
-fn get_default_config_value(field: &'static facet_core::Field) -> Option<ConfigValue> {
+/// For fields with #[facet(default)], calls the default function and serializes to ConfigValue.
+/// For Option<T> types, provides None (null) as implicit default.
+/// For scalar fields without defaults, provides CLI-friendly defaults (false/0).
+/// For struct fields without defaults, creates an empty Object for recursive filling.
+/// For required fields without defaults, returns ConfigValue::Missing with field info.
+fn get_default_config_value(field: &'static facet_core::Field, path_prefix: &str) -> ConfigValue {
     use facet_core::ScalarType;
 
     let shape = field.shape.get();
 
-    // For struct types, create an empty object (even if field has default attribute)
-    // The deserializer needs the Object to enter and recursively fill defaults
+    // If field has explicit default, invoke it and serialize to ConfigValue
+    if let Some(default_source) = &field.default {
+        tracing::debug!(
+            field = field.name,
+            "get_default_config_value: field has default, invoking"
+        );
+
+        if let Ok(config_value) = serialize_default_to_config_value(default_source, shape) {
+            tracing::debug!(
+                field = field.name,
+                ?config_value,
+                "get_default_config_value: successfully serialized default"
+            );
+            return config_value;
+        } else {
+            tracing::error!(
+                field = field.name,
+                "get_default_config_value: failed to serialize default, returning Missing"
+            );
+        }
+    }
+
+    // Option<T> implicitly has Default semantics (None)
+    // Check type_identifier for "Option" - handles both std::option::Option and core::option::Option
+    if shape.type_identifier.contains("Option") {
+        return ConfigValue::Null(Sourced {
+            value: (),
+            span: None,
+            provenance: Some(Provenance::Default),
+        });
+    }
+
+    // For struct types without explicit defaults, create empty object for recursive filling
     if let Type::User(UserType::Struct(_)) = &shape.ty {
-        return Some(ConfigValue::Object(Sourced {
+        return ConfigValue::Object(Sourced {
             value: IndexMap::default(),
             span: None,
             provenance: Some(Provenance::Default),
-        }));
-    }
-
-    // For scalar types with explicit defaults, let facet-reflect handle them
-    if field.default.is_some() {
-        return None;
+        });
     }
 
     // For scalar types without explicit defaults, emit CLI-friendly defaults
-    match shape.scalar_type() {
-        Some(ScalarType::Bool) => Some(ConfigValue::Bool(Sourced {
-            value: false,
-            span: None,
-            provenance: Some(Provenance::Default),
-        })),
-        Some(
+    if let Some(scalar_type) = shape.scalar_type() {
+        return match scalar_type {
+            ScalarType::Bool => ConfigValue::Bool(Sourced {
+                value: false,
+                span: None,
+                provenance: Some(Provenance::Default),
+            }),
             ScalarType::U8
             | ScalarType::U16
             | ScalarType::U32
@@ -161,14 +209,104 @@ fn get_default_config_value(field: &'static facet_core::Field) -> Option<ConfigV
             | ScalarType::I32
             | ScalarType::I64
             | ScalarType::I128
-            | ScalarType::ISize,
-        ) => Some(ConfigValue::Integer(Sourced {
-            value: 0,
-            span: None,
-            provenance: Some(Provenance::Default),
-        })),
-        _ => None,
+            | ScalarType::ISize => ConfigValue::Integer(Sourced {
+                value: 0,
+                span: None,
+                provenance: Some(Provenance::Default),
+            }),
+            _ => {
+                // No sensible default for other scalar types
+                create_missing_marker(field, path_prefix, shape)
+            }
+        };
     }
+
+    // No default available - create Missing marker
+    create_missing_marker(field, path_prefix, shape)
+}
+
+fn create_missing_marker(
+    field: &'static facet_core::Field,
+    path_prefix: &str,
+    shape: &'static facet_core::Shape,
+) -> ConfigValue {
+    let field_path = if path_prefix.is_empty() {
+        field.name.to_string()
+    } else {
+        format!("{}.{}", path_prefix, field.name)
+    };
+
+    let doc_comment = if field.doc.is_empty() {
+        None
+    } else {
+        Some(field.doc.join("\n"))
+    };
+
+    ConfigValue::Missing(crate::config_value::MissingFieldInfo {
+        field_name: field.name.to_string(),
+        field_path,
+        type_name: shape.type_identifier.to_string(),
+        doc_comment,
+    })
+}
+
+/// Serialize a default value to ConfigValue by invoking the default function
+/// and using a ConfigValueSerializer.
+#[allow(unsafe_code)]
+fn serialize_default_to_config_value(
+    default_source: &facet_core::DefaultSource,
+    shape: &'static facet_core::Shape,
+) -> Result<ConfigValue, alloc::string::String> {
+    use facet_core::{DefaultSource, TypeOps};
+
+    // Allocate space for the default value
+    let mut storage: [u8; 1024] = [0; 1024]; // Stack buffer for small types
+    let ptr = storage.as_mut_ptr() as *mut ();
+
+    // Call the appropriate default function to initialize the value
+    match default_source {
+        DefaultSource::FromTrait => {
+            // Get default_in_place from type_ops
+            let type_ops = shape
+                .type_ops
+                .ok_or_else(|| alloc::format!("Shape {} has no type_ops", shape.type_identifier))?;
+
+            match type_ops {
+                TypeOps::Direct(ops) => {
+                    let default_fn = ops.default_in_place.ok_or_else(|| {
+                        alloc::format!("Shape {} has no default function", shape.type_identifier)
+                    })?;
+                    // Direct ops default: unsafe fn(*mut ()) - initializes in place, no return value
+                    unsafe { (default_fn)(ptr) };
+                }
+                TypeOps::Indirect(_) => {
+                    Err(
+                        "Indirect type ops not yet supported for default serialization".to_string(),
+                    )?;
+                }
+            }
+        }
+        DefaultSource::Custom(fn_ptr) => {
+            // Custom default: unsafe fn(PtrUninit) -> PtrMut
+            unsafe {
+                let ptr_uninit = facet_core::PtrUninit::new_sized(ptr);
+                (*fn_ptr)(ptr_uninit);
+            }
+        }
+    }
+
+    // Create a Peek from the initialized value
+    let peek = unsafe {
+        let ptr_const = facet_core::PtrConst::new_sized(ptr as *const ());
+        facet_reflect::Peek::unchecked_new(ptr_const, shape)
+    };
+
+    // Serialize to ConfigValue using our serializer
+    let mut serializer = ConfigValueSerializer::new();
+    facet_format::serialize_root(&mut serializer, peek)
+        .map_err(|e| alloc::format!("Serialization failed: {:?}", e))?;
+
+    Ok(serializer.finish())
 }
 
 /// Errors that can occur during ConfigValue deserialization.
@@ -395,6 +533,13 @@ impl<'input> ConfigValueParser<'input> {
 
                 Ok(ParseEvent::StructStart(ContainerKind::Object))
             }
+            ConfigValue::Missing(info) => {
+                // Missing values cannot be deserialized - they're error markers
+                Err(ConfigValueParseError::Message(alloc::format!(
+                    "Required field '{}' is missing",
+                    info.field_path
+                )))
+            }
         }
     }
 }
@@ -415,6 +560,197 @@ impl core::fmt::Display for ConfigValueParseError {
 }
 
 impl core::error::Error for ConfigValueParseError {}
+
+/// Serializer that builds a ConfigValue tree.
+pub struct ConfigValueSerializer {
+    stack: Vec<BuildFrame>,
+}
+
+impl Default for ConfigValueSerializer {
+    fn default() -> Self {
+        Self {
+            stack: alloc::vec![BuildFrame::Root(None)],
+        }
+    }
+}
+
+enum BuildFrame {
+    Root(Option<ConfigValue>),
+    Object {
+        map: IndexMap<alloc::string::String, ConfigValue, std::hash::RandomState>,
+    },
+    Array {
+        items: Vec<ConfigValue>,
+    },
+    PendingField {
+        map: IndexMap<alloc::string::String, ConfigValue, std::hash::RandomState>,
+        key: alloc::string::String,
+    },
+}
+
+impl ConfigValueSerializer {
+    /// Create a new ConfigValueSerializer.
+    pub fn new() -> Self {
+        Default::default()
+    }
+
+    /// Finish serialization and return the final ConfigValue.
+    pub fn finish(mut self) -> ConfigValue {
+        match self.stack.pop() {
+            Some(BuildFrame::Root(Some(value))) if self.stack.is_empty() => value,
+            Some(BuildFrame::Root(None)) if self.stack.is_empty() => {
+                // No value was serialized, return null
+                ConfigValue::Null(Sourced {
+                    value: (),
+                    span: None,
+                    provenance: Some(Provenance::Default),
+                })
+            }
+            _ => panic!("Serializer finished in unexpected state"),
+        }
+    }
+
+    fn attach_value(&mut self, value: ConfigValue) -> Result<(), alloc::string::String> {
+        let parent = self.stack.pop().ok_or("Stack underflow")?;
+        match parent {
+            BuildFrame::Root(None) => {
+                self.stack.push(BuildFrame::Root(Some(value)));
+                Ok(())
+            }
+            BuildFrame::Root(Some(_)) => Err("Root already has a value")?,
+            BuildFrame::PendingField { mut map, key } => {
+                map.insert(key, value);
+                self.stack.push(BuildFrame::Object { map });
+                Ok(())
+            }
+            BuildFrame::Array { mut items } => {
+                items.push(value);
+                self.stack.push(BuildFrame::Array { items });
+                Ok(())
+            }
+            BuildFrame::Object { .. } => {
+                Err("Cannot attach value directly to Object without field_key")?
+            }
+        }
+    }
+}
+
+impl facet_format::FormatSerializer for ConfigValueSerializer {
+    type Error = alloc::string::String;
+
+    fn begin_struct(&mut self) -> Result<(), Self::Error> {
+        self.stack.push(BuildFrame::Object {
+            map: IndexMap::default(),
+        });
+        Ok(())
+    }
+
+    fn field_key(&mut self, key: &str) -> Result<(), Self::Error> {
+        let frame = self.stack.pop().ok_or("Stack underflow")?;
+        match frame {
+            BuildFrame::Object { map } => {
+                self.stack.push(BuildFrame::PendingField {
+                    map,
+                    key: key.to_string(),
+                });
+                Ok(())
+            }
+            _ => Err("field_key called outside of struct")?,
+        }
+    }
+
+    fn end_struct(&mut self) -> Result<(), Self::Error> {
+        let frame = self.stack.pop().ok_or("Stack underflow")?;
+        match frame {
+            BuildFrame::Object { map } => {
+                let value = ConfigValue::Object(Sourced {
+                    value: map,
+                    span: None,
+                    provenance: Some(Provenance::Default),
+                });
+                self.attach_value(value)
+            }
+            _ => Err("end_struct called without matching begin_struct")?,
+        }
+    }
+
+    fn begin_seq(&mut self) -> Result<(), Self::Error> {
+        self.stack.push(BuildFrame::Array { items: Vec::new() });
+        Ok(())
+    }
+
+    fn end_seq(&mut self) -> Result<(), Self::Error> {
+        let frame = self.stack.pop().ok_or("Stack underflow")?;
+        match frame {
+            BuildFrame::Array { items } => {
+                let value = ConfigValue::Array(Sourced {
+                    value: items,
+                    span: None,
+                    provenance: Some(Provenance::Default),
+                });
+                self.attach_value(value)
+            }
+            _ => Err("end_seq called without matching begin_seq")?,
+        }
+    }
+
+    fn scalar(&mut self, value: facet_format::ScalarValue) -> Result<(), Self::Error> {
+        use facet_format::ScalarValue;
+
+        let config_value = match value {
+            ScalarValue::Unit | ScalarValue::Null => ConfigValue::Null(Sourced {
+                value: (),
+                span: None,
+                provenance: Some(Provenance::Default),
+            }),
+            ScalarValue::Bool(b) => ConfigValue::Bool(Sourced {
+                value: b,
+                span: None,
+                provenance: Some(Provenance::Default),
+            }),
+            ScalarValue::I64(i) => ConfigValue::Integer(Sourced {
+                value: i,
+                span: None,
+                provenance: Some(Provenance::Default),
+            }),
+            ScalarValue::U64(u) => ConfigValue::Integer(Sourced {
+                value: u as i64,
+                span: None,
+                provenance: Some(Provenance::Default),
+            }),
+            ScalarValue::I128(i) => ConfigValue::Integer(Sourced {
+                value: i as i64,
+                span: None,
+                provenance: Some(Provenance::Default),
+            }),
+            ScalarValue::U128(u) => ConfigValue::Integer(Sourced {
+                value: u as i64,
+                span: None,
+                provenance: Some(Provenance::Default),
+            }),
+            ScalarValue::F64(f) => ConfigValue::Float(Sourced {
+                value: f,
+                span: None,
+                provenance: Some(Provenance::Default),
+            }),
+            ScalarValue::Char(c) => ConfigValue::String(Sourced {
+                value: c.to_string(),
+                span: None,
+                provenance: Some(Provenance::Default),
+            }),
+            ScalarValue::Str(s) => ConfigValue::String(Sourced {
+                value: s.into_owned(),
+                span: None,
+                provenance: Some(Provenance::Default),
+            }),
+            ScalarValue::Bytes(_) => {
+                return Err("Bytes not supported in ConfigValue")?;
+            }
+        };
+
+        self.attach_value(config_value)
+    }
+}
 
 #[cfg(test)]
 mod tests {
