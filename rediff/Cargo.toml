@@ -41,6 +41,4 @@ tracing = { version = "0.1", optional = true }
 
 [dev-dependencies]
 facet = { version = "0.43", features = ["all-impls"] }
-facet-value = "0.43"
-insta = "1"
 tracing = "0.1"
