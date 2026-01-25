@@ -627,6 +627,100 @@ impl<T> TypedVTableDirectBuilder<T> {
         self
     }
 
+    // Optional variants for auto-detection via `impls!` macro
+
+    /// Set the display function from an Option.
+    /// Used for auto-detection where the function may not be available.
+    pub const fn display_opt(
+        mut self,
+        f: Option<fn(&T, &mut fmt::Formatter<'_>) -> fmt::Result>,
+    ) -> Self {
+        self.vtable.display = match f {
+            Some(f) => Some(unsafe {
+                transmute::<
+                    fn(&T, &mut fmt::Formatter<'_>) -> fmt::Result,
+                    unsafe fn(*const (), &mut fmt::Formatter<'_>) -> fmt::Result,
+                >(f)
+            }),
+            None => None,
+        };
+        self
+    }
+
+    /// Set the debug function from an Option.
+    /// Used for auto-detection where the function may not be available.
+    pub const fn debug_opt(
+        mut self,
+        f: Option<fn(&T, &mut fmt::Formatter<'_>) -> fmt::Result>,
+    ) -> Self {
+        self.vtable.debug = match f {
+            Some(f) => Some(unsafe {
+                transmute::<
+                    fn(&T, &mut fmt::Formatter<'_>) -> fmt::Result,
+                    unsafe fn(*const (), &mut fmt::Formatter<'_>) -> fmt::Result,
+                >(f)
+            }),
+            None => None,
+        };
+        self
+    }
+
+    /// Set the hash function from an Option.
+    /// Used for auto-detection where the function may not be available.
+    pub const fn hash_opt(mut self, f: Option<fn(&T, &mut HashProxy<'static>)>) -> Self {
+        self.vtable.hash = match f {
+            Some(f) => Some(unsafe {
+                transmute::<fn(&T, &mut HashProxy<'static>), unsafe fn(*const (), &mut HashProxy<'_>)>(
+                    f,
+                )
+            }),
+            None => None,
+        };
+        self
+    }
+
+    /// Set the partial_eq function from an Option.
+    /// Used for auto-detection where the function may not be available.
+    pub const fn partial_eq_opt(mut self, f: Option<fn(&T, &T) -> bool>) -> Self {
+        self.vtable.partial_eq = match f {
+            Some(f) => Some(unsafe {
+                transmute::<fn(&T, &T) -> bool, unsafe fn(*const (), *const ()) -> bool>(f)
+            }),
+            None => None,
+        };
+        self
+    }
+
+    /// Set the partial_cmp function from an Option.
+    /// Used for auto-detection where the function may not be available.
+    pub const fn partial_cmp_opt(mut self, f: Option<fn(&T, &T) -> Option<cmp::Ordering>>) -> Self {
+        self.vtable.partial_cmp = match f {
+            Some(f) => Some(unsafe {
+                transmute::<
+                    fn(&T, &T) -> Option<cmp::Ordering>,
+                    unsafe fn(*const (), *const ()) -> Option<cmp::Ordering>,
+                >(f)
+            }),
+            None => None,
+        };
+        self
+    }
+
+    /// Set the cmp function from an Option.
+    /// Used for auto-detection where the function may not be available.
+    pub const fn cmp_opt(mut self, f: Option<fn(&T, &T) -> cmp::Ordering>) -> Self {
+        self.vtable.cmp = match f {
+            Some(f) => Some(unsafe {
+                transmute::<
+                    fn(&T, &T) -> cmp::Ordering,
+                    unsafe fn(*const (), *const ()) -> cmp::Ordering,
+                >(f)
+            }),
+            None => None,
+        };
+        self
+    }
+
     /// Build the VTable.
     pub const fn build(self) -> VTableDirect {
         self.vtable

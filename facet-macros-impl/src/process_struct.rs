@@ -5,9 +5,22 @@
 //! The vtable contains function pointers for various trait implementations (Debug, Clone,
 //! PartialEq, etc.). There are two ways these can be populated:
 //!
-//! ## 1. Explicit Declaration (No Specialization)
+//! ## 1. Auto-Detection (Default)
 //!
-//! Use `#[facet(traits(...))]` to declare which traits are implemented:
+//! By default, facet uses the `impls!` macro to detect traits at compile time via
+//! specialization tricks:
+//!
+//! ```ignore
+//! #[derive(Debug, Default, Facet)]
+//! struct Foo { ... }
+//! ```
+//!
+//! This automatically detects that `Foo` implements `Debug` and `Default`.
+//!
+//! ## 2. Explicit Declaration
+//!
+//! Use `#[facet(traits(...))]` to explicitly declare which traits are implemented,
+//! bypassing auto-detection:
 //!
 //! ```ignore
 //! #[derive(Debug, Clone, Facet)]
@@ -17,33 +30,11 @@
 //!
 //! This generates compile-time assertions to verify the traits are actually implemented.
 //!
-//! **Note:** Rust strips `#[derive(...)]` attributes before passing to derive macros,
-//! so the Facet macro cannot automatically detect derived traits. You must explicitly
-//! declare them via `#[facet(traits(...))]`.
-//!
-//! ## 2. Auto-Detection (Uses Specialization)
-//!
-//! For backward compatibility or when you don't want to list traits manually, use
-//! `#[facet(auto_traits)]`. This uses the `impls!` macro to detect traits at compile
-//! time via specialization tricks:
-//!
-//! ```ignore
-//! #[derive(Debug, Facet)]
-//! #[facet(auto_traits)]  // Auto-detect all traits
-//! struct Foo { ... }
-//! ```
-//!
-//! **Note:** Auto-detection is slower to compile because it generates specialization
-//! code for each trait. Use explicit declaration when possible.
-//!
 //! ## Layered Resolution
 //!
 //! For each vtable entry, the macro checks sources in order:
 //! 1. Is the trait in `#[facet(traits(...))]`? → Use direct impl
-//! 2. Is `#[facet(auto_traits)]` present? → Use `impls!` detection
-//! 3. Otherwise → Set to `None`
-//!
-//! Note: `#[facet(traits(...))]` and `#[facet(auto_traits)]` are mutually exclusive.
+//! 2. Otherwise → Use `impls!` specialization-based detection
 
 use quote::{format_ident, quote, quote_spanned};
 
@@ -66,13 +57,10 @@ pub(crate) struct TransparentInfo<'a> {
 /// The vtable generation uses a layered approach:
 /// 1. **Declared** - traits explicitly listed in `#[facet(traits(...))]`
 /// 2. **Implied** - traits implied by other attributes (e.g., `#[facet(default)]` implies Default)
-/// 3. **Auto** - if `#[facet(auto_traits)]` is present, use `impls!` for remaining traits
-/// 4. **None** - if none of the above apply, emit `None` for that trait
+/// 3. **Auto** - use `impls!` for remaining traits via specialization (the default)
 pub(crate) struct TraitSources<'a> {
     /// Traits explicitly declared via #[facet(traits(...))]
     pub declared_traits: Option<&'a DeclaredTraits>,
-    /// Whether to auto-detect remaining traits via specialization
-    pub auto_traits: bool,
     /// Whether `#[facet(default)]` is present (implies Default trait)
     pub facet_default: bool,
 }
@@ -82,7 +70,6 @@ impl<'a> TraitSources<'a> {
     pub fn from_attrs(attrs: &'a PAttrs) -> Self {
         Self {
             declared_traits: attrs.declared_traits.as_ref(),
-            auto_traits: attrs.auto_traits,
             facet_default: attrs.has_builtin("default"),
         }
     }
@@ -92,9 +79,10 @@ impl<'a> TraitSources<'a> {
         self.declared_traits.is_some_and(check)
     }
 
-    /// Check if we should use auto-detection for this trait
+    /// Check if we should use auto-detection for this trait.
+    /// Returns true when no explicit traits are declared (the default).
     const fn should_auto(&self) -> bool {
-        self.auto_traits
+        self.declared_traits.is_none()
     }
 }
 
@@ -122,16 +110,15 @@ pub(crate) fn phantom_attr_use(
 /// Generates the vtable for a type based on trait sources.
 ///
 /// Uses a layered approach for each trait:
-/// 1. If explicitly declared → direct impl (no specialization)
-/// 2. If auto_traits enabled → use `impls!` macro for detection
-/// 3. Otherwise → None
+/// 1. If explicitly declared via `#[facet(traits(...))]` → direct impl
+/// 2. Otherwise → use `impls!` specialization-based detection (the default)
 ///
-/// When `auto_traits` is NOT enabled, generates `ValueVTableThinInstant` using
+/// When traits are explicitly declared, generates `ValueVTableThinInstant` using
 /// helper functions like `debug_for::<Self>()`. This avoids closures that would
 /// require `T: 'static` bounds.
 ///
-/// When `auto_traits` IS enabled, falls back to `ValueVTable::builder()` pattern
-/// (ThinDelayed) which uses closures for runtime trait detection.
+/// When using auto-detection (the default), falls back to `ValueVTable::builder()`
+/// pattern (ThinDelayed) which uses closures for specialization-based detection.
 ///
 /// When `use_inherent_borrow_inner` is true, references `<Self>::__facet_try_borrow_inner`
 /// instead of defining an inline function. This is needed for generic types where the
@@ -146,21 +133,17 @@ pub(crate) fn gen_vtable(
     invariants_fn: Option<&TokenStream>,
     use_inherent_borrow_inner: bool,
     try_from_fn_direct: Option<&TokenStream>,
-    try_from_fn_indirect: Option<&TokenStream>,
+    _try_from_fn_indirect: Option<&TokenStream>,
+    _has_type_or_const_generics: bool,
+    has_any_generics: bool,
 ) -> TokenStream {
-    // If auto_traits is enabled, use VTableIndirect with runtime trait detection.
-    if sources.auto_traits {
-        return gen_vtable_indirect(
-            facet_crate,
-            type_name_fn,
-            sources,
-            struct_type,
-            invariants_fn,
-            try_from_fn_indirect,
-        );
-    }
-
-    // Otherwise, use VTableDirect with compile-time trait resolution.
+    // Always use VTableDirect. VTableIndirect was designed for generic types with
+    // auto-detection, but it has the same function-item-referencing-outer-params
+    // issue as VTableDirect, so there's no benefit to using it.
+    //
+    // Auto-detection via the Spez pattern only works for non-generic types
+    // because function items can't reference type or lifetime parameters from
+    // the outer scope.
     gen_vtable_direct(
         facet_crate,
         type_name_fn,
@@ -170,6 +153,7 @@ pub(crate) fn gen_vtable(
         invariants_fn,
         use_inherent_borrow_inner,
         try_from_fn_direct,
+        has_any_generics,
     )
 }
 
@@ -190,45 +174,145 @@ fn gen_vtable_direct(
     invariants_fn: Option<&TokenStream>,
     use_inherent_borrow_inner: bool,
     try_from_fn: Option<&TokenStream>,
+    has_any_generics: bool,
 ) -> TokenStream {
-    // Display: check declared
+    // Auto-detection is only possible for non-generic types.
+    // Types with lifetime parameters can't use auto-detection in VTableDirect
+    // because function items would need to access outer lifetime parameters.
+    let can_auto_detect = sources.should_auto() && !has_any_generics;
+
+    // Display: check declared, then auto-detect if possible
+    // Note: Auto-detection uses the Spez pattern which doesn't require trait bounds
+    // because method resolution happens at compile time via autoref specialization.
+    // We use Self instead of #struct_type because impls! creates internal structs
+    // that can conflict with user-defined type names like "Wrapper".
     let display_call = if sources.has_declared(|d| d.display) {
         quote! { .display(<Self as ::core::fmt::Display>::fmt) }
+    } else if can_auto_detect {
+        quote! {
+            .display_opt(
+                if #facet_crate::𝟋::impls!(Self: ::core::fmt::Display) {
+                    𝟋Some({
+                        fn __display(v: &#struct_type, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                            (&&#facet_crate::𝟋::Spez(v)).spez_display(f)
+                        }
+                        __display
+                    })
+                } else {
+                    𝟋None
+                }
+            )
+        }
     } else {
         quote! {}
     };
 
-    // Debug: check declared
+    // Debug: check declared, then auto-detect if possible
     let debug_call = if sources.has_declared(|d| d.debug) {
         quote! { .debug(<Self as ::core::fmt::Debug>::fmt) }
+    } else if can_auto_detect {
+        quote! {
+            .debug_opt(
+                if #facet_crate::𝟋::impls!(Self: ::core::fmt::Debug) {
+                    𝟋Some({
+                        fn __debug(v: &#struct_type, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                            (&&#facet_crate::𝟋::Spez(v)).spez_debug(f)
+                        }
+                        __debug
+                    })
+                } else {
+                    𝟋None
+                }
+            )
+        }
     } else {
         quote! {}
     };
 
-    // PartialEq: check declared
+    // PartialEq: check declared, then auto-detect if possible
     let partial_eq_call = if sources.has_declared(|d| d.partial_eq) {
         quote! { .partial_eq(<Self as ::core::cmp::PartialEq>::eq) }
+    } else if can_auto_detect {
+        quote! {
+            .partial_eq_opt(
+                if #facet_crate::𝟋::impls!(Self: ::core::cmp::PartialEq) {
+                    𝟋Some({
+                        fn __partial_eq(a: &#struct_type, b: &#struct_type) -> bool {
+                            (&&#facet_crate::𝟋::Spez(a)).spez_partial_eq(&&#facet_crate::𝟋::Spez(b))
+                        }
+                        __partial_eq
+                    })
+                } else {
+                    𝟋None
+                }
+            )
+        }
     } else {
         quote! {}
     };
 
-    // PartialOrd: check declared
+    // PartialOrd: check declared, then auto-detect if possible
     let partial_ord_call = if sources.has_declared(|d| d.partial_ord) {
         quote! { .partial_cmp(<Self as ::core::cmp::PartialOrd>::partial_cmp) }
+    } else if can_auto_detect {
+        quote! {
+            .partial_cmp_opt(
+                if #facet_crate::𝟋::impls!(Self: ::core::cmp::PartialOrd) {
+                    𝟋Some({
+                        fn __partial_cmp(a: &#struct_type, b: &#struct_type) -> ::core::option::Option<::core::cmp::Ordering> {
+                            (&&#facet_crate::𝟋::Spez(a)).spez_partial_cmp(&&#facet_crate::𝟋::Spez(b))
+                        }
+                        __partial_cmp
+                    })
+                } else {
+                    𝟋None
+                }
+            )
+        }
     } else {
         quote! {}
     };
 
-    // Ord: check declared
+    // Ord: check declared, then auto-detect if possible
     let ord_call = if sources.has_declared(|d| d.ord) {
         quote! { .cmp(<Self as ::core::cmp::Ord>::cmp) }
+    } else if can_auto_detect {
+        quote! {
+            .cmp_opt(
+                if #facet_crate::𝟋::impls!(Self: ::core::cmp::Ord) {
+                    𝟋Some({
+                        fn __cmp(a: &#struct_type, b: &#struct_type) -> ::core::cmp::Ordering {
+                            (&&#facet_crate::𝟋::Spez(a)).spez_cmp(&&#facet_crate::𝟋::Spez(b))
+                        }
+                        __cmp
+                    })
+                } else {
+                    𝟋None
+                }
+            )
+        }
     } else {
         quote! {}
     };
 
-    // Hash: check declared
+    // Hash: check declared, then auto-detect if possible
     let hash_call = if sources.has_declared(|d| d.hash) {
         quote! { .hash(<Self as ::core::hash::Hash>::hash::<#facet_crate::HashProxy>) }
+    } else if can_auto_detect {
+        quote! {
+            .hash_opt(
+                if #facet_crate::𝟋::impls!(Self: ::core::hash::Hash) {
+                    𝟋Some({
+                        fn __hash(v: &#struct_type, h: &mut #facet_crate::HashProxy<'static>) {
+                            (&&#facet_crate::𝟋::Spez(v)).spez_hash(h)
+                        }
+                        __hash
+                    })
+                } else {
+                    𝟋None
+                }
+            )
+        }
     } else {
         quote! {}
     };
@@ -307,272 +391,6 @@ fn gen_vtable_direct(
     }
 }
 
-/// Generates a VTableIndirect using the specialization-based auto_traits approach.
-/// Used when `#[facet(auto_traits)]` is enabled for runtime trait detection.
-///
-/// This generates functions that use `OxRef`/`OxMut` and return `Option<T>` to indicate
-/// whether the trait is implemented.
-fn gen_vtable_indirect(
-    facet_crate: &TokenStream,
-    _type_name_fn: &TokenStream,
-    sources: &TraitSources<'_>,
-    struct_type: &TokenStream,
-    invariants_fn: Option<&TokenStream>,
-    try_from_fn: Option<&TokenStream>,
-) -> TokenStream {
-    // For VTableIndirect, functions take OxRef/OxMut and return Option<T>
-    // The Option layer allows returning None when trait is not implemented
-
-    // Display: check declared then auto
-    let display_field = if sources.has_declared(|d| d.display) {
-        quote! {
-            display: 𝟋Some({
-                unsafe fn __display(data: #facet_crate::OxPtrConst, f: &mut ::core::fmt::Formatter<'_>) -> ::core::option::Option<::core::fmt::Result> {
-                    let data: &#struct_type = data.ptr().get();
-                    𝟋Some(::core::fmt::Display::fmt(data, f))
-                }
-                __display
-            }),
-        }
-    } else if sources.should_auto() {
-        quote! {
-            display: 𝟋Some({
-                unsafe fn __display(data: #facet_crate::OxPtrConst, f: &mut ::core::fmt::Formatter<'_>) -> ::core::option::Option<::core::fmt::Result> {
-                    if impls!(#struct_type: ::core::fmt::Display) {
-                        let data: &#struct_type = data.ptr().get();
-                        𝟋Some((&&Spez(data)).spez_display(f))
-                    } else {
-                        𝟋None
-                    }
-                }
-                __display
-            }),
-        }
-    } else {
-        quote! { display: 𝟋None, }
-    };
-
-    // Debug: check declared, then auto
-    let debug_field = if sources.has_declared(|d| d.debug) {
-        quote! {
-            debug: 𝟋Some({
-                unsafe fn __debug(data: #facet_crate::OxPtrConst, f: &mut ::core::fmt::Formatter<'_>) -> ::core::option::Option<::core::fmt::Result> {
-                    let data: &#struct_type = data.ptr().get();
-                    𝟋Some(::core::fmt::Debug::fmt(data, f))
-                }
-                __debug
-            }),
-        }
-    } else if sources.should_auto() {
-        quote! {
-            debug: 𝟋Some({
-                unsafe fn __debug(data: #facet_crate::OxPtrConst, f: &mut ::core::fmt::Formatter<'_>) -> ::core::option::Option<::core::fmt::Result> {
-                    if impls!(#struct_type: ::core::fmt::Debug) {
-                        let data: &#struct_type = data.ptr().get();
-                        𝟋Some((&&Spez(data)).spez_debug(f))
-                    } else {
-                        𝟋None
-                    }
-                }
-                __debug
-            }),
-        }
-    } else {
-        quote! { debug: 𝟋None, }
-    };
-
-    // PartialEq: check declared, then auto
-    let partial_eq_field = if sources.has_declared(|d| d.partial_eq) {
-        quote! {
-            partial_eq: 𝟋Some({
-                unsafe fn __partial_eq(left: #facet_crate::OxPtrConst, right: #facet_crate::OxPtrConst) -> ::core::option::Option<bool> {
-                    let left: &#struct_type = left.ptr().get();
-                    let right: &#struct_type = right.ptr().get();
-                    𝟋Some(<#struct_type as ::core::cmp::PartialEq>::eq(left, right))
-                }
-                __partial_eq
-            }),
-        }
-    } else if sources.should_auto() {
-        quote! {
-            partial_eq: 𝟋Some({
-                unsafe fn __partial_eq(left: #facet_crate::OxPtrConst, right: #facet_crate::OxPtrConst) -> ::core::option::Option<bool> {
-                    if impls!(#struct_type: ::core::cmp::PartialEq) {
-                        let left: &#struct_type = left.ptr().get();
-                        let right: &#struct_type = right.ptr().get();
-                        𝟋Some((&&Spez(left)).spez_partial_eq(&&Spez(right)))
-                    } else {
-                        𝟋None
-                    }
-                }
-                __partial_eq
-            }),
-        }
-    } else {
-        quote! { partial_eq: 𝟋None, }
-    };
-
-    // PartialOrd: check declared, then auto
-    let partial_cmp_field = if sources.has_declared(|d| d.partial_ord) {
-        quote! {
-            partial_cmp: 𝟋Some({
-                unsafe fn __partial_cmp(left: #facet_crate::OxPtrConst, right: #facet_crate::OxPtrConst) -> ::core::option::Option<::core::option::Option<::core::cmp::Ordering>> {
-                    let left: &#struct_type = left.ptr().get();
-                    let right: &#struct_type = right.ptr().get();
-                    𝟋Some(<#struct_type as ::core::cmp::PartialOrd>::partial_cmp(left, right))
-                }
-                __partial_cmp
-            }),
-        }
-    } else if sources.should_auto() {
-        quote! {
-            partial_cmp: 𝟋Some({
-                unsafe fn __partial_cmp(left: #facet_crate::OxPtrConst, right: #facet_crate::OxPtrConst) -> ::core::option::Option<::core::option::Option<::core::cmp::Ordering>> {
-                    if impls!(#struct_type: ::core::cmp::PartialOrd) {
-                        let left: &#struct_type = left.ptr().get();
-                        let right: &#struct_type = right.ptr().get();
-                        𝟋Some((&&Spez(left)).spez_partial_cmp(&&Spez(right)))
-                    } else {
-                        𝟋None
-                    }
-                }
-                __partial_cmp
-            }),
-        }
-    } else {
-        quote! { partial_cmp: 𝟋None, }
-    };
-
-    // Ord: check declared, then auto
-    let cmp_field = if sources.has_declared(|d| d.ord) {
-        quote! {
-            cmp: 𝟋Some({
-                unsafe fn __cmp(left: #facet_crate::OxPtrConst, right: #facet_crate::OxPtrConst) -> ::core::option::Option<::core::cmp::Ordering> {
-                    let left: &#struct_type = left.ptr().get();
-                    let right: &#struct_type = right.ptr().get();
-                    𝟋Some(<#struct_type as ::core::cmp::Ord>::cmp(left, right))
-                }
-                __cmp
-            }),
-        }
-    } else if sources.should_auto() {
-        quote! {
-            cmp: 𝟋Some({
-                unsafe fn __cmp(left: #facet_crate::OxPtrConst, right: #facet_crate::OxPtrConst) -> ::core::option::Option<::core::cmp::Ordering> {
-                    if impls!(#struct_type: ::core::cmp::Ord) {
-                        let left: &#struct_type = left.ptr().get();
-                        let right: &#struct_type = right.ptr().get();
-                        𝟋Some((&&Spez(left)).spez_cmp(&&Spez(right)))
-                    } else {
-                        𝟋None
-                    }
-                }
-                __cmp
-            }),
-        }
-    } else {
-        quote! { cmp: 𝟋None, }
-    };
-
-    // Hash: check declared, then auto
-    let hash_field = if sources.has_declared(|d| d.hash) {
-        quote! {
-            hash: 𝟋Some({
-                unsafe fn __hash(value: #facet_crate::OxPtrConst, hasher: &mut #facet_crate::HashProxy<'_>) -> ::core::option::Option<()> {
-                    let value: &#struct_type = value.ptr().get();
-                    <#struct_type as ::core::hash::Hash>::hash(value, hasher);
-                    𝟋Some(())
-                }
-                __hash
-            }),
-        }
-    } else if sources.should_auto() {
-        quote! {
-            hash: 𝟋Some({
-                unsafe fn __hash(value: #facet_crate::OxPtrConst, hasher: &mut #facet_crate::HashProxy<'_>) -> ::core::option::Option<()> {
-                    if impls!(#struct_type: ::core::hash::Hash) {
-                        let value: &#struct_type = value.ptr().get();
-                        (&&Spez(value)).spez_hash(hasher);
-                        𝟋Some(())
-                    } else {
-                        𝟋None
-                    }
-                }
-                __hash
-            }),
-        }
-    } else {
-        quote! { hash: 𝟋None, }
-    };
-
-    // Parse (FromStr): no derive exists, only auto-detect if enabled
-    let parse_field = if sources.should_auto() {
-        quote! {
-            parse: 𝟋Some({
-                unsafe fn __parse(s: &str, target: #facet_crate::OxPtrUninit) -> ::core::option::Option<::core::result::Result<(), #facet_crate::ParseError>> {
-                    if impls!(#struct_type: ::core::str::FromStr) {
-                        𝟋Some(
-                            match (&&SpezEmpty::<#struct_type>::SPEZ).spez_parse(s, target.ptr()) {
-                                𝟋Ok(_) => 𝟋Ok(()),
-                                𝟋Err(e) => 𝟋Err(e),
-                            }
-                        )
-                    } else {
-                        𝟋None
-                    }
-                }
-                __parse
-            }),
-        }
-    } else {
-        quote! { parse: 𝟋None, }
-    };
-
-    // Invariants: container-level invariants function (wrapped for OxRef signature)
-    let invariants_field = if let Some(inv_fn) = invariants_fn {
-        quote! {
-            invariants: 𝟋Some({
-                unsafe fn __invariants(data: #facet_crate::OxPtrConst) -> ::core::option::Option<#facet_crate::𝟋::𝟋Result<(), #facet_crate::𝟋::𝟋Str>> {
-                    let value: &#struct_type = data.ptr().get();
-                    𝟋Some(#inv_fn(value))
-                }
-                __invariants
-            }),
-        }
-    } else {
-        quote! { invariants: 𝟋None, }
-    };
-
-    // try_from: for from_ref/try_from_ref attribute support
-    let try_from_field = if let Some(try_from_fn) = try_from_fn {
-        quote! { try_from: ::core::option::Option::Some(#try_from_fn), }
-    } else {
-        quote! { try_from: ::core::option::Option::None, }
-    };
-
-    // Return VTableErased::Indirect wrapping a VTableIndirect using struct literal syntax
-    // Uses prelude aliases for compact output (𝟋VtE)
-    // NOTE: drop_in_place, default_in_place, clone_into are now in TypeOps, not VTable
-    quote! {
-        𝟋VtE::Indirect(&const {
-            #facet_crate::VTableIndirect {
-                #display_field
-                #debug_field
-                #hash_field
-                #invariants_field
-                #parse_field
-                parse_bytes: 𝟋None,
-                #try_from_field
-                try_into_inner: 𝟋None,
-                try_borrow_inner: 𝟋None,
-                #partial_eq_field
-                #partial_cmp_field
-                #cmp_field
-            }
-        })
-    }
-}
-
 /// Generates TypeOps for per-type operations (drop, default, clone).
 /// Returns `Option<TokenStream>` - Some if any TypeOps is needed, None if no ops.
 ///
@@ -582,17 +400,25 @@ pub(crate) fn gen_type_ops(
     sources: &TraitSources<'_>,
     struct_type: &TokenStream,
     has_type_or_const_generics: bool,
+    has_any_generics: bool,
     truthy_fn: Option<&TokenStream>,
 ) -> Option<TokenStream> {
     // Only use TypeOpsIndirect when there are actual type or const generics.
-    // For auto_traits WITHOUT generics, we can still use TypeOpsDirect since
-    // the helper functions can use `Self` which resolves to the concrete type.
+    // For non-generic types, we can use TypeOpsDirect since the helper functions
+    // can use `Self` which resolves to the concrete type.
     if has_type_or_const_generics {
         return gen_type_ops_indirect(facet_crate, sources, struct_type, truthy_fn);
     }
 
-    // Use TypeOpsDirect for non-generic types (including auto_traits without generics)
-    gen_type_ops_direct(facet_crate, sources, struct_type, truthy_fn)
+    // Use TypeOpsDirect for non-generic types
+    // Note: has_any_generics tells us if there are lifetime parameters
+    gen_type_ops_direct(
+        facet_crate,
+        sources,
+        struct_type,
+        truthy_fn,
+        has_any_generics,
+    )
 }
 
 /// Generates TypeOpsDirect for non-generic types.
@@ -606,7 +432,13 @@ fn gen_type_ops_direct(
     sources: &TraitSources<'_>,
     struct_type: &TokenStream,
     truthy_fn: Option<&TokenStream>,
+    has_any_generics: bool,
 ) -> Option<TokenStream> {
+    // Auto-detection is only possible for non-generic types.
+    // Types with lifetime parameters can't use auto-detection because
+    // function items would need to access outer lifetime parameters.
+    let can_auto_detect = sources.should_auto() && !has_any_generics;
+
     // Check if Default is available (from declared traits or #[facet(default)])
     let has_default = sources.has_declared(|d| d.default) || sources.facet_default;
 
@@ -622,12 +454,13 @@ fn gen_type_ops_direct(
                 unsafe { 𝟋transmute(#facet_crate::𝟋::𝟋default_for::<Self>() as unsafe fn(*mut Self)) }
             ),
         }
-    } else if sources.should_auto() {
-        // For auto_traits, generate an inline function that uses the Spez pattern.
+    } else if can_auto_detect {
+        // Auto-detection: generate an inline function that uses the Spez pattern.
         // The function hardcodes struct_type, so specialization resolves correctly.
         // The impls! check determines whether we return Some or None at const-eval time.
+        // Use Self in impls! to avoid name conflicts with internal helper structs.
         quote! {
-            default_in_place: if #facet_crate::𝟋::impls!(#struct_type: ::core::default::Default) {
+            default_in_place: if #facet_crate::𝟋::impls!(Self: ::core::default::Default) {
                 𝟋Some({
                     unsafe fn __default_in_place(ptr: *mut ()) {
                         let target = #facet_crate::PtrUninit::new(ptr as *mut u8);
@@ -652,12 +485,13 @@ fn gen_type_ops_direct(
                 unsafe { 𝟋transmute(#facet_crate::𝟋::𝟋clone_for::<Self>() as unsafe fn(*const Self, *mut Self)) }
             ),
         }
-    } else if sources.should_auto() {
-        // For auto_traits, generate an inline function that uses the Spez pattern.
+    } else if can_auto_detect {
+        // Auto-detection: generate an inline function that uses the Spez pattern.
         // The function hardcodes struct_type, so specialization resolves correctly.
         // The impls! check determines whether we return Some or None at const-eval time.
+        // Use Self in impls! to avoid name conflicts with internal helper structs.
         quote! {
-            clone_into: if #facet_crate::𝟋::impls!(#struct_type: ::core::clone::Clone) {
+            clone_into: if #facet_crate::𝟋::impls!(Self: ::core::clone::Clone) {
                 𝟋Some({
                     unsafe fn __clone_into(src: *const (), dst: *mut ()) {
                         let src_ref: &#struct_type = unsafe { &*(src as *const #struct_type) };
@@ -703,7 +537,7 @@ fn gen_type_ops_direct(
     })
 }
 
-/// Generates TypeOpsIndirect for generic types with auto_traits.
+/// Generates TypeOpsIndirect for generic types.
 /// Returns Some(TokenStream) if any ops are needed, None otherwise.
 ///
 /// Uses helper functions that take a type parameter to avoid the "can't use Self
@@ -720,28 +554,26 @@ fn gen_type_ops_indirect(
     // generic parameter, avoiding the "can't use Self from outer item" issue.
 
     // Check if Default is available
-    // Note: For auto_traits, we could use specialization but it's complex.
+    // Note: For generic types, specialization detection is complex.
     // For now, only generate default_in_place when Default is explicitly known.
     let default_field = if sources.has_declared(|d| d.default) || sources.facet_default {
         quote! {
             default_in_place: 𝟋Some(#facet_crate::𝟋::𝟋indirect_default_for::<Self>()),
         }
     } else {
-        // For auto_traits or no default, set to None
-        // Runtime detection of Default not supported in TypeOps yet
+        // Runtime detection of Default not supported in TypeOpsIndirect yet
         quote! { default_in_place: 𝟋None, }
     };
 
     // Check if Clone is available
-    // Note: For auto_traits, we could use specialization but it's complex.
+    // Note: For generic types, specialization detection is complex.
     // For now, only generate clone_into when Clone is explicitly known.
     let clone_field = if sources.has_declared(|d| d.clone) {
         quote! {
             clone_into: 𝟋Some(#facet_crate::𝟋::𝟋indirect_clone_for::<Self>()),
         }
     } else {
-        // For auto_traits or no clone, set to None
-        // Runtime detection of Clone not supported in TypeOps yet
+        // Runtime detection of Clone not supported in TypeOpsIndirect yet
         quote! { clone_into: 𝟋None, }
     };
 
@@ -1624,6 +1456,9 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     let bgp_for_vtable = ps.container.bgp.display_without_bounds();
     let struct_type_for_vtable = quote! { #struct_name_ident #bgp_for_vtable };
 
+    // Check if the type has any generics at all (lifetimes, types, or consts)
+    let has_any_generics = !ps.container.bgp.params.is_empty();
+
     // Check if the type has any type or const generics (NOT lifetimes)
     // Lifetimes don't affect layout, so types like RawJson<'a> can use TypeOpsDirect
     // Only types like Vec<T> need TypeOpsIndirect
@@ -1711,6 +1546,8 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         needs_inherent_borrow_inner,
         try_from_fn_direct.as_ref(),
         try_from_fn_indirect.as_ref(),
+        has_type_or_const_generics,
+        has_any_generics,
     );
     // Note: vtable_code already contains &const { ... } for the VTableDirect,
     // no need for an extra const { } wrapper around VTableErased
@@ -1722,6 +1559,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         &trait_sources,
         &struct_type_for_vtable,
         has_type_or_const_generics,
+        has_any_generics,
         truthy_attr.as_ref(),
     );
 
@@ -1893,7 +1731,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                 // - invariants: populates vtable.invariants
                 // - crate: sets the facet crate path
                 // - traits: compile-time directive for vtable generation
-                // - auto_traits: compile-time directive for vtable generation
+                // - auto_traits: deprecated, now the default (kept for backward compat)
                 // - proxy: sets Shape::proxy for container-level proxy
                 // - ns::proxy: sets Shape::format_proxies for format-specific container-level proxy
                 // - where: compile-time directive for custom generic bounds
@@ -1904,7 +1742,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                         "invariants"
                             | "crate"
                             | "traits"
-                            | "auto_traits"
+                            | "auto_traits" // deprecated but still recognized
                             | "proxy"
                             | "truthy"
                             | "skip_all_unless_truthy"

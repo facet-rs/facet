@@ -25,7 +25,6 @@ impl OpaqueCounter {
 
 /// Proxy type that derives Facet for serialization/comparison.
 #[derive(Facet, Clone, Debug, PartialEq)]
-#[facet(auto_traits)]
 pub struct OpaqueCounterProxy {
     pub count: u64,
 }
@@ -49,7 +48,6 @@ impl TryFrom<&OpaqueCounter> for OpaqueCounterProxy {
 // =============================================================================
 
 #[derive(Facet, Clone, Debug)]
-#[facet(auto_traits)]
 pub struct StructWithOpaqueField {
     pub name: String,
     #[facet(opaque, proxy = OpaqueCounterProxy)]
@@ -136,7 +134,6 @@ fn diff_struct_with_opaque_proxy_field_both_different() {
 // =============================================================================
 
 #[derive(Facet, Clone, Debug)]
-#[facet(auto_traits)]
 #[repr(u8)]
 #[allow(dead_code)]
 pub enum EnumWithOpaqueField {
@@ -203,7 +200,6 @@ fn diff_enum_different_variants() {
 // =============================================================================
 
 #[derive(Facet, Clone, Debug)]
-#[facet(auto_traits)]
 pub struct MultipleOpaqueFields {
     #[facet(opaque, proxy = OpaqueCounterProxy)]
     pub first: OpaqueCounter,
@@ -271,7 +267,6 @@ fn diff_multiple_opaque_fields_both_different() {
 // =============================================================================
 
 #[derive(Facet, Clone, Debug)]
-#[facet(auto_traits)]
 pub struct OuterStruct {
     pub id: u32,
     pub inner: StructWithOpaqueField,
