@@ -1,15 +1,21 @@
+use std::{collections::HashSet, hash::RandomState};
+
 use crate::{
+    Attr,
     reflection::{is_config_field, is_counted_field, is_supported_counted_type},
     schema::{
-        ArgKind, ArgLevelSchema, ArgSchema, Docs, LeafKind, LeafSchema, ScalarType, Schema,
-        Subcommand,
+        ArgKind, ArgLevelSchema, ArgSchema, ConfigFieldSchema, ConfigStructSchema,
+        ConfigValueSchema, ConfigVecSchema, Docs, LeafKind, LeafSchema, ScalarType, Schema,
+        Subcommand, ValueSchema,
         error::{SchemaError, SchemaErrorContext},
     },
 };
 use facet::{
-    Def, EnumType, Facet, Field, ScalarType as FacetScalarType, Shape, Type, UserType, Variant,
+    Def, EnumType, Facet, Field, ScalarType as FacetScalarType, Shape, StructKind, Type, UserType,
+    Variant,
 };
 use heck::ToKebabCase;
+use indexmap::IndexMap;
 
 impl Schema {
     /// Parse a schema from a given shape

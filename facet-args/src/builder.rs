@@ -14,7 +14,7 @@ use crate::{
     env::{EnvConfig, EnvSource, StdEnv},
     help::HelpConfig,
     provenance::{ConfigResult, FilePathStatus, FileResolution, Provenance},
-    schema::{Schema, SchemaError},
+    schema::{Schema, error::SchemaError},
 };
 
 /// Start configuring an args/config parser for a given type.

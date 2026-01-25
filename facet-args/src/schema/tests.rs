@@ -5,9 +5,9 @@ use facet::Facet;
 macro_rules! assert_schema_snapshot {
     ($result:expr) => {{
         match $result {
-            Ok(value) => insta::assert_debug_snapshot!(value),
+            Ok(value) => insta::assert_snapshot!(facet_json::to_string_pretty(&value).unwrap()),
             Err(err) => {
-                let rendered = err.to_ariadne_string();
+                let rendered = err.to_string();
                 let stripped = strip_ansi_escapes::strip(rendered.as_bytes());
                 let stripped = String::from_utf8_lossy(&stripped);
                 insta::assert_snapshot!(stripped);
