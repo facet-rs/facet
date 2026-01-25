@@ -314,7 +314,22 @@ mod tests {
         let missing_path = vec![PathSegment::Field("config_path".into())];
         assert!(formatted.spans.contains_key(&verbose_path));
         assert!(formatted.spans.contains_key(&missing_path));
-        assert!(formatted.type_name_span.is_some());
+
+        let type_name_span = formatted.type_name_span.expect("type name span");
+        let type_label_span = type_name_span.0..type_name_span.1;
+
+        let def_end = formatted.text[type_name_span.1..]
+            .find('}')
+            .map(|offset| type_name_span.1 + offset)
+            .unwrap_or_else(|| formatted.text.len().saturating_sub(1));
+        let def_end_end = (def_end + 1).min(formatted.text.len());
+        let def_end_span = def_end..def_end_end;
+
+        let source_label = App::SHAPE
+            .source_file
+            .zip(App::SHAPE.source_line)
+            .map(|(file, line)| format!("defined at {file}:{line}"))
+            .unwrap_or_else(|| "definition location unavailable (enable facet/doc)".to_string());
 
         let field_span = &formatted.spans[&missing_path];
         let span = field_span.key.0..field_span.value.1;
@@ -322,9 +337,19 @@ mod tests {
         let report = Report::build(ReportKind::Error, span.clone())
             .with_message("missing facet(args::...) annotation")
             .with_label(
+                Label::new(type_label_span)
+                    .with_message(source_label)
+                    .with_color(Color::Blue),
+            )
+            .with_label(
                 Label::new(span)
                     .with_message("THIS IS WHERE YOU FORGOT A facet(args::) annotation")
                     .with_color(Color::Red),
+            )
+            .with_label(
+                Label::new(def_end_span)
+                    .with_message("end of definition")
+                    .with_color(Color::Blue),
             )
             .finish();
 
