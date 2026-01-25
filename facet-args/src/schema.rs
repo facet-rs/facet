@@ -27,8 +27,11 @@ pub struct ArgLevelSchema {
     /// Any valid arguments at this level, `--verbose` etc.
     args: Vec<ArgSchema>,
 
+    /// Any subcommands at this level
     subcommands: Vec<Subcommand>,
 }
+
+pub struct Subcommand {}
 
 /// Schema for a singular argument
 pub struct ArgSchema {
@@ -46,10 +49,17 @@ pub struct ConfigStructSchema {
 }
 
 pub struct ConfigVecSchema {
-    element: ConfigValueSchema,
+    element: Box<ConfigValueSchema>,
 }
 
 enum ConfigValueSchema {
     Struct(ConfigStructSchema),
     Vec(ConfigVecSchema),
+}
+
+impl Schema {
+    /// Parse a schema from a given shape
+    pub(crate) fn from_shape() -> Result<Self, SchemaError> {
+        todo!("walk shape to fill in schema")
+    }
 }

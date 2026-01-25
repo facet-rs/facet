@@ -9,12 +9,12 @@ use facet_error as error;
 use facet_reflect::{Partial, ReflectError};
 
 use crate::{
-    config_format::{ConfigFormatError, FormatRegistry},
+    config_format::{ConfigFormat, ConfigFormatError, FormatRegistry},
     config_value::ConfigValue,
-    env::{EnvConfig, EnvSource, parse_env_with_source},
+    env::{self, EnvConfig, EnvSource, StdEnv, parse_env_with_source},
     merge::merge_layers,
     provenance::{ConfigResult, FilePathStatus, FileResolution, Override, Provenance},
-    schema::SchemaError,
+    schema::{Schema, SchemaError},
 };
 
 /// Start configuring an args/config parser for a given type.
@@ -31,6 +31,7 @@ pub fn builder<T>() -> Result<ConfigBuilder<T>, BuilderError>
 where
     T: Facet<'static>,
 {
+    let schema = Schema::from_shape(T::SHAPE)?;
     let destination = Partial::alloc::<T>().map_err(BuilderError::Alloc)?;
     Ok(ConfigBuilder {
         _phantom: PhantomData,
@@ -38,7 +39,7 @@ where
         cli_config: None,
         env_config: None,
         file_config: None,
-        env_source: Box::new(env::StdEnv),
+        env_source: Box::new(StdEnv),
     })
 }
 
@@ -618,7 +619,7 @@ impl FileConfigBuilder {
     }
 
     /// Register an additional config file format.
-    pub fn format<F: crate::config_format::ConfigFormat + 'static>(mut self, format: F) -> Self {
+    pub fn format<F: ConfigFormat + 'static>(mut self, format: F) -> Self {
         self.config.registry.register(format);
         self
     }
