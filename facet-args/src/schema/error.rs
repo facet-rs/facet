@@ -217,14 +217,56 @@ impl Diagnostic for SchemaError {
 
         match span {
             Some(span) => {
+                let mut labels = Vec::new();
+
+                let mut def_end_span = None;
+                if let Some(type_name_span) = formatted.type_name_span {
+                    let type_label_span = type_name_span.0..type_name_span.1;
+                    let def_end = formatted.text[type_name_span.1..]
+                        .find('}')
+                        .map(|offset| type_name_span.1 + offset)
+                        .unwrap_or_else(|| formatted.text.len().saturating_sub(1));
+                    let def_end_end = (def_end + 1).min(formatted.text.len());
+                    def_end_span = Some(def_end..def_end_end);
+
+                    let source_label = ctx
+                        .shape
+                        .source_file
+                        .zip(ctx.shape.source_line)
+                        .map(|(file, line)| format!("defined at {file}:{line}"))
+                        .unwrap_or_else(|| {
+                            "definition location unavailable (enable facet/doc)".to_string()
+                        });
+
+                    labels.push(LabelSpec {
+                        source: SourceId::Schema,
+                        span: type_label_span,
+                        message: Cow::Owned(source_label),
+                        is_primary: false,
+                        color: Some(ColorHint::Blue),
+                    });
+                }
+
                 let message = self.label();
-                vec![LabelSpec {
+                labels.push(LabelSpec {
                     source: SourceId::Schema,
                     span,
                     message,
                     is_primary: true,
                     color: Some(ColorHint::Red),
-                }]
+                });
+
+                if let Some(def_end_span) = def_end_span {
+                    labels.push(LabelSpec {
+                        source: SourceId::Schema,
+                        span: def_end_span,
+                        message: Cow::Borrowed("end of definition"),
+                        is_primary: false,
+                        color: Some(ColorHint::Blue),
+                    });
+                }
+
+                labels
             }
             None => Vec::new(),
         }
