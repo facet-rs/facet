@@ -3,6 +3,8 @@
 #![warn(clippy::std_instead_of_alloc)]
 #![deny(unsafe_code)]
 #![allow(macro_expanded_macro_exports_accessed_by_absolute_paths)]
+// Allow deprecated during transition to new driver-based API
+#![allow(deprecated)]
 #![doc = include_str!("../README.md")]
 
 extern crate alloc;
@@ -18,6 +20,7 @@ pub(crate) mod diagnostics;
 pub(crate) mod driver;
 pub(crate) mod dump;
 pub(crate) mod env;
+pub(crate) mod env2;
 pub(crate) mod error;
 pub(crate) mod help;
 pub(crate) mod merge;
@@ -48,6 +51,7 @@ pub use error::{ArgsErrorKind, ArgsErrorWithInput};
 pub use help::{HelpConfig, generate_help, generate_help_for_shape};
 pub use parser::{from_slice_with_config, from_std_args};
 
+/// Parse command-line arguments into a Facet type.
 #[deprecated(note = "Use builder() instead; this entry point will be removed.")]
 pub fn from_slice<T: Facet<'static>>(
     _args: &[&str],

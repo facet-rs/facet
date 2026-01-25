@@ -1,5 +1,8 @@
 //! Standard path representation for navigating schemas and ConfigValue trees.
 //!
+//! This module is under active development and not yet wired into the main API.
+#![allow(dead_code)]
+//!
 //! This is intentionally small and stable: a `Path` is a thin wrapper over
 //! `Vec<String>`, where each segment is a name. Indices are stringified numbers.
 //!

@@ -1,5 +1,9 @@
 //! Provenance tracking for layered configuration.
 //!
+//! This module is under active development and not yet fully wired into the main API.
+#![allow(dead_code)]
+#![allow(deprecated)]
+//!
 //! This module provides types for tracking where configuration values came from,
 //! enabling rich error messages and debugging output.
 //!

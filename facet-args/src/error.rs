@@ -619,7 +619,7 @@ mod ariadne_impl {
                         .with_code(self.inner.kind.code())
                         .with_message(self.inner.kind.label());
 
-                    let mut def_end_span = formatted.type_end_span.map(|(start, end)| start..end);
+                    let def_end_span = formatted.type_end_span.map(|(start, end)| start..end);
                     if let Some(type_name_span) = formatted.type_name_span {
                         let type_label_span = type_name_span.0..type_name_span.1;
 
@@ -713,7 +713,6 @@ mod tests {
     use super::*;
     use crate as args;
     use facet::Facet;
-    use facet_pretty::strip_ansi;
 
     #[test]
     fn debug_missing_args_annotation_example() {

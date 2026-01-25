@@ -1,6 +1,7 @@
 use super::*;
 use crate as args;
 use facet::Facet;
+use facet_testhelpers::test;
 
 macro_rules! assert_schema_snapshot {
     ($result:expr) => {{

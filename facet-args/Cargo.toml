@@ -35,6 +35,9 @@ strip-ansi-escapes = "0.2.1"
 facet-error = { path = "../facet-error", version = "0.43.2" }
 
 [dev-dependencies]
+facet-format = { path = "../facet-format", features = ["tracing"] }
+facet-json = { path = "../facet-json", features = ["tracing"] }
+facet-reflect = { path = "../facet-reflect", features = ["tracing"] }
 facet = { path = "../facet", features = ["all-impls"] }
 facet-default = { path = "../facet-default" }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -49,7 +52,7 @@ default = ["rich-diagnostics"]
 rich-diagnostics = []
 # Include doc comments in help generation (enables facet/doc)
 doc = ["facet/doc"]
-
+tracing = ["facet-reflect/tracing", "facet-json/tracing", "facet-format/tracing"]
 
 [[example]]
 name = "args_showcase"

@@ -1,3 +1,10 @@
+//! Builder API for layered configuration.
+//!
+//! This module is under active development.
+#![allow(dead_code)]
+#![allow(deprecated)]
+#![allow(private_interfaces)]
+
 use core::marker::PhantomData;
 
 use alloc::string::String;
@@ -330,6 +337,18 @@ pub struct CliConfig {
     strict: bool,
 }
 
+impl CliConfig {
+    /// Get the CLI arguments.
+    pub fn args(&self) -> &[String] {
+        &self.args
+    }
+
+    /// Check if strict mode is enabled.
+    pub fn strict(&self) -> bool {
+        self.strict
+    }
+}
+
 /// Builder for CLI configuration.
 #[derive(Debug, Default)]
 pub struct CliConfigBuilder {
@@ -372,7 +391,7 @@ impl CliConfigBuilder {
     }
 
     /// Build the CLI configuration.
-    fn build(self) -> CliConfig {
+    pub fn build(self) -> CliConfig {
         self.config
     }
 }
@@ -453,7 +472,7 @@ impl EnvConfigBuilder {
     }
 
     /// Build the env configuration.
-    fn build(self) -> EnvConfig {
+    pub fn build(self) -> EnvConfig {
         let mut config = EnvConfig::new(self.prefix);
         if self.strict {
             config = config.strict();

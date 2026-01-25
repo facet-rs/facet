@@ -7,7 +7,7 @@ Error: #[facet(args::positional)] is not compatible with #[facet(args::short)]
    │
  2 │ struct ShortOnPositional {
    │        ────────┬────────  
-   │                ╰────────── defined at facet-args/src/schema/tests.rs:101
+   │                ╰────────── defined at facet-args/src/schema/tests.rs:102
    │ 
  4 │     value: String,
    │     ──────┬──────  

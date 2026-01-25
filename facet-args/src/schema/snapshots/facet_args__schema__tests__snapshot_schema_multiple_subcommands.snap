@@ -7,7 +7,7 @@ Error: only one field may be marked with #[facet(args::subcommand)] at this leve
    │
  2 │ struct MultipleSubcommands {
    │        ─────────┬─────────  
-   │                 ╰─────────── defined at facet-args/src/schema/tests.rs:81
+   │                 ╰─────────── defined at facet-args/src/schema/tests.rs:82
    │ 
  4 │     a: SubA,
    │     ───┬───  

@@ -1,5 +1,9 @@
 //! Driver API for orchestrating layered configuration parsing, validation, and diagnostics.
 //!
+//! This module is under active development and not yet wired into the main API.
+#![allow(dead_code)]
+#![allow(clippy::result_large_err)]
+//!
 //! # Phases (planned)
 //! 1. **Parse layers** using the schema:
 //!    - CLI, env, file, defaults
@@ -152,7 +156,7 @@ pub struct Diagnostic {
 }
 
 /// Severity for diagnostics.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
     /// Error that prevents producing a value.
     Error,

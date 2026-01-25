@@ -9,7 +9,7 @@ Error: top-level shape must be a struct
    ┆ ┆   
  3 │ │   enum TopLevelEnum {
    │ │        ──────┬─────  
-   │ │              ╰─────── defined at facet-args/src/schema/tests.rs:135
+   │ │              ╰─────── defined at facet-args/src/schema/tests.rs:136
    ┆ ┆   
  5 │ ├─▶ }
    │ │   ┬  

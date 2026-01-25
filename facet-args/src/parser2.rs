@@ -1,5 +1,8 @@
 //! Schema-driven CLI argument parser that outputs ConfigValue with provenance.
 //!
+//! This module is under active development and not yet wired into the main API.
+#![allow(dead_code)]
+//!
 //! This parser:
 //! - Uses the pre-built Schema (not raw attribute lookups)
 //! - Outputs LayerOutput (ConfigValue + diagnostics), not a Partial
@@ -13,6 +16,7 @@ use std::hash::RandomState;
 use heck::{ToKebabCase, ToSnakeCase};
 use indexmap::IndexMap;
 
+use crate::builder::CliConfig;
 use crate::config_value::{ConfigValue, EnumValue, Sourced};
 use crate::driver::{Diagnostic, LayerOutput, Severity};
 use crate::provenance::Provenance;
@@ -23,8 +27,9 @@ use crate::schema::{ArgKind, ArgLevelSchema, ArgSchema, Schema, Subcommand};
 /// This handles both:
 /// - `schema.args`: top-level flags, positionals, subcommands
 /// - `schema.config` overrides: `--config.port 8080` style dotted paths
-pub fn parse_cli(args: &[&str], schema: &Schema) -> LayerOutput {
-    let mut ctx = ParseContext::new(args, schema);
+pub fn parse_cli(schema: &Schema, cli_config: &CliConfig) -> LayerOutput {
+    let args: Vec<&str> = cli_config.args().iter().map(|s| s.as_str()).collect();
+    let mut ctx = ParseContext::new(&args, schema, cli_config.strict());
     ctx.parse();
     ctx.into_output()
 }
@@ -45,10 +50,12 @@ struct ParseContext<'a> {
     positional_only: bool,
     /// Counted flag accumulators: field_name -> count
     counted: IndexMap<String, u64, RandomState>,
+    /// Whether to error on unknown arguments
+    strict: bool,
 }
 
 impl<'a> ParseContext<'a> {
-    fn new(args: &'a [&'a str], schema: &'a Schema) -> Self {
+    fn new(args: &'a [&'a str], schema: &'a Schema, strict: bool) -> Self {
         Self {
             args,
             index: 0,
@@ -57,6 +64,7 @@ impl<'a> ParseContext<'a> {
             diagnostics: Vec::new(),
             positional_only: false,
             counted: IndexMap::default(),
+            strict,
         }
     }
 
@@ -118,27 +126,25 @@ impl<'a> ParseContext<'a> {
         };
 
         // Check if this is a config override (e.g., --config.port)
-        if let Some(config_schema) = self.schema.config() {
-            if let Some(config_field_name) = config_schema.field_name() {
-                if flag_name.starts_with(config_field_name)
-                    && flag_name.len() > config_field_name.len()
-                    && flag_name.as_bytes()[config_field_name.len()] == b'.'
-                {
-                    self.parse_config_override(arg, flag_name, inline_value, config_field_name);
-                    return;
-                }
-            }
+        if let Some(config_schema) = self.schema.config()
+            && let Some(config_field_name) = config_schema.field_name()
+            && flag_name.starts_with(config_field_name)
+            && flag_name.len() > config_field_name.len()
+            && flag_name.as_bytes()[config_field_name.len()] == b'.'
+        {
+            self.parse_config_override(arg, flag_name, inline_value, config_field_name);
+            return;
         }
 
         // Look up in schema
         let flag_snake = flag_name.to_snake_case();
         if let Some(arg_schema) = level.args().get(&flag_snake) {
-            if let ArgKind::Named { counted, .. } = arg_schema.kind() {
-                if *counted {
-                    self.increment_counted(&flag_snake);
-                    self.index += 1;
-                    return;
-                }
+            if let ArgKind::Named { counted, .. } = arg_schema.kind()
+                && *counted
+            {
+                self.increment_counted(&flag_snake);
+                self.index += 1;
+                return;
             }
             self.parse_flag_value(arg, &flag_snake, arg_schema, inline_value);
         } else {
@@ -161,11 +167,11 @@ impl<'a> ParseContext<'a> {
             });
 
             if let Some((name, arg_schema)) = found {
-                if let ArgKind::Named { counted, .. } = arg_schema.kind() {
-                    if *counted {
-                        self.increment_counted(name);
-                        continue;
-                    }
+                if let ArgKind::Named { counted, .. } = arg_schema.kind()
+                    && *counted
+                {
+                    self.increment_counted(name);
+                    continue;
                 }
 
                 let is_bool = arg_schema.value().inner_if_option().is_bool();
@@ -260,7 +266,7 @@ impl<'a> ParseContext<'a> {
 
     fn parse_config_override(
         &mut self,
-        arg: &str,
+        _arg: &str,
         flag_name: &str,
         inline_value: Option<&str>,
         config_field_name: &str,
@@ -371,7 +377,6 @@ impl<'a> ParseContext<'a> {
                 continue;
             }
 
-            let prov = Provenance::cli(arg, arg);
             let value = self.parse_value_string(arg, arg);
             self.result.insert(name.clone(), value);
             self.index += 1;
@@ -583,10 +588,18 @@ mod tests {
         }
     }
 
+    /// Build a CliConfig from a slice of string slices (for tests)
+    fn cli_config(args: &[&str]) -> CliConfig {
+        crate::builder::CliConfigBuilder::new()
+            .args(args.iter().map(|s| s.to_string()))
+            .build()
+    }
+
     /// Assert that parsing produces the expected ConfigValue
     fn assert_parses_to<T: Facet<'static>>(args: &[&str], expected: ConfigValue) {
         let schema = Schema::from_shape(T::SHAPE).expect("valid schema");
-        let output = parse_cli(args, &schema);
+        let config = cli_config(args);
+        let output = parse_cli(&schema, &config);
 
         assert!(
             output.diagnostics.is_empty(),
@@ -601,7 +614,8 @@ mod tests {
     /// Assert that parsing produces a diagnostic containing the given message
     fn assert_diagnostic_contains<T: Facet<'static>>(args: &[&str], expected_msg: &str) {
         let schema = Schema::from_shape(T::SHAPE).expect("valid schema");
-        let output = parse_cli(args, &schema);
+        let config = cli_config(args);
+        let output = parse_cli(&schema, &config);
 
         assert!(
             output
@@ -633,7 +647,10 @@ mod tests {
                     "object keys mismatch"
                 );
                 for (key, expected_val) in &e.value {
-                    let actual_val = a.value.get(key).expect(&format!("missing key: {}", key));
+                    let actual_val = a
+                        .value
+                        .get(key)
+                        .unwrap_or_else(|| panic!("missing key: {}", key));
                     assert_config_value_eq(actual_val, expected_val);
                 }
             }
@@ -655,15 +672,15 @@ mod tests {
                         .value
                         .fields
                         .get(key)
-                        .expect(&format!("missing enum field: {}", key));
+                        .unwrap_or_else(|| panic!("missing enum field: {}", key));
                     assert_config_value_eq(actual_val, expected_val);
                 }
             }
             (ConfigValue::Null(_), ConfigValue::Null(_)) => {}
             _ => panic!(
                 "ConfigValue variant mismatch: {:?} vs {:?}",
-                std::mem::discriminant(actual),
-                std::mem::discriminant(expected)
+                core::mem::discriminant(actual),
+                core::mem::discriminant(expected)
             ),
         }
     }

@@ -7,7 +7,7 @@ Error: duplicate flag `--dup`
    │
  2 │ struct ConflictingLongFlags {
    │        ──────────┬─────────  
-   │                  ╰─────────── defined at facet-args/src/schema/tests.rs:113
+   │                  ╰─────────── defined at facet-args/src/schema/tests.rs:114
    │ 
  4 │     a: bool,
    │     ───┬───  

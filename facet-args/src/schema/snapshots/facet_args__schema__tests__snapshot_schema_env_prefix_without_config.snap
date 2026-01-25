@@ -7,7 +7,7 @@ Error: field `value` uses args::env_prefix without args::config
    │
  2 │ struct EnvPrefixWithoutConfig {
    │        ───────────┬──────────  
-   │                   ╰──────────── defined at facet-args/src/schema/tests.rs:107
+   │                   ╰──────────── defined at facet-args/src/schema/tests.rs:108
    │ 
  4 │     value: String,
    │     ──────┬──────  

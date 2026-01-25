@@ -1,3 +1,8 @@
+//! Schema representation for CLI arguments and config.
+//!
+//! This module is under active development and not yet fully wired into the main API.
+#![allow(dead_code)]
+
 use std::hash::RandomState;
 
 use facet::Facet;
@@ -56,6 +61,7 @@ pub struct ConfigStructSchema {
     field_name: Option<String>,
 
     /// Shape of the config struct.
+    #[facet(skip)]
     shape: &'static Shape,
 
     /// Fields from the struct
@@ -97,6 +103,7 @@ pub struct LeafSchema {
     /// What kind of leaf value this is.
     kind: LeafKind,
     /// Underlying facet shape for defaults and parsing.
+    #[facet(skip)]
     shape: &'static Shape,
 }
 
@@ -109,16 +116,19 @@ pub enum ValueSchema {
     /// Optional value wrapper; Shape is `Option<T>`.
     Option {
         value: Box<ValueSchema>,
+        #[facet(skip)]
         shape: &'static Shape,
     },
     /// Vector/list wrapper; Shape is `Vec<T>` / list.
     Vec {
         element: Box<ValueSchema>,
+        #[facet(skip)]
         shape: &'static Shape,
     },
     /// Struct value; Shape is the struct itself.
     Struct {
         fields: ConfigStructSchema,
+        #[facet(skip)]
         shape: &'static Shape,
     },
 }
@@ -138,6 +148,7 @@ pub struct Subcommand {
     args: ArgLevelSchema,
 
     /// Underlying enum variant shape (kept for defaults / validation).
+    #[facet(skip)]
     shape: &'static Shape,
 }
 

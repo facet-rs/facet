@@ -142,11 +142,7 @@ fn scalar_kind_from_shape(shape: &'static Shape) -> Option<ScalarType> {
 }
 
 fn enum_variants(enum_type: EnumType) -> Vec<String> {
-    enum_type
-        .variants
-        .iter()
-        .map(|variant| variant_cli_name(variant))
-        .collect()
+    enum_type.variants.iter().map(variant_cli_name).collect()
 }
 
 fn variant_cli_name(variant: &Variant) -> String {
@@ -423,6 +419,7 @@ fn arg_level_from_fields(
         };
 
         let value = value_schema_from_shape(field.shape(), &field_ctx)?;
+        #[allow(clippy::nonminimal_bool)]
         let required = {
             let shape = field.shape();
             !matches!(shape.def, Def::Option(_))

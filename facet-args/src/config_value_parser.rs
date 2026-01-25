@@ -1,4 +1,5 @@
 //! Parser that converts `ConfigValue` trees into `ParseEvent` streams for deserialization.
+#![allow(dead_code)]
 //!
 //! This allows us to deserialize `ConfigValue` into arbitrary Facet types using the
 //! standard `facet-format` deserializer infrastructure.

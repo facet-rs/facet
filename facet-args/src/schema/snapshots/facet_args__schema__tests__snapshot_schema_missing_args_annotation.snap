@@ -7,7 +7,7 @@ Error: field `foo` is missing a #[facet(args::...)] annotation
    │
  2 │ struct MissingArgsAnnotation {
    │        ──────────┬──────────  
-   │                  ╰──────────── defined at facet-args/src/schema/tests.rs:64
+   │                  ╰──────────── defined at facet-args/src/schema/tests.rs:65
  3 │     foo: String,
    │     ─────┬─────  
    │          ╰─────── field `foo` is missing a #[facet(args::...)] annotation

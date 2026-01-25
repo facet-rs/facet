@@ -1,5 +1,8 @@
 //! Deep-merge functionality for layered configuration.
 //!
+//! This module is under active development and not yet wired into the main API.
+#![allow(dead_code)]
+//!
 //! This module provides the ability to merge multiple [`ConfigValue`] trees
 //! together, with later values taking precedence over earlier ones.
 //!

@@ -1,5 +1,8 @@
 //! Environment variable parsing for layered configuration.
 //!
+//! This module is being replaced by env2.rs.
+#![allow(dead_code)]
+//!
 //! This module reads environment variables with a given prefix and converts them
 //! into a [`ConfigValue`] tree that can be merged with other configuration sources.
 //!

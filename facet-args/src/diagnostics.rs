@@ -1,4 +1,7 @@
 //! Shared diagnostic types for rich, late-formatted error reporting.
+//!
+//! This module is under active development and not yet wired into the main API.
+#![allow(dead_code)]
 
 use alloc::borrow::Cow;
 use alloc::string::String;

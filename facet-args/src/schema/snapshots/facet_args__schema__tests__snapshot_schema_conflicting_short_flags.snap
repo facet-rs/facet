@@ -7,7 +7,7 @@ Error: duplicate flag `-v`
    │
  2 │ struct ConflictingShortFlags {
    │        ──────────┬──────────  
-   │                  ╰──────────── defined at facet-args/src/schema/tests.rs:121
+   │                  ╰──────────── defined at facet-args/src/schema/tests.rs:122
    │ 
  4 │     a: bool,
    │     ───┬───  

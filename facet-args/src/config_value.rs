@@ -1,4 +1,5 @@
 //! Configuration value with span tracking throughout the tree.
+#![allow(dead_code)]
 
 use alloc::string::String;
 use alloc::sync::Arc;

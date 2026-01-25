@@ -523,377 +523,469 @@ impl<E: Debug> core::fmt::Display for SerializeError<E> {
     }
 }
 
-impl<E: Debug> std::error::Error for SerializeError<E> {}
-
-/// Serialize a root value using the shared traversal logic.
-pub fn serialize_root<'mem, 'facet, S>(
-    serializer: &mut S,
-    value: Peek<'mem, 'facet>,
-) -> Result<(), SerializeError<S::Error>>
-where
-    S: FormatSerializer,
-{
-    shared_serialize(serializer, value)
+/// A path segment in the serialization context.
+#[derive(Debug, Clone)]
+pub enum PathSegment {
+    /// A field name (struct field or map key).
+    Field(Cow<'static, str>),
+    /// An array/list index.
+    Index(usize),
+    /// An enum variant name.
+    Variant(Cow<'static, str>),
 }
 
-/// Helper to sort fields according to format preference (currently a no-op).
-fn sort_fields_if_needed<'mem, 'facet, S>(
-    _serializer: &S,
-    _fields: &mut alloc::vec::Vec<(facet_reflect::FieldItem, Peek<'mem, 'facet>)>,
-) where
-    S: FormatSerializer,
-{
-    // Currently only Declaration order is supported, which preserves the original order.
-}
-
-fn shared_serialize<'mem, 'facet, S>(
-    serializer: &mut S,
-    value: Peek<'mem, 'facet>,
-) -> Result<(), SerializeError<S::Error>>
-where
-    S: FormatSerializer,
-{
-    // Dereference pointers (Box, Arc, etc.) to get the underlying value
-    let value = deref_if_pointer(value);
-
-    // Check for raw serialization type (e.g., RawJson) BEFORE innermost_peek
-    // because innermost_peek might unwrap the type if it has .inner set
-    if serializer.raw_serialize_shape() == Some(value.shape()) {
-        // RawJson is a tuple struct with a single Cow<str> field
-        // Get the inner Cow<str> value via as_str on the inner.
-        // Use fields_for_binary_serialize to access the field directly without skip logic.
-        if let Ok(struct_) = value.into_struct()
-            && let Some((_field_item, inner_value)) = struct_.fields_for_binary_serialize().next()
-            && let Some(s) = inner_value.as_str()
-        {
-            return serializer.raw_scalar(s).map_err(SerializeError::Backend);
+impl core::fmt::Display for PathSegment {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            PathSegment::Field(name) => write!(f, ".{}", name),
+            PathSegment::Index(idx) => write!(f, "[{}]", idx),
+            PathSegment::Variant(name) => write!(f, "::{}", name),
         }
-        // If we get here, the raw shape matched but extraction failed
-        // This shouldn't happen for properly implemented raw types
-        return Err(SerializeError::Unsupported(Cow::Borrowed(
-            "raw capture type matched but could not extract inner string",
-        )));
+    }
+}
+
+/// Context for serialization, tracking the path through the value tree.
+///
+/// This context is passed through recursive serialization calls to track
+/// where we are in the value hierarchy, enabling better error messages.
+pub struct SerializeContext<'s, S: FormatSerializer> {
+    serializer: &'s mut S,
+    path: alloc::vec::Vec<PathSegment>,
+}
+
+impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
+    /// Create a new serialization context wrapping a format serializer.
+    pub fn new(serializer: &'s mut S) -> Self {
+        Self {
+            serializer,
+            path: alloc::vec::Vec::new(),
+        }
     }
 
-    if serializer
-        .serialize_opaque_scalar(value.shape(), value)
-        .map_err(SerializeError::Backend)?
-    {
-        return Ok(());
+    /// Push a path segment onto the context.
+    fn push(&mut self, segment: PathSegment) {
+        self.path.push(segment);
     }
 
-    let value = value.innermost_peek();
+    /// Pop a path segment from the context.
+    fn pop(&mut self) {
+        self.path.pop();
+    }
 
-    // Check for metadata containers - serialize transparently through the inner value
-    // Metadata containers have exactly one non-metadata field that carries the actual value,
-    // while other fields (like doc comments) are metadata for formats that support it.
-    if value.shape().is_metadata_container()
-        && let Ok(struct_) = value.into_struct()
-    {
-        // Let the format handle metadata containers if it wants to (e.g., emit doc comments)
-        if serializer
-            .serialize_metadata_container(&struct_)
+    /// Get the current path as a string.
+    fn path_string(&self) -> String {
+        if self.path.is_empty() {
+            "<root>".into()
+        } else {
+            let mut s = String::new();
+            for seg in &self.path {
+                let _ = write!(s, "{}", seg);
+            }
+            s
+        }
+    }
+
+    /// Create an unsupported error with path context.
+    fn unsupported_error(&self, shape: &Shape, msg: &str) -> SerializeError<S::Error> {
+        SerializeError::Unsupported(Cow::Owned(alloc::format!(
+            "{} (type: `{}`, def: {}, path: `{}`)",
+            msg,
+            shape,
+            def_kind_name(&shape.def),
+            self.path_string()
+        )))
+    }
+
+    /// Serialize a value, tracking path for error context.
+    pub fn serialize<'mem, 'facet>(
+        &mut self,
+        value: Peek<'mem, 'facet>,
+    ) -> Result<(), SerializeError<S::Error>> {
+        self.serialize_impl(value)
+    }
+
+    fn serialize_impl<'mem, 'facet>(
+        &mut self,
+        value: Peek<'mem, 'facet>,
+    ) -> Result<(), SerializeError<S::Error>> {
+        // Dereference pointers (Box, Arc, etc.) to get the underlying value
+        let value = deref_if_pointer(value);
+
+        // Check for raw serialization type (e.g., RawJson) BEFORE innermost_peek
+        if self.serializer.raw_serialize_shape() == Some(value.shape()) {
+            if let Ok(struct_) = value.into_struct()
+                && let Some((_field_item, inner_value)) =
+                    struct_.fields_for_binary_serialize().next()
+                && let Some(s) = inner_value.as_str()
+            {
+                return self
+                    .serializer
+                    .raw_scalar(s)
+                    .map_err(SerializeError::Backend);
+            }
+            return Err(SerializeError::Unsupported(Cow::Borrowed(
+                "raw capture type matched but could not extract inner string",
+            )));
+        }
+
+        if self
+            .serializer
+            .serialize_opaque_scalar(value.shape(), value)
             .map_err(SerializeError::Backend)?
         {
             return Ok(());
         }
-        // Default: serialize transparently through the non-metadata field
-        for (field, field_value) in struct_.fields() {
-            if !field.is_metadata() {
-                return shared_serialize(serializer, field_value);
+
+        let value = value.innermost_peek();
+
+        // Check for metadata containers
+        if value.shape().is_metadata_container()
+            && let Ok(struct_) = value.into_struct()
+        {
+            if self
+                .serializer
+                .serialize_metadata_container(&struct_)
+                .map_err(SerializeError::Backend)?
+            {
+                return Ok(());
             }
-        }
-    }
-
-    // Check for container-level proxy - serialize through the proxy type
-    // Format-specific proxies take precedence over format-agnostic proxies
-    if let Some(proxy_def) = value.shape().effective_proxy(serializer.format_namespace()) {
-        return serialize_via_proxy(serializer, value, proxy_def);
-    }
-
-    // Use typed_scalar for scalars - allows binary formats to encode precisely
-    if let Some(scalar_type) = value.scalar_type() {
-        return serializer
-            .typed_scalar(scalar_type, value)
-            .map_err(SerializeError::Backend);
-    }
-
-    // Fallback for Def::Scalar types with Display trait (e.g., SmolStr, SmartString, CompactString)
-    // These are string-like types that should serialize as strings
-    if matches!(value.shape().def, Def::Scalar) && value.shape().vtable.has_display() {
-        use alloc::string::ToString;
-        let formatted = value.to_string();
-        return serializer
-            .scalar(ScalarValue::Str(Cow::Owned(formatted)))
-            .map_err(SerializeError::Backend);
-    }
-
-    // Handle Option<T> - use begin_option_some/serialize_none for binary formats
-    if let Ok(opt) = value.into_option() {
-        return match opt.value() {
-            Some(inner) => {
-                serializer
-                    .begin_option_some()
-                    .map_err(SerializeError::Backend)?;
-                shared_serialize(serializer, inner)
-            }
-            None => serializer.serialize_none().map_err(SerializeError::Backend),
-        };
-    }
-
-    if let Ok(result) = value.into_result() {
-        let (variant_index, variant_name, inner) = if result.is_ok() {
-            (
-                0,
-                "Ok",
-                result.ok().ok_or(SerializeError::Internal(Cow::Borrowed(
-                    "result reported Ok but value was missing",
-                )))?,
-            )
-        } else {
-            (
-                1,
-                "Err",
-                result.err().ok_or(SerializeError::Internal(Cow::Borrowed(
-                    "result reported Err but value was missing",
-                )))?,
-            )
-        };
-
-        if serializer.enum_variant_encoding() == EnumVariantEncoding::Index {
-            serializer
-                .begin_enum_variant(variant_index, variant_name)
-                .map_err(SerializeError::Backend)?;
-            return shared_serialize(serializer, inner);
-        }
-
-        // Externally tagged representation for non-index encodings.
-        serializer.begin_struct().map_err(SerializeError::Backend)?;
-        serializer
-            .field_key(variant_name)
-            .map_err(SerializeError::Backend)?;
-        shared_serialize(serializer, inner)?;
-        serializer.end_struct().map_err(SerializeError::Backend)?;
-        return Ok(());
-    }
-
-    if let Ok(dynamic) = value.into_dynamic_value() {
-        return serialize_dynamic_value(serializer, dynamic);
-    }
-
-    match value.shape().def {
-        facet_core::Def::List(_) | facet_core::Def::Array(_) | facet_core::Def::Slice(_) => {
-            let list = value.into_list_like().map_err(SerializeError::Reflect)?;
-            let len = list.len();
-
-            // Check if this is a byte sequence - if so, try bulk serialization
-            if let Some(bytes) = list.as_bytes() {
-                let handled = match value.shape().def {
-                    // Arrays have no length prefix
-                    facet_core::Def::Array(_) => serializer
-                        .serialize_byte_array(bytes)
-                        .map_err(SerializeError::Backend)?,
-                    // Lists and slices have a length prefix
-                    _ => serializer
-                        .serialize_byte_sequence(bytes)
-                        .map_err(SerializeError::Backend)?,
-                };
-                if handled {
-                    return Ok(());
+            for (field, field_value) in struct_.fields() {
+                if !field.is_metadata() {
+                    return self.serialize_impl(field_value);
                 }
             }
-            // Fall through to element-by-element if not handled
+        }
 
-            match value.shape().def {
-                facet_core::Def::Array(_) => {
-                    serializer.begin_seq().map_err(SerializeError::Backend)?
+        // Check for container-level proxy
+        if let Some(proxy_def) = value
+            .shape()
+            .effective_proxy(self.serializer.format_namespace())
+        {
+            return self.serialize_via_proxy(value, proxy_def);
+        }
+
+        // Use typed_scalar for scalars
+        if let Some(scalar_type) = value.scalar_type() {
+            return self
+                .serializer
+                .typed_scalar(scalar_type, value)
+                .map_err(SerializeError::Backend);
+        }
+
+        // Fallback for Def::Scalar types with Display trait
+        if matches!(value.shape().def, Def::Scalar) && value.shape().vtable.has_display() {
+            use alloc::string::ToString;
+            let formatted = value.to_string();
+            return self
+                .serializer
+                .scalar(ScalarValue::Str(Cow::Owned(formatted)))
+                .map_err(SerializeError::Backend);
+        }
+
+        // Handle Option<T>
+        if let Ok(opt) = value.into_option() {
+            return match opt.value() {
+                Some(inner) => {
+                    self.serializer
+                        .begin_option_some()
+                        .map_err(SerializeError::Backend)?;
+                    self.serialize_impl(inner)
                 }
-                _ => serializer
-                    .begin_seq_with_len(len)
-                    .map_err(SerializeError::Backend)?,
+                None => self
+                    .serializer
+                    .serialize_none()
+                    .map_err(SerializeError::Backend),
             };
-            for item in list.iter() {
-                shared_serialize(serializer, item)?;
+        }
+
+        if let Ok(result) = value.into_result() {
+            let (variant_index, variant_name, inner) = if result.is_ok() {
+                (
+                    0,
+                    "Ok",
+                    result.ok().ok_or(SerializeError::Internal(Cow::Borrowed(
+                        "result reported Ok but value was missing",
+                    )))?,
+                )
+            } else {
+                (
+                    1,
+                    "Err",
+                    result.err().ok_or(SerializeError::Internal(Cow::Borrowed(
+                        "result reported Err but value was missing",
+                    )))?,
+                )
+            };
+
+            if self.serializer.enum_variant_encoding() == EnumVariantEncoding::Index {
+                self.serializer
+                    .begin_enum_variant(variant_index, variant_name)
+                    .map_err(SerializeError::Backend)?;
+                self.push(PathSegment::Variant(Cow::Borrowed(variant_name)));
+                let result = self.serialize_impl(inner);
+                self.pop();
+                return result;
             }
-            serializer.end_seq().map_err(SerializeError::Backend)?;
+
+            self.serializer
+                .begin_struct()
+                .map_err(SerializeError::Backend)?;
+            self.serializer
+                .field_key(variant_name)
+                .map_err(SerializeError::Backend)?;
+            self.push(PathSegment::Variant(Cow::Borrowed(variant_name)));
+            let result = self.serialize_impl(inner);
+            self.pop();
+            result?;
+            self.serializer
+                .end_struct()
+                .map_err(SerializeError::Backend)?;
             return Ok(());
         }
-        _ => {}
-    }
 
-    if let Ok(map) = value.into_map() {
-        let len = map.len();
-        match serializer.map_encoding() {
-            MapEncoding::Pairs => {
-                serializer
-                    .begin_map_with_len(len)
-                    .map_err(SerializeError::Backend)?;
-                for (key, val) in map.iter() {
-                    shared_serialize(serializer, key)?;
-                    shared_serialize(serializer, val)?;
-                }
-                serializer.end_map().map_err(SerializeError::Backend)?;
-            }
-            MapEncoding::Struct => {
-                serializer.begin_struct().map_err(SerializeError::Backend)?;
-                for (key, val) in map.iter() {
-                    // Let format handle special key types first
-                    if !serializer
-                        .serialize_map_key(key)
-                        .map_err(SerializeError::Backend)?
-                    {
-                        // Default: convert the key to a string for the field name
-                        let key_str = if let Some(s) = key.as_str() {
-                            Cow::Borrowed(s)
-                        } else {
-                            // For non-string keys, use Display format (not Debug, which adds quotes)
-                            Cow::Owned(alloc::format!("{}", key))
-                        };
-                        serializer
-                            .field_key(&key_str)
-                            .map_err(SerializeError::Backend)?;
+        if let Ok(dynamic) = value.into_dynamic_value() {
+            return self.serialize_dynamic_value(dynamic);
+        }
+
+        match value.shape().def {
+            facet_core::Def::List(_) | facet_core::Def::Array(_) | facet_core::Def::Slice(_) => {
+                let list = value.into_list_like().map_err(SerializeError::Reflect)?;
+                let len = list.len();
+
+                // Check if this is a byte sequence
+                if let Some(bytes) = list.as_bytes() {
+                    let handled = match value.shape().def {
+                        facet_core::Def::Array(_) => self
+                            .serializer
+                            .serialize_byte_array(bytes)
+                            .map_err(SerializeError::Backend)?,
+                        _ => self
+                            .serializer
+                            .serialize_byte_sequence(bytes)
+                            .map_err(SerializeError::Backend)?,
+                    };
+                    if handled {
+                        return Ok(());
                     }
-                    shared_serialize(serializer, val)?;
                 }
-                serializer.end_struct().map_err(SerializeError::Backend)?;
+
+                match value.shape().def {
+                    facet_core::Def::Array(_) => self
+                        .serializer
+                        .begin_seq()
+                        .map_err(SerializeError::Backend)?,
+                    _ => self
+                        .serializer
+                        .begin_seq_with_len(len)
+                        .map_err(SerializeError::Backend)?,
+                };
+                for (idx, item) in list.iter().enumerate() {
+                    self.push(PathSegment::Index(idx));
+                    self.serialize_impl(item)?;
+                    self.pop();
+                }
+                self.serializer.end_seq().map_err(SerializeError::Backend)?;
+                return Ok(());
             }
+            _ => {}
         }
-        return Ok(());
+
+        if let Ok(map) = value.into_map() {
+            let len = map.len();
+            match self.serializer.map_encoding() {
+                MapEncoding::Pairs => {
+                    self.serializer
+                        .begin_map_with_len(len)
+                        .map_err(SerializeError::Backend)?;
+                    for (key, val) in map.iter() {
+                        self.serialize_impl(key)?;
+                        // Track map key in path
+                        let key_str = key
+                            .as_str()
+                            .map(|s| Cow::Owned(s.to_string()))
+                            .unwrap_or_else(|| Cow::Owned(alloc::format!("{}", key)));
+                        self.push(PathSegment::Field(key_str));
+                        self.serialize_impl(val)?;
+                        self.pop();
+                    }
+                    self.serializer.end_map().map_err(SerializeError::Backend)?;
+                }
+                MapEncoding::Struct => {
+                    self.serializer
+                        .begin_struct()
+                        .map_err(SerializeError::Backend)?;
+                    for (key, val) in map.iter() {
+                        if !self
+                            .serializer
+                            .serialize_map_key(key)
+                            .map_err(SerializeError::Backend)?
+                        {
+                            let key_str = if let Some(s) = key.as_str() {
+                                Cow::Borrowed(s)
+                            } else {
+                                Cow::Owned(alloc::format!("{}", key))
+                            };
+                            self.serializer
+                                .field_key(&key_str)
+                                .map_err(SerializeError::Backend)?;
+                        }
+                        let key_str = key
+                            .as_str()
+                            .map(|s| Cow::Owned(s.to_string()))
+                            .unwrap_or_else(|| Cow::Owned(alloc::format!("{}", key)));
+                        self.push(PathSegment::Field(key_str));
+                        self.serialize_impl(val)?;
+                        self.pop();
+                    }
+                    self.serializer
+                        .end_struct()
+                        .map_err(SerializeError::Backend)?;
+                }
+            }
+            return Ok(());
+        }
+
+        if let Ok(set) = value.into_set() {
+            let len = set.len();
+            self.serializer
+                .begin_seq_with_len(len)
+                .map_err(SerializeError::Backend)?;
+            for (idx, item) in set.iter().enumerate() {
+                self.push(PathSegment::Index(idx));
+                self.serialize_impl(item)?;
+                self.pop();
+            }
+            self.serializer.end_seq().map_err(SerializeError::Backend)?;
+            return Ok(());
+        }
+
+        if let Ok(struct_) = value.into_struct() {
+            return self.serialize_struct(value.shape(), struct_);
+        }
+
+        if let Ok(enum_) = value.into_enum() {
+            return self.serialize_enum(value.shape(), enum_);
+        }
+
+        Err(self.unsupported_error(value.shape(), "unsupported value kind for serialization"))
     }
 
-    if let Ok(set) = value.into_set() {
-        // Use begin_seq_with_len for binary formats that need length prefixes
-        let len = set.len();
-        serializer
-            .begin_seq_with_len(len)
-            .map_err(SerializeError::Backend)?;
-        for item in set.iter() {
-            shared_serialize(serializer, item)?;
-        }
-        serializer.end_seq().map_err(SerializeError::Backend)?;
-        return Ok(());
-    }
-
-    if let Ok(struct_) = value.into_struct() {
+    fn serialize_struct<'mem, 'facet>(
+        &mut self,
+        shape: &'static Shape,
+        struct_: facet_reflect::PeekStruct<'mem, 'facet>,
+    ) -> Result<(), SerializeError<S::Error>> {
         let kind = struct_.ty().kind;
-        let field_mode = serializer.struct_field_mode();
+        let field_mode = self.serializer.struct_field_mode();
 
         if kind == StructKind::Tuple || kind == StructKind::TupleStruct {
-            // Special case: transparent newtypes (marked with #[facet(transparent)] or
-            // #[repr(transparent)]) serialize as their inner value without wrapping.
             let fields: alloc::vec::Vec<_> = struct_.fields_for_binary_serialize().collect();
-            let is_transparent = value.shape().is_transparent() && fields.len() == 1;
+            let is_transparent = shape.is_transparent() && fields.len() == 1;
 
             if is_transparent {
-                // Serialize the single field directly without array wrapper
                 let (field_item, field_value) = &fields[0];
                 if let Some(proxy_def) = field_item
                     .field
-                    .and_then(|f| f.effective_proxy(serializer.format_namespace()))
+                    .and_then(|f| f.effective_proxy(self.serializer.format_namespace()))
                 {
-                    serialize_via_proxy(serializer, *field_value, proxy_def)?;
+                    self.serialize_via_proxy(*field_value, proxy_def)?;
                 } else {
-                    shared_serialize(serializer, *field_value)?;
+                    self.serialize_impl(*field_value)?;
                 }
             } else {
-                // Serialize tuples as arrays without length prefixes.
-                // Tuples are positional, so use binary serialize to avoid skip predicates.
-                serializer.begin_seq().map_err(SerializeError::Backend)?;
-                for (field_item, field_value) in fields {
-                    // Check for field-level proxy
+                self.serializer
+                    .begin_seq()
+                    .map_err(SerializeError::Backend)?;
+                for (idx, (field_item, field_value)) in fields.into_iter().enumerate() {
+                    self.push(PathSegment::Index(idx));
                     if let Some(proxy_def) = field_item
                         .field
-                        .and_then(|f| f.effective_proxy(serializer.format_namespace()))
+                        .and_then(|f| f.effective_proxy(self.serializer.format_namespace()))
                     {
-                        serialize_via_proxy(serializer, field_value, proxy_def)?;
+                        self.serialize_via_proxy(field_value, proxy_def)?;
                     } else {
-                        shared_serialize(serializer, field_value)?;
+                        self.serialize_impl(field_value)?;
                     }
+                    self.pop();
                 }
-                serializer.end_seq().map_err(SerializeError::Backend)?;
+                self.serializer.end_seq().map_err(SerializeError::Backend)?;
             }
         } else {
-            // Regular structs as objects
-            serializer
-                .struct_metadata(value.shape())
+            self.serializer
+                .struct_metadata(shape)
                 .map_err(SerializeError::Backend)?;
-            serializer.begin_struct().map_err(SerializeError::Backend)?;
+            self.serializer
+                .begin_struct()
+                .map_err(SerializeError::Backend)?;
 
-            // Collect fields and sort according to format preference.
-            // For binary formats (Unnamed), use fields_for_binary_serialize to avoid
-            // skip predicates that would break positional deserialization.
             let mut fields: alloc::vec::Vec<_> = if field_mode == StructFieldMode::Unnamed {
                 struct_.fields_for_binary_serialize().collect()
             } else {
                 struct_.fields_for_serialize().collect()
             };
 
-            sort_fields_if_needed(serializer, &mut fields);
+            sort_fields_if_needed(self.serializer, &mut fields);
 
             for (field_item, field_value) in fields {
                 // Check for flattened internally-tagged enum
-                // For these, we need to emit the tag field and flatten the content
                 if field_item.flattened
                     && let Some(field) = field_item.field
                     && let shape = field.shape()
                     && let Some(tag_key) = shape.get_tag_attr()
                     && shape.get_content_attr().is_none()
                 {
-                    // Internally-tagged: has tag but no content attribute
                     let variant_name = field_item.effective_name();
 
-                    // Emit the tag field
                     if field_mode == StructFieldMode::Named {
-                        serializer
+                        self.serializer
                             .field_key(tag_key)
                             .map_err(SerializeError::Backend)?;
                     }
-                    serializer
+                    self.serializer
                         .scalar(ScalarValue::Str(Cow::Borrowed(variant_name)))
                         .map_err(SerializeError::Backend)?;
 
-                    // Emit the content fields (flattened)
-                    // For newtype variants, field_value is the inner struct
-                    // For struct variants, field_value is the enum itself
                     if let Ok(inner_struct) = field_value.into_struct() {
-                        // Newtype variant - iterate inner struct's fields
                         for (inner_item, inner_value) in inner_struct.fields_for_serialize() {
                             if field_mode == StructFieldMode::Named {
-                                serializer
+                                self.serializer
                                     .field_key(inner_item.effective_name())
                                     .map_err(SerializeError::Backend)?;
                             }
+                            self.push(PathSegment::Field(Cow::Owned(
+                                inner_item.effective_name().to_string(),
+                            )));
                             if let Some(proxy_def) = inner_item
                                 .field
-                                .and_then(|f| f.effective_proxy(serializer.format_namespace()))
+                                .and_then(|f| f.effective_proxy(self.serializer.format_namespace()))
                             {
-                                serialize_via_proxy(serializer, inner_value, proxy_def)?;
+                                self.serialize_via_proxy(inner_value, proxy_def)?;
                             } else {
-                                shared_serialize(serializer, inner_value)?;
+                                self.serialize_impl(inner_value)?;
                             }
+                            self.pop();
                         }
                     } else if let Ok(enum_peek) = field_value.into_enum() {
-                        // Struct variant - iterate enum's fields (the variant's fields)
                         for (inner_item, inner_value) in enum_peek.fields_for_serialize() {
                             if field_mode == StructFieldMode::Named {
-                                serializer
+                                self.serializer
                                     .field_key(inner_item.effective_name())
                                     .map_err(SerializeError::Backend)?;
                             }
+                            self.push(PathSegment::Field(Cow::Owned(
+                                inner_item.effective_name().to_string(),
+                            )));
                             if let Some(proxy_def) = inner_item
                                 .field
-                                .and_then(|f| f.effective_proxy(serializer.format_namespace()))
+                                .and_then(|f| f.effective_proxy(self.serializer.format_namespace()))
                             {
-                                serialize_via_proxy(serializer, inner_value, proxy_def)?;
+                                self.serialize_via_proxy(inner_value, proxy_def)?;
                             } else {
-                                shared_serialize(serializer, inner_value)?;
+                                self.serialize_impl(inner_value)?;
                             }
+                            self.pop();
                         }
                     } else if matches!(field_value.shape().ty, Type::Primitive(_)) {
-                        // Scalar/primitive payload (e.g., A(i32))
-                        // Internally-tagged enums cannot flatten scalar payloads -
-                        // there's no field name to use for the value.
-                        // Use #[facet(content = "...")] for adjacently-tagged representation.
                         return Err(SerializeError::Unsupported(
                             "internally-tagged enum with scalar newtype payload cannot be \
                              flattened; use #[facet(content = \"...\")] for adjacently-tagged \
@@ -901,54 +993,58 @@ where
                                 .into(),
                         ));
                     }
-                    // Unit variants have no content fields to emit
                     continue;
                 }
 
-                // Let format handle field metadata with value access (for metadata containers)
-                let key_written = serializer
+                let key_written = self
+                    .serializer
                     .field_metadata_with_value(&field_item, field_value)
                     .map_err(SerializeError::Backend)?;
                 if !key_written {
-                    serializer
+                    self.serializer
                         .field_metadata(&field_item)
                         .map_err(SerializeError::Backend)?;
                     if field_mode == StructFieldMode::Named {
-                        serializer
+                        self.serializer
                             .field_key(field_item.effective_name())
                             .map_err(SerializeError::Backend)?;
                     }
                 }
-                // Check for field-level proxy
+                self.push(PathSegment::Field(Cow::Owned(
+                    field_item.effective_name().to_string(),
+                )));
                 if let Some(proxy_def) = field_item
                     .field
-                    .and_then(|f| f.effective_proxy(serializer.format_namespace()))
+                    .and_then(|f| f.effective_proxy(self.serializer.format_namespace()))
                 {
-                    serialize_via_proxy(serializer, field_value, proxy_def)?;
+                    self.serialize_via_proxy(field_value, proxy_def)?;
                 } else {
-                    shared_serialize(serializer, field_value)?;
+                    self.serialize_impl(field_value)?;
                 }
+                self.pop();
             }
-            serializer.end_struct().map_err(SerializeError::Backend)?;
+            self.serializer
+                .end_struct()
+                .map_err(SerializeError::Backend)?;
         }
-        return Ok(());
+        Ok(())
     }
 
-    if let Ok(enum_) = value.into_enum() {
+    fn serialize_enum<'mem, 'facet>(
+        &mut self,
+        shape: &'static Shape,
+        enum_: facet_reflect::PeekEnum<'mem, 'facet>,
+    ) -> Result<(), SerializeError<S::Error>> {
         let variant = enum_.active_variant().map_err(|_| {
             SerializeError::Unsupported(Cow::Borrowed("opaque enum layout is unsupported"))
         })?;
 
-        // Notify format of the variant being serialized (for xml::elements support)
-        serializer
+        self.serializer
             .variant_metadata(variant)
             .map_err(SerializeError::Backend)?;
 
-        // Cow-like enums serialize transparently as their inner value,
-        // without any variant wrapper or discriminant. Check this BEFORE
-        // EnumVariantEncoding::Index because cow enums may have #[repr(u8)]
-        // but should still be transparent (no discriminant written).
-        if value.shape().is_cow() {
+        // Cow-like enums serialize transparently
+        if shape.is_cow() {
             let inner = enum_
                 .field(0)
                 .map_err(|_| {
@@ -957,61 +1053,76 @@ where
                 .ok_or(SerializeError::Internal(Cow::Borrowed(
                     "cow variant has no field",
                 )))?;
-            return shared_serialize(serializer, inner);
+            return self.serialize_impl(inner);
         }
 
-        if serializer.enum_variant_encoding() == EnumVariantEncoding::Index {
+        if self.serializer.enum_variant_encoding() == EnumVariantEncoding::Index {
             let variant_index = enum_.variant_index().map_err(|_| {
                 SerializeError::Unsupported(Cow::Borrowed("opaque enum layout is unsupported"))
             })?;
-            serializer
+            self.serializer
                 .begin_enum_variant(variant_index, variant.name)
                 .map_err(SerializeError::Backend)?;
 
-            match variant.data.kind {
-                StructKind::Unit => return Ok(()),
+            self.push(PathSegment::Variant(Cow::Borrowed(variant.name)));
+            let result = match variant.data.kind {
+                StructKind::Unit => Ok(()),
                 StructKind::TupleStruct | StructKind::Tuple | StructKind::Struct => {
-                    // Index encoding is for binary formats - use binary serialize
-                    // to avoid skip predicates that would break positional deserialization.
-                    for (field_item, field_value) in enum_.fields_for_binary_serialize() {
+                    for (idx, (field_item, field_value)) in
+                        enum_.fields_for_binary_serialize().enumerate()
+                    {
+                        self.push(PathSegment::Index(idx));
                         if let Some(proxy_def) = field_item
                             .field
-                            .and_then(|f| f.effective_proxy(serializer.format_namespace()))
+                            .and_then(|f| f.effective_proxy(self.serializer.format_namespace()))
                         {
-                            serialize_via_proxy(serializer, field_value, proxy_def)?;
+                            self.serialize_via_proxy(field_value, proxy_def)?;
                         } else {
-                            shared_serialize(serializer, field_value)?;
+                            self.serialize_impl(field_value)?;
                         }
+                        self.pop();
                     }
-                    return Ok(());
+                    Ok(())
                 }
-            }
+            };
+            self.pop();
+            return result;
         }
 
-        let numeric = value.shape().is_numeric();
-        let untagged = value.shape().is_untagged();
-        let tag = value.shape().get_tag_attr();
-        let content = value.shape().get_content_attr();
+        let numeric = shape.is_numeric();
+        let untagged = shape.is_untagged();
+        let tag = shape.get_tag_attr();
+        let content = shape.get_content_attr();
 
         if numeric {
-            return serialize_numeric_enum(serializer, variant);
+            return serialize_numeric_enum(self.serializer, variant);
         }
         if untagged {
-            return serialize_untagged_enum(serializer, enum_, variant);
+            self.push(PathSegment::Variant(Cow::Borrowed(
+                variant.effective_name(),
+            )));
+            let result = self.serialize_untagged_enum(enum_, variant);
+            self.pop();
+            return result;
         }
 
         match (tag, content) {
             (Some(tag_key), None) => {
-                // Internally tagged.
-                serializer.begin_struct().map_err(SerializeError::Backend)?;
-                serializer
+                // Internally tagged
+                self.serializer
+                    .begin_struct()
+                    .map_err(SerializeError::Backend)?;
+                self.serializer
                     .field_key(tag_key)
                     .map_err(SerializeError::Backend)?;
-                serializer
+                self.serializer
                     .scalar(ScalarValue::Str(Cow::Borrowed(variant.effective_name())))
                     .map_err(SerializeError::Backend)?;
 
-                let field_mode = serializer.struct_field_mode();
+                self.push(PathSegment::Variant(Cow::Borrowed(
+                    variant.effective_name(),
+                )));
+                let field_mode = self.serializer.struct_field_mode();
                 match variant.data.kind {
                     StructKind::Unit => {}
                     StructKind::Struct => {
@@ -1021,125 +1132,47 @@ where
                             } else {
                                 enum_.fields_for_serialize().collect()
                             };
-                        sort_fields_if_needed(serializer, &mut fields);
+                        sort_fields_if_needed(self.serializer, &mut fields);
                         for (field_item, field_value) in fields {
-                            serializer
+                            self.serializer
                                 .field_metadata(&field_item)
                                 .map_err(SerializeError::Backend)?;
                             if field_mode == StructFieldMode::Named {
-                                serializer
+                                self.serializer
                                     .field_key(field_item.effective_name())
                                     .map_err(SerializeError::Backend)?;
                             }
-                            // Check for field-level proxy
+                            self.push(PathSegment::Field(Cow::Owned(
+                                field_item.effective_name().to_string(),
+                            )));
                             if let Some(proxy_def) = field_item
                                 .field
-                                .and_then(|f| f.effective_proxy(serializer.format_namespace()))
+                                .and_then(|f| f.effective_proxy(self.serializer.format_namespace()))
                             {
-                                serialize_via_proxy(serializer, field_value, proxy_def)?;
+                                self.serialize_via_proxy(field_value, proxy_def)?;
                             } else {
-                                shared_serialize(serializer, field_value)?;
+                                self.serialize_impl(field_value)?;
                             }
+                            self.pop();
                         }
                     }
                     StructKind::TupleStruct | StructKind::Tuple => {
+                        self.pop();
                         return Err(SerializeError::Unsupported(Cow::Borrowed(
                             "internally tagged tuple variants are not supported",
                         )));
                     }
                 }
+                self.pop();
 
-                serializer.end_struct().map_err(SerializeError::Backend)?;
+                self.serializer
+                    .end_struct()
+                    .map_err(SerializeError::Backend)?;
                 return Ok(());
             }
             (Some(tag_key), Some(content_key)) => {
-                // Adjacently tagged.
-                let field_mode = serializer.struct_field_mode();
-                serializer.begin_struct().map_err(SerializeError::Backend)?;
-                serializer
-                    .field_key(tag_key)
-                    .map_err(SerializeError::Backend)?;
-                serializer
-                    .scalar(ScalarValue::Str(Cow::Borrowed(variant.effective_name())))
-                    .map_err(SerializeError::Backend)?;
-
-                match variant.data.kind {
-                    StructKind::Unit => {
-                        // Unit variants with adjacent tagging omit the content field.
-                    }
-                    StructKind::Struct => {
-                        serializer
-                            .field_key(content_key)
-                            .map_err(SerializeError::Backend)?;
-                        serializer.begin_struct().map_err(SerializeError::Backend)?;
-                        let mut fields: alloc::vec::Vec<_> =
-                            if field_mode == StructFieldMode::Unnamed {
-                                enum_.fields_for_binary_serialize().collect()
-                            } else {
-                                enum_.fields_for_serialize().collect()
-                            };
-                        sort_fields_if_needed(serializer, &mut fields);
-                        for (field_item, field_value) in fields {
-                            serializer
-                                .field_metadata(&field_item)
-                                .map_err(SerializeError::Backend)?;
-                            if field_mode == StructFieldMode::Named {
-                                serializer
-                                    .field_key(field_item.effective_name())
-                                    .map_err(SerializeError::Backend)?;
-                            }
-                            // Check for field-level proxy
-                            if let Some(proxy_def) = field_item
-                                .field
-                                .and_then(|f| f.effective_proxy(serializer.format_namespace()))
-                            {
-                                serialize_via_proxy(serializer, field_value, proxy_def)?;
-                            } else {
-                                shared_serialize(serializer, field_value)?;
-                            }
-                        }
-                        serializer.end_struct().map_err(SerializeError::Backend)?;
-                    }
-                    StructKind::TupleStruct | StructKind::Tuple => {
-                        serializer
-                            .field_key(content_key)
-                            .map_err(SerializeError::Backend)?;
-
-                        let field_count = variant.data.fields.len();
-                        if field_count == 1 {
-                            let inner = enum_
-                                .field(0)
-                                .map_err(|_| {
-                                    SerializeError::Internal(Cow::Borrowed(
-                                        "variant field lookup failed",
-                                    ))
-                                })?
-                                .ok_or(SerializeError::Internal(Cow::Borrowed(
-                                    "variant reported 1 field but field(0) returned None",
-                                )))?;
-                            shared_serialize(serializer, inner)?;
-                        } else {
-                            serializer.begin_seq().map_err(SerializeError::Backend)?;
-                            for idx in 0..field_count {
-                                let inner = enum_
-                                    .field(idx)
-                                    .map_err(|_| {
-                                        SerializeError::Internal(Cow::Borrowed(
-                                            "variant field lookup failed",
-                                        ))
-                                    })?
-                                    .ok_or(SerializeError::Internal(Cow::Borrowed(
-                                        "variant field missing while iterating tuple fields",
-                                    )))?;
-                                shared_serialize(serializer, inner)?;
-                            }
-                            serializer.end_seq().map_err(SerializeError::Backend)?;
-                        }
-                    }
-                }
-
-                serializer.end_struct().map_err(SerializeError::Backend)?;
-                return Ok(());
+                // Adjacently tagged
+                return self.serialize_adjacently_tagged_enum(enum_, variant, tag_key, content_key);
             }
             (None, Some(_)) => {
                 return Err(SerializeError::Unsupported(Cow::Borrowed(
@@ -1149,18 +1182,130 @@ where
             (None, None) => {}
         }
 
-        // Externally tagged (default).
+        // Externally tagged (default)
+        self.serialize_externally_tagged_enum(enum_, variant)
+    }
+
+    fn serialize_adjacently_tagged_enum<'mem, 'facet>(
+        &mut self,
+        enum_: facet_reflect::PeekEnum<'mem, 'facet>,
+        variant: &'static facet_core::Variant,
+        tag_key: &'static str,
+        content_key: &'static str,
+    ) -> Result<(), SerializeError<S::Error>> {
+        let field_mode = self.serializer.struct_field_mode();
+        self.serializer
+            .begin_struct()
+            .map_err(SerializeError::Backend)?;
+        self.serializer
+            .field_key(tag_key)
+            .map_err(SerializeError::Backend)?;
+        self.serializer
+            .scalar(ScalarValue::Str(Cow::Borrowed(variant.effective_name())))
+            .map_err(SerializeError::Backend)?;
+
+        self.push(PathSegment::Variant(Cow::Borrowed(
+            variant.effective_name(),
+        )));
+
+        match variant.data.kind {
+            StructKind::Unit => {}
+            StructKind::Struct => {
+                self.serializer
+                    .field_key(content_key)
+                    .map_err(SerializeError::Backend)?;
+                self.serializer
+                    .begin_struct()
+                    .map_err(SerializeError::Backend)?;
+                let mut fields: alloc::vec::Vec<_> = if field_mode == StructFieldMode::Unnamed {
+                    enum_.fields_for_binary_serialize().collect()
+                } else {
+                    enum_.fields_for_serialize().collect()
+                };
+                sort_fields_if_needed(self.serializer, &mut fields);
+                for (field_item, field_value) in fields {
+                    self.serializer
+                        .field_metadata(&field_item)
+                        .map_err(SerializeError::Backend)?;
+                    if field_mode == StructFieldMode::Named {
+                        self.serializer
+                            .field_key(field_item.effective_name())
+                            .map_err(SerializeError::Backend)?;
+                    }
+                    self.push(PathSegment::Field(Cow::Owned(
+                        field_item.effective_name().to_string(),
+                    )));
+                    if let Some(proxy_def) = field_item
+                        .field
+                        .and_then(|f| f.effective_proxy(self.serializer.format_namespace()))
+                    {
+                        self.serialize_via_proxy(field_value, proxy_def)?;
+                    } else {
+                        self.serialize_impl(field_value)?;
+                    }
+                    self.pop();
+                }
+                self.serializer
+                    .end_struct()
+                    .map_err(SerializeError::Backend)?;
+            }
+            StructKind::TupleStruct | StructKind::Tuple => {
+                self.serializer
+                    .field_key(content_key)
+                    .map_err(SerializeError::Backend)?;
+
+                let field_count = variant.data.fields.len();
+                if field_count == 1 {
+                    let inner = enum_
+                        .field(0)
+                        .map_err(|_| {
+                            SerializeError::Internal(Cow::Borrowed("variant field lookup failed"))
+                        })?
+                        .ok_or(SerializeError::Internal(Cow::Borrowed(
+                            "variant reported 1 field but field(0) returned None",
+                        )))?;
+                    self.serialize_impl(inner)?;
+                } else {
+                    self.serializer
+                        .begin_seq()
+                        .map_err(SerializeError::Backend)?;
+                    for idx in 0..field_count {
+                        let inner = enum_
+                            .field(idx)
+                            .map_err(|_| {
+                                SerializeError::Internal(Cow::Borrowed(
+                                    "variant field lookup failed",
+                                ))
+                            })?
+                            .ok_or(SerializeError::Internal(Cow::Borrowed(
+                                "variant field missing while iterating tuple fields",
+                            )))?;
+                        self.push(PathSegment::Index(idx));
+                        self.serialize_impl(inner)?;
+                        self.pop();
+                    }
+                    self.serializer.end_seq().map_err(SerializeError::Backend)?;
+                }
+            }
+        }
+
+        self.pop();
+        self.serializer
+            .end_struct()
+            .map_err(SerializeError::Backend)?;
+        Ok(())
+    }
+
+    fn serialize_externally_tagged_enum<'mem, 'facet>(
+        &mut self,
+        enum_: facet_reflect::PeekEnum<'mem, 'facet>,
+        variant: &'static facet_core::Variant,
+    ) -> Result<(), SerializeError<S::Error>> {
+        let field_mode = self.serializer.struct_field_mode();
+
         // For #[facet(other)] variants with a #[facet(metadata = "tag")] field,
-        // use the field's value as the tag name instead of the variant name.
-        trace!(
-            variant_name = variant.name,
-            is_other = variant.is_other(),
-            "serializing enum variant"
-        );
-        let field_mode = serializer.struct_field_mode();
+        // use the field's value as the tag name
         let tag_name: Cow<'_, str> = if variant.is_other() {
-            // Look for a tag field in the variant's data.
-            // For binary formats, use binary serialize to avoid skip predicates.
             let mut tag_value: Option<Cow<'_, str>> = None;
             let fields_iter: alloc::boxed::Box<
                 dyn Iterator<Item = (facet_reflect::FieldItem, facet_reflect::Peek<'_, '_>)>,
@@ -1170,22 +1315,16 @@ where
                 alloc::boxed::Box::new(enum_.fields_for_serialize())
             };
             for (field_item, field_value) in fields_iter {
-                if let Some(field) = field_item.field {
-                    trace!(
-                        field_name = field.name,
-                        is_variant_tag = field.is_variant_tag(),
-                        "checking field for tag"
-                    );
-                    if field.is_variant_tag() {
-                        // Extract the tag value - handle Option<String>
-                        if let Ok(opt) = field_value.into_option()
-                            && let Some(inner) = opt.value()
-                            && let Some(s) = inner.as_str()
-                        {
-                            tag_value = Some(Cow::Borrowed(s));
-                        }
-                        break;
+                if let Some(field) = field_item.field
+                    && field.is_variant_tag()
+                {
+                    if let Ok(opt) = field_value.into_option()
+                        && let Some(inner) = opt.value()
+                        && let Some(s) = inner.as_str()
+                    {
+                        tag_value = Some(Cow::Borrowed(s));
                     }
+                    break;
                 }
             }
             tag_value.unwrap_or_else(|| Cow::Borrowed(variant.effective_name()))
@@ -1193,127 +1332,147 @@ where
             Cow::Borrowed(variant.effective_name())
         };
 
-        // First, check if the format wants to handle this with tag syntax (e.g., Styx's @tag)
-        let use_tag_syntax = serializer
+        // Check if the format wants to handle this with tag syntax
+        let use_tag_syntax = self
+            .serializer
             .write_variant_tag(&tag_name)
             .map_err(SerializeError::Backend)?;
 
-        if use_tag_syntax {
-            // Format wrote the tag, now serialize the payload appropriately
-            return match variant.data.kind {
-                StructKind::Unit => {
-                    // Nothing more to write for unit variants
-                    Ok(())
-                }
-                StructKind::TupleStruct | StructKind::Tuple => {
-                    let field_count = variant.data.fields.len();
-                    if field_count == 1 {
-                        // Newtype variant - serialize payload directly
+        self.push(PathSegment::Variant(Cow::Owned(tag_name.to_string())));
+
+        let result = if use_tag_syntax {
+            self.serialize_variant_after_tag(enum_, variant)
+        } else {
+            self.serialize_standard_externally_tagged(enum_, variant)
+        };
+
+        self.pop();
+        result
+    }
+
+    fn serialize_variant_after_tag<'mem, 'facet>(
+        &mut self,
+        enum_: facet_reflect::PeekEnum<'mem, 'facet>,
+        variant: &'static facet_core::Variant,
+    ) -> Result<(), SerializeError<S::Error>> {
+        let field_mode = self.serializer.struct_field_mode();
+
+        match variant.data.kind {
+            StructKind::Unit => Ok(()),
+            StructKind::TupleStruct | StructKind::Tuple => {
+                let field_count = variant.data.fields.len();
+                if field_count == 1 {
+                    let inner = enum_
+                        .field(0)
+                        .map_err(|_| {
+                            SerializeError::Internal(Cow::Borrowed("variant field lookup failed"))
+                        })?
+                        .ok_or(SerializeError::Internal(Cow::Borrowed(
+                            "variant reported 1 field but field(0) returned None",
+                        )))?;
+                    self.serialize_impl(inner)?;
+                } else {
+                    self.serializer
+                        .begin_seq_after_tag()
+                        .map_err(SerializeError::Backend)?;
+                    for idx in 0..field_count {
                         let inner = enum_
-                            .field(0)
+                            .field(idx)
                             .map_err(|_| {
                                 SerializeError::Internal(Cow::Borrowed(
                                     "variant field lookup failed",
                                 ))
                             })?
                             .ok_or(SerializeError::Internal(Cow::Borrowed(
-                                "variant reported 1 field but field(0) returned None",
+                                "variant field missing while iterating tuple fields",
                             )))?;
-                        shared_serialize(serializer, inner)?;
-                    } else {
-                        // Multi-field tuple - use sequence after tag
-                        serializer
-                            .begin_seq_after_tag()
-                            .map_err(SerializeError::Backend)?;
-                        for idx in 0..field_count {
-                            let inner = enum_
-                                .field(idx)
-                                .map_err(|_| {
-                                    SerializeError::Internal(Cow::Borrowed(
-                                        "variant field lookup failed",
-                                    ))
-                                })?
-                                .ok_or(SerializeError::Internal(Cow::Borrowed(
-                                    "variant field missing while iterating tuple fields",
-                                )))?;
-                            shared_serialize(serializer, inner)?;
-                        }
-                        serializer.end_seq().map_err(SerializeError::Backend)?;
+                        self.push(PathSegment::Index(idx));
+                        self.serialize_impl(inner)?;
+                        self.pop();
                     }
-                    Ok(())
+                    self.serializer.end_seq().map_err(SerializeError::Backend)?;
                 }
-                StructKind::Struct => {
-                    // Struct variant - use struct after tag
-                    // For #[facet(other)] variants, skip metadata fields (like tag) from payload
-                    let is_other = variant.is_other();
-                    let fields_iter: alloc::boxed::Box<
-                        dyn Iterator<
-                            Item = (facet_reflect::FieldItem, facet_reflect::Peek<'_, '_>),
-                        >,
-                    > = if field_mode == StructFieldMode::Unnamed {
-                        alloc::boxed::Box::new(enum_.fields_for_binary_serialize())
-                    } else {
-                        alloc::boxed::Box::new(enum_.fields_for_serialize())
-                    };
-                    let mut fields: alloc::vec::Vec<_> = fields_iter
-                        .filter(|(field_item, _)| {
-                            if is_other {
-                                // Skip metadata fields and tag fields for other variants
-                                field_item
-                                    .field
-                                    .map(|f| f.metadata_kind().is_none() && !f.is_variant_tag())
-                                    .unwrap_or(true)
-                            } else {
-                                true
-                            }
-                        })
-                        .collect();
-
-                    // If no non-metadata fields remain, don't emit a struct at all
-                    if fields.is_empty() {
-                        return Ok(());
-                    }
-
-                    serializer
-                        .begin_struct_after_tag()
-                        .map_err(SerializeError::Backend)?;
-                    sort_fields_if_needed(serializer, &mut fields);
-                    let field_mode = serializer.struct_field_mode();
-                    for (field_item, field_value) in fields {
-                        serializer
-                            .field_metadata(&field_item)
-                            .map_err(SerializeError::Backend)?;
-                        if field_mode == StructFieldMode::Named {
-                            serializer
-                                .field_key(field_item.effective_name())
-                                .map_err(SerializeError::Backend)?;
-                        }
-                        if let Some(proxy_def) = field_item
-                            .field
-                            .and_then(|f| f.effective_proxy(serializer.format_namespace()))
-                        {
-                            serialize_via_proxy(serializer, field_value, proxy_def)?;
+                Ok(())
+            }
+            StructKind::Struct => {
+                let is_other = variant.is_other();
+                let fields_iter: alloc::boxed::Box<
+                    dyn Iterator<Item = (facet_reflect::FieldItem, facet_reflect::Peek<'_, '_>)>,
+                > = if field_mode == StructFieldMode::Unnamed {
+                    alloc::boxed::Box::new(enum_.fields_for_binary_serialize())
+                } else {
+                    alloc::boxed::Box::new(enum_.fields_for_serialize())
+                };
+                let mut fields: alloc::vec::Vec<_> = fields_iter
+                    .filter(|(field_item, _)| {
+                        if is_other {
+                            field_item
+                                .field
+                                .map(|f| f.metadata_kind().is_none() && !f.is_variant_tag())
+                                .unwrap_or(true)
                         } else {
-                            shared_serialize(serializer, field_value)?;
+                            true
                         }
-                    }
-                    serializer.end_struct().map_err(SerializeError::Backend)?;
-                    Ok(())
-                }
-            };
-        }
+                    })
+                    .collect();
 
-        // Standard externally tagged representation: { "variant_name": payload }
-        return match variant.data.kind {
+                if fields.is_empty() {
+                    return Ok(());
+                }
+
+                self.serializer
+                    .begin_struct_after_tag()
+                    .map_err(SerializeError::Backend)?;
+                sort_fields_if_needed(self.serializer, &mut fields);
+                for (field_item, field_value) in fields {
+                    self.serializer
+                        .field_metadata(&field_item)
+                        .map_err(SerializeError::Backend)?;
+                    if field_mode == StructFieldMode::Named {
+                        self.serializer
+                            .field_key(field_item.effective_name())
+                            .map_err(SerializeError::Backend)?;
+                    }
+                    self.push(PathSegment::Field(Cow::Owned(
+                        field_item.effective_name().to_string(),
+                    )));
+                    if let Some(proxy_def) = field_item
+                        .field
+                        .and_then(|f| f.effective_proxy(self.serializer.format_namespace()))
+                    {
+                        self.serialize_via_proxy(field_value, proxy_def)?;
+                    } else {
+                        self.serialize_impl(field_value)?;
+                    }
+                    self.pop();
+                }
+                self.serializer
+                    .end_struct()
+                    .map_err(SerializeError::Backend)?;
+                Ok(())
+            }
+        }
+    }
+
+    fn serialize_standard_externally_tagged<'mem, 'facet>(
+        &mut self,
+        enum_: facet_reflect::PeekEnum<'mem, 'facet>,
+        variant: &'static facet_core::Variant,
+    ) -> Result<(), SerializeError<S::Error>> {
+        let field_mode = self.serializer.struct_field_mode();
+
+        match variant.data.kind {
             StructKind::Unit => {
-                serializer
+                self.serializer
                     .scalar(ScalarValue::Str(Cow::Borrowed(variant.effective_name())))
                     .map_err(SerializeError::Backend)?;
                 Ok(())
             }
             StructKind::TupleStruct | StructKind::Tuple => {
-                serializer.begin_struct().map_err(SerializeError::Backend)?;
-                serializer
+                self.serializer
+                    .begin_struct()
+                    .map_err(SerializeError::Backend)?;
+                self.serializer
                     .field_key(variant.effective_name())
                     .map_err(SerializeError::Backend)?;
 
@@ -1327,17 +1486,18 @@ where
                         .ok_or(SerializeError::Internal(Cow::Borrowed(
                             "variant reported 1 field but field(0) returned None",
                         )))?;
-                    // Check for field-level proxy
                     if let Some(field_def) = variant.data.fields.first()
                         && let Some(proxy_def) =
-                            field_def.effective_proxy(serializer.format_namespace())
+                            field_def.effective_proxy(self.serializer.format_namespace())
                     {
-                        serialize_via_proxy(serializer, inner, proxy_def)?;
+                        self.serialize_via_proxy(inner, proxy_def)?;
                     } else {
-                        shared_serialize(serializer, inner)?;
+                        self.serialize_impl(inner)?;
                     }
                 } else {
-                    serializer.begin_seq().map_err(SerializeError::Backend)?;
+                    self.serializer
+                        .begin_seq()
+                        .map_err(SerializeError::Backend)?;
                     for idx in 0..field_count {
                         let inner = enum_
                             .field(idx)
@@ -1349,234 +1509,424 @@ where
                             .ok_or(SerializeError::Internal(Cow::Borrowed(
                                 "variant field missing while iterating tuple fields",
                             )))?;
-                        // Check for field-level proxy
+                        self.push(PathSegment::Index(idx));
                         if let Some(field_def) = variant.data.fields.get(idx)
                             && let Some(proxy_def) =
-                                field_def.effective_proxy(serializer.format_namespace())
+                                field_def.effective_proxy(self.serializer.format_namespace())
                         {
-                            serialize_via_proxy(serializer, inner, proxy_def)?;
+                            self.serialize_via_proxy(inner, proxy_def)?;
                         } else {
-                            shared_serialize(serializer, inner)?;
+                            self.serialize_impl(inner)?;
                         }
+                        self.pop();
                     }
-                    serializer.end_seq().map_err(SerializeError::Backend)?;
+                    self.serializer.end_seq().map_err(SerializeError::Backend)?;
                 }
 
-                serializer.end_struct().map_err(SerializeError::Backend)?;
+                self.serializer
+                    .end_struct()
+                    .map_err(SerializeError::Backend)?;
                 Ok(())
             }
             StructKind::Struct => {
-                let field_mode = serializer.struct_field_mode();
-                serializer.begin_struct().map_err(SerializeError::Backend)?;
-                serializer
+                self.serializer
+                    .begin_struct()
+                    .map_err(SerializeError::Backend)?;
+                self.serializer
                     .field_key(variant.effective_name())
                     .map_err(SerializeError::Backend)?;
 
-                serializer.begin_struct().map_err(SerializeError::Backend)?;
+                self.serializer
+                    .begin_struct()
+                    .map_err(SerializeError::Backend)?;
                 let mut fields: alloc::vec::Vec<_> = if field_mode == StructFieldMode::Unnamed {
                     enum_.fields_for_binary_serialize().collect()
                 } else {
                     enum_.fields_for_serialize().collect()
                 };
-                sort_fields_if_needed(serializer, &mut fields);
+                sort_fields_if_needed(self.serializer, &mut fields);
                 for (field_item, field_value) in fields {
-                    serializer
+                    self.serializer
                         .field_metadata(&field_item)
                         .map_err(SerializeError::Backend)?;
                     if field_mode == StructFieldMode::Named {
-                        serializer
+                        self.serializer
                             .field_key(field_item.effective_name())
                             .map_err(SerializeError::Backend)?;
                     }
-                    // Check for field-level proxy
+                    self.push(PathSegment::Field(Cow::Owned(
+                        field_item.effective_name().to_string(),
+                    )));
                     if let Some(proxy_def) = field_item
                         .field
-                        .and_then(|f| f.effective_proxy(serializer.format_namespace()))
+                        .and_then(|f| f.effective_proxy(self.serializer.format_namespace()))
                     {
-                        serialize_via_proxy(serializer, field_value, proxy_def)?;
+                        self.serialize_via_proxy(field_value, proxy_def)?;
                     } else {
-                        shared_serialize(serializer, field_value)?;
+                        self.serialize_impl(field_value)?;
                     }
+                    self.pop();
                 }
-                serializer.end_struct().map_err(SerializeError::Backend)?;
+                self.serializer
+                    .end_struct()
+                    .map_err(SerializeError::Backend)?;
 
-                serializer.end_struct().map_err(SerializeError::Backend)?;
+                self.serializer
+                    .end_struct()
+                    .map_err(SerializeError::Backend)?;
                 Ok(())
             }
-        };
+        }
     }
 
-    Err(SerializeError::Unsupported(Cow::Borrowed(
-        "unsupported value kind for serialization",
-    )))
+    fn serialize_untagged_enum<'mem, 'facet>(
+        &mut self,
+        enum_: facet_reflect::PeekEnum<'mem, 'facet>,
+        variant: &'static facet_core::Variant,
+    ) -> Result<(), SerializeError<S::Error>> {
+        let field_mode = self.serializer.struct_field_mode();
+
+        match variant.data.kind {
+            StructKind::Unit => self
+                .serializer
+                .scalar(ScalarValue::Str(Cow::Borrowed(variant.effective_name())))
+                .map_err(SerializeError::Backend),
+            StructKind::TupleStruct | StructKind::Tuple => {
+                let field_count = variant.data.fields.len();
+                if field_count == 1 {
+                    let inner = enum_
+                        .field(0)
+                        .map_err(|_| {
+                            SerializeError::Internal(Cow::Borrowed("variant field lookup failed"))
+                        })?
+                        .ok_or(SerializeError::Internal(Cow::Borrowed(
+                            "variant reported 1 field but field(0) returned None",
+                        )))?;
+                    self.serialize_impl(inner)
+                } else {
+                    self.serializer
+                        .begin_seq()
+                        .map_err(SerializeError::Backend)?;
+                    for idx in 0..field_count {
+                        let inner = enum_
+                            .field(idx)
+                            .map_err(|_| {
+                                SerializeError::Internal(Cow::Borrowed(
+                                    "variant field lookup failed",
+                                ))
+                            })?
+                            .ok_or(SerializeError::Internal(Cow::Borrowed(
+                                "variant field missing while iterating tuple fields",
+                            )))?;
+                        self.push(PathSegment::Index(idx));
+                        self.serialize_impl(inner)?;
+                        self.pop();
+                    }
+                    self.serializer.end_seq().map_err(SerializeError::Backend)?;
+                    Ok(())
+                }
+            }
+            StructKind::Struct => {
+                self.serializer
+                    .begin_struct()
+                    .map_err(SerializeError::Backend)?;
+                let mut fields: alloc::vec::Vec<_> = if field_mode == StructFieldMode::Unnamed {
+                    enum_.fields_for_binary_serialize().collect()
+                } else {
+                    enum_.fields_for_serialize().collect()
+                };
+                sort_fields_if_needed(self.serializer, &mut fields);
+                for (field_item, field_value) in fields {
+                    self.serializer
+                        .field_metadata(&field_item)
+                        .map_err(SerializeError::Backend)?;
+                    if field_mode == StructFieldMode::Named {
+                        self.serializer
+                            .field_key(field_item.effective_name())
+                            .map_err(SerializeError::Backend)?;
+                    }
+                    self.push(PathSegment::Field(Cow::Owned(
+                        field_item.effective_name().to_string(),
+                    )));
+                    if let Some(proxy_def) = field_item
+                        .field
+                        .and_then(|f| f.effective_proxy(self.serializer.format_namespace()))
+                    {
+                        self.serialize_via_proxy(field_value, proxy_def)?;
+                    } else {
+                        self.serialize_impl(field_value)?;
+                    }
+                    self.pop();
+                }
+                self.serializer
+                    .end_struct()
+                    .map_err(SerializeError::Backend)?;
+                Ok(())
+            }
+        }
+    }
+
+    fn serialize_dynamic_value<'mem, 'facet>(
+        &mut self,
+        dynamic: facet_reflect::PeekDynamicValue<'mem, 'facet>,
+    ) -> Result<(), SerializeError<S::Error>> {
+        let tagged = self.serializer.dynamic_value_encoding() == DynamicValueEncoding::Tagged;
+
+        match dynamic.kind() {
+            DynValueKind::Null => {
+                if tagged {
+                    self.serializer
+                        .dynamic_value_tag(DynamicValueTag::Null)
+                        .map_err(SerializeError::Backend)?;
+                }
+                self.serializer
+                    .scalar(ScalarValue::Null)
+                    .map_err(SerializeError::Backend)
+            }
+            DynValueKind::Bool => {
+                let value = dynamic.as_bool().ok_or_else(|| {
+                    SerializeError::Internal(Cow::Borrowed("dynamic bool missing value"))
+                })?;
+                if tagged {
+                    self.serializer
+                        .dynamic_value_tag(DynamicValueTag::Bool)
+                        .map_err(SerializeError::Backend)?;
+                }
+                self.serializer
+                    .scalar(ScalarValue::Bool(value))
+                    .map_err(SerializeError::Backend)
+            }
+            DynValueKind::Number => {
+                if let Some(n) = dynamic.as_i64() {
+                    if tagged {
+                        self.serializer
+                            .dynamic_value_tag(DynamicValueTag::I64)
+                            .map_err(SerializeError::Backend)?;
+                    }
+                    self.serializer
+                        .scalar(ScalarValue::I64(n))
+                        .map_err(SerializeError::Backend)
+                } else if let Some(n) = dynamic.as_u64() {
+                    if tagged {
+                        self.serializer
+                            .dynamic_value_tag(DynamicValueTag::U64)
+                            .map_err(SerializeError::Backend)?;
+                    }
+                    self.serializer
+                        .scalar(ScalarValue::U64(n))
+                        .map_err(SerializeError::Backend)
+                } else if let Some(n) = dynamic.as_f64() {
+                    if tagged {
+                        self.serializer
+                            .dynamic_value_tag(DynamicValueTag::F64)
+                            .map_err(SerializeError::Backend)?;
+                    }
+                    self.serializer
+                        .scalar(ScalarValue::F64(n))
+                        .map_err(SerializeError::Backend)
+                } else {
+                    Err(SerializeError::Unsupported(Cow::Borrowed(
+                        "dynamic number not representable",
+                    )))
+                }
+            }
+            DynValueKind::String => {
+                let value = dynamic.as_str().ok_or_else(|| {
+                    SerializeError::Internal(Cow::Borrowed("dynamic string missing value"))
+                })?;
+                if tagged {
+                    self.serializer
+                        .dynamic_value_tag(DynamicValueTag::String)
+                        .map_err(SerializeError::Backend)?;
+                }
+                self.serializer
+                    .scalar(ScalarValue::Str(Cow::Borrowed(value)))
+                    .map_err(SerializeError::Backend)
+            }
+            DynValueKind::Bytes => {
+                let value = dynamic.as_bytes().ok_or_else(|| {
+                    SerializeError::Internal(Cow::Borrowed("dynamic bytes missing value"))
+                })?;
+                if tagged {
+                    self.serializer
+                        .dynamic_value_tag(DynamicValueTag::Bytes)
+                        .map_err(SerializeError::Backend)?;
+                }
+                self.serializer
+                    .scalar(ScalarValue::Bytes(Cow::Borrowed(value)))
+                    .map_err(SerializeError::Backend)
+            }
+            DynValueKind::Array => {
+                let len = dynamic.array_len().ok_or_else(|| {
+                    SerializeError::Internal(Cow::Borrowed("dynamic array missing length"))
+                })?;
+                if tagged {
+                    self.serializer
+                        .dynamic_value_tag(DynamicValueTag::Array)
+                        .map_err(SerializeError::Backend)?;
+                }
+                self.serializer
+                    .begin_seq_with_len(len)
+                    .map_err(SerializeError::Backend)?;
+                if let Some(iter) = dynamic.array_iter() {
+                    for (idx, item) in iter.enumerate() {
+                        self.push(PathSegment::Index(idx));
+                        self.serialize_impl(item)?;
+                        self.pop();
+                    }
+                }
+                self.serializer.end_seq().map_err(SerializeError::Backend)
+            }
+            DynValueKind::Object => {
+                let len = dynamic.object_len().ok_or_else(|| {
+                    SerializeError::Internal(Cow::Borrowed("dynamic object missing length"))
+                })?;
+                if tagged {
+                    self.serializer
+                        .dynamic_value_tag(DynamicValueTag::Object)
+                        .map_err(SerializeError::Backend)?;
+                }
+                match self.serializer.map_encoding() {
+                    MapEncoding::Pairs => {
+                        self.serializer
+                            .begin_map_with_len(len)
+                            .map_err(SerializeError::Backend)?;
+                        if let Some(iter) = dynamic.object_iter() {
+                            for (key, value) in iter {
+                                self.serializer
+                                    .scalar(ScalarValue::Str(Cow::Borrowed(key)))
+                                    .map_err(SerializeError::Backend)?;
+                                self.push(PathSegment::Field(Cow::Owned(key.to_string())));
+                                self.serialize_impl(value)?;
+                                self.pop();
+                            }
+                        }
+                        self.serializer.end_map().map_err(SerializeError::Backend)
+                    }
+                    MapEncoding::Struct => {
+                        self.serializer
+                            .begin_struct()
+                            .map_err(SerializeError::Backend)?;
+                        if let Some(iter) = dynamic.object_iter() {
+                            for (key, value) in iter {
+                                self.serializer
+                                    .field_key(key)
+                                    .map_err(SerializeError::Backend)?;
+                                self.push(PathSegment::Field(Cow::Owned(key.to_string())));
+                                self.serialize_impl(value)?;
+                                self.pop();
+                            }
+                        }
+                        self.serializer
+                            .end_struct()
+                            .map_err(SerializeError::Backend)
+                    }
+                }
+            }
+            DynValueKind::DateTime => {
+                let dt = dynamic.as_datetime().ok_or_else(|| {
+                    SerializeError::Internal(Cow::Borrowed("dynamic datetime missing value"))
+                })?;
+                if tagged {
+                    self.serializer
+                        .dynamic_value_tag(DynamicValueTag::DateTime)
+                        .map_err(SerializeError::Backend)?;
+                }
+                let s = format_dyn_datetime(dt);
+                self.serializer
+                    .scalar(ScalarValue::Str(Cow::Owned(s)))
+                    .map_err(SerializeError::Backend)
+            }
+            DynValueKind::QName | DynValueKind::Uuid => Err(SerializeError::Unsupported(
+                Cow::Borrowed("dynamic QName/Uuid serialization is not supported"),
+            )),
+        }
+    }
+
+    #[allow(unsafe_code)]
+    fn serialize_via_proxy<'mem, 'facet>(
+        &mut self,
+        value: Peek<'mem, 'facet>,
+        proxy_def: &'static facet_core::ProxyDef,
+    ) -> Result<(), SerializeError<S::Error>> {
+        use facet_core::PtrUninit;
+
+        let proxy_shape = proxy_def.shape;
+        let proxy_layout = proxy_shape.layout.sized_layout().map_err(|_| {
+            SerializeError::Unsupported(Cow::Borrowed("proxy type must be sized for serialization"))
+        })?;
+
+        let proxy_mem = unsafe { alloc::alloc::alloc(proxy_layout) };
+        if proxy_mem.is_null() {
+            return Err(SerializeError::Internal(Cow::Borrowed(
+                "failed to allocate proxy memory",
+            )));
+        }
+
+        let proxy_uninit = PtrUninit::new(proxy_mem);
+        let convert_result = unsafe { (proxy_def.convert_out)(value.data(), proxy_uninit) };
+
+        let proxy_ptr = match convert_result {
+            Ok(ptr) => ptr,
+            Err(msg) => {
+                unsafe { alloc::alloc::dealloc(proxy_mem, proxy_layout) };
+                return Err(SerializeError::Unsupported(Cow::Owned(msg)));
+            }
+        };
+
+        let proxy_peek = unsafe { Peek::unchecked_new(proxy_ptr.as_const(), proxy_shape) };
+        let result = self.serialize_impl(proxy_peek);
+
+        unsafe {
+            let _ = proxy_shape.call_drop_in_place(proxy_ptr);
+            alloc::alloc::dealloc(proxy_mem, proxy_layout);
+        }
+
+        result
+    }
 }
 
-fn serialize_dynamic_value<'mem, 'facet, S>(
+impl<E: Debug> std::error::Error for SerializeError<E> {}
+
+/// Get a human-readable name for a Def variant.
+fn def_kind_name(def: &Def) -> &'static str {
+    match def {
+        Def::Undefined => "Undefined",
+        Def::Scalar => "Scalar",
+        Def::Map(_) => "Map",
+        Def::Set(_) => "Set",
+        Def::List(_) => "List",
+        Def::Array(_) => "Array",
+        Def::NdArray(_) => "NdArray",
+        Def::Slice(_) => "Slice",
+        Def::Option(_) => "Option",
+        Def::Result(_) => "Result",
+        Def::DynamicValue(_) => "DynamicValue",
+        Def::Pointer(_) => "Pointer",
+        _ => "Unknown",
+    }
+}
+
+/// Serialize a root value using the shared traversal logic.
+pub fn serialize_root<'mem, 'facet, S>(
     serializer: &mut S,
-    dynamic: facet_reflect::PeekDynamicValue<'mem, 'facet>,
+    value: Peek<'mem, 'facet>,
 ) -> Result<(), SerializeError<S::Error>>
 where
     S: FormatSerializer,
 {
-    let tagged = serializer.dynamic_value_encoding() == DynamicValueEncoding::Tagged;
+    let mut ctx = SerializeContext::new(serializer);
+    ctx.serialize(value)
+}
 
-    match dynamic.kind() {
-        DynValueKind::Null => {
-            if tagged {
-                serializer
-                    .dynamic_value_tag(DynamicValueTag::Null)
-                    .map_err(SerializeError::Backend)?;
-            }
-            serializer
-                .scalar(ScalarValue::Null)
-                .map_err(SerializeError::Backend)
-        }
-        DynValueKind::Bool => {
-            let value = dynamic.as_bool().ok_or_else(|| {
-                SerializeError::Internal(Cow::Borrowed("dynamic bool missing value"))
-            })?;
-            if tagged {
-                serializer
-                    .dynamic_value_tag(DynamicValueTag::Bool)
-                    .map_err(SerializeError::Backend)?;
-            }
-            serializer
-                .scalar(ScalarValue::Bool(value))
-                .map_err(SerializeError::Backend)
-        }
-        DynValueKind::Number => {
-            if let Some(n) = dynamic.as_i64() {
-                if tagged {
-                    serializer
-                        .dynamic_value_tag(DynamicValueTag::I64)
-                        .map_err(SerializeError::Backend)?;
-                }
-                serializer
-                    .scalar(ScalarValue::I64(n))
-                    .map_err(SerializeError::Backend)
-            } else if let Some(n) = dynamic.as_u64() {
-                if tagged {
-                    serializer
-                        .dynamic_value_tag(DynamicValueTag::U64)
-                        .map_err(SerializeError::Backend)?;
-                }
-                serializer
-                    .scalar(ScalarValue::U64(n))
-                    .map_err(SerializeError::Backend)
-            } else if let Some(n) = dynamic.as_f64() {
-                if tagged {
-                    serializer
-                        .dynamic_value_tag(DynamicValueTag::F64)
-                        .map_err(SerializeError::Backend)?;
-                }
-                serializer
-                    .scalar(ScalarValue::F64(n))
-                    .map_err(SerializeError::Backend)
-            } else {
-                Err(SerializeError::Unsupported(Cow::Borrowed(
-                    "dynamic number not representable",
-                )))
-            }
-        }
-        DynValueKind::String => {
-            let value = dynamic.as_str().ok_or_else(|| {
-                SerializeError::Internal(Cow::Borrowed("dynamic string missing value"))
-            })?;
-            if tagged {
-                serializer
-                    .dynamic_value_tag(DynamicValueTag::String)
-                    .map_err(SerializeError::Backend)?;
-            }
-            serializer
-                .scalar(ScalarValue::Str(Cow::Borrowed(value)))
-                .map_err(SerializeError::Backend)
-        }
-        DynValueKind::Bytes => {
-            let value = dynamic.as_bytes().ok_or_else(|| {
-                SerializeError::Internal(Cow::Borrowed("dynamic bytes missing value"))
-            })?;
-            if tagged {
-                serializer
-                    .dynamic_value_tag(DynamicValueTag::Bytes)
-                    .map_err(SerializeError::Backend)?;
-            }
-            serializer
-                .scalar(ScalarValue::Bytes(Cow::Borrowed(value)))
-                .map_err(SerializeError::Backend)
-        }
-        DynValueKind::Array => {
-            let len = dynamic.array_len().ok_or_else(|| {
-                SerializeError::Internal(Cow::Borrowed("dynamic array missing length"))
-            })?;
-            if tagged {
-                serializer
-                    .dynamic_value_tag(DynamicValueTag::Array)
-                    .map_err(SerializeError::Backend)?;
-            }
-            serializer
-                .begin_seq_with_len(len)
-                .map_err(SerializeError::Backend)?;
-            if let Some(iter) = dynamic.array_iter() {
-                for item in iter {
-                    shared_serialize(serializer, item)?;
-                }
-            }
-            serializer.end_seq().map_err(SerializeError::Backend)
-        }
-        DynValueKind::Object => {
-            let len = dynamic.object_len().ok_or_else(|| {
-                SerializeError::Internal(Cow::Borrowed("dynamic object missing length"))
-            })?;
-            if tagged {
-                serializer
-                    .dynamic_value_tag(DynamicValueTag::Object)
-                    .map_err(SerializeError::Backend)?;
-            }
-            match serializer.map_encoding() {
-                MapEncoding::Pairs => {
-                    serializer
-                        .begin_map_with_len(len)
-                        .map_err(SerializeError::Backend)?;
-                    if let Some(iter) = dynamic.object_iter() {
-                        for (key, value) in iter {
-                            serializer
-                                .scalar(ScalarValue::Str(Cow::Borrowed(key)))
-                                .map_err(SerializeError::Backend)?;
-                            shared_serialize(serializer, value)?;
-                        }
-                    }
-                    serializer.end_map().map_err(SerializeError::Backend)
-                }
-                MapEncoding::Struct => {
-                    serializer.begin_struct().map_err(SerializeError::Backend)?;
-                    if let Some(iter) = dynamic.object_iter() {
-                        for (key, value) in iter {
-                            serializer.field_key(key).map_err(SerializeError::Backend)?;
-                            shared_serialize(serializer, value)?;
-                        }
-                    }
-                    serializer.end_struct().map_err(SerializeError::Backend)
-                }
-            }
-        }
-        DynValueKind::DateTime => {
-            let dt = dynamic.as_datetime().ok_or_else(|| {
-                SerializeError::Internal(Cow::Borrowed("dynamic datetime missing value"))
-            })?;
-            if tagged {
-                serializer
-                    .dynamic_value_tag(DynamicValueTag::DateTime)
-                    .map_err(SerializeError::Backend)?;
-            }
-            let s = format_dyn_datetime(dt);
-            serializer
-                .scalar(ScalarValue::Str(Cow::Owned(s)))
-                .map_err(SerializeError::Backend)
-        }
-        DynValueKind::QName | DynValueKind::Uuid => Err(SerializeError::Unsupported(
-            Cow::Borrowed("dynamic QName/Uuid serialization is not supported"),
-        )),
-    }
+/// Helper to sort fields according to format preference (currently a no-op).
+fn sort_fields_if_needed<'mem, 'facet, S>(
+    _serializer: &S,
+    _fields: &mut alloc::vec::Vec<(facet_reflect::FieldItem, Peek<'mem, 'facet>)>,
+) where
+    S: FormatSerializer,
+{
+    // Currently only Declaration order is supported, which preserves the original order.
 }
 
 fn format_dyn_datetime(
@@ -1650,81 +2000,6 @@ where
         .map_err(SerializeError::Backend)
 }
 
-fn serialize_untagged_enum<'mem, 'facet, S>(
-    serializer: &mut S,
-    enum_: facet_reflect::PeekEnum<'mem, 'facet>,
-    variant: &'static facet_core::Variant,
-) -> Result<(), SerializeError<S::Error>>
-where
-    S: FormatSerializer,
-{
-    match variant.data.kind {
-        StructKind::Unit => serializer
-            .scalar(ScalarValue::Str(Cow::Borrowed(variant.effective_name())))
-            .map_err(SerializeError::Backend),
-        StructKind::TupleStruct | StructKind::Tuple => {
-            let field_count = variant.data.fields.len();
-            if field_count == 1 {
-                let inner = enum_
-                    .field(0)
-                    .map_err(|_| {
-                        SerializeError::Internal(Cow::Borrowed("variant field lookup failed"))
-                    })?
-                    .ok_or(SerializeError::Internal(Cow::Borrowed(
-                        "variant reported 1 field but field(0) returned None",
-                    )))?;
-                shared_serialize(serializer, inner)
-            } else {
-                serializer.begin_seq().map_err(SerializeError::Backend)?;
-                for idx in 0..field_count {
-                    let inner = enum_
-                        .field(idx)
-                        .map_err(|_| {
-                            SerializeError::Internal(Cow::Borrowed("variant field lookup failed"))
-                        })?
-                        .ok_or(SerializeError::Internal(Cow::Borrowed(
-                            "variant field missing while iterating tuple fields",
-                        )))?;
-                    shared_serialize(serializer, inner)?;
-                }
-                serializer.end_seq().map_err(SerializeError::Backend)?;
-                Ok(())
-            }
-        }
-        StructKind::Struct => {
-            let field_mode = serializer.struct_field_mode();
-            serializer.begin_struct().map_err(SerializeError::Backend)?;
-            let mut fields: alloc::vec::Vec<_> = if field_mode == StructFieldMode::Unnamed {
-                enum_.fields_for_binary_serialize().collect()
-            } else {
-                enum_.fields_for_serialize().collect()
-            };
-            sort_fields_if_needed(serializer, &mut fields);
-            for (field_item, field_value) in fields {
-                serializer
-                    .field_metadata(&field_item)
-                    .map_err(SerializeError::Backend)?;
-                if field_mode == StructFieldMode::Named {
-                    serializer
-                        .field_key(field_item.effective_name())
-                        .map_err(SerializeError::Backend)?;
-                }
-                // Check for field-level proxy
-                if let Some(proxy_def) = field_item
-                    .field
-                    .and_then(|f| f.effective_proxy(serializer.format_namespace()))
-                {
-                    serialize_via_proxy(serializer, field_value, proxy_def)?;
-                } else {
-                    shared_serialize(serializer, field_value)?;
-                }
-            }
-            serializer.end_struct().map_err(SerializeError::Backend)?;
-            Ok(())
-        }
-    }
-}
-
 /// Dereference a pointer/reference (Box, Arc, etc.) to get the underlying value
 fn deref_if_pointer<'mem, 'facet>(peek: Peek<'mem, 'facet>) -> Peek<'mem, 'facet> {
     if let Ok(ptr) = peek.into_pointer()
@@ -1733,62 +2008,6 @@ fn deref_if_pointer<'mem, 'facet>(peek: Peek<'mem, 'facet>) -> Peek<'mem, 'facet
         return deref_if_pointer(target);
     }
     peek
-}
-
-/// Serialize a value through its proxy type.
-///
-/// # Safety note
-/// This function requires unsafe code to:
-/// - Allocate memory for the proxy type
-/// - Call the conversion function from target to proxy
-/// - Drop the proxy value after serialization
-#[allow(unsafe_code)]
-fn serialize_via_proxy<'mem, 'facet, S>(
-    serializer: &mut S,
-    value: Peek<'mem, 'facet>,
-    proxy_def: &'static facet_core::ProxyDef,
-) -> Result<(), SerializeError<S::Error>>
-where
-    S: FormatSerializer,
-{
-    use facet_core::PtrUninit;
-
-    let proxy_shape = proxy_def.shape;
-    let proxy_layout = proxy_shape.layout.sized_layout().map_err(|_| {
-        SerializeError::Unsupported(Cow::Borrowed("proxy type must be sized for serialization"))
-    })?;
-
-    // Allocate memory for the proxy value
-    let proxy_mem = unsafe { alloc::alloc::alloc(proxy_layout) };
-    if proxy_mem.is_null() {
-        return Err(SerializeError::Internal(Cow::Borrowed(
-            "failed to allocate proxy memory",
-        )));
-    }
-
-    // Convert target → proxy
-    let proxy_uninit = PtrUninit::new(proxy_mem);
-    let convert_result = unsafe { (proxy_def.convert_out)(value.data(), proxy_uninit) };
-
-    let proxy_ptr = match convert_result {
-        Ok(ptr) => ptr,
-        Err(msg) => {
-            unsafe { alloc::alloc::dealloc(proxy_mem, proxy_layout) };
-            return Err(SerializeError::Unsupported(Cow::Owned(msg)));
-        }
-    };
-
-    // Create a Peek to the proxy value and serialize it
-    let proxy_peek = unsafe { Peek::unchecked_new(proxy_ptr.as_const(), proxy_shape) };
-    let result = shared_serialize(serializer, proxy_peek);
-
-    // Clean up: drop the proxy value and deallocate
-    unsafe {
-        let _ = proxy_shape.call_drop_in_place(proxy_ptr);
-        alloc::alloc::dealloc(proxy_mem, proxy_layout);
-    }
-
-    result
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

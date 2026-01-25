@@ -7,7 +7,7 @@ Error: field `value` marked as counted must be an integer
    │
  2 │ struct CountedOnNonInteger {
    │        ─────────┬─────────  
-   │                 ╰─────────── defined at facet-args/src/schema/tests.rs:95
+   │                 ╰─────────── defined at facet-args/src/schema/tests.rs:96
    │ 
  4 │     value: bool,
    │     ─────┬─────  

@@ -1,3 +1,6 @@
+//! Debug dump utilities for configuration values.
+#![allow(dead_code)]
+
 use crate::{
     config_value::ConfigValue,
     provenance::{ConfigResult, FilePathStatus, FileResolution, Provenance},
