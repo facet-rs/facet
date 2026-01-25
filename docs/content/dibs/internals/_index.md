@@ -191,4 +191,4 @@ When something fails, dibs attaches context (what SQL was running, source locati
 
 ## Metadata tables
 
-dibs maintains `__dibs_*` tables to record source locations (file/line/column), doc comments, and which migration created what. This powers richer tooling in the CLI, editors, and admin UIs - but it's separate from your app schema and ignored during diffing.
+dibs maintains [`__dibs_*` tables](/internals/meta-tables/) to record source locations (file/line/column), doc comments, and which migration created what. This powers richer tooling in the CLI, editors, and admin UIs - but it's separate from your app schema and ignored during diffing.
