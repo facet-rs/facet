@@ -27,7 +27,7 @@ Note: S = Serialization, D = Deserialization
 | [facet-postcard](https://docs.rs/facet-postcard) | SD | Binary | Event-based (custom) | 🚫 |
 | [facet-asn1](https://docs.rs/facet-asn1) | S | Binary | (Custom) | 🚫 |
 | [facet-xdr](https://docs.rs/facet-xdr) | S | Binary | (Custom) | 🚫 |
-| [facet-args](https://docs.rs/facet-args) | D | CLI | (Custom) | [View](/showcases/args) |
+| [figue](https://docs.rs/figue) | D | CLI | (Custom) | [View](/showcases/args) |
 | [facet-urlencoded](https://docs.rs/facet-urlencoded) | D | Text | [form_urlencoded](https://docs.rs/form_urlencoded) | 🚫 |
 | [facet-csv](https://docs.rs/facet-csv) | S | Text | (Custom) | 🚫 |
 

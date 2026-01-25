@@ -1,9 +1,0 @@
----
-source: facet-args/tests/short_chaining.rs
-expression: err.to_string()
----
-error: unknown flag `-x`
-
-available options:
-  -a, --flag-a
-  -c, --flag-c

@@ -141,13 +141,13 @@ dependencies = [
  "chrono",
  "console",
  "facet",
- "facet-args",
  "facet-json",
  "facet-json-schema",
  "facet-typescript",
  "if-addrs",
  "indexmap",
  "owo-colors",
+ "pico-args",
  "serde_json",
  "tokio",
  "tower-http",
@@ -714,23 +714,11 @@ dependencies = [
 
 [[package]]
 name = "facet"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "autocfg",
  "facet-core",
  "facet-macros",
-]
-
-[[package]]
-name = "facet-args"
-version = "0.43.1"
-dependencies = [
- "facet",
- "facet-core",
- "facet-reflect",
- "heck",
- "owo-colors",
- "tracing",
 ]
 
 [[package]]
@@ -745,7 +733,7 @@ dependencies = [
 
 [[package]]
 name = "facet-core"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "autocfg",
  "const-fnv1a-hash",
@@ -756,7 +744,7 @@ dependencies = [
 
 [[package]]
 name = "facet-dessert"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "facet-core",
  "facet-reflect",
@@ -764,7 +752,7 @@ dependencies = [
 
 [[package]]
 name = "facet-format"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "cranelift",
  "cranelift-jit",
@@ -782,7 +770,7 @@ dependencies = [
 
 [[package]]
 name = "facet-json"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "facet",
  "facet-core",
@@ -797,7 +785,7 @@ dependencies = [
 
 [[package]]
 name = "facet-json-schema"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "facet",
  "facet-core",
@@ -806,7 +794,7 @@ dependencies = [
 
 [[package]]
 name = "facet-macro-parse"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "facet-macro-types",
  "proc-macro2",
@@ -815,7 +803,7 @@ dependencies = [
 
 [[package]]
 name = "facet-macro-types"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -824,14 +812,14 @@ dependencies = [
 
 [[package]]
 name = "facet-macros"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "facet-macros-impl",
 ]
 
 [[package]]
 name = "facet-macros-impl"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "facet-macro-parse",
  "facet-macro-types",
@@ -843,7 +831,7 @@ dependencies = [
 
 [[package]]
 name = "facet-path"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "facet-core",
 ]
@@ -866,7 +854,7 @@ dependencies = [
 
 [[package]]
 name = "facet-postcard"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "facet-core",
  "facet-format",
@@ -878,14 +866,14 @@ dependencies = [
 
 [[package]]
 name = "facet-reflect"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "facet-core",
 ]
 
 [[package]]
 name = "facet-solver"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "facet-core",
  "facet-reflect",
@@ -893,14 +881,14 @@ dependencies = [
 
 [[package]]
 name = "facet-typescript"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "facet-core",
 ]
 
 [[package]]
 name = "facet-value"
-version = "0.43.1"
+version = "0.43.2"
 dependencies = [
  "facet-core",
  "facet-format",
@@ -1555,6 +1543,12 @@ dependencies = [
  "indexmap",
  "maud",
 ]
+
+[[package]]
+name = "pico-args"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5be167a7af36ee22fe3115051bc51f6e6c7054c9348e28deb4f49bd6f705a315"
 
 [[package]]
 name = "pin-project-lite"

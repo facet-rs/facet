@@ -1,78 +1,78 @@
 [workspace]
 members = [
-    # core
-    "facet-core",
-    "facet",
+  # core
+  "facet-core",
+  "facet",
 
-    # derive macro
-    "facet-macros-impl",
-    "facet-macros",
+  # derive macro
+  "facet-macros-impl",
+  "facet-macros",
 
-    # macro ecosystem (plugin support)
-    "facet-macro-types",
-    "facet-macro-parse",
-    # "facet-macro-template",  # TODO: re-enable when plugin system is ready
+  # macro ecosystem (plugin support)
+  "facet-macro-types",
+  "facet-macro-parse",
+  # "facet-macro-template",  # TODO: re-enable when plugin system is ready
 
-    # error derive plugin
-    "facet-error",
+  # error derive plugin
+  "facet-error",
 
-    # default derive plugin
-    "facet-default",
+  # default derive plugin
+  "facet-default",
 
-    # reflection
-    "facet-reflect",
+  # reflection
+  "facet-reflect",
 
-    # constraint solver
-    "facet-solver",
+  # constraint solver
+  "facet-solver",
 
-    # test helpers
-    "facet-testhelpers",
-    "facet-testhelpers-macros",
+  # test helpers
+  "facet-testhelpers",
+  "facet-testhelpers-macros",
+  "facet-testattrs",
 
-    # pretty printing
-    "facet-pretty",
+  # pretty printing
+  "facet-pretty",
 
-    # misc.
-    "facet-args",
-    "facet-urlencoded",
+  # misc.
+  "facet-urlencoded",
 
-    # utilities
-    "facet-diff-core",
-    "facet-diff",
-    "facet-assert",
-    "facet-value",
-    "facet-path",
-    "facet-validate",
+  # utilities
+  "facet-diff-core",
+  "facet-diff",
+  "facet-assert",
+  "facet-value",
+  "facet-path",
+  "facet-validate",
 
-    # showcase infrastructure
-    "facet-showcase",
+  # showcase infrastructure
+  "facet-showcase",
 
-    # dev tooling (xtask stays in main workspace)
-    "xtask",
+  # dev tooling (xtask stays in main workspace)
+  "xtask",
 
-    "facet-shapelike",
+  "facet-shapelike",
 
-    # format crates
-    "facet-dessert",
-    "facet-format",
-    "facet-json",
-    "facet-postcard",
-    "facet-msgpack",
-    "facet-toml",
-    "facet-yaml",
-    "facet-format-suite",
-    "facet-asn1",
-    "facet-csv",
-    "facet-xdr",
-    "facet-json-schema",
-    "facet-typescript",
-    "facet-python",
+  # format crates
+  "facet-dessert",
+  "facet-format",
+  "facet-json",
+  "facet-postcard",
+  "facet-msgpack",
+  "facet-toml",
+  "facet-yaml",
+  "facet-format-suite",
+  "facet-asn1",
+  "facet-csv",
+  "facet-xdr",
+  "facet-json-schema",
+  "facet-typescript",
+  "facet-python",
 ]
 exclude = [
-    # proto-attr experiment uses nightly features
-    "proto-attr",
-    # tools/ has its own workspace
-    "tools",
+  # proto-attr experiment uses nightly features
+  "proto-attr",
+  # tools/ has its own workspace
+  "tools",
 ]
 resolver = "3"
 

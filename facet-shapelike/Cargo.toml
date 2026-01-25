@@ -22,10 +22,10 @@ facet-postcard = { path = "../facet-postcard", version = "0.43.2" }
 facet-reflect = { path = "../facet-reflect", version = "0.43.2", default-features = false }
 
 [dev-dependencies]
-facet-args = { path = "../facet-args" }
 facet-assert = { path = "../facet-assert" }
 facet-json = { path = "../facet-json" }
 facet-testhelpers = { path = "../facet-testhelpers" }
+facet-testattrs = { path = "../facet-testattrs" }
 
 [lints]
 workspace = true

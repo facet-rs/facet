@@ -1014,7 +1014,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
     };
 
     // Generate constructor expressions to suppress dead_code warnings on enum variants.
-    // When variants are constructed via reflection (e.g., facet_args::from_std_args()),
+    // When variants are constructed via reflection (e.g., figue::from_std_args()),
     // the compiler doesn't see them being used and warns about dead code.
     // This ensures all variants are "constructed" from the compiler's perspective.
     // We use explicit type annotations to help inference with const generics and

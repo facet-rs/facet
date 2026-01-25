@@ -1,12 +1,12 @@
 [workspace]
 members = [
-    "benchmark-defs",
-    "benchmark-generator",
-    "benchmark-analyzer",
-    "metrics-tui",
-    "perf-index-generator",
-    "facet-bloatbench",
-    "facet-perf-shootout",
+  "benchmark-defs",
+  "benchmark-generator",
+  "benchmark-analyzer",
+  "metrics-tui",
+  "perf-index-generator",
+  "facet-bloatbench",
+  "facet-perf-shootout",
 ]
 resolver = "3"
 
@@ -19,7 +19,6 @@ repository = "https://github.com/facet-rs/facet"
 [workspace.dependencies]
 # Facet crates (from parent workspace)
 facet = { path = "../facet", version = "0.43.1", default-features = false }
-facet-args = { path = "../facet-args", version = "0.43.1" }
 facet-format = { path = "../facet-format", version = "0.43.1" }
 facet-json = { path = "../facet-json", version = "0.43.1", default-features = false }
 facet-postcard = { path = "../facet-postcard", version = "0.43.1" }

@@ -1,6 +1,6 @@
 use crate::shape_like::ShapeLike;
 use facet::Facet;
-use facet_args as args;
+use facet_testattrs as testattrs;
 
 #[derive(Facet)]
 #[repr(C)]
@@ -10,14 +10,11 @@ struct TestStruct {
 }
 
 #[derive(Facet)]
-struct ArgsAttributes {
-    #[facet(args::positional)]
+struct TestAttrsStruct {
+    #[facet(testattrs::positional)]
     pos: String,
-    #[facet(args::named)]
+    #[facet(testattrs::named)]
     named: bool,
-    // FIXME: https://github.com/facet-rs/facet/issues/1732
-    // #[facet(args::short = 'f')]
-    // flag: bool,
 }
 
 #[test]
@@ -31,9 +28,9 @@ fn test_shape_serialization_roundtrip() {
 }
 
 #[test]
-fn test_args_attributes_roundtrip() {
+fn test_testattrs_attributes_roundtrip() {
     facet_testhelpers::setup();
-    let shape = ArgsAttributes::SHAPE;
+    let shape = TestAttrsStruct::SHAPE;
     let shape_like: ShapeLike = shape.into();
     let json = facet_json::to_string(&shape_like).expect("Failed to serialize ShapeLike");
     let deserialized: ShapeLike =

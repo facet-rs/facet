@@ -32,7 +32,7 @@ If you also need YAML/TOML/etc., add `facet-yaml`, `facet-toml`, `facet-msgpack`
 
 ### Optional feature flags
 - Time/UUID: enable the matching features on the format crate (check the crate docs).
-- `doc`: include doc comments in generated shapes (needed for CLI help text with facet-args). To strip docs in release builds while keeping them in debug, add `--cfg facet_no_doc` to your release rustflags.
+- `doc`: include doc comments in generated shapes (needed for CLI help text with figue). To strip docs in release builds while keeping them in debug, add `--cfg facet_no_doc` to your release rustflags.
 - `no_std`: use `facet-core` with `alloc`; most format crates require `std`.
 
 ## Derive `Facet` on your types

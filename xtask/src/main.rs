@@ -10,86 +10,106 @@ use std::{
 };
 
 use facet::Facet;
-use facet_args as args;
 use facet_json::to_string;
 
-/// xtask commands for the facet workspace.
-#[derive(Facet, Debug)]
-struct XtaskArgs {
-    /// Command to run
-    #[facet(args::subcommand)]
-    command: XtaskCommand,
-}
+const HELP: &str = "\
+xtask - development tasks for the facet workspace
 
-/// Available xtask commands.
-#[derive(Facet, Debug)]
-#[repr(u8)]
+USAGE:
+  cargo xtask <COMMAND> [OPTIONS]
+
+COMMANDS:
+  showcases       Generate all showcase markdown files for the website
+  schema          Generate deterministic schema set for bloat/compile benches
+  schema-build    Generate schema, then build facet/serde variants
+  measure         Measure compile times, binary size, LLVM lines, etc.
+  metrics         Interactive TUI to explore metrics from reports/metrics.jsonl
+  gen-benchmarks  Generate unified benchmark code
+  gen-types       Generate TypeScript types for the frontend SPA
+  bench           Run benchmarks, parse output, generate HTML report
+
+OPTIONS:
+  -h, --help      Print this help message
+
+Use 'cargo xtask <COMMAND> --help' for more information about a command.
+";
+
+const SCHEMA_BUILD_HELP: &str = "\
+schema-build - Generate schema, then build facet/serde variants
+
+USAGE:
+  cargo xtask schema-build [OPTIONS]
+
+OPTIONS:
+  --target <TRIPLE>     Target triple to build for
+  --release             Build in release mode
+  --toolchain <TC>      Rust toolchain to use (e.g., nightly)
+  --timings-format <F>  Timings format: html, json, or trace [default: html]
+  --also-json           Also generate JSON timings in addition to primary format
+  --json                Include JSON serialization (no-op, kept for backwards compat)
+  -h, --help            Print this help message
+";
+
+const MEASURE_HELP: &str = "\
+measure - Measure compile times, binary size, LLVM lines, etc.
+
+USAGE:
+  cargo xtask measure <NAME>
+
+ARGS:
+  <NAME>    Experiment name for the report
+
+OPTIONS:
+  -h, --help    Print this help message
+";
+
+const BENCH_HELP: &str = "\
+bench - Run benchmarks, parse output, generate HTML report
+
+USAGE:
+  cargo xtask bench [OPTIONS] [FILTER]
+
+ARGS:
+  [FILTER]    Optional filter for benchmark names
+
+OPTIONS:
+  --serve       Serve the report locally
+  --no-run      Don't run benchmarks, just generate report from existing data
+  --no-index    Don't regenerate the index
+  --push        Push the report to the server
+  -h, --help    Print this help message
+";
+
 enum XtaskCommand {
-    /// Generate all showcase markdown files for the website
     Showcases,
-
-    /// Generate deterministic schema set for bloat/compile benches
     Schema,
-
-    /// Generate schema, then build facet/serde variants (debug or release)
     SchemaBuild {
-        /// Target triple to build for
-        #[facet(default, args::named)]
         target: Option<String>,
-
-        /// Build in release mode
-        #[facet(args::named)]
         release: bool,
-
-        /// Rust toolchain to use (e.g., nightly)
-        #[facet(default, args::named)]
         toolchain: Option<String>,
-
-        /// Timings format: html, json, or trace
-        #[facet(default, args::named)]
         timings_format: Option<String>,
-
-        /// Also generate JSON timings in addition to primary format
-        #[facet(args::named)]
         also_json: bool,
-
-        /// Include JSON serialization (now a no-op, kept for backwards compatibility)
-        #[facet(args::named)]
         json: bool,
     },
-
-    /// Measure compile times, binary size, LLVM lines, etc.
     Measure {
-        /// Experiment name for the report
-        #[facet(args::positional)]
         name: String,
     },
-
-    /// Interactive TUI to explore metrics from reports/metrics.jsonl
     Metrics,
-
-    /// Generate unified benchmark code
     GenBenchmarks,
-
-    /// Generate TypeScript types for the frontend SPA from run_types.rs
     GenTypes,
-
-    /// Run benchmarks, parse output, generate HTML report
     Bench(benchmark_defs::BenchReportArgs),
 }
 
 fn main() {
-    let args: XtaskArgs = match args::from_std_args() {
-        Ok(args) => args,
+    let command = match parse_args() {
+        Ok(cmd) => cmd,
         Err(e) => {
-            let is_help = e.is_help_request();
-            eprintln!("{e}");
-            // Exit with code 0 for help requests, 1 for actual errors
-            std::process::exit(if is_help { 0 } else { 1 });
+            eprintln!("Error: {e}");
+            std::process::exit(1);
         }
     };
 
-    match args.command {
+    match command {
         XtaskCommand::Showcases => generate_showcases(),
         XtaskCommand::Schema => generate_schema(),
         XtaskCommand::SchemaBuild {
@@ -105,6 +125,104 @@ fn main() {
         XtaskCommand::GenBenchmarks => gen_benchmarks(),
         XtaskCommand::GenTypes => gen_types(),
         XtaskCommand::Bench(args) => bench_report(args),
+    }
+}
+
+fn parse_args() -> Result<XtaskCommand, pico_args::Error> {
+    let mut pargs = pico_args::Arguments::from_env();
+
+    // Top-level help
+    if pargs.contains(["-h", "--help"]) {
+        print!("{HELP}");
+        std::process::exit(0);
+    }
+
+    // Get subcommand
+    let subcommand = pargs.subcommand()?;
+    let subcommand = subcommand.as_deref();
+
+    match subcommand {
+        Some("showcases") => {
+            if pargs.contains(["-h", "--help"]) {
+                println!("showcases - Generate all showcase markdown files for the website");
+                std::process::exit(0);
+            }
+            Ok(XtaskCommand::Showcases)
+        }
+        Some("schema") => {
+            if pargs.contains(["-h", "--help"]) {
+                println!("schema - Generate deterministic schema set for bloat/compile benches");
+                std::process::exit(0);
+            }
+            Ok(XtaskCommand::Schema)
+        }
+        Some("schema-build") => {
+            if pargs.contains(["-h", "--help"]) {
+                print!("{SCHEMA_BUILD_HELP}");
+                std::process::exit(0);
+            }
+            Ok(XtaskCommand::SchemaBuild {
+                target: pargs.opt_value_from_str("--target")?,
+                release: pargs.contains("--release"),
+                toolchain: pargs.opt_value_from_str("--toolchain")?,
+                timings_format: pargs.opt_value_from_str("--timings-format")?,
+                also_json: pargs.contains("--also-json"),
+                json: pargs.contains("--json"),
+            })
+        }
+        Some("measure") => {
+            if pargs.contains(["-h", "--help"]) {
+                print!("{MEASURE_HELP}");
+                std::process::exit(0);
+            }
+            let name: String = pargs.free_from_str()?;
+            Ok(XtaskCommand::Measure { name })
+        }
+        Some("metrics") => {
+            if pargs.contains(["-h", "--help"]) {
+                println!("metrics - Interactive TUI to explore metrics from reports/metrics.jsonl");
+                std::process::exit(0);
+            }
+            Ok(XtaskCommand::Metrics)
+        }
+        Some("gen-benchmarks") => {
+            if pargs.contains(["-h", "--help"]) {
+                println!("gen-benchmarks - Generate unified benchmark code");
+                std::process::exit(0);
+            }
+            Ok(XtaskCommand::GenBenchmarks)
+        }
+        Some("gen-types") => {
+            if pargs.contains(["-h", "--help"]) {
+                println!("gen-types - Generate TypeScript types for the frontend SPA");
+                std::process::exit(0);
+            }
+            Ok(XtaskCommand::GenTypes)
+        }
+        Some("bench") => {
+            if pargs.contains(["-h", "--help"]) {
+                print!("{BENCH_HELP}");
+                std::process::exit(0);
+            }
+            let filter: Option<String> = pargs.opt_free_from_str()?;
+            Ok(XtaskCommand::Bench(benchmark_defs::BenchReportArgs {
+                filter,
+                serve: pargs.contains("--serve"),
+                no_run: pargs.contains("--no-run"),
+                no_index: pargs.contains("--no-index"),
+                push: pargs.contains("--push"),
+            }))
+        }
+        Some(other) => {
+            eprintln!("Unknown command: {other}");
+            eprintln!();
+            print!("{HELP}");
+            std::process::exit(1);
+        }
+        None => {
+            print!("{HELP}");
+            std::process::exit(0);
+        }
     }
 }
 

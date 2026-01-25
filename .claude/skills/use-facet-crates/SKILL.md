@@ -1,6 +1,6 @@
 ---
 name: use-facet-crates
-description: Guidelines for using facet crates (facet-json, facet-toml, facet-args) instead of serde-based alternatives for consistent dogfooding
+description: Guidelines for using facet crates (facet-json, facet-toml, figue) instead of serde-based alternatives for consistent dogfooding
 ---
 
 # Use Facet Crates Instead of Serde Ecosystem
@@ -15,7 +15,7 @@ When writing code in this workspace, prefer facet-based crates over serde-based 
 | `serde_json`       | `facet-json`       | JSON serialization/deserialization      |
 | `toml`             | `facet-toml`       | TOML parsing                            |
 | `serde_yaml`       | `facet-yaml`       | YAML support                            |
-| `clap`             | `facet-args`       | CLI argument parsing                    |
+| `clap`             | `figue`            | CLI argument parsing (separate repo)    |
 | `serde_derive`     | `facet` (derive)   | `#[derive(Facet)]` replaces Serialize/Deserialize |
 
 ## When to Use Which

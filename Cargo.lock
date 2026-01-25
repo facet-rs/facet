@@ -225,16 +225,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ariadne"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8454c8a44ce2cb9cc7e7fae67fc6128465b343b92c6631e94beca3c8d1524ea5"
-dependencies = [
- "unicode-width",
- "yansi",
-]
-
-[[package]]
 name = "arraydeque"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1048,45 +1038,17 @@ name = "facet"
 version = "0.43.2"
 dependencies = [
  "autocfg",
- "facet-args",
  "facet-core",
  "facet-default",
  "facet-macros",
  "facet-reflect",
  "facet-showcase",
+ "facet-testattrs",
  "facet-testhelpers",
  "num-complex",
  "owo-colors",
  "static_assertions",
  "tempfile",
-]
-
-[[package]]
-name = "facet-args"
-version = "0.43.2"
-dependencies = [
- "ariadne",
- "camino",
- "facet",
- "facet-core",
- "facet-default",
- "facet-error",
- "facet-format",
- "facet-json",
- "facet-pretty",
- "facet-reflect",
- "facet-showcase",
- "facet-solver",
- "facet-testhelpers",
- "heck",
- "indexmap",
- "insta",
- "owo-colors",
- "strip-ansi-escapes",
- "tempfile",
- "tracing",
- "tracing-subscriber",
- "unicode-width",
 ]
 
 [[package]]
@@ -1455,12 +1417,12 @@ name = "facet-shapelike"
 version = "0.43.2"
 dependencies = [
  "facet",
- "facet-args",
  "facet-assert",
  "facet-core",
  "facet-json",
  "facet-postcard",
  "facet-reflect",
+ "facet-testattrs",
  "facet-testhelpers",
 ]
 
@@ -1486,6 +1448,13 @@ dependencies = [
  "json-event-parser",
  "strsim",
  "tracing",
+]
+
+[[package]]
+name = "facet-testattrs"
+version = "0.43.2"
+dependencies = [
+ "facet",
 ]
 
 [[package]]
@@ -2239,15 +2208,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "matchers"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d1525a2a28c7f4fa0fc98bb91ae755d1e2d1505079e05539e35bc876b5d65ae9"
-dependencies = [
- "regex-automata",
-]
-
-[[package]]
 name = "memchr"
 version = "2.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2449,6 +2409,12 @@ checksum = "67eabc2ef2a60eb7faa00097bd1ffdb5bd28e62bf39990626a582201b7a754e5"
 dependencies = [
  "siphasher",
 ]
+
+[[package]]
+name = "pico-args"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5be167a7af36ee22fe3115051bc51f6e6c7054c9348e28deb4f49bd6f705a315"
 
 [[package]]
 name = "pin-project-lite"
@@ -3103,15 +3069,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b2231b7c3057d5e4ad0156fb3dc807d900806020c5ffa3ee6ff2c8c76fb8520"
 
 [[package]]
-name = "strip-ansi-escapes"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a8f8038e7e7969abb3f1b7c2a811225e9296da208539e0f79c5251d6cac0025"
-dependencies = [
- "vte",
-]
-
-[[package]]
 name = "strsim"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3462,18 +3419,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db97caf9d906fbde555dd62fa95ddba9eecfd14cb388e4f491a66d74cd5fb79a"
 dependencies = [
  "once_cell",
- "valuable",
-]
-
-[[package]]
-name = "tracing-log"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ee855f1f400bd0e5c02d150ae5de3840039a3f54b025156404e34c23c03f47c3"
-dependencies = [
- "log",
- "once_cell",
- "tracing-core",
 ]
 
 [[package]]
@@ -3482,16 +3427,10 @@ version = "0.3.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2f30143827ddab0d256fd843b7a66d164e9f271cfa0dde49142c5ca0ca291f1e"
 dependencies = [
- "matchers",
  "nu-ansi-term",
- "once_cell",
- "regex-automata",
  "sharded-slab",
- "smallvec",
  "thread_local",
- "tracing",
  "tracing-core",
- "tracing-log",
 ]
 
 [[package]]
@@ -3602,15 +3541,6 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
-
-[[package]]
-name = "vte"
-version = "0.14.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "231fdcd7ef3037e8330d8e17e61011a2c244126acc0a982f4040ac3f9f0bc077"
-dependencies = [
- "memchr",
-]
 
 [[package]]
 name = "wait-timeout"
@@ -4043,15 +3973,9 @@ version = "0.43.0"
 dependencies = [
  "benchmark-defs",
  "facet",
- "facet-args",
  "facet-json",
+ "pico-args",
 ]
-
-[[package]]
-name = "yansi"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cfe53a6657fd280eaa890a3bc59152892ffa3e30101319d168b781ed6529b049"
 
 [[package]]
 name = "yoke"

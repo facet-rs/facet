@@ -1,7 +1,0 @@
----
-source: facet-args/tests/err.rs
-expression: err.to_string()
----
-error: unknown flag `--c0ncurrency`
-
-did you mean `--concurrency`?

@@ -8,8 +8,6 @@ mod server;
 
 use chrono::Local;
 use console::Term;
-use facet_args as args;
-
 use owo_colors::OwoColorize;
 use std::collections::VecDeque;
 use std::fs;
@@ -832,11 +830,47 @@ fn sanitize_branch_key(branch: &str) -> String {
         .collect()
 }
 
+const HELP: &str = "\
+benchmark-analyzer - Run benchmarks, parse output, generate HTML reports
+
+USAGE:
+  benchmark-analyzer [OPTIONS] [FILTER]
+
+ARGS:
+  [FILTER]    Optional filter for benchmark names
+
+OPTIONS:
+  --serve       Start HTTP server to view the report after generation
+  --no-run      Skip running benchmarks, reuse previous benchmark data
+  --no-index    Skip cloning perf.facet.rs and generating index
+  --push        Push results to perf.facet.rs (refuses if filter is set)
+  -h, --help    Print this help message
+";
+
+fn parse_args() -> Result<Args, pico_args::Error> {
+    let mut pargs = pico_args::Arguments::from_env();
+
+    if pargs.contains(["-h", "--help"]) {
+        print!("{HELP}");
+        std::process::exit(0);
+    }
+
+    let args = Args {
+        filter: pargs.opt_free_from_str()?,
+        serve: pargs.contains("--serve"),
+        no_run: pargs.contains("--no-run"),
+        no_index: pargs.contains("--no-index"),
+        push: pargs.contains("--push"),
+    };
+
+    Ok(args)
+}
+
 fn main() {
-    let args: Args = match args::from_std_args() {
+    let args: Args = match parse_args() {
         Ok(args) => args,
         Err(e) => {
-            eprintln!("{e}");
+            eprintln!("Error: {e}");
             std::process::exit(1);
         }
     };

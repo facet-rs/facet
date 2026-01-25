@@ -1,5 +1,0 @@
----
-source: facet-args/tests/err.rs
-expression: err.to_string()
----
-error: `Config` cannot be parsed from a string value

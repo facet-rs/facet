@@ -1,0 +1,15 @@
+[package]
+name = "facet-testattrs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Test attributes for facet extension attribute testing (not published)"
+publish = false
+
+[dependencies]
+facet = { path = "../facet", version = "0.43.2" }
+
+[lints]
+workspace = true

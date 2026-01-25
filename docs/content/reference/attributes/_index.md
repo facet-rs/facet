@@ -1149,7 +1149,7 @@ The namespace comes from how you import the crate:
 ```rust,noexec
 use facet::Facet;
 use facet_xml as xml;
-use facet_args as args;
+use figue as args;
 
 #[derive(Facet)]
 struct Config {
@@ -1174,7 +1174,7 @@ struct Cli {
 
 | Crate | Namespace | Attributes |
 |-------|-----------|------------|
-| [`facet-args`](https://docs.rs/facet-args) | `args` | `positional`, `named`, `short`, `subcommand` |
+| [`figue`](https://docs.rs/figue) | `args` | `positional`, `named`, `short`, `subcommand` |
 | [`facet-xml`](https://docs.rs/facet-xml) | `xml` | `element`, `elements`, `attribute`, `text`, `tag`, `ns`, `ns_all`, `proxy` |
 | [`facet-html`](https://docs.rs/facet-html) | `html` | `element`, `elements`, `attribute`, `text`, `tag`, `custom_element`, `proxy` |
 | [`facet-yaml`](https://docs.rs/facet-yaml) | `serde` | `rename` |

@@ -1728,7 +1728,7 @@ impl ParsedGrammar {
                     }
                     VariantKind::Newtype(_) | VariantKind::NewtypeOptionChar | VariantKind::ArbitraryType(_) | VariantKind::Struct(_) | VariantKind::FnPtr(_) => {
                         // For non-unit variants, we need the crate_path to generate proper type references.
-                        // The crate_path is passed to the proc macro so it can output e.g. `::facet_args::Attr::Short(...)`
+                        // The crate_path is passed to the proc macro so it can output e.g. `::figue::Attr::Short(...)`
                         let crate_path = self.crate_path.as_ref().expect(
                             "crate_path is required for non-unit variants; add `crate_path ::your_crate;` to the grammar"
                         );

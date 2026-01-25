@@ -24,91 +24,79 @@ function = ["facet-macros/function"] # Enable function shape introspection
 reflect = ["dep:facet-reflect"] # Enable reflection via Peek and Poke types
 std = ["facet-core/std", "alloc"] # Enable standard library support
 all-impls = [
-    "alloc",
-    "nonzero",
-    "net",
-    "bytes",
-    "bytestring",
-    "camino",
-    "compact_str",
-    "uuid",
-    "ulid",
-    "ordered-float",
-    "jiff02",
-    "time",
-    "chrono",
-    "url",
-    "indexmap",
-    "num-complex",
-    "smartstring",
-    "smol_str",
-    "rust_decimal",
-    "lock_api",
-    "iddqd",
-    "yoke",
-    "smallvec",
+  "alloc",
+  "nonzero",
+  "net",
+  "bytes",
+  "bytestring",
+  "camino",
+  "compact_str",
+  "uuid",
+  "ulid",
+  "ordered-float",
+  "jiff02",
+  "time",
+  "chrono",
+  "url",
+  "indexmap",
+  "num-complex",
+  "smartstring",
+  "smol_str",
+  "rust_decimal",
+  "lock_api",
+  "iddqd",
+  "yoke",
+  "smallvec",
 ] # Enable all optional Facet trait implementations for third-party types
 alloc = ["facet-core/alloc"] # Enable allocation support for no_std environments
 nonzero = ["facet-core/nonzero"] # Provide Facet trait implementations for NonZero<T> types
-net = ["facet-core/net"] # Provide Facet trait implementations for network types (SocketAddr, IpAddr, etc.)
+net = [
+  "facet-core/net",
+] # Provide Facet trait implementations for network types (SocketAddr, IpAddr, etc.)
 bytes = [
-    "facet-core/bytes",
+  "facet-core/bytes",
 ] # Provide Facet trait implementations for bytes::Bytes and bytes::BytesMut
 bytestring = [
-    "facet-core/bytestring",
+  "facet-core/bytestring",
 ] # Provide Facet trait implementations for bytestring::ByteString
 camino = [
-    "facet-core/camino",
+  "facet-core/camino",
 ] # Provide Facet trait implementations for camino::Utf8Path and camino::Utf8PathBuf
 compact_str = [
-    "facet-core/compact_str",
+  "facet-core/compact_str",
 ] # Provide Facet trait implementations for compact_str::CompactString
 uuid = ["facet-core/uuid"] # Provide Facet trait implementations for uuid::Uuid
 ulid = ["facet-core/ulid"] # Provide Facet trait implementations for ulid::Ulid
 tendril = ["facet-core/tendril"] # Provide Facet trait implementations for tendril::Tendril
 ordered-float = [
-    "facet-core/ordered-float",
+  "facet-core/ordered-float",
 ] # Provide Facet trait implementations for ordered_float types
-jiff02 = [
-    "facet-core/jiff02",
-] # Provide Facet trait implementations for jiff crate types
-time = [
-    "facet-core/time",
-] # Provide Facet trait implementations for time crate types
-chrono = [
-    "facet-core/chrono",
-] # Provide Facet trait implementations for chrono crate types
+jiff02 = ["facet-core/jiff02"] # Provide Facet trait implementations for jiff crate types
+time = ["facet-core/time"] # Provide Facet trait implementations for time crate types
+chrono = ["facet-core/chrono"] # Provide Facet trait implementations for chrono crate types
 url = ["facet-core/url"] # Provide Facet trait implementations for url::Url
-ruint = [
-    "facet-core/ruint",
-] # Provide Facet trait implementations for ruint types
+ruint = ["facet-core/ruint"] # Provide Facet trait implementations for ruint types
 indexmap = [
-    "facet-core/indexmap",
+  "facet-core/indexmap",
 ] # Provide Facet trait implementations for indexmap::IndexMap and indexmap::IndexSet
 num-complex = [
-    "facet-core/num-complex",
+  "facet-core/num-complex",
 ] # Provide Facet trait implementations for num_complex::Complex
 smartstring = [
-    "facet-core/smartstring",
+  "facet-core/smartstring",
 ] # Provide Facet trait implementations for smartstring::SmartString
-smol_str = [
-    "facet-core/smol_str",
-] # Provide Facet trait implementations for smol_str::SmolStr
+smol_str = ["facet-core/smol_str"] # Provide Facet trait implementations for smol_str::SmolStr
 rust_decimal = [
-    "facet-core/rust_decimal",
+  "facet-core/rust_decimal",
 ] # Provide Facet trait implementations for rust_decimal::Decimal
 lock_api = [
-    "facet-core/lock_api",
+  "facet-core/lock_api",
 ] # Provide Facet trait implementations for lock_api::Mutex and lock_api::RwLock
 iddqd = [
-    "facet-core/iddqd",
+  "facet-core/iddqd",
 ] # Provide Facet trait implementations for iddqd collection types (IdHashMap, BiHashMap, TriHashMap, IdOrdMap)
-yoke = [
-    "facet-core/yoke",
-] # Provide Facet trait implementations for yoke::Yoke
-smallvec = [
-    "facet-core/smallvec",
-] # Provide Facet trait implementations for smallvec::SmallVec
+yoke = ["facet-core/yoke"] # Provide Facet trait implementations for yoke::Yoke
+smallvec = ["facet-core/smallvec"] # Provide Facet trait implementations for smallvec::SmallVec
 
 # Provide Facet trait implementations for tuples up to size 12. Without it,
 # Facet is only implemented for tuples up to size 4.
@@ -146,11 +134,11 @@ facet-reflect = { path = "../facet-reflect", version = "0.43.2", optional = true
 static_assertions = { workspace = true, optional = true }
 
 [dev-dependencies]
-facet-args = { path = "../facet-args" }
 facet-default = { path = "../facet-default" }
 facet-reflect = { path = "../facet-reflect" }
 facet-showcase = { path = "../facet-showcase" }
 facet-testhelpers = { path = "../facet-testhelpers" }
+facet-testattrs = { path = "../facet-testattrs" }
 num-complex = "0.4.6"
 owo-colors = "4.2.2"
 tempfile = { workspace = true }

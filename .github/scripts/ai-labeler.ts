@@ -128,7 +128,7 @@ Core crates (pick if the ${itemType} is specifically about one of these):
 - "🪞 reflect": facet-reflect crate, runtime reflection
 - "💎 value": facet-value crate, dynamic value type
 - "🏷️ macros": facet-macros, proc-macro implementation (use this for macro internals, use "📜 derive" for user-facing derive usage)
-- "🎯 args": facet-args crate, CLI argument parsing
+- "🎯 args": figue crate (external), CLI argument parsing
 - "🎨 pretty": facet-pretty crate, pretty printing
 - "↔️ diff": facet-diff crate, value diffing
 
