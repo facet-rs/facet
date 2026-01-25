@@ -62,6 +62,8 @@ pub enum SchemaError {
     ConflictingFlagNames {
         #[facet(opaque)]
         ctx: SchemaErrorContext,
+        #[facet(opaque)]
+        other_ctx: SchemaErrorContext,
         name: String,
     },
     /// Unsupported leaf type (non-scalar, non-enum).
@@ -219,15 +221,9 @@ impl Diagnostic for SchemaError {
             Some(span) => {
                 let mut labels = Vec::new();
 
-                let mut def_end_span = None;
+                let mut def_end_span = formatted.type_end_span.map(|(start, end)| start..end);
                 if let Some(type_name_span) = formatted.type_name_span {
                     let type_label_span = type_name_span.0..type_name_span.1;
-                    let def_end = formatted.text[type_name_span.1..]
-                        .find('}')
-                        .map(|offset| type_name_span.1 + offset)
-                        .unwrap_or_else(|| formatted.text.len().saturating_sub(1));
-                    let def_end_end = (def_end + 1).min(formatted.text.len());
-                    def_end_span = Some(def_end..def_end_end);
 
                     let source_label = ctx
                         .shape
@@ -247,6 +243,25 @@ impl Diagnostic for SchemaError {
                     });
                 }
 
+                let mut other_label = None;
+                if let SchemaError::ConflictingFlagNames {
+                    other_ctx, name, ..
+                } = self
+                {
+                    let other_path = schema_path_to_segments(&other_ctx.path);
+                    let other_span = formatted
+                        .spans
+                        .get(&other_path)
+                        .map(|span| span.key.0..span.value.1)
+                        .or_else(|| formatted.type_name_span.map(|(start, end)| start..end));
+
+                    if let Some(other_span) = other_span {
+                        if other_span != span {
+                            other_label = Some((other_span, format!("also uses flag `{name}`")));
+                        }
+                    }
+                }
+
                 let message = self.label();
                 labels.push(LabelSpec {
                     source: SourceId::Schema,
@@ -255,6 +270,16 @@ impl Diagnostic for SchemaError {
                     is_primary: true,
                     color: Some(ColorHint::Red),
                 });
+
+                if let Some((other_span, other_message)) = other_label {
+                    labels.push(LabelSpec {
+                        source: SourceId::Schema,
+                        span: other_span,
+                        message: Cow::Owned(other_message),
+                        is_primary: false,
+                        color: Some(ColorHint::Red),
+                    });
+                }
 
                 if let Some(def_end_span) = def_end_span {
                     labels.push(LabelSpec {

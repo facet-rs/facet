@@ -1,4 +1,4 @@
-use std::{collections::HashSet, hash::RandomState};
+use std::{collections::HashMap, hash::RandomState};
 
 use crate::{
     Attr,
@@ -269,8 +269,9 @@ fn arg_level_from_fields(
     let mut args: IndexMap<String, ArgSchema, RandomState> = IndexMap::default();
     let mut subcommands: IndexMap<String, Subcommand, RandomState> = IndexMap::default();
 
-    let mut seen_long = HashSet::new();
-    let mut seen_short = HashSet::new();
+    let mut seen_long: HashMap<String, SchemaErrorContext> = HashMap::new();
+    let mut seen_short: HashMap<char, SchemaErrorContext> = HashMap::new();
+    let mut seen_subcommands: HashMap<String, SchemaErrorContext> = HashMap::new();
 
     let mut saw_subcommand = false;
 
@@ -357,12 +358,15 @@ fn arg_level_from_fields(
                     shape: enum_shape,
                 };
 
-                if subcommands.insert(name.clone(), sub).is_some() {
+                if let Some(existing_ctx) = seen_subcommands.get(&name) {
                     return Err(SchemaError::ConflictingFlagNames {
                         ctx: variant_ctx,
+                        other_ctx: existing_ctx.clone(),
                         name,
                     });
                 }
+                seen_subcommands.insert(name.clone(), variant_ctx.clone());
+                subcommands.insert(name.clone(), sub);
             }
 
             continue;
@@ -393,19 +397,24 @@ fn arg_level_from_fields(
 
         if !is_positional {
             let long = field.effective_name().to_kebab_case();
-            if !seen_long.insert(long.clone()) {
+            if let Some(existing_ctx) = seen_long.get(&long) {
                 return Err(SchemaError::ConflictingFlagNames {
                     ctx: field_ctx.clone(),
+                    other_ctx: existing_ctx.clone(),
                     name: format!("--{long}"),
                 });
             }
+            seen_long.insert(long.clone(), field_ctx.clone());
+
             if let Some(c) = short {
-                if !seen_short.insert(c) {
+                if let Some(existing_ctx) = seen_short.get(&c) {
                     return Err(SchemaError::ConflictingFlagNames {
                         ctx: field_ctx.clone(),
+                        other_ctx: existing_ctx.clone(),
                         name: format!("-{c}"),
                     });
                 }
+                seen_short.insert(c, field_ctx.clone());
             }
         }
 

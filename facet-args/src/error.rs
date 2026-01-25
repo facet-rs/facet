@@ -619,15 +619,9 @@ mod ariadne_impl {
                         .with_code(self.inner.kind.code())
                         .with_message(self.inner.kind.label());
 
-                    let mut def_end_span = None;
+                    let mut def_end_span = formatted.type_end_span.map(|(start, end)| start..end);
                     if let Some(type_name_span) = formatted.type_name_span {
                         let type_label_span = type_name_span.0..type_name_span.1;
-                        let def_end = formatted.text[type_name_span.1..]
-                            .find('}')
-                            .map(|offset| type_name_span.1 + offset)
-                            .unwrap_or_else(|| formatted.text.len().saturating_sub(1));
-                        let def_end_end = (def_end + 1).min(formatted.text.len());
-                        def_end_span = Some(def_end..def_end_end);
 
                         let source_label = diag
                             .shape
