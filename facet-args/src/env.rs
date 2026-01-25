@@ -156,14 +156,18 @@ pub struct EnvVar {
 /// Configuration for environment variable parsing.
 #[derive(Debug, Clone)]
 pub struct EnvConfig {
-    /// The prefix to look for (e.g., "REEF").
+    /// The prefix to look for (e.g., `MYAPP`). For example, configuration variable
+    /// foo.bar will be overrideable via `MYAPP__FOO__BAR`.
     pub prefix: String,
-    /// Whether to error on unknown variables (strict mode).
+
+    /// Whether to error out if any env vars that start with `MYAPP__` should be reported
+    /// as errors and stop the program entirely (to try and catch typos)
+    // TODO: have strictness levels instead: warnings vs hard errors
     pub strict: bool,
 }
 
 impl EnvConfig {
-    /// Create a new env config with the given prefix.
+    /// See [`EnvConfig::prefix`]
     pub fn new(prefix: impl Into<String>) -> Self {
         Self {
             prefix: prefix.into(),
@@ -171,7 +175,7 @@ impl EnvConfig {
         }
     }
 
-    /// Enable strict mode (error on unknown variables).
+    /// See [`EnvConfig::strict`]
     pub fn strict(mut self) -> Self {
         self.strict = true;
         self
@@ -183,6 +187,7 @@ impl EnvConfig {
 pub struct EnvParseResult {
     /// The parsed configuration value tree.
     pub value: ConfigValue,
+
     /// Variables that were found but couldn't be mapped to known fields.
     /// Only populated in non-strict mode; in strict mode these cause errors.
     pub unknown: Vec<EnvVar>,
@@ -218,7 +223,7 @@ fn parse_env_var_name(name: &str, prefix: &str) -> Option<Vec<String>> {
 }
 
 /// Read all environment variables with the given prefix from an env source.
-pub fn read_env_vars_from_source(source: &impl EnvSource, prefix: &str) -> Vec<EnvVar> {
+pub fn read_env_vars_from_source(source: &dyn EnvSource, prefix: &str) -> Vec<EnvVar> {
     source
         .vars()
         .filter_map(|(name, value)| {
@@ -361,6 +366,9 @@ pub fn build_config_value(vars: Vec<EnvVar>) -> ConfigValue {
 }
 
 /// Insert a value at the given path in the config tree.
+#[deprecated(
+    note = "this should be a ConfigMap feature directly, instead of it being buried in env"
+)]
 fn insert_at_path(
     root: &mut IndexMap<String, ConfigValue, std::hash::RandomState>,
     path: &[String],
@@ -413,7 +421,7 @@ pub fn parse_env(config: &EnvConfig) -> EnvParseResult {
 /// Parse environment variables from a custom source.
 ///
 /// This allows using a [`MockEnv`] for testing without modifying the real environment.
-pub fn parse_env_with_source(config: &EnvConfig, source: &impl EnvSource) -> EnvParseResult {
+pub fn parse_env_with_source(config: &EnvConfig, source: &dyn EnvSource) -> EnvParseResult {
     let vars = read_env_vars_from_source(source, &config.prefix);
     let value = build_config_value(vars);
     EnvParseResult {

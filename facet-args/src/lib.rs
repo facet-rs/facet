@@ -20,6 +20,7 @@ pub(crate) mod merge;
 pub(crate) mod parser;
 pub(crate) mod provenance;
 pub(crate) mod reflection;
+pub(crate) mod schema;
 pub(crate) mod span;
 
 use crate::{

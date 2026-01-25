@@ -1,62 +1,67 @@
+use core::marker::PhantomData;
+
 use alloc::string::String;
 use alloc::vec::Vec;
 
 use camino::Utf8PathBuf;
 use facet::Facet;
+use facet_error as error;
+use facet_reflect::{Partial, ReflectError};
 
-use crate::config_format::{ConfigFormatError, FormatRegistry};
-use crate::config_value::ConfigValue;
-use crate::env::{EnvConfig, EnvSource, StdEnv, parse_env_with_source};
-use crate::merge::merge_layers;
-use crate::provenance::{ConfigResult, FilePathStatus, FileResolution, Override, Provenance};
+use crate::{
+    config_format::{ConfigFormatError, FormatRegistry},
+    config_value::ConfigValue,
+    env::{EnvConfig, EnvSource, parse_env_with_source},
+    merge::merge_layers,
+    provenance::{ConfigResult, FilePathStatus, FileResolution, Override, Provenance},
+    schema::SchemaError,
+};
 
 /// Start configuring an args/config parser for a given type.
 ///
-/// The `T` passed to this should derive `Facet` and must be a struct
-/// whose fields and subfields are all properly annotated with `#[facet(args::positional)]`,
-/// `#[facet(args::named)]`, etc. — see [`crate::Attr`]
-pub fn builder<T>() -> ConfigBuilder
+/// At this stage all you need to pass in is your `Args` type, which must implement [`Facet`].
+///
+/// This call is fallible because it makes sure that the struct that you pass in, is actually a struct
+/// and not an enum, and that all its fields and subfields are actually properly annotated with
+/// [`facet(args::positional)`], [`facet(args::named)`], etc. — see [`crate::Attr`]
+///
+/// This function also already allocates the destination shape, to avoid unsafe code later on.
+/// If this allocation fails, then another error is returned.
+pub fn builder<T>() -> Result<ConfigBuilder<T>, BuilderError>
 where
     T: Facet<'static>,
 {
-    ConfigBuilder::new()
+    let destination = Partial::alloc::<T>().map_err(BuilderError::Alloc)?;
+    Ok(ConfigBuilder {
+        _phantom: PhantomData,
+        partial: destination,
+        cli_config: None,
+        env_config: None,
+        file_config: None,
+        env_source: Box::new(env::StdEnv),
+    })
 }
 
 /// Builder for layered configuration parsing.
-pub struct ConfigBuilder<E: EnvSource = StdEnv> {
+pub struct ConfigBuilder<T> {
+    _phantom: PhantomData<T>,
+    /// The partially allocated destination structure where parsed values land.
+    partial: Partial<'static>,
+    /// CLI parsing settings, if the user configured that layer.
     cli_config: Option<CliConfig>,
+    /// Environment parsing settings, if provided.
     env_config: Option<EnvConfig>,
+    /// File parsing settings for the file layer.
     file_config: Option<FileConfig>,
-    env_source: E,
-}
-
-impl Default for ConfigBuilder<StdEnv> {
-    fn default() -> Self {
-        Self {
-            cli_config: None,
-            env_config: None,
-            file_config: None,
-            env_source: StdEnv,
-        }
-    }
-}
-
-impl ConfigBuilder<StdEnv> {
-    /// Create a new builder with default settings.
-    pub fn new() -> Self {
-        Self::default()
-    }
+    /// Source for environment variables (typically `StdEnv`).
+    env_source: Box<dyn EnvSource>,
 }
 
 impl<E: EnvSource> ConfigBuilder<E> {
     /// Use a custom environment source (for testing).
-    pub fn with_env_source<E2: EnvSource>(self, source: E2) -> ConfigBuilder<E2> {
-        ConfigBuilder {
-            cli_config: self.cli_config,
-            env_config: self.env_config,
-            file_config: self.file_config,
-            env_source: source,
-        }
+    pub fn with_env_source(mut self, source: impl EnvSource + 'static) -> Self {
+        self.env_source = Box::new(source);
+        self
     }
 
     /// Configure CLI argument parsing.
@@ -115,7 +120,7 @@ impl<E: EnvSource> ConfigBuilder<E> {
 
         // Layer 2: Environment variables
         if let Some(ref env_config) = self.env_config {
-            let env_result = parse_env_with_source(env_config, &self.env_source);
+            let env_result = parse_env_with_source(env_config, self.env_source.as_ref());
             layers.push(env_result.value);
         }
 
@@ -526,7 +531,7 @@ impl CliConfigBuilder {
 
 /// Builder for environment variable configuration.
 #[derive(Debug, Default)]
-pub struct EnvConfigBuilder {
+struct EnvConfigBuilder {
     prefix: String,
     strict: bool,
 }
@@ -565,13 +570,16 @@ impl EnvConfigBuilder {
 
 /// Configuration for config file parsing.
 #[derive(Default)]
-pub struct FileConfig {
+struct FileConfig {
     /// Explicit path provided via CLI (e.g., --config path.json).
     explicit_path: Option<Utf8PathBuf>,
+
     /// Default paths to check if no explicit path is provided.
     default_paths: Vec<Utf8PathBuf>,
+
     /// Format registry for parsing different file types.
     registry: FormatRegistry,
+
     /// Whether to error on unknown keys in the config file.
     strict: bool,
 }
@@ -632,6 +640,17 @@ impl FileConfigBuilder {
 // ============================================================================
 // Errors
 // ============================================================================
+
+#[derive(Facet, Debug)]
+#[facet(derive(Error))]
+#[repr(u8)]
+pub enum BuilderError {
+    /// The schema provided to BuilderError was invalid.
+    SchemaError(#[facet(error::from)] SchemaError),
+
+    /// Allocation failed while constructing the builder.
+    Alloc(#[facet(opaque)] ReflectError),
+}
 
 /// Errors that can occur during layered config parsing.
 #[derive(Debug)]

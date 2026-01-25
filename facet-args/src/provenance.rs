@@ -236,18 +236,25 @@ impl core::fmt::Display for Override {
 pub struct ConfigResult<T> {
     /// The resolved configuration value.
     pub value: T,
+
     /// Map from config paths to their provenance.
     ///
     /// Keys are dot-separated paths like "config.port" or "config.smtp.host".
+    #[deprecated(
+        note = "preovnance is stored inline in ConfigMap, I don't believe it's necessary here"
+    )]
     pub provenance: ProvenanceMap,
+
     /// Records of values that were overridden by higher-priority layers.
     pub overrides: Vec<Override>,
+
     /// Information about config file path resolution.
     pub file_resolution: FileResolution,
 }
 
 impl<T> ConfigResult<T> {
     /// Create a new config result with just a value (no provenance tracking).
+    #[deprecated(note = "we always want full provenance")]
     pub fn new(value: T) -> Self {
         Self {
             value,
@@ -258,6 +265,7 @@ impl<T> ConfigResult<T> {
     }
 
     /// Create a new config result with provenance tracking.
+    #[deprecated(note = "we always want full provenance")]
     pub fn with_provenance(value: T, provenance: ProvenanceMap, overrides: Vec<Override>) -> Self {
         Self {
             value,
@@ -268,6 +276,7 @@ impl<T> ConfigResult<T> {
     }
 
     /// Create a new config result with full tracking.
+    #[deprecated(note = "we always want full provenance")]
     pub fn with_full_tracking(
         value: T,
         provenance: ProvenanceMap,
@@ -290,16 +299,6 @@ impl<T> ConfigResult<T> {
     /// Check if any values were overridden.
     pub fn has_overrides(&self) -> bool {
         !self.overrides.is_empty()
-    }
-
-    /// Map the value while preserving provenance.
-    pub fn map<U, F: FnOnce(T) -> U>(self, f: F) -> ConfigResult<U> {
-        ConfigResult {
-            value: f(self.value),
-            provenance: self.provenance,
-            overrides: self.overrides,
-            file_resolution: self.file_resolution,
-        }
     }
 }
 
@@ -503,18 +502,6 @@ mod tests {
         assert_eq!(result.value, 42);
         assert!(result.provenance.is_empty());
         assert!(!result.has_overrides());
-    }
-
-    #[test]
-    fn test_config_result_map() {
-        let mut provenance = ProvenanceMap::default();
-        provenance.insert("port".into(), Provenance::cli("--port", "8080"));
-
-        let result = ConfigResult::with_provenance(42, provenance, Vec::new());
-        let mapped = result.map(|v| v.to_string());
-
-        assert_eq!(mapped.value, "42");
-        assert!(mapped.get_provenance("port").is_some());
     }
 
     #[test]
