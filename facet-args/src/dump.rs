@@ -449,6 +449,22 @@ fn collect_dump_lines(
                 is_header: false,
             });
         }
+        ConfigValue::Enum(sourced) => {
+            // Add header line showing variant name
+            let variant_display = format!("{}::", sourced.value.variant).cyan().to_string();
+            lines.push(DumpLine {
+                indent,
+                key: path.to_string(),
+                value: variant_display,
+                provenance: format_provenance(&sourced.provenance),
+                is_header: true,
+            });
+
+            // Dump the enum's fields
+            for (key, val) in sourced.value.fields.iter() {
+                collect_dump_lines(val, key, indent + 1, shape, false, lines, ctx, state);
+            }
+        }
         ConfigValue::Missing(_info) => {
             // Show big red MISSING marker
             let colored_value = "❌ MISSING (required)".red().bold().to_string();

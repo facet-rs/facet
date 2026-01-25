@@ -68,7 +68,11 @@ impl Schema {
                 Def::Option(opt) => opt.t,
                 _ => shape,
             };
-            Some(config_struct_schema_from_shape(config_shape, &field_ctx)?)
+            Some(config_struct_schema_from_shape(
+                config_shape,
+                &field_ctx,
+                Some(field.name.to_string()),
+            )?)
         } else {
             None
         };
@@ -190,7 +194,7 @@ fn value_schema_from_shape(
         }),
         _ => match &shape.ty {
             Type::User(UserType::Struct(_)) => Ok(ValueSchema::Struct {
-                fields: config_struct_schema_from_shape(shape, ctx)?,
+                fields: config_struct_schema_from_shape(shape, ctx, None)?,
                 shape,
             }),
             _ => Ok(ValueSchema::Leaf(leaf_schema_from_shape(shape, ctx)?)),
@@ -213,7 +217,7 @@ fn config_value_schema_from_shape(
         })),
         _ => match &shape.ty {
             Type::User(UserType::Struct(_)) => Ok(ConfigValueSchema::Struct(
-                config_struct_schema_from_shape(shape, ctx)?,
+                config_struct_schema_from_shape(shape, ctx, None)?,
             )),
             _ => Ok(ConfigValueSchema::Leaf(leaf_schema_from_shape(shape, ctx)?)),
         },
@@ -223,6 +227,7 @@ fn config_value_schema_from_shape(
 fn config_struct_schema_from_shape(
     shape: &'static Shape,
     ctx: &SchemaErrorContext,
+    field_name: Option<String>,
 ) -> Result<ConfigStructSchema, SchemaError> {
     let struct_type = match &shape.ty {
         Type::User(UserType::Struct(s)) => *s,
@@ -243,6 +248,7 @@ fn config_struct_schema_from_shape(
     }
 
     Ok(ConfigStructSchema {
+        field_name,
         shape,
         fields: fields_map,
     })
@@ -278,6 +284,7 @@ fn arg_level_from_fields(
 ) -> Result<ArgLevelSchema, SchemaError> {
     let mut args: IndexMap<String, ArgSchema, RandomState> = IndexMap::default();
     let mut subcommands: IndexMap<String, Subcommand, RandomState> = IndexMap::default();
+    let mut subcommand_field_name: Option<String> = None;
 
     let mut seen_long: HashMap<String, SchemaErrorContext> = HashMap::new();
     let mut seen_short: HashMap<char, SchemaErrorContext> = HashMap::new();
@@ -343,6 +350,7 @@ fn arg_level_from_fields(
                 .with_label(field_ctx, "also marked here"));
             }
             first_subcommand_field = Some(field_ctx.clone());
+            subcommand_field_name = Some(field.name.to_string());
 
             let field_shape = field.shape();
             let (enum_shape, enum_type) = match field_shape.def {
@@ -462,5 +470,9 @@ fn arg_level_from_fields(
         args.insert(field.effective_name().to_string(), arg);
     }
 
-    Ok(ArgLevelSchema { args, subcommands })
+    Ok(ArgLevelSchema {
+        args,
+        subcommands,
+        subcommand_field_name,
+    })
 }

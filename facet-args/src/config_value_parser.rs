@@ -533,6 +533,25 @@ impl<'input> ConfigValueParser<'input> {
 
                 Ok(ParseEvent::StructStart(ContainerKind::Object))
             }
+            ConfigValue::Enum(sourced) => {
+                self.update_span(sourced);
+
+                // Collect entries as borrowed slices from the enum's fields
+                let entries: Vec<(&str, &ConfigValue)> = sourced
+                    .value
+                    .fields
+                    .iter()
+                    .map(|(k, v)| (k.as_str(), v))
+                    .collect();
+
+                // Push object processing for enum fields
+                self.stack.push(StackFrame::Object { entries, index: 0 });
+
+                // Emit variant selection event
+                // TODO: This needs to emit the variant name somehow for proper enum deserialization
+                // For now, emit as a struct - the deserializer will need to handle enum selection
+                Ok(ParseEvent::StructStart(ContainerKind::Object))
+            }
             ConfigValue::Missing(info) => {
                 // Missing values cannot be deserialized - they're error markers
                 Err(ConfigValueParseError::Message(alloc::format!(

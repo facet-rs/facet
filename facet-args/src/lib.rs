@@ -22,6 +22,7 @@ pub(crate) mod error;
 pub(crate) mod help;
 pub(crate) mod merge;
 pub(crate) mod parser;
+pub(crate) mod parser2;
 pub(crate) mod path;
 pub(crate) mod provenance;
 pub(crate) mod reflection;

@@ -2,7 +2,7 @@
 source: facet-args/src/schema/tests.rs
 expression: stripped
 ---
-Error: `-v` first defined here
+Error: duplicate flag `-v`
    ╭─[ <unknown>:4:5 ]
    │
  2 │ struct ConflictingShortFlags {

@@ -34,18 +34,27 @@ pub struct Schema {
 
 /// Schema for one "level" of arguments: top-level, a subcommand, a subcommand's subcommand etc.
 #[derive(Facet)]
+#[facet(skip_all_unless_truthy)]
 pub struct ArgLevelSchema {
     /// Any valid arguments at this level, `--verbose` etc.
     args: IndexMap<String, ArgSchema, RandomState>,
 
     /// Any subcommands at this level
     subcommands: IndexMap<String, Subcommand, RandomState>,
+
+    /// Name of the field that holds subcommands (e.g., "command" for `#[facet(args::subcommand)] command: Command`).
+    /// None if there are no subcommands at this level.
+    subcommand_field_name: Option<String>,
 }
 
 /// Schema for the `config` part of the schema
 #[derive(Facet)]
 #[facet(skip_all_unless_truthy)]
 pub struct ConfigStructSchema {
+    /// Name of the field in the parent struct (e.g., "config" for `#[facet(args::config)] config: ServerConfig`).
+    /// None for nested structs within config.
+    field_name: Option<String>,
+
     /// Shape of the config struct.
     shape: &'static Shape,
 
@@ -310,6 +319,112 @@ impl ConfigValueSchema {
             ConfigValueSchema::Vec(v) => v.element.visit(visitor, path),
             ConfigValueSchema::Option { value, .. } => value.visit(visitor, path),
             ConfigValueSchema::Leaf(_) => {}
+        }
+    }
+}
+
+// ============================================================================
+// Accessor methods for parser2
+// ============================================================================
+
+impl Schema {
+    /// Get the top-level arguments schema.
+    pub fn args(&self) -> &ArgLevelSchema {
+        &self.args
+    }
+
+    /// Get the config struct schema, if any.
+    pub fn config(&self) -> Option<&ConfigStructSchema> {
+        self.config.as_ref()
+    }
+}
+
+impl ArgLevelSchema {
+    /// Get the named/positional arguments at this level.
+    pub fn args(&self) -> &IndexMap<String, ArgSchema, RandomState> {
+        &self.args
+    }
+
+    /// Get the subcommands at this level.
+    pub fn subcommands(&self) -> &IndexMap<String, Subcommand, RandomState> {
+        &self.subcommands
+    }
+
+    /// Get the field name that holds subcommands at this level.
+    /// Returns None if there are no subcommands.
+    pub fn subcommand_field_name(&self) -> Option<&str> {
+        self.subcommand_field_name.as_deref()
+    }
+}
+
+impl ArgSchema {
+    /// Get the argument name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Get the argument kind (positional or named).
+    pub fn kind(&self) -> &ArgKind {
+        &self.kind
+    }
+
+    /// Get the value schema.
+    pub fn value(&self) -> &ValueSchema {
+        &self.value
+    }
+
+    /// Check if this argument is required.
+    pub fn required(&self) -> bool {
+        self.required
+    }
+
+    /// Check if this argument can appear multiple times.
+    pub fn multiple(&self) -> bool {
+        self.multiple
+    }
+}
+
+impl Subcommand {
+    /// Get the subcommand name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Get the arguments schema for this subcommand.
+    pub fn args(&self) -> &ArgLevelSchema {
+        &self.args
+    }
+}
+
+impl ConfigStructSchema {
+    /// Get the field name in the parent struct (e.g., "config").
+    pub fn field_name(&self) -> Option<&str> {
+        self.field_name.as_deref()
+    }
+
+    /// Get the fields of this config struct.
+    pub fn fields(&self) -> &IndexMap<String, ConfigFieldSchema, RandomState> {
+        &self.fields
+    }
+}
+
+impl ValueSchema {
+    /// Check if this is a boolean type.
+    pub fn is_bool(&self) -> bool {
+        matches!(
+            self,
+            ValueSchema::Leaf(LeafSchema {
+                kind: LeafKind::Scalar(ScalarType::Bool),
+                ..
+            })
+        )
+    }
+
+    /// Unwrap Option wrapper if present, returning the inner schema.
+    pub fn inner_if_option(&self) -> &ValueSchema {
+        match self {
+            ValueSchema::Option { value, .. } => value.as_ref(),
+            other => other,
         }
     }
 }

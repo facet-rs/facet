@@ -456,6 +456,7 @@ fn collect_provenance_inner(
         ConfigValue::String(s) => s.provenance.as_ref(),
         ConfigValue::Array(s) => s.provenance.as_ref(),
         ConfigValue::Object(s) => s.provenance.as_ref(),
+        ConfigValue::Enum(s) => s.provenance.as_ref(),
         ConfigValue::Missing(_) => None, // Missing values have no provenance
     };
 
@@ -479,6 +480,16 @@ fn collect_provenance_inner(
         }
         ConfigValue::Object(obj) => {
             for (key, val) in &obj.value {
+                let key_path = if path.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{path}.{key}")
+                };
+                collect_provenance_inner(val, &key_path, map);
+            }
+        }
+        ConfigValue::Enum(e) => {
+            for (key, val) in &e.value.fields {
                 let key_path = if path.is_empty() {
                     key.clone()
                 } else {

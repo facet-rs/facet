@@ -69,6 +69,15 @@ pub struct MissingFieldInfo {
     pub doc_comment: Option<String>,
 }
 
+/// An enum value with variant name and fields.
+#[derive(Debug, Clone, Facet)]
+pub struct EnumValue {
+    /// The variant name (kebab-case for CLI, as provided for config files).
+    pub variant: String,
+    /// Fields of the variant (empty for unit variants).
+    pub fields: IndexMap<String, ConfigValue, std::hash::RandomState>,
+}
+
 /// A configuration value with full provenance tracking at every level.
 #[derive(Debug, Clone, Facet)]
 #[repr(u8)]
@@ -88,6 +97,8 @@ pub enum ConfigValue {
     Array(Sourced<Vec<ConfigValue>>),
     /// An object/map of key-value pairs.
     Object(Sourced<IndexMap<String, ConfigValue, std::hash::RandomState>>),
+    /// An enum value (subcommand or enum field in config).
+    Enum(Sourced<EnumValue>),
     /// A missing required field (used for error reporting)
     Missing(MissingFieldInfo),
 }
@@ -265,6 +276,17 @@ impl ConfigValue {
             ConfigValue::Object(s) => {
                 s.set_file_provenance(file.clone(), path);
                 for (key, value) in s.value.iter_mut() {
+                    let key_path = if path.is_empty() {
+                        key.clone()
+                    } else {
+                        format!("{path}.{key}")
+                    };
+                    value.set_file_provenance_recursive(file, &key_path);
+                }
+            }
+            ConfigValue::Enum(s) => {
+                s.set_file_provenance(file.clone(), path);
+                for (key, value) in s.value.fields.iter_mut() {
                     let key_path = if path.is_empty() {
                         key.clone()
                     } else {
