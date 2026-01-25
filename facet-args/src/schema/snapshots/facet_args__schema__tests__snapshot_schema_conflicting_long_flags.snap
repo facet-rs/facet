@@ -1,0 +1,22 @@
+---
+source: facet-args/src/schema/tests.rs
+expression: stripped
+---
+Error: `--dup` first defined here
+   ╭─[ <unknown>:4:5 ]
+   │
+ 2 │ struct ConflictingLongFlags {
+   │        ──────────┬─────────  
+   │                  ╰─────────── defined at facet-args/src/schema/tests.rs:113
+   │ 
+ 4 │     a: bool,
+   │     ───┬───  
+   │        ╰───── `--dup` first defined here
+   │ 
+ 6 │     b: bool,
+   │     ───┬───  
+   │        ╰───── defined again here
+ 7 │ }
+   │ ┬  
+   │ ╰── end of definition
+───╯

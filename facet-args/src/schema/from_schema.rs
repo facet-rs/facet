@@ -23,37 +23,45 @@ impl Schema {
         let struct_type = match &shape.ty {
             Type::User(UserType::Struct(s)) => *s,
             _ => {
-                return Err(SchemaError::top_level_not_struct(SchemaErrorContext::root(
-                    shape,
-                )));
+                return Err(SchemaError::new(
+                    SchemaErrorContext::root(shape),
+                    "top-level shape must be a struct",
+                ));
             }
         };
 
         let ctx_root = SchemaErrorContext::root(shape);
-        let mut config_field: Option<&'static Field> = None;
+        let mut config_field: Option<(&'static Field, SchemaErrorContext)> = None;
 
         for field in struct_type.fields {
             let field_ctx = ctx_root.with_field(field.name);
 
             if is_config_field(field) {
-                if config_field.is_some() {
-                    return Err(SchemaError::multiple_config_fields(field_ctx, field.name));
+                if let Some((first_field, first_ctx)) = &config_field {
+                    return Err(SchemaError::new(
+                        first_ctx.clone(),
+                        format!("config field `{}` first defined here", first_field.name),
+                    )
+                    .with_label(field_ctx, "defined again here"));
                 }
-                config_field = Some(field);
+                config_field = Some((field, field_ctx.clone()));
             }
 
             if field.has_attr(Some("args"), "env_prefix") && !field.has_attr(Some("args"), "config")
             {
-                return Err(SchemaError::env_prefix_without_config(
-                    field_ctx, field.name,
+                return Err(SchemaError::new(
+                    field_ctx,
+                    format!(
+                        "field `{}` uses args::env_prefix without args::config",
+                        field.name
+                    ),
                 ));
             }
         }
 
         let args = arg_level_from_fields(struct_type.fields, &ctx_root)?;
 
-        let config = if let Some(field) = config_field {
-            let field_ctx = ctx_root.with_field(field.name);
+        let config = if let Some((field, field_ctx)) = config_field {
             let shape = field.shape();
             let config_shape = match shape.def {
                 Def::Option(opt) => opt.t,
@@ -162,7 +170,7 @@ fn leaf_schema_from_shape(
             },
             shape,
         }),
-        _ => Err(SchemaError::unsupported_leaf_type(ctx.clone())),
+        _ => Err(SchemaError::new(ctx.clone(), "unsupported leaf type")),
     }
 }
 
@@ -217,7 +225,12 @@ fn config_struct_schema_from_shape(
 ) -> Result<ConfigStructSchema, SchemaError> {
     let struct_type = match &shape.ty {
         Type::User(UserType::Struct(s)) => *s,
-        _ => return Err(SchemaError::config_field_must_be_struct(ctx.clone())),
+        _ => {
+            return Err(SchemaError::new(
+                ctx.clone(),
+                "config field must be a struct",
+            ));
+        }
     };
 
     let mut fields_map: IndexMap<String, ConfigFieldSchema, RandomState> = IndexMap::default();
@@ -279,12 +292,22 @@ fn arg_level_from_fields(
         let field_ctx = ctx.with_field(field.name);
 
         if !has_any_args_attr(field) {
-            return Err(SchemaError::missing_args_annotation(field_ctx, field.name));
+            return Err(SchemaError::new(
+                field_ctx,
+                format!(
+                    "field `{}` is missing a #[facet(args::...)] annotation",
+                    field.name
+                ),
+            ));
         }
 
         if field.has_attr(Some("args"), "env_prefix") && !field.has_attr(Some("args"), "config") {
-            return Err(SchemaError::env_prefix_without_config(
-                field_ctx, field.name,
+            return Err(SchemaError::new(
+                field_ctx,
+                format!(
+                    "field `{}` uses args::env_prefix without args::config",
+                    field.name
+                ),
             ));
         }
 
@@ -292,17 +315,30 @@ fn arg_level_from_fields(
         let is_subcommand = field.has_attr(Some("args"), "subcommand");
 
         if field.has_attr(Some("args"), "short") && is_positional {
-            return Err(SchemaError::short_on_positional(field_ctx, field.name));
+            return Err(SchemaError::new(
+                field_ctx,
+                format!(
+                    "field `{}` is positional and cannot have a short flag",
+                    field.name
+                ),
+            ));
         }
 
         if is_counted_field(field) && !is_supported_counted_type(field.shape()) {
-            return Err(SchemaError::counted_on_non_integer(field_ctx, field.name));
+            return Err(SchemaError::new(
+                field_ctx,
+                format!(
+                    "field `{}` marked as counted must be an integer",
+                    field.name
+                ),
+            ));
         }
 
         if is_subcommand {
             if saw_subcommand {
-                return Err(SchemaError::multiple_subcommand_fields(
-                    field_ctx, field.name,
+                return Err(SchemaError::new(
+                    field_ctx,
+                    "only one field may be marked with #[facet(args::subcommand)] at this level",
                 ));
             }
             saw_subcommand = true;
@@ -312,13 +348,25 @@ fn arg_level_from_fields(
                 Def::Option(opt) => match opt.t.ty {
                     Type::User(UserType::Enum(enum_type)) => (opt.t, enum_type),
                     _ => {
-                        return Err(SchemaError::subcommand_on_non_enum(field_ctx, field.name));
+                        return Err(SchemaError::new(
+                            field_ctx,
+                            format!(
+                                "field `{}` marked as subcommand must be an enum",
+                                field.name
+                            ),
+                        ));
                     }
                 },
                 _ => match field_shape.ty {
                     Type::User(UserType::Enum(enum_type)) => (field_shape, enum_type),
                     _ => {
-                        return Err(SchemaError::subcommand_on_non_enum(field_ctx, field.name));
+                        return Err(SchemaError::new(
+                            field_ctx,
+                            format!(
+                                "field `{}` marked as subcommand must be an enum",
+                                field.name
+                            ),
+                        ));
                     }
                 },
             };
@@ -338,11 +386,11 @@ fn arg_level_from_fields(
                 };
 
                 if let Some(existing_ctx) = seen_subcommands.get(&name) {
-                    return Err(SchemaError::conflicting_flag_names(
-                        variant_ctx,
+                    return Err(SchemaError::new(
                         existing_ctx.clone(),
-                        name,
-                    ));
+                        format!("subcommand `{name}` first defined here"),
+                    )
+                    .with_label(variant_ctx, format!("defined again here")));
                 }
                 seen_subcommands.insert(name.clone(), variant_ctx.clone());
                 subcommands.insert(name.clone(), sub);
@@ -377,21 +425,21 @@ fn arg_level_from_fields(
         if !is_positional {
             let long = field.effective_name().to_kebab_case();
             if let Some(existing_ctx) = seen_long.get(&long) {
-                return Err(SchemaError::conflicting_flag_names(
-                    field_ctx.clone(),
+                return Err(SchemaError::new(
                     existing_ctx.clone(),
-                    format!("--{long}"),
-                ));
+                    format!("`--{long}` first defined here"),
+                )
+                .with_label(field_ctx.clone(), "defined again here"));
             }
             seen_long.insert(long.clone(), field_ctx.clone());
 
             if let Some(c) = short {
                 if let Some(existing_ctx) = seen_short.get(&c) {
-                    return Err(SchemaError::conflicting_flag_names(
-                        field_ctx.clone(),
+                    return Err(SchemaError::new(
                         existing_ctx.clone(),
-                        format!("-{c}"),
-                    ));
+                        format!("`-{c}` first defined here"),
+                    )
+                    .with_label(field_ctx.clone(), "defined again here"));
                 }
                 seen_short.insert(c, field_ctx.clone());
             }

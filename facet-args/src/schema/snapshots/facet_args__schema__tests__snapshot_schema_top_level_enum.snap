@@ -1,0 +1,19 @@
+---
+source: facet-args/src/schema/tests.rs
+expression: stripped
+---
+Error: top-level shape must be a struct
+   ╭─[ <unknown>:1:1 ]
+   │
+ 1 │ ╭─▶ #[derive(Facet)]
+   ┆ ┆   
+ 3 │ │   enum TopLevelEnum {
+   │ │        ──────┬─────  
+   │ │              ╰─────── defined at facet-args/src/schema/tests.rs:135
+   ┆ ┆   
+ 5 │ ├─▶ }
+   │ │   ┬  
+   │ │   ╰── end of definition
+   │ │      
+   │ ╰────── top-level shape must be a struct
+───╯

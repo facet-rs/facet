@@ -1,0 +1,18 @@
+---
+source: facet-args/src/schema/tests.rs
+expression: stripped
+---
+Error: field `value` marked as subcommand must be an enum
+   ╭─[ <unknown>:4:5 ]
+   │
+ 2 │ struct SubcommandOnNonEnum {
+   │        ─────────┬─────────  
+   │                 ╰─────────── defined at facet-args/src/schema/tests.rs:89
+   │ 
+ 4 │     value: String,
+   │     ──────┬──────  
+   │           ╰──────── field `value` marked as subcommand must be an enum
+ 5 │ }
+   │ ┬  
+   │ ╰── end of definition
+───╯

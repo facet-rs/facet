@@ -1,0 +1,18 @@
+---
+source: facet-args/src/schema/tests.rs
+expression: stripped
+---
+Error: field `value` is positional and cannot have a short flag
+   ╭─[ <unknown>:4:5 ]
+   │
+ 2 │ struct ShortOnPositional {
+   │        ────────┬────────  
+   │                ╰────────── defined at facet-args/src/schema/tests.rs:101
+   │ 
+ 4 │     value: String,
+   │     ──────┬──────  
+   │           ╰──────── field `value` is positional and cannot have a short flag
+ 5 │ }
+   │ ┬  
+   │ ╰── end of definition
+───╯

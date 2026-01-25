@@ -10,125 +10,47 @@ use crate::{
     path::Path,
 };
 
+/// A secondary label to display alongside the primary error location.
+#[derive(Clone, Debug)]
+pub struct SecondaryLabel {
+    /// Context pointing to the secondary location.
+    pub ctx: SchemaErrorContext,
+    /// Message to display at this location.
+    pub message: Cow<'static, str>,
+}
+
 /// The struct passed into facet_args::builder has some problems: some fields are not
 /// annotated, etc.
 pub struct SchemaError {
-    ctx: SchemaErrorContext,
-    code: &'static str,
-    label: Cow<'static, str>,
-    /// For ConflictingFlagNames: the other location that conflicts.
-    other_ctx: Option<SchemaErrorContext>,
-    /// For ConflictingFlagNames: the conflicting flag name.
-    conflicting_name: Option<String>,
+    /// Primary error context.
+    pub ctx: SchemaErrorContext,
+    /// Primary error message.
+    pub message: Cow<'static, str>,
+    /// Additional labeled locations to highlight.
+    pub secondary_labels: Vec<SecondaryLabel>,
 }
 
 impl SchemaError {
-    fn new(
-        ctx: SchemaErrorContext,
-        code: &'static str,
-        label: impl Into<Cow<'static, str>>,
-    ) -> Self {
+    /// Create a simple error with just a context and message.
+    pub fn new(ctx: SchemaErrorContext, message: impl Into<Cow<'static, str>>) -> Self {
         Self {
             ctx,
-            code,
-            label: label.into(),
-            other_ctx: None,
-            conflicting_name: None,
+            message: message.into(),
+            secondary_labels: Vec::new(),
         }
     }
 
-    pub fn top_level_not_struct(ctx: SchemaErrorContext) -> Self {
-        Self::new(
-            ctx,
-            "schema::top_level_not_struct",
-            "top-level shape must be a struct",
-        )
-    }
-
-    pub fn missing_args_annotation(ctx: SchemaErrorContext, field: &'static str) -> Self {
-        Self::new(
-            ctx,
-            "schema::missing_args_annotation",
-            format!("field `{field}` is missing a #[facet(args::...)] annotation"),
-        )
-    }
-
-    pub fn multiple_subcommand_fields(ctx: SchemaErrorContext, _field: &'static str) -> Self {
-        Self::new(
-            ctx,
-            "schema::multiple_subcommand_fields",
-            "only one field may be marked with #[facet(args::subcommand)] at this level",
-        )
-    }
-
-    pub fn subcommand_on_non_enum(ctx: SchemaErrorContext, field: &'static str) -> Self {
-        Self::new(
-            ctx,
-            "schema::subcommand_on_non_enum",
-            format!("field `{field}` marked as subcommand must be an enum"),
-        )
-    }
-
-    pub fn counted_on_non_integer(ctx: SchemaErrorContext, field: &'static str) -> Self {
-        Self::new(
-            ctx,
-            "schema::counted_on_non_integer",
-            format!("field `{field}` marked as counted must be an integer"),
-        )
-    }
-
-    pub fn short_on_positional(ctx: SchemaErrorContext, field: &'static str) -> Self {
-        Self::new(
-            ctx,
-            "schema::short_on_positional",
-            format!("field `{field}` is positional and cannot have a short flag"),
-        )
-    }
-
-    pub fn env_prefix_without_config(ctx: SchemaErrorContext, field: &'static str) -> Self {
-        Self::new(
-            ctx,
-            "schema::env_prefix_without_config",
-            format!("field `{field}` uses args::env_prefix without args::config"),
-        )
-    }
-
-    pub fn conflicting_flag_names(
+    /// Add a secondary label to this error.
+    pub fn with_label(
+        mut self,
         ctx: SchemaErrorContext,
-        other_ctx: SchemaErrorContext,
-        name: String,
+        message: impl Into<Cow<'static, str>>,
     ) -> Self {
-        Self {
+        self.secondary_labels.push(SecondaryLabel {
             ctx,
-            code: "schema::conflicting_flag_names",
-            label: Cow::Owned(format!("duplicate flag name `{name}` at this level")),
-            other_ctx: Some(other_ctx),
-            conflicting_name: Some(name),
-        }
-    }
-
-    pub fn unsupported_leaf_type(ctx: SchemaErrorContext) -> Self {
-        Self::new(
-            ctx,
-            "schema::unsupported_leaf_type",
-            "unsupported leaf type",
-        )
-    }
-
-    pub fn config_field_must_be_struct(ctx: SchemaErrorContext) -> Self {
-        Self::new(
-            ctx,
-            "schema::config_field_must_be_struct",
-            "config field must be a struct",
-        )
-    }
-
-    pub fn multiple_config_fields(ctx: SchemaErrorContext, field: &'static str) -> Self {
-        Self::new(
-            ctx,
-            "schema::multiple_config_fields",
-            format!("multiple config fields (already saw another before `{field}`)"),
-        )
+            message: message.into(),
+        });
+        self
     }
 }
 
@@ -142,14 +64,14 @@ pub struct SchemaErrorContext {
 }
 
 impl SchemaErrorContext {
-    pub(crate) fn root(shape: &'static Shape) -> Self {
+    pub fn root(shape: &'static Shape) -> Self {
         Self {
             shape,
             path: Vec::new(),
         }
     }
 
-    pub(crate) fn with_field(&self, field: &'static str) -> Self {
+    pub fn with_field(&self, field: &'static str) -> Self {
         let mut path = self.path.clone();
         path.push(field.to_string());
         Self {
@@ -158,7 +80,7 @@ impl SchemaErrorContext {
         }
     }
 
-    pub(crate) fn with_variant(&self, variant: impl Into<String>) -> Self {
+    pub fn with_variant(&self, variant: impl Into<String>) -> Self {
         let mut path = self.path.clone();
         path.push(variant.into());
         Self {
@@ -176,11 +98,11 @@ fn schema_path_to_segments(path: &Path) -> Vec<PathSegment> {
 
 impl Diagnostic for SchemaError {
     fn code(&self) -> &'static str {
-        self.code
+        "schema"
     }
 
     fn label(&self) -> Cow<'static, str> {
-        self.label.clone()
+        self.message.clone()
     }
 
     fn sources(&self) -> Vec<SourceBundle> {
@@ -228,40 +150,35 @@ impl Diagnostic for SchemaError {
                     });
                 }
 
-                // Handle the "other" label for conflicting flag names
-                let mut other_label = None;
-                if let (Some(other_ctx), Some(name)) = (&self.other_ctx, &self.conflicting_name) {
-                    let other_path = schema_path_to_segments(&other_ctx.path);
-                    let other_span = formatted
-                        .spans
-                        .get(&other_path)
-                        .map(|span| span.key.0..span.value.1)
-                        .or_else(|| formatted.type_name_span.map(|(start, end)| start..end));
-
-                    if let Some(other_span) = other_span
-                        && other_span != span
-                    {
-                        other_label = Some((other_span, format!("also uses flag `{name}`")));
-                    }
-                }
-
-                let message = self.label();
+                // Primary label
                 labels.push(LabelSpec {
                     source: SourceId::Schema,
-                    span,
-                    message,
+                    span: span.clone(),
+                    message: self.message.clone(),
                     is_primary: true,
                     color: Some(ColorHint::Red),
                 });
 
-                if let Some((other_span, other_message)) = other_label {
-                    labels.push(LabelSpec {
-                        source: SourceId::Schema,
-                        span: other_span,
-                        message: Cow::Owned(other_message),
-                        is_primary: false,
-                        color: Some(ColorHint::Red),
-                    });
+                // Secondary labels
+                for secondary in &self.secondary_labels {
+                    let secondary_path = schema_path_to_segments(&secondary.ctx.path);
+                    let secondary_span = formatted
+                        .spans
+                        .get(&secondary_path)
+                        .map(|s| s.key.0..s.value.1)
+                        .or_else(|| formatted.type_name_span.map(|(start, end)| start..end));
+
+                    if let Some(secondary_span) = secondary_span
+                        && secondary_span != span
+                    {
+                        labels.push(LabelSpec {
+                            source: SourceId::Schema,
+                            span: secondary_span,
+                            message: secondary.message.clone(),
+                            is_primary: false,
+                            color: Some(ColorHint::Red),
+                        });
+                    }
                 }
 
                 if let Some(def_end_span) = def_end_span {
@@ -300,9 +217,8 @@ impl SchemaError {
             .map(|label| label.span.clone())
             .unwrap_or(0..0);
 
-        let mut builder = Report::build(ReportKind::Error, primary_span.clone())
-            .with_code(self.code())
-            .with_message(self.label());
+        let mut builder =
+            Report::build(ReportKind::Error, primary_span.clone()).with_message(self.label());
 
         for label in labels {
             if label.source != SourceId::Schema {

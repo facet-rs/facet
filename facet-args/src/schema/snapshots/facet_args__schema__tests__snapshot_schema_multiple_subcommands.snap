@@ -1,0 +1,18 @@
+---
+source: facet-args/src/schema/tests.rs
+expression: stripped
+---
+Error: only one field may be marked with #[facet(args::subcommand)] at this level
+   ╭─[ <unknown>:6:5 ]
+   │
+ 2 │ struct MultipleSubcommands {
+   │        ─────────┬─────────  
+   │                 ╰─────────── defined at facet-args/src/schema/tests.rs:81
+   │ 
+ 6 │     b: SubB,
+   │     ───┬───  
+   │        ╰───── only one field may be marked with #[facet(args::subcommand)] at this level
+ 7 │ }
+   │ ┬  
+   │ ╰── end of definition
+───╯
