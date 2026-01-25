@@ -12,6 +12,7 @@ use crate::{
     config_format::{ConfigFormat, ConfigFormatError, FormatRegistry},
     config_value::ConfigValue,
     env::{EnvConfig, EnvSource, StdEnv, parse_env_with_source},
+    help::HelpConfig,
     provenance::{ConfigResult, FilePathStatus, FileResolution, Provenance},
     schema::{Schema, SchemaError},
 };
@@ -37,6 +38,7 @@ where
         partial: destination,
         schema,
         cli_config: None,
+        help_config: None,
         env_config: None,
         file_config: None,
         env_source: Box::new(StdEnv),
@@ -52,6 +54,8 @@ pub struct ConfigBuilder<T> {
     schema: Schema,
     /// CLI parsing settings, if the user configured that layer.
     cli_config: Option<CliConfig>,
+    /// Help text settings, if provided.
+    help_config: Option<HelpConfig>,
     /// Environment parsing settings, if provided.
     env_config: Option<EnvConfig>,
     /// File parsing settings for the file layer.
@@ -66,6 +70,8 @@ pub struct Config<T> {
     pub schema: Schema,
     /// CLI parsing settings, if the user configured that layer.
     pub cli_config: Option<CliConfig>,
+    /// Help text settings, if provided.
+    pub help_config: Option<HelpConfig>,
     /// Environment parsing settings, if provided.
     pub env_config: Option<EnvConfig>,
     /// File parsing settings for the file layer.
@@ -89,6 +95,15 @@ impl<T> ConfigBuilder<T> {
         F: FnOnce(CliConfigBuilder) -> CliConfigBuilder,
     {
         self.cli_config = Some(f(CliConfigBuilder::new()).build());
+        self
+    }
+
+    /// Configure help text generation.
+    pub fn help<F>(mut self, f: F) -> Self
+    where
+        F: FnOnce(HelpConfigBuilder) -> HelpConfigBuilder,
+    {
+        self.help_config = Some(f(HelpConfigBuilder::new()).build());
         self
     }
 
@@ -358,6 +373,52 @@ impl CliConfigBuilder {
 
     /// Build the CLI configuration.
     fn build(self) -> CliConfig {
+        self.config
+    }
+}
+
+// ============================================================================
+// Help Configuration
+// ============================================================================
+
+/// Builder for help configuration.
+#[derive(Debug, Default)]
+pub struct HelpConfigBuilder {
+    config: HelpConfig,
+}
+
+impl HelpConfigBuilder {
+    /// Create a new help config builder.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the program name shown in help.
+    pub fn program_name(mut self, name: impl Into<String>) -> Self {
+        self.config.program_name = Some(name.into());
+        self
+    }
+
+    /// Set the program version shown in help.
+    pub fn version(mut self, version: impl Into<String>) -> Self {
+        self.config.version = Some(version.into());
+        self
+    }
+
+    /// Set an additional description shown after the auto-generated one.
+    pub fn description(mut self, description: impl Into<String>) -> Self {
+        self.config.description = Some(description.into());
+        self
+    }
+
+    /// Set the text wrapping width (0 = no wrapping).
+    pub fn width(mut self, width: usize) -> Self {
+        self.config.width = width;
+        self
+    }
+
+    /// Build the help configuration.
+    fn build(self) -> HelpConfig {
         self.config
     }
 }

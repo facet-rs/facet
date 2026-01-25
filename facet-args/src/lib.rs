@@ -43,7 +43,7 @@ pub use builder::builder;
 pub use completions::{Shell, generate_completions, generate_completions_for_shape};
 pub use error::{ArgsErrorKind, ArgsErrorWithInput};
 pub use help::{HelpConfig, generate_help, generate_help_for_shape};
-pub use parser::from_std_args;
+pub use parser::{from_slice_with_config, from_std_args};
 
 #[deprecated(note = "Use builder() instead; this entry point will be removed.")]
 pub fn from_slice<T: Facet<'static>>(
