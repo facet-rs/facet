@@ -15,6 +15,30 @@ fn is_help_flag(arg: &str) -> bool {
     matches!(arg, "-h" | "--help" | "-help" | "/?")
 }
 
+fn validate_args_annotations(shape: &'static Shape) -> Result<(), ArgsErrorKind> {
+    match &shape.ty {
+        Type::User(UserType::Struct(struct_type)) => {
+            for field in struct_type.fields {
+                if !has_any_args_attr(field) {
+                    return Err(ArgsErrorKind::MissingArgsAnnotation { field, shape });
+                }
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
+fn has_any_args_attr(field: &'static Field) -> bool {
+    field.has_attr(Some("args"), "positional")
+        || field.has_attr(Some("args"), "named")
+        || field.has_attr(Some("args"), "subcommand")
+        || field.has_attr(Some("args"), "config")
+        || field.has_attr(Some("args"), "short")
+        || field.has_attr(Some("args"), "counted")
+        || field.has_attr(Some("args"), "env_prefix")
+}
+
 /// Parse command line arguments provided by std::env::args() into a Facet-compatible type
 #[deprecated(note = "we should only have the builder interface that always does layered")]
 pub fn from_std_args<T: Facet<'static>>() -> Result<T, ArgsErrorWithInput> {
@@ -44,6 +68,13 @@ pub fn from_slice_with_config<'input, T: Facet<'static>>(
         let span = Span::new(0, first_arg.len());
         return Err(ArgsErrorWithInput {
             inner: ArgsError::new(ArgsErrorKind::HelpRequested { help_text }, span),
+            flattened_args: args.join(" "),
+        });
+    }
+
+    if let Err(kind) = validate_args_annotations(T::SHAPE) {
+        return Err(ArgsErrorWithInput {
+            inner: ArgsError::new(kind, Span::new(0, 0)),
             flattened_args: args.join(" "),
         });
     }

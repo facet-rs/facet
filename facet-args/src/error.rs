@@ -17,6 +17,12 @@ pub struct ArgsErrorWithInput {
     pub(crate) flattened_args: String,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct ShapeDiagnostics {
+    pub shape: &'static Shape,
+    pub field: &'static Field,
+}
+
 impl ArgsErrorWithInput {
     /// Returns true if this is a help request (not a real error)
     pub const fn is_help_request(&self) -> bool {
@@ -26,6 +32,16 @@ impl ArgsErrorWithInput {
     /// If this is a help request, returns the help text
     pub fn help_text(&self) -> Option<&str> {
         self.inner.kind.help_text()
+    }
+
+    /// Returns shape diagnostics if the error includes schema context.
+    pub fn shape_diagnostics(&self) -> Option<ShapeDiagnostics> {
+        match self.inner.kind {
+            ArgsErrorKind::MissingArgsAnnotation { shape, field } => {
+                Some(ShapeDiagnostics { shape, field })
+            }
+            _ => None,
+        }
     }
 }
 
@@ -96,6 +112,14 @@ pub enum ArgsErrorKind {
         field: &'static Field,
     },
 
+    /// A field was not annotated with any args attribute.
+    MissingArgsAnnotation {
+        /// The field missing an args annotation
+        field: &'static Field,
+        /// The shape where the field is defined
+        shape: &'static Shape,
+    },
+
     /// Passed `--something` (see span), no such long flag
     UnknownLongFlag {
         /// The flag that was passed
@@ -164,6 +188,7 @@ impl ArgsErrorKind {
             ArgsErrorKind::EnumWithoutSubcommandAttribute { .. } => {
                 "args::enum_without_subcommand_attribute"
             }
+            ArgsErrorKind::MissingArgsAnnotation { .. } => "args::missing_args_annotation",
             ArgsErrorKind::UnknownLongFlag { .. } => "args::unknown_long_flag",
             ArgsErrorKind::UnknownShortFlag { .. } => "args::unknown_short_flag",
             ArgsErrorKind::MissingArgument { .. } => "args::missing_argument",
@@ -188,6 +213,12 @@ impl ArgsErrorKind {
                 format!(
                     "enum field `{}` must be marked with `#[facet(args::subcommand)]` to be used as subcommands",
                     field.name
+                )
+            }
+            ArgsErrorKind::MissingArgsAnnotation { field, shape } => {
+                format!(
+                    "field `{}` in `{}` is missing a `#[facet(args::...)]` annotation",
+                    field.name, shape.type_identifier
                 )
             }
             ArgsErrorKind::UnknownLongFlag { flag, .. } => {
@@ -311,6 +342,7 @@ impl ArgsErrorKind {
             ArgsErrorKind::HelpRequested { .. }
             | ArgsErrorKind::NoFields { .. }
             | ArgsErrorKind::EnumWithoutSubcommandAttribute { .. }
+            | ArgsErrorKind::MissingArgsAnnotation { .. }
             | ArgsErrorKind::ReflectError(_) => None,
         }
     }
@@ -559,7 +591,9 @@ pub(crate) const fn get_variants_from_shape(shape: &'static Shape) -> &'static [
 
 mod ariadne_impl {
     use super::*;
+    use alloc::borrow::Cow;
     use ariadne::{Color, Label, Report, ReportKind, Source};
+    use facet_pretty::{PathSegment, format_shape_with_spans};
 
     impl ArgsErrorWithInput {
         /// Returns an Ariadne report builder for this error.
@@ -572,6 +606,61 @@ mod ariadne_impl {
                 return Report::build(ReportKind::Custom("Help", Color::Cyan), 0..0)
                     .with_message(self.help_text().unwrap_or(""))
                     .finish();
+            }
+
+            if let Some(diag) = self.shape_diagnostics() {
+                let formatted = format_shape_with_spans(diag.shape);
+                let missing_path = vec![PathSegment::Field(Cow::Borrowed(diag.field.name))];
+
+                if let Some(field_span) = formatted.spans.get(&missing_path) {
+                    let span = field_span.key.0..field_span.value.1;
+
+                    let mut builder = Report::build(ReportKind::Error, span.clone())
+                        .with_code(self.inner.kind.code())
+                        .with_message(self.inner.kind.label());
+
+                    let mut def_end_span = None;
+                    if let Some(type_name_span) = formatted.type_name_span {
+                        let type_label_span = type_name_span.0..type_name_span.1;
+                        let def_end = formatted.text[type_name_span.1..]
+                            .find('}')
+                            .map(|offset| type_name_span.1 + offset)
+                            .unwrap_or_else(|| formatted.text.len().saturating_sub(1));
+                        let def_end_end = (def_end + 1).min(formatted.text.len());
+                        def_end_span = Some(def_end..def_end_end);
+
+                        let source_label = diag
+                            .shape
+                            .source_file
+                            .zip(diag.shape.source_line)
+                            .map(|(file, line)| format!("defined at {file}:{line}"))
+                            .unwrap_or_else(|| {
+                                "definition location unavailable (enable facet/doc)".to_string()
+                            });
+
+                        builder = builder.with_label(
+                            Label::new(type_label_span)
+                                .with_message(source_label)
+                                .with_color(Color::Blue),
+                        );
+                    }
+
+                    builder = builder.with_label(
+                        Label::new(span)
+                            .with_message("THIS IS WHERE YOU FORGOT A facet(args::) annotation")
+                            .with_color(Color::Red),
+                    );
+
+                    if let Some(def_end_span) = def_end_span {
+                        builder = builder.with_label(
+                            Label::new(def_end_span)
+                                .with_message("end of definition")
+                                .with_color(Color::Blue),
+                        );
+                    }
+
+                    return builder.finish();
+                }
             }
 
             // Use precise_span if available (e.g., for chained short flags)
@@ -602,6 +691,12 @@ mod ariadne_impl {
         /// This creates a source from the flattened CLI arguments and renders the
         /// error report with source context.
         pub fn write_ariadne(&self, writer: impl std::io::Write) -> std::io::Result<()> {
+            if let Some(diag) = self.shape_diagnostics() {
+                let formatted = format_shape_with_spans(diag.shape);
+                let source = Source::from(&formatted.text);
+                return self.to_ariadne_report().write(source, writer);
+            }
+
             let source = Source::from(&self.flattened_args);
             self.to_ariadne_report().write(source, writer)
         }
@@ -616,5 +711,43 @@ mod ariadne_impl {
             self.write_ariadne(&mut buf).expect("write to Vec failed");
             String::from_utf8(buf).expect("ariadne output is valid UTF-8")
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate as args;
+    use facet::Facet;
+    use facet_pretty::strip_ansi;
+
+    #[test]
+    fn debug_missing_args_annotation_example() {
+        #[derive(Facet)]
+        struct App {
+            #[facet(args::named)]
+            verbose: bool,
+            config_path: String,
+        }
+
+        let shape = App::SHAPE;
+        let field = match &shape.ty {
+            Type::User(UserType::Struct(s)) => s
+                .fields
+                .iter()
+                .find(|f| f.name == "config_path")
+                .expect("config_path field"),
+            _ => panic!("expected struct shape"),
+        };
+
+        let err = ArgsErrorWithInput {
+            inner: ArgsError::new(
+                ArgsErrorKind::MissingArgsAnnotation { field, shape },
+                Span::new(0, 0),
+            ),
+            flattened_args: String::new(),
+        };
+
+        println!("{}", err.to_ariadne_string());
     }
 }

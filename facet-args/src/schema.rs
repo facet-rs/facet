@@ -17,6 +17,7 @@ pub enum SchemaError {
     TopLevelNotStruct,
     /// A field was not annotated with any args attribute (positional/named/subcommand/config).
     MissingArgsAnnotation { field: &'static str },
+
     /// More than one field marked as `#[facet(args::subcommand)]` at the same level.
     MultipleSubcommandFields,
     /// `#[facet(args::subcommand)]` used on a non-enum field.
@@ -277,89 +278,5 @@ impl Schema {
     /// Parse a schema from a given shape
     pub(crate) fn from_shape(_shape: &'static Shape) -> Result<Self, SchemaError> {
         todo!("walk shape to fill in schema")
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate as args;
-    use facet_pretty::{PathSegment, format_shape_with_spans};
-
-    #[test]
-    fn pretty_shape_spans_prototype() {
-        use ariadne::{Color, Label, Report, ReportKind, Source};
-        #[derive(Facet)]
-        struct App {
-            #[facet(args::named)]
-            verbose: bool,
-            config_path: String,
-            #[facet(args::subcommand)]
-            cmd: Cmd,
-        }
-
-        #[derive(Facet)]
-        #[repr(u8)]
-        enum Cmd {
-            #[facet(rename = "do-thing")]
-            DoThing {
-                #[facet(args::positional)]
-                path: String,
-            },
-        }
-
-        let formatted = format_shape_with_spans(App::SHAPE);
-
-        let verbose_path = vec![PathSegment::Field("verbose".into())];
-        let missing_path = vec![PathSegment::Field("config_path".into())];
-        assert!(formatted.spans.contains_key(&verbose_path));
-        assert!(formatted.spans.contains_key(&missing_path));
-
-        let type_name_span = formatted.type_name_span.expect("type name span");
-        let type_label_span = type_name_span.0..type_name_span.1;
-
-        let def_end = formatted.text[type_name_span.1..]
-            .find('}')
-            .map(|offset| type_name_span.1 + offset)
-            .unwrap_or_else(|| formatted.text.len().saturating_sub(1));
-        let def_end_end = (def_end + 1).min(formatted.text.len());
-        let def_end_span = def_end..def_end_end;
-
-        let source_label = App::SHAPE
-            .source_file
-            .zip(App::SHAPE.source_line)
-            .map(|(file, line)| format!("defined at {file}:{line}"))
-            .unwrap_or_else(|| "definition location unavailable (enable facet/doc)".to_string());
-
-        let field_span = &formatted.spans[&missing_path];
-        let span = field_span.key.0..field_span.value.1;
-
-        let report = Report::build(ReportKind::Error, span.clone())
-            .with_message("missing facet(args::...) annotation")
-            .with_label(
-                Label::new(type_label_span)
-                    .with_message(source_label)
-                    .with_color(Color::Blue),
-            )
-            .with_label(
-                Label::new(span)
-                    .with_message("THIS IS WHERE YOU FORGOT A facet(args::) annotation")
-                    .with_color(Color::Red),
-            )
-            .with_label(
-                Label::new(def_end_span)
-                    .with_message("end of definition")
-                    .with_color(Color::Blue),
-            )
-            .finish();
-
-        let mut out = Vec::new();
-        report
-            .write(Source::from(&formatted.text), &mut out)
-            .expect("write ariadne report");
-        println!(
-            "{}",
-            String::from_utf8(out).expect("ariadne output is UTF-8")
-        );
     }
 }
