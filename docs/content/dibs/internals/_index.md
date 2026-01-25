@@ -1,7 +1,10 @@
 +++
-title = "How dibs works"
-description = "Intent, reality, and the diff"
+title = "Internals"
+description = "How dibs works under the hood"
+sort_by = "weight"
 +++
+
+# How dibs works
 
 dibs keeps your Postgres schema in sync with your Rust types. It constantly reconciles **intent** (your Rust schema) with **reality** (the live database), then generates the <abbr title="Structured Query Language">SQL</abbr> to make them match.
 
@@ -129,7 +132,7 @@ dibs scans your crate for registered tables (Facet annotations), builds an inter
   </div>
 </div>
 
-The result is a structured list of changes (add/alter/drop/rename) per table - not just raw SQL.
+The result is a structured diff - see below.
 
 <div class="chat">
   <div class="bubble bubble-cli">
@@ -143,7 +146,7 @@ The result is a structured list of changes (add/alter/drop/rename) per table - n
   </div>
 </div>
 
-The solver simulates the migration on a virtual schema, orders operations to satisfy dependencies, then verifies the final state matches the desired schema.
+The solver orders these operations - see below.
 
 <div class="chat">
   <div class="bubble bubble-cli">
@@ -156,8 +159,6 @@ The solver simulates the migration on a virtual schema, orders operations to sat
     <div class="bubble-text">Running pending migrations in transactions - streaming progress as they apply.</div>
   </div>
 </div>
-
-If a migration fails, dibs rolls back that transaction and reports the error with SQL context and source location.
 
 Why RPC? So you don't have to boot your entire app just to work with schemas and migrations.
 

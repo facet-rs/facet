@@ -16,7 +16,7 @@ use facet::Facet;
 #[derive(Facet)]
 #[facet(dibs::table = "users")]
 pub struct User {
-    #[facet(dibs::pk)]
+    #[facet(dibs::pk)] // primary key
     pub id: i64,
 
     #[facet(dibs::unique)]
@@ -71,7 +71,7 @@ Creates an index on this column.
 **`dibs::auto`**
 Marks the column as auto-increment / generated.
 
-### Admin UI (affects TUI and tooling)
+### Admin UI (affects <abbr title="Text User Interface">TUI</abbr> and tooling)
 
 **`dibs::icon = "name"`** (table or column level)
 Sets an icon for display in the TUI and other tooling.

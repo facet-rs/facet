@@ -4,7 +4,7 @@ description = "Tour of the terminal interface and CLI commands"
 weight = 2
 +++
 
-dibs provides both a **TUI** (terminal UI) and a **CLI** for working with your schema.
+dibs provides both a **<abbr title="Text User Interface">TUI</abbr>** (terminal UI) and a **<abbr title="Command Line Interface">CLI</abbr>** for working with your schema.
 
 ## The TUI
 

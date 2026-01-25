@@ -9,7 +9,7 @@ The **-queries crate** is where you write Styx query definitions and generate ty
 This is optional — you can use raw SQL with `tokio-postgres` if you prefer. But the queries crate gives you:
 
 - Type-safe query parameters and results
-- LSP support (completions, go-to-definition, diagnostics)
+- <abbr title="Language Server Protocol">LSP</abbr> support (completions, go-to-definition, diagnostics)
 - Automatic SQL generation from Styx definitions
 
 ## Create the crate
@@ -23,6 +23,7 @@ Add dependencies to `crates/my-app-queries/Cargo.toml`:
 ```toml
 [dependencies]
 my-app-db = { path = "../my-app-db" }
+# See db-crate setup for why we use git deps
 dibs-runtime = { git = "https://github.com/bearcove/dibs", branch = "main" }
 
 [build-dependencies]

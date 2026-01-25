@@ -4,7 +4,7 @@ description = "Create the schema crate and configure dibs"
 weight = 1
 +++
 
-The **-db crate** is where you define your database schema as Rust structs. dibs reads this crate to generate migrations and power the TUI.
+The **-db crate** is where you define your database schema as Rust structs. dibs reads this crate to generate migrations and power the <abbr title="Text User Interface">TUI</abbr>.
 
 ## Workspace structure
 

@@ -75,7 +75,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-## LSP support
+## <abbr title="Language Server Protocol">LSP</abbr> support
 
 dibs provides an LSP extension for Styx query files that gives you completions, diagnostics, and go-to-definition when editing `.dibs-queries/queries.styx`.
 

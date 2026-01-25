@@ -31,44 +31,37 @@ RUN cargo build --release -p my-app-db
 RUN cargo install --git https://github.com/bearcove/dibs dibs-cli
 ```
 
-## Option A: Init container
+## Running migrations
 
-Run migrations in an init container before your app starts:
+Two common approaches:
+
+**Init container** - Runs before your app starts, blocks deployment until complete. Good for: ensuring the app never starts with an outdated schema.
+
+**Separate Job** - Runs independently, can be triggered by CI/CD. Good for: long-running migrations, separating migration failures from app deployments.
+
+Both use the same container spec:
 
 ```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: my-app
-spec:
-  template:
-    spec:
-      initContainers:
-        - name: migrations
-          image: my-app-migrations:latest
-          env:
-            - name: DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: db-credentials
-                  key: url
-          command:
-            - /usr/local/bin/dibs
-            - migrate
-          volumeMounts:
-            - name: config
-              mountPath: /.config
-      containers:
-        - name: app
-          image: my-app:latest
-          # ... your app config
-      volumes:
-        - name: config
-          configMap:
-            name: dibs-config
+# Container spec (used in either approach)
+- name: migrate
+  image: my-app-migrations:latest
+  env:
+    - name: DATABASE_URL
+      valueFrom:
+        secretKeyRef:
+          name: db-credentials
+          key: url
+  command: ["/usr/local/bin/dibs", "migrate"]
+  volumeMounts:
+    - name: config
+      mountPath: /.config
 ```
 
-Create the ConfigMap for `.config/dibs.styx`:
+For init container, add this to your Deployment's `spec.template.spec.initContainers`. For a Job, wrap it in a `batch/v1 Job` with `restartPolicy: Never`.
+
+## Config
+
+Mount `.config/dibs.styx` via ConfigMap:
 
 ```yaml
 apiVersion: v1
@@ -83,40 +76,6 @@ data:
         crate my-app-db
         binary "/app/my-app-db"
     }
-```
-
-## Option B: Job
-
-Run migrations as a separate Job:
-
-```yaml
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: db-migration-{{ .Release.Revision }}
-spec:
-  template:
-    spec:
-      restartPolicy: Never
-      containers:
-        - name: migrate
-          image: my-app-migrations:latest
-          env:
-            - name: DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: db-credentials
-                  key: url
-          command:
-            - /usr/local/bin/dibs
-            - migrate
-          volumeMounts:
-            - name: config
-              mountPath: /.config
-      volumes:
-        - name: config
-          configMap:
-            name: dibs-config
 ```
 
 ## Container image
