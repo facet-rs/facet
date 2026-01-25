@@ -1,8 +1,7 @@
 //! Sequence diffing using Myers' algorithm.
 
-use crate::core_sequences::Updates;
+use crate::{core_sequences::Updates, trace};
 use facet_reflect::Peek;
-use log::trace;
 
 use crate::diff::{DiffOptions, diff_new_peek_with_options};
 

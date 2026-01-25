@@ -23,10 +23,10 @@ tracing = ["dep:tracing"]
 
 [dependencies]
 # Core facet dependencies
-facet = "0.43"
-facet-core = "0.43"
-facet-pretty = "0.43"
-facet-reflect = "0.43"
+facet = { version = "0.43", git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-core = { version = "0.43", git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-pretty = { version = "0.43", git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-reflect = { version = "0.43", git = "https://github.com/facet-rs/facet", branch = "main" }
 
 # From facet-diff-core
 confusables = "0.1"
@@ -35,10 +35,10 @@ owo-colors = "4"
 palette = { version = "0.7", default-features = false, features = ["std"] }
 unicode-width = "0.2"
 
-# From facet-diff
-log = "0.4"
-tracing = { version = "0.1", optional = true }
+tracing = { version = "0.1", default-features = false, optional = true }
 
 [dev-dependencies]
-facet = { version = "0.43", features = ["all-impls"] }
+facet = { version = "0.43", git = "https://github.com/facet-rs/facet", branch = "main", features = [
+  "all-impls",
+] }
 tracing = "0.1"
