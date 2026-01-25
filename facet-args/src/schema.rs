@@ -200,7 +200,7 @@ pub struct ConfigFieldSchema {
     docs: Docs,
 
     /// Value schema for a field
-    value: ConfigValueSchema,
+    pub value: ConfigValueSchema,
 }
 
 /// Schema for a vec in a config value

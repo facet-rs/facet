@@ -36,20 +36,366 @@
 //! - All SCREAMING_SNAKE_CASE
 //! - Double underscore (`__`) as separator (to allow single `_` in field names)
 
-use crate::driver::LayerOutput;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use std::hash::RandomState;
+
+use indexmap::IndexMap;
+
+use crate::config_value::{ConfigValue, Sourced};
+use crate::driver::{Diagnostic, LayerOutput, Severity, UnusedKey};
 use crate::env::{EnvConfig, EnvSource};
-use crate::schema::Schema;
+use crate::provenance::Provenance;
+use crate::schema::{ConfigStructSchema, ConfigValueSchema, Schema};
 
 /// Parse environment variables using the schema, returning a LayerOutput.
 ///
 /// This reads env vars with the configured prefix and builds a ConfigValue tree
 /// under the schema's config field.
-pub fn parse_env(
-    _schema: &Schema,
-    _env_config: &EnvConfig,
-    _source: &dyn EnvSource,
-) -> LayerOutput {
-    todo!("implement env2::parse_env")
+pub fn parse_env(schema: &Schema, env_config: &EnvConfig, source: &dyn EnvSource) -> LayerOutput {
+    let mut ctx = EnvParseContext::new(schema, env_config);
+    ctx.parse(source);
+    ctx.into_output()
+}
+
+/// Context for parsing environment variables.
+struct EnvParseContext<'a> {
+    schema: &'a Schema,
+    env_config: &'a EnvConfig,
+    /// The config field name from schema (e.g., "config" or "settings")
+    config_field_name: Option<&'a str>,
+    /// The config struct schema, if present
+    config_schema: Option<&'a ConfigStructSchema>,
+    /// Result being built: fields under the config object
+    config_fields: IndexMap<String, ConfigValue, RandomState>,
+    /// Unused keys (env vars that don't match schema)
+    unused_keys: Vec<UnusedKey>,
+    /// Diagnostics collected during parsing
+    diagnostics: Vec<Diagnostic>,
+}
+
+impl<'a> EnvParseContext<'a> {
+    fn new(schema: &'a Schema, env_config: &'a EnvConfig) -> Self {
+        let (config_field_name, config_schema) = if let Some(cs) = schema.config() {
+            (cs.field_name(), Some(cs))
+        } else {
+            (None, None)
+        };
+
+        Self {
+            schema,
+            env_config,
+            config_field_name,
+            config_schema,
+            config_fields: IndexMap::default(),
+            unused_keys: Vec::new(),
+            diagnostics: Vec::new(),
+        }
+    }
+
+    fn parse(&mut self, source: &dyn EnvSource) {
+        let prefix_with_sep = format!("{}__", self.env_config.prefix);
+
+        for (name, value) in source.vars() {
+            // Check if this var matches our prefix
+            if !name.starts_with(&prefix_with_sep) {
+                continue;
+            }
+
+            // Extract the path after the prefix
+            let rest = &name[prefix_with_sep.len()..];
+            if rest.is_empty() {
+                self.emit_warning(format!(
+                    "invalid environment variable name: {} (empty after prefix)",
+                    name
+                ));
+                continue;
+            }
+
+            // Parse the path segments
+            let segments: Vec<&str> = rest.split("__").collect();
+
+            // Check for empty segments
+            if segments.iter().any(|s| s.is_empty()) {
+                self.emit_warning(format!(
+                    "invalid environment variable name: {} (contains empty segment)",
+                    name
+                ));
+                continue;
+            }
+
+            // Convert to lowercase for field matching
+            let path: Vec<String> = segments.iter().map(|s| s.to_lowercase()).collect();
+
+            // If no config schema, all env vars are unused
+            if self.config_schema.is_none() {
+                self.add_unused_key(&path, &name);
+                continue;
+            }
+
+            // Check if path exists in schema
+            let config_schema = self.config_schema.unwrap();
+            if !self.path_exists_in_schema(config_schema, &path) {
+                self.add_unused_key(&path, &name);
+                if self.env_config.strict {
+                    self.emit_error(format!("unknown configuration key: {}", path.join(".")));
+                }
+                continue;
+            }
+
+            // Parse the value and insert it
+            let config_value = self.parse_value(&value, &name);
+            self.insert_at_path(&path, config_value);
+        }
+    }
+
+    fn path_exists_in_schema(&self, schema: &ConfigStructSchema, path: &[String]) -> bool {
+        if path.is_empty() {
+            return true;
+        }
+
+        let first = &path[0];
+        if let Some(field) = schema.fields().get(first) {
+            if path.len() == 1 {
+                return true;
+            }
+            // Check nested
+            match &field.value {
+                ConfigValueSchema::Struct(nested) => self.path_exists_in_schema(nested, &path[1..]),
+                ConfigValueSchema::Option { value, .. } => {
+                    // Unwrap option and check inner
+                    if let ConfigValueSchema::Struct(nested) = value.as_ref() {
+                        self.path_exists_in_schema(nested, &path[1..])
+                    } else {
+                        // Option of non-struct with more path - invalid
+                        false
+                    }
+                }
+                _ => {
+                    // Leaf with more path segments - invalid
+                    false
+                }
+            }
+        } else {
+            false
+        }
+    }
+
+    fn parse_value(&self, value: &str, var_name: &str) -> ConfigValue {
+        let prov = Some(Provenance::env(var_name, value));
+
+        // Check for comma-separated list
+        if value.contains(',') {
+            let elements = parse_comma_separated(value);
+            if elements.len() > 1 {
+                // Multiple elements - return as array
+                let array_elements: Vec<ConfigValue> = elements
+                    .into_iter()
+                    .map(|s| {
+                        ConfigValue::String(Sourced {
+                            value: s,
+                            span: None,
+                            provenance: Some(Provenance::env(var_name, value)),
+                        })
+                    })
+                    .collect();
+                return ConfigValue::Array(Sourced {
+                    value: array_elements,
+                    span: None,
+                    provenance: prov,
+                });
+            } else if elements.len() == 1 {
+                // Single element after processing escapes
+                return ConfigValue::String(Sourced {
+                    value: elements.into_iter().next().unwrap(),
+                    span: None,
+                    provenance: prov,
+                });
+            }
+        }
+
+        // Simple string value
+        ConfigValue::String(Sourced {
+            value: value.to_string(),
+            span: None,
+            provenance: prov,
+        })
+    }
+
+    fn insert_at_path(&mut self, path: &[String], value: ConfigValue) {
+        if path.is_empty() {
+            return;
+        }
+
+        if path.len() == 1 {
+            self.config_fields.insert(path[0].clone(), value);
+            return;
+        }
+
+        // Navigate/create nested objects
+        let first = &path[0];
+        let rest = &path[1..];
+
+        let entry = self.config_fields.entry(first.clone()).or_insert_with(|| {
+            ConfigValue::Object(Sourced {
+                value: IndexMap::default(),
+                span: None,
+                provenance: None,
+            })
+        });
+
+        if let ConfigValue::Object(obj) = entry {
+            insert_nested(&mut obj.value, rest, value);
+        }
+    }
+
+    fn add_unused_key(&mut self, path: &[String], var_name: &str) {
+        self.unused_keys.push(UnusedKey {
+            key: path.to_vec(),
+            provenance: Provenance::env(var_name, ""),
+        });
+    }
+
+    fn emit_warning(&mut self, message: String) {
+        self.diagnostics.push(Diagnostic {
+            message,
+            path: None,
+            span: None,
+            severity: Severity::Warning,
+        });
+    }
+
+    fn emit_error(&mut self, message: String) {
+        self.diagnostics.push(Diagnostic {
+            message,
+            path: None,
+            span: None,
+            severity: Severity::Error,
+        });
+    }
+
+    fn into_output(self) -> LayerOutput {
+        let value = if self.config_fields.is_empty() && self.config_field_name.is_none() {
+            // No config field in schema and no values - return empty object
+            Some(ConfigValue::Object(Sourced {
+                value: IndexMap::default(),
+                span: None,
+                provenance: None,
+            }))
+        } else if self.config_fields.is_empty() {
+            // Config field exists but no env vars matched - return object with empty config
+            let mut root = IndexMap::default();
+            if let Some(field_name) = self.config_field_name {
+                root.insert(
+                    field_name.to_string(),
+                    ConfigValue::Object(Sourced {
+                        value: IndexMap::default(),
+                        span: None,
+                        provenance: None,
+                    }),
+                );
+            }
+            Some(ConfigValue::Object(Sourced {
+                value: root,
+                span: None,
+                provenance: None,
+            }))
+        } else {
+            // Wrap config_fields under the config field name
+            let mut root = IndexMap::default();
+            if let Some(field_name) = self.config_field_name {
+                root.insert(
+                    field_name.to_string(),
+                    ConfigValue::Object(Sourced {
+                        value: self.config_fields,
+                        span: None,
+                        provenance: None,
+                    }),
+                );
+            }
+            Some(ConfigValue::Object(Sourced {
+                value: root,
+                span: None,
+                provenance: None,
+            }))
+        };
+
+        LayerOutput {
+            value,
+            unused_keys: self.unused_keys,
+            diagnostics: self.diagnostics,
+        }
+    }
+}
+
+/// Parse a comma-separated string, handling escaping.
+fn parse_comma_separated(input: &str) -> Vec<String> {
+    let mut result = Vec::new();
+    let mut current = String::new();
+    let mut chars = input.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            if let Some(&next) = chars.peek() {
+                if next == ',' {
+                    chars.next();
+                    current.push(',');
+                } else {
+                    current.push(ch);
+                }
+            } else {
+                current.push(ch);
+            }
+        } else if ch == ',' {
+            let trimmed = current.trim().to_string();
+            if !trimmed.is_empty() {
+                result.push(trimmed);
+            }
+            current.clear();
+        } else {
+            current.push(ch);
+        }
+    }
+
+    let trimmed = current.trim().to_string();
+    if !trimmed.is_empty() {
+        result.push(trimmed);
+    }
+
+    if result.is_empty() {
+        result.push(input.to_string());
+    }
+
+    result
+}
+
+/// Insert a value at a nested path in an IndexMap.
+fn insert_nested(
+    map: &mut IndexMap<String, ConfigValue, RandomState>,
+    path: &[String],
+    value: ConfigValue,
+) {
+    if path.is_empty() {
+        return;
+    }
+
+    if path.len() == 1 {
+        map.insert(path[0].clone(), value);
+        return;
+    }
+
+    let key = path[0].clone();
+    let entry = map.entry(key).or_insert_with(|| {
+        ConfigValue::Object(Sourced {
+            value: IndexMap::default(),
+            span: None,
+            provenance: None,
+        })
+    });
+
+    if let ConfigValue::Object(sourced) = entry {
+        insert_nested(&mut sourced.value, &path[1..], value);
+    }
 }
 
 #[cfg(test)]
