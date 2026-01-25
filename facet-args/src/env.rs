@@ -887,6 +887,6 @@ mod tests {
         assert_eq!(config.ratios.len(), 3);
         assert!((config.ratios[0] - 1.5).abs() < 0.01);
         assert!((config.ratios[1] - 2.7).abs() < 0.01);
-        assert!((config.ratios[2] - std::f64::consts::PI).abs() < 0.01);
+        assert!((config.ratios[2] - core::f64::consts::PI).abs() < 0.01);
     }
 }
