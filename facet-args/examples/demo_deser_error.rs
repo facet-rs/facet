@@ -15,6 +15,7 @@
 
 use facet::Facet;
 use facet_args as args;
+use tracing_subscriber::EnvFilter;
 
 /// Application with typed configuration.
 #[derive(Facet)]
@@ -42,6 +43,8 @@ struct AppConfig {
 }
 
 fn main() {
+    facet_testhelpers::setup();
+
     println!("=== Deserialization Error Demo ===\n");
 
     let args_vec: Vec<String> = std::env::args().skip(1).collect();
