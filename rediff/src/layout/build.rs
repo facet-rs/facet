@@ -793,8 +793,7 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
                     && inner_unchanged.is_empty() =>
                 {
                     // Single-field struct with one update - check if it's a scalar change
-                    let (_inner_field_name, inner_field_diff) =
-                        inner_updates.iter().next().unwrap();
+                    let (inner_field_name, inner_field_diff) = inner_updates.iter().next().unwrap();
 
                     // Check if the inner field's change is a scalar Replace
                     if let Diff::Replace {
@@ -813,6 +812,7 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
 
                         if is_scalar {
                             // Inline as attribute change using the parent field name
+                            let _ = inner_field_name; // used in debug! when tracing enabled
                             debug!(
                                 field_name = %field_name,
                                 inner_type = %inner_shape.type_identifier,
