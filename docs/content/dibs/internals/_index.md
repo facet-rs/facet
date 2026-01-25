@@ -1,10 +1,8 @@
 +++
-title = "Internals"
+title = "How dibs works"
 description = "How dibs works under the hood"
 sort_by = "weight"
 +++
-
-# How dibs works
 
 dibs keeps your Postgres schema in sync with your Rust types. It constantly reconciles **intent** (your Rust schema) with **reality** (the live database), then generates the <abbr title="Structured Query Language">SQL</abbr> to make them match.
 
