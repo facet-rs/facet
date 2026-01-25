@@ -544,7 +544,7 @@ impl FileConfigBuilder {
 #[repr(u8)]
 pub enum BuilderError {
     /// The schema provided to BuilderError was invalid.
-    SchemaError(#[facet(error::from)] SchemaError),
+    SchemaError(#[facet(opaque, error::from)] SchemaError),
 
     /// Allocation failed while constructing the builder.
     Alloc(#[facet(opaque)] ReflectError),

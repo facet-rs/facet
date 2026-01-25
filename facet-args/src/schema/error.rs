@@ -1,5 +1,4 @@
 use alloc::borrow::Cow;
-use facet::Facet;
 
 use ariadne::{Color, Label, Report, ReportKind, Source};
 use facet_core::Shape;
@@ -13,75 +12,124 @@ use crate::{
 
 /// The struct passed into facet_args::builder has some problems: some fields are not
 /// annotated, etc.
-#[derive(Facet)]
-#[repr(u8)]
-pub enum SchemaError {
-    /// Top-level shape must be a struct.
-    TopLevelNotStruct {
-        #[facet(opaque)]
-        ctx: SchemaErrorContext,
-    },
-    /// A field was not annotated with any args attribute (positional/named/subcommand/config).
-    MissingArgsAnnotation {
-        #[facet(opaque)]
-        ctx: SchemaErrorContext,
-        field: &'static str,
-    },
+pub struct SchemaError {
+    ctx: SchemaErrorContext,
+    code: &'static str,
+    label: Cow<'static, str>,
+    /// For ConflictingFlagNames: the other location that conflicts.
+    other_ctx: Option<SchemaErrorContext>,
+    /// For ConflictingFlagNames: the conflicting flag name.
+    conflicting_name: Option<String>,
+}
 
-    /// More than one field marked as `#[facet(args::subcommand)]` at the same level.
-    MultipleSubcommandFields {
-        #[facet(opaque)]
+impl SchemaError {
+    fn new(
         ctx: SchemaErrorContext,
-        field: &'static str,
-    },
-    /// `#[facet(args::subcommand)]` used on a non-enum field.
-    SubcommandOnNonEnum {
-        #[facet(opaque)]
+        code: &'static str,
+        label: impl Into<Cow<'static, str>>,
+    ) -> Self {
+        Self {
+            ctx,
+            code,
+            label: label.into(),
+            other_ctx: None,
+            conflicting_name: None,
+        }
+    }
+
+    pub fn top_level_not_struct(ctx: SchemaErrorContext) -> Self {
+        Self::new(
+            ctx,
+            "schema::top_level_not_struct",
+            "top-level shape must be a struct",
+        )
+    }
+
+    pub fn missing_args_annotation(ctx: SchemaErrorContext, field: &'static str) -> Self {
+        Self::new(
+            ctx,
+            "schema::missing_args_annotation",
+            format!("field `{field}` is missing a #[facet(args::...)] annotation"),
+        )
+    }
+
+    pub fn multiple_subcommand_fields(ctx: SchemaErrorContext, _field: &'static str) -> Self {
+        Self::new(
+            ctx,
+            "schema::multiple_subcommand_fields",
+            "only one field may be marked with #[facet(args::subcommand)] at this level",
+        )
+    }
+
+    pub fn subcommand_on_non_enum(ctx: SchemaErrorContext, field: &'static str) -> Self {
+        Self::new(
+            ctx,
+            "schema::subcommand_on_non_enum",
+            format!("field `{field}` marked as subcommand must be an enum"),
+        )
+    }
+
+    pub fn counted_on_non_integer(ctx: SchemaErrorContext, field: &'static str) -> Self {
+        Self::new(
+            ctx,
+            "schema::counted_on_non_integer",
+            format!("field `{field}` marked as counted must be an integer"),
+        )
+    }
+
+    pub fn short_on_positional(ctx: SchemaErrorContext, field: &'static str) -> Self {
+        Self::new(
+            ctx,
+            "schema::short_on_positional",
+            format!("field `{field}` is positional and cannot have a short flag"),
+        )
+    }
+
+    pub fn env_prefix_without_config(ctx: SchemaErrorContext, field: &'static str) -> Self {
+        Self::new(
+            ctx,
+            "schema::env_prefix_without_config",
+            format!("field `{field}` uses args::env_prefix without args::config"),
+        )
+    }
+
+    pub fn conflicting_flag_names(
         ctx: SchemaErrorContext,
-        field: &'static str,
-    },
-    /// `#[facet(args::counted)]` used on a non-integer type.
-    CountedOnNonInteger {
-        #[facet(opaque)]
-        ctx: SchemaErrorContext,
-        field: &'static str,
-    },
-    /// `#[facet(args::short)]` used on a positional-only argument.
-    ShortOnPositional {
-        #[facet(opaque)]
-        ctx: SchemaErrorContext,
-        field: &'static str,
-    },
-    /// `#[facet(args::env_prefix)]` used without `#[facet(args::config)]`.
-    EnvPrefixWithoutConfig {
-        #[facet(opaque)]
-        ctx: SchemaErrorContext,
-        field: &'static str,
-    },
-    /// Duplicate CLI flag name or short at the same level.
-    ConflictingFlagNames {
-        #[facet(opaque)]
-        ctx: SchemaErrorContext,
-        #[facet(opaque)]
         other_ctx: SchemaErrorContext,
         name: String,
-    },
-    /// Unsupported leaf type (non-scalar, non-enum).
-    UnsupportedLeafType {
-        #[facet(opaque)]
-        ctx: SchemaErrorContext,
-    },
-    /// Config field must be a struct.
-    ConfigFieldMustBeStruct {
-        #[facet(opaque)]
-        ctx: SchemaErrorContext,
-    },
-    /// More than one field marked as `#[facet(args::config)]`.
-    MultipleConfigFields {
-        #[facet(opaque)]
-        ctx: SchemaErrorContext,
-        field: &'static str,
-    },
+    ) -> Self {
+        Self {
+            ctx,
+            code: "schema::conflicting_flag_names",
+            label: Cow::Owned(format!("duplicate flag name `{name}` at this level")),
+            other_ctx: Some(other_ctx),
+            conflicting_name: Some(name),
+        }
+    }
+
+    pub fn unsupported_leaf_type(ctx: SchemaErrorContext) -> Self {
+        Self::new(
+            ctx,
+            "schema::unsupported_leaf_type",
+            "unsupported leaf type",
+        )
+    }
+
+    pub fn config_field_must_be_struct(ctx: SchemaErrorContext) -> Self {
+        Self::new(
+            ctx,
+            "schema::config_field_must_be_struct",
+            "config field must be a struct",
+        )
+    }
+
+    pub fn multiple_config_fields(ctx: SchemaErrorContext, field: &'static str) -> Self {
+        Self::new(
+            ctx,
+            "schema::multiple_config_fields",
+            format!("multiple config fields (already saw another before `{field}`)"),
+        )
+    }
 }
 
 /// Context for schema errors, retained for late diagnostic formatting.
@@ -126,80 +174,17 @@ fn schema_path_to_segments(path: &Path) -> Vec<PathSegment> {
         .collect()
 }
 
-impl SchemaError {
-    fn ctx(&self) -> &SchemaErrorContext {
-        match self {
-            SchemaError::TopLevelNotStruct { ctx } => ctx,
-            SchemaError::MissingArgsAnnotation { ctx, .. } => ctx,
-            SchemaError::MultipleSubcommandFields { ctx, .. } => ctx,
-            SchemaError::SubcommandOnNonEnum { ctx, .. } => ctx,
-            SchemaError::CountedOnNonInteger { ctx, .. } => ctx,
-            SchemaError::ShortOnPositional { ctx, .. } => ctx,
-            SchemaError::EnvPrefixWithoutConfig { ctx, .. } => ctx,
-            SchemaError::ConflictingFlagNames { ctx, .. } => ctx,
-            SchemaError::UnsupportedLeafType { ctx } => ctx,
-            SchemaError::ConfigFieldMustBeStruct { ctx } => ctx,
-            SchemaError::MultipleConfigFields { ctx, .. } => ctx,
-        }
-    }
-}
-
 impl Diagnostic for SchemaError {
     fn code(&self) -> &'static str {
-        match self {
-            SchemaError::TopLevelNotStruct { .. } => "schema::top_level_not_struct",
-            SchemaError::MissingArgsAnnotation { .. } => "schema::missing_args_annotation",
-            SchemaError::MultipleSubcommandFields { .. } => "schema::multiple_subcommand_fields",
-            SchemaError::SubcommandOnNonEnum { .. } => "schema::subcommand_on_non_enum",
-            SchemaError::CountedOnNonInteger { .. } => "schema::counted_on_non_integer",
-            SchemaError::ShortOnPositional { .. } => "schema::short_on_positional",
-            SchemaError::EnvPrefixWithoutConfig { .. } => "schema::env_prefix_without_config",
-            SchemaError::ConflictingFlagNames { .. } => "schema::conflicting_flag_names",
-            SchemaError::UnsupportedLeafType { .. } => "schema::unsupported_leaf_type",
-            SchemaError::ConfigFieldMustBeStruct { .. } => "schema::config_field_must_be_struct",
-            SchemaError::MultipleConfigFields { .. } => "schema::multiple_config_fields",
-        }
+        self.code
     }
 
     fn label(&self) -> Cow<'static, str> {
-        match self {
-            SchemaError::TopLevelNotStruct { .. } => {
-                Cow::Borrowed("top-level shape must be a struct")
-            }
-            SchemaError::MissingArgsAnnotation { field, .. } => Cow::Owned(format!(
-                "field `{field}` is missing a #[facet(args::...)] annotation"
-            )),
-            SchemaError::MultipleSubcommandFields { .. } => Cow::Borrowed(
-                "only one field may be marked with #[facet(args::subcommand)] at this level",
-            ),
-            SchemaError::SubcommandOnNonEnum { field, .. } => Cow::Owned(format!(
-                "field `{field}` marked as subcommand must be an enum"
-            )),
-            SchemaError::CountedOnNonInteger { field, .. } => Cow::Owned(format!(
-                "field `{field}` marked as counted must be an integer"
-            )),
-            SchemaError::ShortOnPositional { field, .. } => Cow::Owned(format!(
-                "field `{field}` is positional and cannot have a short flag"
-            )),
-            SchemaError::EnvPrefixWithoutConfig { field, .. } => Cow::Owned(format!(
-                "field `{field}` uses args::env_prefix without args::config"
-            )),
-            SchemaError::ConflictingFlagNames { name, .. } => {
-                Cow::Owned(format!("duplicate flag name `{name}` at this level"))
-            }
-            SchemaError::UnsupportedLeafType { .. } => Cow::Borrowed("unsupported leaf type"),
-            SchemaError::ConfigFieldMustBeStruct { .. } => {
-                Cow::Borrowed("config field must be a struct")
-            }
-            SchemaError::MultipleConfigFields { field, .. } => Cow::Owned(format!(
-                "multiple config fields (already saw another before `{field}`)"
-            )),
-        }
+        self.label.clone()
     }
 
     fn sources(&self) -> Vec<SourceBundle> {
-        let ctx = self.ctx();
-        let formatted = format_shape_with_spans(ctx.shape);
+        let formatted = format_shape_with_spans(self.ctx.shape);
         vec![SourceBundle {
             id: SourceId::Schema,
             name: Some(Cow::Borrowed("schema definition")),
@@ -208,9 +193,8 @@ impl Diagnostic for SchemaError {
     }
 
     fn labels(&self) -> Vec<LabelSpec> {
-        let ctx = self.ctx();
-        let formatted = format_shape_with_spans(ctx.shape);
-        let path = schema_path_to_segments(&ctx.path);
+        let formatted = format_shape_with_spans(self.ctx.shape);
+        let path = schema_path_to_segments(&self.ctx.path);
         let span = formatted
             .spans
             .get(&path)
@@ -221,14 +205,15 @@ impl Diagnostic for SchemaError {
             Some(span) => {
                 let mut labels = Vec::new();
 
-                let mut def_end_span = formatted.type_end_span.map(|(start, end)| start..end);
+                let def_end_span = formatted.type_end_span.map(|(start, end)| start..end);
                 if let Some(type_name_span) = formatted.type_name_span {
                     let type_label_span = type_name_span.0..type_name_span.1;
 
-                    let source_label = ctx
+                    let source_label = self
+                        .ctx
                         .shape
                         .source_file
-                        .zip(ctx.shape.source_line)
+                        .zip(self.ctx.shape.source_line)
                         .map(|(file, line)| format!("defined at {file}:{line}"))
                         .unwrap_or_else(|| {
                             "definition location unavailable (enable facet/doc)".to_string()
@@ -243,11 +228,9 @@ impl Diagnostic for SchemaError {
                     });
                 }
 
+                // Handle the "other" label for conflicting flag names
                 let mut other_label = None;
-                if let SchemaError::ConflictingFlagNames {
-                    other_ctx, name, ..
-                } = self
-                {
+                if let (Some(other_ctx), Some(name)) = (&self.other_ctx, &self.conflicting_name) {
                     let other_path = schema_path_to_segments(&other_ctx.path);
                     let other_span = formatted
                         .spans
@@ -255,10 +238,10 @@ impl Diagnostic for SchemaError {
                         .map(|span| span.key.0..span.value.1)
                         .or_else(|| formatted.type_name_span.map(|(start, end)| start..end));
 
-                    if let Some(other_span) = other_span {
-                        if other_span != span {
-                            other_label = Some((other_span, format!("also uses flag `{name}`")));
-                        }
+                    if let Some(other_span) = other_span
+                        && other_span != span
+                    {
+                        other_label = Some((other_span, format!("also uses flag `{name}`")));
                     }
                 }
 
@@ -310,7 +293,6 @@ fn color_from_hint(hint: ColorHint) -> Color {
 
 impl SchemaError {
     fn to_ariadne_report(&self) -> Report<'static, core::ops::Range<usize>> {
-        let sources = self.sources();
         let labels = self.labels();
         let primary_span = labels
             .iter()
