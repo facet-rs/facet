@@ -1,0 +1,8 @@
+---
+source: facet-args/src/schema.rs
+assertion_line: 926
+expression: "Schema::from_shape(MultipleSubcommands::SHAPE)"
+---
+Err(
+    MultipleSubcommandFields,
+)

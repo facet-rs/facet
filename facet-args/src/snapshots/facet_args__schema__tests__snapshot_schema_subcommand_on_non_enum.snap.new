@@ -1,0 +1,10 @@
+---
+source: facet-args/src/schema.rs
+assertion_line: 931
+expression: "Schema::from_shape(SubcommandOnNonEnum::SHAPE)"
+---
+Err(
+    SubcommandOnNonEnum {
+        field: "value",
+    },
+)

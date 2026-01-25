@@ -572,6 +572,7 @@ fn arg_level_from_fields(fields: &'static [Field]) -> Result<ArgLevelSchema, Sch
             }
         }
 
+        let docs = docs_from_lines(field.doc);
         let arg = ArgSchema {
             name: field.effective_name().to_string(),
             docs,
@@ -625,5 +626,338 @@ impl Schema {
         };
 
         Ok(Schema { args, config })
+    }
+}
+
+impl core::fmt::Debug for Schema {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Schema")
+            .field("args", &self.args)
+            .field("config", &self.config)
+            .finish()
+    }
+}
+
+impl core::fmt::Debug for Docs {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Docs")
+            .field("summary", &self.summary)
+            .field("details", &self.details)
+            .finish()
+    }
+}
+
+impl core::fmt::Debug for ScalarType {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            ScalarType::Bool => f.write_str("Bool"),
+            ScalarType::String => f.write_str("String"),
+            ScalarType::Integer => f.write_str("Integer"),
+            ScalarType::Float => f.write_str("Float"),
+        }
+    }
+}
+
+impl core::fmt::Debug for LeafKind {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            LeafKind::Scalar(s) => f.debug_tuple("Scalar").field(s).finish(),
+            LeafKind::Enum { variants } => {
+                f.debug_struct("Enum").field("variants", variants).finish()
+            }
+        }
+    }
+}
+
+impl core::fmt::Debug for LeafSchema {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("LeafSchema")
+            .field("kind", &self.kind)
+            .finish()
+    }
+}
+
+impl core::fmt::Debug for ValueSchema {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            ValueSchema::Leaf(leaf) => f.debug_tuple("Leaf").field(leaf).finish(),
+            ValueSchema::Option { value, .. } => {
+                f.debug_struct("Option").field("value", value).finish()
+            }
+            ValueSchema::Vec { element, .. } => {
+                f.debug_struct("Vec").field("element", element).finish()
+            }
+            ValueSchema::Struct { fields, .. } => {
+                f.debug_struct("Struct").field("fields", fields).finish()
+            }
+        }
+    }
+}
+
+impl core::fmt::Debug for ArgLevelSchema {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ArgLevelSchema")
+            .field("args", &self.args)
+            .field("subcommands", &self.subcommands)
+            .finish()
+    }
+}
+
+impl core::fmt::Debug for Subcommand {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Subcommand")
+            .field("name", &self.name)
+            .field("docs", &self.docs)
+            .field("args", &self.args)
+            .finish()
+    }
+}
+
+impl core::fmt::Debug for ArgSchema {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ArgSchema")
+            .field("name", &self.name)
+            .field("docs", &self.docs)
+            .field("kind", &self.kind)
+            .field("value", &self.value)
+            .field("required", &self.required)
+            .field("multiple", &self.multiple)
+            .finish()
+    }
+}
+
+impl core::fmt::Debug for ArgKind {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            ArgKind::Positional => f.write_str("Positional"),
+            ArgKind::Named { short, counted } => f
+                .debug_struct("Named")
+                .field("short", short)
+                .field("counted", counted)
+                .finish(),
+        }
+    }
+}
+
+impl core::fmt::Debug for ConfigStructSchema {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ConfigStructSchema")
+            .field("fields", &self.fields)
+            .finish()
+    }
+}
+
+impl core::fmt::Debug for ConfigFieldSchema {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ConfigFieldSchema")
+            .field("docs", &self.docs)
+            .field("value", &self.value)
+            .finish()
+    }
+}
+
+impl core::fmt::Debug for ConfigVecSchema {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ConfigVecSchema")
+            .field("element", &self.element)
+            .finish()
+    }
+}
+
+impl core::fmt::Debug for ConfigValueSchema {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            ConfigValueSchema::Struct(s) => f.debug_tuple("Struct").field(s).finish(),
+            ConfigValueSchema::Vec(v) => f.debug_tuple("Vec").field(v).finish(),
+            ConfigValueSchema::Option { value, .. } => {
+                f.debug_struct("Option").field("value", value).finish()
+            }
+            ConfigValueSchema::Leaf(leaf) => f.debug_tuple("Leaf").field(leaf).finish(),
+        }
+    }
+}
+
+#[cfg(test)]
+#[allow(dead_code)]
+mod tests {
+    use super::*;
+    use crate as args;
+    use facet::Facet;
+
+    #[derive(Facet)]
+    struct BasicArgs {
+        /// Verbose output
+        #[facet(args::named, args::short = 'v')]
+        verbose: bool,
+        /// Input file
+        #[facet(args::positional)]
+        input: String,
+        /// Include list
+        #[facet(args::named)]
+        include: Vec<String>,
+        /// Quiet count
+        #[facet(args::named, args::short = 'q', args::counted)]
+        quiet: u32,
+        /// Subcommand
+        #[facet(args::subcommand)]
+        command: Option<Command>,
+        /// Config
+        #[facet(args::config, args::env_prefix = "APP")]
+        config: Option<AppConfig>,
+    }
+
+    #[derive(Facet)]
+    #[repr(u8)]
+    enum Command {
+        /// Build stuff
+        Build(BuildArgs),
+        /// Clean
+        #[facet(rename = "clean-all")]
+        Clean,
+    }
+
+    #[derive(Facet)]
+    struct BuildArgs {
+        /// Release build
+        #[facet(args::named, args::short = 'r')]
+        release: bool,
+    }
+
+    #[derive(Facet)]
+    struct AppConfig {
+        host: String,
+        port: u16,
+    }
+
+    #[derive(Facet)]
+    struct MissingArgsAnnotation {
+        foo: String,
+    }
+
+    #[derive(Facet)]
+    #[repr(u8)]
+    enum SubA {
+        A,
+    }
+
+    #[derive(Facet)]
+    #[repr(u8)]
+    enum SubB {
+        B,
+    }
+
+    #[derive(Facet)]
+    struct MultipleSubcommands {
+        #[facet(args::subcommand)]
+        a: SubA,
+        #[facet(args::subcommand)]
+        b: SubB,
+    }
+
+    #[derive(Facet)]
+    struct SubcommandOnNonEnum {
+        #[facet(args::subcommand)]
+        value: String,
+    }
+
+    #[derive(Facet)]
+    struct CountedOnNonInteger {
+        #[facet(args::named, args::counted)]
+        value: bool,
+    }
+
+    #[derive(Facet)]
+    struct ShortOnPositional {
+        #[facet(args::positional, args::short = 'p')]
+        value: String,
+    }
+
+    #[derive(Facet)]
+    struct EnvPrefixWithoutConfig {
+        #[facet(args::env_prefix = "APP")]
+        value: String,
+    }
+
+    #[derive(Facet)]
+    struct ConflictingLongFlags {
+        #[facet(args::named, rename = "dup")]
+        a: bool,
+        #[facet(args::named, rename = "dup")]
+        b: bool,
+    }
+
+    #[derive(Facet)]
+    struct ConflictingShortFlags {
+        #[facet(args::named, args::short = 'v')]
+        a: bool,
+        #[facet(args::named, args::short = 'v')]
+        b: bool,
+    }
+
+    #[derive(Facet)]
+    struct BadConfigField {
+        #[facet(args::config)]
+        config: String,
+    }
+
+    #[derive(Facet)]
+    #[repr(u8)]
+    enum TopLevelEnum {
+        Foo,
+    }
+
+    #[test]
+    fn snapshot_schema_basic() {
+        insta::assert_debug_snapshot!(Schema::from_shape(BasicArgs::SHAPE));
+    }
+
+    #[test]
+    fn snapshot_schema_top_level_enum() {
+        insta::assert_debug_snapshot!(Schema::from_shape(TopLevelEnum::SHAPE));
+    }
+
+    #[test]
+    fn snapshot_schema_missing_args_annotation() {
+        insta::assert_debug_snapshot!(Schema::from_shape(MissingArgsAnnotation::SHAPE));
+    }
+
+    #[test]
+    fn snapshot_schema_multiple_subcommands() {
+        insta::assert_debug_snapshot!(Schema::from_shape(MultipleSubcommands::SHAPE));
+    }
+
+    #[test]
+    fn snapshot_schema_subcommand_on_non_enum() {
+        insta::assert_debug_snapshot!(Schema::from_shape(SubcommandOnNonEnum::SHAPE));
+    }
+
+    #[test]
+    fn snapshot_schema_counted_on_non_integer() {
+        insta::assert_debug_snapshot!(Schema::from_shape(CountedOnNonInteger::SHAPE));
+    }
+
+    #[test]
+    fn snapshot_schema_short_on_positional() {
+        insta::assert_debug_snapshot!(Schema::from_shape(ShortOnPositional::SHAPE));
+    }
+
+    #[test]
+    fn snapshot_schema_env_prefix_without_config() {
+        insta::assert_debug_snapshot!(Schema::from_shape(EnvPrefixWithoutConfig::SHAPE));
+    }
+
+    #[test]
+    fn snapshot_schema_conflicting_long_flags() {
+        insta::assert_debug_snapshot!(Schema::from_shape(ConflictingLongFlags::SHAPE));
+    }
+
+    #[test]
+    fn snapshot_schema_conflicting_short_flags() {
+        insta::assert_debug_snapshot!(Schema::from_shape(ConflictingShortFlags::SHAPE));
+    }
+
+    #[test]
+    fn snapshot_schema_bad_config_field() {
+        insta::assert_debug_snapshot!(Schema::from_shape(BadConfigField::SHAPE));
     }
 }

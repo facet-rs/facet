@@ -1,0 +1,10 @@
+---
+source: facet-args/src/schema.rs
+assertion_line: 941
+expression: "Schema::from_shape(ShortOnPositional::SHAPE)"
+---
+Err(
+    ShortOnPositional {
+        field: "value",
+    },
+)

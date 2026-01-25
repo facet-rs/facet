@@ -1,0 +1,10 @@
+---
+source: facet-args/src/schema.rs
+assertion_line: 961
+expression: "Schema::from_shape(BadConfigField::SHAPE)"
+---
+Err(
+    BadSchema(
+        "config field must be a struct",
+    ),
+)

@@ -1,0 +1,10 @@
+---
+source: facet-args/src/schema.rs
+assertion_line: 956
+expression: "Schema::from_shape(ConflictingShortFlags::SHAPE)"
+---
+Err(
+    ConflictingFlagNames {
+        name: "-v",
+    },
+)

@@ -1,0 +1,10 @@
+---
+source: facet-args/src/schema.rs
+assertion_line: 946
+expression: "Schema::from_shape(EnvPrefixWithoutConfig::SHAPE)"
+---
+Err(
+    EnvPrefixWithoutConfig {
+        field: "value",
+    },
+)

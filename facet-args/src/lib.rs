@@ -6,6 +6,7 @@
 #![doc = include_str!("../README.md")]
 
 extern crate alloc;
+extern crate self as facet_args;
 
 pub(crate) mod arg;
 pub(crate) mod builder;

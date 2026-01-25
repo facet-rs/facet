@@ -1,0 +1,10 @@
+---
+source: facet-args/src/schema.rs
+assertion_line: 921
+expression: "Schema::from_shape(MissingArgsAnnotation::SHAPE)"
+---
+Err(
+    MissingArgsAnnotation {
+        field: "foo",
+    },
+)

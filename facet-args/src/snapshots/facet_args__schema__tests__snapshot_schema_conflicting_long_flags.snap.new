@@ -1,0 +1,10 @@
+---
+source: facet-args/src/schema.rs
+assertion_line: 951
+expression: "Schema::from_shape(ConflictingLongFlags::SHAPE)"
+---
+Err(
+    ConflictingFlagNames {
+        name: "--dup",
+    },
+)
