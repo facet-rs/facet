@@ -116,7 +116,7 @@ A typical exchange looks like:
   </div>
 </div>
 
-dibs scans your crate for registered tables (Facet annotations), builds an internal schema model, and returns it over RPC.
+<p class="chat-note">dibs scans your crate for registered tables (Facet annotations), builds an internal schema model, and returns it over RPC.</p>
 
 <div class="chat">
   <div class="bubble bubble-cli">
@@ -130,7 +130,7 @@ dibs scans your crate for registered tables (Facet annotations), builds an inter
   </div>
 </div>
 
-The result is a structured diff - see below.
+<p class="chat-note">The result is a structured diff - see below.</p>
 
 <div class="chat">
   <div class="bubble bubble-cli">
@@ -144,7 +144,7 @@ The result is a structured diff - see below.
   </div>
 </div>
 
-The solver orders these operations - see below.
+<p class="chat-note">The solver orders these operations - see below.</p>
 
 <div class="chat">
   <div class="bubble bubble-cli">
