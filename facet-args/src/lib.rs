@@ -6,39 +6,37 @@
 
 extern crate alloc;
 
-pub mod builder;
-pub mod completions;
-pub mod config_format;
-pub mod config_value;
-pub mod config_value_parser;
-pub mod env;
-mod format;
-pub mod help;
-pub mod merge;
-pub mod provenance;
-
-pub use builder::builder;
-use config_value::{ConfigValue, Sourced};
-use owo_colors::OwoColorize;
-
 pub(crate) mod arg;
+pub(crate) mod builder;
+pub(crate) mod completions;
+pub(crate) mod config_format;
+pub(crate) mod config_value;
+pub(crate) mod config_value_parser;
 pub(crate) mod dump;
+pub(crate) mod env;
 pub(crate) mod error;
+pub(crate) mod help;
+pub(crate) mod merge;
+pub(crate) mod parser;
+pub(crate) mod provenance;
 pub(crate) mod reflection;
 pub(crate) mod span;
-
-use error::ArgsError;
-use facet_core::Facet;
-
-pub use completions::{Shell, generate_completions, generate_completions_for_shape};
-pub use error::{ArgsErrorKind, ArgsErrorWithInput};
-pub use format::from_slice_with_config;
-pub use help::{HelpConfig, generate_help, generate_help_for_shape};
 
 use crate::{
     dump::{collect_missing_values, dump_config_with_missing_fields, dump_config_with_provenance},
     reflection::{find_config_field, get_env_prefix},
 };
+use config_value::{ConfigValue, Sourced};
+use error::ArgsError;
+use facet_core::Facet;
+use owo_colors::OwoColorize;
+
+// ==========================================
+// PUBLIC INTERFACE
+// ==========================================
+
+pub use builder::builder;
+pub use error::{ArgsErrorKind, ArgsErrorWithInput};
 
 // Args extension attributes for use with #[facet(args::attr)] syntax.
 //
@@ -156,7 +154,7 @@ pub fn from_slice_layered<T: Facet<'static>>(
 
     if config_field.is_none() {
         tracing::debug!("No config field found, using regular parsing");
-        let value = format::from_slice(args)?;
+        let value = parser::from_slice(args)?;
         return Ok(ParseResult {
             value,
             file_resolution: provenance::FileResolution::new(),

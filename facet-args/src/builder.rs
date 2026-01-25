@@ -27,19 +27,19 @@ use crate::merge::merge_layers;
 use crate::provenance::{ConfigResult, FilePathStatus, FileResolution, Override, Provenance};
 
 /// Create a new layered configuration builder.
-pub fn builder() -> LayeredConfigBuilder {
-    LayeredConfigBuilder::new()
+pub fn builder() -> ConfigBuilder {
+    ConfigBuilder::new()
 }
 
 /// Builder for layered configuration parsing.
-pub struct LayeredConfigBuilder<E: EnvSource = StdEnv> {
+pub struct ConfigBuilder<E: EnvSource = StdEnv> {
     cli_config: Option<CliConfig>,
     env_config: Option<EnvConfig>,
     file_config: Option<FileConfig>,
     env_source: E,
 }
 
-impl Default for LayeredConfigBuilder<StdEnv> {
+impl Default for ConfigBuilder<StdEnv> {
     fn default() -> Self {
         Self {
             cli_config: None,
@@ -50,17 +50,17 @@ impl Default for LayeredConfigBuilder<StdEnv> {
     }
 }
 
-impl LayeredConfigBuilder<StdEnv> {
+impl ConfigBuilder<StdEnv> {
     /// Create a new builder with default settings.
     pub fn new() -> Self {
         Self::default()
     }
 }
 
-impl<E: EnvSource> LayeredConfigBuilder<E> {
+impl<E: EnvSource> ConfigBuilder<E> {
     /// Use a custom environment source (for testing).
-    pub fn with_env_source<E2: EnvSource>(self, source: E2) -> LayeredConfigBuilder<E2> {
-        LayeredConfigBuilder {
+    pub fn with_env_source<E2: EnvSource>(self, source: E2) -> ConfigBuilder<E2> {
+        ConfigBuilder {
             cli_config: self.cli_config,
             env_config: self.env_config,
             file_config: self.file_config,
