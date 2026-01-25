@@ -77,15 +77,6 @@ pub fn diff_new_peek_with_options<'mem, 'facet>(
         .map(|tol| check_float_tolerance(from, to, tol))
         .unwrap_or(false);
 
-    // log::trace!(
-    //     "diff_new_peek: type={} same_type={} from_has_partialeq={} to_has_partialeq={} values_equal={}",
-    //     from.shape().type_identifier,
-    //     same_type,
-    //     from_has_partialeq,
-    //     to_has_partialeq,
-    //     values_equal
-    // );
-
     if same_type && from_has_partialeq && to_has_partialeq && (values_equal || float_equal) {
         return Diff::Equal { value: Some(from) };
     }
