@@ -288,10 +288,12 @@ mod tests {
 
     #[test]
     fn pretty_shape_spans_prototype() {
+        use ariadne::{Color, Label, Report, ReportKind, Source};
         #[derive(Facet)]
         struct App {
             #[facet(args::named)]
             verbose: bool,
+            config_path: String,
             #[facet(args::subcommand)]
             cmd: Cmd,
         }
@@ -309,7 +311,30 @@ mod tests {
         let formatted = format_shape_with_spans(App::SHAPE);
 
         let verbose_path = vec![PathSegment::Field("verbose".into())];
+        let missing_path = vec![PathSegment::Field("config_path".into())];
         assert!(formatted.spans.contains_key(&verbose_path));
+        assert!(formatted.spans.contains_key(&missing_path));
         assert!(formatted.type_name_span.is_some());
+
+        let field_span = &formatted.spans[&missing_path];
+        let span = field_span.key.0..field_span.value.1;
+
+        let report = Report::build(ReportKind::Error, span.clone())
+            .with_message("missing facet(args::...) annotation")
+            .with_label(
+                Label::new(span)
+                    .with_message("THIS IS WHERE YOU FORGOT A facet(args::) annotation")
+                    .with_color(Color::Red),
+            )
+            .finish();
+
+        let mut out = Vec::new();
+        report
+            .write(Source::from(&formatted.text), &mut out)
+            .expect("write ariadne report");
+        println!(
+            "{}",
+            String::from_utf8(out).expect("ariadne output is UTF-8")
+        );
     }
 }

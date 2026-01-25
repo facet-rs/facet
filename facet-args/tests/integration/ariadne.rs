@@ -1,8 +1,6 @@
 //! Tests for Ariadne pretty error reporting.
 //!
-//! Run with: cargo test -p facet-args --features ariadne
-
-#![cfg(feature = "ariadne")]
+//! Run with: cargo test -p facet-args
 
 use facet::Facet;
 use facet_args as args;

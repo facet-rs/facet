@@ -557,7 +557,6 @@ pub(crate) const fn get_variants_from_shape(shape: &'static Shape) -> &'static [
     }
 }
 
-#[cfg(feature = "ariadne")]
 mod ariadne_impl {
     use super::*;
     use ariadne::{Color, Label, Report, ReportKind, Source};

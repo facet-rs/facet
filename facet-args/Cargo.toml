@@ -28,7 +28,7 @@ heck = "0.5.0"
 indexmap = { workspace = true }
 owo-colors = "4"
 tracing = { workspace = true }
-ariadne = { version = "0.6", optional = true }
+ariadne = "0.6"
 unicode-width = "0.2.2"
 strip-ansi-escapes = "0.2.1"
 facet-error = { path = "../facet-error", version = "0.43.2" }
@@ -49,12 +49,11 @@ default = ["rich-diagnostics"]
 rich-diagnostics = []
 # Include doc comments in help generation (enables facet/doc)
 doc = ["facet/doc"]
-# Enable pretty error reporting with Ariadne
-ariadne = ["dep:ariadne"]
+
 
 [[example]]
 name = "args_showcase"
-required-features = ["ariadne"]
+
 
 [lints]
 workspace = true

@@ -11,7 +11,7 @@ use facet_reflect::{Partial, ReflectError};
 use crate::{
     config_format::{ConfigFormat, ConfigFormatError, FormatRegistry},
     config_value::ConfigValue,
-    env::{EnvConfig, EnvSource, StdEnv, parse_env_with_source},
+    env::{EnvConfig, EnvSource, StdEnv},
     help::HelpConfig,
     provenance::{ConfigResult, FilePathStatus, FileResolution, Provenance},
     schema::{Schema, SchemaError},
