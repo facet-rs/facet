@@ -184,6 +184,19 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
             (None, None)
         };
 
+    // Check if enum has any generics at all
+    let has_any_generics = !pe.container.bgp.params.is_empty();
+
+    // Check if enum has type or const generics (not just lifetimes)
+    // This affects whether we can use VTableIndirect for auto-detection
+    let has_type_or_const_generics = pe.container.bgp.params.iter().any(|p| {
+        matches!(
+            p.param,
+            facet_macro_parse::GenericParamName::Type(_)
+                | facet_macro_parse::GenericParamName::Const(_)
+        )
+    });
+
     let vtable_code = gen_vtable(
         &facet_crate,
         &type_name_fn,
@@ -194,25 +207,20 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
         false, // enums don't need inherent borrow_inner (not transparent)
         try_from_fn_direct.as_ref(),
         try_from_fn_indirect.as_ref(),
+        has_type_or_const_generics,
+        has_any_generics,
     );
     // Note: vtable_code already contains &const { ... } for the VTableDirect,
     // no need for an extra const { } wrapper around VTableErased
     let vtable_init = vtable_code;
 
     // Generate TypeOps for drop/default/clone operations
-    // Check if enum has type or const generics (not just lifetimes)
-    let has_type_or_const_generics = pe.container.bgp.params.iter().any(|p| {
-        matches!(
-            p.param,
-            facet_macro_parse::GenericParamName::Type(_)
-                | facet_macro_parse::GenericParamName::Const(_)
-        )
-    });
     let type_ops_init = gen_type_ops(
         &facet_crate,
         &trait_sources,
         &enum_type_for_vtable,
         has_type_or_const_generics,
+        has_any_generics,
         truthy_attr.as_ref(),
     );
 
@@ -271,7 +279,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
             // These attributes are handled specially and not emitted to runtime:
             // - crate: sets the facet crate path
             // - traits: compile-time directive for vtable generation
-            // - auto_traits: compile-time directive for vtable generation
+            // - auto_traits: deprecated, now the default (kept for backward compat)
             // - where: compile-time directive for custom generic bounds
             if attr.is_builtin() {
                 let key = attr.key_str();
@@ -279,7 +287,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                     key.as_str(),
                     "crate"
                         | "traits"
-                        | "auto_traits"
+                        | "auto_traits" // deprecated but still recognized
                         | "proxy"
                         | "truthy"
                         | "skip_all_unless_truthy"

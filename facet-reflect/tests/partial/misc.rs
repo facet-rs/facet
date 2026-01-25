@@ -672,7 +672,6 @@ fn clone_into() -> Result<(), IPanic> {
     static CLONES: AtomicU64 = AtomicU64::new(0);
 
     #[derive(Facet)]
-    #[facet(auto_traits)]
     struct Foo;
 
     impl Clone for Foo {
@@ -958,7 +957,6 @@ fn struct_field_set_twice() -> Result<(), IPanic> {
 #[test]
 fn set_default() -> Result<(), IPanic> {
     #[derive(Facet, Debug, PartialEq, Default)]
-    #[facet(auto_traits)]
     struct Sample {
         x: u32,
         y: String,
@@ -997,7 +995,6 @@ fn set_default_drops_previous() -> Result<(), IPanic> {
     static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
 
     #[derive(Facet, Debug)]
-    #[facet(auto_traits)]
     struct DropTracker {
         id: u64,
     }

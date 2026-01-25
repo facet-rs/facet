@@ -171,8 +171,8 @@ where
     let mut facts: BTreeSet<Fact> = BTreeSet::new();
     let shape = T::SHAPE;
 
-    // For VTableIndirect (auto_traits), the function pointers exist but may return None
-    // at runtime. We need to actually try calling them to know if the trait is supported.
+    // With auto trait detection, the optional function pointers may be None when the trait
+    // is not implemented. We need to actually try calling them to know if the trait is supported.
     let ptr1 = PtrConst::new(core::ptr::from_ref(val1));
     let ptr2 = PtrConst::new(core::ptr::from_ref(val2));
 
@@ -910,7 +910,6 @@ fn test_vecs() {
 fn test_custom_structs() {
     // Struct with no trait implementations
     #[derive(Facet)]
-    #[facet(auto_traits)]
     struct StructNoTraits {
         value: i32,
     }
@@ -922,7 +921,6 @@ fn test_custom_structs() {
 
     // Struct with Debug only
     #[derive(Facet, Debug)]
-    #[facet(auto_traits)]
     struct StructDebug {
         value: i32,
     }
@@ -934,7 +932,6 @@ fn test_custom_structs() {
 
     // Struct with Debug and PartialEq
     #[derive(Facet, Debug, PartialEq)]
-    #[facet(auto_traits)]
     struct StructDebugEq {
         value: i32,
     }
@@ -946,7 +943,6 @@ fn test_custom_structs() {
 
     // Struct with all traits
     #[derive(Facet, Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
-    #[facet(auto_traits)]
     struct StructAll {
         value: i32,
     }
@@ -986,7 +982,6 @@ fn test_custom_structs() {
 fn test_tuple_structs() {
     // Tuple struct with no trait implementations
     #[derive(Facet)]
-    #[facet(auto_traits)]
     #[allow(dead_code)]
     struct TupleNoTraits(i32, String);
     check_facts(
@@ -997,7 +992,6 @@ fn test_tuple_structs() {
 
     // Tuple struct with Debug only
     #[derive(Facet, Debug)]
-    #[facet(auto_traits)]
     #[allow(dead_code)]
     struct TupleDebug(i32, String);
     check_facts(
@@ -1008,7 +1002,6 @@ fn test_tuple_structs() {
 
     // Tuple struct with EQ only
     #[derive(Facet, PartialEq)]
-    #[facet(auto_traits)]
     struct TupleEq(i32, String);
     check_facts(
         &TupleEq(42, "Hello".to_string()),
@@ -1018,7 +1011,6 @@ fn test_tuple_structs() {
 
     // Tuple struct with all traits
     #[derive(Facet, Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
-    #[facet(auto_traits)]
     struct TupleAll(i32, String);
     check_facts(
         &TupleAll(42, "Hello".to_string()),
@@ -1035,7 +1027,6 @@ fn test_tuple_structs() {
 #[test]
 fn test_enums() {
     #[derive(Facet, Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
-    #[facet(auto_traits)]
     #[repr(u8)]
     enum TestEnum {
         Variant1,
@@ -1087,7 +1078,6 @@ fn test_enums() {
 #[test]
 fn test_weird_cmp() {
     #[derive(Facet)]
-    #[facet(auto_traits)]
     struct WeirdCmp;
 
     impl PartialEq for WeirdCmp {

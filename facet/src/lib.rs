@@ -310,7 +310,7 @@ pub mod builtin {
             /// ```
             RecursiveType,
 
-            // Note: `traits(...)`, `auto_traits`, and `bound` are compile-time-only directives
+            // Note: `traits(...)` and `bound` are compile-time-only directives
             // processed by the derive macro. They are not stored as runtime attributes.
             // See DeclaredTraits in facet-macros-impl/src/parsed.rs for their handling.
 

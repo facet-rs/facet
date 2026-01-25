@@ -618,14 +618,9 @@ pub struct PAttrs {
     pub errors: Vec<CompileError>,
 
     /// Explicitly declared traits via `#[facet(traits(...))]`
-    /// When present, we skip all `impls!` checks and only generate vtable
-    /// entries for the declared traits.
+    /// When present, we skip specialization-based detection and only generate
+    /// vtable entries for the declared traits.
     pub declared_traits: Option<DeclaredTraits>,
-
-    /// Whether `#[facet(auto_traits)]` is present
-    /// When true, we use the old specialization-based detection.
-    /// When false (and no declared_traits), we generate an empty vtable.
-    pub auto_traits: bool,
 
     /// Custom where clause bounds from `#[facet(bound = "...")]`
     /// These are added to the generated Facet impl's where clause
@@ -713,9 +708,8 @@ impl PAttrs {
             }
         }
 
-        // Extract rename, rename_all, crate, traits, auto_traits, and bound from parsed attrs
+        // Extract rename, rename_all, crate, traits, and bound from parsed attrs
         let mut declared_traits: Option<DeclaredTraits> = None;
-        let mut auto_traits = false;
         let mut custom_bounds: Vec<TokenStream> = Vec::new();
 
         for attr in &facet_attrs {
@@ -752,10 +746,6 @@ impl PAttrs {
                         declared_traits =
                             Some(DeclaredTraits::parse_from_tokens(&attr.args, &mut errors));
                     }
-                    "auto_traits" => {
-                        // #[facet(auto_traits)] enables specialization-based detection
-                        auto_traits = true;
-                    }
                     "where" => {
                         // #[facet(where T: Clone + Send)]
                         // Parse the args directly as tokens (no string literal needed)
@@ -776,22 +766,6 @@ impl PAttrs {
             }
         }
 
-        // Validate: traits(...) and auto_traits are mutually exclusive
-        if declared_traits.is_some()
-            && auto_traits
-            && let Some(span) = facet_attrs
-                .iter()
-                .find(|a| a.is_builtin() && a.key_str() == "auto_traits")
-                .map(|a| a.key.span())
-        {
-            errors.push(CompileError {
-                message: "cannot use both #[facet(traits(...))] and #[facet(auto_traits)] \
-                              on the same type"
-                    .to_string(),
-                span,
-            });
-        }
-
         Self {
             doc: doc_lines,
             facet: facet_attrs,
@@ -801,7 +775,6 @@ impl PAttrs {
             crate_path,
             errors,
             declared_traits,
-            auto_traits,
             custom_bounds,
         }
     }
