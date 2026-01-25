@@ -12,6 +12,7 @@ pub(crate) mod completions;
 pub(crate) mod config_format;
 pub(crate) mod config_value;
 pub(crate) mod config_value_parser;
+pub(crate) mod driver;
 pub(crate) mod dump;
 pub(crate) mod env;
 pub(crate) mod error;
