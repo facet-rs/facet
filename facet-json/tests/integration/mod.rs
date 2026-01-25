@@ -10,6 +10,7 @@ mod issue_1896;
 mod issue_1900;
 mod issue_1904;
 mod jit_deserialize;
+mod nan_infinity;
 mod nested_flatten_map;
 mod opaque_proxy_enum;
 mod opaque_proxy_struct;
