@@ -95,7 +95,7 @@ impl<E: EnvSource> ConfigBuilder<E> {
     ///
     /// This parses all configured layers and merges them in priority order:
     /// defaults < file < env < cli
-    pub fn build_value(self) -> Result<ConfigValue, LayeredConfigError> {
+    pub fn build_value(self) -> Result<ConfigValue, BuilderError> {
         let result = self.build_traced()?;
         Ok(result.value)
     }
@@ -104,7 +104,7 @@ impl<E: EnvSource> ConfigBuilder<E> {
     ///
     /// Returns a [`ConfigResult`] containing the merged value, provenance map,
     /// and override records.
-    pub fn build_traced(self) -> Result<ConfigResult<ConfigValue>, LayeredConfigError> {
+    pub fn build_traced(self) -> Result<ConfigResult<ConfigValue>, BuilderError> {
         let mut layers: Vec<ConfigValue> = Vec::new();
         let mut all_overrides: Vec<Override> = Vec::new();
         let mut file_resolution = FileResolution::new();
@@ -149,7 +149,7 @@ impl<E: EnvSource> ConfigBuilder<E> {
     /// Load and parse the config file if specified.
     fn load_config_file(
         file_config: &FileConfig,
-    ) -> Result<(Option<ConfigValue>, FileResolution), LayeredConfigError> {
+    ) -> Result<(Option<ConfigValue>, FileResolution), BuilderError> {
         let mut resolution = FileResolution::new();
 
         // Check if explicit path was provided
@@ -158,7 +158,7 @@ impl<E: EnvSource> ConfigBuilder<E> {
             resolution.add_explicit(explicit.clone(), exists);
 
             if !exists {
-                return Err(LayeredConfigError::FileNotFound {
+                return Err(BuilderError::FileNotFound {
                     path: explicit.clone(),
                     resolution: resolution.clone(),
                 });
@@ -169,12 +169,12 @@ impl<E: EnvSource> ConfigBuilder<E> {
 
             // Read and parse the explicit file
             let contents = std::fs::read_to_string(explicit.as_str())
-                .map_err(|e| LayeredConfigError::FileRead(explicit.clone(), e.to_string()))?;
+                .map_err(|e| BuilderError::FileRead(explicit.clone(), e.to_string()))?;
 
             let value = file_config
                 .registry
                 .parse_file(explicit, &contents)
-                .map_err(|e| LayeredConfigError::FileParse(explicit.clone(), e))?;
+                .map_err(|e| BuilderError::FileParse(explicit.clone(), e))?;
 
             return Ok((Some(value), resolution));
         }
@@ -206,12 +206,12 @@ impl<E: EnvSource> ConfigBuilder<E> {
 
         // Read and parse the picked file
         let contents = std::fs::read_to_string(path.as_str())
-            .map_err(|e| LayeredConfigError::FileRead(path.clone(), e.to_string()))?;
+            .map_err(|e| BuilderError::FileRead(path.clone(), e.to_string()))?;
 
         let value = file_config
             .registry
             .parse_file(&path, &contents)
-            .map_err(|e| LayeredConfigError::FileParse(path, e))?;
+            .map_err(|e| BuilderError::FileParse(path, e))?;
 
         Ok((Some(value), resolution))
     }
@@ -223,9 +223,7 @@ impl<E: EnvSource> ConfigBuilder<E> {
     /// - Short flags: `-v` (bool true), `-n value`
     /// - Dotted paths: `--config.server.port 8080`
     /// - Boolean flags: `--flag` sets to true
-    fn parse_cli_overrides(
-        cli_config: &CliConfig,
-    ) -> Result<Option<ConfigValue>, LayeredConfigError> {
+    fn parse_cli_overrides(cli_config: &CliConfig) -> Result<Option<ConfigValue>, BuilderError> {
         use crate::config_value::Sourced;
         use heck::ToSnakeCase;
         use indexmap::IndexMap;
@@ -248,7 +246,7 @@ impl<E: EnvSource> ConfigBuilder<E> {
                     // Get the value from the next argument
                     i += 1;
                     if i >= cli_config.args.len() {
-                        return Err(LayeredConfigError::CliParse(format!(
+                        return Err(BuilderError::CliParse(format!(
                             "Missing value for --{}",
                             flag
                         )));
@@ -650,25 +648,25 @@ pub enum BuilderError {
 
     /// Allocation failed while constructing the builder.
     Alloc(#[facet(opaque)] ReflectError),
-}
 
-/// Errors that can occur during layered config parsing.
-#[derive(Debug)]
-pub enum LayeredConfigError {
-    /// Config file not found at the specified path.
+    /// Config file not found at the specified path: {path}
     FileNotFound {
         /// The path that was explicitly requested.
         path: Utf8PathBuf,
         /// File resolution information showing what was tried.
         resolution: FileResolution,
     },
-    /// Error reading config file.
+
+    /// Error reading config file: {0}: {1}
     FileRead(Utf8PathBuf, String),
-    /// Error parsing config file.
+
+    /// Error parsing config file: {0}: {1}
     FileParse(Utf8PathBuf, ConfigFormatError),
-    /// Error parsing CLI arguments.
+
+    /// Error parsing CLI arguments: {0}
     CliParse(String),
-    /// Unknown configuration key (in strict mode).
+
+    /// Unknown configuration key (in strict mode): {key} (source: {source}, suggestion: {suggestion:?})
     UnknownKey {
         /// The unknown key that was found.
         key: String,
@@ -677,60 +675,10 @@ pub enum LayeredConfigError {
         /// A suggested correction, if one was found.
         suggestion: Option<String>,
     },
-    /// Missing required configuration value.
+
+    /// Missing required configuration value: {0}
     MissingRequired(String),
 }
-
-impl core::fmt::Display for LayeredConfigError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::FileNotFound { path, resolution } => {
-                writeln!(f, "config file not found: {path}")?;
-                writeln!(f)?;
-                writeln!(f, "File resolution:")?;
-
-                if resolution.had_explicit {
-                    writeln!(f, "  Explicit --config flag was used")?;
-                } else {
-                    writeln!(f, "  No --config flag provided, checked default paths:")?;
-                }
-
-                for path_info in &resolution.paths {
-                    let status_str = match path_info.status {
-                        FilePathStatus::Picked => "(picked)",
-                        FilePathStatus::NotTried => "(not tried)",
-                        FilePathStatus::Absent => "(absent)",
-                    };
-                    let explicit_str = if path_info.explicit {
-                        " [via --config]"
-                    } else {
-                        ""
-                    };
-                    writeln!(f, "    {} {}{}", status_str, path_info.path, explicit_str)?;
-                }
-
-                Ok(())
-            }
-            Self::FileRead(path, err) => write!(f, "error reading {path}: {err}"),
-            Self::FileParse(path, err) => write!(f, "error parsing {path}: {err}"),
-            Self::CliParse(msg) => write!(f, "CLI parse error: {msg}"),
-            Self::UnknownKey {
-                key,
-                source,
-                suggestion,
-            } => {
-                write!(f, "unknown {source} key: {key}")?;
-                if let Some(sug) = suggestion {
-                    write!(f, " (did you mean {sug}?)")?;
-                }
-                Ok(())
-            }
-            Self::MissingRequired(key) => write!(f, "missing required configuration: {key}"),
-        }
-    }
-}
-
-impl core::error::Error for LayeredConfigError {}
 
 // ============================================================================
 // Tests
@@ -851,10 +799,7 @@ mod tests {
             .file(|f| f.path("/nonexistent/path.json"))
             .build_value();
 
-        assert!(matches!(
-            result,
-            Err(LayeredConfigError::FileNotFound { .. })
-        ));
+        assert!(matches!(result, Err(BuilderError::FileNotFound { .. })));
     }
 
     #[test]

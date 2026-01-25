@@ -303,7 +303,8 @@ impl<T> ConfigResult<T> {
 }
 
 /// Status of a config file path during resolution.
-#[derive(Debug, Clone)]
+#[derive(Facet, Debug, Clone)]
+#[repr(u8)]
 pub enum FilePathStatus {
     /// Path was picked and loaded successfully.
     Picked,
@@ -314,21 +315,24 @@ pub enum FilePathStatus {
 }
 
 /// Information about config file path resolution.
-#[derive(Debug, Clone)]
+#[derive(Facet, Debug, Clone)]
 pub struct FilePathResolution {
     /// The path that was checked.
     pub path: Utf8PathBuf,
+
     /// The status of this path.
     pub status: FilePathStatus,
+
     /// Whether this path came from explicit --config flag.
     pub explicit: bool,
 }
 
 /// Result of config file resolution, tracking all paths that were considered.
-#[derive(Debug, Clone, Default)]
+#[derive(Facet, Debug, Clone, Default)]
 pub struct FileResolution {
     /// All paths that were considered, in order.
     pub paths: Vec<FilePathResolution>,
+
     /// Whether an explicit --config path was provided.
     pub had_explicit: bool,
 }

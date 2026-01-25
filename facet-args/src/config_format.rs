@@ -18,15 +18,17 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use camino::Utf8Path;
+use facet::Facet;
 
 use crate::config_value::ConfigValue;
 use crate::provenance::ConfigFile;
 
 /// Error returned when parsing a config file fails.
-#[derive(Debug)]
+#[derive(Facet, Debug)]
 pub struct ConfigFormatError {
     /// Human-readable error message.
     pub message: String,
+
     /// Byte offset in the source where the error occurred, if known.
     pub offset: Option<usize>,
 }
