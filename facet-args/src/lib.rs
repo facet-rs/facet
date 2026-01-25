@@ -2,6 +2,7 @@
 #![warn(clippy::std_instead_of_core)]
 #![warn(clippy::std_instead_of_alloc)]
 #![deny(unsafe_code)]
+#![allow(macro_expanded_macro_exports_accessed_by_absolute_paths)]
 #![doc = include_str!("../README.md")]
 
 extern crate alloc;
@@ -39,7 +40,17 @@ use owo_colors::OwoColorize;
 // ==========================================
 
 pub use builder::builder;
+pub use completions::{Shell, generate_completions, generate_completions_for_shape};
 pub use error::{ArgsErrorKind, ArgsErrorWithInput};
+pub use help::{HelpConfig, generate_help, generate_help_for_shape};
+pub use parser::from_std_args;
+
+#[deprecated(note = "Use builder() instead; this entry point will be removed.")]
+pub fn from_slice<T: Facet<'static>>(
+    _args: &[&str],
+) -> Result<T, crate::error::ArgsErrorWithInput> {
+    panic!("from_slice is deprecated; use builder() instead")
+}
 
 // Args extension attributes for use with #[facet(args::attr)] syntax.
 //

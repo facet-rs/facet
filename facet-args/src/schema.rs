@@ -1,4 +1,4 @@
-use std::hash::DefaultHasher;
+use std::hash::RandomState;
 
 use facet::Facet;
 use facet_core::Shape;
@@ -93,10 +93,10 @@ pub enum ValueSchema {
 
 pub struct ArgLevelSchema {
     /// Any valid arguments at this level, `--verbose` etc.
-    args: IndexMap<String, ArgSchema, DefaultHasher>,
+    args: IndexMap<String, ArgSchema, RandomState>,
 
     /// Any subcommands at this level
-    subcommands: IndexMap<String, Subcommand, DefaultHasher>,
+    subcommands: IndexMap<String, Subcommand, RandomState>,
 }
 
 pub struct Subcommand {
@@ -143,7 +143,7 @@ pub enum ArgKind {
 pub struct ConfigStructSchema {
     /// Shape of the struct.
     shape: &'static Shape,
-    fields: IndexMap<String, ConfigFieldSchema, DefaultHasher>,
+    fields: IndexMap<String, ConfigFieldSchema, RandomState>,
 }
 
 pub struct ConfigFieldSchema {
@@ -242,11 +242,11 @@ impl ConfigStructSchema {
     pub fn get_by_path(&self, path: &Path) -> Option<&ConfigValueSchema> {
         let mut iter = path.iter();
         let first = iter.next()?;
-        let mut current = self.fields.get(first)?.value.as_ref();
+        let mut current = &self.fields.get(first)?.value;
 
         for segment in iter {
             current = match current {
-                ConfigValueSchema::Struct(s) => s.fields.get(segment)?.value.as_ref(),
+                ConfigValueSchema::Struct(s) => &s.fields.get(segment)?.value,
                 ConfigValueSchema::Vec(v) => {
                     segment.parse::<usize>().ok()?;
                     v.element.as_ref()
@@ -283,6 +283,7 @@ impl Schema {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate as args;
     use facet_pretty::{PathSegment, format_shape_with_spans};
 
     #[test]

@@ -526,8 +526,24 @@ pub enum BuilderError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate as args;
+    use facet::Facet;
     use std::io::Write;
     use tempfile::NamedTempFile;
+
+    #[derive(Facet)]
+    struct TestConfig {
+        #[facet(args::config)]
+        config: TestConfigLayer,
+    }
+
+    #[derive(Facet)]
+    struct TestConfigLayer {
+        #[facet(args::named)]
+        port: u16,
+        #[facet(args::named)]
+        host: String,
+    }
 
     #[test]
     fn test_builder_env_only() {
@@ -538,7 +554,7 @@ mod tests {
             ("TEST_BUILDER__HOST", "localhost"),
         ]);
 
-        let result = builder()
+        let result = builder::<TestConfig>()
             .unwrap()
             .with_env_source(env)
             .env(|env| env.prefix("TEST_BUILDER"))
@@ -568,7 +584,7 @@ mod tests {
         writeln!(file, r#"{{"port": 9000, "host": "filehost"}}"#).unwrap();
         let path = Utf8PathBuf::from_path_buf(file.path().to_path_buf()).unwrap();
 
-        let result = builder()
+        let result = builder::<TestConfig>()
             .unwrap()
             .file(|f| f.path(path))
             .build_traced()
