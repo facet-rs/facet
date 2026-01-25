@@ -2,7 +2,7 @@ use crate::{
     arg::ArgType,
     error::{ArgsError, ArgsErrorKind, ArgsErrorWithInput, get_variants_from_shape},
     help::{HelpConfig, generate_help_for_shape},
-    is_counted_field, is_supported_counted_type,
+    reflection::{is_counted_field, is_supported_counted_type},
     span::Span,
 };
 use alloc::collections::BTreeMap;
@@ -16,6 +16,7 @@ fn is_help_flag(arg: &str) -> bool {
 }
 
 /// Parse command line arguments provided by std::env::args() into a Facet-compatible type
+#[deprecated(note = "we should only have the builder interface that always does layered")]
 pub fn from_std_args<T: Facet<'static>>() -> Result<T, ArgsErrorWithInput> {
     let args = std::env::args().skip(1).collect::<Vec<String>>();
     let args_str: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
@@ -23,6 +24,7 @@ pub fn from_std_args<T: Facet<'static>>() -> Result<T, ArgsErrorWithInput> {
 }
 
 /// Parse command line arguments into a Facet-compatible type
+#[deprecated(note = "we should only have the builder interface that always does layered")]
 pub fn from_slice<'input, T: Facet<'static>>(
     args: &'input [&'input str],
 ) -> Result<T, ArgsErrorWithInput> {
@@ -78,6 +80,9 @@ struct Context<'input> {
 }
 
 impl<'input> Context<'input> {
+    #[deprecated(
+        note = "To avoid unsafe code here, we should allocate the shape in a generic function and simply take a Partial here"
+    )]
     fn new(args: &'input [&'input str], shape: &'static Shape) -> Self {
         let mut arg_indices = vec![];
         let mut flattened_args = String::new();
@@ -126,6 +131,7 @@ impl<'input> Context<'input> {
     }
 
     fn try_handle_counted_long_flag(&mut self, field: &'static Field, field_index: usize) -> bool {
+        // TODO: we should validate structs and crash way ahead of time if there's something invalid in there.
         if is_counted_field(field) && is_supported_counted_type(field.shape()) {
             self.increment_counted(field_index);
             self.index += 1;
