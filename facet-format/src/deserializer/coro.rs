@@ -10,7 +10,6 @@
 
 extern crate alloc;
 
-use alloc::borrow::Cow;
 use alloc::format;
 
 use corosensei::stack::DefaultStack;
@@ -34,12 +33,6 @@ pub(crate) enum DeserializeRequest<'input, const BORROW: bool> {
 
     /// Need to call `deserialize_into(wip)` recursively.
     DeserializeInto { wip: Partial<'input, BORROW> },
-
-    /// Need to call `set_string_value(wip, s)`.
-    SetStringValue {
-        wip: Partial<'input, BORROW>,
-        s: Cow<'input, str>,
-    },
 
     /// Get the current span for error reporting.
     GetSpan,
@@ -156,17 +149,6 @@ pub(crate) fn request_deserialize_into<'input, const BORROW: bool>(
         .into_wip()
 }
 
-/// Helper to set a string value.
-pub(crate) fn request_set_string<'input, const BORROW: bool>(
-    yielder: &DeserializeYielder<'input, BORROW>,
-    wip: Partial<'input, BORROW>,
-    s: Cow<'input, str>,
-) -> Result<Partial<'input, BORROW>, InnerDeserializeError> {
-    yielder
-        .suspend(DeserializeRequest::SetStringValue { wip, s })
-        .into_wip()
-}
-
 /// Helper to get the current span for error reporting.
 pub(crate) fn request_span<'input, const BORROW: bool>(
     yielder: &DeserializeYielder<'input, BORROW>,
@@ -227,12 +209,6 @@ where
                         },
                         DeserializeRequest::DeserializeInto { wip } => {
                             match deser.deserialize_into(wip) {
-                                Ok(wip) => DeserializeResponse::Wip(wip),
-                                Err(e) => DeserializeResponse::Error(e.into_inner()),
-                            }
-                        }
-                        DeserializeRequest::SetStringValue { wip, s } => {
-                            match deser.set_string_value(wip, s) {
                                 Ok(wip) => DeserializeResponse::Wip(wip),
                                 Err(e) => DeserializeResponse::Error(e.into_inner()),
                             }
