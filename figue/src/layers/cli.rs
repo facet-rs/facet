@@ -881,21 +881,21 @@ impl<'a> ParseContext<'a> {
         let mut unused_keys = Vec::new();
         let mut diagnostics = self.diagnostics;
 
-        if let Some(builder) = self.config_builder {
-            if let Some(config_schema) = self.schema.config() {
-                let config_field_name = config_schema.field_name();
-                let builder_output = builder.into_output(None);
+        if let Some(builder) = self.config_builder
+            && let Some(config_schema) = self.schema.config()
+        {
+            let config_field_name = config_schema.field_name();
+            let builder_output = builder.into_output(None);
 
-                // Merge builder's value into result under the config field name
-                if let Some(config_value) = builder_output.value {
-                    if let Some(name) = config_field_name {
-                        self.result.insert(name.to_string(), config_value);
-                    }
-                }
-
-                unused_keys.extend(builder_output.unused_keys);
-                diagnostics.extend(builder_output.diagnostics);
+            // Merge builder's value into result under the config field name
+            if let Some(config_value) = builder_output.value
+                && let Some(name) = config_field_name
+            {
+                self.result.insert(name.to_string(), config_value);
             }
+
+            unused_keys.extend(builder_output.unused_keys);
+            diagnostics.extend(builder_output.diagnostics);
         }
 
         let value = if self.result.is_empty() {
@@ -916,6 +916,7 @@ impl<'a> ParseContext<'a> {
             value,
             unused_keys,
             diagnostics,
+            source_text: None,
         }
     }
 }

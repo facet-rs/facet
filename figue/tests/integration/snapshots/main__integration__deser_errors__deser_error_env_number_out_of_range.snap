@@ -1,0 +1,11 @@
+---
+source: crates/figue/tests/integration/deser_errors.rs
+expression: "$crate :: common :: strip_ansi(& report.to_string())"
+---
+Error: failed to parse "99999" as u16
+   ╭─[ <env>:1:12 ]
+   │
+ 1 │ APP__PORT="99999"
+   │            ──┬──  
+   │              ╰──── failed to parse "99999" as u16
+───╯

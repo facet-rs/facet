@@ -6,7 +6,8 @@
 //! to each value and maintain a registry that maps virtual spans back to their
 //! real source locations.
 
-use crate::config_value::ConfigValue;
+use crate::config_value::{ConfigValue, ConfigValueVisitorMut};
+use crate::path::Path;
 use crate::provenance::Provenance;
 use facet_reflect::Span;
 
@@ -88,123 +89,28 @@ impl SpanRegistry {
     }
 }
 
-/// Walk a ConfigValue tree and assign virtual spans, returning a modified tree
-/// and a registry for looking up real spans.
-pub fn assign_virtual_spans(value: &ConfigValue) -> (ConfigValue, SpanRegistry) {
-    let mut registry = SpanRegistry::new();
-    let new_value = assign_virtual_spans_recursive(value, &mut registry);
-    (new_value, registry)
+/// Walk a ConfigValue tree and assign virtual spans, mutating the tree in place.
+/// Returns the registry for looking up real spans.
+pub fn assign_virtual_spans(value: &mut ConfigValue) -> SpanRegistry {
+    let mut visitor = VirtualSpanVisitor {
+        registry: SpanRegistry::new(),
+    };
+    let mut path = Path::new();
+    value.visit_mut(&mut visitor, &mut path);
+    visitor.registry
 }
 
-fn assign_virtual_spans_recursive(value: &ConfigValue, registry: &mut SpanRegistry) -> ConfigValue {
-    match value {
-        ConfigValue::Null(sourced) => {
-            let virtual_span = sourced.span.map(|real_span| {
-                let prov = sourced.provenance.clone().unwrap_or(Provenance::Default);
-                registry.register(real_span, prov)
-            });
-            ConfigValue::Null(crate::config_value::Sourced {
-                value: sourced.value,
-                span: virtual_span,
-                provenance: sourced.provenance.clone(),
-            })
-        }
-        ConfigValue::Bool(sourced) => {
-            let virtual_span = sourced.span.map(|real_span| {
-                let prov = sourced.provenance.clone().unwrap_or(Provenance::Default);
-                registry.register(real_span, prov)
-            });
-            ConfigValue::Bool(crate::config_value::Sourced {
-                value: sourced.value,
-                span: virtual_span,
-                provenance: sourced.provenance.clone(),
-            })
-        }
-        ConfigValue::Integer(sourced) => {
-            let virtual_span = sourced.span.map(|real_span| {
-                let prov = sourced.provenance.clone().unwrap_or(Provenance::Default);
-                registry.register(real_span, prov)
-            });
-            ConfigValue::Integer(crate::config_value::Sourced {
-                value: sourced.value,
-                span: virtual_span,
-                provenance: sourced.provenance.clone(),
-            })
-        }
-        ConfigValue::Float(sourced) => {
-            let virtual_span = sourced.span.map(|real_span| {
-                let prov = sourced.provenance.clone().unwrap_or(Provenance::Default);
-                registry.register(real_span, prov)
-            });
-            ConfigValue::Float(crate::config_value::Sourced {
-                value: sourced.value,
-                span: virtual_span,
-                provenance: sourced.provenance.clone(),
-            })
-        }
-        ConfigValue::String(sourced) => {
-            let virtual_span = sourced.span.map(|real_span| {
-                let prov = sourced.provenance.clone().unwrap_or(Provenance::Default);
-                registry.register(real_span, prov)
-            });
-            ConfigValue::String(crate::config_value::Sourced {
-                value: sourced.value.clone(),
-                span: virtual_span,
-                provenance: sourced.provenance.clone(),
-            })
-        }
-        ConfigValue::Array(sourced) => {
-            let virtual_span = sourced.span.map(|real_span| {
-                let prov = sourced.provenance.clone().unwrap_or(Provenance::Default);
-                registry.register(real_span, prov)
-            });
-            let new_items: Vec<ConfigValue> = sourced
-                .value
-                .iter()
-                .map(|item| assign_virtual_spans_recursive(item, registry))
-                .collect();
-            ConfigValue::Array(crate::config_value::Sourced {
-                value: new_items,
-                span: virtual_span,
-                provenance: sourced.provenance.clone(),
-            })
-        }
-        ConfigValue::Object(sourced) => {
-            let virtual_span = sourced.span.map(|real_span| {
-                let prov = sourced.provenance.clone().unwrap_or(Provenance::Default);
-                registry.register(real_span, prov)
-            });
-            let new_map: indexmap::IndexMap<String, ConfigValue, std::hash::RandomState> = sourced
-                .value
-                .iter()
-                .map(|(k, v)| (k.clone(), assign_virtual_spans_recursive(v, registry)))
-                .collect();
-            ConfigValue::Object(crate::config_value::Sourced {
-                value: new_map,
-                span: virtual_span,
-                provenance: sourced.provenance.clone(),
-            })
-        }
-        ConfigValue::Enum(sourced) => {
-            let virtual_span = sourced.span.map(|real_span| {
-                let prov = sourced.provenance.clone().unwrap_or(Provenance::Default);
-                registry.register(real_span, prov)
-            });
-            let new_fields: indexmap::IndexMap<String, ConfigValue, std::hash::RandomState> =
-                sourced
-                    .value
-                    .fields
-                    .iter()
-                    .map(|(k, v)| (k.clone(), assign_virtual_spans_recursive(v, registry)))
-                    .collect();
-            ConfigValue::Enum(crate::config_value::Sourced {
-                value: crate::config_value::EnumValue {
-                    variant: sourced.value.variant.clone(),
-                    fields: new_fields,
-                },
-                span: virtual_span,
-                provenance: sourced.provenance.clone(),
-            })
+/// Visitor that assigns virtual spans to all values with real spans.
+struct VirtualSpanVisitor {
+    registry: SpanRegistry,
+}
+
+impl ConfigValueVisitorMut for VirtualSpanVisitor {
+    fn visit_value(&mut self, _path: &Path, value: &mut ConfigValue) {
+        if let Some(real_span) = value.span() {
+            let prov = value.provenance().cloned().unwrap_or(Provenance::Default);
+            let virtual_span = self.registry.register(real_span, prov);
+            *value.span_mut() = Some(virtual_span);
         }
     }
 }

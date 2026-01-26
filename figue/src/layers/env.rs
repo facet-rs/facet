@@ -37,9 +37,12 @@
 use std::string::{String, ToString};
 use std::vec::Vec;
 
+use facet_reflect::Span;
 use indexmap::IndexMap;
 
+use crate::config_value::{ConfigValue, ConfigValueVisitorMut};
 use crate::driver::LayerOutput;
+use crate::path::Path;
 use crate::provenance::Provenance;
 use crate::schema::{ConfigStructSchema, ConfigValueSchema, Schema};
 use crate::value_builder::{LeafValue, ValueBuilder};
@@ -276,7 +279,17 @@ pub fn parse_env(schema: &Schema, env_config: &EnvConfig, source: &dyn EnvSource
     // Second pass: check env aliases (lower priority than prefixed vars)
     check_env_aliases(&mut builder, config_schema, source, &[], &prefixed_paths);
 
-    builder.into_output(config_schema.field_name())
+    let mut output = builder.into_output(config_schema.field_name());
+
+    // Assign spans to env-sourced values and build the virtual source document
+    if let Some(ref mut value) = output.value {
+        let source_text = assign_env_spans(value);
+        if !source_text.is_empty() {
+            output.source_text = Some(source_text);
+        }
+    }
+
+    output
 }
 
 /// Recursively check env aliases for all fields in a config struct.
@@ -350,6 +363,7 @@ fn parse_env_no_config(env_config: &EnvConfig, source: &dyn EnvSource) -> LayerO
         value: Some(ConfigValue::Object(Sourced::new(IndexMap::default()))),
         unused_keys,
         diagnostics: Vec::new(),
+        source_text: None,
     }
 }
 
@@ -441,6 +455,75 @@ fn parse_comma_separated(input: &str) -> Vec<String> {
     }
 
     result
+}
+
+// ============================================================================
+// Virtual env document for span tracking
+// ============================================================================
+
+/// Result of assigning env spans to a ConfigValue tree.
+/// Assign spans to all env-sourced values in a ConfigValue tree.
+///
+/// This walks the tree, collects all unique env vars, builds a virtual document
+/// like:
+/// ```text
+/// REEF__PORT="8080"
+/// DATABASE_URL="postgres://localhost/db"
+/// ```
+///
+/// And updates each value's span to point to its position in this document.
+/// Returns the virtual document for error reporting.
+pub fn assign_env_spans(value: &mut ConfigValue) -> String {
+    let mut visitor = EnvSpanVisitor::new();
+    let mut path = Path::new();
+    value.visit_mut(&mut visitor, &mut path);
+    visitor.document
+}
+
+/// Visitor that assigns spans to env-sourced values.
+struct EnvSpanVisitor {
+    /// The virtual document being built.
+    document: String,
+    /// Map from var name to (offset, len) in the document.
+    var_spans: IndexMap<String, (usize, usize), std::hash::RandomState>,
+}
+
+impl EnvSpanVisitor {
+    fn new() -> Self {
+        Self {
+            document: String::new(),
+            var_spans: IndexMap::default(),
+        }
+    }
+
+    /// Ensure an env var is in the document and return its value span.
+    fn ensure_var(&mut self, var: &str, env_value: &str) -> Span {
+        if let Some(&(offset, len)) = self.var_spans.get(var) {
+            return Span::new(offset, len);
+        }
+
+        // Add to document: VAR="value"\n
+        // The span points to just the value part (inside quotes)
+        self.document.push_str(var);
+        self.document.push_str("=\"");
+        let value_offset = self.document.len();
+        self.document.push_str(env_value);
+        let value_len = env_value.len();
+        self.document.push_str("\"\n");
+
+        self.var_spans
+            .insert(var.to_string(), (value_offset, value_len));
+
+        Span::new(value_offset, value_len)
+    }
+}
+
+impl ConfigValueVisitorMut for EnvSpanVisitor {
+    fn visit_value(&mut self, _path: &Path, value: &mut ConfigValue) {
+        if let Some(Provenance::Env { var, value: env_value }) = value.provenance().cloned() {
+            *value.span_mut() = Some(self.ensure_var(&var, &env_value));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1638,5 +1721,102 @@ mod tests {
         let path = get_nested(&value, &["config", "storage", "Local", "path"])
             .expect("should have config.storage.Local.path");
         assert_eq!(get_string(path), Some("/data"));
+    }
+
+    // ========================================================================
+    // Tests: Virtual env document and span assignment
+    // ========================================================================
+
+    #[test]
+    fn test_env_spans_are_assigned() {
+        // Env vars should have spans pointing into a virtual document
+        let schema = Schema::from_shape(ArgsWithConfig::SHAPE).unwrap();
+        let env = MockEnv::from_pairs([("REEF__PORT", "8080"), ("REEF__HOST", "localhost")]);
+        let config = env_config("REEF");
+
+        let output = parse_env(&schema, &config, &env);
+
+        // Should have source_text set
+        assert!(
+            output.source_text.is_some(),
+            "source_text should be set when env vars are parsed"
+        );
+
+        let source_text = output.source_text.as_ref().unwrap();
+
+        // The source_text should contain both env vars
+        assert!(
+            source_text.contains("REEF__PORT=\"8080\""),
+            "source_text should contain REEF__PORT: {}",
+            source_text
+        );
+        assert!(
+            source_text.contains("REEF__HOST=\"localhost\""),
+            "source_text should contain REEF__HOST: {}",
+            source_text
+        );
+
+        // Check that spans are set on the values
+        let value = output.value.expect("should have value");
+        let port = get_nested(&value, &["config", "port"]).expect("config.port");
+
+        // The port value should have a span
+        assert!(port.span().is_some(), "port should have a span");
+
+        // The span should point to the value "8080" in the source_text
+        let span = port.span().unwrap();
+        let pointed_text = &source_text[span.offset..span.offset + span.len];
+        assert_eq!(
+            pointed_text, "8080",
+            "span should point to the value in source_text"
+        );
+    }
+
+    #[test]
+    fn test_env_spans_with_alias() {
+        // Env aliases should also get spans
+        let schema = Schema::from_shape(ArgsWithAliasConfig::SHAPE).unwrap();
+        let env = MockEnv::from_pairs([("DATABASE_URL", "postgres://localhost/db")]);
+        let config = env_config("REEF");
+
+        let output = parse_env(&schema, &config, &env);
+
+        assert!(
+            output.source_text.is_some(),
+            "source_text should be set for aliased env vars"
+        );
+
+        let source_text = output.source_text.as_ref().unwrap();
+        assert!(
+            source_text.contains("DATABASE_URL=\"postgres://localhost/db\""),
+            "source_text should contain DATABASE_URL: {}",
+            source_text
+        );
+
+        let value = output.value.expect("should have value");
+        let db_url = get_nested(&value, &["config", "database_url"]).expect("config.database_url");
+
+        let span = db_url.span().expect("db_url should have a span");
+        let pointed_text = &source_text[span.offset..span.offset + span.len];
+        assert_eq!(
+            pointed_text, "postgres://localhost/db",
+            "span should point to the value in source_text"
+        );
+    }
+
+    #[test]
+    fn test_env_spans_no_env_vars_no_source_text() {
+        // If no env vars are set, source_text should be None (or empty)
+        let schema = Schema::from_shape(ArgsWithConfig::SHAPE).unwrap();
+        let env = MockEnv::new();
+        let config = env_config("REEF");
+
+        let output = parse_env(&schema, &config, &env);
+
+        // No env vars means no source_text
+        assert!(
+            output.source_text.is_none(),
+            "source_text should be None when no env vars are parsed"
+        );
     }
 }
