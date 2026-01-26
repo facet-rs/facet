@@ -8,9 +8,7 @@ extern crate alloc;
 use alloc::{borrow::Cow, vec::Vec};
 
 use crate::error::{Asn1Error, Asn1ErrorKind};
-use facet_format::{
-    ContainerKind, FieldEvidence, FormatParser, ParseEvent, ProbeStream, ScalarValue,
-};
+use facet_format::{ContainerKind, FormatParser, ParseEvent, SavePoint, ScalarValue};
 
 // ASN.1 Universal Tags
 const TAG_BOOLEAN: u8 = 0x01;
@@ -456,10 +454,6 @@ impl<'de> Asn1Parser<'de> {
 
 impl<'de> FormatParser<'de> for Asn1Parser<'de> {
     type Error = Asn1Error;
-    type Probe<'a>
-        = Asn1Probe<'de>
-    where
-        Self: 'a;
 
     fn next_event(&mut self) -> Result<Option<ParseEvent<'de>>, Self::Error> {
         if let Some(event) = self.event_peek.take() {
@@ -489,10 +483,13 @@ impl<'de> FormatParser<'de> for Asn1Parser<'de> {
         Ok(())
     }
 
-    fn begin_probe(&mut self) -> Result<Self::Probe<'_>, Self::Error> {
-        // ASN.1 DER doesn't have field names in the encoding (they're defined by the schema)
-        // So probing returns an empty list - the deserializer will use positional matching
-        Ok(Asn1Probe::new())
+    fn save(&mut self) -> SavePoint {
+        // ASN.1 DER is positional - save/restore not meaningful
+        unimplemented!("save/restore not supported for ASN.1 (positional format)")
+    }
+
+    fn restore(&mut self, _save_point: SavePoint) {
+        unimplemented!("save/restore not supported for ASN.1 (positional format)")
     }
 
     fn is_self_describing(&self) -> bool {
@@ -523,30 +520,5 @@ impl<'de> FormatParser<'de> for Asn1Parser<'de> {
         if matches!(self.event_peek, Some(ParseEvent::StructStart(_))) {
             self.event_peek = None;
         }
-    }
-}
-
-/// Probe stream for ASN.1.
-///
-/// ASN.1 DER doesn't include field names in the encoding - they're defined by the schema.
-/// So probing always returns empty (positional matching is used).
-pub struct Asn1Probe<'de> {
-    _marker: core::marker::PhantomData<&'de ()>,
-}
-
-impl<'de> Asn1Probe<'de> {
-    const fn new() -> Self {
-        Self {
-            _marker: core::marker::PhantomData,
-        }
-    }
-}
-
-impl<'de> ProbeStream<'de> for Asn1Probe<'de> {
-    type Error = Asn1Error;
-
-    fn next(&mut self) -> Result<Option<FieldEvidence<'de>>, Self::Error> {
-        // ASN.1 uses positional fields, not named fields
-        Ok(None)
     }
 }

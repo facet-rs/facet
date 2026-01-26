@@ -1469,7 +1469,6 @@ dependencies = [
  "indoc",
  "itoa",
  "libtest-mimic",
- "log",
  "saphyr-parser",
  "zmij",
 ]

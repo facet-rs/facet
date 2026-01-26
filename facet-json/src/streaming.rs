@@ -13,8 +13,8 @@ use core::cell::RefCell;
 use corosensei::{Coroutine, CoroutineResult};
 use facet_core::Facet;
 use facet_format::{
-    ContainerKind, DeserializeError, FieldEvidence, FieldKey, FieldLocationHint,
-    FormatDeserializer, FormatParser, ParseEvent, ProbeStream, ScalarValue,
+    ContainerKind, DeserializeError, FieldKey, FieldLocationHint, FormatDeserializer, FormatParser,
+    ParseEvent, SavePoint, ScalarValue,
 };
 
 use crate::adapter::{SpannedAdapterToken, Token as AdapterToken, TokenSource};
@@ -231,6 +231,12 @@ pub struct StreamingJsonParser<A> {
     event_buffer: Vec<ParseEvent<'static>>,
     /// Index into event_buffer for replay
     buffer_idx: usize,
+    /// Counter for save points
+    save_counter: u64,
+    /// Events recorded since save() was called
+    recording: Option<Vec<ParseEvent<'static>>>,
+    /// Events to replay before producing new ones
+    replay_buffer: Vec<ParseEvent<'static>>,
 }
 
 #[derive(Debug, Clone)]
@@ -263,6 +269,9 @@ impl<A: TokenSource<'static>> StreamingJsonParser<A> {
             root_complete: false,
             event_buffer: Vec::new(),
             buffer_idx: 0,
+            save_counter: 0,
+            recording: None,
+            replay_buffer: Vec::new(),
         }
     }
 
@@ -548,181 +557,6 @@ impl<A: TokenSource<'static>> StreamingJsonParser<A> {
 
         Ok(())
     }
-
-    /// Build probe evidence by scanning ahead through the current object.
-    /// Buffers all events for later replay.
-    fn build_probe_buffered(&mut self) -> Result<Vec<FieldEvidence<'static>>, JsonError> {
-        // Save parser state
-        let saved_stack = self.stack.clone();
-        let saved_root_started = self.root_started;
-        let saved_root_complete = self.root_complete;
-        let saved_event_peek = self.event_peek.clone();
-
-        // Clear any previous buffer
-        self.event_buffer.clear();
-        self.buffer_idx = 0;
-
-        // Check if we've already peeked a StructStart
-        let already_inside_object = matches!(saved_event_peek, Some(ParseEvent::StructStart(_)));
-
-        if already_inside_object {
-            // Take the peeked StructStart and add it to buffer
-            // Don't restore it later since it's now in the buffer
-            if let Some(event) = self.event_peek.take() {
-                self.event_buffer.push(event);
-            }
-        } else {
-            // Expect an object start
-            let event = self.produce_event()?;
-            if let Some(e) = event.clone() {
-                self.event_buffer.push(e);
-            }
-            if !matches!(event, Some(ParseEvent::StructStart(_))) {
-                // Not an object, return empty evidence - but restore state first
-                self.stack = saved_stack;
-                self.root_started = saved_root_started;
-                self.root_complete = saved_root_complete;
-                self.event_peek = saved_event_peek;
-                self.event_buffer.clear();
-                return Ok(Vec::new());
-            }
-        }
-
-        let mut evidence = Vec::new();
-        let mut depth: usize = 1; // Track nesting depth
-
-        loop {
-            let event = self.produce_event()?;
-            if let Some(ref e) = event {
-                self.event_buffer.push(e.clone());
-            }
-
-            match event {
-                Some(ParseEvent::StructEnd) => {
-                    depth = depth.saturating_sub(1);
-                    if depth == 0 {
-                        break;
-                    }
-                }
-                Some(ParseEvent::StructStart(_)) => {
-                    depth += 1;
-                }
-                Some(ParseEvent::SequenceStart(_)) => {
-                    depth += 1;
-                }
-                Some(ParseEvent::SequenceEnd) => {
-                    depth = depth.saturating_sub(1);
-                }
-                Some(ParseEvent::FieldKey(ref key)) if depth == 1 => {
-                    // Top-level field in the object we're probing
-                    // JSON always has field names, but FieldKey.name is Option for formats like Styx
-                    let Some(field_name) = key.name.clone() else {
-                        continue;
-                    };
-
-                    // Get the value
-                    let value_event = self.produce_event()?;
-                    if let Some(ref e) = value_event {
-                        self.event_buffer.push(e.clone());
-                    }
-
-                    // Extract scalar value if possible
-                    let scalar_value = match value_event {
-                        Some(ParseEvent::Scalar(ref sv)) => Some(sv.clone()),
-                        Some(ParseEvent::StructStart(_)) => {
-                            // Skip the nested structure
-                            self.skip_nested_container(&mut depth)?;
-                            None
-                        }
-                        Some(ParseEvent::SequenceStart(_)) => {
-                            // Skip the nested sequence
-                            self.skip_nested_container(&mut depth)?;
-                            None
-                        }
-                        _ => None,
-                    };
-
-                    if let Some(sv) = scalar_value {
-                        evidence.push(FieldEvidence::with_scalar_value(
-                            field_name,
-                            FieldLocationHint::KeyValue,
-                            None,
-                            sv,
-                        ));
-                    } else {
-                        evidence.push(FieldEvidence::new(
-                            field_name,
-                            FieldLocationHint::KeyValue,
-                            None,
-                        ));
-                    }
-                }
-                Some(ParseEvent::FieldKey(_)) => {
-                    // Nested field, skip the value
-                    let value_event = self.produce_event()?;
-                    if let Some(ref e) = value_event {
-                        self.event_buffer.push(e.clone());
-                    }
-
-                    match value_event {
-                        Some(ParseEvent::StructStart(_)) | Some(ParseEvent::SequenceStart(_)) => {
-                            self.skip_nested_container(&mut depth)?;
-                        }
-                        _ => {}
-                    }
-                }
-                None => {
-                    return Err(JsonError::without_span(JsonErrorKind::UnexpectedEof {
-                        expected: "object end",
-                    }));
-                }
-                _ => {}
-            }
-        }
-
-        // Restore parser state
-        self.stack = saved_stack;
-        self.root_started = saved_root_started;
-        self.root_complete = saved_root_complete;
-        // Only restore event_peek if we didn't move it to the buffer
-        if !already_inside_object {
-            self.event_peek = saved_event_peek;
-        }
-
-        Ok(evidence)
-    }
-
-    /// Skip a nested container while buffering events and tracking depth.
-    fn skip_nested_container(&mut self, depth: &mut usize) -> Result<(), JsonError> {
-        let mut local_depth = 1; // We're entering a container
-        loop {
-            let event = self.produce_event()?;
-            if let Some(ref e) = event {
-                self.event_buffer.push(e.clone());
-            }
-
-            match event {
-                Some(ParseEvent::StructStart(_)) | Some(ParseEvent::SequenceStart(_)) => {
-                    local_depth += 1;
-                    *depth += 1;
-                }
-                Some(ParseEvent::StructEnd) | Some(ParseEvent::SequenceEnd) => {
-                    if local_depth > 0 {
-                        local_depth -= 1;
-                    }
-                    if local_depth == 0 {
-                        return Ok(());
-                    }
-                }
-                None => {
-                    return Err(JsonError::without_span(JsonErrorKind::UnexpectedEof {
-                        expected: "container end",
-                    }));
-                }
-                _ => {}
-            }
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -738,30 +572,53 @@ enum NextAction {
 
 impl<A: TokenSource<'static>> FormatParser<'static> for StreamingJsonParser<A> {
     type Error = JsonError;
-    type Probe<'a>
-        = StreamingProbe
-    where
-        Self: 'a;
 
     fn next_event(&mut self) -> Result<Option<ParseEvent<'static>>, Self::Error> {
-        if let Some(event) = self.event_peek.take() {
+        // First check replay buffer (from restore)
+        if let Some(event) = self.replay_buffer.pop() {
             return Ok(Some(event));
         }
 
-        // Replay from buffer if available
+        // Then check peeked event
+        if let Some(event) = self.event_peek.take() {
+            // Record if we're in save mode
+            if let Some(ref mut rec) = self.recording {
+                rec.push(event.clone());
+            }
+            return Ok(Some(event));
+        }
+
+        // Replay from event_buffer if available (legacy probe buffering)
         if self.buffer_idx < self.event_buffer.len() {
             let event = self.event_buffer[self.buffer_idx].clone();
             self.buffer_idx += 1;
+            // Record if we're in save mode
+            if let Some(ref mut rec) = self.recording {
+                rec.push(event.clone());
+            }
             return Ok(Some(event));
         }
 
-        self.produce_event()
+        let event = self.produce_event()?;
+        // Record if we're in save mode
+        if let Some(ref mut rec) = self.recording
+            && let Some(ref e) = event
+        {
+            rec.push(e.clone());
+        }
+        Ok(event)
     }
 
     fn peek_event(&mut self) -> Result<Option<ParseEvent<'static>>, Self::Error> {
+        // First check replay buffer (peek at last element without removing)
+        if let Some(event) = self.replay_buffer.last().cloned() {
+            return Ok(Some(event));
+        }
+        // Then check already-peeked event
         if let Some(event) = self.event_peek.clone() {
             return Ok(Some(event));
         }
+        // Finally, produce new event and cache it
         let event = self.produce_event()?;
         if let Some(ref e) = event {
             self.event_peek = Some(e.clone());
@@ -785,33 +642,24 @@ impl<A: TokenSource<'static>> FormatParser<'static> for StreamingJsonParser<A> {
         Ok(())
     }
 
-    fn begin_probe(&mut self) -> Result<Self::Probe<'_>, Self::Error> {
-        let evidence = self.build_probe_buffered()?;
-        Ok(StreamingProbe { evidence, idx: 0 })
+    fn save(&mut self) -> SavePoint {
+        self.save_counter += 1;
+        self.recording = Some(Vec::new());
+        SavePoint(self.save_counter)
+    }
+
+    fn restore(&mut self, _save_point: SavePoint) {
+        if let Some(mut recorded) = self.recording.take() {
+            // Reverse so we can pop from the end
+            recorded.reverse();
+            // Prepend to replay buffer (in case there's already stuff there)
+            recorded.append(&mut self.replay_buffer);
+            self.replay_buffer = recorded;
+        }
     }
 
     fn format_namespace(&self) -> Option<&'static str> {
         Some("json")
-    }
-}
-
-/// Probe for streaming parser with buffered evidence.
-pub struct StreamingProbe {
-    evidence: Vec<FieldEvidence<'static>>,
-    idx: usize,
-}
-
-impl ProbeStream<'static> for StreamingProbe {
-    type Error = JsonError;
-
-    fn next(&mut self) -> Result<Option<FieldEvidence<'static>>, Self::Error> {
-        if self.idx >= self.evidence.len() {
-            Ok(None)
-        } else {
-            let ev = self.evidence[self.idx].clone();
-            self.idx += 1;
-            Ok(Some(ev))
-        }
     }
 }
 

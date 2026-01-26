@@ -34,7 +34,7 @@ mod serializer;
 mod axum;
 
 pub use error::{TomlError, TomlErrorKind};
-pub use parser::{TomlParser, TomlProbe};
+pub use parser::TomlParser;
 pub use serializer::{
     SerializeOptions, TomlSerializeError, TomlSerializer, to_string, to_string_with_options, to_vec,
 };

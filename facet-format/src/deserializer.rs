@@ -729,14 +729,103 @@ where
         Ok(wip)
     }
 
-    /// Helper to collect all evidence from a probe stream.
-    fn collect_evidence<S: crate::ProbeStream<'input, Error = P::Error>>(
-        mut probe: S,
-    ) -> Result<alloc::vec::Vec<crate::FieldEvidence<'input>>, P::Error> {
+    /// Helper to collect field evidence using save/restore.
+    ///
+    /// This saves the parser position, reads through the current struct to
+    /// collect field names and their scalar values, then restores the position.
+    fn collect_evidence(
+        &mut self,
+    ) -> Result<alloc::vec::Vec<crate::FieldEvidence<'input>>, DeserializeError<P::Error>> {
+        use crate::{FieldEvidence, FieldLocationHint};
+
+        let save_point = self.parser.save();
+
         let mut evidence = alloc::vec::Vec::new();
-        while let Some(ev) = probe.next()? {
-            evidence.push(ev);
+        let mut depth = 0i32;
+        let mut pending_field_name: Option<alloc::borrow::Cow<'input, str>> = None;
+
+        // Read through the structure
+        loop {
+            let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
+            let Some(event) = event else { break };
+
+            match event {
+                ParseEvent::StructStart(_) => {
+                    depth += 1;
+                    // If we were expecting a value, record field with no scalar
+                    if depth > 1
+                        && let Some(name) = pending_field_name.take()
+                    {
+                        evidence.push(FieldEvidence {
+                            name,
+                            location: FieldLocationHint::KeyValue,
+                            value_type: None,
+                            scalar_value: None,
+                        });
+                    }
+                }
+                ParseEvent::StructEnd => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                ParseEvent::SequenceStart(_) => {
+                    depth += 1;
+                    // If we were expecting a value, record field with no scalar
+                    if let Some(name) = pending_field_name.take() {
+                        evidence.push(FieldEvidence {
+                            name,
+                            location: FieldLocationHint::KeyValue,
+                            value_type: None,
+                            scalar_value: None,
+                        });
+                    }
+                }
+                ParseEvent::SequenceEnd => {
+                    depth -= 1;
+                }
+                ParseEvent::FieldKey(key) => {
+                    // If there's a pending field, record it without a value
+                    if let Some(name) = pending_field_name.take() {
+                        evidence.push(FieldEvidence {
+                            name,
+                            location: FieldLocationHint::KeyValue,
+                            value_type: None,
+                            scalar_value: None,
+                        });
+                    }
+                    if depth == 1 {
+                        // Top-level field - save name, wait for value
+                        pending_field_name = key.name;
+                    }
+                }
+                ParseEvent::Scalar(scalar) => {
+                    if let Some(name) = pending_field_name.take() {
+                        // Record field with its scalar value
+                        evidence.push(FieldEvidence {
+                            name,
+                            location: FieldLocationHint::KeyValue,
+                            value_type: None,
+                            scalar_value: Some(scalar),
+                        });
+                    }
+                }
+                ParseEvent::OrderedField | ParseEvent::VariantTag(_) => {}
+            }
         }
+
+        // Handle any remaining pending field
+        if let Some(name) = pending_field_name.take() {
+            evidence.push(FieldEvidence {
+                name,
+                location: FieldLocationHint::KeyValue,
+                value_type: None,
+                scalar_value: None,
+            });
+        }
+
+        self.parser.restore(save_point);
         Ok(evidence)
     }
 

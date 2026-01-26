@@ -44,6 +44,7 @@ pub(crate) use debug;
 pub(crate) use trace;
 
 mod deserializer;
+mod dyn_parser;
 mod event;
 mod evidence;
 mod parser;
@@ -55,13 +56,14 @@ mod visitor;
 pub mod jit;
 
 pub use deserializer::{DeserializeError, FormatDeserializer, InnerDeserializeError};
+pub use dyn_parser::{DynParser, DynParserError, DynParserWrapper, DynResult};
 pub use event::{
     ContainerKind, FieldKey, FieldLocationHint, ParseEvent, ScalarValue, ValueTypeHint,
 };
 pub use evidence::FieldEvidence;
 #[cfg(feature = "jit")]
 pub use parser::FormatJitParser;
-pub use parser::{EnumVariantHint, FormatParser, ProbeStream, ScalarTypeHint};
+pub use parser::{EnumVariantHint, FormatParser, SavePoint, ScalarTypeHint};
 pub use serializer::{
     DynamicValueEncoding, DynamicValueTag, EnumVariantEncoding, FieldOrdering, FormatSerializer,
     MapEncoding, SerializeError, StructFieldMode, serialize_root, serialize_value_with_shape,
