@@ -15,6 +15,9 @@ pub trait WriteScalar: DomSerializer {
     ///
     /// Returns `Some(string)` if the value is a scalar, `None` otherwise.
     fn format_scalar(&self, value: Peek<'_, '_>) -> Option<String> {
+        // handle transparent types and unwrap all types
+        let value = value.innermost_peek();
+
         // Handle Option<T> by unwrapping if Some
         if let Def::Option(_) = &value.shape().def
             && let Ok(opt) = value.into_option()
