@@ -73,10 +73,7 @@ impl<'de> FieldKey<'de> {
     /// Create a tagged field key (e.g., `@string` in Styx).
     ///
     /// Used for type pattern keys where the key is a tag rather than a bare identifier.
-    pub fn tagged(
-        tag: impl Into<Cow<'de, str>>,
-        location: FieldLocationHint,
-    ) -> Self {
+    pub fn tagged(tag: impl Into<Cow<'de, str>>, location: FieldLocationHint) -> Self {
         Self {
             name: None,
             location,
@@ -191,6 +188,47 @@ pub enum ScalarValue<'de> {
     Str(Cow<'de, str>),
     /// Binary literal.
     Bytes(Cow<'de, [u8]>),
+}
+
+impl<'de> ScalarValue<'de> {
+    /// Convert scalar value to a string representation.
+    ///
+    /// This is a non-generic helper extracted to reduce monomorphization bloat.
+    /// Returns `None` for `Bytes` since that conversion is context-dependent.
+    pub fn to_string_value(&self) -> Option<alloc::string::String> {
+        match self {
+            ScalarValue::Str(s) => Some(s.to_string()),
+            ScalarValue::Bool(b) => Some(b.to_string()),
+            ScalarValue::I64(i) => Some(i.to_string()),
+            ScalarValue::U64(u) => Some(u.to_string()),
+            ScalarValue::I128(i) => Some(i.to_string()),
+            ScalarValue::U128(u) => Some(u.to_string()),
+            ScalarValue::F64(f) => Some(f.to_string()),
+            ScalarValue::Char(c) => Some(c.to_string()),
+            ScalarValue::Null => Some("null".to_string()),
+            ScalarValue::Unit => Some(alloc::string::String::new()),
+            ScalarValue::Bytes(_) => None,
+        }
+    }
+
+    /// Convert scalar value to a display string for error messages.
+    ///
+    /// This is a non-generic helper extracted to reduce monomorphization bloat.
+    pub fn to_display_string(&self) -> alloc::string::String {
+        match self {
+            ScalarValue::Str(s) => s.to_string(),
+            ScalarValue::Bool(b) => alloc::format!("bool({})", b),
+            ScalarValue::I64(i) => alloc::format!("i64({})", i),
+            ScalarValue::U64(u) => alloc::format!("u64({})", u),
+            ScalarValue::I128(i) => alloc::format!("i128({})", i),
+            ScalarValue::U128(u) => alloc::format!("u128({})", u),
+            ScalarValue::F64(f) => alloc::format!("f64({})", f),
+            ScalarValue::Char(c) => alloc::format!("char({})", c),
+            ScalarValue::Bytes(_) => "bytes".to_string(),
+            ScalarValue::Null => "null".to_string(),
+            ScalarValue::Unit => "unit".to_string(),
+        }
+    }
 }
 
 /// Event emitted by a format parser while streaming through input.
