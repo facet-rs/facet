@@ -603,11 +603,6 @@ where
         field.effective_name() == name || field.alias.iter().any(|alias| *alias == name)
     }
 
-    /// Get the display name for a variant (respecting rename attribute).
-    fn get_variant_display_name(variant: &facet_core::Variant) -> &'static str {
-        variant.effective_name()
-    }
-
     fn deserialize_struct(
         &mut self,
         wip: Partial<'input, BORROW>,

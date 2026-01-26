@@ -6,8 +6,169 @@ use facet_core::{ScalarType, Shape, StructKind};
 use facet_reflect::Partial;
 
 use crate::{
-    DeserializeError, FormatDeserializer, FormatParser, ParseEvent, ScalarTypeHint, ScalarValue,
+    DeserializeError, EnumVariantHint, FormatDeserializer, FormatParser, InnerDeserializeError,
+    ParseEvent, ScalarTypeHint, ScalarValue,
+    deserializer::coro::{
+        DeserializeYielder, request_deserialize_enum_as_struct, request_deserialize_struct_dynamic,
+        request_deserialize_tuple_dynamic, request_deserialize_value_recursive, request_event,
+        request_hint_enum, request_set_string_value, request_span, run_deserialize_coro,
+    },
 };
+
+/// Inner implementation of `deserialize_enum_dynamic` that runs in a coroutine.
+fn deserialize_enum_dynamic_inner<'input, const BORROW: bool>(
+    yielder: &DeserializeYielder<'input, BORROW>,
+    mut wip: Partial<'input, BORROW>,
+    enum_def: &'static facet_core::EnumType,
+) -> Result<Partial<'input, BORROW>, InnerDeserializeError> {
+    use alloc::format;
+    use facet_reflect::ReflectError;
+
+    let reflect_err = |e: ReflectError| InnerDeserializeError::Reflect {
+        error: e,
+        span: request_span(yielder),
+        path: None,
+    };
+
+    // Build and send the hint
+    let variants: alloc::vec::Vec<EnumVariantHint> = enum_def
+        .variants
+        .iter()
+        .map(|v| EnumVariantHint {
+            name: v.effective_name(),
+            kind: v.data.kind,
+            field_count: v.data.fields.len(),
+        })
+        .collect();
+    request_hint_enum(yielder, variants)?;
+
+    let event = request_event(yielder, "enum")?;
+
+    match event {
+        ParseEvent::Scalar(ScalarValue::Str(s)) => {
+            // Unit variant as string (self-describing formats)
+            wip = request_set_string_value(yielder, wip, s)?;
+        }
+        ParseEvent::Scalar(ScalarValue::I64(i)) => {
+            wip = wip.set(i).map_err(reflect_err)?;
+        }
+        ParseEvent::Scalar(ScalarValue::U64(u)) => {
+            wip = wip.set(u).map_err(reflect_err)?;
+        }
+        ParseEvent::VariantTag(input_tag) => {
+            // `input_tag`: the variant name as it appeared in the input (e.g. Some("SomethingUnknown"))
+            //              or None for unit tags (bare `@` in Styx)
+            // `variant.name`: the Rust identifier of the matched variant (e.g. "Other")
+            //
+            // These differ when using #[facet(other)] to catch unknown variants.
+
+            // Find variant by display name (respecting rename) or fall back to #[facet(other)]
+            let (variant, is_using_other_fallback) = match input_tag {
+                Some(tag) => {
+                    let is_fallback = !enum_def
+                        .variants
+                        .iter()
+                        .any(|v| get_variant_display_name(v) == tag);
+                    let variant = enum_def
+                        .variants
+                        .iter()
+                        .find(|v| get_variant_display_name(v) == tag)
+                        .or_else(|| enum_def.variants.iter().find(|v| v.is_other()))
+                        .ok_or_else(|| {
+                            InnerDeserializeError::Unsupported(format!("unknown variant: {tag}"))
+                        })?;
+                    (variant, is_fallback)
+                }
+                None => {
+                    // Unit tag - must use #[facet(other)] fallback
+                    let variant =
+                        enum_def
+                            .variants
+                            .iter()
+                            .find(|v| v.is_other())
+                            .ok_or_else(|| {
+                                InnerDeserializeError::Unsupported(
+                                    "unit tag requires #[facet(other)] fallback".into(),
+                                )
+                            })?;
+                    (variant, true)
+                }
+            };
+
+            match variant.data.kind {
+                StructKind::Unit => {
+                    if is_using_other_fallback {
+                        // #[facet(other)] fallback: preserve the original input tag
+                        // so that "SomethingUnknown" round-trips correctly
+                        if let Some(tag) = input_tag {
+                            wip = request_set_string_value(yielder, wip, Cow::Borrowed(tag))?;
+                        } else {
+                            // Unit tag - set to default (None for Option<String>)
+                            wip = wip.set_default().map_err(reflect_err)?;
+                        }
+                    } else {
+                        // Direct match: use effective_name (wire format name)
+                        wip = request_set_string_value(
+                            yielder,
+                            wip,
+                            Cow::Borrowed(variant.effective_name()),
+                        )?;
+                    }
+                }
+                StructKind::TupleStruct | StructKind::Tuple => {
+                    if variant.data.fields.len() == 1 {
+                        wip = wip.init_map().map_err(reflect_err)?;
+                        wip = wip
+                            .begin_object_entry(variant.effective_name())
+                            .map_err(reflect_err)?;
+                        wip = request_deserialize_value_recursive(
+                            yielder,
+                            wip,
+                            variant.data.fields[0].shape.get(),
+                        )?;
+                        wip = wip.end().map_err(reflect_err)?;
+                    } else {
+                        wip = wip.init_map().map_err(reflect_err)?;
+                        wip = wip
+                            .begin_object_entry(variant.effective_name())
+                            .map_err(reflect_err)?;
+                        wip = request_deserialize_tuple_dynamic(yielder, wip, variant.data.fields)?;
+                        wip = wip.end().map_err(reflect_err)?;
+                    }
+                }
+                StructKind::Struct => {
+                    wip = wip.init_map().map_err(reflect_err)?;
+                    wip = wip
+                        .begin_object_entry(variant.effective_name())
+                        .map_err(reflect_err)?;
+                    wip = request_deserialize_struct_dynamic(yielder, wip, variant.data.fields)?;
+                    wip = wip.end().map_err(reflect_err)?;
+                }
+            }
+        }
+        ParseEvent::StructStart(_) => {
+            // Non-self-describing formats emit enum as {variant_name: value}
+            // The parser has already parsed the discriminant and will emit
+            // FieldKey events for the variant name
+            wip = request_deserialize_enum_as_struct(yielder, wip, enum_def)?;
+        }
+        _ => {
+            return Err(InnerDeserializeError::TypeMismatch {
+                expected: "enum variant",
+                got: format!("{event:?}"),
+                span: request_span(yielder),
+                path: None,
+            });
+        }
+    }
+
+    Ok(wip)
+}
+
+/// Helper to get variant display name (used by deserialize_enum_dynamic_inner)
+fn get_variant_display_name(variant: &'static facet_core::Variant) -> &'static str {
+    variant.effective_name()
+}
 
 impl<'input, const BORROW: bool, P> FormatDeserializer<'input, BORROW, P>
 where
@@ -210,139 +371,12 @@ where
 
     pub(crate) fn deserialize_enum_dynamic(
         &mut self,
-        mut wip: Partial<'input, BORROW>,
+        wip: Partial<'input, BORROW>,
         enum_def: &'static facet_core::EnumType,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
-        use crate::EnumVariantHint;
-
-        let variants: alloc::vec::Vec<EnumVariantHint> = enum_def
-            .variants
-            .iter()
-            .map(|v| EnumVariantHint {
-                name: v.effective_name(),
-                kind: v.data.kind,
-                field_count: v.data.fields.len(),
-            })
-            .collect();
-        self.parser.hint_enum(&variants);
-
-        let event = self.expect_event("enum")?;
-        trace!(?event, "deserialize_enum_dynamic got event");
-
-        match event {
-            ParseEvent::Scalar(ScalarValue::Str(s)) => {
-                // Unit variant as string (self-describing formats)
-                wip = self.set_string_value(wip, s)?;
-            }
-            ParseEvent::Scalar(ScalarValue::I64(i)) => {
-                wip = wip.set(i).map_err(DeserializeError::reflect)?;
-            }
-            ParseEvent::Scalar(ScalarValue::U64(u)) => {
-                wip = wip.set(u).map_err(DeserializeError::reflect)?;
-            }
-            ParseEvent::VariantTag(input_tag) => {
-                // `input_tag`: the variant name as it appeared in the input (e.g. Some("SomethingUnknown"))
-                //              or None for unit tags (bare `@` in Styx)
-                // `variant.name`: the Rust identifier of the matched variant (e.g. "Other")
-                //
-                // These differ when using #[facet(other)] to catch unknown variants.
-
-                // Find variant by display name (respecting rename) or fall back to #[facet(other)]
-                let (variant, is_using_other_fallback) =
-                    match input_tag {
-                        Some(tag) => {
-                            let is_fallback = !enum_def
-                                .variants
-                                .iter()
-                                .any(|v| Self::get_variant_display_name(v) == tag);
-                            let variant = enum_def
-                                .variants
-                                .iter()
-                                .find(|v| Self::get_variant_display_name(v) == tag)
-                                .or_else(|| enum_def.variants.iter().find(|v| v.is_other()))
-                                .ok_or_else(|| {
-                                    DeserializeError::Unsupported(format!("unknown variant: {tag}"))
-                                })?;
-                            (variant, is_fallback)
-                        }
-                        None => {
-                            // Unit tag - must use #[facet(other)] fallback
-                            let variant =
-                                enum_def.variants.iter().find(|v| v.is_other()).ok_or_else(
-                                    || {
-                                        DeserializeError::Unsupported(
-                                            "unit tag requires #[facet(other)] fallback".into(),
-                                        )
-                                    },
-                                )?;
-                            (variant, true)
-                        }
-                    };
-
-                match variant.data.kind {
-                    StructKind::Unit => {
-                        if is_using_other_fallback {
-                            // #[facet(other)] fallback: preserve the original input tag
-                            // so that "SomethingUnknown" round-trips correctly
-                            if let Some(tag) = input_tag {
-                                wip = self.set_string_value(wip, Cow::Borrowed(tag))?;
-                            } else {
-                                // Unit tag - set to default (None for Option<String>)
-                                wip = wip.set_default().map_err(DeserializeError::reflect)?;
-                            }
-                        } else {
-                            // Direct match: use effective_name (wire format name)
-                            wip = self
-                                .set_string_value(wip, Cow::Borrowed(variant.effective_name()))?;
-                        }
-                    }
-                    StructKind::TupleStruct | StructKind::Tuple => {
-                        if variant.data.fields.len() == 1 {
-                            wip = wip.init_map().map_err(DeserializeError::reflect)?;
-                            wip = wip
-                                .begin_object_entry(variant.effective_name())
-                                .map_err(DeserializeError::reflect)?;
-                            wip = self.deserialize_value_recursive(
-                                wip,
-                                variant.data.fields[0].shape.get(),
-                            )?;
-                            wip = wip.end().map_err(DeserializeError::reflect)?;
-                        } else {
-                            wip = wip.init_map().map_err(DeserializeError::reflect)?;
-                            wip = wip
-                                .begin_object_entry(variant.effective_name())
-                                .map_err(DeserializeError::reflect)?;
-                            wip = self.deserialize_tuple_dynamic(wip, variant.data.fields)?;
-                            wip = wip.end().map_err(DeserializeError::reflect)?;
-                        }
-                    }
-                    StructKind::Struct => {
-                        wip = wip.init_map().map_err(DeserializeError::reflect)?;
-                        wip = wip
-                            .begin_object_entry(variant.effective_name())
-                            .map_err(DeserializeError::reflect)?;
-                        wip = self.deserialize_struct_dynamic(wip, variant.data.fields)?;
-                        wip = wip.end().map_err(DeserializeError::reflect)?;
-                    }
-                }
-            }
-            ParseEvent::StructStart(_) => {
-                // Non-self-describing formats emit enum as {variant_name: value}
-                // The parser has already parsed the discriminant and will emit
-                // FieldKey events for the variant name
-                wip = self.deserialize_enum_as_struct(wip, enum_def)?;
-            }
-            _ => {
-                return Err(DeserializeError::TypeMismatch {
-                    expected: "enum variant",
-                    got: format!("{event:?}"),
-                    span: self.last_span,
-                    path: Some(self.path_clone()),
-                });
-            }
-        }
-
-        Ok(wip)
+        run_deserialize_coro(self, |yielder| {
+            deserialize_enum_dynamic_inner(yielder, wip, enum_def)
+        })
     }
 
     pub(crate) fn deserialize_scalar_dynamic(
