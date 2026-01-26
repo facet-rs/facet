@@ -110,6 +110,8 @@ pub(crate) struct StructFieldMap {
     pub nested_flattened_attr_maps: Vec<NestedFlattenedMapInfo>,
     /// Whether this struct has any flattened fields (requires deferred mode)
     pub has_flatten: bool,
+    /// Catch-all elements field - matches any tag name (for item types with xml::tag field)
+    pub catch_all_elements_field: Option<FieldInfo>,
 }
 
 /// Compute the effective DOM key for a field, considering `rename_all` from the parent type.
@@ -165,6 +167,7 @@ impl StructFieldMap {
         let mut flattened_attr_maps: Vec<FieldInfo> = Vec::new();
         let mut nested_flattened_attr_maps: Vec<NestedFlattenedMapInfo> = Vec::new();
         let mut has_flatten = false;
+        let mut catch_all_elements_field: Option<FieldInfo> = None;
 
         for (idx, field) in struct_def.fields.iter().enumerate() {
             // Check if this field is flattened
@@ -378,11 +381,15 @@ impl StructFieldMap {
                     namespace,
                 };
                 // Key priority:
-                // 1. Explicit field rename - single key
-                // 2. Item type is enum - register each variant name
-                // 3. Item type's rename (from #[facet(rename = "...")] on the item type)
-                // 4. Singularized field name
-                if let Some(rename) = field.rename {
+                // 1. Item type has xml::tag field - catch-all (matches any element)
+                // 2. Explicit field rename - single key
+                // 3. Item type is enum - register each variant name
+                // 4. Item type's rename (from #[facet(rename = "...")] on the item type)
+                // 5. Singularized field name
+                if item_type_has_tag_field(shape) {
+                    // Item type has xml::tag field - this is a catch-all that matches any element
+                    catch_all_elements_field = Some(info);
+                } else if let Some(rename) = field.rename {
                     // Explicit field rename - single key
                     elements_fields.insert(rename.to_string(), info);
                 } else if let Some(enum_def) = get_item_type_enum(shape) {
@@ -540,6 +547,7 @@ impl StructFieldMap {
             flattened_attr_maps,
             nested_flattened_attr_maps,
             has_flatten,
+            catch_all_elements_field,
         }
     }
 
@@ -794,4 +802,42 @@ pub(crate) fn get_item_type_rename(shape: &facet_core::Shape) -> Option<&'static
 
     // Check if the item type has a rename attribute
     item_shape.get_builtin_attr_value::<&str>("rename")
+}
+
+/// Check if the item type of a collection has an `xml::tag` or `html::tag` field.
+/// This indicates the type can capture any element tag name (catch-all).
+/// For `Vec<Element>` where `Element` has `#[facet(xml::tag)]`, returns `true`.
+fn item_type_has_tag_field(shape: &facet_core::Shape) -> bool {
+    // Get the item shape for collections
+    let item_shape = match &shape.def {
+        Def::List(list_def) => Some(list_def.t()),
+        Def::Set(set_def) => Some(set_def.t()),
+        Def::Slice(slice_def) => Some(slice_def.t()),
+        Def::Array(array_def) => Some(array_def.t()),
+        Def::Pointer(ptr_def) => {
+            // Look through smart pointers like Arc<[T]>
+            ptr_def.pointee().and_then(|inner| match &inner.def {
+                Def::List(list_def) => Some(list_def.t()),
+                Def::Set(set_def) => Some(set_def.t()),
+                Def::Slice(slice_def) => Some(slice_def.t()),
+                _ => None,
+            })
+        }
+        _ => None,
+    };
+
+    let Some(item_shape) = item_shape else {
+        return false;
+    };
+
+    // Check if the item type is a struct with an xml::tag or html::tag field
+    if let Type::User(UserType::Struct(struct_def)) = &item_shape.ty {
+        for field in struct_def.fields.iter() {
+            if field.is_tag() {
+                return true;
+            }
+        }
+    }
+
+    false
 }
