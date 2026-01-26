@@ -12,6 +12,11 @@ description = "Lightweight OTLP telemetry for roam RPC"
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
+[features]
+default = ["native-tls"]
+native-tls = ["reqwest/native-tls"]
+rustls-tls = ["reqwest/rustls-tls"]
+
 [dependencies]
 # Roam
 roam-session = { workspace = true }
@@ -23,7 +28,7 @@ facet-json = { workspace = true }
 facet-pretty = { workspace = true }
 
 # HTTP client
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
 
 # Async runtime
 tokio = { workspace = true, features = ["sync", "time", "rt"] }
