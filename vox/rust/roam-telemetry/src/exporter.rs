@@ -275,7 +275,11 @@ async fn export_batch(client: &reqwest::Client, config: &ExporterConfig, batch: 
             scope_spans: vec![ScopeSpans {
                 scope: InstrumentationScope {
                     name: "roam-telemetry".to_string(),
-                    version: Some(env!("CARGO_PKG_VERSION").to_string()),
+                    version: Some(
+                        option_env!("CARGO_PKG_VERSION")
+                            .unwrap_or("0.0.0")
+                            .to_string(),
+                    ),
                 },
                 spans: std::mem::take(batch),
             }],
