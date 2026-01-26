@@ -78,6 +78,29 @@ pub(crate) enum DeserializeRequest<'input, const BORROW: bool> {
 
     /// Need to call `solve_variant(shape, &mut parser)` for untagged enum resolution.
     SolveVariant { shape: &'static facet_core::Shape },
+
+    /// Need to call `parser.hint_enum(&variants)` for non-self-describing parsers.
+    HintEnum {
+        variants: Vec<crate::EnumVariantHint>,
+    },
+
+    /// Need to call `deserialize_tuple_dynamic(wip, fields)`.
+    DeserializeTupleDynamic {
+        wip: Partial<'input, BORROW>,
+        fields: &'static [facet_core::Field],
+    },
+
+    /// Need to call `deserialize_struct_dynamic(wip, fields)`.
+    DeserializeStructDynamic {
+        wip: Partial<'input, BORROW>,
+        fields: &'static [facet_core::Field],
+    },
+
+    /// Need to call `deserialize_enum_as_struct(wip, enum_def)`.
+    DeserializeEnumAsStruct {
+        wip: Partial<'input, BORROW>,
+        enum_def: &'static facet_core::EnumType,
+    },
 }
 
 /// Response from the wrapper to the inner deserialization logic.
@@ -329,6 +352,49 @@ pub(crate) fn request_solve_variant<'input, const BORROW: bool>(
         .into_solve_variant_result()
 }
 
+/// Helper to hint the parser about enum variants.
+pub(crate) fn request_hint_enum<'input, const BORROW: bool>(
+    yielder: &DeserializeYielder<'input, BORROW>,
+    variants: Vec<crate::EnumVariantHint>,
+) -> Result<(), InnerDeserializeError> {
+    yielder
+        .suspend(DeserializeRequest::HintEnum { variants })
+        .into_skipped()
+}
+
+/// Helper to deserialize a tuple with dynamic fields.
+pub(crate) fn request_deserialize_tuple_dynamic<'input, const BORROW: bool>(
+    yielder: &DeserializeYielder<'input, BORROW>,
+    wip: Partial<'input, BORROW>,
+    fields: &'static [facet_core::Field],
+) -> Result<Partial<'input, BORROW>, InnerDeserializeError> {
+    yielder
+        .suspend(DeserializeRequest::DeserializeTupleDynamic { wip, fields })
+        .into_wip()
+}
+
+/// Helper to deserialize a struct with dynamic fields.
+pub(crate) fn request_deserialize_struct_dynamic<'input, const BORROW: bool>(
+    yielder: &DeserializeYielder<'input, BORROW>,
+    wip: Partial<'input, BORROW>,
+    fields: &'static [facet_core::Field],
+) -> Result<Partial<'input, BORROW>, InnerDeserializeError> {
+    yielder
+        .suspend(DeserializeRequest::DeserializeStructDynamic { wip, fields })
+        .into_wip()
+}
+
+/// Helper to deserialize an enum as a struct (for non-self-describing formats).
+pub(crate) fn request_deserialize_enum_as_struct<'input, const BORROW: bool>(
+    yielder: &DeserializeYielder<'input, BORROW>,
+    wip: Partial<'input, BORROW>,
+    enum_def: &'static facet_core::EnumType,
+) -> Result<Partial<'input, BORROW>, InnerDeserializeError> {
+    yielder
+        .suspend(DeserializeRequest::DeserializeEnumAsStruct { wip, enum_def })
+        .into_wip()
+}
+
 /// Run a coroutine-based deserializer with the given inner function.
 ///
 /// This is the generic wrapper that handles parser operations. The inner function
@@ -455,6 +521,28 @@ where
                                         format!("solve_variant failed: {e:?}"),
                                     ))
                                 }
+                            }
+                        }
+                        DeserializeRequest::HintEnum { variants } => {
+                            deser.parser.hint_enum(&variants);
+                            DeserializeResponse::Skipped
+                        }
+                        DeserializeRequest::DeserializeTupleDynamic { wip, fields } => {
+                            match deser.deserialize_tuple_dynamic(wip, fields) {
+                                Ok(wip) => DeserializeResponse::Wip(wip),
+                                Err(e) => DeserializeResponse::Error(e.into_inner()),
+                            }
+                        }
+                        DeserializeRequest::DeserializeStructDynamic { wip, fields } => {
+                            match deser.deserialize_struct_dynamic(wip, fields) {
+                                Ok(wip) => DeserializeResponse::Wip(wip),
+                                Err(e) => DeserializeResponse::Error(e.into_inner()),
+                            }
+                        }
+                        DeserializeRequest::DeserializeEnumAsStruct { wip, enum_def } => {
+                            match deser.deserialize_enum_as_struct(wip, enum_def) {
+                                Ok(wip) => DeserializeResponse::Wip(wip),
+                                Err(e) => DeserializeResponse::Error(e.into_inner()),
                             }
                         }
                     };
