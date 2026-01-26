@@ -8,7 +8,7 @@ use crossterm::{
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use facet::Facet;
-use facet_args as args;
+use figue as args;
 use jiff::Zoned;
 use ratatui::{
     prelude::*,
@@ -28,9 +28,9 @@ styx_embed::embed_outdir_file!("dibs-queries.styx");
 /// Postgres toolkit for Rust, powered by facet reflection.
 #[derive(Facet, Debug)]
 struct Cli {
-    /// Show version information
-    #[facet(args::named, args::short = 'V')]
-    version: bool,
+    /// Standard CLI options (--help, --version, --completions)
+    #[facet(flatten)]
+    builtins: args::FigueBuiltins,
 
     /// Command to run
     #[facet(default, args::subcommand)]
@@ -77,29 +77,11 @@ fn main() {
     // Load .env file if present (silently ignore if not found)
     let _ = dotenvy::dotenv();
 
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-
-    let result: Result<Cli, _> = args::from_slice(&args_ref);
-
-    match result {
-        Ok(cli) => run(cli),
-        Err(err) if err.is_help_request() => {
-            print!("{}", err.help_text().unwrap_or(""));
-        }
-        Err(err) => {
-            eprintln!("{}", err);
-            std::process::exit(1);
-        }
-    }
+    let cli: Cli = args::from_std_args().unwrap();
+    run(cli)
 }
 
 fn run(cli: Cli) {
-    if cli.version {
-        println!("dibs {}", env!("CARGO_PKG_VERSION"));
-        return;
-    }
-
     match cli.command {
         Some(Commands::Migrate) => {
             run_migrate();

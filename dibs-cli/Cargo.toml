@@ -29,10 +29,16 @@ dibs.workspace = true
 dibs-config.workspace = true
 dibs-proto.workspace = true
 dibs-query-schema.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "process", "io-util", "io-std"] }
+tokio = { workspace = true, features = [
+  "rt-multi-thread",
+  "macros",
+  "process",
+  "io-util",
+  "io-std",
+] }
 tokio-postgres.workspace = true
 facet.workspace = true
-facet-args.workspace = true
+figue.workspace = true
 facet-json.workspace = true
 facet-styx.workspace = true
 roam.workspace = true

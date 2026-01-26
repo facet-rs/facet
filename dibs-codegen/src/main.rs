@@ -4,13 +4,17 @@
 
 use dibs_proto::{dibs_service_service_detail, squel_service_service_detail};
 use facet::Facet;
-use facet_args as args;
+use figue as args;
 use roam_codegen::targets::typescript::generate_service;
 use std::fs;
 use std::path::PathBuf;
 
 #[derive(Facet)]
 struct Args {
+    /// Standard CLI options (--help, --version, --completions)
+    #[facet(flatten)]
+    builtins: args::FigueBuiltins,
+
     /// Output directory for generated files
     #[facet(args::named, args::short = 'o', default = ".")]
     output: PathBuf,
@@ -25,10 +29,7 @@ struct Args {
 }
 
 fn main() {
-    let args: Args = args::from_std_args().unwrap_or_else(|e| {
-        eprintln!("{e}");
-        std::process::exit(1);
-    });
+    let args: Args = args::from_std_args().unwrap();
 
     if !args.typescript {
         eprintln!("No output format specified. Use --typescript");
