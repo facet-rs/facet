@@ -913,6 +913,70 @@ impl DerivedCore {
         debug!(kind = self.kind.0, "restore_runtime_state (derived)");
         Ok(())
     }
+
+    /// Touch a key using an already-encoded DynKey (non-generic, compiled once).
+    ///
+    /// This avoids the decode-then-reencode overhead when called from `DynIngredient::touch`.
+    /// Returns a `BoxFuture` to avoid creating another async block at the call site.
+    fn touch_erased<'a, DB>(
+        &'a self,
+        db: &'a DB,
+        dyn_key: DynKey,
+        compute: &'a dyn ErasedCompute<DB>,
+        eq_erased: EqErasedFn,
+    ) -> BoxFuture<'a, PicanteResult<Touch>>
+    where
+        DB: IngredientLookup + Send + Sync + 'static,
+    {
+        Box::pin(async move {
+            let result = frame::scope_if_needed_boxed(Box::pin(
+                self.access_scoped_erased(db, dyn_key, false, compute, eq_erased),
+            ))
+            .await?;
+            Ok(Touch {
+                changed_at: result.changed_at,
+            })
+        })
+    }
+
+    /// Create a deep snapshot of cells (non-generic, compiled once).
+    ///
+    /// This is functionally equivalent to `DerivedIngredient::snapshot_cells_deep`
+    /// but doesn't require any generic type parameters since it only clones
+    /// `Arc<dyn Any>` (bumping refcount, not actually cloning V).
+    async fn snapshot_cells_deep_inner(&self) -> im::HashMap<DynKey, Arc<ErasedCell>> {
+        // Collect all cells under lock, then release before async work
+        let cells_snapshot: Vec<(DynKey, Arc<ErasedCell>)> = {
+            let cells = self.cells.read();
+            cells.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+        };
+
+        let mut result = im::HashMap::new();
+
+        for (dyn_key, cell) in cells_snapshot {
+            let state = cell.state.lock().await;
+            if let ErasedState::Ready {
+                value,
+                verified_at,
+                changed_at,
+                deps,
+            } = &*state
+            {
+                // Clone the Arc<dyn Any> - just bumps refcount (cheap!)
+                let cloned_value = value.clone();
+
+                let new_cell = Arc::new(ErasedCell::new_ready(
+                    cloned_value,
+                    *verified_at,
+                    *changed_at,
+                    deps.clone(),
+                ));
+                result.insert(dyn_key, new_cell);
+            }
+        }
+
+        result
+    }
 }
 
 // ============================================================================
@@ -1370,37 +1434,8 @@ where
     where
         V: Clone,
     {
-        // Collect all cells under lock, then release before async work
-        let cells_snapshot: Vec<(DynKey, Arc<ErasedCell>)> = {
-            let cells = self.core.cells.read();
-            cells.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
-        };
-
-        let mut result = im::HashMap::new();
-
-        for (dyn_key, cell) in cells_snapshot {
-            let state = cell.state.lock().await;
-            if let ErasedState::Ready {
-                value,
-                verified_at,
-                changed_at,
-                deps,
-            } = &*state
-            {
-                // Clone the Arc<dyn Any> - just bumps refcount (cheap!)
-                let cloned_value = value.clone();
-
-                let new_cell = Arc::new(ErasedCell::new_ready(
-                    cloned_value,
-                    *verified_at,
-                    *changed_at,
-                    deps.clone(),
-                ));
-                result.insert(dyn_key, new_cell);
-            }
-        }
-
-        result
+        // Delegate to non-generic helper (compiled once, not per K/V)
+        self.core.snapshot_cells_deep_inner().await
     }
 }
 
@@ -1600,11 +1635,15 @@ where
     V: Clone + Facet<'static> + Send + Sync + 'static,
 {
     fn touch<'a>(&'a self, db: &'a DB, key: Key) -> BoxFuture<'a, PicanteResult<Touch>> {
-        Box::pin(async move {
-            let key: K = key.decode_facet()?;
-            let changed_at = self.touch(db, key).await?;
-            Ok(Touch { changed_at })
-        })
+        // Use the type-erased touch directly to avoid decode/encode round-trip.
+        // The key is already encoded as bytes; we just wrap it in a DynKey.
+        // Returns the boxed future directly to avoid monomorphizing another async block.
+        let dyn_key = DynKey {
+            kind: self.core.kind,
+            key,
+        };
+        self.core
+            .touch_erased(db, dyn_key, self.compute.as_ref(), self.eq_erased)
     }
 }
 
