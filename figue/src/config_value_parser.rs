@@ -132,7 +132,7 @@ fn fill_defaults_from_arg_level(
         if !map.contains_key(field_name) {
             // First check for explicit default from #[facet(default)] stored in schema
             if let Some(explicit_default) = arg_schema.default() {
-                tracing::debug!(
+                tracing::trace!(
                     field = field_name,
                     ?explicit_default,
                     "fill_defaults_from_arg_level: inserting explicit default for missing field"
@@ -142,7 +142,7 @@ fn fill_defaults_from_arg_level(
                 get_default_from_value_schema(arg_schema.value(), path_prefix)
             {
                 // Fall back to implicit defaults (Option → null, bool → false, struct → empty object)
-                tracing::debug!(
+                tracing::trace!(
                     field = field_name,
                     ?implicit_default,
                     "fill_defaults_from_arg_level: inserting implicit default for missing field"
@@ -345,7 +345,7 @@ fn fill_defaults_from_config_struct(
         if !new_map.contains_key(field_name) {
             // First check for explicit default from #[facet(default)] stored in schema
             if let Some(explicit_default) = field_schema.default() {
-                tracing::debug!(
+                tracing::trace!(
                     field = field_name,
                     ?explicit_default,
                     "fill_defaults_from_config_struct: inserting explicit default for missing field"
@@ -355,7 +355,7 @@ fn fill_defaults_from_config_struct(
                 get_default_from_config_value_schema(&field_schema.value, path_prefix)
             {
                 // Fall back to implicit defaults (struct → empty object, bool → false)
-                tracing::debug!(
+                tracing::trace!(
                     field = field_name,
                     ?implicit_default,
                     "fill_defaults_from_config_struct: inserting implicit default for missing field"
@@ -557,7 +557,7 @@ fn fill_defaults_from_shape_recursive(
     shape: &'static Shape,
     path_prefix: &str,
 ) -> ConfigValue {
-    tracing::debug!(
+    tracing::trace!(
         shape = shape.type_identifier,
         path_prefix,
         "fill_defaults_from_shape_recursive: entering"
@@ -623,7 +623,7 @@ fn fill_defaults_from_shape_recursive(
                             if let Some(default_value) =
                                 get_default_config_value(inner_field, &inner_path)
                             {
-                                tracing::debug!(
+                                tracing::trace!(
                                     field = inner_field.name,
                                     parent_field = field.name,
                                     shape = shape.type_identifier,
@@ -643,7 +643,7 @@ fn fill_defaults_from_shape_recursive(
                     // Returns None if the field has a default that can't be serialized -
                     // in that case we don't insert anything and let facet handle the default
                     if let Some(default_value) = get_default_config_value(field, path_prefix) {
-                        tracing::debug!(
+                        tracing::trace!(
                             field = field.name,
                             shape = shape.type_identifier,
                             ?default_value,
@@ -651,7 +651,7 @@ fn fill_defaults_from_shape_recursive(
                         );
                         new_map.insert(field.name.to_string(), default_value);
                     } else {
-                        tracing::debug!(
+                        tracing::trace!(
                             field = field.name,
                             shape = shape.type_identifier,
                             "fill_defaults_from_shape_recursive: field has unserializable default, letting facet handle it"
@@ -699,7 +699,7 @@ fn fill_defaults_from_shape_recursive(
                 span: sourced.span,
                 provenance: sourced.provenance.clone(),
             });
-            tracing::debug!(
+            tracing::trace!(
                 shape = shape.type_identifier,
                 "fill_defaults_from_shape: completed Object"
             );
@@ -909,7 +909,7 @@ fn get_default_config_value(
 
     // If field has explicit default, invoke it and serialize to ConfigValue
     if let Some(default_source) = &field.default {
-        tracing::debug!(
+        tracing::trace!(
             field = field.name,
             "get_default_config_value: field has default, invoking"
         );
@@ -918,7 +918,7 @@ fn get_default_config_value(
             // Check if serialization actually produced a useful value
             // (not null for non-nullable types)
             if !matches!(config_value, ConfigValue::Null(_)) {
-                tracing::debug!(
+                tracing::trace!(
                     field = field.name,
                     ?config_value,
                     "get_default_config_value: successfully serialized default"
@@ -927,14 +927,14 @@ fn get_default_config_value(
             }
             // Null result for a type that has a default but can't serialize -
             // fall through to let facet handle the default during deserialization
-            tracing::debug!(
+            tracing::trace!(
                 field = field.name,
                 "get_default_config_value: serialized to null, letting facet handle default"
             );
         } else {
             // Serialization failed - the type has a default but can't be represented
             // as ConfigValue. Let facet handle it during deserialization.
-            tracing::debug!(
+            tracing::trace!(
                 field = field.name,
                 "get_default_config_value: serialization failed, letting facet handle default"
             );
