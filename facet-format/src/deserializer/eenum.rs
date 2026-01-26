@@ -6,9 +6,313 @@ use facet_core::{Def, StructKind, Type, UserType};
 use facet_reflect::Partial;
 
 use crate::{
-    ContainerKind, DeserializeError, FormatDeserializer, FormatParser, ParseEvent, ScalarValue,
+    ContainerKind, DeserializeError, FormatDeserializer, FormatParser, InnerDeserializeError,
+    ParseEvent, ScalarValue,
+    deserializer::coro::{
+        DeserializeYielder, request_deserialize_into, request_event, request_peek, request_skip,
+        request_span,
+    },
     deserializer::scalar_matches::scalar_matches_shape,
 };
+
+/// Inner implementation of `deserialize_enum_variant_content` that runs in a coroutine.
+///
+/// This function is non-generic over the parser type, reducing monomorphization.
+/// It yields to the wrapper whenever it needs parser operations.
+fn deserialize_enum_variant_content_inner<'input, const BORROW: bool>(
+    yielder: &DeserializeYielder<'input, BORROW>,
+    mut wip: Partial<'input, BORROW>,
+) -> Result<Partial<'input, BORROW>, InnerDeserializeError> {
+    use alloc::format;
+    use alloc::vec;
+    use facet_core::Characteristic;
+    use facet_reflect::ReflectError;
+
+    let reflect_err = |e: ReflectError| InnerDeserializeError::Reflect {
+        error: e,
+        span: request_span(yielder),
+        path: None,
+    };
+
+    // Get the selected variant's info
+    let variant = wip
+        .selected_variant()
+        .ok_or_else(|| InnerDeserializeError::TypeMismatch {
+            expected: "selected variant",
+            got: "no variant selected".into(),
+            span: request_span(yielder),
+            path: None,
+        })?;
+
+    let variant_kind = variant.data.kind;
+    let variant_fields = variant.data.fields;
+
+    match variant_kind {
+        StructKind::Unit => {
+            // Unit variant - normally nothing to deserialize
+            // But some formats may emit extra tokens
+            let event = request_peek(yielder, "value")?;
+            if matches!(event, ParseEvent::Scalar(ScalarValue::Unit)) {
+                request_event(yielder, "value")?; // consume Unit
+            } else if matches!(event, ParseEvent::StructStart(_)) {
+                request_event(yielder, "value")?; // consume StructStart
+                // Expect immediate StructEnd for empty struct
+                let end_event = request_event(yielder, "value")?;
+                if !matches!(end_event, ParseEvent::StructEnd) {
+                    return Err(InnerDeserializeError::TypeMismatch {
+                        expected: "empty struct for unit variant",
+                        got: format!("{end_event:?}"),
+                        span: request_span(yielder),
+                        path: None,
+                    });
+                }
+            }
+            Ok(wip)
+        }
+        StructKind::Tuple | StructKind::TupleStruct => {
+            if variant_fields.len() == 1 {
+                // Newtype variant - content is the single field's value
+                wip = wip.begin_nth_field(0).map_err(&reflect_err)?;
+                wip = request_deserialize_into(yielder, wip)?;
+                wip = wip.end().map_err(&reflect_err)?;
+            } else {
+                // Multi-field tuple variant - expect array or struct
+                let event = request_event(yielder, "value")?;
+
+                let struct_mode = match event {
+                    ParseEvent::SequenceStart(_) => false,
+                    ParseEvent::StructStart(ContainerKind::Object) => true,
+                    ParseEvent::StructStart(kind) => {
+                        return Err(InnerDeserializeError::TypeMismatch {
+                            expected: "array",
+                            got: kind.name().into(),
+                            span: request_span(yielder),
+                            path: None,
+                        });
+                    }
+                    _ => {
+                        return Err(InnerDeserializeError::TypeMismatch {
+                            expected: "sequence for tuple variant",
+                            got: format!("{event:?}"),
+                            span: request_span(yielder),
+                            path: None,
+                        });
+                    }
+                };
+
+                let mut idx = 0;
+                while idx < variant_fields.len() {
+                    // In struct mode, skip FieldKey events
+                    if struct_mode {
+                        let event = request_peek(yielder, "value")?;
+                        if matches!(event, ParseEvent::FieldKey(_)) {
+                            request_event(yielder, "value")?;
+                            continue;
+                        }
+                    }
+
+                    wip = wip.begin_nth_field(idx).map_err(&reflect_err)?;
+                    wip = request_deserialize_into(yielder, wip)?;
+                    wip = wip.end().map_err(&reflect_err)?;
+                    idx += 1;
+                }
+
+                let event = request_event(yielder, "value")?;
+                if !matches!(event, ParseEvent::SequenceEnd | ParseEvent::StructEnd) {
+                    return Err(InnerDeserializeError::TypeMismatch {
+                        expected: "sequence end for tuple variant",
+                        got: format!("{event:?}"),
+                        span: request_span(yielder),
+                        path: None,
+                    });
+                }
+            }
+            Ok(wip)
+        }
+        StructKind::Struct => {
+            // Struct variant - expect object with fields
+            let event = request_event(yielder, "value")?;
+            if !matches!(event, ParseEvent::StructStart(_)) {
+                return Err(InnerDeserializeError::TypeMismatch {
+                    expected: "struct for struct variant",
+                    got: format!("{event:?}"),
+                    span: request_span(yielder),
+                    path: None,
+                });
+            }
+
+            // Check if variant has any flattened fields
+            let has_flatten = variant_fields.iter().any(|f| f.is_flattened());
+
+            // Enter deferred mode for flatten handling
+            let already_deferred = wip.is_deferred();
+            if has_flatten && !already_deferred {
+                wip = wip.begin_deferred().map_err(&reflect_err)?;
+            }
+
+            let num_fields = variant_fields.len();
+            let mut fields_set = vec![false; num_fields];
+            let mut ordered_field_index = 0usize;
+
+            // Track currently open path segments for flatten handling
+            let mut open_segments: alloc::vec::Vec<(&str, bool)> = alloc::vec::Vec::new();
+
+            // Track which top-level fields have been touched
+            let mut touched_fields: alloc::collections::BTreeSet<&str> =
+                alloc::collections::BTreeSet::new();
+
+            loop {
+                let event = request_event(yielder, "value")?;
+                match event {
+                    ParseEvent::StructEnd => break,
+                    ParseEvent::OrderedField => {
+                        let idx = ordered_field_index;
+                        ordered_field_index += 1;
+                        if idx < num_fields {
+                            wip = wip.begin_nth_field(idx).map_err(&reflect_err)?;
+                            wip = request_deserialize_into(yielder, wip)?;
+                            wip = wip.end().map_err(&reflect_err)?;
+                            fields_set[idx] = true;
+                        }
+                    }
+                    ParseEvent::FieldKey(key) => {
+                        let key_name = match &key.name {
+                            Some(name) => name.as_ref(),
+                            None => {
+                                request_skip(yielder)?;
+                                continue;
+                            }
+                        };
+
+                        if has_flatten {
+                            if let Some(path) = find_field_path(variant_fields, key_name) {
+                                if let Some(&first) = path.first() {
+                                    touched_fields.insert(first);
+                                }
+
+                                let common_len = open_segments
+                                    .iter()
+                                    .zip(path.iter())
+                                    .take_while(|((name, _), b)| *name == **b)
+                                    .count();
+
+                                while open_segments.len() > common_len {
+                                    let (_, is_option) = open_segments.pop().unwrap();
+                                    if is_option {
+                                        wip = wip.end().map_err(&reflect_err)?;
+                                    }
+                                    wip = wip.end().map_err(&reflect_err)?;
+                                }
+
+                                for &field_name in &path[common_len..] {
+                                    wip = wip.begin_field(field_name).map_err(&reflect_err)?;
+                                    let is_option = matches!(wip.shape().def, Def::Option(_));
+                                    if is_option {
+                                        wip = wip.begin_some().map_err(&reflect_err)?;
+                                    }
+                                    open_segments.push((field_name, is_option));
+                                }
+
+                                wip = request_deserialize_into(yielder, wip)?;
+
+                                if let Some((_, is_option)) = open_segments.pop() {
+                                    if is_option {
+                                        wip = wip.end().map_err(&reflect_err)?;
+                                    }
+                                    wip = wip.end().map_err(&reflect_err)?;
+                                }
+                            } else {
+                                request_skip(yielder)?;
+                            }
+                        } else {
+                            let field_info = variant_fields
+                                .iter()
+                                .enumerate()
+                                .find(|(_, f)| field_matches(f, key_name));
+
+                            if let Some((idx, _field)) = field_info {
+                                wip = wip.begin_nth_field(idx).map_err(&reflect_err)?;
+                                wip = request_deserialize_into(yielder, wip)?;
+                                wip = wip.end().map_err(&reflect_err)?;
+                                fields_set[idx] = true;
+                            } else {
+                                request_skip(yielder)?;
+                            }
+                        }
+                    }
+                    other => {
+                        return Err(InnerDeserializeError::TypeMismatch {
+                            expected: "field key, ordered field, or struct end",
+                            got: format!("{other:?}"),
+                            span: request_span(yielder),
+                            path: None,
+                        });
+                    }
+                }
+            }
+
+            // Close any remaining open segments
+            while let Some((_, is_option)) = open_segments.pop() {
+                if is_option {
+                    wip = wip.end().map_err(&reflect_err)?;
+                }
+                wip = wip.end().map_err(&reflect_err)?;
+            }
+
+            // Touch any flattened fields that weren't visited
+            if has_flatten {
+                for field in variant_fields.iter() {
+                    if field.is_flattened() && !touched_fields.contains(field.name) {
+                        wip = wip.begin_field(field.name).map_err(&reflect_err)?;
+                        wip = wip.end().map_err(&reflect_err)?;
+                    }
+                }
+            }
+
+            // Finish deferred mode
+            if has_flatten && !already_deferred {
+                wip = wip.finish_deferred().map_err(&reflect_err)?;
+            }
+
+            // Apply defaults for missing fields (when not using flatten/deferred mode)
+            if !has_flatten {
+                for (idx, field) in variant_fields.iter().enumerate() {
+                    if fields_set[idx] {
+                        continue;
+                    }
+
+                    let field_has_default = field.has_default();
+                    let field_type_has_default = field.shape().is(Characteristic::Default);
+                    let field_is_option = matches!(field.shape().def, Def::Option(_));
+
+                    if field_has_default || field_type_has_default {
+                        wip = wip.set_nth_field_to_default(idx).map_err(&reflect_err)?;
+                    } else if field_is_option {
+                        wip = wip.begin_nth_field(idx).map_err(&reflect_err)?;
+                        wip = wip.set_default().map_err(&reflect_err)?;
+                        wip = wip.end().map_err(&reflect_err)?;
+                    } else if field.should_skip_deserializing() {
+                        wip = wip.set_nth_field_to_default(idx).map_err(&reflect_err)?;
+                    } else {
+                        return Err(InnerDeserializeError::TypeMismatch {
+                            expected: "field to be present or have default",
+                            got: format!("missing field '{}'", field.name),
+                            span: request_span(yielder),
+                            path: None,
+                        });
+                    }
+                }
+            }
+
+            Ok(wip)
+        }
+    }
+}
+
+/// Check if a field matches a given name (by name or alias).
+fn field_matches(field: &facet_core::Field, name: &str) -> bool {
+    field.effective_name() == name || field.alias.iter().any(|alias| *alias == name)
+}
 
 impl<'input, const BORROW: bool, P> FormatDeserializer<'input, BORROW, P>
 where
@@ -1016,324 +1320,19 @@ where
         Ok(wip)
     }
 
+    /// Deserialize the content of an already-selected enum variant.
+    ///
+    /// This is implemented using a coroutine to reduce monomorphization.
+    /// The inner logic runs in a coroutine and yields to the wrapper for
+    /// parser operations.
     pub(crate) fn deserialize_enum_variant_content(
         &mut self,
-        mut wip: Partial<'input, BORROW>,
+        wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
-        use facet_core::Characteristic;
-
-        // Get the selected variant's info
-        let variant = wip
-            .selected_variant()
-            .ok_or_else(|| DeserializeError::TypeMismatch {
-                expected: "selected variant",
-                got: "no variant selected".into(),
-                span: self.last_span,
-                path: None,
-            })?;
-
-        let variant_kind = variant.data.kind;
-        let variant_fields = variant.data.fields;
-
-        match variant_kind {
-            StructKind::Unit => {
-                // Unit variant - normally nothing to deserialize
-                // But some formats may emit extra tokens:
-                // - TOML with [VariantName]: emits StructStart/StructEnd
-                // - STYX with @Foo: emits Scalar(Unit)
-                let event = self.expect_peek("value")?;
-                if matches!(event, ParseEvent::Scalar(ScalarValue::Unit)) {
-                    self.expect_event("value")?; // consume Unit
-                } else if matches!(event, ParseEvent::StructStart(_)) {
-                    self.expect_event("value")?; // consume StructStart
-                    // Expect immediate StructEnd for empty struct
-                    let end_event = self.expect_event("value")?;
-                    if !matches!(end_event, ParseEvent::StructEnd) {
-                        return Err(DeserializeError::TypeMismatch {
-                            expected: "empty struct for unit variant",
-                            got: format!("{end_event:?}"),
-                            span: self.last_span,
-                            path: None,
-                        });
-                    }
-                }
-                Ok(wip)
-            }
-            StructKind::Tuple | StructKind::TupleStruct => {
-                if variant_fields.len() == 1 {
-                    // Newtype variant - content is the single field's value
-                    wip = wip.begin_nth_field(0).map_err(DeserializeError::reflect)?;
-                    wip = self.deserialize_into(wip)?;
-                    wip = wip.end().map_err(DeserializeError::reflect)?;
-                } else {
-                    // Multi-field tuple variant - expect array or struct (for XML/TOML with numeric keys)
-                    let event = self.expect_event("value")?;
-
-                    // Accept SequenceStart (JSON arrays) or Object StructStart (TOML/JSON with numeric keys like "0", "1")
-                    let struct_mode = match event {
-                        ParseEvent::SequenceStart(_) => false,
-                        // Accept objects with numeric keys as valid tuple representations
-                        ParseEvent::StructStart(ContainerKind::Object) => true,
-                        ParseEvent::StructStart(kind) => {
-                            return Err(DeserializeError::TypeMismatch {
-                                expected: "array",
-                                got: kind.name().into(),
-                                span: self.last_span,
-                                path: None,
-                            });
-                        }
-                        _ => {
-                            return Err(DeserializeError::TypeMismatch {
-                                expected: "sequence for tuple variant",
-                                got: format!("{event:?}"),
-                                span: self.last_span,
-                                path: None,
-                            });
-                        }
-                    };
-
-                    let mut idx = 0;
-                    while idx < variant_fields.len() {
-                        // In struct mode, skip FieldKey events
-                        if struct_mode {
-                            let event = self.expect_peek("value")?;
-                            if matches!(event, ParseEvent::FieldKey(_)) {
-                                self.expect_event("value")?;
-                                continue;
-                            }
-                        }
-
-                        wip = wip
-                            .begin_nth_field(idx)
-                            .map_err(DeserializeError::reflect)?;
-                        wip = self.deserialize_into(wip)?;
-                        wip = wip.end().map_err(DeserializeError::reflect)?;
-                        idx += 1;
-                    }
-
-                    let event = self.expect_event("value")?;
-                    if !matches!(event, ParseEvent::SequenceEnd | ParseEvent::StructEnd) {
-                        return Err(DeserializeError::TypeMismatch {
-                            expected: "sequence end for tuple variant",
-                            got: format!("{event:?}"),
-                            span: self.last_span,
-                            path: None,
-                        });
-                    }
-                }
-                Ok(wip)
-            }
-            StructKind::Struct => {
-                // Struct variant - expect object with fields
-                let event = self.expect_event("value")?;
-                if !matches!(event, ParseEvent::StructStart(_)) {
-                    return Err(DeserializeError::TypeMismatch {
-                        expected: "struct for struct variant",
-                        got: format!("{event:?}"),
-                        span: self.last_span,
-                        path: None,
-                    });
-                }
-
-                // Check if variant has any flattened fields
-                let has_flatten = variant_fields.iter().any(|f| f.is_flattened());
-
-                // Enter deferred mode for flatten handling (fields can be set out of order)
-                let already_deferred = wip.is_deferred();
-                if has_flatten && !already_deferred {
-                    wip = wip.begin_deferred().map_err(DeserializeError::reflect)?;
-                }
-
-                let num_fields = variant_fields.len();
-                let mut fields_set = alloc::vec![false; num_fields];
-                let mut ordered_field_index = 0usize;
-
-                // Track currently open path segments for flatten handling: (field_name, is_option)
-                let mut open_segments: alloc::vec::Vec<(&str, bool)> = alloc::vec::Vec::new();
-
-                // Track which top-level fields have been touched (for flatten case)
-                let mut touched_fields: alloc::collections::BTreeSet<&str> =
-                    alloc::collections::BTreeSet::new();
-
-                loop {
-                    let event = self.expect_event("value")?;
-                    match event {
-                        ParseEvent::StructEnd => break,
-                        ParseEvent::OrderedField => {
-                            // Non-self-describing formats emit OrderedField events in order
-                            let idx = ordered_field_index;
-                            ordered_field_index += 1;
-                            if idx < num_fields {
-                                wip = wip
-                                    .begin_nth_field(idx)
-                                    .map_err(DeserializeError::reflect)?;
-                                wip = self.deserialize_into(wip)?;
-                                wip = wip.end().map_err(DeserializeError::reflect)?;
-                                fields_set[idx] = true;
-                            }
-                        }
-                        ParseEvent::FieldKey(key) => {
-                            // Unit keys don't make sense for struct fields
-                            let key_name = match &key.name {
-                                Some(name) => name.as_ref(),
-                                None => {
-                                    // Skip unit keys in struct context
-                                    self.parser.skip_value().map_err(DeserializeError::Parser)?;
-                                    continue;
-                                }
-                            };
-
-                            if has_flatten {
-                                // Use path-based lookup for variants with flattened fields
-                                if let Some(path) = find_field_path(variant_fields, key_name) {
-                                    // Track that the first field in the path was touched
-                                    if let Some(&first) = path.first() {
-                                        touched_fields.insert(first);
-                                    }
-
-                                    // Find common prefix with currently open segments
-                                    let common_len = open_segments
-                                        .iter()
-                                        .zip(path.iter())
-                                        .take_while(|((name, _), b)| *name == **b)
-                                        .count();
-
-                                    // Close segments that are no longer needed (in reverse order)
-                                    while open_segments.len() > common_len {
-                                        let (_, is_option) = open_segments.pop().unwrap();
-                                        if is_option {
-                                            wip = wip.end().map_err(DeserializeError::reflect)?;
-                                        }
-                                        wip = wip.end().map_err(DeserializeError::reflect)?;
-                                    }
-
-                                    // Open new segments
-                                    for &field_name in &path[common_len..] {
-                                        wip = wip
-                                            .begin_field(field_name)
-                                            .map_err(DeserializeError::reflect)?;
-                                        let is_option = matches!(wip.shape().def, Def::Option(_));
-                                        if is_option {
-                                            wip = wip
-                                                .begin_some()
-                                                .map_err(DeserializeError::reflect)?;
-                                        }
-                                        open_segments.push((field_name, is_option));
-                                    }
-
-                                    // Deserialize the value
-                                    wip = self.deserialize_into(wip)?;
-
-                                    // Close the leaf field we just deserialized into
-                                    // (but keep parent segments open for potential sibling fields)
-                                    if let Some((_, is_option)) = open_segments.pop() {
-                                        if is_option {
-                                            wip = wip.end().map_err(DeserializeError::reflect)?;
-                                        }
-                                        wip = wip.end().map_err(DeserializeError::reflect)?;
-                                    }
-                                } else {
-                                    // Unknown field - skip
-                                    self.parser.skip_value().map_err(DeserializeError::Parser)?;
-                                }
-                            } else {
-                                // Simple case: direct field lookup by name/alias
-                                let field_info = variant_fields
-                                    .iter()
-                                    .enumerate()
-                                    .find(|(_, f)| Self::field_matches(f, key_name));
-
-                                if let Some((idx, _field)) = field_info {
-                                    wip = wip
-                                        .begin_nth_field(idx)
-                                        .map_err(DeserializeError::reflect)?;
-                                    wip = self.deserialize_into(wip)?;
-                                    wip = wip.end().map_err(DeserializeError::reflect)?;
-                                    fields_set[idx] = true;
-                                } else {
-                                    // Unknown field - skip
-                                    self.parser.skip_value().map_err(DeserializeError::Parser)?;
-                                }
-                            }
-                        }
-                        other => {
-                            return Err(DeserializeError::TypeMismatch {
-                                expected: "field key, ordered field, or struct end",
-                                got: format!("{other:?}"),
-                                span: self.last_span,
-                                path: None,
-                            });
-                        }
-                    }
-                }
-
-                // Close any remaining open segments
-                while let Some((_, is_option)) = open_segments.pop() {
-                    if is_option {
-                        wip = wip.end().map_err(DeserializeError::reflect)?;
-                    }
-                    wip = wip.end().map_err(DeserializeError::reflect)?;
-                }
-
-                // For flatten case: touch any flattened fields that weren't visited
-                // This ensures fill_defaults can initialize them
-                if has_flatten {
-                    for field in variant_fields.iter() {
-                        if field.is_flattened() && !touched_fields.contains(field.name) {
-                            // Open the field, let fill_defaults handle it, close it
-                            wip = wip
-                                .begin_field(field.name)
-                                .map_err(DeserializeError::reflect)?;
-                            wip = wip.end().map_err(DeserializeError::reflect)?;
-                        }
-                    }
-                }
-
-                // Finish deferred mode (only if we started it)
-                // This applies defaults for missing fields automatically
-                if has_flatten && !already_deferred {
-                    wip = wip.finish_deferred().map_err(DeserializeError::reflect)?;
-                }
-
-                // Apply defaults for missing fields (only when not using flatten/deferred mode)
-                if !has_flatten {
-                    for (idx, field) in variant_fields.iter().enumerate() {
-                        if fields_set[idx] {
-                            continue;
-                        }
-
-                        let field_has_default = field.has_default();
-                        let field_type_has_default = field.shape().is(Characteristic::Default);
-                        let field_is_option = matches!(field.shape().def, Def::Option(_));
-
-                        if field_has_default || field_type_has_default {
-                            wip = wip
-                                .set_nth_field_to_default(idx)
-                                .map_err(DeserializeError::reflect)?;
-                        } else if field_is_option {
-                            wip = wip
-                                .begin_nth_field(idx)
-                                .map_err(DeserializeError::reflect)?;
-                            wip = wip.set_default().map_err(DeserializeError::reflect)?;
-                            wip = wip.end().map_err(DeserializeError::reflect)?;
-                        } else if field.should_skip_deserializing() {
-                            wip = wip
-                                .set_nth_field_to_default(idx)
-                                .map_err(DeserializeError::reflect)?;
-                        } else {
-                            return Err(DeserializeError::TypeMismatch {
-                                expected: "field to be present or have default",
-                                got: format!("missing field '{}'", field.name),
-                                span: self.last_span,
-                                path: None,
-                            });
-                        }
-                    }
-                }
-
-                Ok(wip)
-            }
-        }
+        use crate::deserializer::coro::run_deserialize_coro;
+        run_deserialize_coro(self, |yielder| {
+            deserialize_enum_variant_content_inner(yielder, wip)
+        })
     }
 
     /// Deserialize a cow-like enum transparently from its inner value.

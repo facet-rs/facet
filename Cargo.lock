@@ -1080,6 +1080,7 @@ dependencies = [
 name = "facet-format"
 version = "0.43.2"
 dependencies = [
+ "corosensei",
  "cranelift",
  "cranelift-jit",
  "cranelift-module",
