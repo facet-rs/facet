@@ -75,6 +75,9 @@ pub(crate) enum DeserializeRequest<'input, const BORROW: bool> {
         wip: Partial<'input, BORROW>,
         hint_shape: &'static facet_core::Shape,
     },
+
+    /// Need to call `solve_variant(shape, &mut parser)` for untagged enum resolution.
+    SolveVariant { shape: &'static facet_core::Shape },
 }
 
 /// Response from the wrapper to the inner deserialization logic.
@@ -96,6 +99,9 @@ pub(crate) enum DeserializeResponse<'input, const BORROW: bool> {
 
     /// Result of `collect_evidence`.
     Evidence(Vec<FieldEvidence<'input>>),
+
+    /// Result of `solve_variant` - the resolved variant name, or None if no match.
+    SolveVariantResult(Option<&'static str>),
 
     /// An error occurred.
     Error(InnerDeserializeError),
@@ -169,6 +175,18 @@ impl<'input, const BORROW: bool> DeserializeResponse<'input, BORROW> {
             DeserializeResponse::Error(e) => Err(e),
             other => Err(InnerDeserializeError::Unsupported(format!(
                 "expected Evidence response, got {:?}",
+                core::mem::discriminant(&other)
+            ))),
+        }
+    }
+
+    /// Unwrap as solve_variant result, or return an error.
+    pub fn into_solve_variant_result(self) -> Result<Option<&'static str>, InnerDeserializeError> {
+        match self {
+            DeserializeResponse::SolveVariantResult(result) => Ok(result),
+            DeserializeResponse::Error(e) => Err(e),
+            other => Err(InnerDeserializeError::Unsupported(format!(
+                "expected SolveVariantResult response, got {:?}",
                 core::mem::discriminant(&other)
             ))),
         }
@@ -301,6 +319,16 @@ pub(crate) fn request_deserialize_value_recursive<'input, const BORROW: bool>(
         .into_wip()
 }
 
+/// Helper to solve which variant matches for untagged enums.
+pub(crate) fn request_solve_variant<'input, const BORROW: bool>(
+    yielder: &DeserializeYielder<'input, BORROW>,
+    shape: &'static facet_core::Shape,
+) -> Result<Option<&'static str>, InnerDeserializeError> {
+    yielder
+        .suspend(DeserializeRequest::SolveVariant { shape })
+        .into_solve_variant_result()
+}
+
 /// Run a coroutine-based deserializer with the given inner function.
 ///
 /// This is the generic wrapper that handles parser operations. The inner function
@@ -408,6 +436,25 @@ where
                             match deser.deserialize_value_recursive(wip, hint_shape) {
                                 Ok(wip) => DeserializeResponse::Wip(wip),
                                 Err(e) => DeserializeResponse::Error(e.into_inner()),
+                            }
+                        }
+                        DeserializeRequest::SolveVariant { shape } => {
+                            match crate::solve_variant(shape, &mut deser.parser) {
+                                Ok(Some(outcome)) => {
+                                    // Extract the variant name from the resolution
+                                    let variant_name = outcome
+                                        .resolution()
+                                        .variant_selections()
+                                        .first()
+                                        .map(|vs| vs.variant_name);
+                                    DeserializeResponse::SolveVariantResult(variant_name)
+                                }
+                                Ok(None) => DeserializeResponse::SolveVariantResult(None),
+                                Err(e) => {
+                                    DeserializeResponse::Error(InnerDeserializeError::Unsupported(
+                                        format!("solve_variant failed: {e:?}"),
+                                    ))
+                                }
                             }
                         }
                     };

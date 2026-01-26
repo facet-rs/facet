@@ -12,7 +12,7 @@ use crate::{
         DeserializeYielder, request_collect_evidence, request_deserialize_enum_variant_content,
         request_deserialize_into, request_deserialize_other_variant_with_captured_tag,
         request_deserialize_value_recursive, request_event, request_peek, request_set_string_value,
-        request_skip, request_span, run_deserialize_coro,
+        request_skip, request_solve_variant, request_span, run_deserialize_coro,
     },
     deserializer::scalar_matches::scalar_matches_shape,
 };
@@ -1292,6 +1292,152 @@ fn deserialize_other_variant_with_captured_tag_inner<'input, const BORROW: bool>
     Ok(wip)
 }
 
+/// Inner implementation of `deserialize_enum_untagged` that runs in a coroutine.
+fn deserialize_enum_untagged_inner<'input, const BORROW: bool>(
+    yielder: &DeserializeYielder<'input, BORROW>,
+    mut wip: Partial<'input, BORROW>,
+) -> Result<Partial<'input, BORROW>, InnerDeserializeError> {
+    use alloc::format;
+    use facet_reflect::ReflectError;
+    use facet_solver::VariantsByFormat;
+
+    let reflect_err = |e: ReflectError| InnerDeserializeError::Reflect {
+        error: e,
+        span: request_span(yielder),
+        path: None,
+    };
+
+    let shape = wip.shape();
+    let variants_by_format = VariantsByFormat::from_shape(shape).ok_or_else(|| {
+        InnerDeserializeError::Unsupported("expected enum type for untagged".into())
+    })?;
+
+    let event = request_peek(yielder, "value")?;
+
+    match &event {
+        ParseEvent::Scalar(scalar) => {
+            // Try unit variants for null
+            if matches!(scalar, ScalarValue::Null)
+                && let Some(variant) = variants_by_format.unit_variants.first()
+            {
+                wip = wip
+                    .select_variant_named(variant.effective_name())
+                    .map_err(reflect_err)?;
+                // Consume the null
+                request_event(yielder, "value")?;
+                return Ok(wip);
+            }
+
+            // Try unit variants for string values (match variant name)
+            // This handles untagged enums with only unit variants like:
+            // #[facet(untagged)] enum Color { Red, Green, Blue }
+            // which deserialize from "Red", "Green", "Blue"
+            if let ScalarValue::Str(s) = scalar {
+                for variant in &variants_by_format.unit_variants {
+                    // Match against variant name or rename attribute
+                    let variant_display_name = variant.effective_name();
+
+                    if s.as_ref() == variant_display_name {
+                        wip = wip
+                            .select_variant_named(variant.effective_name())
+                            .map_err(reflect_err)?;
+                        // Consume the string
+                        request_event(yielder, "value")?;
+                        return Ok(wip);
+                    }
+                }
+            }
+
+            // Try scalar variants that match the scalar type
+            for (variant, inner_shape) in &variants_by_format.scalar_variants {
+                if scalar_matches_shape(scalar, inner_shape) {
+                    wip = wip
+                        .select_variant_named(variant.effective_name())
+                        .map_err(reflect_err)?;
+                    wip = request_deserialize_enum_variant_content(yielder, wip)?;
+                    return Ok(wip);
+                }
+            }
+
+            // Try other scalar variants that don't match primitive types.
+            // This handles cases like newtype variants wrapping enums with #[facet(rename)]:
+            //   #[facet(untagged)]
+            //   enum EditionOrWorkspace {
+            //       Edition(Edition),  // Edition is an enum with #[facet(rename = "2024")]
+            //       Workspace(WorkspaceRef),
+            //   }
+            // When deserializing "2024", Edition doesn't match as a primitive scalar,
+            // but it CAN be deserialized from the string via its renamed unit variants.
+            for (variant, inner_shape) in &variants_by_format.scalar_variants {
+                if !scalar_matches_shape(scalar, inner_shape) {
+                    wip = wip
+                        .select_variant_named(variant.effective_name())
+                        .map_err(reflect_err)?;
+                    // Try to deserialize - if this fails, it will bubble up as an error.
+                    // TODO: Implement proper variant trying with backtracking for better error messages
+                    wip = request_deserialize_enum_variant_content(yielder, wip)?;
+                    return Ok(wip);
+                }
+            }
+
+            Err(InnerDeserializeError::TypeMismatch {
+                expected: "matching untagged variant for scalar",
+                got: format!("{:?}", scalar),
+                span: request_span(yielder),
+                path: None,
+            })
+        }
+        ParseEvent::StructStart(_) => {
+            // For struct input, use solve_variant for proper field-based matching
+            match request_solve_variant(yielder, shape)? {
+                Some(variant_name) => {
+                    // Successfully identified which variant matches based on fields
+                    wip = wip
+                        .select_variant_named(variant_name)
+                        .map_err(reflect_err)?;
+                    wip = request_deserialize_enum_variant_content(yielder, wip)?;
+                    Ok(wip)
+                }
+                None => {
+                    // No variant matched - fall back to trying the first struct variant
+                    // (we can't backtrack parser state to try multiple variants)
+                    if let Some(variant) = variants_by_format.struct_variants.first() {
+                        wip = wip
+                            .select_variant_named(variant.effective_name())
+                            .map_err(reflect_err)?;
+                        wip = request_deserialize_enum_variant_content(yielder, wip)?;
+                        Ok(wip)
+                    } else {
+                        Err(InnerDeserializeError::Unsupported(
+                            "no struct variant found for untagged enum with struct input".into(),
+                        ))
+                    }
+                }
+            }
+        }
+        ParseEvent::SequenceStart(_) => {
+            // For sequence input, use first tuple variant
+            if let Some((variant, _arity)) = variants_by_format.tuple_variants.first() {
+                wip = wip
+                    .select_variant_named(variant.effective_name())
+                    .map_err(reflect_err)?;
+                wip = request_deserialize_enum_variant_content(yielder, wip)?;
+                return Ok(wip);
+            }
+
+            Err(InnerDeserializeError::Unsupported(
+                "no tuple variant found for untagged enum with sequence input".into(),
+            ))
+        }
+        _ => Err(InnerDeserializeError::TypeMismatch {
+            expected: "scalar, struct, or sequence for untagged enum",
+            got: format!("{:?}", event),
+            span: request_span(yielder),
+            path: None,
+        }),
+    }
+}
+
 impl<'input, const BORROW: bool, P> FormatDeserializer<'input, BORROW, P>
 where
     P: FormatParser<'input>,
@@ -1593,154 +1739,11 @@ where
 
     fn deserialize_enum_untagged(
         &mut self,
-        mut wip: Partial<'input, BORROW>,
+        wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
-        use facet_solver::VariantsByFormat;
-
-        let shape = wip.shape();
-        let variants_by_format = VariantsByFormat::from_shape(shape).ok_or_else(|| {
-            DeserializeError::Unsupported("expected enum type for untagged".into())
-        })?;
-
-        let event = self.expect_peek("value")?;
-
-        match &event {
-            ParseEvent::Scalar(scalar) => {
-                // Try unit variants for null
-                if matches!(scalar, ScalarValue::Null)
-                    && let Some(variant) = variants_by_format.unit_variants.first()
-                {
-                    wip = wip
-                        .select_variant_named(variant.effective_name())
-                        .map_err(DeserializeError::reflect)?;
-                    // Consume the null
-                    self.expect_event("value")?;
-                    return Ok(wip);
-                }
-
-                // Try unit variants for string values (match variant name)
-                // This handles untagged enums with only unit variants like:
-                // #[facet(untagged)] enum Color { Red, Green, Blue }
-                // which deserialize from "Red", "Green", "Blue"
-                if let ScalarValue::Str(s) = scalar {
-                    for variant in &variants_by_format.unit_variants {
-                        // Match against variant name or rename attribute
-                        let variant_display_name = variant.effective_name();
-
-                        if s.as_ref() == variant_display_name {
-                            wip = wip
-                                .select_variant_named(variant.effective_name())
-                                .map_err(DeserializeError::reflect)?;
-                            // Consume the string
-                            self.expect_event("value")?;
-                            return Ok(wip);
-                        }
-                    }
-                }
-
-                // Try scalar variants that match the scalar type
-                for (variant, inner_shape) in &variants_by_format.scalar_variants {
-                    if scalar_matches_shape(scalar, inner_shape) {
-                        wip = wip
-                            .select_variant_named(variant.effective_name())
-                            .map_err(DeserializeError::reflect)?;
-                        wip = self.deserialize_enum_variant_content(wip)?;
-                        return Ok(wip);
-                    }
-                }
-
-                // Try other scalar variants that don't match primitive types.
-                // This handles cases like newtype variants wrapping enums with #[facet(rename)]:
-                //   #[facet(untagged)]
-                //   enum EditionOrWorkspace {
-                //       Edition(Edition),  // Edition is an enum with #[facet(rename = "2024")]
-                //       Workspace(WorkspaceRef),
-                //   }
-                // When deserializing "2024", Edition doesn't match as a primitive scalar,
-                // but it CAN be deserialized from the string via its renamed unit variants.
-                for (variant, inner_shape) in &variants_by_format.scalar_variants {
-                    if !scalar_matches_shape(scalar, inner_shape) {
-                        wip = wip
-                            .select_variant_named(variant.effective_name())
-                            .map_err(DeserializeError::reflect)?;
-                        // Try to deserialize - if this fails, it will bubble up as an error.
-                        // TODO: Implement proper variant trying with backtracking for better error messages
-                        wip = self.deserialize_enum_variant_content(wip)?;
-                        return Ok(wip);
-                    }
-                }
-
-                Err(DeserializeError::TypeMismatch {
-                    expected: "matching untagged variant for scalar",
-                    got: format!("{:?}", scalar),
-                    span: self.last_span,
-                    path: None,
-                })
-            }
-            ParseEvent::StructStart(_) => {
-                // For struct input, use solve_variant for proper field-based matching
-                match crate::solve_variant(shape, &mut self.parser) {
-                    Ok(Some(outcome)) => {
-                        // Successfully identified which variant matches based on fields
-                        let resolution = outcome.resolution();
-                        // For top-level untagged enum, there should be exactly one variant selection
-                        let variant_name = resolution
-                            .variant_selections()
-                            .first()
-                            .map(|vs| vs.variant_name)
-                            .ok_or_else(|| {
-                                DeserializeError::Unsupported(
-                                    "solved resolution has no variant selection".into(),
-                                )
-                            })?;
-                        wip = wip
-                            .select_variant_named(variant_name)
-                            .map_err(DeserializeError::reflect)?;
-                        wip = self.deserialize_enum_variant_content(wip)?;
-                        Ok(wip)
-                    }
-                    Ok(None) => {
-                        // No variant matched - fall back to trying the first struct variant
-                        // (we can't backtrack parser state to try multiple variants)
-                        if let Some(variant) = variants_by_format.struct_variants.first() {
-                            wip = wip
-                                .select_variant_named(variant.effective_name())
-                                .map_err(DeserializeError::reflect)?;
-                            wip = self.deserialize_enum_variant_content(wip)?;
-                            Ok(wip)
-                        } else {
-                            Err(DeserializeError::Unsupported(
-                                "no struct variant found for untagged enum with struct input"
-                                    .into(),
-                            ))
-                        }
-                    }
-                    Err(_) => Err(DeserializeError::Unsupported(
-                        "failed to solve variant for untagged enum".into(),
-                    )),
-                }
-            }
-            ParseEvent::SequenceStart(_) => {
-                // For sequence input, use first tuple variant
-                if let Some((variant, _arity)) = variants_by_format.tuple_variants.first() {
-                    wip = wip
-                        .select_variant_named(variant.effective_name())
-                        .map_err(DeserializeError::reflect)?;
-                    wip = self.deserialize_enum_variant_content(wip)?;
-                    return Ok(wip);
-                }
-
-                Err(DeserializeError::Unsupported(
-                    "no tuple variant found for untagged enum with sequence input".into(),
-                ))
-            }
-            _ => Err(DeserializeError::TypeMismatch {
-                expected: "scalar, struct, or sequence for untagged enum",
-                got: format!("{:?}", event),
-                span: self.last_span,
-                path: None,
-            }),
-        }
+        run_deserialize_coro(self, |yielder| {
+            deserialize_enum_untagged_inner(yielder, wip)
+        })
     }
 
     /// Deserialize an `#[facet(other)]` variant that may have `#[facet(tag)]` and `#[facet(content)]` fields.
