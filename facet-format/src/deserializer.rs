@@ -7,7 +7,9 @@ use facet_core::{Def, Facet, Shape, StructKind, Type, UserType};
 pub use facet_path::{Path, PathStep};
 use facet_reflect::{HeapValue, Partial};
 
-use crate::{ContainerKind, FormatParser, ParseEvent, ScalarTypeHint, ScalarValue};
+use crate::{
+    ContainerKind, DynParser, DynParserError, FormatParser, ParseEvent, ScalarTypeHint, ScalarValue,
+};
 
 mod error;
 pub use error::*;
@@ -21,6 +23,40 @@ mod setters;
 mod struct_simple;
 mod struct_with_flatten;
 mod validate;
+
+/// Type alias for a deserializer using dynamic dispatch.
+///
+/// This uses `&mut dyn DynParser<'input>` as the parser, which allows a single
+/// monomorphization of `FormatDeserializer` to work with any format parser at runtime.
+///
+/// # Tradeoffs
+///
+/// - **Pros**: Reduces monomorphization bloat (one copy instead of N copies for N formats)
+/// - **Cons**: Dynamic dispatch overhead (likely negligible), parser errors are stringified
+///
+/// # Example
+///
+/// ```ignore
+/// use facet_json::JsonParser;
+/// use facet_format::{DynDeserializer, DynParser, FormatDeserializer};
+///
+/// let input = r#"{"name": "Alice"}"#;
+/// let mut parser = JsonParser::new(input.as_bytes());
+/// let mut dyn_parser: &mut dyn DynParser = &mut parser;
+/// let mut de: DynDeserializer = FormatDeserializer::new(dyn_parser);
+/// let value: MyStruct = de.deserialize().unwrap();
+/// ```
+pub type DynDeserializer<'input, 'p> =
+    FormatDeserializer<'input, true, &'p mut dyn DynParser<'input>>;
+
+/// Type alias for a deserializer using dynamic dispatch (owned strings variant).
+///
+/// Same as [`DynDeserializer`] but produces owned strings instead of borrowing from input.
+pub type DynDeserializerOwned<'input, 'p> =
+    FormatDeserializer<'input, false, &'p mut dyn DynParser<'input>>;
+
+/// Type alias for deserialization errors when using dynamic dispatch.
+pub type DynDeserializeError = DeserializeError<DynParserError>;
 
 /// Generic deserializer that drives a format-specific parser directly into `Partial`.
 ///

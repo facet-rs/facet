@@ -55,7 +55,10 @@ mod visitor;
 #[cfg(feature = "jit")]
 pub mod jit;
 
-pub use deserializer::{DeserializeError, FormatDeserializer, InnerDeserializeError};
+pub use deserializer::{
+    DeserializeError, DynDeserializeError, DynDeserializer, DynDeserializerOwned,
+    FormatDeserializer, InnerDeserializeError,
+};
 pub use dyn_parser::{DynParser, DynParserError, DynParserWrapper, DynResult};
 pub use event::{
     ContainerKind, FieldKey, FieldLocationHint, ParseEvent, ScalarValue, ValueTypeHint,

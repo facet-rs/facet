@@ -337,3 +337,95 @@ impl<'de, P: FormatParser<'de>> DynParser<'de> for DynParserWrapper<'de, P> {
         self.parser.format_namespace()
     }
 }
+
+// Implement FormatParser for dyn DynParser trait objects.
+//
+// This allows using `&mut dyn DynParser<'de>` wherever `P: FormatParser<'de>` is expected,
+// enabling dynamic dispatch through FormatDeserializer without code changes.
+impl<'de> FormatParser<'de> for &mut dyn DynParser<'de> {
+    type Error = DynParserError;
+
+    fn next_event(&mut self) -> Result<Option<ParseEvent<'de>>, Self::Error> {
+        DynParser::next_event(*self)
+    }
+
+    fn peek_event(&mut self) -> Result<Option<ParseEvent<'de>>, Self::Error> {
+        DynParser::peek_event(*self)
+    }
+
+    fn skip_value(&mut self) -> Result<(), Self::Error> {
+        DynParser::skip_value(*self)
+    }
+
+    fn save(&mut self) -> SavePoint {
+        DynParser::save(*self)
+    }
+
+    fn restore(&mut self, save_point: SavePoint) {
+        DynParser::restore(*self, save_point)
+    }
+
+    fn capture_raw(&mut self) -> Result<Option<&'de str>, Self::Error> {
+        DynParser::capture_raw(*self)
+    }
+
+    fn raw_capture_shape(&self) -> Option<&'static facet_core::Shape> {
+        DynParser::raw_capture_shape(*self)
+    }
+
+    fn is_self_describing(&self) -> bool {
+        DynParser::is_self_describing(*self)
+    }
+
+    fn hint_struct_fields(&mut self, num_fields: usize) {
+        DynParser::hint_struct_fields(*self, num_fields);
+    }
+
+    fn hint_scalar_type(&mut self, hint: ScalarTypeHint) {
+        DynParser::hint_scalar_type(*self, hint);
+    }
+
+    fn hint_sequence(&mut self) {
+        DynParser::hint_sequence(*self);
+    }
+
+    fn hint_byte_sequence(&mut self) -> bool {
+        DynParser::hint_byte_sequence(*self)
+    }
+
+    fn hint_array(&mut self, len: usize) {
+        DynParser::hint_array(*self, len);
+    }
+
+    fn hint_option(&mut self) {
+        DynParser::hint_option(*self);
+    }
+
+    fn hint_map(&mut self) {
+        DynParser::hint_map(*self);
+    }
+
+    fn hint_dynamic_value(&mut self) {
+        DynParser::hint_dynamic_value(*self);
+    }
+
+    fn hint_enum(&mut self, variants: &[EnumVariantHint]) {
+        DynParser::hint_enum(*self, variants);
+    }
+
+    fn hint_opaque_scalar(
+        &mut self,
+        type_identifier: &'static str,
+        shape: &'static facet_core::Shape,
+    ) -> bool {
+        DynParser::hint_opaque_scalar(*self, type_identifier, shape)
+    }
+
+    fn current_span(&self) -> Option<Span> {
+        DynParser::current_span(*self)
+    }
+
+    fn format_namespace(&self) -> Option<&'static str> {
+        DynParser::format_namespace(*self)
+    }
+}
