@@ -6,7 +6,8 @@ use crate::key::{Dep, DynKey, Key, QueryKindId};
 use crate::persist::{PersistableIngredient, SectionType};
 use crate::revision::Revision;
 use facet::Facet;
-use facet_reflect::{Partial, Peek};
+use facet_core::Shape;
+use facet_reflect::{HeapValue, Partial, Peek};
 use futures_util::FutureExt;
 use futures_util::future::BoxFuture;
 use parking_lot::RwLock;
@@ -85,6 +86,46 @@ struct ApplyWalResult {
 
 /// Function pointer for deep equality check without knowing V
 type EqErasedFn = fn(&dyn Any, &dyn Any) -> bool;
+
+// ============================================================================
+// Non-generic helpers for type-erased serialization/deserialization
+// These are compiled once and called from the generic closures
+// ============================================================================
+
+/// Serialize a value using type-erased Peek. Non-generic, compiled once.
+#[inline(never)]
+fn encode_with_peek(peek: Peek<'_, '_>, what: &'static str) -> PicanteResult<Vec<u8>> {
+    facet_postcard::peek_to_vec(peek).map_err(|e| {
+        Arc::new(PicanteError::Encode {
+            what,
+            message: format!("{e:?}"),
+        })
+    })
+}
+
+/// Deserialize bytes into a HeapValue using type-erased Shape. Non-generic, compiled once.
+#[inline(never)]
+fn decode_to_heap_value(bytes: &[u8], shape: &'static Shape, what: &'static str) -> PicanteResult<HeapValue<'static, false>> {
+    // SAFETY: shape must be the correct shape for the target type
+    let partial = unsafe { Partial::alloc_shape_owned(shape) }.map_err(|e| {
+        Arc::new(PicanteError::Decode {
+            what,
+            message: format!("alloc failed: {e:?}"),
+        })
+    })?;
+    let partial = facet_postcard::from_slice_into(bytes, partial).map_err(|e| {
+        Arc::new(PicanteError::Decode {
+            what,
+            message: format!("{e:?}"),
+        })
+    })?;
+    partial.build().map_err(|e| {
+        Arc::new(PicanteError::Decode {
+            what,
+            message: format!("build failed: {e:?}"),
+        })
+    })
+}
 
 // r[type-erasure.mechanism]
 /// Trait for type-erased compute function (dyn dispatch)
@@ -1062,13 +1103,8 @@ where
             deps,
         };
 
-        // Use type-erased serialization: Peek::new is tiny, peek_to_vec is non-generic
-        facet_postcard::peek_to_vec(Peek::new(&rec)).map_err(|e| {
-            Arc::new(PicanteError::Encode {
-                what: "derived record",
-                message: format!("{e:?}"),
-            })
-        })
+        // Peek::new is tiny and generic, encode_with_peek is non-generic
+        encode_with_peek(Peek::new(&rec), "derived record")
     }
 }
 
@@ -1079,28 +1115,8 @@ where
     V: Clone + Facet<'static> + Send + Sync + 'static,
 {
     |kind, bytes| {
-        // Use type-erased deserialization: from_slice_into is non-generic
-        let record_shape = <DerivedRecord<K, V>>::SHAPE;
-        // SAFETY: record_shape is the correct shape for DerivedRecord<K, V>
-        let partial = unsafe { Partial::alloc_shape_owned(record_shape) }.map_err(|e| {
-            Arc::new(PicanteError::Decode {
-                what: "derived record (alloc)",
-                message: format!("{e:?}"),
-            })
-        })?;
-        let partial = facet_postcard::from_slice_into(&bytes, partial).map_err(|e| {
-            Arc::new(PicanteError::Decode {
-                what: "derived record",
-                message: format!("{e:?}"),
-            })
-        })?;
-        let heap_value = partial.build().map_err(|e| {
-            Arc::new(PicanteError::Decode {
-                what: "derived record (build)",
-                message: format!("{e:?}"),
-            })
-        })?;
-        // materialize is generic but tiny (just a pointer read)
+        // decode_to_heap_value is non-generic, materialize is tiny
+        let heap_value = decode_to_heap_value(&bytes, <DerivedRecord<K, V>>::SHAPE, "derived record")?;
         let rec: DerivedRecord<K, V> = heap_value.materialize().map_err(|e| {
             Arc::new(PicanteError::Decode {
                 what: "derived record (materialize)",
@@ -1181,20 +1197,9 @@ where
             deps: dep_records,
         };
 
-        // Use type-erased serialization: Peek::new is tiny, peek_to_vec is non-generic
-        let key_bytes = facet_postcard::peek_to_vec(Peek::new(&key)).map_err(|e| {
-            Arc::new(PicanteError::Encode {
-                what: "derived key",
-                message: format!("{e:?}"),
-            })
-        })?;
-
-        let value_bytes = facet_postcard::peek_to_vec(Peek::new(&rec)).map_err(|e| {
-            Arc::new(PicanteError::Encode {
-                what: "derived record",
-                message: format!("{e:?}"),
-            })
-        })?;
+        // Peek::new is tiny and generic, encode_with_peek is non-generic
+        let key_bytes = encode_with_peek(Peek::new(&key), "derived key")?;
+        let value_bytes = encode_with_peek(Peek::new(&rec), "derived record")?;
 
         Ok((key_bytes, value_bytes))
     }
@@ -1207,27 +1212,8 @@ where
     V: Clone + Facet<'static> + Send + Sync + 'static,
 {
     |kind, key_bytes, value_bytes| {
-        // Use type-erased deserialization for the key
-        let key_shape = K::SHAPE;
-        // SAFETY: key_shape is the correct shape for K
-        let partial = unsafe { Partial::alloc_shape_owned(key_shape) }.map_err(|e| {
-            Arc::new(PicanteError::Decode {
-                what: "derived key from WAL (alloc)",
-                message: format!("{e:?}"),
-            })
-        })?;
-        let partial = facet_postcard::from_slice_into(&key_bytes, partial).map_err(|e| {
-            Arc::new(PicanteError::Decode {
-                what: "derived key from WAL",
-                message: format!("{e:?}"),
-            })
-        })?;
-        let heap_value = partial.build().map_err(|e| {
-            Arc::new(PicanteError::Decode {
-                what: "derived key from WAL (build)",
-                message: format!("{e:?}"),
-            })
-        })?;
+        // decode_to_heap_value is non-generic, materialize is tiny
+        let heap_value = decode_to_heap_value(&key_bytes, K::SHAPE, "derived key from WAL")?;
         let key: K = heap_value.materialize().map_err(|e| {
             Arc::new(PicanteError::Decode {
                 what: "derived key from WAL (materialize)",
@@ -1241,27 +1227,8 @@ where
         };
 
         if let Some(value_bytes) = value_bytes {
-            // Use type-erased deserialization for the record
-            let record_shape = <DerivedRecord<K, V>>::SHAPE;
-            // SAFETY: record_shape is the correct shape for DerivedRecord<K, V>
-            let partial = unsafe { Partial::alloc_shape_owned(record_shape) }.map_err(|e| {
-                Arc::new(PicanteError::Decode {
-                    what: "derived record from WAL (alloc)",
-                    message: format!("{e:?}"),
-                })
-            })?;
-            let partial = facet_postcard::from_slice_into(&value_bytes, partial).map_err(|e| {
-                Arc::new(PicanteError::Decode {
-                    what: "derived record from WAL",
-                    message: format!("{e:?}"),
-                })
-            })?;
-            let heap_value = partial.build().map_err(|e| {
-                Arc::new(PicanteError::Decode {
-                    what: "derived record from WAL (build)",
-                    message: format!("{e:?}"),
-                })
-            })?;
+            // decode_to_heap_value is non-generic, materialize is tiny
+            let heap_value = decode_to_heap_value(&value_bytes, <DerivedRecord<K, V>>::SHAPE, "derived record from WAL")?;
             let rec: DerivedRecord<K, V> = heap_value.materialize().map_err(|e| {
                 Arc::new(PicanteError::Decode {
                     what: "derived record from WAL (materialize)",
