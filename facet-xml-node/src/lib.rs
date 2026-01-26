@@ -261,7 +261,10 @@ impl From<&str> for Content {
 
 #[cfg(test)]
 mod tests {
+    use std::{fmt::Display, str::FromStr};
+
     use super::*;
+    use facet::Facet;
     use facet_testhelpers::test;
 
     #[test]
@@ -555,5 +558,83 @@ mod tests {
         let result: EmptyContainer = facet_xml::from_str(xml).unwrap();
 
         assert!(result.elements.is_empty());
+    }
+
+    #[derive(Debug, Facet)]
+    #[facet(proxy = StringRepr)]
+    struct ConstantName;
+
+    /// A proxy type for Facet that uses the Display/FromStr implementation
+    #[derive(Debug, Facet)]
+    #[repr(transparent)]
+    pub(crate) struct StringRepr(pub String);
+
+    impl Display for ConstantName {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "CONSTANT")
+        }
+    }
+
+    impl FromStr for ConstantName {
+        type Err = &'static str;
+        fn from_str(s: &str) -> Result<Self, Self::Err> {
+            if s == "CONSTANT" {
+                Ok(Self)
+            } else {
+                Err("expected `CONSTANT`")
+            }
+        }
+    }
+
+    impl From<ConstantName> for StringRepr {
+        fn from(value: ConstantName) -> Self {
+            Self(value.to_string())
+        }
+    }
+    impl From<&ConstantName> for StringRepr {
+        fn from(value: &ConstantName) -> Self {
+            Self(value.to_string())
+        }
+    }
+    impl TryFrom<StringRepr> for ConstantName {
+        type Error = <ConstantName as core::str::FromStr>::Err;
+        fn try_from(value: StringRepr) -> Result<Self, Self::Error> {
+            value.0.parse()
+        }
+    }
+    impl TryFrom<&StringRepr> for ConstantName {
+        type Error = <ConstantName as core::str::FromStr>::Err;
+        fn try_from(value: &StringRepr) -> Result<Self, Self::Error> {
+            value.0.parse()
+        }
+    }
+
+    #[derive(Debug, Facet)]
+    #[repr(C)]
+    enum Foo {
+        #[facet(rename = "foo")]
+        Value {
+            #[facet(xml::attribute)]
+            #[allow(unused)]
+            name: ConstantName,
+            #[facet(xml::attribute)]
+            #[allow(unused)]
+            exists: String,
+        },
+    }
+
+    #[test]
+    fn transparent_attribute_not_discarded() {
+        let raw_xml = r#"
+<foo name="CONSTANT" exists="i do exist and am not discarded"></foo>"#;
+        let x: Foo = facet_xml::from_str(raw_xml).unwrap();
+        let element = crate::to_element(&x).unwrap();
+        let _ = facet_xml::to_string(&x).unwrap();
+        let _ = facet_xml::to_string(&element).unwrap();
+        assert!(
+            element.attrs.contains_key("exists"),
+            "this attribute is not discarded"
+        );
+        assert_eq!(element.attrs["name"], "CONSTANT", "name is not discarded");
     }
 }
