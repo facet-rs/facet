@@ -134,10 +134,9 @@ impl<'input, const BORROW: bool> SliceAdapter<'input, BORROW> {
 
     /// Create a new adapter starting at a specific offset.
     ///
-    /// This is used by the JIT deserializer to reset the parser position
-    /// after Tier-2 parsing completes. The spans remain absolute positions
-    /// in the original input.
-    #[cfg(feature = "jit")]
+    /// This is used to reset the parser position (for save/restore functionality
+    /// and JIT deserialization). The spans remain absolute positions in the
+    /// original input.
     pub fn new_with_offset(input: &'input [u8], offset: usize) -> Self {
         let offset = offset.min(input.len());
         let initial_end = (offset + DEFAULT_CHUNK_SIZE).min(input.len());

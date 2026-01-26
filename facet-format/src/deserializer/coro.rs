@@ -466,20 +466,9 @@ where
                             }
                         }
                         DeserializeRequest::GetSpan => DeserializeResponse::Span(deser.last_span),
-                        DeserializeRequest::CollectEvidence => match deser.parser.begin_probe() {
-                            Ok(probe) => {
-                                match FormatDeserializer::<'input, BORROW, P>::collect_evidence(
-                                    probe,
-                                ) {
-                                    Ok(ev) => DeserializeResponse::Evidence(ev),
-                                    Err(e) => DeserializeResponse::Error(
-                                        InnerDeserializeError::Parser(format!("{e:?}")),
-                                    ),
-                                }
-                            }
-                            Err(e) => DeserializeResponse::Error(InnerDeserializeError::Parser(
-                                format!("{e:?}"),
-                            )),
+                        DeserializeRequest::CollectEvidence => match deser.collect_evidence() {
+                            Ok(ev) => DeserializeResponse::Evidence(ev),
+                            Err(e) => DeserializeResponse::Error(e.into_inner()),
                         },
                         DeserializeRequest::SetStringValue { wip, value } => {
                             match deser.set_string_value(wip, value) {

@@ -1,15 +1,17 @@
-use crate::FieldEvidence;
 use facet_reflect::Span;
 
-/// Streaming cursor that yields serialized fields for solver probing.
-pub trait ProbeStream<'de> {
-    /// Parser-specific error type.
-    type Error;
+/// Opaque token returned by [`FormatParser::save`].
+///
+/// This token can be passed to [`FormatParser::restore`] to replay
+/// all events that were consumed since the save point.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SavePoint(pub u64);
 
-    /// Produce the next field evidence entry. Returning `Ok(None)` indicates
-    /// the parser ran out of evidence or the format does not need additional
-    /// passes.
-    fn next(&mut self) -> Result<Option<FieldEvidence<'de>>, Self::Error>;
+impl SavePoint {
+    /// Create a new save point with the given ID.
+    pub fn new(id: u64) -> Self {
+        Self(id)
+    }
 }
 
 /// Streaming parser for a specific wire format.
@@ -17,17 +19,15 @@ pub trait FormatParser<'de> {
     /// Parser-specific error type.
     type Error: core::fmt::Debug;
 
-    /// Evidence cursor type produced by [`FormatParser::begin_probe`].
-    type Probe<'a>: ProbeStream<'de, Error = Self::Error>
-    where
-        Self: 'a;
-
     /// Read the next parse event, or `None` if the input is exhausted.
     ///
     /// Returns `Ok(None)` at end-of-input (EOF). For formats like TOML where
     /// structs can be "reopened" (fields added after the struct was previously
     /// exited), callers should continue processing until EOF rather than
     /// stopping at `StructEnd`.
+    ///
+    /// If [`restore`](Self::restore) was called, events are first replayed
+    /// from the internal buffer before reading new events from the input.
     fn next_event(&mut self) -> Result<Option<crate::ParseEvent<'de>>, Self::Error>;
 
     /// Peek at the next event without consuming it, or `None` if at EOF.
@@ -36,8 +36,24 @@ pub trait FormatParser<'de> {
     /// Skip the current value (for unknown fields, etc.).
     fn skip_value(&mut self) -> Result<(), Self::Error>;
 
-    /// Begin evidence collection for untagged-enum resolution.
-    fn begin_probe(&mut self) -> Result<Self::Probe<'_>, Self::Error>;
+    /// Save the current parser position and start recording events.
+    ///
+    /// Returns a [`SavePoint`] token. All events returned by [`next_event`](Self::next_event)
+    /// after this call are recorded internally. Call [`restore`](Self::restore) with this
+    /// token to replay all recorded events.
+    ///
+    /// This is used for untagged enum resolution: save, read ahead to determine
+    /// the variant, then restore and parse with the correct type.
+    fn save(&mut self) -> SavePoint;
+
+    /// Restore to a previous save point, replaying recorded events.
+    ///
+    /// After calling this, subsequent calls to [`next_event`](Self::next_event) will
+    /// first return all events that were recorded since the save point, then
+    /// continue reading from the input.
+    ///
+    /// The save point is consumed - to save again, call [`save`](Self::save).
+    fn restore(&mut self, save_point: SavePoint);
 
     /// Capture the raw representation of the current value without parsing it.
     ///

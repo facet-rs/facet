@@ -4,23 +4,21 @@ use alloc::{borrow::Cow, vec::Vec};
 
 use facet_core::Facet as _;
 use facet_format::{
-    ContainerKind, FieldEvidence, FieldKey, FieldLocationHint, FormatParser, ParseEvent,
-    ProbeStream, ScalarValue,
+    ContainerKind, FieldKey, FieldLocationHint, FormatParser, ParseEvent, SavePoint, ScalarValue,
 };
 
 use crate::adapter::{SliceAdapter, SpannedAdapterToken, Token as AdapterToken};
 pub use crate::error::JsonError;
 use crate::error::JsonErrorKind;
 
-/// Streaming JSON parser backed by `facet-json`'s `SliceAdapter`.
-pub struct JsonParser<'de> {
-    input: &'de [u8],
-    adapter: SliceAdapter<'de, true>,
+/// Mutable parser state that can be saved and restored.
+#[derive(Clone)]
+struct ParserState<'de> {
+    /// Stack tracking nested containers.
     stack: Vec<ContextState>,
     /// Cached event for `peek_event`.
     event_peek: Option<ParseEvent<'de>>,
     /// Start offset of the peeked event's first token (for capture_raw).
-    /// This is the span.offset of the first token consumed during peek.
     peek_start_offset: Option<usize>,
     /// Whether the root value has started.
     root_started: bool,
@@ -29,24 +27,34 @@ pub struct JsonParser<'de> {
     /// Absolute offset (in bytes) of the next unread token.
     current_offset: usize,
     /// Offset of the last token's start (span.offset).
-    /// Used to track the start of a value during peek.
     last_token_start: usize,
 }
 
-#[derive(Debug)]
+/// Streaming JSON parser backed by `facet-json`'s `SliceAdapter`.
+pub struct JsonParser<'de> {
+    input: &'de [u8],
+    adapter: SliceAdapter<'de, true>,
+    state: ParserState<'de>,
+    /// Counter for save points.
+    save_counter: u64,
+    /// Saved states for restore functionality.
+    saved_states: Vec<(u64, ParserState<'de>)>,
+}
+
+#[derive(Debug, Clone)]
 enum ContextState {
     Object(ObjectState),
     Array(ArrayState),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 enum ObjectState {
     KeyOrEnd,
     Value,
     CommaOrEnd,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 enum ArrayState {
     ValueOrEnd,
     CommaOrEnd,
@@ -74,20 +82,24 @@ impl<'de> JsonParser<'de> {
         Self {
             input,
             adapter: SliceAdapter::new(input),
-            stack: Vec::new(),
-            event_peek: None,
-            peek_start_offset: None,
-            root_started: false,
-            root_complete: false,
-            current_offset: 0,
-            last_token_start: 0,
+            state: ParserState {
+                stack: Vec::new(),
+                event_peek: None,
+                peek_start_offset: None,
+                root_started: false,
+                root_complete: false,
+                current_offset: 0,
+                last_token_start: 0,
+            },
+            save_counter: 0,
+            saved_states: Vec::new(),
         }
     }
 
     fn consume_token(&mut self) -> Result<SpannedAdapterToken<'de>, JsonError> {
         let token = self.adapter.next_token().map_err(JsonError::from)?;
-        self.last_token_start = token.span.offset;
-        self.current_offset = token.span.offset + token.span.len;
+        self.state.last_token_start = token.span.offset;
+        self.state.current_offset = token.span.offset + token.span.len;
         Ok(token)
     }
 
@@ -108,15 +120,19 @@ impl<'de> JsonParser<'de> {
             None => self.consume_token()?,
         };
 
-        self.root_started = true;
+        self.state.root_started = true;
 
         match token.token {
             AdapterToken::ObjectStart => {
-                self.stack.push(ContextState::Object(ObjectState::KeyOrEnd));
+                self.state
+                    .stack
+                    .push(ContextState::Object(ObjectState::KeyOrEnd));
                 Ok(ParseEvent::StructStart(ContainerKind::Object))
             }
             AdapterToken::ArrayStart => {
-                self.stack.push(ContextState::Array(ArrayState::ValueOrEnd));
+                self.state
+                    .stack
+                    .push(ContextState::Array(ArrayState::ValueOrEnd));
                 Ok(ParseEvent::SequenceStart(ContainerKind::Array))
             }
             AdapterToken::String(s) => {
@@ -172,13 +188,13 @@ impl<'de> JsonParser<'de> {
     }
 
     fn finish_value_in_parent(&mut self) {
-        if let Some(context) = self.stack.last_mut() {
+        if let Some(context) = self.state.stack.last_mut() {
             match context {
                 ContextState::Object(state) => *state = ObjectState::CommaOrEnd,
                 ContextState::Array(state) => *state = ArrayState::CommaOrEnd,
             }
-        } else if self.root_started {
-            self.root_complete = true;
+        } else if self.state.root_started {
+            self.state.root_complete = true;
         }
     }
 
@@ -194,7 +210,7 @@ impl<'de> JsonParser<'de> {
 
     fn consume_value_tokens(&mut self) -> Result<(), JsonError> {
         let span = self.adapter.skip().map_err(JsonError::from)?;
-        self.current_offset = span.offset + span.len;
+        self.state.current_offset = span.offset + span.len;
         Ok(())
     }
 
@@ -235,62 +251,8 @@ impl<'de> JsonParser<'de> {
         Ok(())
     }
 
-    /// Skip a container in a separate adapter (used during probing).
-    fn skip_container_in_adapter(
-        &self,
-        adapter: &mut SliceAdapter<'de, true>,
-        start_kind: DelimKind,
-    ) -> Result<(), JsonError> {
-        let mut stack = vec![start_kind];
-        while let Some(current) = stack.last().copied() {
-            let token = adapter.next_token().map_err(JsonError::from)?;
-            match token.token {
-                AdapterToken::ObjectStart => stack.push(DelimKind::Object),
-                AdapterToken::ArrayStart => stack.push(DelimKind::Array),
-                AdapterToken::ObjectEnd => {
-                    if current != DelimKind::Object {
-                        return Err(JsonError::new(
-                            JsonErrorKind::UnexpectedToken {
-                                got: format!("{:?}", token.token),
-                                expected: "'}'",
-                            },
-                            token.span,
-                        ));
-                    }
-                    stack.pop();
-                    if stack.is_empty() {
-                        break;
-                    }
-                }
-                AdapterToken::ArrayEnd => {
-                    if current != DelimKind::Array {
-                        return Err(JsonError::new(
-                            JsonErrorKind::UnexpectedToken {
-                                got: format!("{:?}", token.token),
-                                expected: "']'",
-                            },
-                            token.span,
-                        ));
-                    }
-                    stack.pop();
-                    if stack.is_empty() {
-                        break;
-                    }
-                }
-                AdapterToken::Eof => {
-                    return Err(JsonError::new(
-                        JsonErrorKind::UnexpectedEof { expected: "value" },
-                        token.span,
-                    ));
-                }
-                _ => {}
-            }
-        }
-        Ok(())
-    }
-
     fn determine_action(&self) -> NextAction {
-        if let Some(context) = self.stack.last() {
+        if let Some(context) = self.state.stack.last() {
             match context {
                 ContextState::Object(state) => match state {
                     ObjectState::KeyOrEnd => NextAction::ObjectKey,
@@ -302,7 +264,7 @@ impl<'de> JsonParser<'de> {
                     ArrayState::CommaOrEnd => NextAction::ArrayComma,
                 },
             }
-        } else if self.root_complete {
+        } else if self.state.root_complete {
             NextAction::RootFinished
         } else {
             NextAction::RootValue
@@ -316,13 +278,13 @@ impl<'de> JsonParser<'de> {
                     let token = self.consume_token()?;
                     match token.token {
                         AdapterToken::ObjectEnd => {
-                            self.stack.pop();
+                            self.state.stack.pop();
                             self.finish_value_in_parent();
                             return Ok(Some(ParseEvent::StructEnd));
                         }
                         AdapterToken::String(name) => {
                             self.expect_colon()?;
-                            if let Some(ContextState::Object(state)) = self.stack.last_mut() {
+                            if let Some(ContextState::Object(state)) = self.state.stack.last_mut() {
                                 *state = ObjectState::Value;
                             }
                             return Ok(Some(ParseEvent::FieldKey(FieldKey::new(
@@ -348,13 +310,13 @@ impl<'de> JsonParser<'de> {
                     let token = self.consume_token()?;
                     match token.token {
                         AdapterToken::Comma => {
-                            if let Some(ContextState::Object(state)) = self.stack.last_mut() {
+                            if let Some(ContextState::Object(state)) = self.state.stack.last_mut() {
                                 *state = ObjectState::KeyOrEnd;
                             }
                             continue;
                         }
                         AdapterToken::ObjectEnd => {
-                            self.stack.pop();
+                            self.state.stack.pop();
                             self.finish_value_in_parent();
                             return Ok(Some(ParseEvent::StructEnd));
                         }
@@ -373,7 +335,7 @@ impl<'de> JsonParser<'de> {
                     let token = self.consume_token()?;
                     match token.token {
                         AdapterToken::ArrayEnd => {
-                            self.stack.pop();
+                            self.state.stack.pop();
                             self.finish_value_in_parent();
                             return Ok(Some(ParseEvent::SequenceEnd));
                         }
@@ -397,13 +359,13 @@ impl<'de> JsonParser<'de> {
                     let token = self.consume_token()?;
                     match token.token {
                         AdapterToken::Comma => {
-                            if let Some(ContextState::Array(state)) = self.stack.last_mut() {
+                            if let Some(ContextState::Array(state)) = self.state.stack.last_mut() {
                                 *state = ArrayState::ValueOrEnd;
                             }
                             continue;
                         }
                         AdapterToken::ArrayEnd => {
-                            self.stack.pop();
+                            self.state.stack.pop();
                             self.finish_value_in_parent();
                             return Ok(Some(ParseEvent::SequenceEnd));
                         }
@@ -427,173 +389,72 @@ impl<'de> JsonParser<'de> {
             }
         }
     }
-
-    fn build_probe(&self) -> Result<Vec<FieldEvidence<'de>>, JsonError> {
-        let remaining = self.input.get(self.current_offset..).unwrap_or_default();
-        if remaining.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let mut adapter = SliceAdapter::<true>::new(remaining);
-
-        // If we've peeked a StructStart, we've already consumed the '{' so skip the check.
-        // Otherwise, expect ObjectStart as the first token.
-        let already_inside_object = matches!(self.event_peek, Some(ParseEvent::StructStart(_)));
-
-        if !already_inside_object {
-            let first = adapter.next_token().map_err(JsonError::from)?;
-            if !matches!(first.token, AdapterToken::ObjectStart) {
-                return Ok(Vec::new());
-            }
-        }
-
-        let mut evidence = Vec::new();
-        loop {
-            let token = adapter.next_token().map_err(JsonError::from)?;
-            match token.token {
-                AdapterToken::ObjectEnd => break,
-                AdapterToken::String(name) => {
-                    let colon = adapter.next_token().map_err(JsonError::from)?;
-                    if !matches!(colon.token, AdapterToken::Colon) {
-                        return Err(JsonError::new(
-                            JsonErrorKind::UnexpectedToken {
-                                got: format!("{:?}", colon.token),
-                                expected: "':'",
-                            },
-                            colon.span,
-                        ));
-                    }
-
-                    // Capture scalar values, skip complex types (objects/arrays)
-                    let value_token = adapter.next_token().map_err(JsonError::from)?;
-                    let scalar_value = match value_token.token {
-                        AdapterToken::String(s) => Some(ScalarValue::Str(s)),
-                        AdapterToken::True => Some(ScalarValue::Bool(true)),
-                        AdapterToken::False => Some(ScalarValue::Bool(false)),
-                        AdapterToken::Null => Some(ScalarValue::Null),
-                        AdapterToken::I64(n) => Some(ScalarValue::I64(n)),
-                        AdapterToken::U64(n) => Some(ScalarValue::U64(n)),
-                        AdapterToken::I128(n) => Some(ScalarValue::Str(Cow::Owned(n.to_string()))),
-                        AdapterToken::U128(n) => Some(ScalarValue::Str(Cow::Owned(n.to_string()))),
-                        AdapterToken::F64(n) => Some(ScalarValue::F64(n)),
-                        AdapterToken::ObjectStart => {
-                            // Skip the complex object
-                            self.skip_container_in_adapter(&mut adapter, DelimKind::Object)?;
-                            None
-                        }
-                        AdapterToken::ArrayStart => {
-                            // Skip the complex array
-                            self.skip_container_in_adapter(&mut adapter, DelimKind::Array)?;
-                            None
-                        }
-                        _ => None,
-                    };
-
-                    if let Some(sv) = scalar_value {
-                        evidence.push(FieldEvidence::with_scalar_value(
-                            name,
-                            FieldLocationHint::KeyValue,
-                            None,
-                            sv,
-                        ));
-                    } else {
-                        evidence.push(FieldEvidence::new(name, FieldLocationHint::KeyValue, None));
-                    }
-
-                    let sep = adapter.next_token().map_err(JsonError::from)?;
-                    match sep.token {
-                        AdapterToken::Comma => continue,
-                        AdapterToken::ObjectEnd => break,
-                        AdapterToken::Eof => {
-                            return Err(JsonError::new(
-                                JsonErrorKind::UnexpectedEof {
-                                    expected: "',' or '}'",
-                                },
-                                sep.span,
-                            ));
-                        }
-                        _ => {
-                            return Err(JsonError::new(
-                                JsonErrorKind::UnexpectedToken {
-                                    got: format!("{:?}", sep.token),
-                                    expected: "',' or '}'",
-                                },
-                                sep.span,
-                            ));
-                        }
-                    }
-                }
-                AdapterToken::Eof => {
-                    return Err(JsonError::new(
-                        JsonErrorKind::UnexpectedEof {
-                            expected: "field name or '}'",
-                        },
-                        token.span,
-                    ));
-                }
-                _ => {
-                    return Err(JsonError::new(
-                        JsonErrorKind::UnexpectedToken {
-                            got: format!("{:?}", token.token),
-                            expected: "field name or '}'",
-                        },
-                        token.span,
-                    ));
-                }
-            }
-        }
-
-        Ok(evidence)
-    }
 }
 
 impl<'de> FormatParser<'de> for JsonParser<'de> {
     type Error = JsonError;
-    type Probe<'a>
-        = JsonProbe<'de>
-    where
-        Self: 'a;
 
     fn raw_capture_shape(&self) -> Option<&'static facet_core::Shape> {
         Some(crate::RawJson::SHAPE)
     }
 
     fn next_event(&mut self) -> Result<Option<ParseEvent<'de>>, Self::Error> {
-        if let Some(event) = self.event_peek.take() {
-            self.peek_start_offset = None;
+        if let Some(event) = self.state.event_peek.take() {
+            self.state.peek_start_offset = None;
             return Ok(Some(event));
         }
         self.produce_event()
     }
 
+    fn save(&mut self) -> SavePoint {
+        self.save_counter += 1;
+        self.saved_states
+            .push((self.save_counter, self.state.clone()));
+        SavePoint(self.save_counter)
+    }
+
+    fn restore(&mut self, save_point: SavePoint) {
+        // Find and remove the saved state
+        if let Some(pos) = self
+            .saved_states
+            .iter()
+            .position(|(id, _)| *id == save_point.0)
+        {
+            let (_, saved) = self.saved_states.remove(pos);
+            self.state = saved;
+            // Reset the adapter to the saved position
+            self.adapter = SliceAdapter::new_with_offset(self.input, self.state.current_offset);
+        }
+    }
+
     fn peek_event(&mut self) -> Result<Option<ParseEvent<'de>>, Self::Error> {
-        if let Some(event) = self.event_peek.clone() {
+        if let Some(event) = self.state.event_peek.clone() {
             return Ok(Some(event));
         }
         let event = self.produce_event()?;
         if let Some(ref e) = event {
-            self.event_peek = Some(e.clone());
+            self.state.event_peek = Some(e.clone());
             // Use the offset of the last token consumed (which is the value's first token)
             // For values, produce_event ultimately calls parse_value_start_with_token
             // which consumes the first token and sets last_token_start.
-            self.peek_start_offset = Some(self.last_token_start);
+            self.state.peek_start_offset = Some(self.state.last_token_start);
         }
         Ok(event)
     }
 
     fn skip_value(&mut self) -> Result<(), Self::Error> {
         // Handle the case where peek_event was called before skip_value
-        if let Some(event) = self.event_peek.take() {
-            self.peek_start_offset = None;
+        if let Some(event) = self.state.event_peek.take() {
+            self.state.peek_start_offset = None;
 
             // Based on the peeked event, we may need to skip the rest of a container.
             // Note: When peeking a StructStart/SequenceStart, the parser already pushed
-            // to self.stack. We need to pop it after skipping the container.
+            // to self.state.stack. We need to pop it after skipping the container.
             match event {
                 ParseEvent::StructStart(_) => {
                     let res = self.skip_container(DelimKind::Object);
                     // Pop the stack entry that was pushed during peek, even if skip_container errored
-                    self.stack.pop();
+                    self.state.stack.pop();
                     res?;
                     // Update the parent's state after skipping the container
                     self.finish_value_in_parent();
@@ -601,7 +462,7 @@ impl<'de> FormatParser<'de> for JsonParser<'de> {
                 ParseEvent::SequenceStart(_) => {
                     let res = self.skip_container(DelimKind::Array);
                     // Pop the stack entry that was pushed during peek, even if skip_container errored
-                    self.stack.pop();
+                    self.state.stack.pop();
                     res?;
                     // Update the parent's state after skipping the container
                     self.finish_value_in_parent();
@@ -619,34 +480,30 @@ impl<'de> FormatParser<'de> for JsonParser<'de> {
         Ok(())
     }
 
-    fn begin_probe(&mut self) -> Result<Self::Probe<'_>, Self::Error> {
-        let evidence = self.build_probe()?;
-        Ok(JsonProbe { evidence, idx: 0 })
-    }
-
     fn capture_raw(&mut self) -> Result<Option<&'de str>, Self::Error> {
         // Handle the case where peek_event was called before capture_raw.
         // This happens when deserialize_option peeks to check for null.
-        let start_offset = if let Some(event) = self.event_peek.take() {
+        let start_offset = if let Some(event) = self.state.event_peek.take() {
             let start = self
+                .state
                 .peek_start_offset
                 .take()
                 .expect("peek_start_offset should be set when event_peek is set");
 
             // Based on the peeked event, we may need to skip the rest of a container.
             // Note: When peeking a StructStart/SequenceStart, the parser already pushed
-            // to self.stack. We need to pop it after skipping the container.
+            // to self.state.stack. We need to pop it after skipping the container.
             match event {
                 ParseEvent::StructStart(_) => {
                     let res = self.skip_container(DelimKind::Object);
                     // Pop the stack entry that was pushed during peek, even if skip_container errored
-                    self.stack.pop();
+                    self.state.stack.pop();
                     res?;
                 }
                 ParseEvent::SequenceStart(_) => {
                     let res = self.skip_container(DelimKind::Array);
                     // Pop the stack entry that was pushed during peek, even if skip_container errored
-                    self.stack.pop();
+                    self.state.stack.pop();
                     res?;
                 }
                 ParseEvent::StructEnd | ParseEvent::SequenceEnd => {
@@ -689,7 +546,7 @@ impl<'de> FormatParser<'de> for JsonParser<'de> {
         };
 
         // Get end position
-        let end_offset = self.current_offset;
+        let end_offset = self.state.current_offset;
 
         // Extract the raw slice and convert to str
         let raw_bytes = &self.input[start_offset..end_offset];
@@ -710,8 +567,8 @@ impl<'de> FormatParser<'de> for JsonParser<'de> {
     fn current_span(&self) -> Option<facet_reflect::Span> {
         // Return the span of the most recently consumed token
         // This is used by metadata containers to track source locations
-        let offset = self.last_token_start;
-        let len = self.current_offset.saturating_sub(offset);
+        let offset = self.state.last_token_start;
+        let len = self.state.current_offset.saturating_sub(offset);
         Some(facet_reflect::Span::new(offset, len))
     }
 }
@@ -735,22 +592,22 @@ impl<'de> facet_format::FormatJitParser<'de> for JsonParser<'de> {
         // - Root not yet started, OR root is complete
         //
         // This ensures jit_set_pos doesn't corrupt parser state machine.
-        if self.event_peek.is_some() {
+        if self.state.event_peek.is_some() {
             return None;
         }
-        if !self.stack.is_empty() {
+        if !self.state.stack.is_empty() {
             return None;
         }
-        if self.root_started && !self.root_complete {
+        if self.state.root_started && !self.state.root_complete {
             // We've started parsing root but haven't finished - not safe
             return None;
         }
-        Some(self.current_offset)
+        Some(self.state.current_offset)
     }
 
     fn jit_set_pos(&mut self, pos: usize) {
         // Update the offset
-        self.current_offset = pos;
+        self.state.current_offset = pos;
 
         // Reset the adapter to start from the new position
         // We need to create a new adapter pointing to the remaining input
@@ -758,18 +615,18 @@ impl<'de> facet_format::FormatJitParser<'de> for JsonParser<'de> {
         self.adapter = SliceAdapter::new_with_offset(self.input, pos);
 
         // Clear any peeked event and its offset
-        self.event_peek = None;
-        self.peek_start_offset = None;
+        self.state.event_peek = None;
+        self.state.peek_start_offset = None;
 
         // Tier-2 JIT parsed a complete root value, so update parser state.
         // jit_pos() already enforces root-only usage, so we know:
         // - We started at root level with empty stack
         // - Tier-2 successfully parsed a complete value
         // - We're now at the position after that value
-        self.root_started = true;
-        self.root_complete = true;
+        self.state.root_started = true;
+        self.state.root_complete = true;
         // Stack should already be empty (jit_pos enforces this)
-        debug_assert!(self.stack.is_empty());
+        debug_assert!(self.state.stack.is_empty());
     }
 
     fn jit_format(&self) -> Self::FormatJit {
@@ -806,24 +663,5 @@ impl<'de> facet_format::FormatJitParser<'de> for JsonParser<'de> {
                 len: 1,
             },
         )
-    }
-}
-
-pub struct JsonProbe<'de> {
-    evidence: Vec<FieldEvidence<'de>>,
-    idx: usize,
-}
-
-impl<'de> ProbeStream<'de> for JsonProbe<'de> {
-    type Error = JsonError;
-
-    fn next(&mut self) -> Result<Option<FieldEvidence<'de>>, Self::Error> {
-        if self.idx >= self.evidence.len() {
-            Ok(None)
-        } else {
-            let ev = self.evidence[self.idx].clone();
-            self.idx += 1;
-            Ok(Some(ev))
-        }
     }
 }
