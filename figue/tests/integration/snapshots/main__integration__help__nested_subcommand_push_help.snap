@@ -1,0 +1,18 @@
+---
+source: tests/integration/help.rs
+expression: "$crate :: common ::\nstrip_binary_paths(& $crate :: common :: strip_ansi(& help))"
+---
+<PROGRAM>
+
+Push changes
+
+USAGE:
+    <PROGRAM>
+
+ARGUMENTS:
+        <REMOTE>
+            Remote name
+
+OPTIONS:
+    -f, --force
+            Force push

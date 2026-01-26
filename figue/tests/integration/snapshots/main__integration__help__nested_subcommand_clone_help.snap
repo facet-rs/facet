@@ -1,0 +1,20 @@
+---
+source: tests/integration/help.rs
+expression: "$crate :: common ::\nstrip_binary_paths(& $crate :: common :: strip_ansi(& help))"
+---
+<PROGRAM>
+
+Clone a repository
+
+USAGE:
+    <PROGRAM>
+
+ARGUMENTS:
+        <URL>
+            Repository URL
+
+OPTIONS:
+        --depth <U32>
+            Clone depth (shallow clone)
+    -b, --branch <STRING>
+            Branch to clone

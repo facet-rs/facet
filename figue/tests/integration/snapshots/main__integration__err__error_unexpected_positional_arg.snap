@@ -1,0 +1,11 @@
+---
+source: tests/integration/err.rs
+expression: "$crate :: common :: strip_ansi(& err.to_string())"
+---
+Error: unexpected argument: unexpected
+   ╭─[ <cli>:1:1 ]
+   │
+ 1 │ unexpected --name value
+   │ ─────┬────  
+   │      ╰────── unexpected argument: unexpected
+───╯

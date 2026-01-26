@@ -1,0 +1,20 @@
+---
+source: tests/integration/help.rs
+expression: "$crate :: common ::\nstrip_binary_paths(& $crate :: common :: strip_ansi(& help))"
+---
+<PROGRAM>
+
+Install a package
+
+USAGE:
+    <PROGRAM>
+
+ARGUMENTS:
+        <PACKAGE>
+            Package name to install
+
+OPTIONS:
+    -g, --global
+            Install globally
+    -f, --force
+            Force reinstall even if already installed

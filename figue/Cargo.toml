@@ -1,0 +1,58 @@
+[package]
+name = "figue"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Type-safe CLI arguments, config files, and environment variables powered by Facet reflection"
+documentation = "https://docs.rs/figue"
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[dependencies]
+camino.workspace = true
+figue-attrs.workspace = true
+facet.workspace = true
+facet-core.workspace = true
+facet-format.workspace = true
+facet-json.workspace = true
+facet-styx = { workspace = true, optional = true }
+facet-reflect.workspace = true
+facet-pretty.workspace = true
+facet-error.workspace = true
+heck.workspace = true
+indexmap.workspace = true
+owo-colors.workspace = true
+tracing.workspace = true
+ariadne.workspace = true
+unicode-width.workspace = true
+strip-ansi-escapes.workspace = true
+
+[dev-dependencies]
+facet-format = { workspace = true, features = ["tracing"] }
+facet-json = { workspace = true, features = ["tracing"] }
+facet-reflect = { workspace = true, features = ["tracing"] }
+facet = { workspace = true, features = ["all-impls"] }
+facet-showcase.workspace = true
+facet-solver.workspace = true
+facet-testhelpers.workspace = true
+insta.workspace = true
+tempfile.workspace = true
+
+[features]
+default = ["rich-diagnostics"]
+rich-diagnostics = []
+doc = ["facet/doc"]
+tracing = ["facet-reflect/tracing", "facet-json/tracing", "facet-format/tracing"]
+styx = ["dep:facet-styx"]
+
+[[example]]
+name = "args_showcase"

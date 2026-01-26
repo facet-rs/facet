@@ -1,0 +1,11 @@
+---
+source: tests/integration/ariadne.rs
+expression: ariadne_output
+---
+Error: failed to parse "not-a-number" as usize
+   ╭─[ <cli>:1:9 ]
+   │
+ 1 │ --count not-a-number
+   │         ──────┬─────  
+   │               ╰─────── failed to parse "not-a-number" as usize
+───╯

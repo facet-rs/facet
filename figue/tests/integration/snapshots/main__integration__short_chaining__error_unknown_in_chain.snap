@@ -1,0 +1,11 @@
+---
+source: tests/integration/short_chaining.rs
+expression: "$crate :: common :: strip_ansi(& err.to_string())"
+---
+Error: unknown flag: -x
+   ╭─[ <cli>:1:1 ]
+   │
+ 1 │ -axc
+   │ ──┬─  
+   │   ╰─── unknown flag: -x
+───╯

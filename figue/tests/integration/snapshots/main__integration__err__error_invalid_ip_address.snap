@@ -1,0 +1,11 @@
+---
+source: tests/integration/err.rs
+expression: "$crate :: common :: strip_ansi(& err.to_string())"
+---
+Error: failed to parse "not-an-ip" as IpAddr
+   ╭─[ <cli>:1:11 ]
+   │
+ 1 │ --address not-an-ip
+   │           ────┬────  
+   │               ╰────── failed to parse "not-an-ip" as IpAddr
+───╯
