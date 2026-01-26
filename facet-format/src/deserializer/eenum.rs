@@ -6,13 +6,14 @@ use facet_core::{Def, StructKind, Type, UserType};
 use facet_reflect::Partial;
 
 use crate::{
-    ContainerKind, DeserializeError, FieldEvidence, FormatDeserializer, FormatParser,
-    InnerDeserializeError, ParseEvent, ScalarValue,
+    ContainerKind, DeserializeError, EnumVariantHint, FieldEvidence, FormatDeserializer,
+    FormatParser, InnerDeserializeError, ParseEvent, ScalarValue,
     deserializer::coro::{
         DeserializeYielder, request_collect_evidence, request_deserialize_enum_variant_content,
         request_deserialize_into, request_deserialize_other_variant_with_captured_tag,
-        request_deserialize_value_recursive, request_event, request_peek, request_set_string_value,
-        request_skip, request_solve_variant, request_span, run_deserialize_coro,
+        request_deserialize_value_recursive, request_event, request_hint_enum, request_peek,
+        request_set_string_value, request_skip, request_solve_variant, request_span,
+        run_deserialize_coro,
     },
     deserializer::scalar_matches::scalar_matches_shape,
 };
@@ -1292,6 +1293,102 @@ fn deserialize_other_variant_with_captured_tag_inner<'input, const BORROW: bool>
     Ok(wip)
 }
 
+/// Inner implementation of `deserialize_result_as_enum` that runs in a coroutine.
+fn deserialize_result_as_enum_inner<'input, const BORROW: bool>(
+    yielder: &DeserializeYielder<'input, BORROW>,
+    mut wip: Partial<'input, BORROW>,
+) -> Result<Partial<'input, BORROW>, InnerDeserializeError> {
+    use alloc::format;
+    use alloc::vec;
+    use facet_reflect::ReflectError;
+
+    let reflect_err = |e: ReflectError| InnerDeserializeError::Reflect {
+        error: e,
+        span: request_span(yielder),
+        path: None,
+    };
+
+    // Hint to non-self-describing parsers that a Result enum is expected
+    // Result is encoded as a 2-variant enum: Ok (index 0) and Err (index 1)
+    let variant_hints = vec![
+        EnumVariantHint {
+            name: "Ok",
+            kind: StructKind::TupleStruct,
+            field_count: 1,
+        },
+        EnumVariantHint {
+            name: "Err",
+            kind: StructKind::TupleStruct,
+            field_count: 1,
+        },
+    ];
+    request_hint_enum(yielder, variant_hints)?;
+
+    // Read the StructStart emitted by the parser after hint_enum
+    let event = request_event(yielder, "struct start for Result")?;
+    if !matches!(event, ParseEvent::StructStart(_)) {
+        return Err(InnerDeserializeError::TypeMismatch {
+            expected: "struct start for Result variant",
+            got: format!("{event:?}"),
+            span: request_span(yielder),
+            path: None,
+        });
+    }
+
+    // Read the FieldKey with the variant name ("Ok" or "Err")
+    let key_event = request_event(yielder, "variant key for Result")?;
+    let variant_name = match key_event {
+        ParseEvent::FieldKey(key) => {
+            key.name
+                .ok_or_else(|| InnerDeserializeError::TypeMismatch {
+                    expected: "variant name",
+                    got: "unit key".to_string(),
+                    span: request_span(yielder),
+                    path: None,
+                })?
+        }
+        other => {
+            return Err(InnerDeserializeError::TypeMismatch {
+                expected: "field key with variant name",
+                got: format!("{other:?}"),
+                span: request_span(yielder),
+                path: None,
+            });
+        }
+    };
+
+    // Select the appropriate variant and deserialize its content
+    if variant_name.as_ref() == "Ok" {
+        wip = wip.begin_ok().map_err(reflect_err)?;
+    } else if variant_name.as_ref() == "Err" {
+        wip = wip.begin_err().map_err(reflect_err)?;
+    } else {
+        return Err(InnerDeserializeError::TypeMismatch {
+            expected: "Ok or Err variant",
+            got: format!("variant '{}'", variant_name),
+            span: request_span(yielder),
+            path: None,
+        });
+    }
+
+    // Deserialize the variant's value (newtype pattern - single field)
+    wip = request_deserialize_into(yielder, wip)?;
+    wip = wip.end().map_err(reflect_err)?;
+
+    // Consume StructEnd
+    let end_event = request_event(yielder, "struct end for Result")?;
+    if !matches!(end_event, ParseEvent::StructEnd) {
+        return Err(InnerDeserializeError::TypeMismatch {
+            expected: "struct end for Result variant",
+            got: format!("{end_event:?}"),
+            span: request_span(yielder),
+            path: None,
+        });
+    }
+
+    Ok(wip)
+}
+
 /// Inner implementation of `deserialize_enum_untagged` that runs in a coroutine.
 fn deserialize_enum_untagged_inner<'input, const BORROW: bool>(
     yielder: &DeserializeYielder<'input, BORROW>,
@@ -1534,88 +1631,11 @@ where
 
     pub(crate) fn deserialize_result_as_enum(
         &mut self,
-        mut wip: Partial<'input, BORROW>,
+        wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
-        use facet_core::StructKind;
-
-        // Hint to non-self-describing parsers that a Result enum is expected
-        // Result is encoded as a 2-variant enum: Ok (index 0) and Err (index 1)
-        let variant_hints: Vec<crate::EnumVariantHint> = vec![
-            crate::EnumVariantHint {
-                name: "Ok",
-                kind: StructKind::TupleStruct,
-                field_count: 1,
-            },
-            crate::EnumVariantHint {
-                name: "Err",
-                kind: StructKind::TupleStruct,
-                field_count: 1,
-            },
-        ];
-        self.parser.hint_enum(&variant_hints);
-
-        // Read the StructStart emitted by the parser after hint_enum
-        let event = self.expect_event("struct start for Result")?;
-        if !matches!(event, ParseEvent::StructStart(_)) {
-            return Err(DeserializeError::TypeMismatch {
-                expected: "struct start for Result variant",
-                got: format!("{event:?}"),
-                span: self.last_span,
-                path: None,
-            });
-        }
-
-        // Read the FieldKey with the variant name ("Ok" or "Err")
-        let key_event = self.expect_event("variant key for Result")?;
-        let variant_name = match key_event {
-            ParseEvent::FieldKey(key) => {
-                key.name.ok_or_else(|| DeserializeError::TypeMismatch {
-                    expected: "variant name",
-                    got: "unit key".to_string(),
-                    span: self.last_span,
-                    path: None,
-                })?
-            }
-            other => {
-                return Err(DeserializeError::TypeMismatch {
-                    expected: "field key with variant name",
-                    got: format!("{other:?}"),
-                    span: self.last_span,
-                    path: None,
-                });
-            }
-        };
-
-        // Select the appropriate variant and deserialize its content
-        if variant_name.as_ref() == "Ok" {
-            wip = wip.begin_ok().map_err(DeserializeError::reflect)?;
-        } else if variant_name.as_ref() == "Err" {
-            wip = wip.begin_err().map_err(DeserializeError::reflect)?;
-        } else {
-            return Err(DeserializeError::TypeMismatch {
-                expected: "Ok or Err variant",
-                got: alloc::format!("variant '{}'", variant_name),
-                span: self.last_span,
-                path: None,
-            });
-        }
-
-        // Deserialize the variant's value (newtype pattern - single field)
-        wip = self.deserialize_into(wip)?;
-        wip = wip.end().map_err(DeserializeError::reflect)?;
-
-        // Consume StructEnd
-        let end_event = self.expect_event("struct end for Result")?;
-        if !matches!(end_event, ParseEvent::StructEnd) {
-            return Err(DeserializeError::TypeMismatch {
-                expected: "struct end for Result variant",
-                got: format!("{end_event:?}"),
-                span: self.last_span,
-                path: None,
-            });
-        }
-
-        Ok(wip)
+        run_deserialize_coro(self, |yielder| {
+            deserialize_result_as_enum_inner(yielder, wip)
+        })
     }
 
     /// Deserialize the struct fields of a variant.
