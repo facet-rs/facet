@@ -551,8 +551,9 @@ where
         &mut self,
         wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
-        run_deserialize_coro(self, |yielder| {
-            deserialize_struct_with_flatten_inner(yielder, wip)
-        })
+        run_deserialize_coro(
+            self,
+            Box::new(move |yielder| deserialize_struct_with_flatten_inner(yielder, wip)),
+        )
     }
 }

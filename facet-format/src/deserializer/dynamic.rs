@@ -374,9 +374,10 @@ where
         wip: Partial<'input, BORROW>,
         enum_def: &'static facet_core::EnumType,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
-        run_deserialize_coro(self, |yielder| {
-            deserialize_enum_dynamic_inner(yielder, wip, enum_def)
-        })
+        run_deserialize_coro(
+            self,
+            Box::new(move |yielder| deserialize_enum_dynamic_inner(yielder, wip, enum_def)),
+        )
     }
 
     pub(crate) fn deserialize_scalar_dynamic(

@@ -595,7 +595,7 @@ fn find_tag_value<'a, 'input>(
 fn deserialize_enum_internally_tagged_inner<'input, const BORROW: bool>(
     yielder: &DeserializeYielder<'input, BORROW>,
     mut wip: Partial<'input, BORROW>,
-    tag_key: &str,
+    tag_key: &'static str,
 ) -> Result<Partial<'input, BORROW>, InnerDeserializeError> {
     use alloc::format;
     use alloc::string::ToString;
@@ -795,8 +795,8 @@ fn deserialize_enum_internally_tagged_inner<'input, const BORROW: bool>(
 fn deserialize_enum_adjacently_tagged_inner<'input, const BORROW: bool>(
     yielder: &DeserializeYielder<'input, BORROW>,
     mut wip: Partial<'input, BORROW>,
-    tag_key: &str,
-    content_key: &str,
+    tag_key: &'static str,
+    content_key: &'static str,
 ) -> Result<Partial<'input, BORROW>, InnerDeserializeError> {
     use alloc::format;
     use alloc::string::ToString;
@@ -1599,19 +1599,23 @@ where
         &mut self,
         wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
-        run_deserialize_coro(self, |yielder| {
-            deserialize_enum_externally_tagged_inner(yielder, wip)
-        })
+        run_deserialize_coro(
+            self,
+            Box::new(move |yielder| deserialize_enum_externally_tagged_inner(yielder, wip)),
+        )
     }
 
     fn deserialize_enum_internally_tagged(
         &mut self,
         wip: Partial<'input, BORROW>,
-        tag_key: &str,
+        tag_key: &'static str,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
-        run_deserialize_coro(self, |yielder| {
-            deserialize_enum_internally_tagged_inner(yielder, wip, tag_key)
-        })
+        run_deserialize_coro(
+            self,
+            Box::new(move |yielder| {
+                deserialize_enum_internally_tagged_inner(yielder, wip, tag_key)
+            }),
+        )
     }
 
     /// Deserialize enum represented as struct (used by postcard and similar formats).
@@ -1624,18 +1628,20 @@ where
         wip: Partial<'input, BORROW>,
         enum_def: &'static facet_core::EnumType,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
-        run_deserialize_coro(self, |yielder| {
-            deserialize_enum_as_struct_inner(yielder, wip, enum_def)
-        })
+        run_deserialize_coro(
+            self,
+            Box::new(move |yielder| deserialize_enum_as_struct_inner(yielder, wip, enum_def)),
+        )
     }
 
     pub(crate) fn deserialize_result_as_enum(
         &mut self,
         wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
-        run_deserialize_coro(self, |yielder| {
-            deserialize_result_as_enum_inner(yielder, wip)
-        })
+        run_deserialize_coro(
+            self,
+            Box::new(move |yielder| deserialize_result_as_enum_inner(yielder, wip)),
+        )
     }
 
     /// Deserialize the struct fields of a variant.
@@ -1644,20 +1650,24 @@ where
         &mut self,
         wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
-        run_deserialize_coro(self, |yielder| {
-            deserialize_variant_struct_fields_inner(yielder, wip)
-        })
+        run_deserialize_coro(
+            self,
+            Box::new(move |yielder| deserialize_variant_struct_fields_inner(yielder, wip)),
+        )
     }
 
     fn deserialize_enum_adjacently_tagged(
         &mut self,
         wip: Partial<'input, BORROW>,
-        tag_key: &str,
-        content_key: &str,
+        tag_key: &'static str,
+        content_key: &'static str,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
-        run_deserialize_coro(self, |yielder| {
-            deserialize_enum_adjacently_tagged_inner(yielder, wip, tag_key, content_key)
-        })
+        run_deserialize_coro(
+            self,
+            Box::new(move |yielder| {
+                deserialize_enum_adjacently_tagged_inner(yielder, wip, tag_key, content_key)
+            }),
+        )
     }
 
     /// Deserialize the content of an already-selected enum variant.
@@ -1670,9 +1680,10 @@ where
         wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
         use crate::deserializer::coro::run_deserialize_coro;
-        run_deserialize_coro(self, |yielder| {
-            deserialize_enum_variant_content_inner(yielder, wip)
-        })
+        run_deserialize_coro(
+            self,
+            Box::new(move |yielder| deserialize_enum_variant_content_inner(yielder, wip)),
+        )
     }
 
     /// Deserialize a cow-like enum transparently from its inner value.
@@ -1761,9 +1772,10 @@ where
         &mut self,
         wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
-        run_deserialize_coro(self, |yielder| {
-            deserialize_enum_untagged_inner(yielder, wip)
-        })
+        run_deserialize_coro(
+            self,
+            Box::new(move |yielder| deserialize_enum_untagged_inner(yielder, wip)),
+        )
     }
 
     /// Deserialize an `#[facet(other)]` variant that may have `#[facet(tag)]` and `#[facet(content)]` fields.
@@ -1778,9 +1790,12 @@ where
         wip: Partial<'input, BORROW>,
         captured_tag: Option<&'input str>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
-        run_deserialize_coro(self, |yielder| {
-            deserialize_other_variant_with_captured_tag_inner(yielder, wip, captured_tag)
-        })
+        run_deserialize_coro(
+            self,
+            Box::new(move |yielder| {
+                deserialize_other_variant_with_captured_tag_inner(yielder, wip, captured_tag)
+            }),
+        )
     }
 }
 

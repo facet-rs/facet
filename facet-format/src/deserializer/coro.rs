@@ -395,18 +395,27 @@ pub(crate) fn request_deserialize_enum_as_struct<'input, const BORROW: bool>(
         .into_wip()
 }
 
-/// Run a coroutine-based deserializer with the given inner function.
+/// Boxed inner function type for type-erased coroutine dispatch.
+/// This eliminates monomorphization over the closure type F.
+pub(crate) type BoxedInnerFn<'input, const BORROW: bool> = Box<
+    dyn FnOnce(
+            &DeserializeYielder<'input, BORROW>,
+        ) -> Result<Partial<'input, BORROW>, InnerDeserializeError>
+        + 'input,
+>;
+
+/// Run a coroutine-based deserializer with a boxed inner function.
 ///
-/// This is the generic wrapper that handles parser operations. The inner function
-/// is non-generic over the parser type, reducing monomorphization.
+/// This is the generic wrapper that handles parser operations. By boxing the
+/// inner function, we type-erase it and only monomorphize over the parser type P,
+/// not over every distinct closure type.
 #[inline(never)]
-pub(crate) fn run_deserialize_coro<'input, const BORROW: bool, P, F, R>(
+pub(crate) fn run_deserialize_coro<'input, const BORROW: bool, P>(
     deser: &mut FormatDeserializer<'input, BORROW, P>,
-    inner_fn: F,
-) -> Result<R, DeserializeError<P::Error>>
+    inner_fn: BoxedInnerFn<'input, BORROW>,
+) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>>
 where
     P: FormatParser<'input>,
-    F: FnOnce(&DeserializeYielder<'input, BORROW>) -> Result<R, InnerDeserializeError>,
 {
     // Create the coroutine with its own stack
     let stack = DefaultStack::new(STACK_SIZE).expect("failed to allocate coroutine stack");
@@ -414,7 +423,7 @@ where
     let coro: ScopedCoroutine<
         DeserializeResponse<'input, BORROW>,
         DeserializeRequest<'input, BORROW>,
-        Result<R, InnerDeserializeError>,
+        Result<Partial<'input, BORROW>, InnerDeserializeError>,
         DefaultStack,
     > = ScopedCoroutine::with_stack(stack, move |yielder, _initial| inner_fn(yielder));
 
