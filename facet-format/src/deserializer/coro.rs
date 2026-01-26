@@ -55,6 +55,17 @@ pub(crate) enum DeserializeRequest<'input, const BORROW: bool> {
 
     /// Need to call `deserialize_variant_struct_fields(wip)`.
     DeserializeVariantStructFields { wip: Partial<'input, BORROW> },
+
+    /// Need to call `deserialize_enum_variant_content(wip)`.
+    #[allow(dead_code)] // Infrastructure for future extraction
+    DeserializeEnumVariantContent { wip: Partial<'input, BORROW> },
+
+    /// Need to call `deserialize_other_variant_with_captured_tag(wip, captured_tag)`.
+    #[allow(dead_code)] // Infrastructure for future extraction
+    DeserializeOtherVariantWithCapturedTag {
+        wip: Partial<'input, BORROW>,
+        captured_tag: Option<&'input str>,
+    },
 }
 
 /// Response from the wrapper to the inner deserialization logic.
@@ -247,6 +258,29 @@ pub(crate) fn request_deserialize_variant_struct_fields<'input, const BORROW: bo
         .into_wip()
 }
 
+/// Helper to deserialize enum variant content.
+#[allow(dead_code)] // Infrastructure for future extraction
+pub(crate) fn request_deserialize_enum_variant_content<'input, const BORROW: bool>(
+    yielder: &DeserializeYielder<'input, BORROW>,
+    wip: Partial<'input, BORROW>,
+) -> Result<Partial<'input, BORROW>, InnerDeserializeError> {
+    yielder
+        .suspend(DeserializeRequest::DeserializeEnumVariantContent { wip })
+        .into_wip()
+}
+
+/// Helper to deserialize other variant with captured tag.
+#[allow(dead_code)] // Infrastructure for future extraction
+pub(crate) fn request_deserialize_other_variant_with_captured_tag<'input, const BORROW: bool>(
+    yielder: &DeserializeYielder<'input, BORROW>,
+    wip: Partial<'input, BORROW>,
+    captured_tag: Option<&'input str>,
+) -> Result<Partial<'input, BORROW>, InnerDeserializeError> {
+    yielder
+        .suspend(DeserializeRequest::DeserializeOtherVariantWithCapturedTag { wip, captured_tag })
+        .into_wip()
+}
+
 /// Run a coroutine-based deserializer with the given inner function.
 ///
 /// This is the generic wrapper that handles parser operations. The inner function
@@ -335,6 +369,21 @@ where
                                 Err(e) => DeserializeResponse::Error(e.into_inner()),
                             }
                         }
+                        DeserializeRequest::DeserializeEnumVariantContent { wip } => {
+                            match deser.deserialize_enum_variant_content(wip) {
+                                Ok(wip) => DeserializeResponse::Wip(wip),
+                                Err(e) => DeserializeResponse::Error(e.into_inner()),
+                            }
+                        }
+                        DeserializeRequest::DeserializeOtherVariantWithCapturedTag {
+                            wip,
+                            captured_tag,
+                        } => match deser
+                            .deserialize_other_variant_with_captured_tag(wip, captured_tag)
+                        {
+                            Ok(wip) => DeserializeResponse::Wip(wip),
+                            Err(e) => DeserializeResponse::Error(e.into_inner()),
+                        },
                     };
                     result = coro_ref.as_mut().resume(response);
                 }

@@ -1576,7 +1576,7 @@ where
     /// `#[facet(tag)]` field, while the payload is deserialized into the `#[facet(content)]` field.
     ///
     /// `captured_tag` is `None` for unit tags (bare `@` in Styx).
-    fn deserialize_other_variant_with_captured_tag(
+    pub(crate) fn deserialize_other_variant_with_captured_tag(
         &mut self,
         mut wip: Partial<'input, BORROW>,
         captured_tag: Option<&'input str>,
