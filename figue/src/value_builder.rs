@@ -179,12 +179,49 @@ impl<'a> ValueBuilder<'a> {
             }
         }
 
+        // Validate enum string values (for unit enums like LogLevel)
+        if let LeafValue::String(ref s) = value {
+            self.validate_enum_string_value(path, s);
+        }
+
         // Convert leaf value to ConfigValue with provenance
         let config_value = value.into_config_value(span, provenance);
 
         // Insert at the resolved path
         self.insert_at_path(&resolved.insertion_path, config_value);
         true
+    }
+
+    /// Validate that a string value at an enum path is a valid variant name.
+    fn validate_enum_string_value(&mut self, path: &[String], value: &str) {
+        // Get the schema for this path
+        let Some(value_schema) = self.schema.get_by_path(&path.to_vec()) else {
+            return;
+        };
+
+        // Unwrap Option wrapper if present
+        let inner_schema = match value_schema {
+            ConfigValueSchema::Option { value: inner, .. } => inner.as_ref(),
+            other => other,
+        };
+
+        // For enum fields, validate the value is a known variant
+        if let ConfigValueSchema::Enum(enum_schema) = inner_schema {
+            let variants = enum_schema.variants();
+            if !variants.contains_key(value) {
+                let valid_variants: Vec<&String> = variants.keys().collect();
+                self.warn(format!(
+                    "unknown variant '{}' for {}. Valid variants are: {}",
+                    value,
+                    path.join("."),
+                    valid_variants
+                        .iter()
+                        .map(|v| format!("'{}'", v))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+        }
     }
 
     /// Check if a value exists at the given path.
@@ -271,6 +308,90 @@ impl<'a> ValueBuilder<'a> {
     #[allow(dead_code)]
     pub fn schema(&self) -> &'a ConfigStructSchema {
         self.schema
+    }
+
+    /// Get access to unused keys collected so far.
+    pub fn unused_keys(&self) -> &[UnusedKey] {
+        &self.unused_keys
+    }
+
+    /// Import values from an already-parsed ConfigValue tree.
+    ///
+    /// This walks the tree and calls `set()` for each leaf value, which means:
+    /// - Path validation happens (invalid paths → unused keys)
+    /// - Enum variant conflicts are detected
+    /// - Enum values are validated
+    ///
+    /// Used by file parsers that receive structured data (JSON, TOML).
+    pub fn import_tree(&mut self, value: &ConfigValue) {
+        self.import_tree_recursive(value, Vec::new());
+    }
+
+    fn import_tree_recursive(&mut self, value: &ConfigValue, path: Vec<String>) {
+        match value {
+            ConfigValue::Object(obj) => {
+                for (key, val) in &obj.value {
+                    let mut key_path = path.clone();
+                    key_path.push(key.clone());
+                    self.import_tree_recursive(val, key_path);
+                }
+            }
+            ConfigValue::Array(arr) => {
+                for (idx, val) in arr.value.iter().enumerate() {
+                    let mut idx_path = path.clone();
+                    idx_path.push(idx.to_string());
+                    self.import_tree_recursive(val, idx_path);
+                }
+            }
+            // Leaf values - call set()
+            ConfigValue::String(s) => {
+                let prov = s.provenance.clone().unwrap_or(Provenance::Default);
+                self.set(&path, LeafValue::String(s.value.clone()), s.span, prov);
+            }
+            ConfigValue::Bool(b) => {
+                let prov = b.provenance.clone().unwrap_or(Provenance::Default);
+                self.set(&path, LeafValue::Bool(b.value), b.span, prov);
+            }
+            ConfigValue::Integer(i) => {
+                let prov = i.provenance.clone().unwrap_or(Provenance::Default);
+                self.set(&path, LeafValue::Integer(i.value), i.span, prov);
+            }
+            ConfigValue::Float(f) => {
+                let prov = f.provenance.clone().unwrap_or(Provenance::Default);
+                self.set(&path, LeafValue::Float(f.value), f.span, prov);
+            }
+            ConfigValue::Null(n) => {
+                let prov = n.provenance.clone().unwrap_or(Provenance::Default);
+                self.set(&path, LeafValue::Null, n.span, prov);
+            }
+            ConfigValue::Enum(e) => {
+                // Enum values from file parsing - treat as string for validation
+                let prov = e.provenance.clone().unwrap_or(Provenance::Default);
+                self.set(&path, LeafValue::String(e.value.variant.clone()), e.span, prov);
+            }
+        }
+    }
+
+    /// Consume the builder and return a LayerOutput with the given ConfigValue.
+    ///
+    /// This is used after `import_tree()` to return the original parsed value
+    /// along with collected diagnostics and unused keys.
+    pub fn into_output_with_value(self, value: Option<ConfigValue>, field_name: Option<&str>) -> LayerOutput {
+        let value = match value {
+            Some(parsed) if field_name.is_some() => {
+                // Wrap under the config field name
+                let mut root = IndexMap::default();
+                root.insert(field_name.unwrap().to_string(), parsed);
+                Some(ConfigValue::Object(Sourced::new(root)))
+            }
+            other => other,
+        };
+
+        LayerOutput {
+            value,
+            unused_keys: self.unused_keys,
+            diagnostics: self.diagnostics,
+        }
     }
 
     // ========================================================================

@@ -24,48 +24,18 @@
 //! ```
 
 use std::boxed::Box;
-use std::string::{String, ToString};
+use std::string::String;
 use std::sync::Arc;
 use std::vec::Vec;
 
 use camino::{Utf8Path, Utf8PathBuf};
 
-use std::collections::HashSet;
-
 use crate::config_format::{ConfigFormat, ConfigFormatError, JsonFormat};
 use crate::config_value::ConfigValue;
-use crate::driver::{Diagnostic, LayerOutput, Severity, UnusedKey};
-use crate::provenance::{ConfigFile, FilePathStatus, FileResolution, Provenance};
-use crate::schema::{ConfigStructSchema, ConfigValueSchema, Schema};
-
-// ============================================================================
-// Valid Paths Helper
-// ============================================================================
-
-/// Tracks valid paths for config file validation.
-///
-/// Distinguishes between:
-/// - Container paths: intermediate objects (like "common" when "common.log_level" exists)
-/// - Leaf paths: actual field values
-#[derive(Default)]
-struct ValidPaths {
-    /// All valid paths (both containers and leaves)
-    paths: HashSet<Vec<String>>,
-}
-
-impl ValidPaths {
-    fn new() -> Self {
-        Self::default()
-    }
-
-    fn add_leaf(&mut self, path: Vec<String>) {
-        self.paths.insert(path);
-    }
-
-    fn is_valid(&self, path: &[String]) -> bool {
-        self.paths.contains(path)
-    }
-}
+use crate::driver::{Diagnostic, LayerOutput, Severity};
+use crate::provenance::{ConfigFile, FilePathStatus, FileResolution};
+use crate::schema::Schema;
+use crate::value_builder::ValueBuilder;
 
 // ============================================================================
 // Format Registry
@@ -256,52 +226,25 @@ pub fn parse_file(schema: &Schema, config: &FileConfig) -> FileParseResult {
     ctx.into_result()
 }
 
-/// Extract provenance from a ConfigValue.
-fn get_provenance(value: &ConfigValue) -> Option<&Provenance> {
-    match value {
-        ConfigValue::Null(s) => s.provenance.as_ref(),
-        ConfigValue::Bool(s) => s.provenance.as_ref(),
-        ConfigValue::Integer(s) => s.provenance.as_ref(),
-        ConfigValue::Float(s) => s.provenance.as_ref(),
-        ConfigValue::String(s) => s.provenance.as_ref(),
-        ConfigValue::Array(s) => s.provenance.as_ref(),
-        ConfigValue::Object(s) => s.provenance.as_ref(),
-        ConfigValue::Enum(s) => s.provenance.as_ref(),
-    }
-}
-
 /// Context for parsing config files.
 struct FileParseContext<'a> {
+    schema: &'a Schema,
     config: &'a FileConfig,
-    /// The config struct schema, if present
-    config_schema: Option<&'a ConfigStructSchema>,
-    /// The config field name from schema (e.g., "config" or "settings")
-    config_field_name: Option<&'a str>,
     /// Parsed config value (if successful)
     value: Option<ConfigValue>,
-    /// Unused keys found in the file
-    unused_keys: Vec<UnusedKey>,
-    /// Diagnostics collected during parsing
-    diagnostics: Vec<Diagnostic>,
+    /// Diagnostics collected before ValueBuilder takes over
+    early_diagnostics: Vec<Diagnostic>,
     /// File resolution tracking
     resolution: FileResolution,
 }
 
 impl<'a> FileParseContext<'a> {
     fn new(schema: &'a Schema, config: &'a FileConfig) -> Self {
-        let (config_field_name, config_schema) = if let Some(cs) = schema.config() {
-            (cs.field_name(), Some(cs))
-        } else {
-            (None, None)
-        };
-
         Self {
+            schema,
             config,
-            config_schema,
-            config_field_name,
             value: None,
-            unused_keys: Vec::new(),
-            diagnostics: Vec::new(),
+            early_diagnostics: Vec::new(),
             resolution: FileResolution::new(),
         }
     }
@@ -339,11 +282,6 @@ impl<'a> FileParseContext<'a> {
                 return;
             }
         };
-
-        // Validate against schema and collect unused keys
-        if let Some(config_schema) = self.config_schema {
-            self.validate_and_collect_unused(&parsed, config_schema, Vec::new());
-        }
 
         self.value = Some(parsed);
     }
@@ -384,162 +322,8 @@ impl<'a> FileParseContext<'a> {
         None
     }
 
-    /// Validate parsed values against the schema and collect unused keys.
-    ///
-    /// This function handles flattened fields by using `target_path` to understand
-    /// the expected nested structure. The schema's fields are flattened, but the
-    /// JSON/config file will have the original nested structure.
-    fn validate_and_collect_unused(
-        &mut self,
-        value: &ConfigValue,
-        schema: &ConfigStructSchema,
-        path: Vec<String>,
-    ) {
-        // Build a set of valid paths from the schema's target_paths
-        let valid_paths = self.build_valid_paths(schema);
-
-        // Recursively validate against the valid paths
-        self.validate_recursive(value, &valid_paths, path);
-    }
-
-    /// Build a set of all valid key paths from the schema.
-    ///
-    /// Each field in the schema is indexed by its effective name (after rename).
-    /// Flattened fields appear directly in the schema at their effective name.
-    fn build_valid_paths(&self, schema: &ConfigStructSchema) -> ValidPaths {
-        let mut valid = ValidPaths::new();
-
-        for (field_name, field_schema) in schema.fields() {
-            // Add this field as a valid leaf path
-            valid.add_leaf(vec![field_name.clone()]);
-
-            // If it's a struct, recurse to add nested paths
-            self.add_nested_paths(field_schema.value(), vec![field_name.clone()], &mut valid);
-        }
-
-        valid
-    }
-
-    /// Recursively add nested paths for struct fields.
-    fn add_nested_paths(
-        &self,
-        value_schema: &ConfigValueSchema,
-        prefix: Vec<String>,
-        valid: &mut ValidPaths,
-    ) {
-        match value_schema {
-            ConfigValueSchema::Struct(nested) => {
-                for (name, field) in nested.fields() {
-                    let mut path = prefix.clone();
-                    path.push(name.clone());
-                    valid.add_leaf(path.clone());
-                    self.add_nested_paths(field.value(), path, valid);
-                }
-            }
-            ConfigValueSchema::Option { value, .. } => {
-                self.add_nested_paths(value, prefix, valid);
-            }
-            ConfigValueSchema::Vec(vec_schema) => {
-                // For vec, we can't predict indices, but we mark the prefix as valid
-                self.add_nested_paths(vec_schema.element(), prefix, valid);
-            }
-            ConfigValueSchema::Enum(enum_schema) => {
-                // For enums, add paths for all variant fields
-                for (_variant_name, variant_schema) in enum_schema.variants() {
-                    for (field_name, field_schema) in variant_schema.fields() {
-                        let mut path = prefix.clone();
-                        path.push(field_name.clone());
-                        valid.add_leaf(path.clone());
-                        self.add_nested_paths(field_schema.value(), path, valid);
-                    }
-                }
-            }
-            ConfigValueSchema::Leaf(_) => {
-                // Nothing more to add
-            }
-        }
-    }
-
-    /// Recursively validate config values against valid paths.
-    fn validate_recursive(
-        &mut self,
-        value: &ConfigValue,
-        valid_paths: &ValidPaths,
-        path: Vec<String>,
-    ) {
-        if let ConfigValue::Object(obj) = value {
-            for (key, val) in &obj.value {
-                let mut key_path = path.clone();
-                key_path.push(key.clone());
-
-                if valid_paths.is_valid(&key_path) {
-                    // Valid key - validate enum values and recurse if it's an object
-                    self.validate_enum_value(val, &key_path);
-                    if matches!(val, ConfigValue::Object(_)) {
-                        self.validate_recursive(val, valid_paths, key_path);
-                    }
-                } else {
-                    // Unknown key
-                    let prov = get_provenance(val).cloned().unwrap_or(Provenance::Default);
-                    self.unused_keys.push(UnusedKey {
-                        key: key_path.clone(),
-                        provenance: prov,
-                    });
-
-                    if self.config.strict {
-                        self.emit_error(format!(
-                            "unknown configuration key: {}",
-                            key_path.join(".")
-                        ));
-                    }
-                }
-            }
-        }
-    }
-
-    /// Validate that a string value at an enum path is a valid variant.
-    fn validate_enum_value(&mut self, value: &ConfigValue, path: &[String]) {
-        // Only check string values - other types will be caught by deserialization
-        let string_value = match value {
-            ConfigValue::String(s) => &s.value,
-            _ => return,
-        };
-
-        // Get the schema for this path
-        let Some(config_schema) = self.config_schema else {
-            return;
-        };
-        let Some(value_schema) = config_schema.get_by_path(&path.to_vec()) else {
-            return;
-        };
-
-        // Unwrap Option wrapper if present
-        let inner_schema = match value_schema {
-            ConfigValueSchema::Option { value: inner, .. } => inner.as_ref(),
-            other => other,
-        };
-
-        // For enum fields, validate the value is a known variant
-        if let ConfigValueSchema::Enum(enum_schema) = inner_schema {
-            let variants = enum_schema.variants();
-            if !variants.contains_key(string_value) {
-                let valid_variants: Vec<&String> = variants.keys().collect();
-                self.emit_warning(format!(
-                    "unknown variant '{}' for {}. Valid variants are: {}",
-                    string_value,
-                    path.join("."),
-                    valid_variants
-                        .iter()
-                        .map(|v| format!("'{}'", v))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ));
-            }
-        }
-    }
-
     fn emit_error(&mut self, message: String) {
-        self.diagnostics.push(Diagnostic {
+        self.early_diagnostics.push(Diagnostic {
             message,
             path: None,
             span: None,
@@ -547,40 +331,58 @@ impl<'a> FileParseContext<'a> {
         });
     }
 
-    fn emit_warning(&mut self, message: String) {
-        self.diagnostics.push(Diagnostic {
-            message,
-            path: None,
-            span: None,
-            severity: Severity::Warning,
-        });
-    }
-
     fn into_result(self) -> FileParseResult {
-        // Wrap the value under the config field name if needed
-        let value = if let Some(parsed) = self.value {
-            if let Some(field_name) = self.config_field_name {
-                // Wrap: {config_field_name: parsed_value}
-                let mut root = indexmap::IndexMap::default();
-                root.insert(field_name.to_string(), parsed);
-                Some(ConfigValue::Object(crate::config_value::Sourced {
-                    value: root,
-                    span: None,
-                    provenance: None,
-                }))
+        // If we have a config schema and a parsed value, use ValueBuilder
+        // to validate and collect unused keys
+        let output = if let Some(config_schema) = self.schema.config() {
+            if let Some(ref parsed) = self.value {
+                // Create a ValueBuilder and import the parsed tree
+                let mut builder = ValueBuilder::new(config_schema);
+                builder.import_tree(parsed);
+
+                // In strict mode, convert unused keys to errors
+                if self.config.strict {
+                    let error_msgs: Vec<String> = builder
+                        .unused_keys()
+                        .iter()
+                        .map(|uk| format!("unknown configuration key: {}", uk.key.join(".")))
+                        .collect();
+                    for msg in error_msgs {
+                        builder.error(msg);
+                    }
+                }
+
+                // Get the output from the builder
+                let mut output = builder.into_output_with_value(
+                    self.value.clone(),
+                    config_schema.field_name(),
+                );
+
+                // Prepend any early diagnostics (file read errors, etc.)
+                let mut all_diagnostics = self.early_diagnostics;
+                all_diagnostics.append(&mut output.diagnostics);
+                output.diagnostics = all_diagnostics;
+
+                output
             } else {
-                Some(parsed)
+                // No parsed value - return early diagnostics only
+                LayerOutput {
+                    value: None,
+                    unused_keys: Vec::new(),
+                    diagnostics: self.early_diagnostics,
+                }
             }
         } else {
-            None
+            // No config schema - just return the parsed value as-is
+            LayerOutput {
+                value: self.value,
+                unused_keys: Vec::new(),
+                diagnostics: self.early_diagnostics,
+            }
         };
 
         FileParseResult {
-            output: LayerOutput {
-                value,
-                unused_keys: self.unused_keys,
-                diagnostics: self.diagnostics,
-            },
+            output,
             resolution: self.resolution,
         }
     }
@@ -590,9 +392,24 @@ impl<'a> FileParseContext<'a> {
 mod tests {
     use super::*;
     use crate as figue;
+    use crate::provenance::Provenance;
     use facet::Facet;
     use std::io::Write;
     use tempfile::NamedTempFile;
+
+    /// Extract provenance from a ConfigValue (test helper).
+    fn get_provenance(value: &ConfigValue) -> Option<&Provenance> {
+        match value {
+            ConfigValue::Null(s) => s.provenance.as_ref(),
+            ConfigValue::Bool(s) => s.provenance.as_ref(),
+            ConfigValue::Integer(s) => s.provenance.as_ref(),
+            ConfigValue::Float(s) => s.provenance.as_ref(),
+            ConfigValue::String(s) => s.provenance.as_ref(),
+            ConfigValue::Array(s) => s.provenance.as_ref(),
+            ConfigValue::Object(s) => s.provenance.as_ref(),
+            ConfigValue::Enum(s) => s.provenance.as_ref(),
+        }
+    }
 
     // ========================================================================
     // Test schemas
