@@ -262,6 +262,7 @@ impl From<&str> for Content {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use facet_testhelpers::test;
 
     #[test]
     fn element_builder_api() {
@@ -440,5 +441,119 @@ mod tests {
         let roundtripped: Item = from_element(&elem).unwrap();
 
         assert_eq!(original, roundtripped);
+    }
+
+    /// Reproduction test for issue #10:
+    /// `Vec<Element>` does not match any tag, although it should match every tag
+    #[test]
+    fn vec_element_matches_any_tag() {
+        #[derive(facet::Facet, Debug)]
+        #[facet(rename = "any")]
+        struct AnyContainer {
+            #[facet(xml::elements)]
+            elements: Vec<Element>,
+        }
+
+        let xml = r#"<any><foo a="b" /><bar c="d" /></any>"#;
+        let result: AnyContainer = facet_xml::from_str(xml).unwrap();
+
+        assert_eq!(result.elements.len(), 2);
+        assert_eq!(result.elements[0].tag, "foo");
+        assert_eq!(result.elements[0].get_attr("a"), Some("b"));
+        assert_eq!(result.elements[1].tag, "bar");
+        assert_eq!(result.elements[1].get_attr("c"), Some("d"));
+    }
+
+    /// Edge case: specific fields should take precedence over catch-all Vec<Element>
+    #[test]
+    fn vec_element_catch_all_with_specific_field() {
+        #[derive(facet::Facet, Debug)]
+        #[facet(rename = "container")]
+        struct MixedContainer {
+            // Specific field - should match <name> elements
+            name: String,
+            // Catch-all - should get everything else
+            #[facet(xml::elements)]
+            others: Vec<Element>,
+        }
+
+        let xml = r#"<container><name>test</name><foo>a</foo><bar>b</bar></container>"#;
+        let result: MixedContainer = facet_xml::from_str(xml).unwrap();
+
+        assert_eq!(result.name, "test");
+        assert_eq!(result.others.len(), 2);
+        assert_eq!(result.others[0].tag, "foo");
+        assert_eq!(result.others[1].tag, "bar");
+    }
+
+    /// Edge case: text nodes should be ignored when using xml::elements
+    #[test]
+    fn vec_element_ignores_text_nodes() {
+        #[derive(facet::Facet, Debug)]
+        #[facet(rename = "any")]
+        struct AnyContainer {
+            #[facet(xml::elements)]
+            elements: Vec<Element>,
+        }
+
+        // Text nodes between elements should be ignored
+        let xml = r#"<any>text before<foo/>middle text<bar/>text after</any>"#;
+        let result: AnyContainer = facet_xml::from_str(xml).unwrap();
+
+        assert_eq!(result.elements.len(), 2);
+        assert_eq!(result.elements[0].tag, "foo");
+        assert_eq!(result.elements[1].tag, "bar");
+    }
+
+    /// Edge case: roundtrip serialization of Vec<Element>
+    ///
+    /// Tests that Element's xml::tag field is used as the element name during
+    /// serialization, producing `<foo>...</foo>` instead of `<element><tag>foo</tag>...</element>`.
+    #[test]
+    fn vec_element_roundtrip() {
+        #[derive(facet::Facet, Debug, PartialEq)]
+        #[facet(rename = "container")]
+        struct Container {
+            #[facet(xml::elements)]
+            elements: Vec<Element>,
+        }
+
+        let original = Container {
+            elements: vec![
+                Element::new("foo").with_attr("a", "1"),
+                Element::new("bar").with_text("hello"),
+            ],
+        };
+
+        let xml = facet_xml::to_string(&original).unwrap();
+
+        // After fix: tag field becomes the element name
+        // <container><foo a="1"/><bar>hello</bar></container>
+        assert!(xml.contains("<foo"), "expected <foo>, got: {}", xml);
+        assert!(xml.contains("<bar"), "expected <bar>, got: {}", xml);
+
+        // Roundtrip should preserve original tag names
+        let roundtripped: Container = facet_xml::from_str(&xml).unwrap();
+        assert_eq!(roundtripped.elements.len(), 2);
+        assert_eq!(roundtripped.elements[0].tag, "foo");
+        assert_eq!(roundtripped.elements[0].get_attr("a"), Some("1"));
+        assert_eq!(roundtripped.elements[1].tag, "bar");
+        assert_eq!(roundtripped.elements[1].text_content(), "hello");
+    }
+
+    /// Edge case: empty container produces empty Vec
+    #[test]
+    fn vec_element_empty_container() {
+        #[derive(facet::Facet, Debug)]
+        #[facet(rename = "empty")]
+        struct EmptyContainer {
+            #[facet(xml::elements)]
+            elements: Vec<Element>,
+        }
+
+        let xml = r#"<empty></empty>"#;
+        let result: EmptyContainer = facet_xml::from_str(xml).unwrap();
+
+        assert!(result.elements.is_empty());
     }
 }

@@ -553,6 +553,9 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
             self.handle_flattened_enum(wip, field_idx)
         } else if let Some(info) = self.field_map.elements_fields.get(tag).cloned() {
             self.handle_elements_collection(wip, &info)
+        } else if let Some(info) = self.field_map.catch_all_elements_field.clone() {
+            // Catch-all elements field (item type has xml::tag, matches any element)
+            self.handle_elements_collection(wip, &info)
         } else if !self.field_map.flattened_maps.is_empty() {
             self.handle_flattened_map(wip, tag, namespace)
         } else {
