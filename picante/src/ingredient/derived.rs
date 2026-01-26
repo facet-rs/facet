@@ -104,9 +104,13 @@ fn encode_with_peek(peek: Peek<'_, '_>, what: &'static str) -> PicanteResult<Vec
 }
 
 /// Deserialize bytes into a HeapValue using type-erased Shape. Non-generic, compiled once.
+///
+/// # Safety
+///
+/// `shape` must be the correct shape for the target type being decoded.
 #[inline(never)]
-fn decode_to_heap_value(bytes: &[u8], shape: &'static Shape, what: &'static str) -> PicanteResult<HeapValue<'static, false>> {
-    // SAFETY: shape must be the correct shape for the target type
+unsafe fn decode_to_heap_value(bytes: &[u8], shape: &'static Shape, what: &'static str) -> PicanteResult<HeapValue<'static, false>> {
+    // SAFETY: caller guarantees `shape` is correct for the target type
     let partial = unsafe { Partial::alloc_shape_owned(shape) }.map_err(|e| {
         Arc::new(PicanteError::Decode {
             what,
@@ -1115,8 +1119,8 @@ where
     V: Clone + Facet<'static> + Send + Sync + 'static,
 {
     |kind, bytes| {
-        // decode_to_heap_value is non-generic, materialize is tiny
-        let heap_value = decode_to_heap_value(&bytes, <DerivedRecord<K, V>>::SHAPE, "derived record")?;
+        // SAFETY: <DerivedRecord<K, V>>::SHAPE is the correct shape for DerivedRecord<K, V>
+        let heap_value = unsafe { decode_to_heap_value(&bytes, <DerivedRecord<K, V>>::SHAPE, "derived record") }?;
         let rec: DerivedRecord<K, V> = heap_value.materialize().map_err(|e| {
             Arc::new(PicanteError::Decode {
                 what: "derived record (materialize)",
@@ -1212,8 +1216,8 @@ where
     V: Clone + Facet<'static> + Send + Sync + 'static,
 {
     |kind, key_bytes, value_bytes| {
-        // decode_to_heap_value is non-generic, materialize is tiny
-        let heap_value = decode_to_heap_value(&key_bytes, K::SHAPE, "derived key from WAL")?;
+        // SAFETY: K::SHAPE is the correct shape for K
+        let heap_value = unsafe { decode_to_heap_value(&key_bytes, K::SHAPE, "derived key from WAL") }?;
         let key: K = heap_value.materialize().map_err(|e| {
             Arc::new(PicanteError::Decode {
                 what: "derived key from WAL (materialize)",
@@ -1227,8 +1231,8 @@ where
         };
 
         if let Some(value_bytes) = value_bytes {
-            // decode_to_heap_value is non-generic, materialize is tiny
-            let heap_value = decode_to_heap_value(&value_bytes, <DerivedRecord<K, V>>::SHAPE, "derived record from WAL")?;
+            // SAFETY: <DerivedRecord<K, V>>::SHAPE is the correct shape for DerivedRecord<K, V>
+            let heap_value = unsafe { decode_to_heap_value(&value_bytes, <DerivedRecord<K, V>>::SHAPE, "derived record from WAL") }?;
             let rec: DerivedRecord<K, V> = heap_value.materialize().map_err(|e| {
                 Arc::new(PicanteError::Decode {
                     what: "derived record from WAL (materialize)",
