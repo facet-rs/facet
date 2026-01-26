@@ -255,8 +255,10 @@ impl DomSerializer for ElementSerializer {
         if let Some(value_str) = self.format_scalar(value) {
             let elem = self.stack.last_mut().ok_or(ElementSerializeError)?;
             elem.attrs.insert(name.to_string(), value_str);
+            Ok(())
+        } else {
+            Err(ElementSerializeError)
         }
-        Ok(())
     }
 
     fn children_start(&mut self) -> Result<(), Self::Error> {
