@@ -315,3 +315,65 @@ pub type MigrationFn = for<'a> fn(
 
 // Register Migration with inventory
 inventory::collect!(Migration);
+
+/// Generate query code from a `.styx` file.
+///
+/// This is the main entry point for build scripts that generate query code.
+/// It collects the schema from inventory, parses the query file, generates
+/// Rust code, and writes it to `OUT_DIR`.
+///
+/// # Example
+///
+/// ```ignore
+/// // build.rs
+/// fn main() {
+///     // Force the linker to include the db crate's inventory submissions
+///     my_db::ensure_linked();
+///
+///     dibs::build_queries(".dibs-queries/queries.styx");
+/// }
+/// ```
+///
+/// # Panics
+///
+/// Panics if the query file cannot be read or parsed, or if the output cannot be written.
+pub fn build_queries(queries_path: impl AsRef<std::path::Path>) {
+    let queries_path = queries_path.as_ref();
+
+    println!("cargo::rerun-if-changed={}", queries_path.display());
+
+    // Collect schema from registered tables via inventory
+    let dibs_schema = Schema::collect();
+
+    eprintln!(
+        "cargo::warning=dibs: found {} tables in schema",
+        dibs_schema.tables.len()
+    );
+
+    for table in &dibs_schema.tables {
+        eprintln!(
+            "cargo::warning=dibs: table '{}' with {} columns, {} FKs",
+            table.name,
+            table.columns.len(),
+            table.foreign_keys.len()
+        );
+    }
+
+    let (schema, planner_schema) = dibs_schema.to_query_schema();
+
+    let source = std::fs::read_to_string(queries_path)
+        .unwrap_or_else(|e| panic!("Failed to read {}: {}", queries_path.display(), e));
+
+    let file = parse_query_file(&source)
+        .unwrap_or_else(|e| panic!("Failed to parse {}: {}", queries_path.display(), e));
+
+    let generated = generate_rust_code_with_planner(&file, &schema, Some(&planner_schema));
+
+    let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
+    let dest_path = std::path::Path::new(&out_dir).join("queries.rs");
+
+    std::fs::write(&dest_path, &generated.code)
+        .unwrap_or_else(|e| panic!("Failed to write {}: {}", dest_path.display(), e));
+
+    println!("cargo::rustc-env=QUERIES_PATH={}", dest_path.display());
+}

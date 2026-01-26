@@ -225,3 +225,9 @@ pub struct ProductTranslation {
     #[facet(dibs::lang = "markdown")]
     pub description: Option<String>,
 }
+
+/// Call this in build.rs to ensure inventory table submissions are linked.
+///
+/// Build scripts that use `dibs::build_queries` need to force the linker to
+/// include this crate's inventory submissions.
+pub fn ensure_linked() {}

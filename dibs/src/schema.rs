@@ -242,6 +242,33 @@ pub enum PgType {
     IntegerArray,
 }
 
+impl PgType {
+    /// Map this Postgres type to a Rust type string.
+    ///
+    /// These names match what's exported in `dibs_runtime::prelude`.
+    pub fn to_rust_type(&self) -> &'static str {
+        match self {
+            PgType::SmallInt => "i16",
+            PgType::Integer => "i32",
+            PgType::BigInt => "i64",
+            PgType::Real => "f32",
+            PgType::DoublePrecision => "f64",
+            PgType::Numeric => "Decimal",
+            PgType::Boolean => "bool",
+            PgType::Text => "String",
+            PgType::Bytea => "Vec<u8>",
+            PgType::Timestamptz => "Timestamp",
+            PgType::Date => "Date",
+            PgType::Time => "Time",
+            PgType::Uuid => "Uuid",
+            PgType::Jsonb => "JsonValue",
+            PgType::TextArray => "Vec<String>",
+            PgType::BigIntArray => "Vec<i64>",
+            PgType::IntegerArray => "Vec<i32>",
+        }
+    }
+}
+
 impl std::fmt::Display for PgType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -682,6 +709,73 @@ impl Schema {
         }
 
         sql.trim_end().to_string()
+    }
+
+    /// Convert this schema to the types needed for query code generation.
+    ///
+    /// Returns `(SchemaInfo, PlannerSchema)` which can be passed to
+    /// `generate_rust_code_with_planner`.
+    pub fn to_query_schema(&self) -> (dibs_query_gen::SchemaInfo, dibs_query_gen::PlannerSchema) {
+        use dibs_query_gen::{
+            ColumnInfo, PlannerForeignKey, PlannerSchema, PlannerTable, SchemaInfo, TableInfo,
+        };
+        use std::collections::HashMap;
+
+        let mut schema_tables = HashMap::new();
+        let mut planner_tables = HashMap::new();
+
+        for table in &self.tables {
+            // Build SchemaInfo table
+            let mut columns = HashMap::new();
+            let mut column_names = Vec::new();
+
+            for col in &table.columns {
+                let rust_type = col
+                    .rust_type
+                    .clone()
+                    .unwrap_or_else(|| col.pg_type.to_rust_type().to_string());
+
+                columns.insert(
+                    col.name.clone(),
+                    ColumnInfo {
+                        rust_type,
+                        nullable: col.nullable,
+                    },
+                );
+                column_names.push(col.name.clone());
+            }
+
+            schema_tables.insert(table.name.clone(), TableInfo { columns });
+
+            // Build PlannerSchema table
+            let foreign_keys: Vec<PlannerForeignKey> = table
+                .foreign_keys
+                .iter()
+                .map(|fk| PlannerForeignKey {
+                    columns: fk.columns.clone(),
+                    references_table: fk.references_table.clone(),
+                    references_columns: fk.references_columns.clone(),
+                })
+                .collect();
+
+            planner_tables.insert(
+                table.name.clone(),
+                PlannerTable {
+                    name: table.name.clone(),
+                    columns: column_names,
+                    foreign_keys,
+                },
+            );
+        }
+
+        (
+            SchemaInfo {
+                tables: schema_tables,
+            },
+            PlannerSchema {
+                tables: planner_tables,
+            },
+        )
     }
 }
 
