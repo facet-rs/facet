@@ -531,6 +531,87 @@ where
         // directly if they need response stream binding.
         let _ = (response, channels);
     }
+
+    #[allow(unsafe_code)]
+    fn call_with_metadata_by_shape(
+        &self,
+        method_id: u64,
+        args_ptr: crate::SendPtr,
+        args_shape: &'static facet_core::Shape,
+        metadata: roam_wire::Metadata,
+    ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send {
+        // Capture self for use in async block
+        let this = self.clone();
+
+        async move {
+            let mut attempt = 0u32;
+
+            loop {
+                let handle = match this.ensure_connected().await {
+                    Ok(h) => h,
+                    Err(ConnectError::ConnectFailed(_)) => {
+                        attempt += 1;
+                        if attempt >= this.retry_policy.max_attempts {
+                            return Err(TransportError::ConnectionClosed);
+                        }
+                        let backoff = this.retry_policy.backoff_for_attempt(attempt);
+                        sleep(backoff).await;
+                        continue;
+                    }
+                    Err(ConnectError::RetriesExhausted { .. }) => {
+                        return Err(TransportError::ConnectionClosed);
+                    }
+                    Err(ConnectError::Rpc(e)) => return Err(e),
+                    Err(ConnectError::Rejected(_)) => {
+                        return Err(TransportError::ConnectionClosed);
+                    }
+                };
+
+                // SAFETY: args_ptr was created from valid, initialized, Send data
+                match unsafe {
+                    handle.call_with_metadata_by_shape(
+                        method_id,
+                        args_ptr.as_ptr(),
+                        args_shape,
+                        metadata.clone(),
+                    )
+                }
+                .await
+                {
+                    Ok(response) => return Ok(response),
+                    Err(TransportError::Encode(e)) => {
+                        return Err(TransportError::Encode(e));
+                    }
+                    Err(TransportError::ConnectionClosed) | Err(TransportError::DriverGone) => {
+                        {
+                            let mut state = this.state.lock().await;
+                            *state = None;
+                        }
+
+                        attempt += 1;
+                        if attempt >= this.retry_policy.max_attempts {
+                            return Err(TransportError::ConnectionClosed);
+                        }
+
+                        let backoff = this.retry_policy.backoff_for_attempt(attempt);
+                        sleep(backoff).await;
+                    }
+                }
+            }
+        }
+    }
+
+    #[allow(unsafe_code)]
+    unsafe fn bind_response_streams_by_shape(
+        &self,
+        response_ptr: *mut (),
+        response_shape: &'static facet_core::Shape,
+        channels: &[u64],
+    ) {
+        // Same as bind_response_streams - this is a no-op for FramedClient.
+        // Users should use ConnectionHandle directly if they need response stream binding.
+        let _ = (response_ptr, response_shape, channels);
+    }
 }
 
 fn connection_error_to_io(e: ConnectionError) -> io::Error {

@@ -1,8 +1,47 @@
 use std::marker::PhantomData;
 
 use facet::Facet;
+use facet_core::{PtrUninit, Shape};
 
 use crate::{CallError, ConnectionHandle, DecodeError, ResponseData, RoamError, TransportError};
+
+/// A raw pointer wrapper that is `Send` and `Sync`.
+///
+/// This is used to pass pointers through async boundaries in `call_with_metadata_by_shape`.
+/// The caller must ensure that the underlying data is actually `Send`.
+///
+/// # Safety
+///
+/// The caller must ensure that:
+/// - The underlying data is `Send`
+/// - The pointer remains valid for the entire duration it's used
+#[doc(hidden)]
+#[derive(Clone, Copy)]
+pub struct SendPtr(*mut ());
+
+// SAFETY: The caller of `call_with_metadata_by_shape` ensures the data is `Send`.
+// The trait bounds on `CallFuture::into_future` enforce `Args: Send`.
+#[allow(unsafe_code)]
+unsafe impl Send for SendPtr {}
+#[allow(unsafe_code)]
+unsafe impl Sync for SendPtr {}
+
+impl SendPtr {
+    /// Create a new SendPtr from a raw pointer.
+    ///
+    /// # Safety
+    ///
+    /// The underlying data must be `Send` and the pointer must be valid.
+    #[allow(unsafe_code)]
+    pub unsafe fn new(ptr: *mut ()) -> Self {
+        Self(ptr)
+    }
+
+    /// Get the raw pointer.
+    pub fn as_ptr(self) -> *mut () {
+        self.0
+    }
+}
 
 /// Trait for making RPC calls.
 ///
@@ -13,6 +52,7 @@ use crate::{CallError, ConnectionHandle, DecodeError, ResponseData, RoamError, T
 /// Generated clients convert this to `CallError<E>` which also includes
 /// response-level errors like `RoamError::User(E)`.
 #[allow(async_fn_in_trait)]
+#[allow(unsafe_code)]
 pub trait Caller: Clone + Send + Sync + 'static {
     /// Make an RPC call with the given method ID and arguments.
     ///
@@ -79,6 +119,61 @@ pub trait Caller: Clone + Send + Sync + 'static {
     /// response and binds receivers for each Rx using the channel IDs from
     /// the Response message.
     fn bind_response_streams<T: Facet<'static>>(&self, response: &mut T, channels: &[u64]);
+
+    // ========================================================================
+    // Non-generic methods (reduce monomorphization)
+    // ========================================================================
+
+    /// Make an RPC call using reflection (non-generic).
+    ///
+    /// This is the non-generic core implementation that avoids monomorphization.
+    /// The generic `call_with_metadata` can delegate to this.
+    ///
+    /// # Safety
+    ///
+    /// - `args_ptr` must have been created from a valid, initialized pointer matching `args_shape`
+    /// - The underlying args type must be `Send`
+    #[doc(hidden)]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn call_with_metadata_by_shape(
+        &self,
+        method_id: u64,
+        args_ptr: SendPtr,
+        args_shape: &'static Shape,
+        metadata: roam_wire::Metadata,
+    ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send;
+
+    /// Make an RPC call using reflection (non-generic).
+    ///
+    /// This is the non-generic core implementation that avoids monomorphization.
+    /// The generic `call_with_metadata` can delegate to this.
+    ///
+    /// # Safety
+    ///
+    /// - `args_ptr` must have been created from a valid, initialized pointer matching `args_shape`
+    /// - The underlying args type must be `Send`
+    #[doc(hidden)]
+    #[cfg(target_arch = "wasm32")]
+    fn call_with_metadata_by_shape(
+        &self,
+        method_id: u64,
+        args_ptr: SendPtr,
+        args_shape: &'static Shape,
+        metadata: roam_wire::Metadata,
+    ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>>;
+
+    /// Bind receivers for `Rx<T>` streams in the response using reflection (non-generic).
+    ///
+    /// # Safety
+    ///
+    /// - `response_ptr` must point to valid, initialized memory matching `response_shape`
+    #[doc(hidden)]
+    unsafe fn bind_response_streams_by_shape(
+        &self,
+        response_ptr: *mut (),
+        response_shape: &'static Shape,
+        channels: &[u64],
+    );
 }
 
 impl Caller for ConnectionHandle {
@@ -93,6 +188,44 @@ impl Caller for ConnectionHandle {
 
     fn bind_response_streams<T: Facet<'static>>(&self, response: &mut T, channels: &[u64]) {
         ConnectionHandle::bind_response_streams(self, response, channels)
+    }
+
+    #[allow(unsafe_code)]
+    fn call_with_metadata_by_shape(
+        &self,
+        method_id: u64,
+        args_ptr: SendPtr,
+        args_shape: &'static Shape,
+        metadata: roam_wire::Metadata,
+    ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send {
+        // SAFETY: Caller guarantees args_ptr is valid, initialized, and Send
+        unsafe {
+            ConnectionHandle::call_with_metadata_by_shape(
+                self,
+                method_id,
+                args_ptr.as_ptr(),
+                args_shape,
+                metadata,
+            )
+        }
+    }
+
+    #[allow(unsafe_code)]
+    unsafe fn bind_response_streams_by_shape(
+        &self,
+        response_ptr: *mut (),
+        response_shape: &'static Shape,
+        channels: &[u64],
+    ) {
+        // SAFETY: Caller guarantees response_ptr is valid and initialized
+        unsafe {
+            ConnectionHandle::bind_response_streams_by_shape(
+                self,
+                response_ptr,
+                response_shape,
+                channels,
+            )
+        }
     }
 }
 
@@ -170,6 +303,7 @@ where
     type Output = Result<Ok, CallError<Err>>;
     type IntoFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Self::Output> + Send>>;
 
+    #[allow(unsafe_code)]
     fn into_future(self) -> Self::IntoFuture {
         let CallFuture {
             caller,
@@ -179,14 +313,68 @@ where
             _phantom,
         } = self;
 
+        // Use non-generic call to reduce monomorphization.
+        // The async block still needs to be boxed, but the inner call uses reflection
+        // instead of monomorphizing for each Args type.
         Box::pin(async move {
+            // SAFETY: args is valid, initialized, and Send (enforced by trait bounds).
+            // We create the pointer INSIDE the async block after the move to ensure
+            // it points to the correct memory location.
+            let args_ptr = unsafe { SendPtr::new((&raw mut args).cast::<()>()) };
+
             let response = caller
-                .call_with_metadata(method_id, &mut args, metadata)
+                .call_with_metadata_by_shape(method_id, args_ptr, Args::SHAPE, metadata)
                 .await
                 .map_err(CallError::from)?;
-            let mut result = decode_response::<Ok, Err>(&response.payload)?;
-            caller.bind_response_streams(&mut result, &response.channels);
-            Ok(result)
+
+            // Use non-generic decode to reduce monomorphization.
+            // SAFETY: MaybeUninit is properly aligned and sized for Ok/Err types
+            let mut ok_slot = std::mem::MaybeUninit::<Ok>::uninit();
+            let mut err_slot = std::mem::MaybeUninit::<Err>::uninit();
+
+            let outcome = unsafe {
+                decode_response_into(
+                    &response.payload,
+                    ok_slot.as_mut_ptr().cast::<()>(),
+                    Ok::SHAPE,
+                    err_slot.as_mut_ptr().cast::<()>(),
+                    Err::SHAPE,
+                )
+            };
+
+            match outcome {
+                DecodeOutcome::Ok => {
+                    // SAFETY: decode_response_into initialized ok_slot
+                    let mut result = unsafe { ok_slot.assume_init() };
+                    // SAFETY: result is valid and initialized
+                    unsafe {
+                        caller.bind_response_streams_by_shape(
+                            (&raw mut result).cast::<()>(),
+                            Ok::SHAPE,
+                            &response.channels,
+                        );
+                    }
+                    std::result::Result::Ok(result)
+                }
+                DecodeOutcome::UserError => {
+                    // SAFETY: decode_response_into initialized err_slot
+                    let user_error = unsafe { err_slot.assume_init() };
+                    std::result::Result::Err(CallError::Roam(RoamError::User(user_error)))
+                }
+                DecodeOutcome::SystemError(e) => {
+                    // Map RoamError<()> to RoamError<Err>
+                    let mapped = match e {
+                        RoamError::User(()) => unreachable!("SystemError never has User variant"),
+                        RoamError::UnknownMethod => RoamError::UnknownMethod,
+                        RoamError::InvalidPayload => RoamError::InvalidPayload,
+                        RoamError::Cancelled => RoamError::Cancelled,
+                    };
+                    std::result::Result::Err(CallError::Roam(mapped))
+                }
+                DecodeOutcome::DeserializeFailed(msg) => std::result::Result::Err(
+                    CallError::Protocol(DecodeError::DeserializeFailed(msg)),
+                ),
+            }
         })
     }
 }
@@ -202,6 +390,7 @@ where
     type Output = Result<Ok, CallError<Err>>;
     type IntoFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Self::Output>>>;
 
+    #[allow(unsafe_code)]
     fn into_future(self) -> Self::IntoFuture {
         let CallFuture {
             caller,
@@ -211,14 +400,66 @@ where
             _phantom,
         } = self;
 
+        // Use non-generic call to reduce monomorphization.
         Box::pin(async move {
+            // SAFETY: args is valid, initialized, and Send (enforced by trait bounds).
+            // We create the pointer INSIDE the async block after the move to ensure
+            // it points to the correct memory location.
+            let args_ptr = unsafe { SendPtr::new((&raw mut args).cast::<()>()) };
+
             let response = caller
-                .call_with_metadata(method_id, &mut args, metadata)
+                .call_with_metadata_by_shape(method_id, args_ptr, Args::SHAPE, metadata)
                 .await
                 .map_err(CallError::from)?;
-            let mut result = decode_response::<Ok, Err>(&response.payload)?;
-            caller.bind_response_streams(&mut result, &response.channels);
-            Ok(result)
+
+            // Use non-generic decode to reduce monomorphization.
+            // SAFETY: MaybeUninit is properly aligned and sized for Ok/Err types
+            let mut ok_slot = std::mem::MaybeUninit::<Ok>::uninit();
+            let mut err_slot = std::mem::MaybeUninit::<Err>::uninit();
+
+            let outcome = unsafe {
+                decode_response_into(
+                    &response.payload,
+                    ok_slot.as_mut_ptr().cast::<()>(),
+                    Ok::SHAPE,
+                    err_slot.as_mut_ptr().cast::<()>(),
+                    Err::SHAPE,
+                )
+            };
+
+            match outcome {
+                DecodeOutcome::Ok => {
+                    // SAFETY: decode_response_into initialized ok_slot
+                    let mut result = unsafe { ok_slot.assume_init() };
+                    // SAFETY: result is valid and initialized
+                    unsafe {
+                        caller.bind_response_streams_by_shape(
+                            (&raw mut result).cast::<()>(),
+                            Ok::SHAPE,
+                            &response.channels,
+                        );
+                    }
+                    std::result::Result::Ok(result)
+                }
+                DecodeOutcome::UserError => {
+                    // SAFETY: decode_response_into initialized err_slot
+                    let user_error = unsafe { err_slot.assume_init() };
+                    std::result::Result::Err(CallError::Roam(RoamError::User(user_error)))
+                }
+                DecodeOutcome::SystemError(e) => {
+                    // Map RoamError<()> to RoamError<Err>
+                    let mapped = match e {
+                        RoamError::User(()) => unreachable!("SystemError never has User variant"),
+                        RoamError::UnknownMethod => RoamError::UnknownMethod,
+                        RoamError::InvalidPayload => RoamError::InvalidPayload,
+                        RoamError::Cancelled => RoamError::Cancelled,
+                    };
+                    std::result::Result::Err(CallError::Roam(mapped))
+                }
+                DecodeOutcome::DeserializeFailed(msg) => std::result::Result::Err(
+                    CallError::Protocol(DecodeError::DeserializeFailed(msg)),
+                ),
+            }
         })
     }
 }
@@ -266,4 +507,131 @@ pub fn decode_response<T: Facet<'static>, E: Facet<'static>>(
         }
         d => Err(DecodeError::InvalidResultDiscriminant(d).into()),
     }
+}
+
+/// Result of non-generic response decoding.
+///
+/// Used by `decode_response_into` to indicate the outcome without being generic
+/// over the user error type.
+#[doc(hidden)]
+#[derive(Debug)]
+pub enum DecodeOutcome {
+    /// Ok variant was deserialized successfully into the provided pointer.
+    Ok,
+    /// User error was deserialized successfully into the provided error pointer.
+    UserError,
+    /// A system RoamError occurred (no user error to deserialize).
+    SystemError(RoamError<()>),
+    /// Deserialization failed.
+    DeserializeFailed(String),
+}
+
+/// Decode a response payload into provided memory using reflection (non-generic).
+///
+/// This is the non-generic version of `decode_response()`. It deserializes directly
+/// into caller-provided memory to avoid monomorphization.
+///
+/// # Arguments
+///
+/// * `payload` - The response payload bytes
+/// * `ok_ptr` - Pointer to write the Ok value if successful
+/// * `ok_shape` - Shape of the Ok type
+/// * `err_ptr` - Pointer to write the user error if it's a User error
+/// * `err_shape` - Shape of the user error type
+///
+/// # Returns
+///
+/// - `DecodeOutcome::Ok` - The Ok value was written to `ok_ptr`
+/// - `DecodeOutcome::UserError` - A user error was written to `err_ptr`
+/// - `DecodeOutcome::SystemError` - A system error occurred (UnknownMethod, InvalidPayload, etc.)
+/// - `DecodeOutcome::DeserializeFailed` - Deserialization failed
+///
+/// # Safety
+///
+/// - `ok_ptr` must point to valid, aligned, properly-sized uninitialized memory for `ok_shape`
+/// - `err_ptr` must point to valid, aligned, properly-sized uninitialized memory for `err_shape`
+/// - On `DecodeOutcome::Ok`, `ok_ptr` is initialized and MUST be read
+/// - On `DecodeOutcome::UserError`, `err_ptr` is initialized and MUST be read
+/// - On other outcomes, neither pointer is initialized
+#[doc(hidden)]
+#[allow(unsafe_code)]
+pub unsafe fn decode_response_into(
+    payload: &[u8],
+    ok_ptr: *mut (),
+    ok_shape: &'static Shape,
+    err_ptr: *mut (),
+    err_shape: &'static Shape,
+) -> DecodeOutcome {
+    if payload.is_empty() {
+        return DecodeOutcome::DeserializeFailed("empty payload".into());
+    }
+
+    match payload[0] {
+        0 => {
+            // Ok variant: deserialize the value into ok_ptr
+            if let Err(e) = unsafe { deserialize_into_ptr(ok_ptr, ok_shape, &payload[1..]) } {
+                return DecodeOutcome::DeserializeFailed(e);
+            }
+            DecodeOutcome::Ok
+        }
+        1 => {
+            // Err variant: determine what kind of error
+            if payload.len() < 2 {
+                return DecodeOutcome::DeserializeFailed("truncated error".into());
+            }
+            match payload[1] {
+                0 => {
+                    // User error: deserialize into err_ptr
+                    if let Err(e) =
+                        unsafe { deserialize_into_ptr(err_ptr, err_shape, &payload[2..]) }
+                    {
+                        return DecodeOutcome::DeserializeFailed(e);
+                    }
+                    DecodeOutcome::UserError
+                }
+                1 => DecodeOutcome::SystemError(RoamError::UnknownMethod),
+                2 => DecodeOutcome::SystemError(RoamError::InvalidPayload),
+                3 => DecodeOutcome::SystemError(RoamError::Cancelled),
+                d => DecodeOutcome::DeserializeFailed(format!(
+                    "unknown RoamError discriminant: {}",
+                    d
+                )),
+            }
+        }
+        d => DecodeOutcome::DeserializeFailed(format!("invalid result discriminant: {}", d)),
+    }
+}
+
+/// Deserialize payload into a type-erased pointer using Shape.
+///
+/// # Safety
+///
+/// - `ptr` must point to valid, properly aligned memory for the type described by `shape`
+/// - On success, the memory at `ptr` will be initialized
+/// - On error, the memory may be partially initialized and MUST NOT be read
+#[allow(unsafe_code)]
+unsafe fn deserialize_into_ptr(
+    ptr: *mut (),
+    shape: &'static Shape,
+    payload: &[u8],
+) -> Result<(), String> {
+    use facet_format::FormatDeserializer;
+    use facet_postcard::PostcardParser;
+    use facet_reflect::Partial;
+
+    let ptr_uninit = PtrUninit::new(ptr.cast::<u8>());
+
+    // SAFETY: Caller guarantees ptr is valid, aligned, and properly sized
+    let partial: Partial<'_, false> =
+        unsafe { Partial::from_raw(ptr_uninit, shape) }.map_err(|e| e.to_string())?;
+
+    let parser = PostcardParser::new(payload);
+    let mut deserializer: FormatDeserializer<'_, false, _> = FormatDeserializer::new_owned(parser);
+    let partial = deserializer
+        .deserialize_into(partial)
+        .map_err(|e| e.to_string())?;
+
+    partial.finish_in_place().map_err(|e| e.to_string())?;
+
+    Ok(())
 }

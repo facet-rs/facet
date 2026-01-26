@@ -3,6 +3,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use facet::Facet;
 
+use facet_core::{PtrMut, Shape};
+
 use crate::{
     ChannelError, ChannelId, ChannelIdAllocator, ChannelRegistry, DriverMessage,
     RX_STREAM_BUFFER_SIZE, ReceiverSlot, ResponseData, SenderSlot, ServiceDispatcher,
@@ -310,6 +312,177 @@ impl ConnectionHandle {
             }
 
             result
+        }
+    }
+
+    /// Make an RPC call using reflection (non-generic).
+    ///
+    /// This is the non-generic core implementation that avoids monomorphization.
+    /// The generic `call_with_metadata` delegates to this.
+    ///
+    /// # Safety
+    ///
+    /// - `args_ptr` must point to valid, initialized memory matching `args_shape`
+    /// - The args type must be `Send`
+    #[doc(hidden)]
+    #[allow(unsafe_code)]
+    pub unsafe fn call_with_metadata_by_shape(
+        &self,
+        method_id: u64,
+        args_ptr: *mut (),
+        args_shape: &'static Shape,
+        metadata: roam_wire::Metadata,
+    ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send + '_ {
+        // Do all pointer work synchronously BEFORE creating the async block.
+        // This ensures the raw pointer doesn't need to be captured by the future.
+
+        // Walk args and bind any streams (allocates channel IDs)
+        // This collects receivers that need to be drained but does NOT spawn
+        let mut drains = Vec::new();
+        trace!("ConnectionHandle::call_by_shape: binding streams");
+
+        // SAFETY: Caller guarantees args_ptr is valid and initialized
+        let poke =
+            unsafe { facet::Poke::from_raw_parts(PtrMut::new(args_ptr.cast::<u8>()), args_shape) };
+        self.bind_streams_recursive(poke, &mut drains);
+
+        // Collect channel IDs for the Request message using non-generic Peek
+        // SAFETY: args_ptr is valid and initialized (was just walked by bind_streams)
+        let peek = unsafe {
+            facet::Peek::unchecked_new(facet_core::PtrConst::new(args_ptr.cast::<u8>()), args_shape)
+        };
+        let channels = crate::dispatch::collect_channel_ids_from_peek_pub(peek);
+        trace!(
+            channels = ?channels,
+            drain_count = drains.len(),
+            "ConnectionHandle::call_by_shape: collected channels after bind_streams"
+        );
+
+        // Serialize using non-generic peek_to_vec
+        let peek = unsafe {
+            facet::Peek::unchecked_new(facet_core::PtrConst::new(args_ptr.cast::<u8>()), args_shape)
+        };
+        let payload_result = facet_postcard::peek_to_vec(peek);
+
+        // Generate args debug info for diagnostics when enabled
+        let args_debug = if diagnostic::debug_enabled() {
+            let peek = unsafe {
+                facet::Peek::unchecked_new(
+                    facet_core::PtrConst::new(args_ptr.cast::<u8>()),
+                    args_shape,
+                )
+            };
+            Some(
+                facet_pretty::PrettyPrinter::new()
+                    .with_colors(facet_pretty::ColorMode::Never)
+                    .with_max_content_len(64)
+                    .format_peek(peek),
+            )
+        } else {
+            None
+        };
+
+        // Now return an async block that doesn't capture args_ptr
+        async move {
+            let payload = payload_result.map_err(TransportError::Encode)?;
+
+            if drains.is_empty() {
+                // No Rx streams - simple call
+                self.call_raw_with_channels_and_metadata(
+                    method_id, channels, payload, args_debug, metadata,
+                )
+                .await
+            } else {
+                // Has Rx streams - spawn tasks to drain them
+                // IMPORTANT: We must send Request BEFORE spawning drain tasks to ensure ordering.
+                let request_id = self.shared.request_ids.next();
+                let (response_tx, response_rx) = oneshot();
+
+                // Track outgoing request for diagnostics
+                if let Some(diag) = &self.shared.diagnostic_state {
+                    let args = args_debug.map(|s| {
+                        let mut map = std::collections::HashMap::new();
+                        map.insert("args".to_string(), s);
+                        map
+                    });
+                    diag.record_outgoing_request(request_id, method_id, args);
+                    diag.associate_channels_with_request(&channels, request_id);
+                }
+
+                let msg = DriverMessage::Call {
+                    conn_id: self.shared.conn_id,
+                    request_id,
+                    method_id,
+                    metadata,
+                    channels,
+                    payload,
+                    response_tx,
+                };
+
+                // Send the Call message NOW, before spawning drain tasks
+                if self.shared.driver_tx.send(msg).await.is_err() {
+                    return Err(TransportError::DriverGone);
+                }
+
+                let task_tx = self.shared.channel_registry.lock().unwrap().driver_tx();
+                let conn_id = self.shared.conn_id;
+
+                // Spawn a task for each drain to forward data to driver
+                for (channel_id, mut rx) in drains {
+                    let task_tx = task_tx.clone();
+                    crate::runtime::spawn(async move {
+                        loop {
+                            match rx.recv().await {
+                                Some(payload) => {
+                                    debug!(
+                                        "drain task: received {} bytes on channel {}",
+                                        payload.len(),
+                                        channel_id
+                                    );
+                                    let _ = task_tx
+                                        .send(DriverMessage::Data {
+                                            conn_id,
+                                            channel_id,
+                                            payload,
+                                        })
+                                        .await;
+                                    debug!(
+                                        "drain task: sent DriverMessage::Data for channel {}",
+                                        channel_id
+                                    );
+                                }
+                                None => {
+                                    debug!("drain task: channel {} closed", channel_id);
+                                    let _ = task_tx
+                                        .send(DriverMessage::Close {
+                                            conn_id,
+                                            channel_id,
+                                        })
+                                        .await;
+                                    debug!(
+                                        "drain task: sent DriverMessage::Close for channel {}",
+                                        channel_id
+                                    );
+                                    break;
+                                }
+                            }
+                        }
+                    });
+                }
+
+                // Just await the response - drain tasks run independently
+                let result = response_rx
+                    .await
+                    .map_err(|_| TransportError::DriverGone)?
+                    .map_err(|_| TransportError::ConnectionClosed);
+
+                // Mark request as complete
+                if let Some(diag) = &self.shared.diagnostic_state {
+                    diag.complete_request(request_id);
+                }
+
+                result
+            }
         }
     }
 
@@ -885,5 +1058,34 @@ impl ConnectionHandle {
             // Register for incoming data routing
             self.register_incoming(channel_id, tx);
         }
+    }
+
+    /// Bind receivers for `Rx<T>` streams in a deserialized response using reflection (non-generic).
+    ///
+    /// This is the non-generic version of `bind_response_streams`. It uses Shape reflection
+    /// to avoid monomorphization.
+    ///
+    /// # Safety
+    ///
+    /// - `response_ptr` must point to valid, initialized memory matching `response_shape`
+    #[doc(hidden)]
+    #[allow(unsafe_code)]
+    pub unsafe fn bind_response_streams_by_shape(
+        &self,
+        response_ptr: *mut (),
+        response_shape: &'static Shape,
+        channels: &[u64],
+    ) {
+        // Patch channel IDs from Response.channels into the deserialized response.
+        // SAFETY: response_ptr is valid and initialized
+        unsafe {
+            crate::dispatch::patch_channel_ids_by_shape(response_ptr, response_shape, channels);
+        }
+
+        // SAFETY: response_ptr is valid and initialized
+        let poke = unsafe {
+            facet::Poke::from_raw_parts(PtrMut::new(response_ptr.cast::<u8>()), response_shape)
+        };
+        self.bind_response_streams_recursive(poke);
     }
 }

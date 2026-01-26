@@ -878,6 +878,14 @@ fn collect_channel_ids_from_peek(peek: facet::Peek<'_, '_>) -> Vec<u64> {
     ids
 }
 
+/// Collect channel IDs from a Peek value (public API for non-generic code paths).
+///
+/// This is used by `ConnectionHandle::call_with_metadata_by_shape` to avoid monomorphization.
+#[doc(hidden)]
+pub fn collect_channel_ids_from_peek_pub(peek: facet::Peek<'_, '_>) -> Vec<u64> {
+    collect_channel_ids_from_peek(peek)
+}
+
 // ============================================================================
 // Channel ID Collection and Patching
 // ============================================================================

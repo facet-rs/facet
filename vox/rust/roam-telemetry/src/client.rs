@@ -8,7 +8,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use facet::Facet;
-use roam_session::{Caller, ResponseData, TransportError};
+use roam_session::{Caller, ResponseData, SendPtr, TransportError};
 use roam_wire::MetadataValue;
 
 use crate::exporter::OtlpExporter;
@@ -251,5 +251,32 @@ impl<C: Caller> Caller for TracingCaller<C> {
 
     fn bind_response_streams<T: Facet<'static>>(&self, response: &mut T, channels: &[u64]) {
         self.inner.bind_response_streams(response, channels)
+    }
+
+    #[allow(unsafe_code)]
+    fn call_with_metadata_by_shape(
+        &self,
+        method_id: u64,
+        args_ptr: SendPtr,
+        args_shape: &'static facet::Shape,
+        metadata: roam_wire::Metadata,
+    ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send {
+        // TracingCaller just delegates to inner - tracing happens at the generic call level
+        self.inner
+            .call_with_metadata_by_shape(method_id, args_ptr, args_shape, metadata)
+    }
+
+    #[allow(unsafe_code)]
+    unsafe fn bind_response_streams_by_shape(
+        &self,
+        response_ptr: *mut (),
+        response_shape: &'static facet::Shape,
+        channels: &[u64],
+    ) {
+        // SAFETY: Caller guarantees response_ptr is valid and initialized
+        unsafe {
+            self.inner
+                .bind_response_streams_by_shape(response_ptr, response_shape, channels)
+        }
     }
 }

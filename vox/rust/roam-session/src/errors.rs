@@ -175,6 +175,8 @@ pub enum DecodeError {
     InvalidResultDiscriminant(u8),
     /// Postcard deserialization error.
     Postcard(facet_postcard::DeserializeError<facet_postcard::PostcardError>),
+    /// Deserialization failed with a message.
+    DeserializeFailed(String),
 }
 
 impl std::fmt::Display for DecodeError {
@@ -189,6 +191,7 @@ impl std::fmt::Display for DecodeError {
                 write!(f, "invalid Result discriminant: {d}")
             }
             DecodeError::Postcard(e) => write!(f, "postcard: {e}"),
+            DecodeError::DeserializeFailed(msg) => write!(f, "deserialize failed: {msg}"),
         }
     }
 }
