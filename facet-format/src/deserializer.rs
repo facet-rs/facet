@@ -734,20 +734,6 @@ where
         Ok(wip)
     }
 
-    /// Helper to find a tag value from field evidence.
-    fn find_tag_value<'a>(
-        evidence: &'a [crate::FieldEvidence<'input>],
-        tag_key: &str,
-    ) -> Option<&'a str> {
-        evidence
-            .iter()
-            .find(|e| e.name == tag_key)
-            .and_then(|e| match &e.scalar_value {
-                Some(ScalarValue::Str(s)) => Some(s.as_ref()),
-                _ => None,
-            })
-    }
-
     /// Helper to collect all evidence from a probe stream.
     fn collect_evidence<S: crate::ProbeStream<'input, Error = P::Error>>(
         mut probe: S,

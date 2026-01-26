@@ -6,12 +6,13 @@ use facet_core::{Def, StructKind, Type, UserType};
 use facet_reflect::Partial;
 
 use crate::{
-    ContainerKind, DeserializeError, FormatDeserializer, FormatParser, InnerDeserializeError,
-    ParseEvent, ScalarValue,
+    ContainerKind, DeserializeError, FieldEvidence, FormatDeserializer, FormatParser,
+    InnerDeserializeError, ParseEvent, ScalarValue,
     deserializer::coro::{
-        DeserializeYielder, request_deserialize_enum_variant_content, request_deserialize_into,
-        request_deserialize_other_variant_with_captured_tag, request_event, request_peek,
-        request_set_string_value, request_skip, request_span, run_deserialize_coro,
+        DeserializeYielder, request_collect_evidence, request_deserialize_enum_variant_content,
+        request_deserialize_into, request_deserialize_other_variant_with_captured_tag,
+        request_event, request_peek, request_set_string_value, request_skip, request_span,
+        run_deserialize_coro,
     },
     deserializer::scalar_matches::scalar_matches_shape,
 };
@@ -575,6 +576,331 @@ fn deserialize_enum_externally_tagged_inner<'input, const BORROW: bool>(
     Ok(wip)
 }
 
+/// Helper to find a tag value from field evidence.
+fn find_tag_value<'a, 'input>(
+    evidence: &'a [FieldEvidence<'input>],
+    tag_key: &str,
+) -> Option<&'a str> {
+    evidence
+        .iter()
+        .find(|e| e.name == tag_key)
+        .and_then(|e| match &e.scalar_value {
+            Some(ScalarValue::Str(s)) => Some(s.as_ref()),
+            _ => None,
+        })
+}
+
+/// Inner implementation of `deserialize_enum_internally_tagged` that runs in a coroutine.
+fn deserialize_enum_internally_tagged_inner<'input, const BORROW: bool>(
+    yielder: &DeserializeYielder<'input, BORROW>,
+    mut wip: Partial<'input, BORROW>,
+    tag_key: &str,
+) -> Result<Partial<'input, BORROW>, InnerDeserializeError> {
+    use alloc::format;
+    use alloc::string::ToString;
+    use alloc::vec::Vec;
+    use facet_reflect::ReflectError;
+
+    let reflect_err = |e: ReflectError| InnerDeserializeError::Reflect {
+        error: e,
+        span: request_span(yielder),
+        path: None,
+    };
+
+    // Step 1: Probe to find the tag value (handles out-of-order fields)
+    let evidence = request_collect_evidence(yielder)?;
+
+    let variant_name = find_tag_value(&evidence, tag_key)
+        .ok_or_else(|| InnerDeserializeError::TypeMismatch {
+            expected: "tag field in internally tagged enum",
+            got: format!("missing '{tag_key}' field"),
+            span: request_span(yielder),
+            path: None,
+        })?
+        .to_string();
+
+    // Step 2: Consume StructStart
+    let event = request_event(yielder, "value")?;
+    if !matches!(event, ParseEvent::StructStart(_)) {
+        return Err(InnerDeserializeError::TypeMismatch {
+            expected: "struct for internally tagged enum",
+            got: format!("{event:?}"),
+            span: request_span(yielder),
+            path: None,
+        });
+    }
+
+    // Step 3: Select the variant
+    // For cow-like enums, redirect Borrowed -> Owned when borrowing is disabled
+    let enum_def = match &wip.shape().ty {
+        Type::User(UserType::Enum(e)) => e,
+        _ => return Err(InnerDeserializeError::Unsupported("expected enum".into())),
+    };
+    let actual_variant = cow_redirect_variant_name::<BORROW>(enum_def, &variant_name);
+    wip = wip
+        .select_variant_named(actual_variant)
+        .map_err(reflect_err)?;
+
+    // Get the selected variant info
+    let variant = wip
+        .selected_variant()
+        .ok_or_else(|| InnerDeserializeError::TypeMismatch {
+            expected: "selected variant",
+            got: "no variant selected".into(),
+            span: request_span(yielder),
+            path: None,
+        })?;
+
+    let variant_fields = variant.data.fields;
+
+    // Check if this is a unit variant (no fields)
+    if variant_fields.is_empty() || variant.data.kind == StructKind::Unit {
+        // Consume remaining fields in the object
+        loop {
+            let event = request_event(yielder, "value")?;
+            match event {
+                ParseEvent::StructEnd => break,
+                ParseEvent::FieldKey(_) => {
+                    request_skip(yielder)?;
+                }
+                other => {
+                    return Err(InnerDeserializeError::TypeMismatch {
+                        expected: "field key or struct end",
+                        got: format!("{other:?}"),
+                        span: request_span(yielder),
+                        path: None,
+                    });
+                }
+            }
+        }
+        return Ok(wip);
+    }
+
+    // Check if variant has any flattened fields
+    let has_flatten = variant_fields.iter().any(|f| f.is_flattened());
+
+    // Track currently open path segments for flatten handling: (field_name, is_option)
+    let mut open_segments: Vec<(&str, bool)> = Vec::new();
+
+    // Process all fields (they can come in any order now)
+    loop {
+        let event = request_event(yielder, "value")?;
+        match event {
+            ParseEvent::StructEnd => break,
+            ParseEvent::FieldKey(key) => {
+                // Unit keys don't make sense for struct fields
+                let key_name = match &key.name {
+                    Some(name) => name.as_ref(),
+                    None => {
+                        // Skip unit keys in struct context
+                        request_skip(yielder)?;
+                        continue;
+                    }
+                };
+
+                // Skip the tag field - already used
+                if key_name == tag_key {
+                    request_skip(yielder)?;
+                    continue;
+                }
+
+                if has_flatten {
+                    // Use path-based lookup for variants with flattened fields
+                    if let Some(path) = find_field_path(variant_fields, key_name) {
+                        // Find common prefix with currently open segments
+                        let common_len = open_segments
+                            .iter()
+                            .zip(path.iter())
+                            .take_while(|((name, _), b)| *name == **b)
+                            .count();
+
+                        // Close segments that are no longer needed (in reverse order)
+                        while open_segments.len() > common_len {
+                            let (_, is_option) = open_segments.pop().unwrap();
+                            if is_option {
+                                wip = wip.end().map_err(reflect_err)?;
+                            }
+                            wip = wip.end().map_err(reflect_err)?;
+                        }
+
+                        // Open new segments
+                        for &field_name in &path[common_len..] {
+                            wip = wip.begin_field(field_name).map_err(reflect_err)?;
+                            let is_option = matches!(wip.shape().def, Def::Option(_));
+                            if is_option {
+                                wip = wip.begin_some().map_err(reflect_err)?;
+                            }
+                            open_segments.push((field_name, is_option));
+                        }
+
+                        // Deserialize the value
+                        wip = request_deserialize_into(yielder, wip)?;
+
+                        // Close the leaf field we just deserialized into
+                        // (but keep parent segments open for potential sibling fields)
+                        if let Some((_, is_option)) = open_segments.pop() {
+                            if is_option {
+                                wip = wip.end().map_err(reflect_err)?;
+                            }
+                            wip = wip.end().map_err(reflect_err)?;
+                        }
+                    } else {
+                        // Unknown field - skip
+                        request_skip(yielder)?;
+                    }
+                } else {
+                    // Simple case: direct field lookup by name/alias
+                    let field_info = variant_fields
+                        .iter()
+                        .enumerate()
+                        .find(|(_, f)| field_matches(f, key_name));
+
+                    if let Some((idx, _field)) = field_info {
+                        wip = wip.begin_nth_field(idx).map_err(reflect_err)?;
+                        wip = request_deserialize_into(yielder, wip)?;
+                        wip = wip.end().map_err(reflect_err)?;
+                    } else {
+                        // Unknown field - skip
+                        request_skip(yielder)?;
+                    }
+                }
+            }
+            other => {
+                return Err(InnerDeserializeError::TypeMismatch {
+                    expected: "field key or struct end",
+                    got: format!("{other:?}"),
+                    span: request_span(yielder),
+                    path: None,
+                });
+            }
+        }
+    }
+
+    // Close any remaining open segments
+    while let Some((_, is_option)) = open_segments.pop() {
+        if is_option {
+            wip = wip.end().map_err(reflect_err)?;
+        }
+        wip = wip.end().map_err(reflect_err)?;
+    }
+
+    // Defaults for missing fields are applied automatically by facet-reflect's
+    // fill_defaults() when build() or end() is called.
+
+    Ok(wip)
+}
+
+/// Inner implementation of `deserialize_enum_adjacently_tagged` that runs in a coroutine.
+fn deserialize_enum_adjacently_tagged_inner<'input, const BORROW: bool>(
+    yielder: &DeserializeYielder<'input, BORROW>,
+    mut wip: Partial<'input, BORROW>,
+    tag_key: &str,
+    content_key: &str,
+) -> Result<Partial<'input, BORROW>, InnerDeserializeError> {
+    use alloc::format;
+    use alloc::string::ToString;
+    use facet_reflect::ReflectError;
+
+    let reflect_err = |e: ReflectError| InnerDeserializeError::Reflect {
+        error: e,
+        span: request_span(yielder),
+        path: None,
+    };
+
+    // Step 1: Probe to find the tag value (handles out-of-order fields)
+    let evidence = request_collect_evidence(yielder)?;
+
+    let variant_name = find_tag_value(&evidence, tag_key)
+        .ok_or_else(|| InnerDeserializeError::TypeMismatch {
+            expected: "tag field in adjacently tagged enum",
+            got: format!("missing '{tag_key}' field"),
+            span: request_span(yielder),
+            path: None,
+        })?
+        .to_string();
+
+    // Step 2: Consume StructStart
+    let event = request_event(yielder, "value")?;
+    if !matches!(event, ParseEvent::StructStart(_)) {
+        return Err(InnerDeserializeError::TypeMismatch {
+            expected: "struct for adjacently tagged enum",
+            got: format!("{event:?}"),
+            span: request_span(yielder),
+            path: None,
+        });
+    }
+
+    // Step 3: Select the variant
+    // For cow-like enums, redirect Borrowed -> Owned when borrowing is disabled
+    let enum_def = match &wip.shape().ty {
+        Type::User(UserType::Enum(e)) => e,
+        _ => return Err(InnerDeserializeError::Unsupported("expected enum".into())),
+    };
+    let actual_variant = cow_redirect_variant_name::<BORROW>(enum_def, &variant_name);
+    wip = wip
+        .select_variant_named(actual_variant)
+        .map_err(reflect_err)?;
+
+    // Step 4: Process fields in any order
+    let mut content_seen = false;
+    loop {
+        let event = request_event(yielder, "value")?;
+        match event {
+            ParseEvent::StructEnd => break,
+            ParseEvent::FieldKey(key) => {
+                // Unit keys don't make sense for adjacently tagged enums
+                let key_name = match &key.name {
+                    Some(name) => name.as_ref(),
+                    None => {
+                        // Skip unit keys
+                        request_skip(yielder)?;
+                        continue;
+                    }
+                };
+
+                if key_name == tag_key {
+                    // Skip the tag field - already used
+                    request_skip(yielder)?;
+                } else if key_name == content_key {
+                    // Deserialize the content
+                    wip = request_deserialize_enum_variant_content(yielder, wip)?;
+                    content_seen = true;
+                } else {
+                    // Unknown field - skip
+                    request_skip(yielder)?;
+                }
+            }
+            other => {
+                return Err(InnerDeserializeError::TypeMismatch {
+                    expected: "field key or struct end",
+                    got: format!("{other:?}"),
+                    span: request_span(yielder),
+                    path: None,
+                });
+            }
+        }
+    }
+
+    // If no content field was present, it's a unit variant (already selected above)
+    if !content_seen {
+        // Check if the variant expects content
+        let variant = wip.selected_variant();
+        if let Some(v) = variant
+            && v.data.kind != StructKind::Unit
+            && !v.data.fields.is_empty()
+        {
+            return Err(InnerDeserializeError::TypeMismatch {
+                expected: "content field for non-unit variant",
+                got: format!("missing '{content_key}' field"),
+                span: request_span(yielder),
+                path: None,
+            });
+        }
+    }
+
+    Ok(wip)
+}
+
 impl<'input, const BORROW: bool, P> FormatDeserializer<'input, BORROW, P>
 where
     P: FormatParser<'input>,
@@ -646,198 +972,12 @@ where
 
     fn deserialize_enum_internally_tagged(
         &mut self,
-        mut wip: Partial<'input, BORROW>,
+        wip: Partial<'input, BORROW>,
         tag_key: &str,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
-        // Step 1: Probe to find the tag value (handles out-of-order fields)
-        let probe = self
-            .parser
-            .begin_probe()
-            .map_err(DeserializeError::Parser)?;
-        let evidence = Self::collect_evidence(probe).map_err(DeserializeError::Parser)?;
-
-        let variant_name = Self::find_tag_value(&evidence, tag_key)
-            .ok_or_else(|| DeserializeError::TypeMismatch {
-                expected: "tag field in internally tagged enum",
-                got: format!("missing '{tag_key}' field"),
-                span: self.last_span,
-                path: None,
-            })?
-            .to_string();
-
-        // Step 2: Consume StructStart
-        let event = self.expect_event("value")?;
-        if !matches!(event, ParseEvent::StructStart(_)) {
-            return Err(DeserializeError::TypeMismatch {
-                expected: "struct for internally tagged enum",
-                got: format!("{event:?}"),
-                span: self.last_span,
-                path: None,
-            });
-        }
-
-        // Step 3: Select the variant
-        // For cow-like enums, redirect Borrowed -> Owned when borrowing is disabled
-        let enum_def = match &wip.shape().ty {
-            Type::User(UserType::Enum(e)) => e,
-            _ => return Err(DeserializeError::Unsupported("expected enum".into())),
-        };
-        let actual_variant = Self::cow_redirect_variant_name(enum_def, &variant_name);
-        wip = wip
-            .select_variant_named(actual_variant)
-            .map_err(DeserializeError::reflect)?;
-
-        // Get the selected variant info
-        let variant = wip
-            .selected_variant()
-            .ok_or_else(|| DeserializeError::TypeMismatch {
-                expected: "selected variant",
-                got: "no variant selected".into(),
-                span: self.last_span,
-                path: None,
-            })?;
-
-        let variant_fields = variant.data.fields;
-
-        // Check if this is a unit variant (no fields)
-        if variant_fields.is_empty() || variant.data.kind == StructKind::Unit {
-            // Consume remaining fields in the object
-            loop {
-                let event = self.expect_event("value")?;
-                match event {
-                    ParseEvent::StructEnd => break,
-                    ParseEvent::FieldKey(_) => {
-                        self.parser.skip_value().map_err(DeserializeError::Parser)?;
-                    }
-                    other => {
-                        return Err(DeserializeError::TypeMismatch {
-                            expected: "field key or struct end",
-                            got: format!("{other:?}"),
-                            span: self.last_span,
-                            path: None,
-                        });
-                    }
-                }
-            }
-            return Ok(wip);
-        }
-
-        // Check if variant has any flattened fields
-        let has_flatten = variant_fields.iter().any(|f| f.is_flattened());
-
-        // Track currently open path segments for flatten handling: (field_name, is_option)
-        let mut open_segments: alloc::vec::Vec<(&str, bool)> = alloc::vec::Vec::new();
-
-        // Process all fields (they can come in any order now)
-        loop {
-            let event = self.expect_event("value")?;
-            match event {
-                ParseEvent::StructEnd => break,
-                ParseEvent::FieldKey(key) => {
-                    // Unit keys don't make sense for struct fields
-                    let key_name = match &key.name {
-                        Some(name) => name.as_ref(),
-                        None => {
-                            // Skip unit keys in struct context
-                            self.parser.skip_value().map_err(DeserializeError::Parser)?;
-                            continue;
-                        }
-                    };
-
-                    // Skip the tag field - already used
-                    if key_name == tag_key {
-                        self.parser.skip_value().map_err(DeserializeError::Parser)?;
-                        continue;
-                    }
-
-                    if has_flatten {
-                        // Use path-based lookup for variants with flattened fields
-                        if let Some(path) = find_field_path(variant_fields, key_name) {
-                            // Find common prefix with currently open segments
-                            let common_len = open_segments
-                                .iter()
-                                .zip(path.iter())
-                                .take_while(|((name, _), b)| *name == **b)
-                                .count();
-
-                            // Close segments that are no longer needed (in reverse order)
-                            while open_segments.len() > common_len {
-                                let (_, is_option) = open_segments.pop().unwrap();
-                                if is_option {
-                                    wip = wip.end().map_err(DeserializeError::reflect)?;
-                                }
-                                wip = wip.end().map_err(DeserializeError::reflect)?;
-                            }
-
-                            // Open new segments
-                            for &field_name in &path[common_len..] {
-                                wip = wip
-                                    .begin_field(field_name)
-                                    .map_err(DeserializeError::reflect)?;
-                                let is_option = matches!(wip.shape().def, Def::Option(_));
-                                if is_option {
-                                    wip = wip.begin_some().map_err(DeserializeError::reflect)?;
-                                }
-                                open_segments.push((field_name, is_option));
-                            }
-
-                            // Deserialize the value
-                            wip = self.deserialize_into(wip)?;
-
-                            // Close the leaf field we just deserialized into
-                            // (but keep parent segments open for potential sibling fields)
-                            if let Some((_, is_option)) = open_segments.pop() {
-                                if is_option {
-                                    wip = wip.end().map_err(DeserializeError::reflect)?;
-                                }
-                                wip = wip.end().map_err(DeserializeError::reflect)?;
-                            }
-                        } else {
-                            // Unknown field - skip
-                            self.parser.skip_value().map_err(DeserializeError::Parser)?;
-                        }
-                    } else {
-                        // Simple case: direct field lookup by name/alias
-                        let field_info = variant_fields
-                            .iter()
-                            .enumerate()
-                            .find(|(_, f)| Self::field_matches(f, key_name));
-
-                        if let Some((idx, _field)) = field_info {
-                            wip = wip
-                                .begin_nth_field(idx)
-                                .map_err(DeserializeError::reflect)?;
-                            wip = self.deserialize_into(wip)?;
-                            wip = wip.end().map_err(DeserializeError::reflect)?;
-                        } else {
-                            // Unknown field - skip
-                            self.parser.skip_value().map_err(DeserializeError::Parser)?;
-                        }
-                    }
-                }
-                other => {
-                    return Err(DeserializeError::TypeMismatch {
-                        expected: "field key or struct end",
-                        got: format!("{other:?}"),
-                        span: self.last_span,
-                        path: None,
-                    });
-                }
-            }
-        }
-
-        // Close any remaining open segments
-        while let Some((_, is_option)) = open_segments.pop() {
-            if is_option {
-                wip = wip.end().map_err(DeserializeError::reflect)?;
-            }
-            wip = wip.end().map_err(DeserializeError::reflect)?;
-        }
-
-        // Defaults for missing fields are applied automatically by facet-reflect's
-        // fill_defaults() when build() or end() is called.
-
-        Ok(wip)
+        run_deserialize_coro(self, |yielder| {
+            deserialize_enum_internally_tagged_inner(yielder, wip, tag_key)
+        })
     }
 
     /// Deserialize enum represented as struct (used by postcard and similar formats).
@@ -1243,106 +1383,13 @@ where
 
     fn deserialize_enum_adjacently_tagged(
         &mut self,
-        mut wip: Partial<'input, BORROW>,
+        wip: Partial<'input, BORROW>,
         tag_key: &str,
         content_key: &str,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
-        // Step 1: Probe to find the tag value (handles out-of-order fields)
-        let probe = self
-            .parser
-            .begin_probe()
-            .map_err(DeserializeError::Parser)?;
-        let evidence = Self::collect_evidence(probe).map_err(DeserializeError::Parser)?;
-
-        let variant_name = Self::find_tag_value(&evidence, tag_key)
-            .ok_or_else(|| DeserializeError::TypeMismatch {
-                expected: "tag field in adjacently tagged enum",
-                got: format!("missing '{tag_key}' field"),
-                span: self.last_span,
-                path: None,
-            })?
-            .to_string();
-
-        // Step 2: Consume StructStart
-        let event = self.expect_event("value")?;
-        if !matches!(event, ParseEvent::StructStart(_)) {
-            return Err(DeserializeError::TypeMismatch {
-                expected: "struct for adjacently tagged enum",
-                got: format!("{event:?}"),
-                span: self.last_span,
-                path: None,
-            });
-        }
-
-        // Step 3: Select the variant
-        // For cow-like enums, redirect Borrowed -> Owned when borrowing is disabled
-        let enum_def = match &wip.shape().ty {
-            Type::User(UserType::Enum(e)) => e,
-            _ => return Err(DeserializeError::Unsupported("expected enum".into())),
-        };
-        let actual_variant = Self::cow_redirect_variant_name(enum_def, &variant_name);
-        wip = wip
-            .select_variant_named(actual_variant)
-            .map_err(DeserializeError::reflect)?;
-
-        // Step 4: Process fields in any order
-        let mut content_seen = false;
-        loop {
-            let event = self.expect_event("value")?;
-            match event {
-                ParseEvent::StructEnd => break,
-                ParseEvent::FieldKey(key) => {
-                    // Unit keys don't make sense for adjacently tagged enums
-                    let key_name = match &key.name {
-                        Some(name) => name.as_ref(),
-                        None => {
-                            // Skip unit keys
-                            self.parser.skip_value().map_err(DeserializeError::Parser)?;
-                            continue;
-                        }
-                    };
-
-                    if key_name == tag_key {
-                        // Skip the tag field - already used
-                        self.parser.skip_value().map_err(DeserializeError::Parser)?;
-                    } else if key_name == content_key {
-                        // Deserialize the content
-                        wip = self.deserialize_enum_variant_content(wip)?;
-                        content_seen = true;
-                    } else {
-                        // Unknown field - skip
-                        self.parser.skip_value().map_err(DeserializeError::Parser)?;
-                    }
-                }
-                other => {
-                    return Err(DeserializeError::TypeMismatch {
-                        expected: "field key or struct end",
-                        got: format!("{other:?}"),
-                        span: self.last_span,
-                        path: None,
-                    });
-                }
-            }
-        }
-
-        // If no content field was present, it's a unit variant (already selected above)
-        if !content_seen {
-            // Check if the variant expects content
-            let variant = wip.selected_variant();
-            if let Some(v) = variant
-                && v.data.kind != StructKind::Unit
-                && !v.data.fields.is_empty()
-            {
-                return Err(DeserializeError::TypeMismatch {
-                    expected: "content field for non-unit variant",
-                    got: format!("missing '{content_key}' field"),
-                    span: self.last_span,
-                    path: None,
-                });
-            }
-        }
-
-        Ok(wip)
+        run_deserialize_coro(self, |yielder| {
+            deserialize_enum_adjacently_tagged_inner(yielder, wip, tag_key, content_key)
+        })
     }
 
     /// Deserialize the content of an already-selected enum variant.
@@ -1666,28 +1713,6 @@ where
         }
 
         Ok(wip)
-    }
-
-    /// For cow-like enums, redirects "Borrowed" variant to "Owned" when borrowing is disabled.
-    ///
-    /// When BORROW=false and the enum has `#[facet(cow)]`, selecting the "Borrowed" variant
-    /// would fail during field deserialization (can't deserialize into `&str`). Instead, we
-    /// redirect to the "Owned" variant which can hold the data in an owned form.
-    ///
-    /// Returns the (potentially redirected) variant name.
-    fn cow_redirect_variant_name<'a>(
-        enum_def: &facet_core::EnumType,
-        variant_name: &'a str,
-    ) -> &'a str {
-        // Only redirect if:
-        // 1. The enum has cow-like semantics
-        // 2. Borrowing is disabled
-        // 3. The requested variant is "Borrowed"
-        if !BORROW && enum_def.is_cow && variant_name == "Borrowed" {
-            "Owned"
-        } else {
-            variant_name
-        }
     }
 }
 
