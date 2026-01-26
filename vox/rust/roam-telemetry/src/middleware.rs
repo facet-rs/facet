@@ -97,11 +97,20 @@ impl PendingSpan {
                 self.attributes.push(KeyValue::bool("rpc.success", true));
                 Status::ok()
             }
-            MethodOutcome::Err(_) => {
+            MethodOutcome::Err(error_peek) => {
                 self.attributes.push(KeyValue::bool("rpc.success", false));
                 self.attributes
                     .push(KeyValue::string("rpc.error_type", "user_error"));
-                Status::error("user error")
+
+                // Format the error value for logging
+                let error_str = PrettyPrinter::new()
+                    .with_colors(facet_pretty::ColorMode::Never)
+                    .with_max_content_len(256)
+                    .format_peek(error_peek.peek());
+                self.attributes
+                    .push(KeyValue::string("rpc.user_error", &error_str));
+
+                Status::error(&error_str)
             }
             MethodOutcome::Rejected(rejection) => {
                 self.attributes.push(KeyValue::bool("rpc.success", false));
