@@ -425,6 +425,8 @@ impl<T: Facet<'static>> Driver<T> {
                 cli_args_source,
                 source_name: "<cli>".to_string(),
             },
+            merged_config: value_with_virtual_spans,
+            schema: self.config.schema.clone(),
         })
     }
 }
@@ -561,12 +563,24 @@ impl<T> DriverOutcome<T> {
 }
 
 /// Successful driver output: a typed value plus an execution report.
-#[derive(Debug)]
 pub struct DriverOutput<T> {
     /// The fully-typed value produced by deserialization.
     pub value: T,
     /// Diagnostics and metadata produced by the driver.
     pub report: DriverReport,
+    /// The merged configuration value (for extract()).
+    merged_config: ConfigValue,
+    /// The schema (for computing hints in extract()).
+    schema: crate::schema::Schema,
+}
+
+impl<T: std::fmt::Debug> std::fmt::Debug for DriverOutput<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DriverOutput")
+            .field("value", &self.value)
+            .field("report", &self.report)
+            .finish_non_exhaustive()
+    }
 }
 
 impl<T> DriverOutput<T> {
@@ -593,6 +607,44 @@ impl<T> DriverOutput<T> {
                 eprintln!("{}: {}", diagnostic.severity.as_str(), diagnostic.message);
             }
         }
+    }
+
+    /// Extract a requirements struct from the parsed configuration.
+    ///
+    /// This allows subcommand-specific validation of required fields. The requirements
+    /// struct should have fields annotated with `#[facet(args::origin = "path")]` to
+    /// indicate which values from the config should be extracted.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use figue as args;
+    ///
+    /// #[derive(Facet)]
+    /// struct MigrateRequirements {
+    ///     #[facet(args::origin = "config.database_url")]
+    ///     database_url: String,  // Required for this context
+    ///
+    ///     #[facet(args::origin = "config.migrations_path")]
+    ///     migrations_path: PathBuf,
+    /// }
+    ///
+    /// let output = figue::builder::<Args>()?.cli(|c| c.from_std_args()).build().run()?;
+    ///
+    /// match output.value.command {
+    ///     Command::Migrate => {
+    ///         let req: MigrateRequirements = output.extract()?;
+    ///         run_migrate(&req.database_url, &req.migrations_path);
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any required field (non-Option) is missing in the config,
+    /// or if a field lacks the `args::origin` attribute.
+    pub fn extract<R: Facet<'static>>(&self) -> Result<R, crate::extract::ExtractError> {
+        crate::extract::extract_requirements::<R>(&self.merged_config, &self.schema)
     }
 }
 

@@ -9,7 +9,7 @@ use facet_core::{Facet, Shape, Type, UserType};
 // Note: Shape is still used by fill_defaults_from_shape and coerce_types_from_shape
 use facet_format::{
     ContainerKind, FieldKey, FieldLocationHint, FormatDeserializer, FormatParser, ParseEvent,
-    ScalarValue,
+    SavePoint, ScalarValue,
 };
 use facet_reflect::Span;
 use indexmap::IndexMap;
@@ -1117,6 +1117,7 @@ impl ConfigValueDeserializeError {
 ///
 /// This is a simple parser that just emits what's in the ConfigValue.
 /// It does NOT do any Shape-based transformations - that's the deserializer's job.
+#[derive(Clone)]
 pub struct ConfigValueParser<'input> {
     /// Stack of values to process.
     stack: Vec<StackFrame<'input>>,
@@ -1124,9 +1125,12 @@ pub struct ConfigValueParser<'input> {
     last_span: Option<Span>,
     /// Peeked event (cached for peek_event).
     peeked: Option<ParseEvent<'input>>,
+    /// Saved parser state for save/restore.
+    saved_state: Option<Box<ConfigValueParser<'input>>>,
 }
 
 /// A frame on the parsing stack.
+#[derive(Clone)]
 enum StackFrame<'input> {
     /// Processing an object - emit key-value pairs.
     Object {
@@ -1160,6 +1164,7 @@ impl<'input> ConfigValueParser<'input> {
             stack: vec![StackFrame::Value(value)],
             last_span: None,
             peeked: None,
+            saved_state: None,
         }
     }
 
@@ -1169,113 +1174,10 @@ impl<'input> ConfigValueParser<'input> {
             self.last_span = Some(span);
         }
     }
-
-    /// Build probe evidence from the current value.
-    /// Returns field names and optionally scalar values for the solver.
-    fn build_probe_evidence(&self) -> Vec<facet_format::FieldEvidence<'input>> {
-        use std::borrow::Cow;
-
-        tracing::debug!(
-            stack_len = self.stack.len(),
-            "build_probe_evidence: starting"
-        );
-
-        // Get the CURRENT value from the stack (top, not root).
-        // When deserializing nested structs, we need to probe the current position,
-        // not the root of the entire ConfigValue tree.
-        let current_value = match self.stack.last() {
-            Some(StackFrame::Value(v)) => {
-                tracing::debug!("build_probe_evidence: found Value frame");
-                *v
-            }
-            Some(StackFrame::Object { entries, .. }) => {
-                tracing::debug!(
-                    num_entries = entries.len(),
-                    "build_probe_evidence: found Object frame (already started)"
-                );
-                // If we've already started processing the object, we need to look at its entries
-                // This shouldn't happen normally, but let's handle it
-                return entries
-                    .iter()
-                    .map(|(key, _value)| {
-                        facet_format::FieldEvidence::new(
-                            Cow::Borrowed(*key),
-                            FieldLocationHint::KeyValue,
-                            None,
-                        )
-                    })
-                    .collect();
-            }
-            Some(_) => {
-                tracing::debug!("build_probe_evidence: unexpected frame type (Array or Enum)");
-                return Vec::new();
-            }
-            None => {
-                tracing::debug!("build_probe_evidence: empty stack");
-                return Vec::new();
-            }
-        };
-
-        // If it's an object, collect field evidence
-        match current_value {
-            ConfigValue::Object(sourced) => {
-                tracing::debug!(
-                    num_fields = sourced.value.len(),
-                    "build_probe_evidence: found Object"
-                );
-                sourced
-                    .value
-                    .iter()
-                    .map(|(key, value)| {
-                        // Capture scalar values for tag disambiguation
-                        let scalar_value = match value {
-                            ConfigValue::String(s) => {
-                                Some(ScalarValue::Str(Cow::Borrowed(&s.value)))
-                            }
-                            ConfigValue::Bool(b) => Some(ScalarValue::Bool(b.value)),
-                            ConfigValue::Integer(i) => Some(ScalarValue::I64(i.value)),
-                            ConfigValue::Float(f) => Some(ScalarValue::F64(f.value)),
-                            ConfigValue::Null(_) => Some(ScalarValue::Null),
-                            _ => None, // Objects/arrays are not captured
-                        };
-
-                        if let Some(sv) = scalar_value {
-                            facet_format::FieldEvidence::with_scalar_value(
-                                Cow::Borrowed(key.as_str()),
-                                FieldLocationHint::KeyValue,
-                                None,
-                                sv,
-                            )
-                        } else {
-                            facet_format::FieldEvidence::new(
-                                Cow::Borrowed(key.as_str()),
-                                FieldLocationHint::KeyValue,
-                                None,
-                            )
-                        }
-                    })
-                    .collect()
-            }
-            ConfigValue::Enum(sourced) => {
-                // For enum variants, the variant name IS the field key
-                // This matches the externally-tagged format: {"VariantName": {...}}
-                vec![facet_format::FieldEvidence::new(
-                    Cow::Borrowed(sourced.value.variant.as_str()),
-                    FieldLocationHint::KeyValue,
-                    None,
-                )]
-            }
-            _ => Vec::new(),
-        }
-    }
 }
 
 impl<'input> FormatParser<'input> for ConfigValueParser<'input> {
     type Error = ConfigValueParseError;
-    type Probe<'a>
-        = ConfigValueProbe<'input>
-    where
-        Self: 'a;
 
     fn next_event(&mut self) -> Result<Option<ParseEvent<'input>>, Self::Error> {
         // If we have a peeked event, return it
@@ -1400,37 +1302,24 @@ impl<'input> FormatParser<'input> for ConfigValueParser<'input> {
         Ok(())
     }
 
-    fn begin_probe(&mut self) -> Result<Self::Probe<'_>, Self::Error> {
-        // Build probe evidence from the current value
-        // We look at the first stack frame which should be the root value
-        let evidence = self.build_probe_evidence();
-        Ok(ConfigValueProbe { evidence, index: 0 })
+    fn save(&mut self) -> SavePoint {
+        // Clone the current parser state (without saved_state to avoid recursion)
+        let mut clone = self.clone();
+        clone.saved_state = None;
+        self.saved_state = Some(Box::new(clone));
+        SavePoint(0)
+    }
+
+    fn restore(&mut self, _save_point: SavePoint) {
+        if let Some(saved) = self.saved_state.take() {
+            *self = *saved;
+        }
     }
 
     fn current_span(&self) -> Option<Span> {
         // Return the last span we saw - this is a "virtual" span that maps back
         // to the real source location via the SpanRegistry
         self.last_span
-    }
-}
-
-/// Probe stream for ConfigValueParser that yields field evidence.
-pub struct ConfigValueProbe<'input> {
-    evidence: Vec<facet_format::FieldEvidence<'input>>,
-    index: usize,
-}
-
-impl<'input> facet_format::ProbeStream<'input> for ConfigValueProbe<'input> {
-    type Error = ConfigValueParseError;
-
-    fn next(&mut self) -> Result<Option<facet_format::FieldEvidence<'input>>, Self::Error> {
-        if self.index < self.evidence.len() {
-            let ev = self.evidence[self.index].clone();
-            self.index += 1;
-            Ok(Some(ev))
-        } else {
-            Ok(None)
-        }
     }
 }
 
