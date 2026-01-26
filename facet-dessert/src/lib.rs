@@ -2,6 +2,9 @@
 //!
 //! This crate provides common setter functions for handling string, bytes, and scalar values
 //! when deserializing into facet types. It's used by both `facet-format` and `facet-dom`.
+//!
+//! By extracting these functions into a non-generic crate, we reduce monomorphization bloat
+//! in format deserializers. See <https://github.com/bearcove/facet/issues/1924> for details.
 
 extern crate alloc;
 
