@@ -42,8 +42,7 @@ use alloc::{
 };
 
 use facet_format::{
-    ContainerKind, FieldEvidence, FieldKey, FieldLocationHint, FormatParser, ParseEvent,
-    ProbeStream, ScalarValue,
+    ContainerKind, FieldKey, FieldLocationHint, FormatParser, ParseEvent, SavePoint, ScalarValue,
 };
 use toml_parser::{
     ErrorSink, Raw, Source,
@@ -134,6 +133,22 @@ pub struct TomlParser<'de> {
     inline_stack: Vec<(bool, usize)>,
     /// The span of the most recently consumed scalar value (for error reporting).
     last_scalar_span: Option<facet_reflect::Span>,
+    /// Counter for save points.
+    save_counter: u64,
+    /// Saved parser states for restore.
+    saved_states: Vec<(u64, SavedState<'de>)>,
+}
+
+/// Saved parser state for save/restore.
+#[derive(Clone)]
+struct SavedState<'de> {
+    pos: usize,
+    current_path: Vec<PathSegment<'de>>,
+    pending_events: VecDeque<ParseEvent<'de>>,
+    event_peek: Option<ParseEvent<'de>>,
+    root_started: bool,
+    root_ended: bool,
+    inline_stack: Vec<(bool, usize)>,
 }
 
 impl<'de> TomlParser<'de> {
@@ -162,6 +177,8 @@ impl<'de> TomlParser<'de> {
             root_ended: false,
             inline_stack: Vec::new(),
             last_scalar_span: None,
+            save_counter: 0,
+            saved_states: Vec::new(),
         })
     }
 
@@ -862,20 +879,20 @@ impl<'de> TomlParser<'de> {
     /// - Sequences: consume SequenceStart, all contents, and SequenceEnd
     fn skip_current_value(&mut self) -> Result<(), TomlError> {
         // Peek at the next parse event (not raw token)
-        let Some(event) = self.produce_event()? else {
+        let Some(event) = self.next_event()? else {
             return Ok(());
         };
 
         match event {
             ParseEvent::Scalar(_) => {
-                // Scalar value - already consumed by produce_event
+                // Scalar value - already consumed by next_event
                 Ok(())
             }
             ParseEvent::StructStart(_) => {
                 // Need to skip the entire struct
                 let mut depth = 1;
                 while depth > 0 {
-                    let Some(event) = self.produce_event()? else {
+                    let Some(event) = self.next_event()? else {
                         return Err(TomlError::without_span(TomlErrorKind::UnexpectedEof {
                             expected: "struct end",
                         }));
@@ -892,7 +909,7 @@ impl<'de> TomlParser<'de> {
                 // Need to skip the entire sequence
                 let mut depth = 1;
                 while depth > 0 {
-                    let Some(event) = self.produce_event()? else {
+                    let Some(event) = self.next_event()? else {
                         return Err(TomlError::without_span(TomlErrorKind::UnexpectedEof {
                             expected: "sequence end",
                         }));
@@ -911,114 +928,10 @@ impl<'de> TomlParser<'de> {
             }
         }
     }
-
-    /// Build probe evidence by scanning ahead.
-    fn build_probe(&self) -> Result<Vec<FieldEvidence<'de>>, TomlError> {
-        let mut evidence = Vec::new();
-        let mut pos = self.pos;
-
-        // Skip to find field keys at current level
-        while pos < self.events.len() {
-            let event = &self.events[pos];
-
-            if Self::should_skip(event) {
-                pos += 1;
-                continue;
-            }
-
-            match event.kind() {
-                EventKind::SimpleKey => {
-                    let key = self.decode_key(event);
-                    pos += 1;
-
-                    // Skip to value
-                    while pos < self.events.len() {
-                        let e = &self.events[pos];
-                        if !Self::should_skip(e) {
-                            break;
-                        }
-                        pos += 1;
-                    }
-
-                    // Skip KeySep (dots) and additional key parts
-                    while pos < self.events.len() {
-                        let e = &self.events[pos];
-                        if Self::should_skip(e) {
-                            pos += 1;
-                            continue;
-                        }
-                        if matches!(e.kind(), EventKind::KeySep | EventKind::SimpleKey) {
-                            pos += 1;
-                            continue;
-                        }
-                        break;
-                    }
-
-                    // Skip KeyValSep (=)
-                    if pos < self.events.len() {
-                        let e = &self.events[pos];
-                        if matches!(e.kind(), EventKind::KeyValSep) {
-                            pos += 1;
-                        }
-                    }
-
-                    // Skip whitespace to value
-                    while pos < self.events.len() {
-                        let e = &self.events[pos];
-                        if !Self::should_skip(e) {
-                            break;
-                        }
-                        pos += 1;
-                    }
-
-                    // Try to get scalar value
-                    let scalar_value = if pos < self.events.len() {
-                        let e = &self.events[pos];
-                        if matches!(e.kind(), EventKind::Scalar) {
-                            self.decode_scalar(e).ok()
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    };
-
-                    if let Some(sv) = scalar_value {
-                        evidence.push(FieldEvidence::with_scalar_value(
-                            key,
-                            FieldLocationHint::KeyValue,
-                            None,
-                            sv,
-                        ));
-                    } else {
-                        evidence.push(FieldEvidence::new(key, FieldLocationHint::KeyValue, None));
-                    }
-                }
-
-                EventKind::StdTableOpen
-                | EventKind::ArrayTableOpen
-                | EventKind::InlineTableClose
-                | EventKind::ArrayClose => {
-                    // Stop scanning at table boundaries or container ends
-                    break;
-                }
-
-                _ => {
-                    pos += 1;
-                }
-            }
-        }
-
-        Ok(evidence)
-    }
 }
 
 impl<'de> FormatParser<'de> for TomlParser<'de> {
     type Error = TomlError;
-    type Probe<'a>
-        = TomlProbe<'de>
-    where
-        Self: 'a;
 
     fn next_event(&mut self) -> Result<Option<ParseEvent<'de>>, Self::Error> {
         if let Some(event) = self.event_peek.take() {
@@ -1046,9 +959,36 @@ impl<'de> FormatParser<'de> for TomlParser<'de> {
         self.skip_current_value()
     }
 
-    fn begin_probe(&mut self) -> Result<Self::Probe<'_>, Self::Error> {
-        let evidence = self.build_probe()?;
-        Ok(TomlProbe { evidence, idx: 0 })
+    fn save(&mut self) -> SavePoint {
+        self.save_counter += 1;
+        let state = SavedState {
+            pos: self.pos,
+            current_path: self.current_path.clone(),
+            pending_events: self.pending_events.clone(),
+            event_peek: self.event_peek.clone(),
+            root_started: self.root_started,
+            root_ended: self.root_ended,
+            inline_stack: self.inline_stack.clone(),
+        };
+        self.saved_states.push((self.save_counter, state));
+        SavePoint(self.save_counter)
+    }
+
+    fn restore(&mut self, save_point: SavePoint) {
+        if let Some(idx) = self
+            .saved_states
+            .iter()
+            .position(|(id, _)| *id == save_point.0)
+        {
+            let (_, state) = self.saved_states.remove(idx);
+            self.pos = state.pos;
+            self.current_path = state.current_path;
+            self.pending_events = state.pending_events;
+            self.event_peek = state.event_peek;
+            self.root_started = state.root_started;
+            self.root_ended = state.root_ended;
+            self.inline_stack = state.inline_stack;
+        }
     }
 
     fn capture_raw(&mut self) -> Result<Option<&'de str>, Self::Error> {
@@ -1059,26 +999,6 @@ impl<'de> FormatParser<'de> for TomlParser<'de> {
 
     fn current_span(&self) -> Option<facet_reflect::Span> {
         self.last_scalar_span
-    }
-}
-
-/// Probe stream for TOML.
-pub struct TomlProbe<'de> {
-    evidence: Vec<FieldEvidence<'de>>,
-    idx: usize,
-}
-
-impl<'de> ProbeStream<'de> for TomlProbe<'de> {
-    type Error = TomlError;
-
-    fn next(&mut self) -> Result<Option<FieldEvidence<'de>>, Self::Error> {
-        if self.idx >= self.evidence.len() {
-            Ok(None)
-        } else {
-            let ev = self.evidence[self.idx].clone();
-            self.idx += 1;
-            Ok(Some(ev))
-        }
     }
 }
 
