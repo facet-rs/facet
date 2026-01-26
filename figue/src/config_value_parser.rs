@@ -129,16 +129,26 @@ fn fill_defaults_from_arg_level(
 ) {
     // The schema's args() already has flattened fields at the right level
     for (field_name, arg_schema) in arg_level.args() {
-        if !map.contains_key(field_name)
-            && let Some(default_value) =
+        if !map.contains_key(field_name) {
+            // First check for explicit default from #[facet(default)] stored in schema
+            if let Some(explicit_default) = arg_schema.default() {
+                tracing::debug!(
+                    field = field_name,
+                    ?explicit_default,
+                    "fill_defaults_from_arg_level: inserting explicit default for missing field"
+                );
+                map.insert(field_name.clone(), explicit_default.clone());
+            } else if let Some(implicit_default) =
                 get_default_from_value_schema(arg_schema.value(), path_prefix)
-        {
-            tracing::debug!(
-                field = field_name,
-                ?default_value,
-                "fill_defaults_from_arg_level: inserting default for missing field"
-            );
-            map.insert(field_name.clone(), default_value);
+            {
+                // Fall back to implicit defaults (Option → null, bool → false, struct → empty object)
+                tracing::debug!(
+                    field = field_name,
+                    ?implicit_default,
+                    "fill_defaults_from_arg_level: inserting implicit default for missing field"
+                );
+                map.insert(field_name.clone(), implicit_default);
+            }
         }
     }
 
@@ -185,11 +195,16 @@ fn fill_defaults_from_subcommand(
 ) {
     // Fill defaults for the subcommand's args (already flattened)
     for (arg_name, arg_schema) in subcommand.args().args() {
-        if !fields.contains_key(arg_name)
-            && let Some(default_value) =
+        if !fields.contains_key(arg_name) {
+            // First check for explicit default from #[facet(default)] stored in schema
+            if let Some(explicit_default) = arg_schema.default() {
+                fields.insert(arg_name.clone(), explicit_default.clone());
+            } else if let Some(implicit_default) =
                 get_default_from_value_schema(arg_schema.value(), path_prefix)
-        {
-            fields.insert(arg_name.clone(), default_value);
+            {
+                // Fall back to implicit defaults
+                fields.insert(arg_name.clone(), implicit_default);
+            }
         }
     }
 
@@ -328,16 +343,24 @@ fn fill_defaults_from_config_struct(
     // The schema's fields() already has flattened fields merged in at the right level
     for (field_name, field_schema) in struct_schema.fields() {
         if !new_map.contains_key(field_name) {
-            // Field is missing - get default based on value schema
-            if let Some(default_value) =
-                get_default_from_config_value_schema(&field_schema.value, path_prefix)
-            {
+            // First check for explicit default from #[facet(default)] stored in schema
+            if let Some(explicit_default) = field_schema.default() {
                 tracing::debug!(
                     field = field_name,
-                    ?default_value,
-                    "fill_defaults_from_config_struct: inserting default for missing field"
+                    ?explicit_default,
+                    "fill_defaults_from_config_struct: inserting explicit default for missing field"
                 );
-                new_map.insert(field_name.clone(), default_value);
+                new_map.insert(field_name.clone(), explicit_default.clone());
+            } else if let Some(implicit_default) =
+                get_default_from_config_value_schema(&field_schema.value, path_prefix)
+            {
+                // Fall back to implicit defaults (struct → empty object, bool → false)
+                tracing::debug!(
+                    field = field_name,
+                    ?implicit_default,
+                    "fill_defaults_from_config_struct: inserting implicit default for missing field"
+                );
+                new_map.insert(field_name.clone(), implicit_default);
             }
         }
     }
@@ -429,15 +452,21 @@ fn fill_defaults_from_config_enum(
     // The schema's variant fields already have flattened fields merged in
     for (field_name, field_schema) in variant_schema.fields() {
         if !new_fields.contains_key(field_name) {
-            let field_path = if path_prefix.is_empty() {
-                field_name.clone()
+            // First check for explicit default from #[facet(default)] stored in schema
+            if let Some(explicit_default) = field_schema.default() {
+                new_fields.insert(field_name.clone(), explicit_default.clone());
             } else {
-                format!("{}.{}", path_prefix, field_name)
-            };
-            if let Some(default_value) =
-                get_default_from_config_value_schema(&field_schema.value, &field_path)
-            {
-                new_fields.insert(field_name.clone(), default_value);
+                // Fall back to implicit defaults
+                let field_path = if path_prefix.is_empty() {
+                    field_name.clone()
+                } else {
+                    format!("{}.{}", path_prefix, field_name)
+                };
+                if let Some(implicit_default) =
+                    get_default_from_config_value_schema(&field_schema.value, &field_path)
+                {
+                    new_fields.insert(field_name.clone(), implicit_default);
+                }
             }
         }
     }
@@ -972,8 +1001,11 @@ fn get_default_config_value(
 
 /// Serialize a default value to ConfigValue by invoking the default function
 /// and using a ConfigValueSerializer.
+///
+/// This is used both during schema building (to pre-compute field defaults) and
+/// during default-filling (for Shape-based code paths).
 #[allow(unsafe_code)]
-fn serialize_default_to_config_value(
+pub(crate) fn serialize_default_to_config_value(
     default_source: &facet_core::DefaultSource,
     shape: &'static facet_core::Shape,
 ) -> Result<ConfigValue, String> {

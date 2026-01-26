@@ -5,6 +5,7 @@ mod env_subst;
 mod err;
 mod help;
 mod layered;
+mod schema_defaults;
 mod sequence;
 mod short_chaining;
 mod simple;

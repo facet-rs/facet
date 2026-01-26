@@ -143,6 +143,44 @@ fn has_env_subst_all(shape: &'static Shape) -> bool {
         .any(|attr| attr.ns == Some("args") && attr.key == "env_subst_all")
 }
 
+/// Extract the default value from a field's `#[facet(default)]` or `#[facet(default = ...)]` attribute,
+/// serialized to ConfigValue.
+///
+/// Returns None if the field has no default, or if the default cannot be serialized.
+fn extract_field_default(field: &Field) -> Option<crate::config_value::ConfigValue> {
+    let default_source = field.default.as_ref()?;
+    let shape = field.shape();
+
+    match crate::config_value_parser::serialize_default_to_config_value(default_source, shape) {
+        Ok(config_value) => {
+            // Don't return null for types that shouldn't be null - that indicates
+            // the serialization couldn't represent the default value properly
+            if matches!(config_value, crate::config_value::ConfigValue::Null(_)) {
+                tracing::debug!(
+                    field = field.name,
+                    "extract_field_default: serialized to null, skipping"
+                );
+                None
+            } else {
+                tracing::debug!(
+                    field = field.name,
+                    ?config_value,
+                    "extract_field_default: successfully extracted default"
+                );
+                Some(config_value)
+            }
+        }
+        Err(e) => {
+            tracing::debug!(
+                field = field.name,
+                error = %e,
+                "extract_field_default: failed to serialize default"
+            );
+            None
+        }
+    }
+}
+
 fn docs_from_lines(lines: &'static [&'static str]) -> Docs {
     if lines.is_empty() {
         return Docs::default();
@@ -296,6 +334,7 @@ fn config_enum_schema_from_shape(
             let env_aliases = extract_env_aliases(field);
             let env_subst = has_env_subst(field);
             let value = config_value_schema_from_shape(field.shape(), &field_ctx)?;
+            let default = extract_field_default(field);
 
             fields.insert(
                 field.effective_name().to_string(),
@@ -305,6 +344,7 @@ fn config_enum_schema_from_shape(
                     env_aliases,
                     env_subst,
                     value,
+                    default,
                 },
             );
         }
@@ -408,6 +448,7 @@ fn config_struct_schema_from_shape_inner(
         let sensitive = field.flags.contains(facet_core::FieldFlags::SENSITIVE);
         let env_aliases = extract_env_aliases(field);
         let value = config_value_schema_from_shape(field.shape(), &field_ctx)?;
+        let default = extract_field_default(field);
 
         // env_subst is enabled if:
         // - The field has #[facet(args::env_subst)] directly, OR
@@ -425,6 +466,7 @@ fn config_struct_schema_from_shape_inner(
                 env_aliases,
                 env_subst,
                 value,
+                default,
             },
         );
     }
@@ -815,6 +857,7 @@ fn arg_level_from_fields_with_prefix(
 
         let docs = docs_from_lines(field.doc);
         let effective_name = field.effective_name().to_string();
+        let default = extract_field_default(field);
 
         // Build the full path for this field (for special field detection)
         // The path uses the EFFECTIVE name (what appears in ConfigValue)
@@ -839,6 +882,7 @@ fn arg_level_from_fields_with_prefix(
             value,
             required,
             multiple,
+            default,
         };
 
         args.insert(effective_name, arg);

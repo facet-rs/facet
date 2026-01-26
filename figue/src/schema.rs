@@ -280,6 +280,10 @@ pub struct ArgSchema {
     /// Whether the argument can appear multiple times on the CLI.
     /// True for list-like values and counted flags.
     multiple: bool,
+
+    /// The field's default value, if any (from `#[facet(default)]` or `#[facet(default = ...)]`).
+    /// Pre-serialized to ConfigValue during schema building.
+    default: Option<crate::config_value::ConfigValue>,
 }
 
 /// A kind of argument
@@ -322,6 +326,10 @@ pub struct ConfigFieldSchema {
 
     /// Value schema for a field
     pub value: ConfigValueSchema,
+
+    /// The field's default value, if any (from `#[facet(default)]` or `#[facet(default = ...)]`).
+    /// Pre-serialized to ConfigValue during schema building.
+    default: Option<crate::config_value::ConfigValue>,
 }
 
 /// Schema for a vec in a config value
@@ -615,6 +623,14 @@ impl ArgSchema {
     pub fn docs(&self) -> &Docs {
         &self.docs
     }
+
+    /// Get the default value for this argument, if any.
+    ///
+    /// This returns the field's default from `#[facet(default)]` or `#[facet(default = ...)]`,
+    /// pre-serialized to ConfigValue during schema building.
+    pub fn default(&self) -> Option<&crate::config_value::ConfigValue> {
+        self.default.as_ref()
+    }
 }
 
 impl Subcommand {
@@ -698,6 +714,14 @@ impl ConfigFieldSchema {
     /// with the corresponding environment variable.
     pub fn env_subst(&self) -> bool {
         self.env_subst
+    }
+
+    /// Get the default value for this field, if any.
+    ///
+    /// This returns the field's default from `#[facet(default)]` or `#[facet(default = ...)]`,
+    /// pre-serialized to ConfigValue during schema building.
+    pub fn default(&self) -> Option<&crate::config_value::ConfigValue> {
+        self.default.as_ref()
     }
 }
 
