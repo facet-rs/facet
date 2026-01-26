@@ -17,8 +17,8 @@ use alloc::{borrow::Cow, string::String, vec::Vec};
 
 use crate::error::{XdrError, codes};
 use facet_format::{
-    ContainerKind, EnumVariantHint, FieldEvidence, FormatParser, ParseEvent, ProbeStream,
-    ScalarTypeHint, ScalarValue,
+    ContainerKind, EnumVariantHint, FormatParser, ParseEvent, SavePoint, ScalarTypeHint,
+    ScalarValue,
 };
 
 /// Stored variant metadata for enum parsing.
@@ -483,10 +483,6 @@ impl<'de> XdrParser<'de> {
 
 impl<'de> FormatParser<'de> for XdrParser<'de> {
     type Error = XdrError;
-    type Probe<'a>
-        = XdrProbe
-    where
-        Self: 'a;
 
     fn next_event(&mut self) -> Result<Option<ParseEvent<'de>>, Self::Error> {
         if let Some(event) = self.peeked.take() {
@@ -511,9 +507,13 @@ impl<'de> FormatParser<'de> for XdrParser<'de> {
         ))
     }
 
-    fn begin_probe(&mut self) -> Result<Self::Probe<'_>, Self::Error> {
-        // XDR doesn't support probing (positional format)
-        Ok(XdrProbe)
+    fn save(&mut self) -> SavePoint {
+        // XDR is positional - save/restore not meaningful
+        unimplemented!("save/restore not supported for XDR (positional format)")
+    }
+
+    fn restore(&mut self, _save_point: SavePoint) {
+        unimplemented!("save/restore not supported for XDR (positional format)")
     }
 
     fn is_self_describing(&self) -> bool {
@@ -568,19 +568,5 @@ impl<'de> FormatParser<'de> for XdrParser<'de> {
         if matches!(self.peeked, Some(ParseEvent::OrderedField)) {
             self.peeked = None;
         }
-    }
-}
-
-/// Stub probe stream for XdrParser.
-///
-/// XDR doesn't support probing since it's a positional format without field names.
-pub struct XdrProbe;
-
-impl<'de> ProbeStream<'de> for XdrProbe {
-    type Error = XdrError;
-
-    fn next(&mut self) -> Result<Option<FieldEvidence<'de>>, Self::Error> {
-        // XDR doesn't support probing
-        Ok(None)
     }
 }

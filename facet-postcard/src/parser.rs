@@ -9,8 +9,8 @@ use alloc::vec::Vec;
 
 use crate::error::{PostcardError, codes};
 use facet_format::{
-    ContainerKind, EnumVariantHint, FieldEvidence, FieldKey, FieldLocationHint, FormatParser,
-    ParseEvent, ProbeStream, ScalarTypeHint, ScalarValue,
+    ContainerKind, EnumVariantHint, FieldKey, FieldLocationHint, FormatParser, ParseEvent,
+    SavePoint, ScalarTypeHint, ScalarValue,
 };
 
 /// Stored variant metadata for enum parsing.
@@ -902,26 +902,8 @@ impl<'de> PostcardParser<'de> {
     }
 }
 
-/// Stub probe stream for PostcardParser.
-///
-/// Not used since postcard doesn't support probing (non-self-describing).
-pub struct PostcardProbe;
-
-impl<'de> ProbeStream<'de> for PostcardProbe {
-    type Error = PostcardError;
-
-    fn next(&mut self) -> Result<Option<FieldEvidence<'de>>, Self::Error> {
-        // Postcard doesn't support probing
-        Ok(None)
-    }
-}
-
 impl<'de> FormatParser<'de> for PostcardParser<'de> {
     type Error = PostcardError;
-    type Probe<'a>
-        = PostcardProbe
-    where
-        Self: 'a;
 
     fn next_event(&mut self) -> Result<Option<ParseEvent<'de>>, Self::Error> {
         // Return peeked event if available
@@ -949,9 +931,15 @@ impl<'de> FormatParser<'de> for PostcardParser<'de> {
         })
     }
 
-    fn begin_probe(&mut self) -> Result<Self::Probe<'_>, Self::Error> {
-        // Postcard doesn't support probing
-        Ok(PostcardProbe)
+    fn save(&mut self) -> SavePoint {
+        // Postcard doesn't support save/restore (non-self-describing format)
+        // The solver can't work with positional formats anyway
+        unimplemented!("save/restore not supported for postcard (non-self-describing)")
+    }
+
+    fn restore(&mut self, _save_point: SavePoint) {
+        // Postcard doesn't support save/restore (non-self-describing format)
+        unimplemented!("save/restore not supported for postcard (non-self-describing)")
     }
 
     fn is_self_describing(&self) -> bool {

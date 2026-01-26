@@ -9,8 +9,7 @@ use alloc::{borrow::Cow, format, vec::Vec};
 
 use crate::error::{MsgPackError, codes};
 use facet_format::{
-    ContainerKind, FieldEvidence, FieldKey, FieldLocationHint, FormatParser, ParseEvent,
-    ProbeStream, ScalarValue,
+    ContainerKind, FieldKey, FieldLocationHint, FormatParser, ParseEvent, SavePoint, ScalarValue,
 };
 
 // MsgPack format constants
@@ -649,188 +648,10 @@ impl<'de> MsgPackParser<'de> {
             }),
         }
     }
-
-    /// Build probe evidence by scanning ahead in a map.
-    fn build_probe(&self) -> Result<Vec<FieldEvidence<'de>>, MsgPackError> {
-        // Create a temporary parser to scan ahead
-        let mut probe_pos = self.pos;
-        let mut evidence = Vec::new();
-
-        // If we've peeked a StructStart, we need to scan the map that follows
-        // Check if next byte is a map prefix
-        if probe_pos >= self.input.len() {
-            return Ok(evidence);
-        }
-
-        let prefix = self.input[probe_pos];
-        let map_len = match prefix {
-            MSGPACK_FIXMAP_MIN..=MSGPACK_FIXMAP_MAX => {
-                probe_pos += 1;
-                (prefix & 0x0f) as usize
-            }
-            MSGPACK_MAP16 => {
-                if probe_pos + 3 > self.input.len() {
-                    return Ok(evidence);
-                }
-                probe_pos += 1;
-                let len = u16::from_be_bytes([self.input[probe_pos], self.input[probe_pos + 1]]);
-                probe_pos += 2;
-                len as usize
-            }
-            MSGPACK_MAP32 => {
-                if probe_pos + 5 > self.input.len() {
-                    return Ok(evidence);
-                }
-                probe_pos += 1;
-                let len = u32::from_be_bytes([
-                    self.input[probe_pos],
-                    self.input[probe_pos + 1],
-                    self.input[probe_pos + 2],
-                    self.input[probe_pos + 3],
-                ]);
-                probe_pos += 4;
-                len as usize
-            }
-            _ => return Ok(evidence), // Not a map
-        };
-
-        // Scan each key-value pair
-        for _ in 0..map_len {
-            if probe_pos >= self.input.len() {
-                break;
-            }
-
-            // Read key (must be a string)
-            let key_prefix = self.input[probe_pos];
-            let key_len = match key_prefix {
-                MSGPACK_FIXSTR_MIN..=MSGPACK_FIXSTR_MAX => {
-                    probe_pos += 1;
-                    (key_prefix & 0x1f) as usize
-                }
-                MSGPACK_STR8 => {
-                    if probe_pos + 2 > self.input.len() {
-                        break;
-                    }
-                    probe_pos += 1;
-                    let len = self.input[probe_pos] as usize;
-                    probe_pos += 1;
-                    len
-                }
-                MSGPACK_STR16 => {
-                    if probe_pos + 3 > self.input.len() {
-                        break;
-                    }
-                    probe_pos += 1;
-                    let len = u16::from_be_bytes([self.input[probe_pos], self.input[probe_pos + 1]])
-                        as usize;
-                    probe_pos += 2;
-                    len
-                }
-                MSGPACK_STR32 => {
-                    if probe_pos + 5 > self.input.len() {
-                        break;
-                    }
-                    probe_pos += 1;
-                    let len = u32::from_be_bytes([
-                        self.input[probe_pos],
-                        self.input[probe_pos + 1],
-                        self.input[probe_pos + 2],
-                        self.input[probe_pos + 3],
-                    ]) as usize;
-                    probe_pos += 4;
-                    len
-                }
-                _ => break, // Non-string key, stop probing
-            };
-
-            if probe_pos + key_len > self.input.len() {
-                break;
-            }
-
-            let key_bytes = &self.input[probe_pos..probe_pos + key_len];
-            probe_pos += key_len;
-
-            let key = match core::str::from_utf8(key_bytes) {
-                Ok(s) => Cow::Borrowed(s),
-                Err(_) => break,
-            };
-
-            // Try to read scalar value for evidence
-            if probe_pos >= self.input.len() {
-                evidence.push(FieldEvidence::new(key, FieldLocationHint::KeyValue, None));
-                break;
-            }
-
-            let value_prefix = self.input[probe_pos];
-            let scalar_value = match value_prefix {
-                MSGPACK_NIL => {
-                    probe_pos += 1;
-                    Some(ScalarValue::Null)
-                }
-                MSGPACK_FALSE => {
-                    probe_pos += 1;
-                    Some(ScalarValue::Bool(false))
-                }
-                MSGPACK_TRUE => {
-                    probe_pos += 1;
-                    Some(ScalarValue::Bool(true))
-                }
-                0x00..=MSGPACK_POSFIXINT_MAX => {
-                    probe_pos += 1;
-                    Some(ScalarValue::U64(value_prefix as u64))
-                }
-                MSGPACK_NEGFIXINT_MIN..=0xff => {
-                    probe_pos += 1;
-                    Some(ScalarValue::I64(value_prefix as i8 as i64))
-                }
-                MSGPACK_FIXSTR_MIN..=MSGPACK_FIXSTR_MAX => {
-                    let str_len = (value_prefix & 0x1f) as usize;
-                    probe_pos += 1;
-                    if probe_pos + str_len <= self.input.len() {
-                        let str_bytes = &self.input[probe_pos..probe_pos + str_len];
-                        probe_pos += str_len;
-                        core::str::from_utf8(str_bytes)
-                            .ok()
-                            .map(|s| ScalarValue::Str(Cow::Borrowed(s)))
-                    } else {
-                        None
-                    }
-                }
-                // For complex types, skip and don't include scalar value
-                _ => {
-                    // Use a temporary parser to skip the value
-                    let mut tmp = MsgPackParser::new(&self.input[probe_pos..]);
-                    if tmp.skip_value_internal().is_ok() {
-                        probe_pos += tmp.pos;
-                        None
-                    } else {
-                        break;
-                    }
-                }
-            };
-
-            if let Some(sv) = scalar_value {
-                evidence.push(FieldEvidence::with_scalar_value(
-                    key,
-                    FieldLocationHint::KeyValue,
-                    None,
-                    sv,
-                ));
-            } else {
-                evidence.push(FieldEvidence::new(key, FieldLocationHint::KeyValue, None));
-            }
-        }
-
-        Ok(evidence)
-    }
 }
 
 impl<'de> FormatParser<'de> for MsgPackParser<'de> {
     type Error = MsgPackError;
-    type Probe<'a>
-        = MsgPackProbe<'de>
-    where
-        Self: 'a;
 
     fn next_event(&mut self) -> Result<Option<ParseEvent<'de>>, Self::Error> {
         if let Some(event) = self.event_peek.take() {
@@ -860,9 +681,14 @@ impl<'de> FormatParser<'de> for MsgPackParser<'de> {
         Ok(())
     }
 
-    fn begin_probe(&mut self) -> Result<Self::Probe<'_>, Self::Error> {
-        let evidence = self.build_probe()?;
-        Ok(MsgPackProbe { evidence, idx: 0 })
+    fn save(&mut self) -> SavePoint {
+        // MsgPack is self-describing but save/restore would need full state cloning
+        // For now, unimplemented - can be added if needed for solver support
+        unimplemented!("save/restore not yet implemented for MsgPack")
+    }
+
+    fn restore(&mut self, _save_point: SavePoint) {
+        unimplemented!("save/restore not yet implemented for MsgPack")
     }
 }
 
@@ -900,25 +726,5 @@ impl<'de> facet_format::FormatJitParser<'de> for MsgPackParser<'de> {
 
     fn jit_error(&self, _input: &'de [u8], error_pos: usize, error_code: i32) -> Self::Error {
         MsgPackError::from_code(error_code, error_pos)
-    }
-}
-
-/// Probe stream for MsgPack.
-pub struct MsgPackProbe<'de> {
-    evidence: Vec<FieldEvidence<'de>>,
-    idx: usize,
-}
-
-impl<'de> ProbeStream<'de> for MsgPackProbe<'de> {
-    type Error = MsgPackError;
-
-    fn next(&mut self) -> Result<Option<FieldEvidence<'de>>, Self::Error> {
-        if self.idx >= self.evidence.len() {
-            Ok(None)
-        } else {
-            let ev = self.evidence[self.idx].clone();
-            self.idx += 1;
-            Ok(Some(ev))
-        }
     }
 }

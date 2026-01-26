@@ -6,8 +6,7 @@ use alloc::borrow::Cow;
 use alloc::vec::Vec;
 
 use facet_format::{
-    ContainerKind, FieldEvidence, FormatParser, ParseEvent, ProbeStream, ScalarTypeHint,
-    ScalarValue,
+    ContainerKind, FormatParser, ParseEvent, SavePoint, ScalarTypeHint, ScalarValue,
 };
 
 use crate::error::{CsvError, CsvErrorKind};
@@ -222,10 +221,6 @@ fn parse_scalar_with_hint(value: &str, hint: ScalarTypeHint) -> ScalarValue<'_> 
 
 impl<'de> FormatParser<'de> for CsvParser<'de> {
     type Error = CsvError;
-    type Probe<'a>
-        = CsvProbe
-    where
-        Self: 'a;
 
     fn next_event(&mut self) -> Result<Option<ParseEvent<'de>>, Self::Error> {
         // Return peeked event if available
@@ -250,9 +245,13 @@ impl<'de> FormatParser<'de> for CsvParser<'de> {
         Ok(())
     }
 
-    fn begin_probe(&mut self) -> Result<Self::Probe<'_>, Self::Error> {
-        // CSV doesn't support probing for field names (it's positional)
-        Ok(CsvProbe)
+    fn save(&mut self) -> SavePoint {
+        // CSV is positional - save/restore not meaningful
+        unimplemented!("save/restore not supported for CSV (positional format)")
+    }
+
+    fn restore(&mut self, _save_point: SavePoint) {
+        unimplemented!("save/restore not supported for CSV (positional format)")
     }
 
     fn is_self_describing(&self) -> bool {
@@ -277,17 +276,5 @@ impl<'de> FormatParser<'de> for CsvParser<'de> {
         if matches!(self.peeked, Some(ParseEvent::OrderedField)) {
             self.peeked = None;
         }
-    }
-}
-
-/// Empty probe for CSV - no field evidence since CSV is positional.
-pub struct CsvProbe;
-
-impl<'de> ProbeStream<'de> for CsvProbe {
-    type Error = CsvError;
-
-    fn next(&mut self) -> Result<Option<FieldEvidence<'de>>, Self::Error> {
-        // CSV doesn't have named fields, so no evidence to provide
-        Ok(None)
     }
 }
