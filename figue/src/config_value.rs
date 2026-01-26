@@ -98,6 +98,13 @@ pub trait ConfigValueVisitor {
     fn exit_value(&mut self, _path: &Path, _value: &ConfigValue) {}
 }
 
+/// Mutable visitor for transforming ConfigValue trees.
+pub trait ConfigValueVisitorMut {
+    /// Called for each value, allowing mutation.
+    /// Called before recursing into children.
+    fn visit_value(&mut self, _path: &Path, _value: &mut ConfigValue) {}
+}
+
 impl ConfigValue {
     /// Visit all ConfigValue nodes in depth-first order.
     pub fn visit(&self, visitor: &mut impl ConfigValueVisitor, path: &mut Path) {
@@ -120,6 +127,77 @@ impl ConfigValue {
             _ => {}
         }
         visitor.exit_value(path, self);
+    }
+
+    /// Visit all ConfigValue nodes mutably in depth-first order.
+    pub fn visit_mut(&mut self, visitor: &mut impl ConfigValueVisitorMut, path: &mut Path) {
+        visitor.visit_value(path, self);
+        match self {
+            ConfigValue::Array(arr) => {
+                for (i, item) in arr.value.iter_mut().enumerate() {
+                    path.push(i.to_string());
+                    item.visit_mut(visitor, path);
+                    path.pop();
+                }
+            }
+            ConfigValue::Object(obj) => {
+                for (key, value) in obj.value.iter_mut() {
+                    path.push(key.clone());
+                    value.visit_mut(visitor, path);
+                    path.pop();
+                }
+            }
+            ConfigValue::Enum(e) => {
+                for (key, value) in e.value.fields.iter_mut() {
+                    path.push(key.clone());
+                    value.visit_mut(visitor, path);
+                    path.pop();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Get the span of this value (regardless of variant).
+    pub fn span(&self) -> Option<Span> {
+        match self {
+            ConfigValue::Null(s) => s.span,
+            ConfigValue::Bool(s) => s.span,
+            ConfigValue::Integer(s) => s.span,
+            ConfigValue::Float(s) => s.span,
+            ConfigValue::String(s) => s.span,
+            ConfigValue::Array(s) => s.span,
+            ConfigValue::Object(s) => s.span,
+            ConfigValue::Enum(s) => s.span,
+        }
+    }
+
+    /// Get a mutable reference to the span of this value.
+    pub fn span_mut(&mut self) -> &mut Option<Span> {
+        match self {
+            ConfigValue::Null(s) => &mut s.span,
+            ConfigValue::Bool(s) => &mut s.span,
+            ConfigValue::Integer(s) => &mut s.span,
+            ConfigValue::Float(s) => &mut s.span,
+            ConfigValue::String(s) => &mut s.span,
+            ConfigValue::Array(s) => &mut s.span,
+            ConfigValue::Object(s) => &mut s.span,
+            ConfigValue::Enum(s) => &mut s.span,
+        }
+    }
+
+    /// Get the provenance of this value (regardless of variant).
+    pub fn provenance(&self) -> Option<&Provenance> {
+        match self {
+            ConfigValue::Null(s) => s.provenance.as_ref(),
+            ConfigValue::Bool(s) => s.provenance.as_ref(),
+            ConfigValue::Integer(s) => s.provenance.as_ref(),
+            ConfigValue::Float(s) => s.provenance.as_ref(),
+            ConfigValue::String(s) => s.provenance.as_ref(),
+            ConfigValue::Array(s) => s.provenance.as_ref(),
+            ConfigValue::Object(s) => s.provenance.as_ref(),
+            ConfigValue::Enum(s) => s.provenance.as_ref(),
+        }
     }
 
     /// Navigate to a value by path.

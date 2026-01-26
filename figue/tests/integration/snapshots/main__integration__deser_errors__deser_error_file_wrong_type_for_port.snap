@@ -1,0 +1,11 @@
+---
+source: crates/figue/tests/integration/deser_errors.rs
+expression: "$crate :: common :: strip_ansi(& report.to_string())"
+---
+Error: failed to parse "not_a_number" as u16
+   ╭─[ config.json:2:17 ]
+   │
+ 2 │         "port": "not_a_number",
+   │                 ───────┬──────  
+   │                        ╰──────── failed to parse "not_a_number" as u16
+───╯

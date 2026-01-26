@@ -48,6 +48,11 @@ pub struct LayerOutput {
     pub unused_keys: Vec<UnusedKey>,
     /// Layer-specific diagnostics collected while parsing.
     pub diagnostics: Vec<Diagnostic>,
+    /// Virtual source text for this layer (for error reporting with Ariadne).
+    /// For env layers, this is a synthetic document like `VAR="value"\n`.
+    /// For file layers, this is the file contents.
+    /// For CLI, this is the concatenated args.
+    pub source_text: Option<String>,
 }
 
 /// A key that was unused by the schema, with provenance.
@@ -372,7 +377,8 @@ impl<T: Facet<'static>> Driver<T> {
 
         // Phase 4: Assign virtual spans and deserialize into T
         // The span registry maps virtual spans back to real source locations
-        let (value_with_virtual_spans, span_registry) = assign_virtual_spans(&value_with_defaults);
+        let mut value_with_virtual_spans = value_with_defaults;
+        let span_registry = assign_virtual_spans(&mut value_with_virtual_spans);
 
         let value: T = match from_config_value(&value_with_virtual_spans) {
             Ok(v) => v,
@@ -382,7 +388,7 @@ impl<T: Facet<'static>> Driver<T> {
                     if let Some(entry) = span_registry.lookup_by_offset(virtual_span.offset) {
                         let real_span = Span::new(entry.real_span.offset, entry.real_span.len);
                         let (name, contents) =
-                            get_source_for_provenance(&entry.provenance, &cli_args_source);
+                            get_source_for_provenance(&entry.provenance, &cli_args_source, &layers);
                         (Some(real_span), name, contents)
                     } else {
                         (None, "<unknown>".to_string(), cli_args_source.clone())
@@ -424,10 +430,23 @@ impl<T: Facet<'static>> Driver<T> {
 }
 
 /// Get the source name and contents for a provenance.
-fn get_source_for_provenance(provenance: &Provenance, cli_args_source: &str) -> (String, String) {
+fn get_source_for_provenance(
+    provenance: &Provenance,
+    cli_args_source: &str,
+    layers: &ConfigLayers,
+) -> (String, String) {
     match provenance {
         Provenance::Cli { .. } => ("<cli>".to_string(), cli_args_source.to_string()),
-        Provenance::Env { var, value } => (format!("${}", var), value.clone()),
+        Provenance::Env { .. } => {
+            // Use the virtual env document from the env layer
+            let source_text = layers
+                .env
+                .source_text
+                .as_ref()
+                .cloned()
+                .unwrap_or_default();
+            ("<env>".to_string(), source_text)
+        }
         Provenance::File { file, .. } => (file.path.to_string(), file.contents.clone()),
         Provenance::Default => ("<default>".to_string(), String::new()),
     }

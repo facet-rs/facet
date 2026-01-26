@@ -370,6 +370,7 @@ impl<'a> FileParseContext<'a> {
                     value: None,
                     unused_keys: Vec::new(),
                     diagnostics: self.early_diagnostics,
+                    source_text: None,
                 }
             }
         } else {
@@ -378,6 +379,7 @@ impl<'a> FileParseContext<'a> {
                 value: self.value,
                 unused_keys: Vec::new(),
                 diagnostics: self.early_diagnostics,
+                source_text: None,
             }
         };
 
