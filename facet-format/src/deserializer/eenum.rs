@@ -901,6 +901,148 @@ fn deserialize_enum_adjacently_tagged_inner<'input, const BORROW: bool>(
     Ok(wip)
 }
 
+/// Inner implementation of `deserialize_variant_struct_fields` that runs in a coroutine.
+fn deserialize_variant_struct_fields_inner<'input, const BORROW: bool>(
+    yielder: &DeserializeYielder<'input, BORROW>,
+    mut wip: Partial<'input, BORROW>,
+) -> Result<Partial<'input, BORROW>, InnerDeserializeError> {
+    use alloc::format;
+    use alloc::vec;
+    use facet_core::Characteristic;
+    use facet_reflect::ReflectError;
+
+    let reflect_err = |e: ReflectError| InnerDeserializeError::Reflect {
+        error: e,
+        span: request_span(yielder),
+        path: None,
+    };
+
+    let variant = wip
+        .selected_variant()
+        .ok_or_else(|| InnerDeserializeError::TypeMismatch {
+            expected: "selected variant",
+            got: "no variant selected".into(),
+            span: request_span(yielder),
+            path: None,
+        })?;
+
+    let variant_fields = variant.data.fields;
+    let kind = variant.data.kind;
+
+    // Handle based on variant kind
+    match kind {
+        StructKind::TupleStruct if variant_fields.len() == 1 => {
+            // Single-element tuple variant (newtype): deserialize the inner value directly
+            wip = wip.begin_nth_field(0).map_err(reflect_err)?;
+            wip = request_deserialize_into(yielder, wip)?;
+            wip = wip.end().map_err(reflect_err)?;
+            return Ok(wip);
+        }
+        StructKind::TupleStruct | StructKind::Tuple => {
+            // Multi-element tuple variant - not yet supported in this context
+            return Err(InnerDeserializeError::Unsupported(
+                "multi-element tuple variants in flatten not yet supported".into(),
+            ));
+        }
+        StructKind::Unit => {
+            // Unit variant - nothing to deserialize
+            return Ok(wip);
+        }
+        StructKind::Struct => {
+            // Struct variant - fall through to struct deserialization below
+        }
+    }
+
+    // Struct variant: deserialize as a struct with named fields
+    // Expect StructStart for the variant content
+    let event = request_event(yielder, "value")?;
+    if !matches!(event, ParseEvent::StructStart(_)) {
+        return Err(InnerDeserializeError::TypeMismatch {
+            expected: "struct start for variant content",
+            got: format!("{event:?}"),
+            span: request_span(yielder),
+            path: None,
+        });
+    }
+
+    // Track which fields have been set
+    let num_fields = variant_fields.len();
+    let mut fields_set = vec![false; num_fields];
+
+    // Process all fields
+    loop {
+        let event = request_event(yielder, "value")?;
+        match event {
+            ParseEvent::StructEnd => break,
+            ParseEvent::FieldKey(key) => {
+                // Unit keys don't make sense for struct fields
+                let key_name = match &key.name {
+                    Some(name) => name.as_ref(),
+                    None => {
+                        // Skip unit keys in struct context
+                        request_skip(yielder)?;
+                        continue;
+                    }
+                };
+
+                // Look up field in variant's fields by name/alias
+                let field_info = variant_fields
+                    .iter()
+                    .enumerate()
+                    .find(|(_, f)| field_matches(f, key_name));
+
+                if let Some((idx, _field)) = field_info {
+                    wip = wip.begin_nth_field(idx).map_err(reflect_err)?;
+                    wip = request_deserialize_into(yielder, wip)?;
+                    wip = wip.end().map_err(reflect_err)?;
+                    fields_set[idx] = true;
+                } else {
+                    // Unknown field - skip
+                    request_skip(yielder)?;
+                }
+            }
+            other => {
+                return Err(InnerDeserializeError::TypeMismatch {
+                    expected: "field key or struct end",
+                    got: format!("{other:?}"),
+                    span: request_span(yielder),
+                    path: None,
+                });
+            }
+        }
+    }
+
+    // Apply defaults for missing fields
+    for (idx, field) in variant_fields.iter().enumerate() {
+        if fields_set[idx] {
+            continue;
+        }
+
+        let field_has_default = field.has_default();
+        let field_type_has_default = field.shape().is(Characteristic::Default);
+        let field_is_option = matches!(field.shape().def, Def::Option(_));
+
+        if field_has_default || field_type_has_default {
+            wip = wip.set_nth_field_to_default(idx).map_err(reflect_err)?;
+        } else if field_is_option {
+            wip = wip.begin_nth_field(idx).map_err(reflect_err)?;
+            wip = wip.set_default().map_err(reflect_err)?;
+            wip = wip.end().map_err(reflect_err)?;
+        } else if field.should_skip_deserializing() {
+            wip = wip.set_nth_field_to_default(idx).map_err(reflect_err)?;
+        } else {
+            return Err(InnerDeserializeError::TypeMismatch {
+                expected: "field to be present or have default",
+                got: format!("missing field '{}'", field.name),
+                span: request_span(yielder),
+                path: None,
+            });
+        }
+    }
+
+    Ok(wip)
+}
+
 impl<'input, const BORROW: bool, P> FormatDeserializer<'input, BORROW, P>
 where
     P: FormatParser<'input>,
@@ -1243,142 +1385,11 @@ where
     /// Expects the variant to already be selected.
     pub(crate) fn deserialize_variant_struct_fields(
         &mut self,
-        mut wip: Partial<'input, BORROW>,
+        wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
-        use facet_core::StructKind;
-
-        let variant = wip
-            .selected_variant()
-            .ok_or_else(|| DeserializeError::TypeMismatch {
-                expected: "selected variant",
-                got: "no variant selected".into(),
-                span: self.last_span,
-                path: None,
-            })?;
-
-        let variant_fields = variant.data.fields;
-        let kind = variant.data.kind;
-
-        // Handle based on variant kind
-        match kind {
-            StructKind::TupleStruct if variant_fields.len() == 1 => {
-                // Single-element tuple variant (newtype): deserialize the inner value directly
-                wip = wip.begin_nth_field(0).map_err(DeserializeError::reflect)?;
-                wip = self.deserialize_into(wip)?;
-                wip = wip.end().map_err(DeserializeError::reflect)?;
-                return Ok(wip);
-            }
-            StructKind::TupleStruct | StructKind::Tuple => {
-                // Multi-element tuple variant - not yet supported in this context
-                return Err(DeserializeError::Unsupported(
-                    "multi-element tuple variants in flatten not yet supported".into(),
-                ));
-            }
-            StructKind::Unit => {
-                // Unit variant - nothing to deserialize
-                return Ok(wip);
-            }
-            StructKind::Struct => {
-                // Struct variant - fall through to struct deserialization below
-            }
-        }
-
-        // Struct variant: deserialize as a struct with named fields
-        // Expect StructStart for the variant content
-        let event = self.expect_event("value")?;
-        if !matches!(event, ParseEvent::StructStart(_)) {
-            return Err(DeserializeError::TypeMismatch {
-                expected: "struct start for variant content",
-                got: format!("{event:?}"),
-                span: self.last_span,
-                path: None,
-            });
-        }
-
-        // Track which fields have been set
-        let num_fields = variant_fields.len();
-        let mut fields_set = alloc::vec![false; num_fields];
-
-        // Process all fields
-        loop {
-            let event = self.expect_event("value")?;
-            match event {
-                ParseEvent::StructEnd => break,
-                ParseEvent::FieldKey(key) => {
-                    // Unit keys don't make sense for struct fields
-                    let key_name = match &key.name {
-                        Some(name) => name.as_ref(),
-                        None => {
-                            // Skip unit keys in struct context
-                            self.parser.skip_value().map_err(DeserializeError::Parser)?;
-                            continue;
-                        }
-                    };
-
-                    // Look up field in variant's fields by name/alias
-                    let field_info = variant_fields
-                        .iter()
-                        .enumerate()
-                        .find(|(_, f)| Self::field_matches(f, key_name));
-
-                    if let Some((idx, _field)) = field_info {
-                        wip = wip
-                            .begin_nth_field(idx)
-                            .map_err(DeserializeError::reflect)?;
-                        wip = self.deserialize_into(wip)?;
-                        wip = wip.end().map_err(DeserializeError::reflect)?;
-                        fields_set[idx] = true;
-                    } else {
-                        // Unknown field - skip
-                        self.parser.skip_value().map_err(DeserializeError::Parser)?;
-                    }
-                }
-                other => {
-                    return Err(DeserializeError::TypeMismatch {
-                        expected: "field key or struct end",
-                        got: format!("{other:?}"),
-                        span: self.last_span,
-                        path: None,
-                    });
-                }
-            }
-        }
-
-        // Apply defaults for missing fields
-        for (idx, field) in variant_fields.iter().enumerate() {
-            if fields_set[idx] {
-                continue;
-            }
-
-            let field_has_default = field.has_default();
-            let field_type_has_default = field.shape().is(facet_core::Characteristic::Default);
-            let field_is_option = matches!(field.shape().def, Def::Option(_));
-
-            if field_has_default || field_type_has_default {
-                wip = wip
-                    .set_nth_field_to_default(idx)
-                    .map_err(DeserializeError::reflect)?;
-            } else if field_is_option {
-                wip = wip
-                    .begin_nth_field(idx)
-                    .map_err(DeserializeError::reflect)?;
-                wip = wip.set_default().map_err(DeserializeError::reflect)?;
-                wip = wip.end().map_err(DeserializeError::reflect)?;
-            } else if field.should_skip_deserializing() {
-                wip = wip
-                    .set_nth_field_to_default(idx)
-                    .map_err(DeserializeError::reflect)?;
-            } else {
-                return Err(DeserializeError::TypeMismatch {
-                    expected: "field to be present or have default",
-                    got: format!("missing field '{}'", field.name),
-                    span: self.last_span,
-                    path: None,
-                });
-            }
-        }
-
-        Ok(wip)
+        run_deserialize_coro(self, |yielder| {
+            deserialize_variant_struct_fields_inner(yielder, wip)
+        })
     }
 
     fn deserialize_enum_adjacently_tagged(
