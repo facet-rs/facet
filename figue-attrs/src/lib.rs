@@ -27,7 +27,7 @@ extern crate self as figue_attrs;
 // - `__parse_attr!` macro for parsing (internal use)
 facet::define_attr_grammar! {
     ns "args";
-    crate_path ::figue_attrs;
+    crate_path ::figue;
 
     /// Args attribute types for field configuration.
     pub enum Attr {
