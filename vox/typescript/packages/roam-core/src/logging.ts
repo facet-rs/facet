@@ -7,6 +7,12 @@ import { RpcError, RpcErrorCode } from "@bearcove/roam-wire";
 
 const START_TIME = Symbol("logging:start-time");
 
+/**
+ * Error decoder function type.
+ * Takes the method name and error payload, returns a string representation.
+ */
+export type ErrorDecoder = (method: string, payload: Uint8Array) => string | null;
+
 export interface LoggingOptions {
   /**
    * Custom logger function. Defaults to console.log.
@@ -33,6 +39,13 @@ export interface LoggingOptions {
    * Defaults to 0 (log all requests).
    */
   minDuration?: number;
+
+  /**
+   * Custom error decoder for user errors.
+   * If provided, will be called to decode error payloads into human-readable strings.
+   * Return null to fall back to default "(N bytes)" display.
+   */
+  errorDecoder?: ErrorDecoder;
 }
 
 /**
@@ -66,6 +79,7 @@ export function loggingMiddleware(options: LoggingOptions = {}): ClientMiddlewar
   const logResults = options.logResults ?? false;
   const logMetadata = options.logMetadata ?? false;
   const minDuration = options.minDuration ?? 0;
+  const errorDecoder = options.errorDecoder;
 
   return {
     pre(ctx: ClientContext, request: CallRequest): void {
@@ -122,10 +136,23 @@ export function loggingMiddleware(options: LoggingOptions = {}): ClientMiddlewar
         message += ` ✗ ${duration.toFixed(2)}ms`;
         const error = outcome.error;
         if (error instanceof RpcError) {
-          // RPC error - show code and whether it has a payload
+          // RPC error - show code and decoded error if possible
           const codeStr = rpcErrorCodeToString(error.code);
           if (error.isUserError() && error.payload) {
-            message += ` ${codeStr} (${error.payload.length} bytes)`;
+            // Try to decode the error payload
+            let decoded: string | null = null;
+            if (errorDecoder) {
+              try {
+                decoded = errorDecoder(request.method, error.payload);
+              } catch {
+                // Decoder failed, fall back to bytes display
+              }
+            }
+            if (decoded) {
+              message += ` ${codeStr}: ${decoded}`;
+            } else {
+              message += ` ${codeStr} (${error.payload.length} bytes)`;
+            }
           } else {
             message += ` ${codeStr}`;
           }

@@ -222,7 +222,7 @@ export { type CallerRequest, type Caller, MiddlewareCaller } from "./caller.ts";
 export { CallBuilder, withMeta, type CallExecutor } from "./call_builder.ts";
 
 // Logging middleware
-export { loggingMiddleware, type LoggingOptions } from "./logging.ts";
+export { loggingMiddleware, type LoggingOptions, type ErrorDecoder } from "./logging.ts";
 
 // Metadata conversion utilities
 export { metadataMapToEntries, metadataEntriesToMap } from "./metadata.ts";
