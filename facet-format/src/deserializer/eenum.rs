@@ -1219,6 +1219,79 @@ fn deserialize_enum_as_struct_inner<'input, const BORROW: bool>(
     Ok(wip)
 }
 
+/// Inner implementation of `deserialize_other_variant_with_captured_tag` that runs in a coroutine.
+fn deserialize_other_variant_with_captured_tag_inner<'input, const BORROW: bool>(
+    yielder: &DeserializeYielder<'input, BORROW>,
+    mut wip: Partial<'input, BORROW>,
+    captured_tag: Option<&'input str>,
+) -> Result<Partial<'input, BORROW>, InnerDeserializeError> {
+    use alloc::format;
+    use facet_reflect::ReflectError;
+
+    let reflect_err = |e: ReflectError| InnerDeserializeError::Reflect {
+        error: e,
+        span: request_span(yielder),
+        path: None,
+    };
+
+    let variant = wip
+        .selected_variant()
+        .ok_or_else(|| InnerDeserializeError::TypeMismatch {
+            expected: "selected variant",
+            got: "no variant selected".into(),
+            span: request_span(yielder),
+            path: None,
+        })?;
+
+    let variant_fields = variant.data.fields;
+
+    // Find tag and content field indices
+    let tag_field_idx = variant_fields.iter().position(|f| f.is_variant_tag());
+    let content_field_idx = variant_fields.iter().position(|f| f.is_variant_content());
+
+    // If no tag field and no content field, fall back to regular deserialization
+    if tag_field_idx.is_none() && content_field_idx.is_none() {
+        return request_deserialize_enum_variant_content(yielder, wip);
+    }
+
+    // Set the tag field to the captured tag name (or None for unit tags)
+    if let Some(idx) = tag_field_idx {
+        wip = wip.begin_nth_field(idx).map_err(reflect_err)?;
+        match captured_tag {
+            Some(tag) => {
+                wip = request_set_string_value(yielder, wip, Cow::Borrowed(tag))?;
+            }
+            None => {
+                // Unit tag - set the field to its default (None for Option<String>)
+                wip = wip.set_default().map_err(reflect_err)?;
+            }
+        }
+        wip = wip.end().map_err(reflect_err)?;
+    }
+
+    // Deserialize the content into the content field (if present)
+    if let Some(idx) = content_field_idx {
+        wip = wip.begin_nth_field(idx).map_err(reflect_err)?;
+        wip = request_deserialize_into(yielder, wip)?;
+        wip = wip.end().map_err(reflect_err)?;
+    } else {
+        // No content field - the payload must be Unit
+        let event = request_peek(yielder, "value")?;
+        if matches!(event, ParseEvent::Scalar(ScalarValue::Unit)) {
+            request_event(yielder, "value")?; // consume Unit
+        } else {
+            return Err(InnerDeserializeError::TypeMismatch {
+                expected: "unit payload for #[facet(other)] variant without #[facet(content)]",
+                got: format!("{event:?}"),
+                span: request_span(yielder),
+                path: None,
+            });
+        }
+    }
+
+    Ok(wip)
+}
+
 impl<'input, const BORROW: bool, P> FormatDeserializer<'input, BORROW, P>
 where
     P: FormatParser<'input>,
@@ -1679,69 +1752,12 @@ where
     /// `captured_tag` is `None` for unit tags (bare `@` in Styx).
     pub(crate) fn deserialize_other_variant_with_captured_tag(
         &mut self,
-        mut wip: Partial<'input, BORROW>,
+        wip: Partial<'input, BORROW>,
         captured_tag: Option<&'input str>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
-        let variant = wip
-            .selected_variant()
-            .ok_or_else(|| DeserializeError::TypeMismatch {
-                expected: "selected variant",
-                got: "no variant selected".into(),
-                span: self.last_span,
-                path: None,
-            })?;
-
-        let variant_fields = variant.data.fields;
-
-        // Find tag and content field indices
-        let tag_field_idx = variant_fields.iter().position(|f| f.is_variant_tag());
-        let content_field_idx = variant_fields.iter().position(|f| f.is_variant_content());
-
-        // If no tag field and no content field, fall back to regular deserialization
-        if tag_field_idx.is_none() && content_field_idx.is_none() {
-            return self.deserialize_enum_variant_content(wip);
-        }
-
-        // Set the tag field to the captured tag name (or None for unit tags)
-        if let Some(idx) = tag_field_idx {
-            wip = wip
-                .begin_nth_field(idx)
-                .map_err(DeserializeError::reflect)?;
-            match captured_tag {
-                Some(tag) => {
-                    wip = self.set_string_value(wip, Cow::Borrowed(tag))?;
-                }
-                None => {
-                    // Unit tag - set the field to its default (None for Option<String>)
-                    wip = wip.set_default().map_err(DeserializeError::reflect)?;
-                }
-            }
-            wip = wip.end().map_err(DeserializeError::reflect)?;
-        }
-
-        // Deserialize the content into the content field (if present)
-        if let Some(idx) = content_field_idx {
-            wip = wip
-                .begin_nth_field(idx)
-                .map_err(DeserializeError::reflect)?;
-            wip = self.deserialize_into(wip)?;
-            wip = wip.end().map_err(DeserializeError::reflect)?;
-        } else {
-            // No content field - the payload must be Unit
-            let event = self.expect_peek("value")?;
-            if matches!(event, ParseEvent::Scalar(ScalarValue::Unit)) {
-                self.expect_event("value")?; // consume Unit
-            } else {
-                return Err(DeserializeError::TypeMismatch {
-                    expected: "unit payload for #[facet(other)] variant without #[facet(content)]",
-                    got: format!("{event:?}"),
-                    span: self.last_span,
-                    path: None,
-                });
-            }
-        }
-
-        Ok(wip)
+        run_deserialize_coro(self, |yielder| {
+            deserialize_other_variant_with_captured_tag_inner(yielder, wip, captured_tag)
+        })
     }
 }
 
