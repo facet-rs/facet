@@ -1,5 +1,4 @@
 mod ariadne;
-mod config;
 mod counted;
 mod deser_errors;
 mod env_subst;

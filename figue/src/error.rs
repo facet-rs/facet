@@ -749,6 +749,17 @@ mod tests {
             flattened_args: String::new(),
         };
 
-        println!("{}", err.to_ariadne_string());
+        // Verify error renders correctly
+        let rendered = err.to_ariadne_string();
+        assert!(
+            rendered.contains("config_path"),
+            "error should mention the field name: {}",
+            rendered
+        );
+        assert!(
+            rendered.contains("args::"),
+            "error should mention args annotation: {}",
+            rendered
+        );
     }
 }

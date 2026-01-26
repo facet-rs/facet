@@ -47,7 +47,6 @@ fn test_error_missing_value_for_argument_short_missed() {
         verbose: bool,
     }
     let err = figue::from_slice::<Args>(&["-j", "-v"]).unwrap_err();
-    eprintln!("{err}");
     assert_diag_snapshot!(err);
 }
 
