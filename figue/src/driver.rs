@@ -79,7 +79,33 @@ pub struct ConfigLayers {
 
 /// Primary driver type that orchestrates parsing and validation.
 ///
-/// This is generic over `T`, with a non-generic core for future optimization.
+/// The driver coordinates all phases of configuration parsing:
+/// 1. **Parse layers**: CLI, environment variables, config files
+/// 2. **Check special fields**: Handle `--help`, `--version`, `--completions`
+/// 3. **Merge layers**: Combine values by priority (CLI > env > file > defaults)
+/// 4. **Deserialize**: Convert merged config into the target type `T`
+///
+/// # Example
+///
+/// ```rust
+/// use facet::Facet;
+/// use figue::{self as args, builder, Driver};
+///
+/// #[derive(Facet)]
+/// struct Args {
+///     #[facet(args::positional)]
+///     file: String,
+/// }
+///
+/// let config = builder::<Args>()
+///     .unwrap()
+///     .cli(|cli| cli.args(["input.txt"]))
+///     .build();
+///
+/// // Create the driver and run parsing
+/// let output = Driver::new(config).run().into_result().unwrap();
+/// assert_eq!(output.value.file, "input.txt");
+/// ```
 pub struct Driver<T> {
     config: Config<T>,
     core: DriverCore,
@@ -98,6 +124,8 @@ impl DriverCore {
 
 impl<T: Facet<'static>> Driver<T> {
     /// Create a driver from a fully built config.
+    ///
+    /// Use [`builder()`](crate::builder::builder) to create the config, then pass it here.
     pub fn new(config: Config<T>) -> Self {
         Self {
             config,
@@ -455,9 +483,35 @@ fn get_source_for_provenance(
 /// This prevents accidentally propagating help/version/completions as errors (which would
 /// cause exit code 1 instead of 0).
 ///
+/// # Usage
+///
 /// Use one of the following methods to extract the value:
-/// - `.unwrap()` - handles exits correctly, returns `T` (recommended for most cases)
-/// - `.into_result()` - for advanced users who want to handle everything themselves
+/// - [`.unwrap()`](Self::unwrap) - handles exits correctly, returns `T` (recommended for most cases)
+/// - [`.into_result()`](Self::into_result) - for advanced users who want to handle everything themselves
+///
+/// # Example
+///
+/// ```rust
+/// use facet::Facet;
+/// use figue::{self as args, FigueBuiltins};
+///
+/// #[derive(Facet)]
+/// struct Args {
+///     #[facet(args::positional)]
+///     file: String,
+///
+///     #[facet(flatten)]
+///     builtins: FigueBuiltins,
+/// }
+///
+/// // Using unwrap() - recommended for simple cases
+/// let args: Args = figue::from_slice(&["input.txt"]).unwrap();
+/// assert_eq!(args.file, "input.txt");
+///
+/// // Using into_result() - for custom error handling
+/// let result = figue::from_slice::<Args>(&["--help"]).into_result();
+/// assert!(result.is_err());
+/// ```
 #[must_use = "this `DriverOutcome` may contain a help/version request that should be handled"]
 pub struct DriverOutcome<T>(Result<DriverOutput<T>, DriverError>);
 
@@ -505,17 +559,35 @@ impl<T> DriverOutcome<T> {
 
     /// Get the value, or print output and exit.
     ///
-    /// - On success: prints warnings to stderr, returns value
-    /// - On help/completions/version: prints to stdout, exits with code 0
-    /// - On error: prints diagnostics to stderr, exits with code 1
+    /// This is the recommended way to handle `DriverOutcome` in most applications.
+    /// It correctly handles all cases:
+    ///
+    /// - **On success**: prints warnings to stderr, returns the parsed value
+    /// - **On help/completions/version**: prints to stdout, exits with code 0
+    /// - **On error**: prints diagnostics to stderr, exits with code 1
     ///
     /// # Example
     ///
-    /// ```ignore
-    /// fn main() {
-    ///     let args = figue::from_std_args::<Args>().unwrap();
-    ///     // use args...
+    /// ```rust,no_run
+    /// use facet::Facet;
+    /// use figue::{self as args, FigueBuiltins};
+    ///
+    /// #[derive(Facet)]
+    /// struct Args {
+    ///     #[facet(args::positional)]
+    ///     file: String,
+    ///
+    ///     #[facet(flatten)]
+    ///     builtins: FigueBuiltins,
     /// }
+    ///
+    /// // This will:
+    /// // - Print help and exit(0) if --help is passed
+    /// // - Print version and exit(0) if --version is passed
+    /// // - Print error and exit(1) if args are invalid
+    /// // - Return the Args if everything is OK
+    /// let args: Args = figue::from_std_args().unwrap();
+    /// println!("Processing: {}", args.file);
     /// ```
     pub fn unwrap(self) -> T {
         match self.0 {
@@ -563,6 +635,35 @@ impl<T> DriverOutcome<T> {
 }
 
 /// Successful driver output: a typed value plus an execution report.
+///
+/// This is returned when parsing succeeds. It contains:
+/// - The parsed value of type `T`
+/// - A [`DriverReport`] with diagnostics and metadata
+///
+/// # Example
+///
+/// ```rust
+/// use facet::Facet;
+/// use figue::{self as args, FigueBuiltins};
+///
+/// #[derive(Facet, Debug)]
+/// struct Args {
+///     #[facet(args::named, default)]
+///     verbose: bool,
+///
+///     #[facet(flatten)]
+///     builtins: FigueBuiltins,
+/// }
+///
+/// let result = figue::from_slice::<Args>(&["--verbose"]).into_result();
+/// let output = result.unwrap();
+///
+/// // Access the parsed value
+/// assert!(output.value.verbose);
+///
+/// // Or get the value with warnings printed
+/// // let args = output.get();
+/// ```
 pub struct DriverOutput<T> {
     /// The fully-typed value produced by deserialization.
     pub value: T,
@@ -823,42 +924,114 @@ fn extract_shell_from_value(value: &ConfigValue) -> Option<Shell> {
 
 /// Error returned by the driver.
 ///
-/// Not all variants are "errors" in the traditional sense - Help, Completions,
-/// and Version are successful operations that just don't produce a config value.
+/// Not all variants are "errors" in the traditional sense - [`Help`](Self::Help),
+/// [`Completions`](Self::Completions), and [`Version`](Self::Version) are successful
+/// operations that just don't produce a config value.
+///
+/// # Exit Codes
+///
+/// | Variant | Exit Code | Meaning |
+/// |---------|-----------|---------|
+/// | `Help` | 0 | User requested help |
+/// | `Version` | 0 | User requested version |
+/// | `Completions` | 0 | User requested shell completions |
+/// | `Failed` | 1 | Parsing or validation error |
+/// | `Builder` | 1 | Schema or setup error |
+/// | `EnvSubst` | 1 | Environment variable substitution error |
+///
+/// # Example
+///
+/// ```rust
+/// use figue::{self as args, FigueBuiltins, DriverError};
+/// use facet::Facet;
+///
+/// #[derive(Facet)]
+/// struct Args {
+///     #[facet(args::positional, default)]
+///     file: Option<String>,
+///
+///     #[facet(flatten)]
+///     builtins: FigueBuiltins,
+/// }
+///
+/// let result = figue::from_slice::<Args>(&["--help"]).into_result();
+/// match result {
+///     Err(DriverError::Help { text }) => {
+///         assert!(text.contains("--help"));
+///         // In a real app: print text and exit(0)
+///     }
+///     Err(DriverError::Version { text }) => {
+///         // print text and exit(0)
+///     }
+///     Err(DriverError::Failed { report }) => {
+///         // print report.render_pretty() and exit(1)
+///     }
+///     Err(e) => {
+///         // other error, exit(1)
+///     }
+///     Ok(output) => {
+///         // success, use output.value
+///     }
+/// }
+/// ```
 pub enum DriverError {
-    /// Builder failed (e.g., schema validation, file not found) - exit code 1
+    /// Builder failed (e.g., schema validation, file not found).
+    ///
+    /// Exit code: 1
     Builder {
-        /// The builder error
+        /// The builder error.
         error: crate::builder::BuilderError,
     },
 
-    /// Parsing or validation failed - exit code 1
+    /// Parsing or validation failed.
+    ///
+    /// Exit code: 1
+    ///
+    /// The report contains detailed diagnostics with source locations
+    /// when available.
     Failed {
-        /// Report containing all diagnostics
+        /// Report containing all diagnostics.
         report: Box<DriverReport>,
     },
 
-    /// Help was requested (via `#[facet(figue::help)]` field) - exit code 0
+    /// Help was requested (via `#[facet(figue::help)]` field).
+    ///
+    /// Exit code: 0
+    ///
+    /// This is a "successful" exit - the user asked for help and got it.
     Help {
-        /// Formatted help text
+        /// Formatted help text ready to print to stdout.
         text: String,
     },
 
-    /// Shell completions were requested (via `#[facet(figue::completions)]` field) - exit code 0
+    /// Shell completions were requested (via `#[facet(figue::completions)]` field).
+    ///
+    /// Exit code: 0
+    ///
+    /// This is a "successful" exit - the user asked for completions and got them.
     Completions {
-        /// Generated completion script
+        /// Generated completion script for the requested shell.
         script: String,
     },
 
-    /// Version was requested (via `#[facet(figue::version)]` field) - exit code 0
+    /// Version was requested (via `#[facet(figue::version)]` field).
+    ///
+    /// Exit code: 0
+    ///
+    /// This is a "successful" exit - the user asked for version and got it.
     Version {
-        /// Version string
+        /// Version string (e.g., "myapp 1.0.0").
         text: String,
     },
 
-    /// Environment variable substitution failed - exit code 1
+    /// Environment variable substitution failed.
+    ///
+    /// Exit code: 1
+    ///
+    /// This happens when `${VAR}` substitution is enabled but the variable
+    /// is not set and has no default.
     EnvSubst {
-        /// The substitution error
+        /// The substitution error.
         error: EnvSubstError,
     },
 }
