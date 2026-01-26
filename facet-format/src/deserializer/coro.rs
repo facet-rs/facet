@@ -24,6 +24,9 @@ use crate::{
     ParseEvent,
 };
 
+/// Stack size for coroutines: 2MB to handle deep nesting and coverage instrumentation.
+const STACK_SIZE: usize = 2 * 1024 * 1024;
+
 /// Request from the inner deserialization logic to the wrapper.
 pub(crate) enum DeserializeRequest<'input, const BORROW: bool> {
     /// Need to call `expect_event(expected)` and get the result.
@@ -294,7 +297,7 @@ where
     F: FnOnce(&DeserializeYielder<'input, BORROW>) -> Result<R, InnerDeserializeError>,
 {
     // Create the coroutine with its own stack
-    let stack = DefaultStack::new(64 * 1024).expect("failed to allocate coroutine stack");
+    let stack = DefaultStack::new(STACK_SIZE).expect("failed to allocate coroutine stack");
 
     let coro: ScopedCoroutine<
         DeserializeResponse<'input, BORROW>,
