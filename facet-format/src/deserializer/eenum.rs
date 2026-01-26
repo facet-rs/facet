@@ -9,8 +9,9 @@ use crate::{
     ContainerKind, DeserializeError, FormatDeserializer, FormatParser, InnerDeserializeError,
     ParseEvent, ScalarValue,
     deserializer::coro::{
-        DeserializeYielder, request_deserialize_into, request_event, request_peek, request_skip,
-        request_span,
+        DeserializeYielder, request_deserialize_enum_variant_content, request_deserialize_into,
+        request_deserialize_other_variant_with_captured_tag, request_event, request_peek,
+        request_set_string_value, request_skip, request_span, run_deserialize_coro,
     },
     deserializer::scalar_matches::scalar_matches_shape,
 };
@@ -314,6 +315,266 @@ fn field_matches(field: &facet_core::Field, name: &str) -> bool {
     field.effective_name() == name || field.alias.iter().any(|alias| *alias == name)
 }
 
+/// Find a variant by its display name (checking rename attributes).
+/// Returns the effective name to use with `select_variant_named`.
+fn find_variant_by_display_name<'a>(
+    enum_def: &'a facet_core::EnumType,
+    display_name: &str,
+) -> Option<&'a str> {
+    enum_def.variants.iter().find_map(|v| {
+        if v.effective_name() == display_name {
+            Some(v.effective_name())
+        } else {
+            None
+        }
+    })
+}
+
+/// For cow-like enums, redirect from "Borrowed" to "Owned" variant when borrowing is disabled.
+fn cow_redirect_variant_name<'a, const BORROW: bool>(
+    enum_def: &facet_core::EnumType,
+    variant_name: &'a str,
+) -> &'a str {
+    if !BORROW && enum_def.is_cow && variant_name == "Borrowed" {
+        "Owned"
+    } else {
+        variant_name
+    }
+}
+
+/// Inner implementation of `deserialize_enum_externally_tagged` that runs in a coroutine.
+fn deserialize_enum_externally_tagged_inner<'input, const BORROW: bool>(
+    yielder: &DeserializeYielder<'input, BORROW>,
+    mut wip: Partial<'input, BORROW>,
+) -> Result<Partial<'input, BORROW>, InnerDeserializeError> {
+    use alloc::format;
+    use alloc::string::ToString;
+    use facet_reflect::ReflectError;
+
+    let reflect_err = |e: ReflectError| InnerDeserializeError::Reflect {
+        error: e,
+        span: request_span(yielder),
+        path: None,
+    };
+
+    trace!("deserialize_enum_externally_tagged called");
+    let event = request_peek(yielder, "value")?;
+    trace!(?event, "peeked event");
+
+    // Check for any bare scalar (string, bool, int, etc.)
+    if let ParseEvent::Scalar(scalar) = &event {
+        let enum_def = match &wip.shape().ty {
+            Type::User(UserType::Enum(e)) => e,
+            _ => return Err(InnerDeserializeError::Unsupported("expected enum".into())),
+        };
+
+        // For string scalars, first try to match as a unit variant name
+        if let ScalarValue::Str(variant_name) = scalar {
+            let matched_variant = find_variant_by_display_name(enum_def, variant_name);
+
+            if let Some(matched_name) = matched_variant {
+                // Found a matching unit variant
+                let actual_variant = cow_redirect_variant_name::<BORROW>(enum_def, matched_name);
+                request_event(yielder, "value")?;
+                wip = wip
+                    .select_variant_named(actual_variant)
+                    .map_err(&reflect_err)?;
+                return Ok(wip);
+            }
+        }
+
+        // No matching variant - check for #[facet(other)] fallback
+        if let Some(other_variant) = enum_def.variants.iter().find(|v| v.is_other()) {
+            let has_tag_field = other_variant.data.fields.iter().any(|f| f.is_variant_tag());
+            let has_content_field = other_variant
+                .data
+                .fields
+                .iter()
+                .any(|f| f.is_variant_content());
+
+            if has_tag_field || has_content_field {
+                wip = wip
+                    .select_variant_named(other_variant.effective_name())
+                    .map_err(&reflect_err)?;
+                wip = request_deserialize_other_variant_with_captured_tag(yielder, wip, None)?;
+            } else {
+                request_event(yielder, "value")?;
+                wip = wip
+                    .select_variant_named(other_variant.effective_name())
+                    .map_err(&reflect_err)?;
+
+                let scalar_as_string = scalar.to_string_value().ok_or_else(|| {
+                    InnerDeserializeError::TypeMismatch {
+                        expected: "string or struct for enum",
+                        got: "bytes".to_string(),
+                        span: request_span(yielder),
+                        path: None,
+                    }
+                })?;
+
+                wip = wip.begin_nth_field(0).map_err(&reflect_err)?;
+                wip = request_set_string_value(yielder, wip, Cow::Owned(scalar_as_string))?;
+                wip = wip.end().map_err(&reflect_err)?;
+            }
+            return Ok(wip);
+        }
+
+        // No fallback available - error
+        return Err(InnerDeserializeError::TypeMismatch {
+            expected: "known enum variant",
+            got: scalar.to_display_string(),
+            span: request_span(yielder),
+            path: None,
+        });
+    }
+
+    // Check for VariantTag (self-describing formats like Styx)
+    if let ParseEvent::VariantTag(tag_name) = &event {
+        let tag_name = *tag_name;
+        request_event(yielder, "value")?; // consume VariantTag
+
+        let enum_def = match &wip.shape().ty {
+            Type::User(UserType::Enum(e)) => e,
+            _ => return Err(InnerDeserializeError::Unsupported("expected enum".into())),
+        };
+
+        let (variant_name, is_using_other_fallback) = match tag_name {
+            Some(name) => {
+                let by_display = find_variant_by_display_name(enum_def, name);
+                let is_fallback = by_display.is_none();
+                let variant = by_display
+                    .or_else(|| {
+                        enum_def
+                            .variants
+                            .iter()
+                            .find(|v| v.is_other())
+                            .map(|v| v.effective_name())
+                    })
+                    .ok_or_else(|| InnerDeserializeError::TypeMismatch {
+                        expected: "known enum variant",
+                        got: format!("@{}", name),
+                        span: request_span(yielder),
+                        path: None,
+                    })?;
+                (variant, is_fallback)
+            }
+            None => {
+                let variant = enum_def
+                    .variants
+                    .iter()
+                    .find(|v| v.is_other())
+                    .map(|v| v.effective_name())
+                    .ok_or_else(|| InnerDeserializeError::TypeMismatch {
+                        expected: "#[facet(other)] fallback variant for unit tag",
+                        got: "@".to_string(),
+                        span: request_span(yielder),
+                        path: None,
+                    })?;
+                (variant, true)
+            }
+        };
+
+        let actual_variant = cow_redirect_variant_name::<BORROW>(enum_def, variant_name);
+        wip = wip
+            .select_variant_named(actual_variant)
+            .map_err(&reflect_err)?;
+
+        if is_using_other_fallback {
+            wip = request_deserialize_other_variant_with_captured_tag(yielder, wip, tag_name)?;
+        } else {
+            wip = request_deserialize_enum_variant_content(yielder, wip)?;
+        }
+        return Ok(wip);
+    }
+
+    // Otherwise expect a struct { VariantName: ... }
+    if !matches!(event, ParseEvent::StructStart(_)) {
+        return Err(InnerDeserializeError::TypeMismatch {
+            expected: "string or struct for enum",
+            got: format!("{event:?}"),
+            span: request_span(yielder),
+            path: None,
+        });
+    }
+
+    request_event(yielder, "value")?; // consume StructStart
+
+    // Get the variant name from the field key
+    let event = request_event(yielder, "value")?;
+    let field_key_name = match event {
+        ParseEvent::FieldKey(key) => {
+            key.name
+                .ok_or_else(|| InnerDeserializeError::TypeMismatch {
+                    expected: "variant name",
+                    got: "unit key".to_string(),
+                    span: request_span(yielder),
+                    path: None,
+                })?
+        }
+        other => {
+            return Err(InnerDeserializeError::TypeMismatch {
+                expected: "variant name",
+                got: format!("{other:?}"),
+                span: request_span(yielder),
+                path: None,
+            });
+        }
+    };
+
+    let enum_def = match &wip.shape().ty {
+        Type::User(UserType::Enum(e)) => e,
+        _ => return Err(InnerDeserializeError::Unsupported("expected enum".into())),
+    };
+    let is_using_other_fallback = find_variant_by_display_name(enum_def, &field_key_name).is_none();
+    let variant_name = find_variant_by_display_name(enum_def, &field_key_name)
+        .or_else(|| {
+            enum_def
+                .variants
+                .iter()
+                .find(|v| v.is_other())
+                .map(|v| v.effective_name())
+        })
+        .ok_or_else(|| InnerDeserializeError::TypeMismatch {
+            expected: "known enum variant",
+            got: format!("{}", field_key_name),
+            span: request_span(yielder),
+            path: None,
+        })?;
+
+    let actual_variant = cow_redirect_variant_name::<BORROW>(enum_def, variant_name);
+    wip = wip
+        .select_variant_named(actual_variant)
+        .map_err(&reflect_err)?;
+
+    // For #[facet(other)] fallback variants, if the content is Unit, use the field key name as the value
+    if is_using_other_fallback {
+        let event = request_peek(yielder, "value")?;
+        if matches!(event, ParseEvent::Scalar(ScalarValue::Unit)) {
+            request_event(yielder, "value")?; // consume Unit
+            wip = wip.begin_nth_field(0).map_err(&reflect_err)?;
+            wip = request_set_string_value(yielder, wip, Cow::Owned(field_key_name.into_owned()))?;
+            wip = wip.end().map_err(&reflect_err)?;
+        } else {
+            wip = request_deserialize_enum_variant_content(yielder, wip)?;
+        }
+    } else {
+        wip = request_deserialize_enum_variant_content(yielder, wip)?;
+    }
+
+    // Consume StructEnd
+    let event = request_event(yielder, "value")?;
+    if !matches!(event, ParseEvent::StructEnd) {
+        return Err(InnerDeserializeError::TypeMismatch {
+            expected: "struct end after enum variant",
+            got: format!("{event:?}"),
+            span: request_span(yielder),
+            path: None,
+        });
+    }
+
+    Ok(wip)
+}
+
 impl<'input, const BORROW: bool, P> FormatDeserializer<'input, BORROW, P>
 where
     P: FormatParser<'input>,
@@ -376,247 +637,11 @@ where
 
     fn deserialize_enum_externally_tagged(
         &mut self,
-        mut wip: Partial<'input, BORROW>,
+        wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
-        trace!("deserialize_enum_externally_tagged called");
-        let event = self.expect_peek("value")?;
-        trace!(?event, "peeked event");
-
-        // Check for any bare scalar (string, bool, int, etc.)
-        // This handles cases like bare identifiers that should fall back to #[facet(other)]
-        if let ParseEvent::Scalar(scalar) = &event {
-            let enum_def = match &wip.shape().ty {
-                Type::User(UserType::Enum(e)) => e,
-                _ => return Err(DeserializeError::Unsupported("expected enum".into())),
-            };
-
-            // For string scalars, first try to match as a unit variant name
-            if let ScalarValue::Str(variant_name) = scalar {
-                let matched_variant = Self::find_variant_by_display_name(enum_def, variant_name);
-
-                if let Some(matched_name) = matched_variant {
-                    // Found a matching unit variant
-                    // For cow-like enums, redirect Borrowed -> Owned when borrowing is disabled
-                    let actual_variant = Self::cow_redirect_variant_name(enum_def, matched_name);
-                    self.expect_event("value")?;
-                    wip = wip
-                        .select_variant_named(actual_variant)
-                        .map_err(DeserializeError::reflect)?;
-                    return Ok(wip);
-                }
-            }
-
-            // No matching variant - check for #[facet(other)] fallback
-            if let Some(other_variant) = enum_def.variants.iter().find(|v| v.is_other()) {
-                // Check if this variant has #[facet(tag)] and #[facet(content)] fields
-                let has_tag_field = other_variant.data.fields.iter().any(|f| f.is_variant_tag());
-                let has_content_field = other_variant
-                    .data
-                    .fields
-                    .iter()
-                    .any(|f| f.is_variant_content());
-
-                if has_tag_field || has_content_field {
-                    // Don't consume the scalar yet - let deserialize_other_variant_with_captured_tag do it
-                    wip = wip
-                        .select_variant_named(other_variant.effective_name())
-                        .map_err(DeserializeError::reflect)?;
-
-                    // Use the tag/content deserialization path with tag=None
-                    // The scalar will be deserialized into the content field
-                    wip = self.deserialize_other_variant_with_captured_tag(wip, None)?;
-                } else {
-                    // Consume the scalar now for the newtype path
-                    self.expect_event("value")?;
-
-                    wip = wip
-                        .select_variant_named(other_variant.effective_name())
-                        .map_err(DeserializeError::reflect)?;
-
-                    // The other variant is a newtype (single field)
-                    // Convert scalar to string and set it into field 0
-                    let scalar_as_string =
-                        scalar
-                            .to_string_value()
-                            .ok_or_else(|| DeserializeError::TypeMismatch {
-                                expected: "string or struct for enum",
-                                got: "bytes".to_string(),
-                                span: self.last_span,
-                                path: None,
-                            })?;
-
-                    wip = wip.begin_nth_field(0).map_err(DeserializeError::reflect)?;
-                    wip = self.set_string_value(wip, Cow::Owned(scalar_as_string))?;
-                    wip = wip.end().map_err(DeserializeError::reflect)?;
-                }
-                return Ok(wip);
-            }
-
-            // No fallback available - error
-            return Err(DeserializeError::TypeMismatch {
-                expected: "known enum variant",
-                got: scalar.to_display_string(),
-                span: self.last_span,
-                path: None,
-            });
-        }
-
-        // Check for VariantTag (self-describing formats like Styx)
-        if let ParseEvent::VariantTag(tag_name) = &event {
-            let tag_name = *tag_name;
-            self.expect_event("value")?; // consume VariantTag
-
-            // Look up the real variant name respecting rename attributes
-            let enum_def = match &wip.shape().ty {
-                Type::User(UserType::Enum(e)) => e,
-                _ => return Err(DeserializeError::Unsupported("expected enum".into())),
-            };
-
-            // For unit tags (None), go straight to #[facet(other)] fallback
-            // For named tags, try exact match first, then fall back to #[facet(other)]
-            let (variant_name, is_using_other_fallback) = match tag_name {
-                Some(name) => {
-                    let by_display = Self::find_variant_by_display_name(enum_def, name);
-                    let is_fallback = by_display.is_none();
-                    let variant = by_display
-                        .or_else(|| {
-                            enum_def
-                                .variants
-                                .iter()
-                                .find(|v| v.is_other())
-                                .map(|v| v.effective_name())
-                        })
-                        .ok_or_else(|| DeserializeError::TypeMismatch {
-                            expected: "known enum variant",
-                            got: format!("@{}", name),
-                            span: self.last_span,
-                            path: None,
-                        })?;
-                    (variant, is_fallback)
-                }
-                None => {
-                    // Unit tag - must use #[facet(other)] fallback
-                    let variant = enum_def
-                        .variants
-                        .iter()
-                        .find(|v| v.is_other())
-                        .map(|v| v.effective_name())
-                        .ok_or_else(|| DeserializeError::TypeMismatch {
-                            expected: "#[facet(other)] fallback variant for unit tag",
-                            got: "@".to_string(),
-                            span: self.last_span,
-                            path: None,
-                        })?;
-                    (variant, true)
-                }
-            };
-
-            // For cow-like enums, redirect Borrowed -> Owned when borrowing is disabled
-            let actual_variant = Self::cow_redirect_variant_name(enum_def, variant_name);
-            wip = wip
-                .select_variant_named(actual_variant)
-                .map_err(DeserializeError::reflect)?;
-
-            // For #[facet(other)] variants, check for #[facet(tag)] and #[facet(content)] fields
-            if is_using_other_fallback {
-                wip = self.deserialize_other_variant_with_captured_tag(wip, tag_name)?;
-            } else {
-                // Deserialize the variant content normally
-                wip = self.deserialize_enum_variant_content(wip)?;
-            }
-            return Ok(wip);
-        }
-
-        // Otherwise expect a struct { VariantName: ... }
-        if !matches!(event, ParseEvent::StructStart(_)) {
-            return Err(DeserializeError::TypeMismatch {
-                expected: "string or struct for enum",
-                got: format!("{event:?}"),
-                span: self.last_span,
-                path: None,
-            });
-        }
-
-        self.expect_event("value")?; // consume StructStart
-
-        // Get the variant name from the field key
-        let event = self.expect_event("value")?;
-        let field_key_name = match event {
-            ParseEvent::FieldKey(key) => {
-                key.name.ok_or_else(|| DeserializeError::TypeMismatch {
-                    expected: "variant name",
-                    got: "unit key".to_string(),
-                    span: self.last_span,
-                    path: None,
-                })?
-            }
-            other => {
-                return Err(DeserializeError::TypeMismatch {
-                    expected: "variant name",
-                    got: format!("{other:?}"),
-                    span: self.last_span,
-                    path: None,
-                });
-            }
-        };
-
-        // Look up the real variant name respecting rename attributes, with fallback to #[facet(other)]
-        let enum_def = match &wip.shape().ty {
-            Type::User(UserType::Enum(e)) => e,
-            _ => return Err(DeserializeError::Unsupported("expected enum".into())),
-        };
-        let is_using_other_fallback =
-            Self::find_variant_by_display_name(enum_def, &field_key_name).is_none();
-        let variant_name = Self::find_variant_by_display_name(enum_def, &field_key_name)
-            .or_else(|| {
-                enum_def
-                    .variants
-                    .iter()
-                    .find(|v| v.is_other())
-                    .map(|v| v.effective_name())
-            })
-            .ok_or_else(|| DeserializeError::TypeMismatch {
-                expected: "known enum variant",
-                got: format!("{}", field_key_name),
-                span: self.last_span,
-                path: None,
-            })?;
-
-        // For cow-like enums, redirect Borrowed -> Owned when borrowing is disabled
-        let actual_variant = Self::cow_redirect_variant_name(enum_def, variant_name);
-        wip = wip
-            .select_variant_named(actual_variant)
-            .map_err(DeserializeError::reflect)?;
-
-        // For #[facet(other)] fallback variants, if the content is Unit, use the field key name as the value
-        if is_using_other_fallback {
-            let event = self.expect_peek("value")?;
-            if matches!(event, ParseEvent::Scalar(ScalarValue::Unit)) {
-                self.expect_event("value")?; // consume Unit
-                // Enter field 0 of the newtype variant (e.g., Type(String))
-                wip = wip.begin_nth_field(0).map_err(DeserializeError::reflect)?;
-                wip = self.set_string_value(wip, Cow::Owned(field_key_name.into_owned()))?;
-                wip = wip.end().map_err(DeserializeError::reflect)?;
-            } else {
-                wip = self.deserialize_enum_variant_content(wip)?;
-            }
-        } else {
-            // Deserialize the variant content normally
-            wip = self.deserialize_enum_variant_content(wip)?;
-        }
-
-        // Consume StructEnd
-        let event = self.expect_event("value")?;
-        if !matches!(event, ParseEvent::StructEnd) {
-            return Err(DeserializeError::TypeMismatch {
-                expected: "struct end after enum variant",
-                got: format!("{event:?}"),
-                span: self.last_span,
-                path: None,
-            });
-        }
-
-        Ok(wip)
+        run_deserialize_coro(self, |yielder| {
+            deserialize_enum_externally_tagged_inner(yielder, wip)
+        })
     }
 
     fn deserialize_enum_internally_tagged(
