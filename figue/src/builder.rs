@@ -1,6 +1,56 @@
 //! Builder API for layered configuration.
 //!
-//! This module is under active development.
+//! This module provides the [`builder`] function and [`ConfigBuilder`] type for
+//! constructing layered configuration parsers. Use this when you need to combine
+//! multiple configuration sources (CLI, environment variables, config files).
+//!
+//! # Overview
+//!
+//! The builder pattern allows you to:
+//! - Configure CLI argument parsing
+//! - Set up environment variable parsing with custom prefixes
+//! - Load configuration files in various formats
+//! - Customize help text and version information
+//!
+//! # Example
+//!
+//! ```rust
+//! use facet::Facet;
+//! use figue::{self as args, builder, Driver};
+//!
+//! #[derive(Facet, Debug)]
+//! struct Args {
+//!     #[facet(args::config, args::env_prefix = "MYAPP")]
+//!     config: Config,
+//! }
+//!
+//! #[derive(Facet, Debug)]
+//! struct Config {
+//!     #[facet(default = 8080)]
+//!     port: u16,
+//!     #[facet(default = "localhost")]
+//!     host: String,
+//! }
+//!
+//! // Build the configuration
+//! let config = builder::<Args>()
+//!     .unwrap()
+//!     .cli(|cli| cli.args(["--config.port", "3000"]))
+//!     .help(|h| h.program_name("myapp").version("1.0.0"))
+//!     .build();
+//!
+//! // Run the driver to get the parsed value
+//! let output = Driver::new(config).run().into_result().unwrap();
+//! assert_eq!(output.value.config.port, 3000);
+//! ```
+//!
+//! # Layer Priority
+//!
+//! When the same field is set in multiple sources, the priority order is:
+//! 1. CLI arguments (highest)
+//! 2. Environment variables
+//! 3. Config files
+//! 4. Code defaults (lowest)
 #![allow(private_interfaces)]
 
 use std::marker::PhantomData;
@@ -23,14 +73,40 @@ use crate::{
 
 /// Start configuring an args/config parser for a given type.
 ///
-/// At this stage all you need to pass in is your `Args` type, which must implement [`Facet`].
+/// This is the main entry point for building layered configuration. The type `T`
+/// must implement [`Facet`] and be properly annotated with figue attributes.
 ///
-/// This call is fallible because it makes sure that the struct that you pass in, is actually a struct
-/// and not an enum, and that all its fields and subfields are actually properly annotated with
-/// `#[facet(args::positional)]`, `#[facet(args::named)]`, etc. — see [`crate::Attr`]
+/// # Example
 ///
-/// This function also already allocates the destination shape, to avoid unsafe code later on.
-/// If this allocation fails, then another error is returned.
+/// ```rust
+/// use facet::Facet;
+/// use figue::{self as args, builder, Driver};
+///
+/// #[derive(Facet)]
+/// struct Args {
+///     #[facet(args::named, default)]
+///     verbose: bool,
+///     #[facet(args::positional)]
+///     file: String,
+/// }
+///
+/// let config = builder::<Args>()
+///     .expect("schema should be valid")
+///     .cli(|cli| cli.args(["--verbose", "input.txt"]))
+///     .build();
+///
+/// let args: Args = Driver::new(config).run().unwrap();
+/// assert!(args.verbose);
+/// ```
+///
+/// # Errors
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - The type is not a struct (enums cannot be root types)
+/// - Fields are missing required annotations (`args::positional`, `args::named`, etc.)
+/// - Schema validation fails
 pub fn builder<T>() -> Result<ConfigBuilder<T>, BuilderError>
 where
     T: Facet<'static>,
@@ -47,6 +123,41 @@ where
 }
 
 /// Builder for layered configuration parsing.
+///
+/// Use the fluent API to configure each layer:
+/// - [`.cli()`](Self::cli) - Configure CLI argument parsing
+/// - [`.env()`](Self::env) - Configure environment variable parsing
+/// - [`.file()`](Self::file) - Configure config file loading
+/// - [`.help()`](Self::help) - Configure help text generation
+/// - [`.build()`](Self::build) - Finalize and create the config
+///
+/// # Example
+///
+/// ```rust
+/// use facet::Facet;
+/// use figue::{self as args, builder, Driver};
+///
+/// #[derive(Facet)]
+/// struct Args {
+///     #[facet(args::config, args::env_prefix = "APP")]
+///     config: AppConfig,
+/// }
+///
+/// #[derive(Facet)]
+/// struct AppConfig {
+///     #[facet(default = 8080)]
+///     port: u16,
+/// }
+///
+/// let config = builder::<Args>()
+///     .unwrap()
+///     .cli(|cli| cli.args(["--config.port", "9000"]))  // CLI takes priority
+///     .help(|h| h.program_name("myapp"))
+///     .build();
+///
+/// let output = Driver::new(config).run().into_result().unwrap();
+/// assert_eq!(output.value.config.port, 9000);
+/// ```
 pub struct ConfigBuilder<T> {
     _phantom: PhantomData<T>,
     /// Parsed schema for the target type.
@@ -79,6 +190,43 @@ pub struct Config<T> {
 
 impl<T> ConfigBuilder<T> {
     /// Configure CLI argument parsing.
+    ///
+    /// Use this to specify where CLI arguments come from and how they're parsed.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use facet::Facet;
+    /// use figue::{self as args, builder, Driver};
+    ///
+    /// #[derive(Facet)]
+    /// struct Args {
+    ///     #[facet(args::named)]
+    ///     verbose: bool,
+    /// }
+    ///
+    /// // Parse specific arguments (useful for testing)
+    /// let config = builder::<Args>()
+    ///     .unwrap()
+    ///     .cli(|cli| cli.args(["--verbose"]))
+    ///     .build();
+    ///
+    /// let args: Args = Driver::new(config).run().unwrap();
+    /// assert!(args.verbose);
+    /// ```
+    ///
+    /// For production use, parse from `std::env::args()`:
+    ///
+    /// ```rust,no_run
+    /// # use facet::Facet;
+    /// # use figue::{self as args, builder, Driver};
+    /// # #[derive(Facet)]
+    /// # struct Args { #[facet(args::named)] verbose: bool }
+    /// let config = builder::<Args>()
+    ///     .unwrap()
+    ///     .cli(|cli| cli.args(std::env::args().skip(1)))
+    ///     .build();
+    /// ```
     pub fn cli<F>(mut self, f: F) -> Self
     where
         F: FnOnce(CliConfigBuilder) -> CliConfigBuilder,
@@ -88,6 +236,39 @@ impl<T> ConfigBuilder<T> {
     }
 
     /// Configure help text generation.
+    ///
+    /// Use this to set the program name, version, and additional description
+    /// shown in help output and version output.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use facet::Facet;
+    /// use figue::{self as args, builder, Driver, DriverError};
+    ///
+    /// #[derive(Facet)]
+    /// struct Args {
+    ///     #[facet(args::named, args::help, default)]
+    ///     help: bool,
+    /// }
+    ///
+    /// let config = builder::<Args>()
+    ///     .unwrap()
+    ///     .cli(|cli| cli.args(["--help"]))
+    ///     .help(|h| h
+    ///         .program_name("myapp")
+    ///         .version("1.2.3")
+    ///         .description("A helpful description"))
+    ///     .build();
+    ///
+    /// let result = Driver::new(config).run().into_result();
+    /// match result {
+    ///     Err(DriverError::Help { text }) => {
+    ///         assert!(text.contains("myapp"));
+    ///     }
+    ///     _ => panic!("expected help"),
+    /// }
+    /// ```
     pub fn help<F>(mut self, f: F) -> Self
     where
         F: FnOnce(HelpConfigBuilder) -> HelpConfigBuilder,
@@ -97,6 +278,40 @@ impl<T> ConfigBuilder<T> {
     }
 
     /// Configure environment variable parsing.
+    ///
+    /// Environment variables are parsed according to the schema's `args::env_prefix`
+    /// attribute. For example, with prefix "MYAPP" and a field `port`, the env var
+    /// `MYAPP__PORT` will be read.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use facet::Facet;
+    /// use figue::{self as args, builder, Driver, MockEnv};
+    ///
+    /// #[derive(Facet)]
+    /// struct Args {
+    ///     #[facet(args::config, args::env_prefix = "APP")]
+    ///     config: Config,
+    /// }
+    ///
+    /// #[derive(Facet)]
+    /// struct Config {
+    ///     #[facet(default = 8080)]
+    ///     port: u16,
+    /// }
+    ///
+    /// // Use MockEnv for testing (to avoid modifying real environment)
+    /// let config = builder::<Args>()
+    ///     .unwrap()
+    ///     .env(|env| env.source(MockEnv::from_pairs([
+    ///         ("APP__PORT", "9000"),
+    ///     ])))
+    ///     .build();
+    ///
+    /// let output = Driver::new(config).run().into_result().unwrap();
+    /// assert_eq!(output.value.config.port, 9000);
+    /// ```
     pub fn env<F>(mut self, f: F) -> Self
     where
         F: FnOnce(EnvConfigBuilder) -> EnvConfigBuilder,
@@ -106,6 +321,36 @@ impl<T> ConfigBuilder<T> {
     }
 
     /// Configure config file parsing.
+    ///
+    /// Load configuration from JSON, or other formats via the format registry.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use facet::Facet;
+    /// use figue::{self as args, builder, Driver};
+    ///
+    /// #[derive(Facet)]
+    /// struct Args {
+    ///     #[facet(args::config)]
+    ///     config: Config,
+    /// }
+    ///
+    /// #[derive(Facet)]
+    /// struct Config {
+    ///     #[facet(default = 8080)]
+    ///     port: u16,
+    /// }
+    ///
+    /// // Use inline content for testing (avoids file I/O)
+    /// let config = builder::<Args>()
+    ///     .unwrap()
+    ///     .file(|f| f.content(r#"{"port": 9000}"#, "config.json"))
+    ///     .build();
+    ///
+    /// let output = Driver::new(config).run().into_result().unwrap();
+    /// assert_eq!(output.value.config.port, 9000);
+    /// ```
     pub fn file<F>(mut self, f: F) -> Self
     where
         F: FnOnce(FileConfigBuilder) -> FileConfigBuilder,
@@ -114,12 +359,27 @@ impl<T> ConfigBuilder<T> {
         self
     }
 
-    /// Finalize the builder and return a Config for use with the Driver.
+    /// Finalize the builder and return a [`Config`] for use with [`Driver`](crate::Driver).
     ///
     /// After calling this, create a `Driver` and call `run()`:
-    /// ```ignore
-    /// let config = builder::<MyArgs>()?.cli(...).env(...).build();
-    /// let output = Driver::new(config).run().unwrap();
+    ///
+    /// ```rust
+    /// use facet::Facet;
+    /// use figue::{self as args, builder, Driver};
+    ///
+    /// #[derive(Facet)]
+    /// struct Args {
+    ///     #[facet(args::positional)]
+    ///     file: String,
+    /// }
+    ///
+    /// let config = builder::<Args>()
+    ///     .unwrap()
+    ///     .cli(|cli| cli.args(["input.txt"]))
+    ///     .build();
+    ///
+    /// let output = Driver::new(config).run().into_result().unwrap();
+    /// assert_eq!(output.value.file, "input.txt");
     /// ```
     pub fn build(self) -> Config<T> {
         Config {
@@ -137,7 +397,36 @@ impl<T> ConfigBuilder<T> {
 // Help Configuration
 // ============================================================================
 
-/// Builder for help configuration.
+/// Builder for help text configuration.
+///
+/// Configure how help and version information is displayed.
+///
+/// # Example
+///
+/// ```rust
+/// use facet::Facet;
+/// use figue::{self as args, builder, Driver, DriverError};
+///
+/// #[derive(Facet)]
+/// struct Args {
+///     #[facet(args::named, args::version, default)]
+///     version: bool,
+/// }
+///
+/// let config = builder::<Args>()
+///     .unwrap()
+///     .cli(|cli| cli.args(["--version"]))
+///     .help(|h| h.program_name("myapp").version("1.0.0"))
+///     .build();
+///
+/// let result = Driver::new(config).run().into_result();
+/// match result {
+///     Err(DriverError::Version { text }) => {
+///         assert!(text.contains("myapp 1.0.0"));
+///     }
+///     _ => panic!("expected version"),
+/// }
+/// ```
 #[derive(Debug, Default)]
 pub struct HelpConfigBuilder {
     config: HelpConfig,
@@ -149,7 +438,9 @@ impl HelpConfigBuilder {
         Self::default()
     }
 
-    /// Set the program name shown in help.
+    /// Set the program name shown in help and version output.
+    ///
+    /// If not set, defaults to the executable name from `std::env::args()`.
     pub fn program_name(mut self, name: impl Into<String>) -> Self {
         self.config.program_name = Some(name.into());
         self
@@ -159,8 +450,14 @@ impl HelpConfigBuilder {
     ///
     /// Use `env!("CARGO_PKG_VERSION")` to capture your crate's version:
     ///
-    /// ```rust,ignore
-    /// .help(|h| h.version(env!("CARGO_PKG_VERSION")))
+    /// ```rust,no_run
+    /// # use figue::builder;
+    /// # use facet::Facet;
+    /// # #[derive(Facet)] struct Args { #[facet(figue::positional)] f: String }
+    /// let config = builder::<Args>()
+    ///     .unwrap()
+    ///     .help(|h| h.version(env!("CARGO_PKG_VERSION")))
+    ///     .build();
     /// ```
     ///
     /// If not set, `--version` will display "unknown".
@@ -169,13 +466,18 @@ impl HelpConfigBuilder {
         self
     }
 
-    /// Set an additional description shown after the auto-generated one.
+    /// Set an additional description shown after the auto-generated help.
+    ///
+    /// This appears below the program name and doc comment, useful for
+    /// additional context or examples.
     pub fn description(mut self, description: impl Into<String>) -> Self {
         self.config.description = Some(description.into());
         self
     }
 
-    /// Set the text wrapping width (0 = no wrapping).
+    /// Set the text wrapping width for help output.
+    ///
+    /// Set to 0 to disable wrapping. Default is 80 columns.
     pub fn width(mut self, width: usize) -> Self {
         self.config.width = width;
         self
@@ -191,7 +493,40 @@ impl HelpConfigBuilder {
 // File Configuration Builder
 // ============================================================================
 
-/// Builder for file configuration.
+/// Builder for config file parsing configuration.
+///
+/// Configure how configuration files are loaded and parsed.
+///
+/// # Example
+///
+/// ```rust
+/// use facet::Facet;
+/// use figue::{self as args, builder, Driver};
+///
+/// #[derive(Facet)]
+/// struct Args {
+///     #[facet(args::config)]
+///     config: Config,
+/// }
+///
+/// #[derive(Facet)]
+/// struct Config {
+///     #[facet(default = "localhost")]
+///     host: String,
+///     #[facet(default = 8080)]
+///     port: u16,
+/// }
+///
+/// // Load from inline JSON (useful for testing)
+/// let config = builder::<Args>()
+///     .unwrap()
+///     .file(|f| f.content(r#"{"host": "0.0.0.0", "port": 3000}"#, "config.json"))
+///     .build();
+///
+/// let output = Driver::new(config).run().into_result().unwrap();
+/// assert_eq!(output.value.config.host, "0.0.0.0");
+/// assert_eq!(output.value.config.port, 3000);
+/// ```
 #[derive(Default)]
 pub struct FileConfigBuilder {
     config: FileConfig,
@@ -206,6 +541,9 @@ impl FileConfigBuilder {
     }
 
     /// Set an explicit config file path.
+    ///
+    /// This path takes priority over default paths. Use when the user
+    /// specifies a config file via CLI (e.g., `--config path/to/config.json`).
     pub fn path(mut self, path: impl Into<Utf8PathBuf>) -> Self {
         self.config.explicit_path = Some(path.into());
         self
@@ -214,6 +552,24 @@ impl FileConfigBuilder {
     /// Set default paths to check for config files.
     ///
     /// These are checked in order; the first existing file is used.
+    /// Common patterns include `./config.json`, `~/.config/app/config.json`, etc.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use figue::builder;
+    /// # use facet::Facet;
+    /// # #[derive(Facet)] struct Args { #[facet(figue::config)] config: Config }
+    /// # #[derive(Facet)] struct Config { #[facet(default = 0)] port: u16 }
+    /// let config = builder::<Args>()
+    ///     .unwrap()
+    ///     .file(|f| f.default_paths([
+    ///         "./config.json",
+    ///         "~/.config/myapp/config.json",
+    ///         "/etc/myapp/config.json",
+    ///     ]))
+    ///     .build();
+    /// ```
     pub fn default_paths<I, P>(mut self, paths: I) -> Self
     where
         I: IntoIterator<Item = P>,
@@ -224,12 +580,18 @@ impl FileConfigBuilder {
     }
 
     /// Register an additional config file format.
+    ///
+    /// By default, JSON is supported. Use this to add TOML, YAML, or custom formats.
+    /// See [`ConfigFormat`](crate::ConfigFormat) for implementing custom formats.
     pub fn format<F: ConfigFormat + 'static>(mut self, format: F) -> Self {
         self.config.registry.register(format);
         self
     }
 
     /// Enable strict mode - error on unknown keys in config file.
+    ///
+    /// By default, unknown keys are ignored. In strict mode, any key in the
+    /// config file that doesn't match a schema field causes an error.
     pub fn strict(mut self) -> Self {
         self.config.strict = true;
         self
@@ -238,6 +600,34 @@ impl FileConfigBuilder {
     /// Set inline content for testing (avoids disk I/O).
     ///
     /// The filename is used for format detection (e.g., "config.toml" or "settings.json").
+    /// This is useful for unit tests that don't want to create actual files.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use facet::Facet;
+    /// use figue::{self as args, builder, Driver};
+    ///
+    /// #[derive(Facet)]
+    /// struct Args {
+    ///     #[facet(args::config)]
+    ///     config: Config,
+    /// }
+    ///
+    /// #[derive(Facet)]
+    /// struct Config {
+    ///     #[facet(default = 8080)]
+    ///     port: u16,
+    /// }
+    ///
+    /// let config = builder::<Args>()
+    ///     .unwrap()
+    ///     .file(|f| f.content(r#"{"port": 9000}"#, "test.json"))
+    ///     .build();
+    ///
+    /// let output = Driver::new(config).run().into_result().unwrap();
+    /// assert_eq!(output.value.config.port, 9000);
+    /// ```
     pub fn content(mut self, content: impl Into<String>, filename: impl Into<String>) -> Self {
         self.config.inline_content = Some((content.into(), filename.into()));
         self
@@ -253,22 +643,50 @@ impl FileConfigBuilder {
 // Errors
 // ============================================================================
 
+/// Errors that can occur when building configuration.
+///
+/// These errors happen during the setup phase, before actual parsing begins.
+/// They typically indicate problems with the schema definition or file loading.
 #[derive(Facet)]
 #[repr(u8)]
 pub enum BuilderError {
+    /// Schema validation failed.
+    ///
+    /// The type definition has errors, such as missing required attributes
+    /// or invalid combinations of attributes.
     SchemaError(#[facet(opaque)] SchemaError),
+
+    /// Memory allocation failed when preparing the destination type.
     Alloc(#[facet(opaque)] ReflectError),
+
+    /// Config file was not found at the specified path.
     FileNotFound {
+        /// The path that was checked.
         path: Utf8PathBuf,
     },
+
+    /// Failed to read the config file.
     FileRead(Utf8PathBuf, String),
+
+    /// Failed to parse the config file content.
     FileParse(Utf8PathBuf, ConfigFormatError),
+
+    /// CLI argument parsing failed.
     CliParse(String),
+
+    /// An unknown key was found in configuration.
+    ///
+    /// Only reported in strict mode.
     UnknownKey {
+        /// The unknown key.
         key: String,
+        /// Where the key came from (e.g., "config file", "environment").
         source: &'static str,
+        /// A suggested correction if the key appears to be a typo.
         suggestion: Option<String>,
     },
+
+    /// A required field was not provided.
     MissingRequired(String),
 }
 

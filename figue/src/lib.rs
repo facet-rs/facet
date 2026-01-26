@@ -1,7 +1,154 @@
 #![warn(missing_docs)]
 #![deny(unsafe_code)]
 // Allow deprecated during transition to new driver-based API
-#![doc = include_str!("../README.md")]
+//! # figue - Layered Configuration for Rust
+//!
+//! figue provides type-safe, layered configuration parsing with support for:
+//! - **CLI arguments** - Standard command-line argument parsing
+//! - **Environment variables** - Configure apps via environment
+//! - **Config files** - JSON, and more formats via plugins
+//! - **Defaults from code** - Compile-time defaults
+//!
+//! Built on [facet](https://docs.rs/facet) reflection, figue uses derive macros
+//! to generate parsers at compile time with zero runtime reflection overhead.
+//!
+//! ## Quick Start
+//!
+//! For simple CLI-only parsing, use [`from_slice`] or [`from_std_args`]:
+//!
+//! ```rust
+//! use facet::Facet;
+//! use figue::{self as args, FigueBuiltins};
+//!
+//! #[derive(Facet, Debug)]
+//! struct Args {
+//!     /// Enable verbose output
+//!     #[facet(args::named, args::short = 'v', default)]
+//!     verbose: bool,
+//!
+//!     /// Input file to process
+//!     #[facet(args::positional)]
+//!     input: String,
+//!
+//!     /// Standard CLI options (--help, --version, --completions)
+//!     #[facet(flatten)]
+//!     builtins: FigueBuiltins,
+//! }
+//!
+//! // Parse from a slice (useful for testing)
+//! let args: Args = figue::from_slice(&["--verbose", "input.txt"]).unwrap();
+//! assert!(args.verbose);
+//! assert_eq!(args.input, "input.txt");
+//! ```
+//!
+//! ## Layered Configuration
+//!
+//! For applications that need config files and environment variables, use the
+//! [`builder`] API with [`Driver`]:
+//!
+//! ```rust
+//! use facet::Facet;
+//! use figue::{self as args, builder, Driver};
+//!
+//! #[derive(Facet, Debug)]
+//! struct Args {
+//!     /// Application configuration
+//!     #[facet(args::config, args::env_prefix = "MYAPP")]
+//!     config: AppConfig,
+//! }
+//!
+//! #[derive(Facet, Debug)]
+//! struct AppConfig {
+//!     /// Server port
+//!     #[facet(default = 8080)]
+//!     port: u16,
+//!
+//!     /// Server host
+//!     #[facet(default = "localhost")]
+//!     host: String,
+//! }
+//!
+//! // Build layered configuration
+//! let config = builder::<Args>()
+//!     .unwrap()
+//!     .cli(|cli| cli.args(["--config.port", "3000"]))
+//!     .build();
+//!
+//! let output = Driver::new(config).run().into_result().unwrap();
+//! assert_eq!(output.value.config.port, 3000);
+//! assert_eq!(output.value.config.host, "localhost"); // from default
+//! ```
+//!
+//! ## Subcommands
+//!
+//! figue supports subcommands via enum types:
+//!
+//! ```rust
+//! use facet::Facet;
+//! use figue::{self as args, FigueBuiltins};
+//!
+//! #[derive(Facet, Debug)]
+//! struct Cli {
+//!     #[facet(args::subcommand)]
+//!     command: Command,
+//!
+//!     #[facet(flatten)]
+//!     builtins: FigueBuiltins,
+//! }
+//!
+//! #[derive(Facet, Debug)]
+//! #[repr(u8)]
+//! enum Command {
+//!     /// Build the project
+//!     Build {
+//!         /// Build in release mode
+//!         #[facet(args::named, args::short = 'r')]
+//!         release: bool,
+//!     },
+//!     /// Run the project
+//!     Run {
+//!         /// Arguments to pass through
+//!         #[facet(args::positional)]
+//!         args: Vec<String>,
+//!     },
+//! }
+//!
+//! let cli: Cli = figue::from_slice(&["build", "--release"]).unwrap();
+//! match cli.command {
+//!     Command::Build { release } => assert!(release),
+//!     Command::Run { .. } => unreachable!(),
+//! }
+//! ```
+//!
+//! ## Attribute Reference
+//!
+//! figue uses `#[facet(...)]` attributes to configure parsing behavior:
+//!
+//! | Attribute | Description |
+//! |-----------|-------------|
+//! | `args::positional` | Mark field as positional argument |
+//! | `args::named` | Mark field as named flag (--flag) |
+//! | `args::short = 'x'` | Add short flag (-x) |
+//! | `args::counted` | Count occurrences (-vvv = 3) |
+//! | `args::subcommand` | Mark field as subcommand selector |
+//! | `args::config` | Mark field as layered config struct |
+//! | `args::env_prefix = "X"` | Set env var prefix for config |
+//! | `args::help` | Mark as help flag (exits with code 0) |
+//! | `args::version` | Mark as version flag (exits with code 0) |
+//! | `args::completions` | Mark as shell completions flag |
+//! | `flatten` | Flatten nested struct fields |
+//! | `default` / `default = x` | Provide default value |
+//! | `rename = "x"` | Rename field in CLI/config |
+//! | `sensitive` | Redact field in debug output |
+//!
+//! ## Entry Points
+//!
+//! - [`from_std_args`] - Parse from `std::env::args()` (CLI-only)
+//! - [`from_slice`] - Parse from a string slice (CLI-only, good for testing)
+//! - [`builder`] - Start building layered configuration (CLI + env + files)
+//!
+//! For most CLI applications, start with [`FigueBuiltins`] flattened into your
+//! args struct to get `--help`, `--version`, and `--completions` for free.
 
 extern crate self as figue;
 
@@ -62,15 +209,28 @@ pub use layers::file::FormatRegistry;
 /// Parse command-line arguments from `std::env::args()`.
 ///
 /// This is a convenience function for CLI-only parsing (no env vars, no config files).
-/// For layered configuration, use `builder()` instead.
+/// For layered configuration, use [`builder`] instead.
+///
+/// Returns a [`DriverOutcome`] which handles `--help`, `--version`, and errors gracefully.
+/// Use `.unwrap()` for automatic exit handling, or `.into_result()` for manual control.
 ///
 /// # Example
 ///
-/// ```ignore
-/// fn main() {
-///     let args = figue::from_std_args::<Args>().unwrap();
-///     // use args...
+/// ```rust,no_run
+/// use facet::Facet;
+/// use figue::{self as args, FigueBuiltins};
+///
+/// #[derive(Facet)]
+/// struct Args {
+///     #[facet(args::positional)]
+///     input: String,
+///
+///     #[facet(flatten)]
+///     builtins: FigueBuiltins,
 /// }
+///
+/// let args: Args = figue::from_std_args().unwrap();
+/// println!("Processing: {}", args.input);
 /// ```
 pub fn from_std_args<T: Facet<'static>>() -> driver::DriverOutcome<T> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -81,16 +241,52 @@ pub fn from_std_args<T: Facet<'static>>() -> driver::DriverOutcome<T> {
 /// Parse command-line arguments from a slice.
 ///
 /// This is a convenience function for CLI-only parsing (no env vars, no config files).
-/// For layered configuration, use `builder()` instead.
+/// For layered configuration, use [`builder`] instead.
+///
+/// This function is particularly useful for testing, as you can provide arguments
+/// directly without modifying `std::env::args()`.
 ///
 /// # Example
 ///
-/// ```ignore
-/// fn main() {
-///     let args = figue::from_slice::<Args>(&["--verbose", "input.txt"]).unwrap();
-///     // use args...
+/// ```rust
+/// use facet::Facet;
+/// use figue::{self as args, FigueBuiltins};
+///
+/// #[derive(Facet, Debug)]
+/// struct Args {
+///     /// Enable verbose mode
+///     #[facet(args::named, args::short = 'v', default)]
+///     verbose: bool,
+///
+///     /// Input file
+///     #[facet(args::positional)]
+///     input: String,
+///
+///     #[facet(flatten)]
+///     builtins: FigueBuiltins,
 /// }
+///
+/// // Parse with long flag
+/// let args: Args = figue::from_slice(&["--verbose", "file.txt"]).unwrap();
+/// assert!(args.verbose);
+/// assert_eq!(args.input, "file.txt");
+///
+/// // Parse with short flag
+/// let args: Args = figue::from_slice(&["-v", "file.txt"]).unwrap();
+/// assert!(args.verbose);
+///
+/// // Parse without optional flag
+/// let args: Args = figue::from_slice(&["file.txt"]).unwrap();
+/// assert!(!args.verbose);
 /// ```
+///
+/// # Errors
+///
+/// Returns an error (via [`DriverOutcome`]) if:
+/// - Required arguments are missing
+/// - Unknown flags are provided
+/// - Type conversion fails (e.g., "abc" for a number)
+/// - `--help`, `--version`, or `--completions` is requested (success exit)
 pub fn from_slice<T: Facet<'static>>(args: &[&str]) -> driver::DriverOutcome<T> {
     use crate::driver::{Driver, DriverError, DriverOutcome};
 
@@ -109,11 +305,11 @@ pub fn from_slice<T: Facet<'static>>(args: &[&str]) -> driver::DriverOutcome<T> 
 /// This provides the standard `--help`, `--version`, and `--completions` flags
 /// that most CLI applications need. Flatten it into your Args struct:
 ///
-/// ```rust,ignore
+/// ```rust
 /// use figue::{self as args, FigueBuiltins};
 /// use facet::Facet;
 ///
-/// #[derive(Facet)]
+/// #[derive(Facet, Debug)]
 /// struct Args {
 ///     /// Your actual arguments
 ///     #[facet(args::positional)]
@@ -123,6 +319,12 @@ pub fn from_slice<T: Facet<'static>>(args: &[&str]) -> driver::DriverOutcome<T> 
 ///     #[facet(flatten)]
 ///     builtins: FigueBuiltins,
 /// }
+///
+/// // The builtins are automatically available
+/// let args: Args = figue::from_slice(&["myfile.txt"]).unwrap();
+/// assert_eq!(args.input, "myfile.txt");
+/// assert!(!args.builtins.help);
+/// assert!(!args.builtins.version);
 /// ```
 ///
 /// The driver automatically handles these fields:
@@ -136,23 +338,60 @@ pub fn from_slice<T: Facet<'static>>(args: &[&str]) -> driver::DriverOutcome<T> 
 /// capture your crate's version at compile time. To display your crate's version,
 /// configure it via the builder:
 ///
-/// ```rust,ignore
-/// fn main() {
-///     let args = figue::builder::<Args>()
-///         .unwrap()
-///         .cli(|cli| cli.args(std::env::args().skip(1)))
-///         .help(|h| h
-///             .program_name(env!("CARGO_PKG_NAME"))
-///             .version(env!("CARGO_PKG_VERSION")))
-///         .build();
+/// ```rust,no_run
+/// use figue::{self as args, builder, Driver, FigueBuiltins};
+/// use facet::Facet;
 ///
-///     let args = figue::Driver::new(args).run().unwrap();
-///     // use args...
+/// #[derive(Facet)]
+/// struct Args {
+///     #[facet(args::positional)]
+///     input: String,
+///
+///     #[facet(flatten)]
+///     builtins: FigueBuiltins,
 /// }
+///
+/// let config = figue::builder::<Args>()
+///     .unwrap()
+///     .cli(|cli| cli.args(std::env::args().skip(1)))
+///     .help(|h| h
+///         .program_name(env!("CARGO_PKG_NAME"))
+///         .version(env!("CARGO_PKG_VERSION")))
+///     .build();
+///
+/// let args: Args = figue::Driver::new(config).run().unwrap();
+/// // use args...
 /// ```
 ///
 /// The `env!("CARGO_PKG_VERSION")` macro is evaluated at *your* crate's compile time,
 /// capturing the correct version from your `Cargo.toml`.
+///
+/// # Handling Help and Version Manually
+///
+/// If you need to handle these cases yourself (e.g., for custom formatting),
+/// use `into_result()` instead of `unwrap()`:
+///
+/// ```rust
+/// use figue::{self as args, FigueBuiltins, DriverError};
+/// use facet::Facet;
+///
+/// #[derive(Facet)]
+/// struct Args {
+///     #[facet(args::positional, default)]
+///     input: Option<String>,
+///
+///     #[facet(flatten)]
+///     builtins: FigueBuiltins,
+/// }
+///
+/// let result = figue::from_slice::<Args>(&["--help"]).into_result();
+/// match result {
+///     Err(DriverError::Help { text }) => {
+///         assert!(text.contains("--help"));
+///     }
+///     _ => panic!("expected help"),
+/// }
+/// ```
 #[derive(facet::Facet, Default, Debug)]
 pub struct FigueBuiltins {
     /// Show help message and exit.
