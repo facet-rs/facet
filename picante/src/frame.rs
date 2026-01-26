@@ -84,6 +84,21 @@ where
     }
 }
 
+/// Run a boxed future with a task-local query stack, creating one if needed.
+///
+/// This variant accepts a pre-boxed future to avoid monomorphization overhead.
+/// Use this instead of [`scope_if_needed`] in generic contexts where each call
+/// site would otherwise create a unique monomorphization.
+pub async fn scope_if_needed_boxed<R>(
+    fut: std::pin::Pin<Box<dyn Future<Output = R> + Send + '_>>,
+) -> R {
+    if ACTIVE_STACK.try_with(|_| ()).is_ok() {
+        fut.await
+    } else {
+        ACTIVE_STACK.scope(RefCell::new(Vec::new()), fut).await
+    }
+}
+
 /// Returns `true` if there is a current query frame.
 pub fn has_active_frame() -> bool {
     ACTIVE_STACK

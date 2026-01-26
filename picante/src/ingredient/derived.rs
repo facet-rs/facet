@@ -886,6 +886,33 @@ impl DerivedCore {
 
         Ok(())
     }
+
+    /// Restore runtime state from loaded cells (non-generic, compiled once).
+    ///
+    /// This method only accesses `self.cells` and `ErasedState`, not K or V,
+    /// so it doesn't need to be generic. Factoring it out avoids monomorphization.
+    async fn restore_runtime_state_inner(
+        &self,
+        runtime: &crate::runtime::Runtime,
+    ) -> PicanteResult<()> {
+        // Collect snapshot under lock, then release before async work
+        let snapshot: Vec<(DynKey, Arc<ErasedCell>)> = {
+            let cells = self.cells.read();
+            cells.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+        };
+
+        for (dyn_key, cell) in snapshot {
+            let state = cell.state.lock().await;
+            let ErasedState::Ready { deps, .. } = &*state else {
+                continue;
+            };
+
+            runtime.update_query_deps(dyn_key, deps.clone());
+        }
+
+        debug!(kind = self.kind.0, "restore_runtime_state (derived)");
+        Ok(())
+    }
 }
 
 // ============================================================================
@@ -1200,18 +1227,14 @@ where
         };
 
         // Ensure we have a task-local query stack (required for cycle detection + dep tracking).
-        let result = frame::scope_if_needed(|| async {
-            // Call type-erased core with trait object (dyn dispatch)
-            self.core
-                .access_scoped_erased(
-                    db,
-                    dyn_key.clone(),
-                    true,
-                    self.compute.as_ref(),
-                    self.eq_erased,
-                )
-                .await
-        })
+        // Use scope_if_needed_boxed to avoid monomorphization per (DB, K, V).
+        let result = frame::scope_if_needed_boxed(Box::pin(self.core.access_scoped_erased(
+            db,
+            dyn_key.clone(),
+            true,
+            self.compute.as_ref(),
+            self.eq_erased,
+        )))
         .await?;
 
         // Downcast at the boundary - MUST succeed due to type safety
@@ -1249,11 +1272,14 @@ where
 
         // Ensure we have a task-local query stack (required for cycle detection + dep tracking).
         // Note: touch may still compute/revalidate; it just doesn't return the value to the caller.
-        let result = frame::scope_if_needed(|| async {
-            self.core
-                .access_scoped_erased(db, dyn_key, false, self.compute.as_ref(), self.eq_erased)
-                .await
-        })
+        // Use scope_if_needed_boxed to avoid monomorphization per (DB, K, V).
+        let result = frame::scope_if_needed_boxed(Box::pin(self.core.access_scoped_erased(
+            db,
+            dyn_key,
+            false,
+            self.compute.as_ref(),
+            self.eq_erased,
+        )))
         .await?;
 
         Ok(result.changed_at)
@@ -1544,25 +1570,8 @@ where
         &'a self,
         runtime: &'a crate::runtime::Runtime,
     ) -> BoxFuture<'a, PicanteResult<()>> {
-        Box::pin(async move {
-            // Collect snapshot under lock, then release before async work
-            let snapshot: Vec<(DynKey, Arc<ErasedCell>)> = {
-                let cells = self.core.cells.read();
-                cells.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
-            };
-
-            for (dyn_key, cell) in snapshot {
-                let state = cell.state.lock().await;
-                let ErasedState::Ready { deps, .. } = &*state else {
-                    continue;
-                };
-
-                runtime.update_query_deps(dyn_key, deps.clone());
-            }
-
-            debug!(kind = self.core.kind.0, "restore_runtime_state (derived)");
-            Ok(())
-        })
+        // Delegate to non-generic helper (compiled once, not per K/V)
+        Box::pin(self.core.restore_runtime_state_inner(runtime))
     }
 
     fn save_incremental_records(
