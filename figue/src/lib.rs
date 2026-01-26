@@ -36,6 +36,7 @@ pub(crate) mod reflection;
 pub(crate) mod schema;
 pub(crate) mod span;
 pub(crate) mod span_registry;
+pub(crate) mod suggest;
 pub(crate) mod value_builder;
 
 use facet_core::Facet;

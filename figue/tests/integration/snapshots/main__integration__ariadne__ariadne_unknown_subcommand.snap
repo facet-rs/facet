@@ -1,11 +1,11 @@
 ---
-source: tests/integration/ariadne.rs
+source: crates/figue/tests/integration/ariadne.rs
 expression: ariadne_output
 ---
-Error: unexpected argument: buidl
+Error: unexpected argument: buidl. Did you mean 'build'?
    ╭─[ <cli>:1:1 ]
    │
  1 │ buidl
    │ ──┬──  
-   │   ╰──── unexpected argument: buidl
+   │   ╰──── unexpected argument: buidl. Did you mean 'build'?
 ───╯

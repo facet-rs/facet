@@ -1,5 +1,5 @@
 ---
-source: tests/integration/subcommand.rs
+source: crates/figue/tests/integration/subcommand.rs
 expression: "$crate :: common :: strip_ansi(& err.to_string())"
 ---
 Error: unknown flag: --action
@@ -9,10 +9,10 @@ Error: unknown flag: --action
    │    ────┬───  
    │        ╰───── unknown flag: --action
 ───╯
-Error: unexpected argument: gen
+Error: unexpected argument: gen. Did you mean 'generate'?
    ╭─[ <cli>:1:13 ]
    │
  1 │ ci --action gen
    │             ─┬─  
-   │              ╰─── unexpected argument: gen
+   │              ╰─── unexpected argument: gen. Did you mean 'generate'?
 ───╯
