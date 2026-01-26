@@ -39,6 +39,7 @@ use crate::config_value::{ConfigValue, EnumValue, Sourced};
 use crate::driver::{Diagnostic, LayerOutput, Severity};
 use crate::provenance::Provenance;
 use crate::schema::{ArgKind, ArgLevelSchema, ArgSchema, Schema, Subcommand};
+use crate::value_builder::{LeafValue, ValueBuilder};
 
 // ============================================================================
 // CliConfig
@@ -185,6 +186,9 @@ struct ParseContext<'a> {
     /// Stack of parent levels for the adoption agency algorithm.
     /// When parsing a subcommand, parent levels are pushed here so flags can bubble up.
     parent_stack: Vec<ParentLevel<'a>>,
+    /// ValueBuilder for config overrides (--config.foo.bar style).
+    /// Only present if the schema has a config field.
+    config_builder: Option<ValueBuilder<'a>>,
 }
 
 impl<'a> ParseContext<'a> {
@@ -202,6 +206,8 @@ impl<'a> ParseContext<'a> {
             }
         }
 
+        let config_builder = schema.config().map(ValueBuilder::new);
+
         Self {
             args,
             index: 0,
@@ -212,6 +218,7 @@ impl<'a> ParseContext<'a> {
             counted: IndexMap::default(),
             arg_offsets,
             parent_stack: Vec::new(),
+            config_builder,
         }
     }
 
@@ -565,8 +572,8 @@ impl<'a> ParseContext<'a> {
         config_field_name: &str,
     ) {
         // Extract the path after "config."
-        let path = &flag_name[config_field_name.len() + 1..];
-        let parts: Vec<&str> = path.split('.').collect();
+        let path_str = &flag_name[config_field_name.len() + 1..];
+        let parts: Vec<&str> = path_str.split('.').collect();
 
         // Get the value
         let flag_span = self.current_span(); // Save span before incrementing
@@ -590,28 +597,14 @@ impl<'a> ParseContext<'a> {
         };
 
         let prov_arg = format!("--{}", flag_name);
-        let value = self.parse_value_string(value_str, &prov_arg, value_span);
+        let provenance = Provenance::cli(&prov_arg, value_str);
+        let path: Vec<String> = parts.iter().map(|s| (*s).to_string()).collect();
+        let leaf_value = LeafValue::String(value_str.to_string());
 
-        // Insert into nested config structure
-        self.insert_config_value(config_field_name, &parts, value);
-    }
-
-    fn insert_config_value(&mut self, config_field_name: &str, path: &[&str], value: ConfigValue) {
-        // Get or create the config object
-        let config_obj = self
-            .result
-            .entry(config_field_name.to_string())
-            .or_insert_with(|| {
-                ConfigValue::Object(Sourced {
-                    value: IndexMap::default(),
-                    span: None,
-                    provenance: None,
-                })
-            });
-
-        if let ConfigValue::Object(sourced) = config_obj {
-            insert_nested(&mut sourced.value, path, value);
-        }
+        self.config_builder
+            .as_mut()
+            .expect("config_builder must exist when parsing config overrides")
+            .set(&path, leaf_value, Some(value_span), provenance);
     }
 
     fn try_parse_subcommand(&mut self, level: &'a ArgLevelSchema) -> bool {
@@ -883,7 +876,28 @@ impl<'a> ParseContext<'a> {
         });
     }
 
-    fn into_output(self) -> LayerOutput {
+    fn into_output(mut self) -> LayerOutput {
+        // Merge config builder output if present
+        let mut unused_keys = Vec::new();
+        let mut diagnostics = self.diagnostics;
+
+        if let Some(builder) = self.config_builder {
+            if let Some(config_schema) = self.schema.config() {
+                let config_field_name = config_schema.field_name();
+                let builder_output = builder.into_output(None);
+
+                // Merge builder's value into result under the config field name
+                if let Some(config_value) = builder_output.value {
+                    if let Some(name) = config_field_name {
+                        self.result.insert(name.to_string(), config_value);
+                    }
+                }
+
+                unused_keys.extend(builder_output.unused_keys);
+                diagnostics.extend(builder_output.diagnostics);
+            }
+        }
+
         let value = if self.result.is_empty() {
             Some(ConfigValue::Object(Sourced {
                 value: IndexMap::default(),
@@ -900,66 +914,9 @@ impl<'a> ParseContext<'a> {
 
         LayerOutput {
             value,
-            unused_keys: Vec::new(),
-            diagnostics: self.diagnostics,
+            unused_keys,
+            diagnostics,
         }
-    }
-}
-
-/// Insert a value at a nested path in an IndexMap.
-/// If the path already has a value, accumulates into an array.
-fn insert_nested(
-    map: &mut IndexMap<String, ConfigValue, RandomState>,
-    path: &[&str],
-    value: ConfigValue,
-) {
-    if path.is_empty() {
-        return;
-    }
-
-    if path.len() == 1 {
-        let key = path[0].to_string();
-        // Check if there's already a value at this path
-        if let Some(existing) = map.get_mut(&key) {
-            // Accumulate into an array
-            match existing {
-                ConfigValue::Array(arr) => {
-                    // Already an array, push the new value
-                    arr.value.push(value);
-                }
-                _ => {
-                    // Convert existing scalar to array with both values
-                    let old_value = std::mem::replace(
-                        existing,
-                        ConfigValue::Array(Sourced {
-                            value: Vec::new(),
-                            span: None,
-                            provenance: None,
-                        }),
-                    );
-                    if let ConfigValue::Array(arr) = existing {
-                        arr.value.push(old_value);
-                        arr.value.push(value);
-                    }
-                }
-            }
-        } else {
-            map.insert(key, value);
-        }
-        return;
-    }
-
-    let key = path[0].to_string();
-    let entry = map.entry(key).or_insert_with(|| {
-        ConfigValue::Object(Sourced {
-            value: IndexMap::default(),
-            span: None,
-            provenance: None,
-        })
-    });
-
-    if let ConfigValue::Object(sourced) = entry {
-        insert_nested(&mut sourced.value, &path[1..], value);
     }
 }
 
@@ -1392,39 +1349,28 @@ mod tests {
 
     #[test]
     fn test_config_override_with_flattened_struct() {
-        // CLI config overrides use the full path to the target location.
-        // Even though the schema has `log_level` as a flattened field,
-        // the CLI override uses --config.common.log_level to specify
-        // the actual nested path where the value will be stored.
+        // Flattened fields are accessed directly without the wrapper field name.
+        // Since `common` is flattened, `log_level` appears at the top level of the config.
         assert_parses_to::<ArgsWithFlattenedConfigCli>(
-            &["--config.common.log_level", "debug"],
+            &["--config.log_level", "debug"],
             cv::object([(
                 "config",
-                cv::object([(
-                    "common",
-                    cv::object([(
-                        "log_level",
-                        cv::string("debug", "--config.common.log_level"),
-                    )]),
-                )]),
+                cv::object([("log_level", cv::string("debug", "--config.log_level"))]),
             )]),
         );
     }
 
     #[test]
     fn test_config_override_flattened_and_regular_fields() {
-        // Mix of regular (port) and flattened (common.debug) fields
-        // Note: CLI config overrides parse values as strings; type coercion happens at deserialization
+        // Mix of regular (port) and flattened (debug) fields.
+        // Since `common` is flattened, its fields appear directly in the config.
         assert_parses_to::<ArgsWithFlattenedConfigCli>(
-            &["--config.port", "8080", "--config.common.debug", "true"],
+            &["--config.port", "8080", "--config.debug", "true"],
             cv::object([(
                 "config",
                 cv::object([
                     ("port", cv::string("8080", "--config.port")),
-                    (
-                        "common",
-                        cv::object([("debug", cv::string("true", "--config.common.debug"))]),
-                    ),
+                    ("debug", cv::string("true", "--config.debug")),
                 ]),
             )]),
         );
