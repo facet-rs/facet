@@ -939,6 +939,38 @@ impl DerivedCore {
         })
     }
 
+    /// Get a value using an already-encoded DynKey (non-generic over K/V, compiled once per DB).
+    ///
+    /// Returns a `BoxFuture` to avoid creating another async block at the call site.
+    /// The caller is responsible for downcasting the result.
+    fn get_erased<'a, DB>(
+        &'a self,
+        db: &'a DB,
+        dyn_key: DynKey,
+        compute: &'a dyn ErasedCompute<DB>,
+        eq_erased: EqErasedFn,
+    ) -> BoxFuture<'a, PicanteResult<ArcAny>>
+    where
+        DB: IngredientLookup + Send + Sync + 'static,
+    {
+        Box::pin(async move {
+            let result = frame::scope_if_needed_boxed(Box::pin(self.access_scoped_erased(
+                db,
+                dyn_key.clone(),
+                true,
+                compute,
+                eq_erased,
+            )))
+            .await?;
+
+            result.value.ok_or_else(|| {
+                Arc::new(PicanteError::Panic {
+                    message: format!("[BUG] expected value but got None for key {:?}", dyn_key),
+                })
+            })
+        })
+    }
+
     /// Create a deep snapshot of cells (non-generic, compiled once).
     ///
     /// This is functionally equivalent to `DerivedIngredient::snapshot_cells_deep`
@@ -1290,23 +1322,11 @@ where
             key: Key::encode_facet(&key)?,
         };
 
-        // Ensure we have a task-local query stack (required for cycle detection + dep tracking).
-        // Use scope_if_needed_boxed to avoid monomorphization per (DB, K, V).
-        let result = frame::scope_if_needed_boxed(Box::pin(self.core.access_scoped_erased(
-            db,
-            dyn_key.clone(),
-            true,
-            self.compute.as_ref(),
-            self.eq_erased,
-        )))
-        .await?;
-
-        // Downcast at the boundary - MUST succeed due to type safety
-        let arc_any = result.value.ok_or_else(|| {
-            Arc::new(PicanteError::Panic {
-                message: format!("[BUG] expected value but got None for key {:?}", dyn_key),
-            })
-        })?;
+        // Use the type-erased get helper (compiled once per DB, not per K/V)
+        let arc_any = self
+            .core
+            .get_erased(db, dyn_key, self.compute.as_ref(), self.eq_erased)
+            .await?;
 
         // Downcast Arc<dyn Any> → Arc<V>
         let arc_v = arc_any.downcast::<V>().map_err(|any| {
@@ -1334,19 +1354,13 @@ where
             key: Key::encode_facet(&key)?,
         };
 
-        // Ensure we have a task-local query stack (required for cycle detection + dep tracking).
-        // Note: touch may still compute/revalidate; it just doesn't return the value to the caller.
-        // Use scope_if_needed_boxed to avoid monomorphization per (DB, K, V).
-        let result = frame::scope_if_needed_boxed(Box::pin(self.core.access_scoped_erased(
-            db,
-            dyn_key,
-            false,
-            self.compute.as_ref(),
-            self.eq_erased,
-        )))
-        .await?;
+        // Use the type-erased touch helper (compiled once per DB, not per K/V)
+        let touch = self
+            .core
+            .touch_erased(db, dyn_key, self.compute.as_ref(), self.eq_erased)
+            .await?;
 
-        Ok(result.changed_at)
+        Ok(touch.changed_at)
     }
 
     /// Create a snapshot of this ingredient's cells.
