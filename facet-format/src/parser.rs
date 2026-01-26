@@ -15,7 +15,7 @@ pub trait ProbeStream<'de> {
 /// Streaming parser for a specific wire format.
 pub trait FormatParser<'de> {
     /// Parser-specific error type.
-    type Error;
+    type Error: core::fmt::Debug;
 
     /// Evidence cursor type produced by [`FormatParser::begin_probe`].
     type Probe<'a>: ProbeStream<'de, Error = Self::Error>

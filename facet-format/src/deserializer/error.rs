@@ -76,6 +76,8 @@ pub enum InnerDeserializeError {
         /// What was expected before EOF.
         expected: &'static str,
     },
+    /// Parser error (stored as formatted string since we don't know the type).
+    Parser(String),
 }
 
 impl InnerDeserializeError {
@@ -132,6 +134,9 @@ impl InnerDeserializeError {
             },
             InnerDeserializeError::UnexpectedEof { expected } => {
                 DeserializeError::UnexpectedEof { expected }
+            }
+            InnerDeserializeError::Parser(msg) => {
+                DeserializeError::Unsupported(format!("parser error: {msg}"))
             }
         }
     }
@@ -190,6 +195,9 @@ impl fmt::Display for InnerDeserializeError {
             }
             InnerDeserializeError::UnexpectedEof { expected } => {
                 write!(f, "unexpected end of input, expected {expected}")
+            }
+            InnerDeserializeError::Parser(msg) => {
+                write!(f, "parser error: {msg}")
             }
         }
     }
@@ -296,6 +304,64 @@ impl<E: fmt::Display> fmt::Display for DeserializeError<E> {
 }
 
 impl<E: fmt::Debug + fmt::Display> std::error::Error for DeserializeError<E> {}
+
+impl<E: core::fmt::Debug> DeserializeError<E> {
+    /// Convert this error into an `InnerDeserializeError`, losing the parser error type.
+    ///
+    /// Parser errors are converted to their debug representation.
+    pub fn into_inner(self) -> InnerDeserializeError {
+        match self {
+            DeserializeError::Parser(e) => InnerDeserializeError::Parser(format!("{e:?}")),
+            DeserializeError::Reflect { error, span, path } => {
+                InnerDeserializeError::Reflect { error, span, path }
+            }
+            DeserializeError::TypeMismatch {
+                expected,
+                got,
+                span,
+                path,
+            } => InnerDeserializeError::TypeMismatch {
+                expected,
+                got,
+                span,
+                path,
+            },
+            DeserializeError::Unsupported(msg) => InnerDeserializeError::Unsupported(msg),
+            DeserializeError::UnknownField { field, span, path } => {
+                InnerDeserializeError::UnknownField { field, span, path }
+            }
+            DeserializeError::CannotBorrow { message } => {
+                InnerDeserializeError::CannotBorrow { message }
+            }
+            DeserializeError::MissingField {
+                field,
+                type_name,
+                span,
+                path,
+            } => InnerDeserializeError::MissingField {
+                field,
+                type_name,
+                span,
+                path,
+            },
+            #[cfg(feature = "validate")]
+            DeserializeError::Validation {
+                field,
+                message,
+                span,
+                path,
+            } => InnerDeserializeError::Validation {
+                field,
+                message,
+                span,
+                path,
+            },
+            DeserializeError::UnexpectedEof { expected } => {
+                InnerDeserializeError::UnexpectedEof { expected }
+            }
+        }
+    }
+}
 
 impl<E> DeserializeError<E> {
     /// Create a Reflect error without span or path information.

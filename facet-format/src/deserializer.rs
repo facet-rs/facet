@@ -12,6 +12,7 @@ use crate::{ContainerKind, FormatParser, ParseEvent, ScalarTypeHint, ScalarValue
 mod error;
 pub use error::*;
 
+mod coro;
 mod dynamic;
 mod eenum;
 mod pointer;
