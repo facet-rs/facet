@@ -5,97 +5,15 @@
 
 extern crate alloc;
 
-use alloc::{
-    borrow::Cow,
-    format,
-    string::{String, ToString},
-    vec::Vec,
-};
+use alloc::{borrow::Cow, format, vec::Vec};
 
 use facet_format::{
-    ContainerKind, FieldEvidence, FieldKey, FieldLocationHint, FormatParser, ParseEvent,
-    ProbeStream, ScalarValue,
+    ContainerKind, FieldKey, FieldLocationHint, FormatParser, ParseEvent, SavePoint, ScalarValue,
 };
-use saphyr_parser::{Event, Parser, ScalarStyle, Span as SaphyrSpan, SpannedEventReceiver};
+use saphyr_parser::{Event, Parser, ScalarStyle, Span as SaphyrSpan, StrInput};
 
 use crate::error::{SpanExt, YamlError, YamlErrorKind};
 use facet_reflect::Span;
-
-// ============================================================================
-// Event wrapper with owned strings
-// ============================================================================
-
-/// A YAML event with owned string data and span information.
-/// We convert from saphyr's borrowed events to owned so we can store them.
-#[derive(Debug, Clone)]
-#[allow(dead_code)] // Some variants/fields reserved for future anchor/alias support
-enum OwnedEvent {
-    StreamStart,
-    StreamEnd,
-    DocumentStart,
-    DocumentEnd,
-    Alias(usize),
-    Scalar {
-        value: String,
-        style: ScalarStyle,
-        anchor: usize,
-    },
-    SequenceStart {
-        anchor: usize,
-    },
-    SequenceEnd,
-    MappingStart {
-        anchor: usize,
-    },
-    MappingEnd,
-}
-
-#[derive(Debug, Clone)]
-struct SpannedEvent {
-    event: OwnedEvent,
-    span: SaphyrSpan,
-}
-
-// ============================================================================
-// Event Collector
-// ============================================================================
-
-/// Collects all events from the parser upfront.
-/// This is necessary because saphyr-parser doesn't support seeking/rewinding,
-/// but we need to replay events for flatten deserialization.
-struct EventCollector {
-    events: Vec<SpannedEvent>,
-}
-
-impl EventCollector {
-    const fn new() -> Self {
-        Self { events: Vec::new() }
-    }
-}
-
-impl SpannedEventReceiver<'_> for EventCollector {
-    fn on_event(&mut self, event: Event<'_>, span: SaphyrSpan) {
-        let owned = match event {
-            Event::StreamStart => OwnedEvent::StreamStart,
-            Event::StreamEnd => OwnedEvent::StreamEnd,
-            Event::DocumentStart(_) => OwnedEvent::DocumentStart,
-            Event::DocumentEnd => OwnedEvent::DocumentEnd,
-            Event::Alias(id) => OwnedEvent::Alias(id),
-            Event::Scalar(value, style, anchor, _tag) => OwnedEvent::Scalar {
-                value: value.into_owned(),
-                style,
-                anchor,
-            },
-            Event::SequenceStart(anchor, _tag) => OwnedEvent::SequenceStart { anchor },
-            Event::SequenceEnd => OwnedEvent::SequenceEnd,
-            Event::MappingStart(anchor, _tag) => OwnedEvent::MappingStart { anchor },
-            Event::MappingEnd => OwnedEvent::MappingEnd,
-            Event::Nothing => return, // Skip internal events
-        };
-        log::trace!("YAML event: {owned:?}");
-        self.events.push(SpannedEvent { event: owned, span });
-    }
-}
 
 // ============================================================================
 // Parser State
@@ -123,10 +41,8 @@ enum ContextState {
 pub struct YamlParser<'de> {
     /// Original input string.
     input: &'de str,
-    /// Pre-parsed events from saphyr-parser.
-    events: Vec<SpannedEvent>,
-    /// Current position in the event stream.
-    pos: usize,
+    /// The underlying saphyr parser.
+    parser: Parser<'de, StrInput<'de>>,
     /// Stack tracking nested containers.
     stack: Vec<ContextState>,
     /// Cached event for peek_event().
@@ -135,26 +51,27 @@ pub struct YamlParser<'de> {
     started: bool,
     /// The span of the most recently consumed event (for error reporting).
     last_span: Option<Span>,
+    /// Counter for save points.
+    save_counter: u64,
+    /// Events recorded since save() was called.
+    recording: Option<Vec<ParseEvent<'de>>>,
+    /// Events to replay before producing new ones.
+    replay_buffer: Vec<ParseEvent<'de>>,
 }
 
 impl<'de> YamlParser<'de> {
     /// Create a new YAML parser from a string slice.
     pub fn new(input: &'de str) -> Result<Self, YamlError> {
-        let mut collector = EventCollector::new();
-        Parser::new_from_str(input)
-            .load(&mut collector, true)
-            .map_err(|e| {
-                YamlError::without_span(YamlErrorKind::Parse(format!("{e}"))).with_source(input)
-            })?;
-
         Ok(Self {
             input,
-            events: collector.events,
-            pos: 0,
+            parser: Parser::new_from_str(input),
             stack: Vec::new(),
             event_peek: None,
             started: false,
             last_span: None,
+            save_counter: 0,
+            recording: None,
+            replay_buffer: Vec::new(),
         })
     }
 
@@ -163,45 +80,129 @@ impl<'de> YamlParser<'de> {
         self.input
     }
 
-    /// Consume and return the current event.
-    fn next_raw(&mut self) -> Option<SpannedEvent> {
-        if self.pos < self.events.len() {
-            let event = self.events[self.pos].clone();
-            self.last_span = Some(Span::from_saphyr_span(&event.span));
-            self.pos += 1;
-            Some(event)
-        } else {
-            None
+    /// Get the next raw event from saphyr, updating span tracking.
+    fn next_raw_event(&mut self) -> Result<Option<(Event<'de>, SaphyrSpan)>, YamlError> {
+        match self.parser.next_event() {
+            Some(Ok((event, span))) => {
+                self.last_span = Some(Span::from_saphyr_span(&span));
+                Ok(Some((event, span)))
+            }
+            Some(Err(e)) => Err(
+                YamlError::without_span(YamlErrorKind::Parse(format!("{e}")))
+                    .with_source(self.input),
+            ),
+            None => Ok(None),
         }
     }
 
     /// Skip stream/document start events.
-    fn skip_preamble(&mut self) {
-        while self.pos < self.events.len() {
-            match &self.events[self.pos].event {
-                OwnedEvent::StreamStart | OwnedEvent::DocumentStart => {
-                    self.pos += 1;
-                }
-                _ => break,
-            }
+    fn skip_preamble(&mut self) -> Result<(), YamlError> {
+        if self.started {
+            return Ok(());
         }
         self.started = true;
+
+        // Skip StreamStart
+        if let Some((Event::StreamStart, _)) = self.next_raw_event()? {
+            // Good
+        }
+
+        // Skip DocumentStart if present
+        // We need to peek - but saphyr has peek() too
+        if let Some(Ok((Event::DocumentStart(_), _))) = self.parser.peek() {
+            self.next_raw_event()?;
+        }
+
+        Ok(())
+    }
+
+    /// Produce a ParseEvent from the underlying saphyr parser.
+    fn produce_event(&mut self) -> Result<Option<ParseEvent<'de>>, YamlError> {
+        self.skip_preamble()?;
+
+        let (event, _span) = match self.next_raw_event()? {
+            Some(ev) => ev,
+            None => return Ok(None),
+        };
+
+        match event {
+            Event::StreamStart | Event::DocumentStart(_) => {
+                // Should have been skipped by preamble
+                self.produce_event()
+            }
+            Event::StreamEnd | Event::DocumentEnd => {
+                // End of document - return None
+                Ok(None)
+            }
+            Event::MappingStart(_anchor, _tag) => {
+                self.stack.push(ContextState::MappingKey);
+                Ok(Some(ParseEvent::StructStart(ContainerKind::Object)))
+            }
+            Event::MappingEnd => {
+                self.stack.pop();
+                // If the parent was expecting a value, transition back to expecting a key
+                if let Some(ctx @ ContextState::MappingValue) = self.stack.last_mut() {
+                    *ctx = ContextState::MappingKey;
+                }
+                Ok(Some(ParseEvent::StructEnd))
+            }
+            Event::SequenceStart(_anchor, _tag) => {
+                self.stack.push(ContextState::SequenceValue);
+                Ok(Some(ParseEvent::SequenceStart(ContainerKind::Array)))
+            }
+            Event::SequenceEnd => {
+                self.stack.pop();
+                // If the parent was expecting a value, transition back to expecting a key
+                if let Some(ctx @ ContextState::MappingValue) = self.stack.last_mut() {
+                    *ctx = ContextState::MappingKey;
+                }
+                Ok(Some(ParseEvent::SequenceEnd))
+            }
+            Event::Scalar(value, style, _anchor, _tag) => {
+                // Check if we're expecting a mapping key
+                if let Some(ctx @ ContextState::MappingKey) = self.stack.last_mut() {
+                    // This scalar is a key
+                    *ctx = ContextState::MappingValue;
+                    Ok(Some(ParseEvent::FieldKey(FieldKey::new(
+                        value,
+                        FieldLocationHint::KeyValue,
+                    ))))
+                } else {
+                    // This scalar is a value
+                    if let Some(ctx @ ContextState::MappingValue) = self.stack.last_mut() {
+                        *ctx = ContextState::MappingKey;
+                    }
+                    Ok(Some(ParseEvent::Scalar(self.scalar_to_value(value, style))))
+                }
+            }
+            Event::Alias(_id) => {
+                // For now, treat aliases as null (proper anchor support would be more complex)
+                if let Some(ctx @ ContextState::MappingValue) = self.stack.last_mut() {
+                    *ctx = ContextState::MappingKey;
+                }
+                Ok(Some(ParseEvent::Scalar(ScalarValue::Null)))
+            }
+            Event::Nothing => {
+                // Internal event, skip
+                self.produce_event()
+            }
+        }
     }
 
     /// Convert a YAML scalar to a ScalarValue.
-    fn scalar_to_value(&self, value: &str, style: ScalarStyle) -> ScalarValue<'de> {
-        // If quoted, always treat as string
+    fn scalar_to_value(&self, value: Cow<'de, str>, style: ScalarStyle) -> ScalarValue<'de> {
+        // Quoted strings are always strings
         if matches!(style, ScalarStyle::SingleQuoted | ScalarStyle::DoubleQuoted) {
-            return ScalarValue::Str(Cow::Owned(value.to_string()));
+            return ScalarValue::Str(value);
         }
 
         // Check for null
-        if is_yaml_null(value) {
+        if is_yaml_null(&value) {
             return ScalarValue::Null;
         }
 
         // Check for boolean
-        if let Some(b) = parse_yaml_bool(value) {
+        if let Some(b) = parse_yaml_bool(&value) {
             return ScalarValue::Bool(b);
         }
 
@@ -209,371 +210,98 @@ impl<'de> YamlParser<'de> {
         if let Ok(n) = value.parse::<i64>() {
             return ScalarValue::I64(n);
         }
+        if let Ok(n) = value.parse::<u64>() {
+            return ScalarValue::U64(n);
+        }
 
         // Check for float
         if let Ok(f) = value.parse::<f64>() {
             return ScalarValue::F64(f);
         }
 
+        // Special float values
+        match value.as_ref() {
+            ".inf" | ".Inf" | ".INF" => return ScalarValue::F64(f64::INFINITY),
+            "-.inf" | "-.Inf" | "-.INF" => return ScalarValue::F64(f64::NEG_INFINITY),
+            ".nan" | ".NaN" | ".NAN" => return ScalarValue::F64(f64::NAN),
+            _ => {}
+        }
+
         // Default to string
-        ScalarValue::Str(Cow::Owned(value.to_string()))
+        ScalarValue::Str(value)
     }
 
-    /// Produce the next parse event.
-    fn produce_event(&mut self) -> Result<Option<ParseEvent<'de>>, YamlError> {
-        // Skip preamble if we haven't started
-        if !self.started {
-            self.skip_preamble();
-        }
-
-        // Check current context to know what to expect
-        let context = self.stack.last().copied();
-
-        if self.pos >= self.events.len() {
-            // EOF - we're done
-            return Ok(None);
-        }
-
-        // Clone the event to avoid borrow issues
-        let raw_event = self.events[self.pos].clone();
-
-        match (&raw_event.event, context) {
-            // Stream/Document end - skip and continue
-            (OwnedEvent::StreamEnd, _) | (OwnedEvent::DocumentEnd, _) => {
-                self.next_raw();
-                self.produce_event()
-            }
-
-            // Mapping start
-            (OwnedEvent::MappingStart { .. }, _) => {
-                self.next_raw();
-                // If we're in MappingValue context, this nested struct satisfies the value,
-                // so transition parent back to MappingKey before pushing new context
-                if let Some(ctx) = self.stack.last_mut()
-                    && *ctx == ContextState::MappingValue
-                {
-                    *ctx = ContextState::MappingKey;
-                }
-                self.stack.push(ContextState::MappingKey);
-                Ok(Some(ParseEvent::StructStart(ContainerKind::Object)))
-            }
-
-            // Mapping end
-            (OwnedEvent::MappingEnd, _) => {
-                self.next_raw();
-                self.stack.pop();
-                Ok(Some(ParseEvent::StructEnd))
-            }
-
-            // Sequence start
-            (OwnedEvent::SequenceStart { .. }, _) => {
-                self.next_raw();
-                // If we're in MappingValue context, this sequence satisfies the value,
-                // so transition parent back to MappingKey before pushing new context
-                if let Some(ctx) = self.stack.last_mut()
-                    && *ctx == ContextState::MappingValue
-                {
-                    *ctx = ContextState::MappingKey;
-                }
-                self.stack.push(ContextState::SequenceValue);
-                Ok(Some(ParseEvent::SequenceStart(ContainerKind::Array)))
-            }
-
-            // Sequence end
-            (OwnedEvent::SequenceEnd, _) => {
-                self.next_raw();
-                self.stack.pop();
-                Ok(Some(ParseEvent::SequenceEnd))
-            }
-
-            // Scalar in mapping key position -> emit FieldKey
-            (OwnedEvent::Scalar { value, .. }, Some(ContextState::MappingKey)) => {
-                let key = value.clone();
-                self.next_raw();
-                // Transition to expecting value
-                if let Some(ctx) = self.stack.last_mut() {
-                    *ctx = ContextState::MappingValue;
-                }
-                Ok(Some(ParseEvent::FieldKey(FieldKey::new(
-                    Cow::Owned(key),
-                    FieldLocationHint::KeyValue,
-                ))))
-            }
-
-            // Scalar in mapping value position -> emit Scalar and transition back to key
-            (OwnedEvent::Scalar { value, style, .. }, Some(ContextState::MappingValue)) => {
-                let value = value.clone();
-                let style = *style;
-                self.next_raw();
-                // Transition back to expecting key
-                if let Some(ctx) = self.stack.last_mut() {
-                    *ctx = ContextState::MappingKey;
-                }
-                Ok(Some(ParseEvent::Scalar(
-                    self.scalar_to_value(&value, style),
-                )))
-            }
-
-            // Scalar in sequence -> emit Scalar
-            (OwnedEvent::Scalar { value, style, .. }, Some(ContextState::SequenceValue)) => {
-                let value = value.clone();
-                let style = *style;
-                self.next_raw();
-                Ok(Some(ParseEvent::Scalar(
-                    self.scalar_to_value(&value, style),
-                )))
-            }
-
-            // Scalar at root level (no context) -> emit Scalar
-            (OwnedEvent::Scalar { value, style, .. }, None) => {
-                let value = value.clone();
-                let style = *style;
-                self.next_raw();
-                Ok(Some(ParseEvent::Scalar(
-                    self.scalar_to_value(&value, style),
-                )))
-            }
-
-            // Alias - not fully supported yet
-            (OwnedEvent::Alias(_), _) => {
-                let span = Span::from_saphyr_span(&raw_event.span);
-                Err(YamlError::new(
-                    YamlErrorKind::Unsupported("YAML aliases are not yet supported".into()),
-                    span,
-                )
-                .with_source(self.input))
-            }
-
-            // Unexpected combinations
-            _ => {
-                let span = Span::from_saphyr_span(&raw_event.span);
-                Err(YamlError::new(
-                    YamlErrorKind::UnexpectedEvent {
-                        got: format!("{:?}", raw_event.event),
-                        expected: "valid YAML structure",
-                    },
-                    span,
-                )
-                .with_source(self.input))
-            }
-        }
-    }
-
-    /// Skip the current value (for unknown fields).
+    /// Skip the current value (handles nested structures).
+    /// This uses next_event_internal to properly handle replay buffers.
     fn skip_current_value(&mut self) -> Result<(), YamlError> {
-        if self.pos >= self.events.len() {
-            return Ok(());
-        }
+        let mut depth = 0i32;
 
-        let raw_event = self.events[self.pos].clone();
-
-        match &raw_event.event {
-            OwnedEvent::Scalar { .. } => {
-                self.next_raw();
-                // Update context if in mapping value position
-                if let Some(ctx) = self.stack.last_mut()
-                    && *ctx == ContextState::MappingValue
-                {
-                    *ctx = ContextState::MappingKey;
+        loop {
+            let event = self.next_event_internal()?;
+            match event {
+                Some(ParseEvent::StructStart(_) | ParseEvent::SequenceStart(_)) => {
+                    depth += 1;
                 }
-                Ok(())
-            }
-            OwnedEvent::MappingStart { .. } => {
-                self.next_raw();
-                let mut depth = 1;
-                while depth > 0 {
-                    let Some(event) = self.next_raw() else {
-                        return Err(YamlError::without_span(YamlErrorKind::UnexpectedEof {
-                            expected: "mapping end",
-                        })
-                        .with_source(self.input));
-                    };
-                    match &event.event {
-                        OwnedEvent::MappingStart { .. } => depth += 1,
-                        OwnedEvent::MappingEnd => depth -= 1,
-                        OwnedEvent::SequenceStart { .. } => depth += 1,
-                        OwnedEvent::SequenceEnd => depth -= 1,
-                        _ => {}
+                Some(ParseEvent::StructEnd | ParseEvent::SequenceEnd) => {
+                    depth -= 1;
+                    if depth <= 0 {
+                        return Ok(());
                     }
                 }
-                // Update context if in mapping value position
-                if let Some(ctx) = self.stack.last_mut()
-                    && *ctx == ContextState::MappingValue
-                {
-                    *ctx = ContextState::MappingKey;
+                Some(ParseEvent::Scalar(_)) if depth == 0 => {
+                    return Ok(());
                 }
-                Ok(())
-            }
-            OwnedEvent::SequenceStart { .. } => {
-                self.next_raw();
-                let mut depth = 1;
-                while depth > 0 {
-                    let Some(event) = self.next_raw() else {
-                        return Err(YamlError::without_span(YamlErrorKind::UnexpectedEof {
-                            expected: "sequence end",
-                        })
-                        .with_source(self.input));
-                    };
-                    match &event.event {
-                        OwnedEvent::MappingStart { .. } => depth += 1,
-                        OwnedEvent::MappingEnd => depth -= 1,
-                        OwnedEvent::SequenceStart { .. } => depth += 1,
-                        OwnedEvent::SequenceEnd => depth -= 1,
-                        _ => {}
-                    }
-                }
-                // Update context if in mapping value position
-                if let Some(ctx) = self.stack.last_mut()
-                    && *ctx == ContextState::MappingValue
-                {
-                    *ctx = ContextState::MappingKey;
-                }
-                Ok(())
-            }
-            _ => {
-                self.next_raw();
-                Ok(())
+                Some(_) => {}
+                None => return Ok(()),
             }
         }
     }
 
-    /// Build probe evidence by scanning ahead without consuming.
-    fn build_probe(&self) -> Result<Vec<FieldEvidence<'de>>, YamlError> {
-        let mut evidence = Vec::new();
-        let mut pos = self.pos;
-
-        // Skip preamble (StreamStart, DocumentStart) if we haven't started yet
-        while pos < self.events.len() {
-            match &self.events[pos].event {
-                OwnedEvent::StreamStart | OwnedEvent::DocumentStart => {
-                    pos += 1;
-                }
-                _ => break,
-            }
+    /// Internal next_event that handles replay buffer and recording.
+    fn next_event_internal(&mut self) -> Result<Option<ParseEvent<'de>>, YamlError> {
+        // First check replay buffer
+        if let Some(event) = self.replay_buffer.pop() {
+            return Ok(Some(event));
         }
 
-        // Skip MappingStart if we have one
-        if pos < self.events.len()
-            && let OwnedEvent::MappingStart { .. } = &self.events[pos].event
+        // Then check peeked event
+        if let Some(event) = self.event_peek.take() {
+            // Record if we're in save mode
+            if let Some(ref mut rec) = self.recording {
+                rec.push(event.clone());
+            }
+            return Ok(Some(event));
+        }
+
+        // Produce new event
+        let event = self.produce_event()?;
+        // Record if we're in save mode
+        if let Some(ref mut rec) = self.recording
+            && let Some(ref e) = event
         {
-            pos += 1;
+            rec.push(e.clone());
         }
-
-        // Scan the mapping for keys
-        let mut depth = 1;
-        while pos < self.events.len() && depth > 0 {
-            let event = &self.events[pos];
-            match &event.event {
-                OwnedEvent::MappingStart { .. } => {
-                    depth += 1;
-                    pos += 1;
-                }
-                OwnedEvent::MappingEnd => {
-                    depth -= 1;
-                    pos += 1;
-                }
-                OwnedEvent::SequenceStart { .. } => {
-                    depth += 1;
-                    pos += 1;
-                }
-                OwnedEvent::SequenceEnd => {
-                    depth -= 1;
-                    pos += 1;
-                }
-                OwnedEvent::Scalar { value, .. } if depth == 1 => {
-                    // This is a key at the top level of the mapping
-                    let key = Cow::Owned(value.clone());
-                    pos += 1;
-
-                    // Look at the value
-                    if pos < self.events.len() {
-                        let value_event = &self.events[pos];
-                        let scalar_value = if let OwnedEvent::Scalar {
-                            value: v, style: s, ..
-                        } = &value_event.event
-                        {
-                            Some(self.scalar_to_value(v, *s))
-                        } else {
-                            None
-                        };
-
-                        if let Some(sv) = scalar_value {
-                            evidence.push(FieldEvidence::with_scalar_value(
-                                key,
-                                FieldLocationHint::KeyValue,
-                                None,
-                                sv,
-                            ));
-                        } else {
-                            evidence.push(FieldEvidence::new(
-                                key,
-                                FieldLocationHint::KeyValue,
-                                None,
-                            ));
-                        }
-
-                        // Skip the value
-                        pos = self.skip_value_from(pos);
-                    }
-                }
-                _ => {
-                    pos += 1;
-                }
-            }
-        }
-
-        Ok(evidence)
-    }
-
-    /// Skip a value starting from `pos`, returning the position after the value.
-    fn skip_value_from(&self, start: usize) -> usize {
-        let mut pos = start;
-        if pos >= self.events.len() {
-            return pos;
-        }
-
-        match &self.events[pos].event {
-            OwnedEvent::Scalar { .. } => pos + 1,
-            OwnedEvent::MappingStart { .. } | OwnedEvent::SequenceStart { .. } => {
-                let mut depth = 1;
-                pos += 1;
-                while pos < self.events.len() && depth > 0 {
-                    match &self.events[pos].event {
-                        OwnedEvent::MappingStart { .. } | OwnedEvent::SequenceStart { .. } => {
-                            depth += 1;
-                        }
-                        OwnedEvent::MappingEnd | OwnedEvent::SequenceEnd => {
-                            depth -= 1;
-                        }
-                        _ => {}
-                    }
-                    pos += 1;
-                }
-                pos
-            }
-            _ => pos + 1,
-        }
+        Ok(event)
     }
 }
 
 impl<'de> FormatParser<'de> for YamlParser<'de> {
     type Error = YamlError;
-    type Probe<'a>
-        = YamlProbe<'de>
-    where
-        Self: 'a;
 
     fn next_event(&mut self) -> Result<Option<ParseEvent<'de>>, Self::Error> {
-        if let Some(event) = self.event_peek.take() {
-            return Ok(Some(event));
-        }
-        self.produce_event()
+        self.next_event_internal()
     }
 
     fn peek_event(&mut self) -> Result<Option<ParseEvent<'de>>, Self::Error> {
+        // First check replay buffer (peek at last element without removing)
+        if let Some(event) = self.replay_buffer.last().cloned() {
+            return Ok(Some(event));
+        }
+        // Then check already-peeked event
         if let Some(event) = self.event_peek.clone() {
             return Ok(Some(event));
         }
+        // Finally, produce new event and cache it
         let event = self.produce_event()?;
         if let Some(ref e) = event {
             self.event_peek = Some(e.clone());
@@ -589,9 +317,20 @@ impl<'de> FormatParser<'de> for YamlParser<'de> {
         self.skip_current_value()
     }
 
-    fn begin_probe(&mut self) -> Result<Self::Probe<'_>, Self::Error> {
-        let evidence = self.build_probe()?;
-        Ok(YamlProbe { evidence, idx: 0 })
+    fn save(&mut self) -> SavePoint {
+        self.save_counter += 1;
+        self.recording = Some(Vec::new());
+        SavePoint(self.save_counter)
+    }
+
+    fn restore(&mut self, _save_point: SavePoint) {
+        if let Some(mut recorded) = self.recording.take() {
+            // Reverse so we can pop from the end
+            recorded.reverse();
+            // Prepend to replay buffer (in case there's already stuff there)
+            recorded.append(&mut self.replay_buffer);
+            self.replay_buffer = recorded;
+        }
     }
 
     fn capture_raw(&mut self) -> Result<Option<&'de str>, Self::Error> {
@@ -602,26 +341,6 @@ impl<'de> FormatParser<'de> for YamlParser<'de> {
 
     fn current_span(&self) -> Option<Span> {
         self.last_span
-    }
-}
-
-/// Probe stream for YAML.
-pub struct YamlProbe<'de> {
-    evidence: Vec<FieldEvidence<'de>>,
-    idx: usize,
-}
-
-impl<'de> ProbeStream<'de> for YamlProbe<'de> {
-    type Error = YamlError;
-
-    fn next(&mut self) -> Result<Option<FieldEvidence<'de>>, Self::Error> {
-        if self.idx >= self.evidence.len() {
-            Ok(None)
-        } else {
-            let ev = self.evidence[self.idx].clone();
-            self.idx += 1;
-            Ok(Some(ev))
-        }
     }
 }
 
