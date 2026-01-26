@@ -161,5 +161,27 @@ facet::define_attr_grammar! {
         ///
         /// Usage: `#[facet(figue::completions)]`
         Completions,
+        /// Specifies the origin path for field extraction.
+        ///
+        /// Used in "requirements structs" to indicate which field from the
+        /// parsed config should be extracted into this field. The path uses
+        /// dot notation to navigate nested structures.
+        ///
+        /// Usage: `#[facet(args::origin = "config.database_url")]`
+        ///
+        /// Example:
+        /// ```ignore
+        /// use figue as args;
+        ///
+        /// #[derive(Facet)]
+        /// struct MigrateRequirements {
+        ///     #[facet(args::origin = "config.database_url")]
+        ///     database_url: String,  // Required for this context
+        ///
+        ///     #[facet(args::origin = "config.migrations_path")]
+        ///     migrations_path: PathBuf,
+        /// }
+        /// ```
+        Origin(&'static str),
     }
 }

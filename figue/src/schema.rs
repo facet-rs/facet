@@ -65,7 +65,7 @@ pub(crate) mod from_schema;
 ///   config: SomeConfigStruct,
 /// }
 /// ```
-#[derive(Facet, Debug)]
+#[derive(Facet, Debug, Clone)]
 #[facet(skip_all_unless_truthy)]
 pub struct Schema {
     /// Documentation for the top-level type.
@@ -89,7 +89,7 @@ pub struct Schema {
 ///
 /// After CLI parsing, the driver checks these fields to short-circuit before
 /// full deserialization.
-#[derive(Facet, Default, Debug)]
+#[derive(Facet, Default, Debug, Clone)]
 #[facet(skip_all_unless_truthy)]
 pub struct SpecialFields {
     /// Path to the `help` field - when true, show help and exit 0.
@@ -106,7 +106,7 @@ pub struct SpecialFields {
 }
 
 /// Schema for one "level" of arguments: top-level, a subcommand, a subcommand's subcommand etc.
-#[derive(Facet, Debug)]
+#[derive(Facet, Debug, Clone)]
 #[facet(skip_all_unless_truthy)]
 pub struct ArgLevelSchema {
     /// Any valid arguments at this level, `--verbose` etc.
@@ -124,7 +124,7 @@ pub struct ArgLevelSchema {
 }
 
 /// Schema for the `config` part of the schema
-#[derive(Facet, Debug)]
+#[derive(Facet, Debug, Clone)]
 #[facet(skip_all_unless_truthy)]
 pub struct ConfigStructSchema {
     /// Name of the field in the parent struct (e.g., "config" for `#[facet(args::config)] config: ServerConfig`).
@@ -143,7 +143,7 @@ pub struct ConfigStructSchema {
     fields: IndexMap<String, ConfigFieldSchema, RandomState>,
 }
 
-#[derive(Facet, Debug, Default)]
+#[derive(Facet, Debug, Default, Clone)]
 #[facet(skip_all_unless_truthy)]
 pub struct Docs {
     /// Short summary / first line.
@@ -152,7 +152,7 @@ pub struct Docs {
     details: Option<String>,
 }
 
-#[derive(Facet, Debug)]
+#[derive(Facet, Debug, Clone)]
 #[repr(u8)]
 pub enum ScalarType {
     Bool,
@@ -163,7 +163,7 @@ pub enum ScalarType {
     Other,
 }
 
-#[derive(Facet, Debug)]
+#[derive(Facet, Debug, Clone)]
 #[facet(skip_all_unless_truthy)]
 #[repr(u8)]
 pub enum LeafKind {
@@ -174,7 +174,7 @@ pub enum LeafKind {
     Enum { variants: Vec<String> },
 }
 
-#[derive(Facet, Debug)]
+#[derive(Facet, Debug, Clone)]
 #[facet(skip_all_unless_truthy)]
 pub struct LeafSchema {
     /// What kind of leaf value this is.
@@ -184,7 +184,7 @@ pub struct LeafSchema {
     pub(crate) shape: &'static Shape,
 }
 
-#[derive(Facet, Debug)]
+#[derive(Facet, Debug, Clone)]
 #[facet(skip_all_unless_truthy)]
 #[repr(u8)]
 pub enum ValueSchema {
@@ -230,7 +230,7 @@ pub enum ValueSchema {
 ///    This is what users type on the command line.
 ///
 /// The schema stores both `effective_name` (for deserialization) and `name` (CLI name, for matching).
-#[derive(Facet, Debug)]
+#[derive(Facet, Debug, Clone)]
 #[facet(skip_all_unless_truthy)]
 pub struct Subcommand {
     /// CLI name (kebab-case, used for command-line matching).
@@ -257,7 +257,7 @@ pub struct Subcommand {
 }
 
 /// Schema for a singular argument
-#[derive(Facet, Debug)]
+#[derive(Facet, Debug, Clone)]
 #[facet(skip_all_unless_truthy)]
 pub struct ArgSchema {
     /// Argument name / effective name (rename or field name).
@@ -287,7 +287,7 @@ pub struct ArgSchema {
 }
 
 /// A kind of argument
-#[derive(Facet, Debug)]
+#[derive(Facet, Debug, Clone)]
 #[facet(skip_all_unless_truthy)]
 #[repr(u8)]
 pub enum ArgKind {
@@ -301,7 +301,7 @@ pub enum ArgKind {
 }
 
 /// Schema for the 'config' field of the top-level args struct
-#[derive(Facet, Debug)]
+#[derive(Facet, Debug, Clone)]
 #[facet(skip_all_unless_truthy)]
 pub struct ConfigFieldSchema {
     /// Doc comments for a field
@@ -333,7 +333,7 @@ pub struct ConfigFieldSchema {
 }
 
 /// Schema for a vec in a config value
-#[derive(Facet, Debug)]
+#[derive(Facet, Debug, Clone)]
 #[facet(skip_all_unless_truthy)]
 pub struct ConfigVecSchema {
     /// Shape of the vector/list.
@@ -344,7 +344,7 @@ pub struct ConfigVecSchema {
 }
 
 /// Schema for a value in the config struct
-#[derive(Facet, Debug)]
+#[derive(Facet, Debug, Clone)]
 #[facet(skip_all_unless_truthy)]
 #[repr(u8)]
 pub enum ConfigValueSchema {
@@ -359,7 +359,7 @@ pub enum ConfigValueSchema {
 }
 
 /// Schema for an enum in a config value (with struct variants)
-#[derive(Facet, Debug)]
+#[derive(Facet, Debug, Clone)]
 #[facet(skip_all_unless_truthy)]
 pub struct ConfigEnumSchema {
     /// Shape of the enum.
@@ -371,7 +371,7 @@ pub struct ConfigEnumSchema {
 }
 
 /// Schema for an enum variant
-#[derive(Facet, Debug)]
+#[derive(Facet, Debug, Clone)]
 #[facet(skip_all_unless_truthy)]
 pub struct ConfigEnumVariantSchema {
     /// Documentation for this variant.
