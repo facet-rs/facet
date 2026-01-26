@@ -2,7 +2,7 @@ extern crate alloc;
 
 use std::borrow::Cow;
 
-use facet_core::ScalarType;
+use facet_core::{NumericType, PrimitiveType, ScalarType, Type, UserType};
 use facet_reflect::{Partial, ReflectError, Span};
 
 use crate::{
@@ -185,6 +185,100 @@ impl<'input, const BORROW: bool> From<InnerDeserializeError> for SetScalarResult
     fn from(e: InnerDeserializeError) -> Self {
         SetScalarResult::Error(e)
     }
+}
+
+/// Result of `deserialize_map_key_terminal_inner` - either success or delegation.
+pub(crate) enum MapKeyTerminalResult<'input, const BORROW: bool> {
+    /// Need to call `set_string_value` with these parameters.
+    NeedsSetString {
+        wip: Partial<'input, BORROW>,
+        s: Cow<'input, str>,
+    },
+    /// An error occurred.
+    Error(InnerDeserializeError),
+}
+
+impl<'input, const BORROW: bool> From<InnerDeserializeError>
+    for MapKeyTerminalResult<'input, BORROW>
+{
+    fn from(e: InnerDeserializeError) -> Self {
+        MapKeyTerminalResult::Error(e)
+    }
+}
+
+/// Handle terminal cases of map key deserialization (enum, numeric, string).
+///
+/// This is a non-generic inner function that handles the final step of `deserialize_map_key`
+/// when recursion is not needed. It's extracted to reduce monomorphization bloat.
+///
+/// The function handles:
+/// - Enum types: use `select_variant_named`
+/// - Numeric types: parse the string key as a number
+/// - String types: delegate to `set_string_value` (returns `NeedsSetString`)
+pub(crate) fn deserialize_map_key_terminal_inner<'input, const BORROW: bool>(
+    mut wip: Partial<'input, BORROW>,
+    key: Cow<'input, str>,
+    span: Option<Span>,
+) -> Result<Partial<'input, BORROW>, MapKeyTerminalResult<'input, BORROW>> {
+    let shape = wip.shape();
+
+    let reflect_err = |e: ReflectError| InnerDeserializeError::Reflect {
+        error: e,
+        span,
+        path: None,
+    };
+
+    // Check if target is an enum - use select_variant_named for unit variants
+    if let Type::User(UserType::Enum(_)) = &shape.ty {
+        wip = wip.select_variant_named(&key).map_err(&reflect_err)?;
+        return Ok(wip);
+    }
+
+    // Check if target is a numeric type - parse the string key as a number
+    if let Type::Primitive(PrimitiveType::Numeric(num_ty)) = &shape.ty {
+        match num_ty {
+            NumericType::Integer { signed } => {
+                if *signed {
+                    let n: i64 = key
+                        .parse()
+                        .map_err(|_| InnerDeserializeError::TypeMismatch {
+                            expected: "valid integer for map key",
+                            got: alloc::format!("string '{}'", key),
+                            span,
+                            path: None,
+                        })?;
+                    // Use set for each size - the Partial handles type conversion
+                    wip = wip.set(n).map_err(&reflect_err)?;
+                } else {
+                    let n: u64 = key
+                        .parse()
+                        .map_err(|_| InnerDeserializeError::TypeMismatch {
+                            expected: "valid unsigned integer for map key",
+                            got: alloc::format!("string '{}'", key),
+                            span,
+                            path: None,
+                        })?;
+                    wip = wip.set(n).map_err(&reflect_err)?;
+                }
+                return Ok(wip);
+            }
+            NumericType::Float => {
+                let n: f64 = key
+                    .parse()
+                    .map_err(|_| InnerDeserializeError::TypeMismatch {
+                        expected: "valid float for map key",
+                        got: alloc::format!("string '{}'", key),
+                        span,
+                        path: None,
+                    })?;
+                wip = wip.set(n).map_err(&reflect_err)?;
+                return Ok(wip);
+            }
+        }
+    }
+
+    // Default: treat as string - delegate to set_string_value
+    Err(MapKeyTerminalResult::NeedsSetString { wip, s: key })
 }
 
 impl<'input, const BORROW: bool, P> FormatDeserializer<'input, BORROW, P>

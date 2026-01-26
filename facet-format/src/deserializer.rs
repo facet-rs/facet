@@ -3,7 +3,7 @@ extern crate alloc;
 use alloc::borrow::Cow;
 use alloc::format;
 
-use facet_core::{Def, Facet, NumericType, PrimitiveType, Shape, StructKind, Type, UserType};
+use facet_core::{Def, Facet, Shape, StructKind, Type, UserType};
 pub use facet_path::{Path, PathStep};
 use facet_reflect::{HeapValue, Partial};
 
@@ -1287,53 +1287,14 @@ where
             return Ok(wip);
         }
 
-        // Check if target is an enum - use select_variant_named for unit variants
-        if let Type::User(UserType::Enum(_)) = &shape.ty {
-            wip = wip
-                .select_variant_named(&key)
-                .map_err(DeserializeError::reflect)?;
-            return Ok(wip);
+        // Handle terminal cases (enum, numeric, string) via non-generic inner function
+        use crate::deserializer::setters::{
+            MapKeyTerminalResult, deserialize_map_key_terminal_inner,
+        };
+        match deserialize_map_key_terminal_inner(wip, key, self.last_span) {
+            Ok(wip) => Ok(wip),
+            Err(MapKeyTerminalResult::NeedsSetString { wip, s }) => self.set_string_value(wip, s),
+            Err(MapKeyTerminalResult::Error(e)) => Err(e.into_deserialize_error()),
         }
-
-        // Check if target is a numeric type - parse the string key as a number
-        if let Type::Primitive(PrimitiveType::Numeric(num_ty)) = &shape.ty {
-            match num_ty {
-                NumericType::Integer { signed } => {
-                    if *signed {
-                        let n: i64 = key.parse().map_err(|_| DeserializeError::TypeMismatch {
-                            expected: "valid integer for map key",
-                            got: format!("string '{}'", key),
-                            span: self.last_span,
-                            path: None,
-                        })?;
-                        // Use set for each size - the Partial handles type conversion
-                        wip = wip.set(n).map_err(DeserializeError::reflect)?;
-                    } else {
-                        let n: u64 = key.parse().map_err(|_| DeserializeError::TypeMismatch {
-                            expected: "valid unsigned integer for map key",
-                            got: format!("string '{}'", key),
-                            span: self.last_span,
-                            path: None,
-                        })?;
-                        wip = wip.set(n).map_err(DeserializeError::reflect)?;
-                    }
-                    return Ok(wip);
-                }
-                NumericType::Float => {
-                    let n: f64 = key.parse().map_err(|_| DeserializeError::TypeMismatch {
-                        expected: "valid float for map key",
-                        got: format!("string '{}'", key),
-                        span: self.last_span,
-                        path: None,
-                    })?;
-                    wip = wip.set(n).map_err(DeserializeError::reflect)?;
-                    return Ok(wip);
-                }
-            }
-        }
-
-        // Default: treat as string
-        wip = self.set_string_value(wip, key)?;
-        Ok(wip)
     }
 }
