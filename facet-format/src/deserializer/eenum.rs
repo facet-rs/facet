@@ -11,8 +11,8 @@ use crate::{
     deserializer::coro::{
         DeserializeYielder, request_collect_evidence, request_deserialize_enum_variant_content,
         request_deserialize_into, request_deserialize_other_variant_with_captured_tag,
-        request_event, request_peek, request_set_string_value, request_skip, request_span,
-        run_deserialize_coro,
+        request_deserialize_value_recursive, request_event, request_peek, request_set_string_value,
+        request_skip, request_span, run_deserialize_coro,
     },
     deserializer::scalar_matches::scalar_matches_shape,
 };
@@ -1043,6 +1043,182 @@ fn deserialize_variant_struct_fields_inner<'input, const BORROW: bool>(
     Ok(wip)
 }
 
+/// Inner implementation of `deserialize_enum_as_struct` that runs in a coroutine.
+fn deserialize_enum_as_struct_inner<'input, const BORROW: bool>(
+    yielder: &DeserializeYielder<'input, BORROW>,
+    mut wip: Partial<'input, BORROW>,
+    enum_def: &'static facet_core::EnumType,
+) -> Result<Partial<'input, BORROW>, InnerDeserializeError> {
+    use alloc::format;
+    use facet_reflect::ReflectError;
+
+    let reflect_err = |e: ReflectError| InnerDeserializeError::Reflect {
+        error: e,
+        span: request_span(yielder),
+        path: None,
+    };
+
+    // Get the variant name from FieldKey
+    let field_event = request_event(yielder, "enum field key")?;
+    let variant_name = match field_event {
+        ParseEvent::FieldKey(key) => {
+            key.name
+                .ok_or_else(|| InnerDeserializeError::TypeMismatch {
+                    expected: "variant name",
+                    got: "unit key".to_string(),
+                    span: request_span(yielder),
+                    path: None,
+                })?
+        }
+        ParseEvent::StructEnd => {
+            // Empty struct - this shouldn't happen for valid enums
+            return Err(InnerDeserializeError::Unsupported(
+                "unexpected empty struct for enum".into(),
+            ));
+        }
+        _ => {
+            return Err(InnerDeserializeError::TypeMismatch {
+                expected: "field key for enum variant",
+                got: format!("{field_event:?}"),
+                span: request_span(yielder),
+                path: None,
+            });
+        }
+    };
+
+    // Find the variant definition
+    let variant = enum_def
+        .variants
+        .iter()
+        .find(|v| v.name == variant_name.as_ref())
+        .ok_or_else(|| {
+            InnerDeserializeError::Unsupported(format!("unknown variant: {variant_name}"))
+        })?;
+
+    match variant.data.kind {
+        StructKind::Unit => {
+            // Unit variant - the parser will emit StructEnd next
+            wip = request_set_string_value(yielder, wip, variant_name)?;
+        }
+        StructKind::TupleStruct | StructKind::Tuple => {
+            wip = wip.init_map().map_err(reflect_err)?;
+            wip = wip.begin_object_entry(variant.name).map_err(reflect_err)?;
+            if variant.data.fields.len() == 1 {
+                // Newtype variant - single field content, no wrapper
+                wip = request_deserialize_value_recursive(
+                    yielder,
+                    wip,
+                    variant.data.fields[0].shape.get(),
+                )?;
+            } else {
+                // Multi-field tuple variant - parser emits SequenceStart
+                let seq_event = request_event(yielder, "tuple variant start")?;
+                if !matches!(seq_event, ParseEvent::SequenceStart(_)) {
+                    return Err(InnerDeserializeError::TypeMismatch {
+                        expected: "SequenceStart for tuple variant",
+                        got: format!("{seq_event:?}"),
+                        span: request_span(yielder),
+                        path: None,
+                    });
+                }
+
+                wip = wip.init_list().map_err(reflect_err)?;
+                for field in variant.data.fields {
+                    // The parser's InSequence state will emit OrderedField for each element
+                    let _elem_event = request_event(yielder, "tuple element")?;
+                    wip = wip.begin_list_item().map_err(reflect_err)?;
+                    wip = request_deserialize_value_recursive(yielder, wip, field.shape.get())?;
+                    wip = wip.end().map_err(reflect_err)?;
+                }
+
+                let seq_end = request_event(yielder, "tuple variant end")?;
+                if !matches!(seq_end, ParseEvent::SequenceEnd) {
+                    return Err(InnerDeserializeError::TypeMismatch {
+                        expected: "SequenceEnd for tuple variant",
+                        got: format!("{seq_end:?}"),
+                        span: request_span(yielder),
+                        path: None,
+                    });
+                }
+                wip = wip.end().map_err(reflect_err)?;
+            }
+            wip = wip.end().map_err(reflect_err)?;
+        }
+        StructKind::Struct => {
+            // The parser auto-emits StructStart and pushes InStruct state
+            let struct_event = request_event(yielder, "struct variant start")?;
+            if !matches!(struct_event, ParseEvent::StructStart(_)) {
+                return Err(InnerDeserializeError::TypeMismatch {
+                    expected: "StructStart for struct variant",
+                    got: format!("{struct_event:?}"),
+                    span: request_span(yielder),
+                    path: None,
+                });
+            }
+
+            wip = wip.init_map().map_err(reflect_err)?;
+            wip = wip.begin_object_entry(variant.name).map_err(reflect_err)?;
+            // begin_map() initializes the entry's value as an Object (doesn't push a frame)
+            wip = wip.init_map().map_err(reflect_err)?;
+
+            // Deserialize each field - parser will emit OrderedField for each
+            for field in variant.data.fields {
+                let field_event = request_event(yielder, "struct field")?;
+                match field_event {
+                    ParseEvent::OrderedField | ParseEvent::FieldKey(_) => {
+                        let key = field.rename.unwrap_or(field.name);
+                        wip = wip.begin_object_entry(key).map_err(reflect_err)?;
+                        wip = request_deserialize_value_recursive(yielder, wip, field.shape.get())?;
+                        wip = wip.end().map_err(reflect_err)?;
+                    }
+                    ParseEvent::StructEnd => {
+                        return Err(InnerDeserializeError::TypeMismatch {
+                            expected: "field",
+                            got: "StructEnd (struct ended too early)".into(),
+                            span: request_span(yielder),
+                            path: None,
+                        });
+                    }
+                    _ => {
+                        return Err(InnerDeserializeError::TypeMismatch {
+                            expected: "field",
+                            got: format!("{field_event:?}"),
+                            span: request_span(yielder),
+                            path: None,
+                        });
+                    }
+                }
+            }
+
+            // Consume inner StructEnd
+            let inner_end = request_event(yielder, "struct variant inner end")?;
+            if !matches!(inner_end, ParseEvent::StructEnd) {
+                return Err(InnerDeserializeError::TypeMismatch {
+                    expected: "StructEnd for struct variant inner",
+                    got: format!("{inner_end:?}"),
+                    span: request_span(yielder),
+                    path: None,
+                });
+            }
+            // Only end the object entry (begin_map doesn't push a frame)
+            wip = wip.end().map_err(reflect_err)?;
+        }
+    }
+
+    // Consume the outer StructEnd
+    let end_event = request_event(yielder, "enum struct end")?;
+    if !matches!(end_event, ParseEvent::StructEnd) {
+        return Err(InnerDeserializeError::TypeMismatch {
+            expected: "StructEnd for enum wrapper",
+            got: format!("{end_event:?}"),
+            span: request_span(yielder),
+            path: None,
+        });
+    }
+
+    Ok(wip)
+}
+
 impl<'input, const BORROW: bool, P> FormatDeserializer<'input, BORROW, P>
 where
     P: FormatParser<'input>,
@@ -1129,170 +1305,12 @@ where
     /// appropriate state, so we just consume the events it produces.
     pub(crate) fn deserialize_enum_as_struct(
         &mut self,
-        mut wip: Partial<'input, BORROW>,
+        wip: Partial<'input, BORROW>,
         enum_def: &'static facet_core::EnumType,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
-        // Get the variant name from FieldKey
-        let field_event = self.expect_event("enum field key")?;
-        let variant_name = match field_event {
-            ParseEvent::FieldKey(key) => {
-                key.name.ok_or_else(|| DeserializeError::TypeMismatch {
-                    expected: "variant name",
-                    got: "unit key".to_string(),
-                    span: self.last_span,
-                    path: Some(self.path_clone()),
-                })?
-            }
-            ParseEvent::StructEnd => {
-                // Empty struct - this shouldn't happen for valid enums
-                return Err(DeserializeError::Unsupported(
-                    "unexpected empty struct for enum".into(),
-                ));
-            }
-            _ => {
-                return Err(DeserializeError::TypeMismatch {
-                    expected: "field key for enum variant",
-                    got: format!("{field_event:?}"),
-                    span: self.last_span,
-                    path: Some(self.path_clone()),
-                });
-            }
-        };
-
-        // Find the variant definition
-        let variant = enum_def
-            .variants
-            .iter()
-            .find(|v| v.name == variant_name.as_ref())
-            .ok_or_else(|| {
-                DeserializeError::Unsupported(format!("unknown variant: {variant_name}"))
-            })?;
-
-        match variant.data.kind {
-            StructKind::Unit => {
-                // Unit variant - the parser will emit StructEnd next
-                wip = self.set_string_value(wip, variant_name)?;
-            }
-            StructKind::TupleStruct | StructKind::Tuple => {
-                wip = wip.init_map().map_err(DeserializeError::reflect)?;
-                wip = wip
-                    .begin_object_entry(variant.name)
-                    .map_err(DeserializeError::reflect)?;
-                if variant.data.fields.len() == 1 {
-                    // Newtype variant - single field content, no wrapper
-                    wip =
-                        self.deserialize_value_recursive(wip, variant.data.fields[0].shape.get())?;
-                } else {
-                    // Multi-field tuple variant - parser emits SequenceStart
-                    let seq_event = self.expect_event("tuple variant start")?;
-                    if !matches!(seq_event, ParseEvent::SequenceStart(_)) {
-                        return Err(DeserializeError::TypeMismatch {
-                            expected: "SequenceStart for tuple variant",
-                            got: format!("{seq_event:?}"),
-                            span: self.last_span,
-                            path: Some(self.path_clone()),
-                        });
-                    }
-
-                    wip = wip.init_list().map_err(DeserializeError::reflect)?;
-                    for field in variant.data.fields {
-                        // The parser's InSequence state will emit OrderedField for each element
-                        let _elem_event = self.expect_event("tuple element")?;
-                        wip = wip.begin_list_item().map_err(DeserializeError::reflect)?;
-                        wip = self.deserialize_value_recursive(wip, field.shape.get())?;
-                        wip = wip.end().map_err(DeserializeError::reflect)?;
-                    }
-
-                    let seq_end = self.expect_event("tuple variant end")?;
-                    if !matches!(seq_end, ParseEvent::SequenceEnd) {
-                        return Err(DeserializeError::TypeMismatch {
-                            expected: "SequenceEnd for tuple variant",
-                            got: format!("{seq_end:?}"),
-                            span: self.last_span,
-                            path: Some(self.path_clone()),
-                        });
-                    }
-                    wip = wip.end().map_err(DeserializeError::reflect)?;
-                }
-                wip = wip.end().map_err(DeserializeError::reflect)?;
-            }
-            StructKind::Struct => {
-                // The parser auto-emits StructStart and pushes InStruct state
-                let struct_event = self.expect_event("struct variant start")?;
-                if !matches!(struct_event, ParseEvent::StructStart(_)) {
-                    return Err(DeserializeError::TypeMismatch {
-                        expected: "StructStart for struct variant",
-                        got: format!("{struct_event:?}"),
-                        span: self.last_span,
-                        path: Some(self.path_clone()),
-                    });
-                }
-
-                wip = wip.init_map().map_err(DeserializeError::reflect)?;
-                wip = wip
-                    .begin_object_entry(variant.name)
-                    .map_err(DeserializeError::reflect)?;
-                // begin_map() initializes the entry's value as an Object (doesn't push a frame)
-                wip = wip.init_map().map_err(DeserializeError::reflect)?;
-
-                // Deserialize each field - parser will emit OrderedField for each
-                for field in variant.data.fields {
-                    let field_event = self.expect_event("struct field")?;
-                    match field_event {
-                        ParseEvent::OrderedField | ParseEvent::FieldKey(_) => {
-                            let key = field.rename.unwrap_or(field.name);
-                            wip = wip
-                                .begin_object_entry(key)
-                                .map_err(DeserializeError::reflect)?;
-                            wip = self.deserialize_value_recursive(wip, field.shape.get())?;
-                            wip = wip.end().map_err(DeserializeError::reflect)?;
-                        }
-                        ParseEvent::StructEnd => {
-                            return Err(DeserializeError::TypeMismatch {
-                                expected: "field",
-                                got: "StructEnd (struct ended too early)".into(),
-                                span: self.last_span,
-                                path: Some(self.path_clone()),
-                            });
-                        }
-                        _ => {
-                            return Err(DeserializeError::TypeMismatch {
-                                expected: "field",
-                                got: format!("{field_event:?}"),
-                                span: self.last_span,
-                                path: Some(self.path_clone()),
-                            });
-                        }
-                    }
-                }
-
-                // Consume inner StructEnd
-                let inner_end = self.expect_event("struct variant inner end")?;
-                if !matches!(inner_end, ParseEvent::StructEnd) {
-                    return Err(DeserializeError::TypeMismatch {
-                        expected: "StructEnd for struct variant inner",
-                        got: format!("{inner_end:?}"),
-                        span: self.last_span,
-                        path: Some(self.path_clone()),
-                    });
-                }
-                // Only end the object entry (begin_map doesn't push a frame)
-                wip = wip.end().map_err(DeserializeError::reflect)?;
-            }
-        }
-
-        // Consume the outer StructEnd
-        let end_event = self.expect_event("enum struct end")?;
-        if !matches!(end_event, ParseEvent::StructEnd) {
-            return Err(DeserializeError::TypeMismatch {
-                expected: "StructEnd for enum wrapper",
-                got: format!("{end_event:?}"),
-                span: self.last_span,
-                path: Some(self.path_clone()),
-            });
-        }
-
-        Ok(wip)
+        run_deserialize_coro(self, |yielder| {
+            deserialize_enum_as_struct_inner(yielder, wip, enum_def)
+        })
     }
 
     pub(crate) fn deserialize_result_as_enum(

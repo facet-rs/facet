@@ -69,6 +69,12 @@ pub(crate) enum DeserializeRequest<'input, const BORROW: bool> {
         wip: Partial<'input, BORROW>,
         captured_tag: Option<&'input str>,
     },
+
+    /// Need to call `deserialize_value_recursive(wip, hint_shape)`.
+    DeserializeValueRecursive {
+        wip: Partial<'input, BORROW>,
+        hint_shape: &'static facet_core::Shape,
+    },
 }
 
 /// Response from the wrapper to the inner deserialization logic.
@@ -284,6 +290,17 @@ pub(crate) fn request_deserialize_other_variant_with_captured_tag<'input, const 
         .into_wip()
 }
 
+/// Helper to deserialize a value recursively with a shape hint.
+pub(crate) fn request_deserialize_value_recursive<'input, const BORROW: bool>(
+    yielder: &DeserializeYielder<'input, BORROW>,
+    wip: Partial<'input, BORROW>,
+    hint_shape: &'static facet_core::Shape,
+) -> Result<Partial<'input, BORROW>, InnerDeserializeError> {
+    yielder
+        .suspend(DeserializeRequest::DeserializeValueRecursive { wip, hint_shape })
+        .into_wip()
+}
+
 /// Run a coroutine-based deserializer with the given inner function.
 ///
 /// This is the generic wrapper that handles parser operations. The inner function
@@ -387,6 +404,12 @@ where
                             Ok(wip) => DeserializeResponse::Wip(wip),
                             Err(e) => DeserializeResponse::Error(e.into_inner()),
                         },
+                        DeserializeRequest::DeserializeValueRecursive { wip, hint_shape } => {
+                            match deser.deserialize_value_recursive(wip, hint_shape) {
+                                Ok(wip) => DeserializeResponse::Wip(wip),
+                                Err(e) => DeserializeResponse::Error(e.into_inner()),
+                            }
+                        }
                     };
                     result = coro_ref.as_mut().resume(response);
                 }
