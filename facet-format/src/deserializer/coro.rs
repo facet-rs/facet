@@ -399,6 +399,7 @@ pub(crate) fn request_deserialize_enum_as_struct<'input, const BORROW: bool>(
 ///
 /// This is the generic wrapper that handles parser operations. The inner function
 /// is non-generic over the parser type, reducing monomorphization.
+#[inline(never)]
 pub(crate) fn run_deserialize_coro<'input, const BORROW: bool, P, F, R>(
     deser: &mut FormatDeserializer<'input, BORROW, P>,
     inner_fn: F,
