@@ -7,6 +7,7 @@ use facet_reflect::Partial;
 
 use crate::{
     ContainerKind, DeserializeError, FormatDeserializer, FormatParser, ParseEvent, ScalarValue,
+    deserializer::scalar_matches::scalar_matches_shape,
 };
 
 impl<'input, const BORROW: bool, P> FormatDeserializer<'input, BORROW, P>
@@ -1466,7 +1467,7 @@ where
 
                 // Try scalar variants that match the scalar type
                 for (variant, inner_shape) in &variants_by_format.scalar_variants {
-                    if self.scalar_matches_shape(scalar, inner_shape) {
+                    if scalar_matches_shape(scalar, inner_shape) {
                         wip = wip
                             .select_variant_named(variant.effective_name())
                             .map_err(DeserializeError::reflect)?;
@@ -1485,7 +1486,7 @@ where
                 // When deserializing "2024", Edition doesn't match as a primitive scalar,
                 // but it CAN be deserialized from the string via its renamed unit variants.
                 for (variant, inner_shape) in &variants_by_format.scalar_variants {
-                    if !self.scalar_matches_shape(scalar, inner_shape) {
+                    if !scalar_matches_shape(scalar, inner_shape) {
                         wip = wip
                             .select_variant_named(variant.effective_name())
                             .map_err(DeserializeError::reflect)?;
