@@ -1158,9 +1158,25 @@ where
                     });
                 }
 
+                // Check if variant has any flattened fields
+                let has_flatten = variant_fields.iter().any(|f| f.is_flattened());
+
+                // Enter deferred mode for flatten handling (fields can be set out of order)
+                let already_deferred = wip.is_deferred();
+                if has_flatten && !already_deferred {
+                    wip = wip.begin_deferred().map_err(DeserializeError::reflect)?;
+                }
+
                 let num_fields = variant_fields.len();
                 let mut fields_set = alloc::vec![false; num_fields];
                 let mut ordered_field_index = 0usize;
+
+                // Track currently open path segments for flatten handling: (field_name, is_option)
+                let mut open_segments: alloc::vec::Vec<(&str, bool)> = alloc::vec::Vec::new();
+
+                // Track which top-level fields have been touched (for flatten case)
+                let mut touched_fields: alloc::collections::BTreeSet<&str> =
+                    alloc::collections::BTreeSet::new();
 
                 loop {
                     let event = self.expect_event("value")?;
@@ -1190,22 +1206,77 @@ where
                                 }
                             };
 
-                            // Look up field in variant's fields by name/alias
-                            let field_info = variant_fields
-                                .iter()
-                                .enumerate()
-                                .find(|(_, f)| Self::field_matches(f, key_name));
+                            if has_flatten {
+                                // Use path-based lookup for variants with flattened fields
+                                if let Some(path) = find_field_path(variant_fields, key_name) {
+                                    // Track that the first field in the path was touched
+                                    if let Some(&first) = path.first() {
+                                        touched_fields.insert(first);
+                                    }
 
-                            if let Some((idx, _field)) = field_info {
-                                wip = wip
-                                    .begin_nth_field(idx)
-                                    .map_err(DeserializeError::reflect)?;
-                                wip = self.deserialize_into(wip)?;
-                                wip = wip.end().map_err(DeserializeError::reflect)?;
-                                fields_set[idx] = true;
+                                    // Find common prefix with currently open segments
+                                    let common_len = open_segments
+                                        .iter()
+                                        .zip(path.iter())
+                                        .take_while(|((name, _), b)| *name == **b)
+                                        .count();
+
+                                    // Close segments that are no longer needed (in reverse order)
+                                    while open_segments.len() > common_len {
+                                        let (_, is_option) = open_segments.pop().unwrap();
+                                        if is_option {
+                                            wip = wip.end().map_err(DeserializeError::reflect)?;
+                                        }
+                                        wip = wip.end().map_err(DeserializeError::reflect)?;
+                                    }
+
+                                    // Open new segments
+                                    for &field_name in &path[common_len..] {
+                                        wip = wip
+                                            .begin_field(field_name)
+                                            .map_err(DeserializeError::reflect)?;
+                                        let is_option = matches!(wip.shape().def, Def::Option(_));
+                                        if is_option {
+                                            wip = wip
+                                                .begin_some()
+                                                .map_err(DeserializeError::reflect)?;
+                                        }
+                                        open_segments.push((field_name, is_option));
+                                    }
+
+                                    // Deserialize the value
+                                    wip = self.deserialize_into(wip)?;
+
+                                    // Close the leaf field we just deserialized into
+                                    // (but keep parent segments open for potential sibling fields)
+                                    if let Some((_, is_option)) = open_segments.pop() {
+                                        if is_option {
+                                            wip = wip.end().map_err(DeserializeError::reflect)?;
+                                        }
+                                        wip = wip.end().map_err(DeserializeError::reflect)?;
+                                    }
+                                } else {
+                                    // Unknown field - skip
+                                    self.parser.skip_value().map_err(DeserializeError::Parser)?;
+                                }
                             } else {
-                                // Unknown field - skip
-                                self.parser.skip_value().map_err(DeserializeError::Parser)?;
+                                // Simple case: direct field lookup by name/alias
+                                let field_info = variant_fields
+                                    .iter()
+                                    .enumerate()
+                                    .find(|(_, f)| Self::field_matches(f, key_name));
+
+                                if let Some((idx, _field)) = field_info {
+                                    wip = wip
+                                        .begin_nth_field(idx)
+                                        .map_err(DeserializeError::reflect)?;
+                                    wip = self.deserialize_into(wip)?;
+                                    wip = wip.end().map_err(DeserializeError::reflect)?;
+                                    fields_set[idx] = true;
+                                } else {
+                                    // Unknown field - skip
+                                    self.parser.skip_value().map_err(DeserializeError::Parser)?;
+                                }
                             }
                         }
                         other => {
@@ -1219,37 +1290,67 @@ where
                     }
                 }
 
-                // Apply defaults for missing fields
-                for (idx, field) in variant_fields.iter().enumerate() {
-                    if fields_set[idx] {
-                        continue;
-                    }
-
-                    let field_has_default = field.has_default();
-                    let field_type_has_default = field.shape().is(Characteristic::Default);
-                    let field_is_option = matches!(field.shape().def, Def::Option(_));
-
-                    if field_has_default || field_type_has_default {
-                        wip = wip
-                            .set_nth_field_to_default(idx)
-                            .map_err(DeserializeError::reflect)?;
-                    } else if field_is_option {
-                        wip = wip
-                            .begin_nth_field(idx)
-                            .map_err(DeserializeError::reflect)?;
-                        wip = wip.set_default().map_err(DeserializeError::reflect)?;
+                // Close any remaining open segments
+                while let Some((_, is_option)) = open_segments.pop() {
+                    if is_option {
                         wip = wip.end().map_err(DeserializeError::reflect)?;
-                    } else if field.should_skip_deserializing() {
-                        wip = wip
-                            .set_nth_field_to_default(idx)
-                            .map_err(DeserializeError::reflect)?;
-                    } else {
-                        return Err(DeserializeError::TypeMismatch {
-                            expected: "field to be present or have default",
-                            got: format!("missing field '{}'", field.name),
-                            span: self.last_span,
-                            path: None,
-                        });
+                    }
+                    wip = wip.end().map_err(DeserializeError::reflect)?;
+                }
+
+                // For flatten case: touch any flattened fields that weren't visited
+                // This ensures fill_defaults can initialize them
+                if has_flatten {
+                    for field in variant_fields.iter() {
+                        if field.is_flattened() && !touched_fields.contains(field.name) {
+                            // Open the field, let fill_defaults handle it, close it
+                            wip = wip
+                                .begin_field(field.name)
+                                .map_err(DeserializeError::reflect)?;
+                            wip = wip.end().map_err(DeserializeError::reflect)?;
+                        }
+                    }
+                }
+
+                // Finish deferred mode (only if we started it)
+                // This applies defaults for missing fields automatically
+                if has_flatten && !already_deferred {
+                    wip = wip.finish_deferred().map_err(DeserializeError::reflect)?;
+                }
+
+                // Apply defaults for missing fields (only when not using flatten/deferred mode)
+                if !has_flatten {
+                    for (idx, field) in variant_fields.iter().enumerate() {
+                        if fields_set[idx] {
+                            continue;
+                        }
+
+                        let field_has_default = field.has_default();
+                        let field_type_has_default = field.shape().is(Characteristic::Default);
+                        let field_is_option = matches!(field.shape().def, Def::Option(_));
+
+                        if field_has_default || field_type_has_default {
+                            wip = wip
+                                .set_nth_field_to_default(idx)
+                                .map_err(DeserializeError::reflect)?;
+                        } else if field_is_option {
+                            wip = wip
+                                .begin_nth_field(idx)
+                                .map_err(DeserializeError::reflect)?;
+                            wip = wip.set_default().map_err(DeserializeError::reflect)?;
+                            wip = wip.end().map_err(DeserializeError::reflect)?;
+                        } else if field.should_skip_deserializing() {
+                            wip = wip
+                                .set_nth_field_to_default(idx)
+                                .map_err(DeserializeError::reflect)?;
+                        } else {
+                            return Err(DeserializeError::TypeMismatch {
+                                expected: "field to be present or have default",
+                                got: format!("missing field '{}'", field.name),
+                                span: self.last_span,
+                                path: None,
+                            });
+                        }
                     }
                 }
 
