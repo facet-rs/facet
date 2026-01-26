@@ -439,12 +439,7 @@ fn get_source_for_provenance(
         Provenance::Cli { .. } => ("<cli>".to_string(), cli_args_source.to_string()),
         Provenance::Env { .. } => {
             // Use the virtual env document from the env layer
-            let source_text = layers
-                .env
-                .source_text
-                .as_ref()
-                .cloned()
-                .unwrap_or_default();
+            let source_text = layers.env.source_text.as_ref().cloned().unwrap_or_default();
             ("<env>".to_string(), source_text)
         }
         Provenance::File { file, .. } => (file.path.to_string(), file.contents.clone()),
@@ -1281,7 +1276,7 @@ mod tests {
     }
 
     #[test]
-    fn test_debug_subcommand_with_builtins_parsing() {
+    fn test_subcommand_with_builtins_parsing() {
         use crate::config_value_parser::fill_defaults_from_shape;
         use crate::layers::cli::CliConfigBuilder;
         use crate::layers::cli::parse_cli;
@@ -1292,78 +1287,31 @@ mod tests {
         let schema =
             Schema::from_shape(ArgsWithSubcommandAndBuiltins::SHAPE).expect("schema should build");
 
-        // Check what the schema says about subcommand field
-        let args_level = schema.args();
-        eprintln!(
-            "Schema subcommand_field_name: {:?}",
-            args_level.subcommand_field_name()
-        );
-        eprintln!(
-            "Schema args: {:?}",
-            args_level.args().keys().collect::<Vec<_>>()
-        );
-        eprintln!(
-            "Schema subcommands: {:?}",
-            args_level.subcommands().keys().collect::<Vec<_>>()
-        );
-
         // Parse CLI args
         let cli_config = CliConfigBuilder::new().args(["build", "--release"]).build();
         let output = parse_cli(&schema, &cli_config);
-
-        eprintln!("CLI output value: {:#?}", output.value);
-        eprintln!("CLI output diagnostics: {:?}", output.diagnostics);
-
-        // The value should have a "command" key with the enum
-        if let Some(crate::config_value::ConfigValue::Object(obj)) = output.value.as_ref() {
-            eprintln!("Top-level keys: {:?}", obj.value.keys().collect::<Vec<_>>());
-            for (k, v) in &obj.value {
-                eprintln!("  {} = {:?}", k, v);
-            }
-        }
 
         assert!(output.diagnostics.is_empty(), "should have no diagnostics");
 
         // Now test fill_defaults_from_shape
         let cli_value = output.value.unwrap();
-        eprintln!("\n--- fill_defaults_from_shape ---");
         let with_defaults =
             fill_defaults_from_shape(&cli_value, ArgsWithSubcommandAndBuiltins::SHAPE);
-        eprintln!("After fill_defaults: {:#?}", with_defaults);
 
         // Check for missing fields
         let mut missing_fields = Vec::new();
         collect_missing_fields(&with_defaults, &schema, &mut missing_fields);
-        eprintln!("Missing fields: {:?}", missing_fields);
 
-        // The test should show what's going wrong
         assert!(
             missing_fields.is_empty(),
             "should have no missing fields, got: {:?}",
             missing_fields
         );
 
-        // Print the shape's fields to understand what the deserializer expects
-        eprintln!("\n--- Shape fields ---");
-        if let facet_core::Type::User(facet_core::UserType::Struct(s)) =
-            &ArgsWithSubcommandAndBuiltins::SHAPE.ty
-        {
-            for field in s.fields.iter() {
-                eprintln!(
-                    "Field: {} (flattened: {})",
-                    field.name,
-                    field.is_flattened()
-                );
-            }
-        }
-
         // Now try the full deserialization
-        eprintln!("\n--- Deserializing ---");
         let result: Result<ArgsWithSubcommandAndBuiltins, _> =
             crate::config_value_parser::from_config_value(&with_defaults);
-        eprintln!("Deserialization result: {:?}", result);
 
-        // This should succeed
         assert!(
             result.is_ok(),
             "deserialization should succeed: {:?}",
@@ -1919,15 +1867,13 @@ mod tests {
 
         let result = Driver::new(config).run().into_result();
         match result {
-            Ok(output) => {
-                match &output.value.config.storage {
-                    StorageBackend::S3 { bucket, region } => {
-                        assert_eq!(bucket, "my-bucket");
-                        assert_eq!(region, "us-east-1");
-                    }
-                    other => panic!("expected S3 variant, got {:?}", other),
+            Ok(output) => match &output.value.config.storage {
+                StorageBackend::S3 { bucket, region } => {
+                    assert_eq!(bucket, "my-bucket");
+                    assert_eq!(region, "us-east-1");
                 }
-            }
+                other => panic!("expected S3 variant, got {:?}", other),
+            },
             Err(e) => panic!("expected success, got {:?}", e),
         }
     }
@@ -2019,15 +1965,13 @@ mod tests {
 
         let result = Driver::new(config).run().into_result();
         match result {
-            Ok(output) => {
-                match &output.value.config.storage {
-                    StorageBackend::S3 { bucket, region } => {
-                        assert_eq!(bucket, "my-bucket");
-                        assert_eq!(region, "us-east-1");
-                    }
-                    other => panic!("expected S3 variant, got {:?}", other),
+            Ok(output) => match &output.value.config.storage {
+                StorageBackend::S3 { bucket, region } => {
+                    assert_eq!(bucket, "my-bucket");
+                    assert_eq!(region, "us-east-1");
                 }
-            }
+                other => panic!("expected S3 variant, got {:?}", other),
+            },
             Err(e) => panic!("expected success, got {:?}", e),
         }
     }

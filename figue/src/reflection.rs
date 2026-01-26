@@ -202,3 +202,324 @@ pub(crate) fn coerce_types_from_shape(
         _ => value.clone(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use facet::Facet;
+
+    // Helper to create a string ConfigValue
+    fn string_value(s: &str) -> ConfigValue {
+        ConfigValue::String(Sourced {
+            value: s.to_string(),
+            span: None,
+            provenance: None,
+        })
+    }
+
+    // Helper to extract integer from ConfigValue
+    fn get_integer(v: &ConfigValue) -> Option<i64> {
+        match v {
+            ConfigValue::Integer(sourced) => Some(sourced.value),
+            _ => None,
+        }
+    }
+
+    // Helper to extract bool from ConfigValue
+    fn get_bool(v: &ConfigValue) -> Option<bool> {
+        match v {
+            ConfigValue::Bool(sourced) => Some(sourced.value),
+            _ => None,
+        }
+    }
+
+    // Helper to extract float from ConfigValue
+    fn get_float(v: &ConfigValue) -> Option<f64> {
+        match v {
+            ConfigValue::Float(sourced) => Some(sourced.value),
+            _ => None,
+        }
+    }
+
+    // Helper to check if value is still a string
+    fn is_string(v: &ConfigValue) -> bool {
+        matches!(v, ConfigValue::String(_))
+    }
+
+    // Helper to check if value is an array
+    fn is_array(v: &ConfigValue) -> bool {
+        matches!(v, ConfigValue::Array(_))
+    }
+
+    // Helper to get array length
+    fn array_len(v: &ConfigValue) -> Option<usize> {
+        match v {
+            ConfigValue::Array(sourced) => Some(sourced.value.len()),
+            _ => None,
+        }
+    }
+
+    // ========================================================================
+    // String to integer coercion tests
+    // ========================================================================
+
+    #[test]
+    fn test_coerce_string_to_i64() {
+        #[derive(Facet)]
+        struct Test {
+            count: i64,
+        }
+
+        let value = string_value("42");
+        let coerced = coerce_types_from_shape(&value, i64::SHAPE);
+        assert_eq!(get_integer(&coerced), Some(42));
+    }
+
+    #[test]
+    fn test_coerce_string_to_i32() {
+        let value = string_value("1000");
+        let coerced = coerce_types_from_shape(&value, i32::SHAPE);
+        assert_eq!(get_integer(&coerced), Some(1000));
+    }
+
+    #[test]
+    fn test_coerce_string_to_i16() {
+        let value = string_value("255");
+        let coerced = coerce_types_from_shape(&value, i16::SHAPE);
+        assert_eq!(get_integer(&coerced), Some(255));
+    }
+
+    #[test]
+    fn test_coerce_string_to_i8() {
+        let value = string_value("100");
+        let coerced = coerce_types_from_shape(&value, i8::SHAPE);
+        assert_eq!(get_integer(&coerced), Some(100));
+    }
+
+    #[test]
+    fn test_coerce_string_to_u64() {
+        let value = string_value("999");
+        let coerced = coerce_types_from_shape(&value, u64::SHAPE);
+        assert_eq!(get_integer(&coerced), Some(999));
+    }
+
+    #[test]
+    fn test_coerce_string_to_u32() {
+        let value = string_value("65535");
+        let coerced = coerce_types_from_shape(&value, u32::SHAPE);
+        assert_eq!(get_integer(&coerced), Some(65535));
+    }
+
+    #[test]
+    fn test_coerce_string_to_u16() {
+        let value = string_value("8080");
+        let coerced = coerce_types_from_shape(&value, u16::SHAPE);
+        assert_eq!(get_integer(&coerced), Some(8080));
+    }
+
+    #[test]
+    fn test_coerce_string_to_u8() {
+        let value = string_value("200");
+        let coerced = coerce_types_from_shape(&value, u8::SHAPE);
+        assert_eq!(get_integer(&coerced), Some(200));
+    }
+
+    #[test]
+    fn test_coerce_negative_string_to_signed() {
+        let value = string_value("-42");
+        let coerced = coerce_types_from_shape(&value, i64::SHAPE);
+        assert_eq!(get_integer(&coerced), Some(-42));
+    }
+
+    #[test]
+    fn test_coerce_negative_string_to_unsigned_fails() {
+        // Negative numbers should stay as strings for unsigned types
+        let value = string_value("-1");
+        let coerced = coerce_types_from_shape(&value, u64::SHAPE);
+        assert!(
+            is_string(&coerced),
+            "negative should stay as string for unsigned"
+        );
+    }
+
+    #[test]
+    fn test_coerce_out_of_range_i8_stays_string() {
+        // Value too large for i8 should stay as string
+        let value = string_value("999");
+        let coerced = coerce_types_from_shape(&value, i8::SHAPE);
+        assert!(is_string(&coerced), "out of range should stay as string");
+    }
+
+    #[test]
+    fn test_coerce_invalid_integer_stays_string() {
+        let value = string_value("not_a_number");
+        let coerced = coerce_types_from_shape(&value, i64::SHAPE);
+        assert!(is_string(&coerced));
+    }
+
+    // ========================================================================
+    // String to bool coercion tests
+    // ========================================================================
+
+    #[test]
+    fn test_coerce_string_true_to_bool() {
+        let value = string_value("true");
+        let coerced = coerce_types_from_shape(&value, bool::SHAPE);
+        assert_eq!(get_bool(&coerced), Some(true));
+    }
+
+    #[test]
+    fn test_coerce_string_false_to_bool() {
+        let value = string_value("false");
+        let coerced = coerce_types_from_shape(&value, bool::SHAPE);
+        assert_eq!(get_bool(&coerced), Some(false));
+    }
+
+    #[test]
+    fn test_coerce_invalid_bool_stays_string() {
+        let value = string_value("yes");
+        let coerced = coerce_types_from_shape(&value, bool::SHAPE);
+        // "yes" is not valid for Rust's bool::parse, stays as string
+        assert!(is_string(&coerced));
+    }
+
+    // ========================================================================
+    // String to float coercion tests
+    // ========================================================================
+
+    #[test]
+    fn test_coerce_string_to_f64() {
+        let value = string_value("1.5");
+        let coerced = coerce_types_from_shape(&value, f64::SHAPE);
+        let float_val = get_float(&coerced);
+        assert!(float_val.is_some());
+        assert!((float_val.unwrap() - 1.5).abs() < 0.0001);
+    }
+
+    #[test]
+    fn test_coerce_string_to_f32() {
+        let value = string_value("2.5");
+        let coerced = coerce_types_from_shape(&value, f32::SHAPE);
+        let float_val = get_float(&coerced);
+        assert!(float_val.is_some());
+        assert!((float_val.unwrap() - 2.5).abs() < 0.0001);
+    }
+
+    #[test]
+    fn test_coerce_integer_string_to_float() {
+        let value = string_value("42");
+        let coerced = coerce_types_from_shape(&value, f64::SHAPE);
+        let float_val = get_float(&coerced);
+        assert!(float_val.is_some());
+        assert!((float_val.unwrap() - 42.0).abs() < 0.0001);
+    }
+
+    // ========================================================================
+    // List wrapping tests
+    // ========================================================================
+
+    #[test]
+    fn test_coerce_scalar_to_vec() {
+        let value = string_value("42");
+        let coerced = coerce_types_from_shape(&value, <Vec<i64>>::SHAPE);
+
+        // Should wrap in array
+        assert!(is_array(&coerced));
+        assert_eq!(array_len(&coerced), Some(1));
+
+        // Element should be coerced to integer
+        if let ConfigValue::Array(arr) = &coerced {
+            assert_eq!(get_integer(&arr.value[0]), Some(42));
+        }
+    }
+
+    #[test]
+    fn test_coerce_array_stays_array() {
+        let arr = ConfigValue::Array(Sourced {
+            value: vec![string_value("1"), string_value("2"), string_value("3")],
+            span: None,
+            provenance: None,
+        });
+
+        let coerced = coerce_types_from_shape(&arr, <Vec<i64>>::SHAPE);
+
+        // Should stay as array
+        assert!(is_array(&coerced));
+        assert_eq!(array_len(&coerced), Some(3));
+
+        // Elements should be coerced to integers
+        if let ConfigValue::Array(arr) = &coerced {
+            assert_eq!(get_integer(&arr.value[0]), Some(1));
+            assert_eq!(get_integer(&arr.value[1]), Some(2));
+            assert_eq!(get_integer(&arr.value[2]), Some(3));
+        }
+    }
+
+    // ========================================================================
+    // Struct coercion tests
+    // ========================================================================
+
+    #[test]
+    fn test_coerce_struct_fields() {
+        use indexmap::IndexMap;
+
+        #[derive(Facet)]
+        struct Config {
+            port: u16,
+            debug: bool,
+        }
+
+        let mut map = IndexMap::default();
+        map.insert("port".to_string(), string_value("8080"));
+        map.insert("debug".to_string(), string_value("true"));
+
+        let obj = ConfigValue::Object(Sourced {
+            value: map,
+            span: None,
+            provenance: None,
+        });
+
+        let coerced = coerce_types_from_shape(&obj, Config::SHAPE);
+
+        if let ConfigValue::Object(sourced) = coerced {
+            assert_eq!(get_integer(sourced.value.get("port").unwrap()), Some(8080));
+            assert_eq!(get_bool(sourced.value.get("debug").unwrap()), Some(true));
+        } else {
+            panic!("expected object");
+        }
+    }
+
+    // ========================================================================
+    // Edge cases
+    // ========================================================================
+
+    #[test]
+    fn test_coerce_already_correct_type_unchanged() {
+        let value = ConfigValue::Integer(Sourced {
+            value: 42,
+            span: None,
+            provenance: None,
+        });
+        let coerced = coerce_types_from_shape(&value, i64::SHAPE);
+        assert_eq!(get_integer(&coerced), Some(42));
+    }
+
+    #[test]
+    fn test_coerce_bool_value_unchanged() {
+        let value = ConfigValue::Bool(Sourced {
+            value: true,
+            span: None,
+            provenance: None,
+        });
+        let coerced = coerce_types_from_shape(&value, bool::SHAPE);
+        assert_eq!(get_bool(&coerced), Some(true));
+    }
+
+    #[test]
+    fn test_coerce_empty_string_stays_string() {
+        let value = string_value("");
+        let coerced = coerce_types_from_shape(&value, i64::SHAPE);
+        // Empty string doesn't parse as integer, stays as string
+        assert!(is_string(&coerced));
+    }
+}

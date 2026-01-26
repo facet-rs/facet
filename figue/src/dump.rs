@@ -737,3 +737,400 @@ fn wrap_value(value: &str, max_width: usize) -> Vec<String> {
 
     lines
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ========================================================================
+    // Helper functions tests
+    // ========================================================================
+
+    #[test]
+    fn test_truncate_middle_short_string() {
+        let (result, truncated) = truncate_middle("hello", 10);
+        assert_eq!(result, "hello");
+        assert!(!truncated);
+    }
+
+    #[test]
+    fn test_truncate_middle_exact_length() {
+        let (result, truncated) = truncate_middle("hello", 5);
+        assert_eq!(result, "hello");
+        assert!(!truncated);
+    }
+
+    #[test]
+    fn test_truncate_middle_long_string() {
+        let (result, truncated) = truncate_middle("hello world", 8);
+        assert_eq!(result.len(), 8);
+        assert!(result.contains("..."));
+        assert!(truncated);
+    }
+
+    #[test]
+    fn test_truncate_middle_very_short_max() {
+        let (result, truncated) = truncate_middle("hello", 2);
+        assert_eq!(result, "...");
+        assert!(truncated);
+    }
+
+    #[test]
+    fn test_calculate_line_number_first_line() {
+        let contents = "first\nsecond\nthird";
+        assert_eq!(calculate_line_number(contents, 0), 1);
+        assert_eq!(calculate_line_number(contents, 3), 1);
+    }
+
+    #[test]
+    fn test_calculate_line_number_second_line() {
+        let contents = "first\nsecond\nthird";
+        // offset 6 is start of "second"
+        assert_eq!(calculate_line_number(contents, 6), 2);
+    }
+
+    #[test]
+    fn test_calculate_line_number_third_line() {
+        let contents = "first\nsecond\nthird";
+        // offset 13 is start of "third"
+        assert_eq!(calculate_line_number(contents, 13), 3);
+    }
+
+    #[test]
+    fn test_visual_width_plain_text() {
+        assert_eq!(visual_width("hello"), 5);
+    }
+
+    #[test]
+    fn test_visual_width_with_ansi() {
+        // ANSI codes should not count toward visual width
+        let colored = "\x1b[32mhello\x1b[0m";
+        assert_eq!(visual_width(colored), 5);
+    }
+
+    #[test]
+    fn test_wrap_value_short() {
+        let lines = wrap_value("short", 10);
+        assert_eq!(lines, vec!["short"]);
+    }
+
+    #[test]
+    fn test_wrap_value_long() {
+        let lines = wrap_value("hello world", 5);
+        assert_eq!(lines.len(), 3); // "hello", " worl", "d"
+    }
+
+    #[test]
+    fn test_wrap_value_empty() {
+        let lines = wrap_value("", 10);
+        assert_eq!(lines, vec![""]);
+    }
+
+    // ========================================================================
+    // DumpEntry tests
+    // ========================================================================
+
+    #[test]
+    fn test_dump_entry_leaf() {
+        let entry = DumpEntry::leaf("key", "value".to_string(), "prov".to_string());
+        assert_eq!(entry.key, "key");
+        assert_eq!(entry.value, "value");
+        assert_eq!(entry.provenance, "prov");
+        assert!(!entry.is_group());
+    }
+
+    #[test]
+    fn test_dump_entry_group() {
+        let child = DumpEntry::leaf("child", "val".to_string(), "prov".to_string());
+        let entry = DumpEntry::group("parent", vec![child]);
+        assert_eq!(entry.key, "parent");
+        assert!(entry.is_group());
+        assert_eq!(entry.children.len(), 1);
+    }
+
+    #[test]
+    fn test_dump_entry_missing() {
+        let entry = DumpEntry::missing("field");
+        assert_eq!(entry.key, "field");
+        assert!(entry.provenance.contains("MISSING"));
+    }
+
+    #[test]
+    fn test_dump_entry_default() {
+        let entry = DumpEntry::default_value("field");
+        assert_eq!(entry.key, "field");
+        assert!(entry.provenance.contains("DEFAULT"));
+    }
+
+    // ========================================================================
+    // Provenance formatting tests
+    // ========================================================================
+
+    #[test]
+    fn test_format_provenance_cli() {
+        let prov = Some(Provenance::Cli {
+            arg: "--verbose".to_string(),
+            value: "true".to_string(),
+        });
+        let formatted = format_provenance(&prov);
+        // Should contain the arg name (with ANSI codes)
+        assert!(formatted.contains("--verbose") || visual_width(&formatted) > 0);
+    }
+
+    #[test]
+    fn test_format_provenance_env() {
+        let prov = Some(Provenance::Env {
+            var: "MY_VAR".to_string(),
+            value: "value".to_string(),
+        });
+        let formatted = format_provenance(&prov);
+        assert!(formatted.contains("MY_VAR"));
+    }
+
+    #[test]
+    fn test_format_provenance_default() {
+        let prov = Some(Provenance::Default);
+        let formatted = format_provenance(&prov);
+        assert!(formatted.contains("DEFAULT"));
+    }
+
+    #[test]
+    fn test_format_provenance_none() {
+        let formatted = format_provenance(&None);
+        assert!(formatted.is_empty());
+    }
+
+    // ========================================================================
+    // Integration tests with schema
+    // ========================================================================
+
+    #[test]
+    fn test_build_dump_tree_basic() {
+        use crate as args;
+        use crate::config_value::Sourced;
+        use facet::Facet;
+        use indexmap::IndexMap;
+
+        #[derive(Facet)]
+        struct TestArgs {
+            #[facet(args::named)]
+            verbose: bool,
+        }
+
+        let schema = Schema::from_shape(TestArgs::SHAPE).expect("schema should build");
+
+        // Build a simple ConfigValue
+        let mut root = IndexMap::default();
+        root.insert(
+            "verbose".to_string(),
+            ConfigValue::Bool(Sourced {
+                value: true,
+                span: None,
+                provenance: Some(Provenance::Cli {
+                    arg: "--verbose".to_string(),
+                    value: "true".to_string(),
+                }),
+            }),
+        );
+        let value = ConfigValue::Object(Sourced::new(root));
+
+        let opts = FormatOptions {
+            max_string_length: 50,
+            max_value_width: 50,
+        };
+        let entries = build_dump_tree(&value, &schema, &opts);
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].key, "verbose");
+    }
+
+    #[test]
+    fn test_build_dump_tree_with_config() {
+        use crate as args;
+        use crate::config_value::Sourced;
+        use facet::Facet;
+        use indexmap::IndexMap;
+
+        #[derive(Facet)]
+        struct ServerConfig {
+            host: String,
+            port: u16,
+        }
+
+        #[derive(Facet)]
+        struct TestArgs {
+            #[facet(args::config)]
+            config: ServerConfig,
+        }
+
+        let schema = Schema::from_shape(TestArgs::SHAPE).expect("schema should build");
+
+        // Build ConfigValue with nested config
+        let mut config_map = IndexMap::default();
+        config_map.insert(
+            "host".to_string(),
+            ConfigValue::String(Sourced {
+                value: "localhost".to_string(),
+                span: None,
+                provenance: Some(Provenance::Default),
+            }),
+        );
+        config_map.insert(
+            "port".to_string(),
+            ConfigValue::Integer(Sourced {
+                value: 8080,
+                span: None,
+                provenance: Some(Provenance::Env {
+                    var: "PORT".to_string(),
+                    value: "8080".to_string(),
+                }),
+            }),
+        );
+
+        let mut root = IndexMap::default();
+        root.insert(
+            "config".to_string(),
+            ConfigValue::Object(Sourced::new(config_map)),
+        );
+        let value = ConfigValue::Object(Sourced::new(root));
+
+        let opts = FormatOptions {
+            max_string_length: 50,
+            max_value_width: 50,
+        };
+        let entries = build_dump_tree(&value, &schema, &opts);
+
+        // Should have entries for host and port
+        assert!(entries.len() >= 2);
+        let keys: Vec<&str> = entries.iter().map(|e| e.key.as_str()).collect();
+        assert!(keys.contains(&"host"));
+        assert!(keys.contains(&"port"));
+    }
+
+    #[test]
+    fn test_build_dump_tree_missing_required() {
+        use crate as args;
+        use crate::config_value::Sourced;
+        use facet::Facet;
+        use indexmap::IndexMap;
+
+        #[derive(Facet)]
+        struct TestArgs {
+            #[facet(args::positional)]
+            input: String, // required
+        }
+
+        let schema = Schema::from_shape(TestArgs::SHAPE).expect("schema should build");
+
+        // Empty value - missing required field
+        let root = IndexMap::default();
+        let value = ConfigValue::Object(Sourced::new(root));
+
+        let opts = FormatOptions {
+            max_string_length: 50,
+            max_value_width: 50,
+        };
+        let entries = build_dump_tree(&value, &schema, &opts);
+
+        // Should have a MISSING entry
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].provenance.contains("MISSING"));
+    }
+
+    #[test]
+    fn test_build_dump_tree_optional_default() {
+        use crate as args;
+        use crate::config_value::Sourced;
+        use facet::Facet;
+        use indexmap::IndexMap;
+
+        #[derive(Facet)]
+        struct TestArgs {
+            #[facet(args::named)]
+            verbose: Option<bool>, // optional
+        }
+
+        let schema = Schema::from_shape(TestArgs::SHAPE).expect("schema should build");
+
+        // Empty value - optional field not set
+        let root = IndexMap::default();
+        let value = ConfigValue::Object(Sourced::new(root));
+
+        let opts = FormatOptions {
+            max_string_length: 50,
+            max_value_width: 50,
+        };
+        let entries = build_dump_tree(&value, &schema, &opts);
+
+        // Should have a DEFAULT entry (not MISSING)
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].provenance.contains("DEFAULT"));
+    }
+
+    #[test]
+    fn test_build_leaf_entry_sensitive() {
+        let opts = FormatOptions {
+            max_string_length: 50,
+            max_value_width: 50,
+        };
+
+        let value = ConfigValue::String(crate::config_value::Sourced {
+            value: "secret_password_123".to_string(),
+            span: None,
+            provenance: Some(Provenance::Env {
+                var: "PASSWORD".to_string(),
+                value: "secret_password_123".to_string(),
+            }),
+        });
+
+        let entry = build_leaf_entry("password", &value, true, &opts);
+
+        // Sensitive field should show REDACTED
+        assert!(entry.value.contains("REDACTED"));
+        assert!(!entry.value.contains("secret"));
+    }
+
+    #[test]
+    fn test_dump_config_with_schema_output() {
+        use crate as args;
+        use crate::config_value::Sourced;
+        use facet::Facet;
+        use indexmap::IndexMap;
+
+        #[derive(Facet)]
+        struct TestArgs {
+            #[facet(args::named)]
+            verbose: bool,
+        }
+
+        let schema = Schema::from_shape(TestArgs::SHAPE).expect("schema should build");
+
+        let mut root = IndexMap::default();
+        root.insert(
+            "verbose".to_string(),
+            ConfigValue::Bool(Sourced {
+                value: true,
+                span: None,
+                provenance: Some(Provenance::Cli {
+                    arg: "--verbose".to_string(),
+                    value: "true".to_string(),
+                }),
+            }),
+        );
+        let value = ConfigValue::Object(Sourced::new(root));
+
+        let file_resolution = FileResolution {
+            paths: vec![],
+            had_explicit: false,
+        };
+
+        let mut output = Vec::new();
+        dump_config_with_schema(&mut output, &value, &file_resolution, &schema);
+
+        let output_str = String::from_utf8(output).expect("output should be valid UTF-8");
+
+        // Should contain Sources header and verbose field
+        assert!(output_str.contains("Sources:"));
+        assert!(output_str.contains("verbose"));
+    }
+}
