@@ -107,9 +107,10 @@ export function loggingMiddleware(options: LoggingOptions = {}): ClientMiddlewar
       if (duration < minDuration) return;
 
       // Build log message
-      let message = `← ${request.method}: ${duration.toFixed(2)}ms`;
+      let message = `← ${request.method}:`;
 
       if (outcome.ok) {
+        message += ` ✓ ${duration.toFixed(2)}ms`;
         if (logResults) {
           const resultStr = typeof outcome.value === "string"
             ? `"${outcome.value}"`
@@ -118,19 +119,20 @@ export function loggingMiddleware(options: LoggingOptions = {}): ClientMiddlewar
         }
       } else {
         // Log errors regardless of logResults setting
+        message += ` ✗ ${duration.toFixed(2)}ms`;
         const error = outcome.error;
         if (error instanceof RpcError) {
           // RPC error - show code and whether it has a payload
           const codeStr = rpcErrorCodeToString(error.code);
           if (error.isUserError() && error.payload) {
-            message += ` ✗ ${codeStr} (${error.payload.length} bytes)`;
+            message += ` ${codeStr} (${error.payload.length} bytes)`;
           } else {
-            message += ` ✗ ${codeStr}`;
+            message += ` ${codeStr}`;
           }
         } else if (error instanceof Error) {
-          message += ` ✗ ${error.name}: ${error.message}`;
+          message += ` ${error.name}: ${error.message}`;
         } else {
-          message += ` ✗ ${error}`;
+          message += ` ${error}`;
         }
       }
 
