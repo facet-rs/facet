@@ -103,11 +103,19 @@ impl PendingSpan {
                     .push(KeyValue::string("rpc.error_type", "user_error"));
                 Status::error("user error")
             }
-            MethodOutcome::Rejected => {
+            MethodOutcome::Rejected(rejection) => {
                 self.attributes.push(KeyValue::bool("rpc.success", false));
                 self.attributes
                     .push(KeyValue::string("rpc.error_type", "rejected"));
-                Status::error("rejected by middleware")
+                self.attributes.push(KeyValue::string(
+                    "rpc.rejection_code",
+                    format!("{:?}", rejection.code),
+                ));
+                self.attributes.push(KeyValue::string(
+                    "rpc.rejection_message",
+                    &rejection.message,
+                ));
+                Status::error(&rejection.message)
             }
         };
 

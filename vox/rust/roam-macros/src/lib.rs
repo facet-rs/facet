@@ -559,7 +559,7 @@ fn generate_dispatch_method(method: &ServiceMethod, roam: &TokenStream2) -> Toke
                         // Still run post-middleware so it can clean up (e.g., end tracing spans)
                         #roam::session::run_post_middleware(
                             &cx,
-                            #roam::session::MethodOutcome::Rejected,
+                            #roam::session::MethodOutcome::Rejected(rejection.clone()),
                             &middleware,
                         ).await;
 

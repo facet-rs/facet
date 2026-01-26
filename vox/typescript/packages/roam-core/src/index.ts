@@ -69,7 +69,7 @@ import {
 export { encodeResultOk, encodeResultErr, encodeUnknownMethod, encodeInvalidPayload, ROAM_ERROR };
 
 // RPC error types (for client-side error handling)
-export { RpcError, RpcErrorCode, decodeRpcResult, decodeUserError } from "@bearcove/roam-wire";
+export { RpcError, RpcErrorCode, decodeRpcResult, decodeUserError, tryDecodeRpcResult, type RpcResult } from "@bearcove/roam-wire";
 
 // Wire types, schemas, and codec
 export type {

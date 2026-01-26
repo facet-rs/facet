@@ -791,7 +791,7 @@ pub async fn run_post_middleware(
 ) {
     // Post runs last-to-first
     for mw in middleware.iter().rev() {
-        mw.post(ctx, outcome).await;
+        mw.post(ctx, outcome.clone()).await;
     }
 }
 

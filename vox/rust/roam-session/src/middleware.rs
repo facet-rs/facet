@@ -61,14 +61,14 @@ use crate::Context;
 /// - `Ok`: Handler returned successfully
 /// - `Err`: Handler returned an error
 /// - `Rejected`: Pre-middleware rejected the request (handler never ran)
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub enum MethodOutcome<'mem> {
     /// Handler returned Ok(value)
     Ok(SendPeek<'mem>),
     /// Handler returned Err(error)
     Err(SendPeek<'mem>),
     /// Pre-middleware rejected the request (handler never ran)
-    Rejected,
+    Rejected(Rejection),
 }
 
 impl MethodOutcome<'_> {
@@ -84,7 +84,7 @@ impl MethodOutcome<'_> {
 
     /// Returns true if the request was rejected by pre-middleware.
     pub fn is_rejected(&self) -> bool {
-        matches!(self, MethodOutcome::Rejected)
+        matches!(self, MethodOutcome::Rejected(_))
     }
 
     /// Get the inner SendPeek if the handler ran (Ok or Err).
@@ -92,7 +92,15 @@ impl MethodOutcome<'_> {
     pub fn peek(&self) -> Option<SendPeek<'_>> {
         match self {
             MethodOutcome::Ok(p) | MethodOutcome::Err(p) => Some(*p),
-            MethodOutcome::Rejected => None,
+            MethodOutcome::Rejected(_) => None,
+        }
+    }
+
+    /// Get the rejection if this outcome was rejected by pre-middleware.
+    pub fn rejection(&self) -> Option<&Rejection> {
+        match self {
+            MethodOutcome::Rejected(r) => Some(r),
+            _ => None,
         }
     }
 }
@@ -344,7 +352,7 @@ impl Middleware for MiddlewareStack {
         Box::pin(async move {
             // Post runs last-to-first (reverse order)
             for layer in self.layers.iter().rev() {
-                layer.post(ctx, outcome).await;
+                layer.post(ctx, outcome.clone()).await;
             }
         })
     }
@@ -510,7 +518,7 @@ mod tests {
                     match outcome {
                         MethodOutcome::Ok(_) => OUTCOME_TYPE.store(1, Ordering::SeqCst),
                         MethodOutcome::Err(_) => OUTCOME_TYPE.store(2, Ordering::SeqCst),
-                        MethodOutcome::Rejected => OUTCOME_TYPE.store(3, Ordering::SeqCst),
+                        MethodOutcome::Rejected(_) => OUTCOME_TYPE.store(3, Ordering::SeqCst),
                     }
                 })
             }
@@ -548,7 +556,8 @@ mod tests {
 
         // Test with Rejected outcome
         POST_CALLED.store(false, Ordering::SeqCst);
-        let future = mw.post(&ctx, MethodOutcome::Rejected);
+        let rejection = Rejection::unauthenticated("test rejection");
+        let future = mw.post(&ctx, MethodOutcome::Rejected(rejection));
         futures_util::pin_mut!(future);
         loop {
             match future.as_mut().poll(&mut cx) {

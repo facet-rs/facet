@@ -8,7 +8,7 @@
 // RPC Error Types
 // ============================================================================
 
-export { RpcError, RpcErrorCode, decodeRpcResult, decodeUserError } from "./rpc_error.ts";
+export { RpcError, RpcErrorCode, decodeRpcResult, decodeUserError, tryDecodeRpcResult, type RpcResult } from "./rpc_error.ts";
 
 // ============================================================================
 // Wire Types

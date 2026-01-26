@@ -3,6 +3,7 @@
 // Provides request/response logging with timing information.
 
 import type { ClientMiddleware, ClientContext, CallRequest, CallOutcome } from "./middleware.ts";
+import { RpcError, RpcErrorCode } from "@bearcove/roam-wire";
 
 const START_TIME = Symbol("logging:start-time");
 
@@ -118,7 +119,15 @@ export function loggingMiddleware(options: LoggingOptions = {}): ClientMiddlewar
       } else {
         // Log errors regardless of logResults setting
         const error = outcome.error;
-        if (error instanceof Error) {
+        if (error instanceof RpcError) {
+          // RPC error - show code and whether it has a payload
+          const codeStr = rpcErrorCodeToString(error.code);
+          if (error.isUserError() && error.payload) {
+            message += ` ✗ ${codeStr} (${error.payload.length} bytes)`;
+          } else {
+            message += ` ✗ ${codeStr}`;
+          }
+        } else if (error instanceof Error) {
           message += ` ✗ ${error.name}: ${error.message}`;
         } else {
           message += ` ✗ ${error}`;
@@ -128,4 +137,20 @@ export function loggingMiddleware(options: LoggingOptions = {}): ClientMiddlewar
       logger(message);
     },
   };
+}
+
+/** Convert RPC error code to human-readable string */
+function rpcErrorCodeToString(code: number): string {
+  switch (code) {
+    case RpcErrorCode.USER:
+      return "user_error";
+    case RpcErrorCode.UNKNOWN_METHOD:
+      return "unknown_method";
+    case RpcErrorCode.INVALID_PAYLOAD:
+      return "invalid_payload";
+    case RpcErrorCode.CANCELLED:
+      return "cancelled";
+    default:
+      return `error_${code}`;
+  }
 }

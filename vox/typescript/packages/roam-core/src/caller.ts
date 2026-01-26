@@ -12,6 +12,7 @@ import type {
   ClientMetadataValue,
 } from "./middleware.ts";
 import { Extensions, RejectionError } from "./middleware.ts";
+import { tryDecodeRpcResult } from "@bearcove/roam-wire";
 
 /**
  * Internal request representation used by Caller implementations.
@@ -154,7 +155,15 @@ export class MiddlewareCaller implements Caller {
 
     try {
       responsePayload = await this.inner.call(finalRequest);
-      outcome = { ok: true, value: responsePayload };
+
+      // Peek at the response to determine actual outcome (Ok vs user/protocol error)
+      const rpcResult = tryDecodeRpcResult(responsePayload);
+      if (rpcResult.ok) {
+        outcome = { ok: true, value: responsePayload };
+      } else {
+        // RPC returned an error (user error or protocol error)
+        outcome = { ok: false, error: rpcResult.error };
+      }
     } catch (e) {
       const error = e instanceof Error ? e : new Error(String(e));
       outcome = { ok: false, error };
@@ -163,7 +172,7 @@ export class MiddlewareCaller implements Caller {
       throw e;
     }
 
-    // Run post hooks with success
+    // Run post hooks with actual outcome
     await this.runPostHooks(ctx, callRequest, outcome);
 
     return responsePayload;
