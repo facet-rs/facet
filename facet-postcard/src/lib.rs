@@ -24,6 +24,8 @@
 //! - [`from_slice`]: Deserializes into owned types (`T: Facet<'static>`)
 //! - [`from_slice_borrowed`]: Deserializes with zero-copy borrowing from the input buffer
 //! - [`from_slice_with_shape`]: Deserializes into `Value` using runtime shape information
+//! - [`from_slice_into`]: Deserializes into an existing `Partial` (type-erased, owned)
+//! - [`from_slice_into_borrowed`]: Deserializes into an existing `Partial` (type-erased, zero-copy)
 //!
 //! ```
 //! use facet_postcard::from_slice;
@@ -40,7 +42,8 @@
 //!
 //! This ensures all `Facet` types can be deserialized.
 
-#![cfg_attr(not(feature = "jit"), forbid(unsafe_code))]
+// Note: unsafe code is used for lifetime transmutes in from_slice_into
+// when BORROW=false, mirroring the approach used in facet-json.
 
 extern crate alloc;
 
@@ -143,4 +146,111 @@ where
     let parser = PostcardParser::new(input);
     let mut de = FormatDeserializer::new(parser);
     de.deserialize()
+}
+
+/// Deserialize postcard bytes into an existing Partial.
+///
+/// This is useful for reflection-based deserialization where you don't have
+/// a concrete type `T` at compile time, only its Shape metadata. The Partial
+/// must already be allocated for the target type.
+///
+/// This version produces owned strings (no borrowing from input).
+///
+/// # Example
+///
+/// ```
+/// use facet::Facet;
+/// use facet_postcard::from_slice_into;
+/// use facet_reflect::Partial;
+///
+/// #[derive(Facet, Debug, PartialEq)]
+/// struct Point {
+///     x: i32,
+///     y: i32,
+/// }
+///
+/// // Postcard encoding: [x=10 (zigzag), y=20 (zigzag)]
+/// let bytes = &[0x14, 0x28];
+/// let partial = Partial::alloc_owned::<Point>().unwrap();
+/// let partial = from_slice_into(bytes, partial).unwrap();
+/// let value = partial.build().unwrap();
+/// let point: Point = value.materialize().unwrap();
+/// assert_eq!(point.x, 10);
+/// assert_eq!(point.y, 20);
+/// ```
+pub fn from_slice_into<'facet>(
+    input: &[u8],
+    partial: facet_reflect::Partial<'facet, false>,
+) -> Result<facet_reflect::Partial<'facet, false>, DeserializeError<PostcardError>> {
+    use facet_format::FormatDeserializer;
+    let parser = PostcardParser::new(input);
+    let mut de = FormatDeserializer::new_owned(parser);
+
+    // SAFETY: The deserializer expects Partial<'input, false> where 'input is the
+    // lifetime of the postcard bytes. Since BORROW=false, no data is borrowed from the
+    // input, so the actual 'facet lifetime of the Partial is independent of 'input.
+    // We transmute to satisfy the type system, then transmute back after deserialization.
+    #[allow(unsafe_code)]
+    let partial: facet_reflect::Partial<'_, false> = unsafe {
+        core::mem::transmute::<
+            facet_reflect::Partial<'facet, false>,
+            facet_reflect::Partial<'_, false>,
+        >(partial)
+    };
+
+    let partial = de.deserialize_into(partial)?;
+
+    // SAFETY: Same reasoning - no borrowed data since BORROW=false.
+    #[allow(unsafe_code)]
+    let partial: facet_reflect::Partial<'facet, false> = unsafe {
+        core::mem::transmute::<
+            facet_reflect::Partial<'_, false>,
+            facet_reflect::Partial<'facet, false>,
+        >(partial)
+    };
+
+    Ok(partial)
+}
+
+/// Deserialize postcard bytes into an existing Partial, allowing zero-copy borrowing.
+///
+/// This variant requires the input to outlive the Partial's lifetime (`'input: 'facet`),
+/// enabling zero-copy deserialization of byte slices as `&[u8]` or `Cow<[u8]>`.
+///
+/// This is useful for reflection-based deserialization where you don't have
+/// a concrete type `T` at compile time, only its Shape metadata.
+///
+/// # Example
+///
+/// ```
+/// use facet::Facet;
+/// use facet_postcard::from_slice_into_borrowed;
+/// use facet_reflect::Partial;
+///
+/// #[derive(Facet, Debug, PartialEq)]
+/// struct Message<'a> {
+///     id: u32,
+///     data: &'a [u8],
+/// }
+///
+/// // Postcard encoding: [id=1, data_len=3, 0xAB, 0xCD, 0xEF]
+/// let bytes = &[0x01, 0x03, 0xAB, 0xCD, 0xEF];
+/// let partial = Partial::alloc::<Message>().unwrap();
+/// let partial = from_slice_into_borrowed(bytes, partial).unwrap();
+/// let value = partial.build().unwrap();
+/// let msg: Message = value.materialize().unwrap();
+/// assert_eq!(msg.id, 1);
+/// assert_eq!(msg.data, &[0xAB, 0xCD, 0xEF]);
+/// ```
+pub fn from_slice_into_borrowed<'input, 'facet>(
+    input: &'input [u8],
+    partial: facet_reflect::Partial<'facet, true>,
+) -> Result<facet_reflect::Partial<'facet, true>, DeserializeError<PostcardError>>
+where
+    'input: 'facet,
+{
+    use facet_format::FormatDeserializer;
+    let parser = PostcardParser::new(input);
+    let mut de = FormatDeserializer::new(parser);
+    de.deserialize_into(partial)
 }
