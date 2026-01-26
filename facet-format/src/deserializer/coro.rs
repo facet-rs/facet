@@ -16,9 +16,16 @@ use corosensei::stack::DefaultStack;
 use corosensei::{CoroutineResult, ScopedCoroutine, Yielder};
 use facet_reflect::{Partial, Span};
 
+use alloc::borrow::Cow;
+use alloc::vec::Vec;
+
 use crate::{
-    DeserializeError, FormatDeserializer, FormatParser, InnerDeserializeError, ParseEvent,
+    DeserializeError, FieldEvidence, FormatDeserializer, FormatParser, InnerDeserializeError,
+    ParseEvent,
 };
+
+/// Stack size for coroutines: 2MB to handle deep nesting and coverage instrumentation.
+const STACK_SIZE: usize = 2 * 1024 * 1024;
 
 /// Request from the inner deserialization logic to the wrapper.
 pub(crate) enum DeserializeRequest<'input, const BORROW: bool> {
@@ -28,6 +35,9 @@ pub(crate) enum DeserializeRequest<'input, const BORROW: bool> {
     /// Need to call `expect_peek(expected)` and get the result.
     ExpectPeek { expected: &'static str },
 
+    /// Need to call `parser.peek_event()` and get the raw Option result.
+    PeekEventRaw,
+
     /// Need to call `parser.skip_value()`.
     SkipValue,
 
@@ -36,12 +46,38 @@ pub(crate) enum DeserializeRequest<'input, const BORROW: bool> {
 
     /// Get the current span for error reporting.
     GetSpan,
+
+    /// Need to call `parser.begin_probe()` and collect evidence.
+    CollectEvidence,
+
+    /// Need to call `set_string_value(wip, value)`.
+    SetStringValue {
+        wip: Partial<'input, BORROW>,
+        value: Cow<'input, str>,
+    },
+
+    /// Need to call `deserialize_variant_struct_fields(wip)`.
+    DeserializeVariantStructFields { wip: Partial<'input, BORROW> },
+
+    /// Need to call `deserialize_enum_variant_content(wip)`.
+    #[allow(dead_code)] // Infrastructure for future extraction
+    DeserializeEnumVariantContent { wip: Partial<'input, BORROW> },
+
+    /// Need to call `deserialize_other_variant_with_captured_tag(wip, captured_tag)`.
+    #[allow(dead_code)] // Infrastructure for future extraction
+    DeserializeOtherVariantWithCapturedTag {
+        wip: Partial<'input, BORROW>,
+        captured_tag: Option<&'input str>,
+    },
 }
 
 /// Response from the wrapper to the inner deserialization logic.
 pub(crate) enum DeserializeResponse<'input, const BORROW: bool> {
     /// Result of `expect_event` or `expect_peek`.
     Event(ParseEvent<'input>),
+
+    /// Result of `peek_event_raw` (may be None at EOF).
+    MaybeEvent(Option<ParseEvent<'input>>),
 
     /// Result of `skip_value` (success).
     Skipped,
@@ -51,6 +87,9 @@ pub(crate) enum DeserializeResponse<'input, const BORROW: bool> {
 
     /// Current span value.
     Span(Option<Span>),
+
+    /// Result of `collect_evidence`.
+    Evidence(Vec<FieldEvidence<'input>>),
 
     /// An error occurred.
     Error(InnerDeserializeError),
@@ -64,6 +103,18 @@ impl<'input, const BORROW: bool> DeserializeResponse<'input, BORROW> {
             DeserializeResponse::Error(e) => Err(e),
             other => Err(InnerDeserializeError::Unsupported(format!(
                 "expected Event response, got {:?}",
+                core::mem::discriminant(&other)
+            ))),
+        }
+    }
+
+    /// Unwrap as an optional event (for raw peek), or return an error.
+    pub fn into_maybe_event(self) -> Result<Option<ParseEvent<'input>>, InnerDeserializeError> {
+        match self {
+            DeserializeResponse::MaybeEvent(e) => Ok(e),
+            DeserializeResponse::Error(e) => Err(e),
+            other => Err(InnerDeserializeError::Unsupported(format!(
+                "expected MaybeEvent response, got {:?}",
                 core::mem::discriminant(&other)
             ))),
         }
@@ -104,6 +155,18 @@ impl<'input, const BORROW: bool> DeserializeResponse<'input, BORROW> {
             ))),
         }
     }
+
+    /// Unwrap as evidence, or return an error.
+    pub fn into_evidence(self) -> Result<Vec<FieldEvidence<'input>>, InnerDeserializeError> {
+        match self {
+            DeserializeResponse::Evidence(ev) => Ok(ev),
+            DeserializeResponse::Error(e) => Err(e),
+            other => Err(InnerDeserializeError::Unsupported(format!(
+                "expected Evidence response, got {:?}",
+                core::mem::discriminant(&other)
+            ))),
+        }
+    }
 }
 
 /// Type alias for the yielder used in deserialization coroutines.
@@ -128,6 +191,15 @@ pub(crate) fn request_peek<'input, const BORROW: bool>(
     yielder
         .suspend(DeserializeRequest::ExpectPeek { expected })
         .into_event()
+}
+
+/// Helper to peek at the next event, returning None at EOF.
+pub(crate) fn request_peek_raw<'input, const BORROW: bool>(
+    yielder: &DeserializeYielder<'input, BORROW>,
+) -> Result<Option<ParseEvent<'input>>, InnerDeserializeError> {
+    yielder
+        .suspend(DeserializeRequest::PeekEventRaw)
+        .into_maybe_event()
 }
 
 /// Helper to skip a value.
@@ -159,6 +231,59 @@ pub(crate) fn request_span<'input, const BORROW: bool>(
         .unwrap_or(None)
 }
 
+/// Helper to collect evidence via probe.
+pub(crate) fn request_collect_evidence<'input, const BORROW: bool>(
+    yielder: &DeserializeYielder<'input, BORROW>,
+) -> Result<Vec<FieldEvidence<'input>>, InnerDeserializeError> {
+    yielder
+        .suspend(DeserializeRequest::CollectEvidence)
+        .into_evidence()
+}
+
+/// Helper to set a string value.
+pub(crate) fn request_set_string_value<'input, const BORROW: bool>(
+    yielder: &DeserializeYielder<'input, BORROW>,
+    wip: Partial<'input, BORROW>,
+    value: Cow<'input, str>,
+) -> Result<Partial<'input, BORROW>, InnerDeserializeError> {
+    yielder
+        .suspend(DeserializeRequest::SetStringValue { wip, value })
+        .into_wip()
+}
+
+/// Helper to deserialize variant struct fields.
+pub(crate) fn request_deserialize_variant_struct_fields<'input, const BORROW: bool>(
+    yielder: &DeserializeYielder<'input, BORROW>,
+    wip: Partial<'input, BORROW>,
+) -> Result<Partial<'input, BORROW>, InnerDeserializeError> {
+    yielder
+        .suspend(DeserializeRequest::DeserializeVariantStructFields { wip })
+        .into_wip()
+}
+
+/// Helper to deserialize enum variant content.
+#[allow(dead_code)] // Infrastructure for future extraction
+pub(crate) fn request_deserialize_enum_variant_content<'input, const BORROW: bool>(
+    yielder: &DeserializeYielder<'input, BORROW>,
+    wip: Partial<'input, BORROW>,
+) -> Result<Partial<'input, BORROW>, InnerDeserializeError> {
+    yielder
+        .suspend(DeserializeRequest::DeserializeEnumVariantContent { wip })
+        .into_wip()
+}
+
+/// Helper to deserialize other variant with captured tag.
+#[allow(dead_code)] // Infrastructure for future extraction
+pub(crate) fn request_deserialize_other_variant_with_captured_tag<'input, const BORROW: bool>(
+    yielder: &DeserializeYielder<'input, BORROW>,
+    wip: Partial<'input, BORROW>,
+    captured_tag: Option<&'input str>,
+) -> Result<Partial<'input, BORROW>, InnerDeserializeError> {
+    yielder
+        .suspend(DeserializeRequest::DeserializeOtherVariantWithCapturedTag { wip, captured_tag })
+        .into_wip()
+}
+
 /// Run a coroutine-based deserializer with the given inner function.
 ///
 /// This is the generic wrapper that handles parser operations. The inner function
@@ -172,7 +297,7 @@ where
     F: FnOnce(&DeserializeYielder<'input, BORROW>) -> Result<R, InnerDeserializeError>,
 {
     // Create the coroutine with its own stack
-    let stack = DefaultStack::new(64 * 1024).expect("failed to allocate coroutine stack");
+    let stack = DefaultStack::new(STACK_SIZE).expect("failed to allocate coroutine stack");
 
     let coro: ScopedCoroutine<
         DeserializeResponse<'input, BORROW>,
@@ -201,6 +326,12 @@ where
                                 Err(e) => DeserializeResponse::Error(e.into_inner()),
                             }
                         }
+                        DeserializeRequest::PeekEventRaw => match deser.parser.peek_event() {
+                            Ok(maybe_event) => DeserializeResponse::MaybeEvent(maybe_event),
+                            Err(e) => DeserializeResponse::Error(InnerDeserializeError::Parser(
+                                format!("{e:?}"),
+                            )),
+                        },
                         DeserializeRequest::SkipValue => match deser.parser.skip_value() {
                             Ok(()) => DeserializeResponse::Skipped,
                             Err(e) => DeserializeResponse::Error(InnerDeserializeError::Parser(
@@ -214,6 +345,48 @@ where
                             }
                         }
                         DeserializeRequest::GetSpan => DeserializeResponse::Span(deser.last_span),
+                        DeserializeRequest::CollectEvidence => match deser.parser.begin_probe() {
+                            Ok(probe) => {
+                                match FormatDeserializer::<'input, BORROW, P>::collect_evidence(
+                                    probe,
+                                ) {
+                                    Ok(ev) => DeserializeResponse::Evidence(ev),
+                                    Err(e) => DeserializeResponse::Error(
+                                        InnerDeserializeError::Parser(format!("{e:?}")),
+                                    ),
+                                }
+                            }
+                            Err(e) => DeserializeResponse::Error(InnerDeserializeError::Parser(
+                                format!("{e:?}"),
+                            )),
+                        },
+                        DeserializeRequest::SetStringValue { wip, value } => {
+                            match deser.set_string_value(wip, value) {
+                                Ok(wip) => DeserializeResponse::Wip(wip),
+                                Err(e) => DeserializeResponse::Error(e.into_inner()),
+                            }
+                        }
+                        DeserializeRequest::DeserializeVariantStructFields { wip } => {
+                            match deser.deserialize_variant_struct_fields(wip) {
+                                Ok(wip) => DeserializeResponse::Wip(wip),
+                                Err(e) => DeserializeResponse::Error(e.into_inner()),
+                            }
+                        }
+                        DeserializeRequest::DeserializeEnumVariantContent { wip } => {
+                            match deser.deserialize_enum_variant_content(wip) {
+                                Ok(wip) => DeserializeResponse::Wip(wip),
+                                Err(e) => DeserializeResponse::Error(e.into_inner()),
+                            }
+                        }
+                        DeserializeRequest::DeserializeOtherVariantWithCapturedTag {
+                            wip,
+                            captured_tag,
+                        } => match deser
+                            .deserialize_other_variant_with_captured_tag(wip, captured_tag)
+                        {
+                            Ok(wip) => DeserializeResponse::Wip(wip),
+                            Err(e) => DeserializeResponse::Error(e.into_inner()),
+                        },
                     };
                     result = coro_ref.as_mut().resume(response);
                 }
