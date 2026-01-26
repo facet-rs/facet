@@ -1,0 +1,16 @@
+---
+source: tests/integration/help.rs
+expression: "$crate :: common ::\nstrip_binary_paths(& $crate :: common :: strip_ansi(& help))"
+---
+<PROGRAM>
+
+List installed packages
+
+USAGE:
+    <PROGRAM>
+
+OPTIONS:
+    -a, --all
+            Show all versions
+        --json
+            Output as JSON

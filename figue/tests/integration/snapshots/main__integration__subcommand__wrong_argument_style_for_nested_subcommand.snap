@@ -1,0 +1,18 @@
+---
+source: tests/integration/subcommand.rs
+expression: "$crate :: common :: strip_ansi(& err.to_string())"
+---
+Error: unknown flag: --action
+   ╭─[ <cli>:1:4 ]
+   │
+ 1 │ ci --action gen
+   │    ────┬───  
+   │        ╰───── unknown flag: --action
+───╯
+Error: unexpected argument: gen
+   ╭─[ <cli>:1:13 ]
+   │
+ 1 │ ci --action gen
+   │             ─┬─  
+   │              ╰─── unexpected argument: gen
+───╯

@@ -1,0 +1,19 @@
+---
+source: crates/figue/tests/integration/err.rs
+expression: "$crate :: common :: strip_ansi(& err.to_string())"
+---
+Error: top-level shape must be a struct
+   ╭─[ <unknown>:1:1 ]
+   │
+ 1 │ ╭─▶ #[derive(Facet)]
+   ┆ ┆   
+ 3 │ │   enum Args {
+   │ │        ──┬─  
+   │ │          ╰─── defined at crates/figue/tests/integration/err.rs:7
+   ┆ ┆   
+ 6 │ ├─▶ }
+   │ │   ┬  
+   │ │   ╰── end of definition
+   │ │      
+   │ ╰────── top-level shape must be a struct
+───╯

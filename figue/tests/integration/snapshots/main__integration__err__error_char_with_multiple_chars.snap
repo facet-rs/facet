@@ -1,0 +1,11 @@
+---
+source: tests/integration/err.rs
+expression: "$crate :: common :: strip_ansi(& err.to_string())"
+---
+Error: failed to parse "abc" as char
+   ╭─[ <cli>:1:10 ]
+   │
+ 1 │ --letter abc
+   │          ─┬─  
+   │           ╰─── failed to parse "abc" as char
+───╯

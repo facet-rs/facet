@@ -1,0 +1,22 @@
+---
+source: crates/figue/src/schema/tests.rs
+expression: stripped
+---
+Error: duplicate flag `--dup`
+   ╭─[ <unknown>:4:5 ]
+   │
+ 2 │ struct ConflictingLongFlags {
+   │        ──────────┬─────────  
+   │                  ╰─────────── defined at crates/figue/src/schema/tests.rs:114
+   │ 
+ 4 │     a: bool,
+   │     ───┬───  
+   │        ╰───── `--dup` first defined here
+   │ 
+ 6 │     b: bool,
+   │     ───┬───  
+   │        ╰───── defined again here
+ 7 │ }
+   │ ┬  
+   │ ╰── end of definition
+───╯

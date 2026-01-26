@@ -1,0 +1,30 @@
+---
+source: tests/integration/help.rs
+expression: "$crate :: common ::\nstrip_binary_paths(& $crate :: common :: strip_ansi(& help))"
+---
+myapp 1.0.0
+
+A sample CLI application for testing help generation.
+This is a longer description that spans multiple lines
+to test how doc comments are handled.
+
+USAGE:
+    myapp [OPTIONS] <INPUT> [OUTPUT]
+
+ARGUMENTS:
+        <INPUT>
+            Input file to process
+        <OUTPUT>
+            Output file (optional)
+
+OPTIONS:
+    -v, --verbose
+            Enable verbose output
+    -j, --jobs <USIZE>
+            Number of parallel jobs
+    -h, --help
+            Show help message and exit.
+    -V, --version
+            Show version and exit.
+        --completions <SHELL>
+            Generate shell completions.

@@ -1,0 +1,11 @@
+---
+source: tests/integration/ariadne.rs
+expression: ariadne_output
+---
+Error: flag --concurrency requires a value
+   ╭─[ <cli>:1:1 ]
+   │
+ 1 │ --concurrency
+   │ ──────┬──────  
+   │       ╰──────── flag --concurrency requires a value
+───╯

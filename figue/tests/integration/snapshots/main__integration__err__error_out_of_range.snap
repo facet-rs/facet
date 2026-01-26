@@ -1,0 +1,11 @@
+---
+source: tests/integration/err.rs
+expression: "$crate :: common :: strip_ansi(& err.to_string())"
+---
+Error: failed to parse "1000" as u8
+   ╭─[ <cli>:1:8 ]
+   │
+ 1 │ --byte 1000
+   │        ──┬─  
+   │          ╰─── failed to parse "1000" as u8
+───╯

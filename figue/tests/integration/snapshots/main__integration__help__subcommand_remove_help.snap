@@ -1,0 +1,18 @@
+---
+source: tests/integration/help.rs
+expression: "$crate :: common ::\nstrip_binary_paths(& $crate :: common :: strip_ansi(& help))"
+---
+<PROGRAM>
+
+Remove a package
+
+USAGE:
+    <PROGRAM>
+
+ARGUMENTS:
+        <PACKAGE>
+            Package name to remove
+
+OPTIONS:
+    -y, --yes
+            Don't ask for confirmation

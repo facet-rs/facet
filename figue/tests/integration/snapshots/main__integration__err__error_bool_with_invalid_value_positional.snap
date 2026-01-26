@@ -1,0 +1,11 @@
+---
+source: tests/integration/err.rs
+expression: "$crate :: common :: strip_ansi(& err.to_string())"
+---
+Error: unexpected argument: maybe
+   ╭─[ <cli>:1:10 ]
+   │
+ 1 │ --enable maybe
+   │          ──┬──  
+   │            ╰──── unexpected argument: maybe
+───╯

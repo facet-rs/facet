@@ -1,0 +1,11 @@
+---
+source: tests/integration/ariadne.rs
+expression: ariadne_output
+---
+Error: unexpected argument: unexpected
+   ╭─[ <cli>:1:1 ]
+   │
+ 1 │ unexpected --name value
+   │ ─────┬────  
+   │      ╰────── unexpected argument: unexpected
+───╯

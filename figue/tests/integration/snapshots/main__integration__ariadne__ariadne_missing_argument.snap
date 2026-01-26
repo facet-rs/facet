@@ -1,0 +1,16 @@
+---
+source: tests/integration/ariadne.rs
+expression: ariadne_output
+---
+Error: Missing required fields:
+
+Sources:
+  cli --settings.*
+  defaults
+
+required_field.. .. ⨯ MISSING
+
+Missing:
+  required_field <String> (--required-field)
+
+Run with --help for usage information.

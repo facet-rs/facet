@@ -1,0 +1,16 @@
+---
+source: tests/integration/help.rs
+expression: "$crate :: common ::\nstrip_binary_paths(& $crate :: common :: strip_ansi(& help))"
+---
+<PROGRAM>
+
+Manage repositories
+
+USAGE:
+    <PROGRAM>
+
+COMMANDS:
+    clone
+            Clone a repository
+    push
+            Push changes
