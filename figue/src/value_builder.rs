@@ -209,11 +209,17 @@ impl<'a> ValueBuilder<'a> {
         if let ConfigValueSchema::Enum(enum_schema) = inner_schema {
             let variants = enum_schema.variants();
             if !variants.contains_key(value) {
-                let valid_variants: Vec<&String> = variants.keys().collect();
+                let valid_variants: Vec<&str> = variants.keys().map(|s| s.as_str()).collect();
+
+                // Try to find a similar variant
+                let suggestion =
+                    crate::suggest::format_suggestion(value, valid_variants.iter().copied());
+
                 self.warn(format!(
-                    "unknown variant '{}' for {}. Valid variants are: {}",
+                    "unknown variant '{}' for {}{} Valid variants are: {}",
                     value,
                     path.join("."),
+                    suggestion,
                     valid_variants
                         .iter()
                         .map(|v| format!("'{}'", v))
@@ -368,7 +374,12 @@ impl<'a> ValueBuilder<'a> {
             ConfigValue::Enum(e) => {
                 // Enum values from file parsing - treat as string for validation
                 let prov = e.provenance.clone().unwrap_or(Provenance::Default);
-                self.set(&path, LeafValue::String(e.value.variant.clone()), e.span, prov);
+                self.set(
+                    &path,
+                    LeafValue::String(e.value.variant.clone()),
+                    e.span,
+                    prov,
+                );
             }
         }
     }
@@ -377,7 +388,11 @@ impl<'a> ValueBuilder<'a> {
     ///
     /// This is used after `import_tree()` to return the original parsed value
     /// along with collected diagnostics and unused keys.
-    pub fn into_output_with_value(self, value: Option<ConfigValue>, field_name: Option<&str>) -> LayerOutput {
+    pub fn into_output_with_value(
+        self,
+        value: Option<ConfigValue>,
+        field_name: Option<&str>,
+    ) -> LayerOutput {
         let value = match value {
             Some(parsed) if field_name.is_some() => {
                 // Wrap under the config field name

@@ -345,7 +345,15 @@ impl<'a> FileParseContext<'a> {
                     let error_msgs: Vec<String> = builder
                         .unused_keys()
                         .iter()
-                        .map(|uk| format!("unknown configuration key: {}", uk.key.join(".")))
+                        .map(|uk| {
+                            let suggestion =
+                                crate::suggest::suggest_config_path(config_schema, &uk.key);
+                            format!(
+                                "unknown configuration key: {}{}",
+                                uk.key.join("."),
+                                suggestion
+                            )
+                        })
                         .collect();
                     for msg in error_msgs {
                         builder.error(msg);
@@ -353,10 +361,8 @@ impl<'a> FileParseContext<'a> {
                 }
 
                 // Get the output from the builder
-                let mut output = builder.into_output_with_value(
-                    self.value.clone(),
-                    config_schema.field_name(),
-                );
+                let mut output =
+                    builder.into_output_with_value(self.value.clone(), config_schema.field_name());
 
                 // Prepend any early diagnostics (file read errors, etc.)
                 let mut all_diagnostics = self.early_diagnostics;

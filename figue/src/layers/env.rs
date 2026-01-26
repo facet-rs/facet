@@ -272,7 +272,12 @@ pub fn parse_env(schema: &Schema, env_config: &EnvConfig, source: &dyn EnvSource
         if builder.set(&path, leaf_value, None, prov) {
             prefixed_paths.push(path);
         } else if env_config.strict {
-            builder.error(format!("unknown configuration key: {}", path.join(".")));
+            let suggestion = crate::suggest::suggest_config_path(config_schema, &path);
+            builder.error(format!(
+                "unknown configuration key: {}{}",
+                path.join("."),
+                suggestion
+            ));
         }
     }
 
@@ -399,12 +404,18 @@ fn validate_enum_value_if_applicable(
         if let ConfigValueSchema::Enum(enum_schema) = inner_schema {
             let variants = enum_schema.variants();
             if !variants.contains_key(value) {
-                let valid_variants: Vec<&String> = variants.keys().collect();
+                let valid_variants: Vec<&str> = variants.keys().map(|s| s.as_str()).collect();
+
+                // Try to find a similar variant
+                let suggestion =
+                    crate::suggest::format_suggestion(value, valid_variants.iter().copied());
+
                 builder.warn(format!(
-                    "{}: unknown variant '{}' for {}. Valid variants are: {}",
+                    "{}: unknown variant '{}' for {}{} Valid variants are: {}",
                     var_name,
                     value,
                     path.join("."),
+                    suggestion,
                     valid_variants
                         .iter()
                         .map(|v| format!("'{}'", v))
@@ -520,7 +531,11 @@ impl EnvSpanVisitor {
 
 impl ConfigValueVisitorMut for EnvSpanVisitor {
     fn visit_value(&mut self, _path: &Path, value: &mut ConfigValue) {
-        if let Some(Provenance::Env { var, value: env_value }) = value.provenance().cloned() {
+        if let Some(Provenance::Env {
+            var,
+            value: env_value,
+        }) = value.provenance().cloned()
+        {
             *value.span_mut() = Some(self.ensure_var(&var, &env_value));
         }
     }
@@ -901,11 +916,18 @@ mod tests {
         let output = parse_env(&schema, &config, &env);
 
         // In strict mode, unknown keys should produce an error diagnostic
+        let error = output
+            .diagnostics
+            .iter()
+            .find(|d| d.severity == Severity::Error);
+        assert!(error.is_some(), "should have an error diagnostic");
+
+        // Error should suggest 'port' since "portt" is a typo
+        let error_msg = &error.unwrap().message;
         assert!(
-            output
-                .diagnostics
-                .iter()
-                .any(|d| d.severity == Severity::Error)
+            error_msg.contains("Did you mean 'port'?"),
+            "error should suggest similar field: {}",
+            error_msg
         );
     }
 
@@ -1434,6 +1456,12 @@ mod tests {
                 && warning.message.contains("Warn")
                 && warning.message.contains("Error"),
             "warning should list valid variants: {}",
+            warning.message
+        );
+        // Should include a "did you mean" suggestion since "Debugg" is similar to "Debug"
+        assert!(
+            warning.message.contains("Did you mean 'Debug'?"),
+            "warning should suggest similar variant: {}",
             warning.message
         );
 

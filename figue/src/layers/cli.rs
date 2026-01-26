@@ -260,7 +260,11 @@ impl<'a> ParseContext<'a> {
             // In positional-only mode, everything is a positional
             if self.positional_only {
                 if !self.try_parse_positional(level) && !self.try_parse_subcommand(level) {
-                    self.emit_error(format!("unexpected positional argument: {}", arg));
+                    let suggestion = self.suggest_subcommand_if_expected(arg, level);
+                    self.emit_error(format!(
+                        "unexpected positional argument: {}{}",
+                        arg, suggestion
+                    ));
                     self.index += 1;
                 }
                 continue;
@@ -274,7 +278,8 @@ impl<'a> ParseContext<'a> {
             } else {
                 // Positional or subcommand
                 if !self.try_parse_subcommand(level) && !self.try_parse_positional(level) {
-                    self.emit_error(format!("unexpected argument: {}", arg));
+                    let suggestion = self.suggest_subcommand_if_expected(arg, level);
+                    self.emit_error(format!("unexpected argument: {}{}", arg, suggestion));
                     self.index += 1;
                 }
             }
@@ -336,7 +341,21 @@ impl<'a> ParseContext<'a> {
                 inline_value,
             );
         } else {
-            self.emit_error(format!("unknown flag: --{}", flag_name));
+            // Collect all available flag names for suggestion
+            let all_flags: Vec<&str> = level
+                .args()
+                .iter()
+                .filter_map(|(name, schema)| {
+                    // Only suggest named flags
+                    if matches!(schema.kind(), ArgKind::Named { .. }) {
+                        Some(name.as_str())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            let suggestion = crate::suggest::suggest_flag(flag_name, all_flags);
+            self.emit_error(format!("unknown flag: --{}{}", flag_name, suggestion));
             self.index += 1;
         }
     }
@@ -742,6 +761,23 @@ impl<'a> ParseContext<'a> {
             }
         }
         None
+    }
+
+    /// If the level expects subcommands, try to suggest a similar subcommand name.
+    fn suggest_subcommand_if_expected(&self, arg: &str, level: &ArgLevelSchema) -> String {
+        // Only suggest if this level has subcommands defined
+        if level.subcommand_field_name().is_none() || level.subcommands().is_empty() {
+            return String::new();
+        }
+
+        // Get all subcommand names in kebab-case
+        let subcommand_names: Vec<String> = level
+            .subcommands()
+            .iter()
+            .map(|(name, _)| name.to_kebab_case())
+            .collect();
+
+        crate::suggest::suggest_subcommand(arg, subcommand_names.iter().map(|s| s.as_str()))
     }
 
     fn try_parse_positional(&mut self, level: &ArgLevelSchema) -> bool {
