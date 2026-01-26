@@ -4,8 +4,7 @@ use std::borrow::Cow;
 
 use facet_core::Facet;
 use facet_format::{
-    ContainerKind, FieldEvidence, FieldKey, FieldLocationHint, FormatParser, ParseEvent,
-    ProbeStream, ScalarValue, ValueTypeHint,
+    ContainerKind, FieldKey, FieldLocationHint, FormatParser, ParseEvent, SavePoint, ScalarValue,
 };
 use styx_parse::{Lexer, ScalarKind, Span, Token, TokenKind};
 
@@ -39,6 +38,8 @@ pub struct StyxParser<'de> {
     peek_start_offset: Option<usize>,
     /// Buffered doc comments for the next field key.
     pending_doc: Vec<Cow<'de, str>>,
+    /// Saved parser state for save/restore.
+    saved_state: Option<Box<StyxParser<'de>>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -66,6 +67,7 @@ impl<'de> StyxParser<'de> {
             expr_mode: false,
             peek_start_offset: None,
             pending_doc: Vec::new(),
+            saved_state: None,
         }
     }
 
@@ -88,6 +90,7 @@ impl<'de> StyxParser<'de> {
             expr_mode: true,
             peek_start_offset: None,
             pending_doc: Vec::new(),
+            saved_state: None,
         }
     }
 
@@ -257,64 +260,6 @@ impl<'de> StyxParser<'de> {
         StyxError::new(kind, self.current_span)
     }
 
-    /// Build probe evidence by cloning the parser and scanning for field keys.
-    /// Does not modify the main parser's state.
-    fn build_probe(&self) -> Result<Vec<FieldEvidence<'de>>, StyxError> {
-        // Clone the parser so we can advance without affecting the original
-        let mut probe_parser = self.clone();
-
-        let mut evidence = Vec::new();
-        let mut depth = 1usize;
-
-        loop {
-            let event = probe_parser.next_event()?;
-            match event {
-                Some(ParseEvent::FieldKey(key)) if depth == 1 => {
-                    // At top level, collect field name evidence
-                    let name = key.name.unwrap_or(Cow::Borrowed(""));
-                    evidence.push(FieldEvidence::new(
-                        name,
-                        FieldLocationHint::KeyValue,
-                        Some(ValueTypeHint::Map),
-                    ));
-                    // Skip the field's value
-                    probe_parser.skip_value()?;
-                }
-                Some(ParseEvent::FieldKey(_)) => {
-                    // Nested field, skip its value
-                    probe_parser.skip_value()?;
-                }
-                Some(ParseEvent::StructStart(_)) => {
-                    depth += 1;
-                }
-                Some(ParseEvent::SequenceStart(_)) => {
-                    depth += 1;
-                }
-                Some(ParseEvent::StructEnd) => {
-                    depth -= 1;
-                    if depth == 0 {
-                        break;
-                    }
-                }
-                Some(ParseEvent::SequenceEnd) => {
-                    depth -= 1;
-                    if depth == 0 {
-                        break;
-                    }
-                }
-                Some(ParseEvent::Scalar(_)) | Some(ParseEvent::VariantTag(_)) => {
-                    // Skip scalars and variant tags
-                }
-                Some(ParseEvent::OrderedField) => {
-                    // Skip ordered fields
-                }
-                None => break,
-            }
-        }
-
-        Ok(evidence)
-    }
-
     /// Parse a tag and emit appropriate events.
     /// Called after consuming the @ token.
     /// Returns the first event to emit (others are queued in peeked_events).
@@ -367,10 +312,6 @@ impl<'de> StyxParser<'de> {
 
 impl<'de> FormatParser<'de> for StyxParser<'de> {
     type Error = StyxError;
-    type Probe<'a>
-        = StyxProbe<'de>
-    where
-        Self: 'a;
 
     fn next_event(&mut self) -> Result<Option<ParseEvent<'de>>, Self::Error> {
         // Return queued event if any (FIFO - take from front)
@@ -750,9 +691,18 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
         Ok(())
     }
 
-    fn begin_probe(&mut self) -> Result<Self::Probe<'_>, Self::Error> {
-        let evidence = self.build_probe()?;
-        Ok(StyxProbe { evidence, idx: 0 })
+    fn save(&mut self) -> SavePoint {
+        // Clone the current parser state (without the saved_state field to avoid recursion)
+        let mut clone = self.clone();
+        clone.saved_state = None;
+        self.saved_state = Some(Box::new(clone));
+        SavePoint(0)
+    }
+
+    fn restore(&mut self, _save_point: SavePoint) {
+        if let Some(saved) = self.saved_state.take() {
+            *self = *saved;
+        }
     }
 
     fn current_span(&self) -> Option<facet_reflect::Span> {
@@ -785,29 +735,5 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
         let raw_str = raw_str.trim();
 
         Ok(Some(raw_str))
-    }
-}
-
-/// Probe for untagged enum resolution.
-///
-/// Pre-collects evidence from a fresh parser scan without modifying the main parser.
-pub struct StyxProbe<'de> {
-    /// Pre-collected evidence.
-    evidence: Vec<FieldEvidence<'de>>,
-    /// Current index into evidence.
-    idx: usize,
-}
-
-impl<'de> ProbeStream<'de> for StyxProbe<'de> {
-    type Error = StyxError;
-
-    fn next(&mut self) -> Result<Option<FieldEvidence<'de>>, Self::Error> {
-        if self.idx >= self.evidence.len() {
-            Ok(None)
-        } else {
-            let ev = self.evidence[self.idx].clone();
-            self.idx += 1;
-            Ok(Some(ev))
-        }
     }
 }

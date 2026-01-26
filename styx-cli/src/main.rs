@@ -17,8 +17,8 @@ use std::io::{self, IsTerminal, Read};
 use std::path::Path;
 
 use facet::Facet;
-use facet_args as args;
 use facet_styx::{SchemaFile, validate};
+use figue as args;
 use styx_format::{FormatOptions, format_source};
 use styx_lsp::{TokenType, compute_highlight_spans};
 use styx_tree::{Payload, Value};
@@ -305,8 +305,7 @@ fn print_help() {
 
 fn run_file_mode(args: &[String]) -> Result<(), CliError> {
     let args_strs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    let opts: FileArgs =
-        facet_args::from_slice(&args_strs).map_err(|e| CliError::Usage(format!("{}", e)))?;
+    let opts: FileArgs = figue::from_slice(&args_strs).unwrap();
 
     // Validate option combinations
     if opts.in_place && opts.input == "-" {
@@ -386,8 +385,7 @@ fn run_file_mode(args: &[String]) -> Result<(), CliError> {
 
 fn run_subcommand_mode(args: &[String]) -> Result<(), CliError> {
     let args_strs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    let parsed: Args =
-        facet_args::from_slice(&args_strs).map_err(|e| CliError::Usage(format!("{}", e)))?;
+    let parsed: Args = figue::from_slice(&args_strs).unwrap();
 
     match parsed.command {
         Some(Command::Lsp) => run_lsp(),
@@ -578,9 +576,9 @@ fn run_skill() -> Result<(), CliError> {
 
 fn run_completions(shell: &str) -> Result<(), CliError> {
     let shell_enum = match shell.to_lowercase().as_str() {
-        "bash" => facet_args::Shell::Bash,
-        "zsh" => facet_args::Shell::Zsh,
-        "fish" => facet_args::Shell::Fish,
+        "bash" => figue::Shell::Bash,
+        "zsh" => figue::Shell::Zsh,
+        "fish" => figue::Shell::Fish,
         _ => {
             return Err(CliError::Usage(format!(
                 "unknown shell '{}', expected: bash, zsh, fish",
@@ -589,7 +587,7 @@ fn run_completions(shell: &str) -> Result<(), CliError> {
         }
     };
 
-    let completions = facet_args::generate_completions::<Args>(shell_enum, "styx");
+    let completions = figue::generate_completions::<Args>(shell_enum, "styx");
     print!("{completions}");
     Ok(())
 }
