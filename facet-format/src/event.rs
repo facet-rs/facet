@@ -1,6 +1,8 @@
 extern crate alloc;
 
 use alloc::borrow::Cow;
+use alloc::boxed::Box;
+use alloc::vec::Vec;
 use core::fmt;
 
 /// Location hint for a serialized field.
@@ -13,12 +15,24 @@ pub enum FieldLocationHint {
 
 /// Field key for a serialized field.
 ///
-/// For self-describing formats, this represents either:
-/// - A named key (struct field or map key with string name)
-/// - A tagged key (e.g., `@string` in Styx for type pattern keys)
-/// - A unit key (map key with no name, e.g., `@` in Styx representing `None` in `Option<String>` keys)
+/// This enum is optimized for the common case (simple named keys) while still
+/// supporting rich metadata for formats like Styx.
+///
+/// - `Name`: Simple string key (24 bytes) - used by JSON, YAML, TOML, etc.
+/// - `Full`: Boxed full key with metadata (8 bytes) - used by Styx for doc/tag support.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FieldKey<'de> {
+pub enum FieldKey<'de> {
+    /// Simple named key (common case for JSON/YAML/TOML).
+    Name(Cow<'de, str>),
+    /// Full key with metadata support (for Styx).
+    Full(Box<FullFieldKey<'de>>),
+}
+
+/// Full field key with metadata support.
+///
+/// Used by formats like Styx that support documentation comments and type tags on keys.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FullFieldKey<'de> {
     /// Field name.
     ///
     /// `None` represents a unit key (e.g., `@` in Styx) which can be deserialized as
@@ -46,14 +60,10 @@ pub struct FieldKey<'de> {
 }
 
 impl<'de> FieldKey<'de> {
-    /// Create a new field key with a name.
-    pub fn new(name: impl Into<Cow<'de, str>>, location: FieldLocationHint) -> Self {
-        Self {
-            name: Some(name.into()),
-            location,
-            doc: None,
-            tag: None,
-        }
+    /// Create a new field key with a name (common case).
+    #[inline]
+    pub fn new(name: impl Into<Cow<'de, str>>, _location: FieldLocationHint) -> Self {
+        FieldKey::Name(name.into())
     }
 
     /// Create a new field key with a name and documentation.
@@ -62,11 +72,15 @@ impl<'de> FieldKey<'de> {
         location: FieldLocationHint,
         doc: Vec<Cow<'de, str>>,
     ) -> Self {
-        Self {
-            name: Some(name.into()),
-            location,
-            doc: if doc.is_empty() { None } else { Some(doc) },
-            tag: None,
+        if doc.is_empty() {
+            FieldKey::Name(name.into())
+        } else {
+            FieldKey::Full(Box::new(FullFieldKey {
+                name: Some(name.into()),
+                location,
+                doc: Some(doc),
+                tag: None,
+            }))
         }
     }
 
@@ -74,12 +88,12 @@ impl<'de> FieldKey<'de> {
     ///
     /// Used for type pattern keys where the key is a tag rather than a bare identifier.
     pub fn tagged(tag: impl Into<Cow<'de, str>>, location: FieldLocationHint) -> Self {
-        Self {
+        FieldKey::Full(Box::new(FullFieldKey {
             name: None,
             location,
             doc: None,
             tag: Some(tag.into()),
-        }
+        }))
     }
 
     /// Create a tagged field key with documentation.
@@ -88,12 +102,12 @@ impl<'de> FieldKey<'de> {
         location: FieldLocationHint,
         doc: Vec<Cow<'de, str>>,
     ) -> Self {
-        Self {
+        FieldKey::Full(Box::new(FullFieldKey {
             name: None,
             location,
             doc: if doc.is_empty() { None } else { Some(doc) },
             tag: Some(tag.into()),
-        }
+        }))
     }
 
     /// Create a unit field key (no name).
@@ -101,21 +115,57 @@ impl<'de> FieldKey<'de> {
     /// Used for formats like Styx where `@` represents a unit key in maps.
     /// This is equivalent to `tagged("")` - a tag with an empty name.
     pub fn unit(location: FieldLocationHint) -> Self {
-        Self {
+        FieldKey::Full(Box::new(FullFieldKey {
             name: None,
             location,
             doc: None,
             tag: Some(Cow::Borrowed("")),
-        }
+        }))
     }
 
     /// Create a unit field key with documentation.
     pub fn unit_with_doc(location: FieldLocationHint, doc: Vec<Cow<'de, str>>) -> Self {
-        Self {
+        FieldKey::Full(Box::new(FullFieldKey {
             name: None,
             location,
             doc: if doc.is_empty() { None } else { Some(doc) },
             tag: Some(Cow::Borrowed("")),
+        }))
+    }
+
+    /// Get the field name, if any.
+    #[inline]
+    pub fn name(&self) -> Option<&Cow<'de, str>> {
+        match self {
+            FieldKey::Name(name) => Some(name),
+            FieldKey::Full(full) => full.name.as_ref(),
+        }
+    }
+
+    /// Get the documentation comments, if any.
+    #[inline]
+    pub fn doc(&self) -> Option<&[Cow<'de, str>]> {
+        match self {
+            FieldKey::Name(_) => None,
+            FieldKey::Full(full) => full.doc.as_deref(),
+        }
+    }
+
+    /// Get the tag name, if any.
+    #[inline]
+    pub fn tag(&self) -> Option<&Cow<'de, str>> {
+        match self {
+            FieldKey::Name(_) => None,
+            FieldKey::Full(full) => full.tag.as_ref(),
+        }
+    }
+
+    /// Get the location hint.
+    #[inline]
+    pub fn location(&self) -> FieldLocationHint {
+        match self {
+            FieldKey::Name(_) => FieldLocationHint::KeyValue,
+            FieldKey::Full(full) => full.location,
         }
     }
 }

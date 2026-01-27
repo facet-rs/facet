@@ -54,7 +54,7 @@ fn spanned_string() {
 
     // Span should be populated and point to the value
     let span = config.name.span.expect("span should be populated");
-    let spanned_text = &input[span.offset..span.offset + span.len];
+    let spanned_text = &input[span.offset as usize..span.offset as usize + span.len as usize];
     assert_eq!(spanned_text, r#""foo""#);
 }
 
@@ -86,7 +86,7 @@ fn spanned_bool() {
     assert!(config.enabled.value);
 
     let span = config.enabled.span.expect("span should be populated");
-    let spanned_text = &input[span.offset..span.offset + span.len];
+    let spanned_text = &input[span.offset as usize..span.offset as usize + span.len as usize];
     assert_eq!(spanned_text, "true");
 }
 
@@ -102,7 +102,7 @@ fn spanned_integer() {
     assert_eq!(config.version.value, 42);
 
     let span = config.version.span.expect("span should be populated");
-    let spanned_text = &input[span.offset..span.offset + span.len];
+    let spanned_text = &input[span.offset as usize..span.offset as usize + span.len as usize];
     assert_eq!(spanned_text, "42");
 }
 

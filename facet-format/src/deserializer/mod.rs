@@ -534,15 +534,15 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
         // Peek to get the start offset
         let first_event = self.expect_peek("value to skip")?;
-        let start_offset = first_event.span.offset;
+        let start_offset = first_event.span.offset as usize;
         #[allow(unused_assignments)]
-        let mut end_offset = 0;
+        let mut end_offset = 0usize;
 
         let mut depth = 0i32;
         loop {
             let event = self.expect_event("value to skip")?;
             // Track the end of each event
-            end_offset = event.span.offset + event.span.len;
+            end_offset = event.span.end();
 
             match &event.kind {
                 ParseEventKind::StructStart(_) | ParseEventKind::SequenceStart(_) => {
@@ -672,7 +672,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 crate::ParseEventKind::FieldKey(ref key) => {
                     if depth == 1 && in_struct {
                         // Top-level field - feed to solver
-                        if let Some(ref name) = key.name {
+                        if let Some(name) = key.name() {
                             match solver.see_key(name.clone()) {
                                 KeyResult::Solved(handle) => {
                                     break Some(handle);

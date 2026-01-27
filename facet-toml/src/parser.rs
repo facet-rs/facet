@@ -1106,7 +1106,7 @@ value = 42
         // FieldKey("name")
         assert!(matches!(
             parser.next_event().unwrap(),
-            Some(ParseEvent { kind: ParseEventKind::FieldKey(key), .. }) if key.name.as_deref() == Some("name")
+            Some(ParseEvent { kind: ParseEventKind::FieldKey(key), .. }) if key.name().map(|c| c.as_ref()) == Some("name")
         ));
 
         // Scalar("test")
@@ -1118,7 +1118,7 @@ value = 42
         // FieldKey("value")
         assert!(matches!(
             parser.next_event().unwrap(),
-            Some(ParseEvent { kind: ParseEventKind::FieldKey(key), .. }) if key.name.as_deref() == Some("value")
+            Some(ParseEvent { kind: ParseEventKind::FieldKey(key), .. }) if key.name().map(|c| c.as_ref()) == Some("value")
         ));
 
         // Scalar(42)
@@ -1163,7 +1163,7 @@ port = 8080
             }
         ));
         assert!(
-            matches!(&events[1], ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name.as_deref() == Some("server"))
+            matches!(&events[1], ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name().map(|c| c.as_ref()) == Some("server"))
         );
         assert!(matches!(
             &events[2],
@@ -1173,13 +1173,13 @@ port = 8080
             }
         ));
         assert!(
-            matches!(&events[3], ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name.as_deref() == Some("host"))
+            matches!(&events[3], ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name().map(|c| c.as_ref()) == Some("host"))
         );
         assert!(
             matches!(&events[4], ParseEvent { kind: ParseEventKind::Scalar(ScalarValue::Str(s)), .. } if s == "localhost")
         );
         assert!(
-            matches!(&events[5], ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name.as_deref() == Some("port"))
+            matches!(&events[5], ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name().map(|c| c.as_ref()) == Some("port"))
         );
         assert!(matches!(
             &events[6],
@@ -1237,7 +1237,7 @@ name = "beta"
             }
         )); // root
         assert!(
-            matches!(&events[1], ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name.as_deref() == Some("servers"))
+            matches!(&events[1], ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name().map(|c| c.as_ref()) == Some("servers"))
         );
         assert!(matches!(
             &events[2],
@@ -1254,7 +1254,7 @@ name = "beta"
             }
         )); // element 0
         assert!(
-            matches!(&events[4], ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name.as_deref() == Some("name"))
+            matches!(&events[4], ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name().map(|c| c.as_ref()) == Some("name"))
         );
         assert!(
             matches!(&events[5], ParseEvent { kind: ParseEventKind::Scalar(ScalarValue::Str(s)), .. } if s == "alpha")
@@ -1276,7 +1276,7 @@ name = "beta"
 
         // Reopen servers array
         assert!(
-            matches!(&events[8], ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name.as_deref() == Some("servers"))
+            matches!(&events[8], ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name().map(|c| c.as_ref()) == Some("servers"))
         );
         assert!(matches!(
             &events[9],
@@ -1293,7 +1293,7 @@ name = "beta"
             }
         )); // element 1
         assert!(
-            matches!(&events[11], ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name.as_deref() == Some("name"))
+            matches!(&events[11], ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name().map(|c| c.as_ref()) == Some("name"))
         );
         assert!(
             matches!(&events[12], ParseEvent { kind: ParseEventKind::Scalar(ScalarValue::Str(s)), .. } if s == "beta")
@@ -1332,14 +1332,14 @@ name = "beta"
                 ..
             } = event
             {
-                if k.name.as_deref() == Some("servers") {
+                if k.name().map(|c| c.as_ref()) == Some("servers") {
                     servers_count += 1;
                     if !saw_database {
                         saw_servers_first = true;
                     } else {
                         saw_servers_second = true;
                     }
-                } else if k.name.as_deref() == Some("database") {
+                } else if k.name().map(|c| c.as_ref()) == Some("database") {
                     saw_database = true;
                 }
             }
@@ -1376,7 +1376,7 @@ y = 2
         // Count how many times we see FieldKey("bar")
         let bar_count = events
             .iter()
-            .filter(|e| matches!(e, ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name.as_deref() == Some("bar")))
+            .filter(|e| matches!(e, ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name().map(|c| c.as_ref()) == Some("bar")))
             .count();
 
         assert_eq!(bar_count, 2, "Should see bar twice (reopened)");
@@ -1403,7 +1403,7 @@ foo.bar.baz = 1
             }
         )); // root
         assert!(
-            matches!(&events[1], ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name.as_deref() == Some("foo"))
+            matches!(&events[1], ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name().map(|c| c.as_ref()) == Some("foo"))
         );
         assert!(matches!(
             &events[2],
@@ -1413,7 +1413,7 @@ foo.bar.baz = 1
             }
         ));
         assert!(
-            matches!(&events[3], ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name.as_deref() == Some("bar"))
+            matches!(&events[3], ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name().map(|c| c.as_ref()) == Some("bar"))
         );
         assert!(matches!(
             &events[4],
@@ -1423,7 +1423,7 @@ foo.bar.baz = 1
             }
         ));
         assert!(
-            matches!(&events[5], ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name.as_deref() == Some("baz"))
+            matches!(&events[5], ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name().map(|c| c.as_ref()) == Some("baz"))
         );
         assert!(matches!(
             &events[6],
@@ -1475,7 +1475,7 @@ server = { host = "localhost", port = 8080 }
             }
         )); // root
         assert!(
-            matches!(&events[1], ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name.as_deref() == Some("server"))
+            matches!(&events[1], ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name().map(|c| c.as_ref()) == Some("server"))
         );
         assert!(matches!(
             &events[2],
@@ -1485,13 +1485,13 @@ server = { host = "localhost", port = 8080 }
             }
         )); // inline table
         assert!(
-            matches!(&events[3], ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name.as_deref() == Some("host"))
+            matches!(&events[3], ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name().map(|c| c.as_ref()) == Some("host"))
         );
         assert!(
             matches!(&events[4], ParseEvent { kind: ParseEventKind::Scalar(ScalarValue::Str(s)), .. } if s == "localhost")
         );
         assert!(
-            matches!(&events[5], ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name.as_deref() == Some("port"))
+            matches!(&events[5], ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name().map(|c| c.as_ref()) == Some("port"))
         );
         assert!(matches!(
             &events[6],
@@ -1535,7 +1535,7 @@ numbers = [1, 2, 3]
             }
         )); // root
         assert!(
-            matches!(&events[1], ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name.as_deref() == Some("numbers"))
+            matches!(&events[1], ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name().map(|c| c.as_ref()) == Some("numbers"))
         );
         assert!(matches!(
             &events[2],

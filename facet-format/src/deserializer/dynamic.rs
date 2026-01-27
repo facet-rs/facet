@@ -73,7 +73,8 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                         ParseEventKind::FieldKey(field_key) => {
                             // For dynamic values, unit keys become "@"
                             field_key
-                                .name
+                                .name()
+                                .cloned()
                                 .map(|n| n.into_owned())
                                 .unwrap_or_else(|| "@".to_owned())
                         }
@@ -602,7 +603,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 ParseEventKind::Scalar(ScalarValue::Str(s)) => s,
                 ParseEventKind::Scalar(ScalarValue::I64(i)) => Cow::Owned(i.to_string()),
                 ParseEventKind::Scalar(ScalarValue::U64(u)) => Cow::Owned(u.to_string()),
-                ParseEventKind::FieldKey(k) => k.name.unwrap_or(Cow::Borrowed("@")),
+                ParseEventKind::FieldKey(k) => k.name().cloned().unwrap_or(Cow::Borrowed("@")),
                 _ => {
                     return Err(self.mk_err(
                         &wip,

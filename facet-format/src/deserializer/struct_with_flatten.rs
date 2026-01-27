@@ -145,7 +145,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 ParseEventKind::StructEnd => break,
                 ParseEventKind::FieldKey(key) => {
                     // Unit keys don't make sense for struct fields
-                    let key_name = match &key.name {
+                    let key_name = match key.name() {
                         Some(name) => name.as_ref(),
                         None => {
                             self.skip_value()?;

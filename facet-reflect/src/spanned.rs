@@ -28,16 +28,29 @@ use facet_core::{
 /// ```
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Span {
-    /// Byte offset from start of source.
-    pub offset: usize,
-    /// Length in bytes.
-    pub len: usize,
+    /// Byte offset from start of source (max 4GB).
+    pub offset: u32,
+    /// Length in bytes (max 4GB).
+    pub len: u32,
 }
 
 impl Span {
     /// Create a new span with the given offset and length.
+    ///
+    /// Values larger than `u32::MAX` are saturated.
     pub const fn new(offset: usize, len: usize) -> Self {
-        Self { offset, len }
+        Self {
+            offset: if offset > u32::MAX as usize {
+                u32::MAX
+            } else {
+                offset as u32
+            },
+            len: if len > u32::MAX as usize {
+                u32::MAX
+            } else {
+                len as u32
+            },
+        }
     }
 
     /// Check if this span is unknown (zero offset and length).
@@ -47,23 +60,23 @@ impl Span {
 
     /// Get the end offset (offset + len).
     pub const fn end(&self) -> usize {
-        self.offset + self.len
+        self.offset as usize + self.len as usize
     }
 }
 
-// SAFETY: Span is a simple struct with two usize fields, properly laid out
+// SAFETY: Span is a simple struct with two u32 fields, properly laid out
 unsafe impl Facet<'_> for Span {
     const SHAPE: &'static Shape = &const {
         static FIELDS: [facet_core::Field; 2] = [
             FieldBuilder::new(
                 "offset",
-                facet_core::shape_of::<usize>,
+                facet_core::shape_of::<u32>,
                 mem::offset_of!(Span, offset),
             )
             .build(),
             FieldBuilder::new(
                 "len",
-                facet_core::shape_of::<usize>,
+                facet_core::shape_of::<u32>,
                 mem::offset_of!(Span, len),
             )
             .build(),
