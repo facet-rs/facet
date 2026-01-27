@@ -183,7 +183,7 @@ fn test_partial_covariant_growing() {
     let test = CompilationTest {
         name: "covariant_growing",
         source: include_str!("partial/compile_tests/covariant_growing.rs"),
-        expected_errors: &["error: lifetime may not live long enough"],
+        expected_errors: &["error[E0521]: borrowed data escapes outside of function"],
     };
 
     run_compilation_test(&test);
@@ -195,7 +195,7 @@ fn test_partial_invariant_growing() {
     let test = CompilationTest {
         name: "invariant_growing",
         source: include_str!("partial/compile_tests/invariant_growing.rs"),
-        expected_errors: &["error: lifetime may not live long enough"],
+        expected_errors: &["error[E0521]: borrowed data escapes outside of function"],
     };
 
     run_compilation_test(&test);
