@@ -90,6 +90,13 @@ impl Path {
         self.steps.is_empty()
     }
 
+    /// Format this path as a human-readable string using the stored root shape.
+    ///
+    /// Returns a path like `outer.inner.items[3].name`.
+    pub fn format(&self) -> String {
+        self.format_with_shape(self.shape)
+    }
+
     /// Format this path as a human-readable string by walking the given shape.
     ///
     /// Returns a path like `outer.inner.items[3].name`.

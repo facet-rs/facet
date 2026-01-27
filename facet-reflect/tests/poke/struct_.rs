@@ -1,5 +1,5 @@
 use facet::Facet;
-use facet_reflect::{Poke, ReflectError};
+use facet_reflect::{Poke, ReflectErrorKind};
 
 #[test]
 fn poke_struct_field_by_name() {
@@ -78,7 +78,9 @@ fn poke_struct_wrong_field_type() {
 
     // Try to set i32 field with u32
     let result = poke_struct.set_field_by_name("x", 100u32);
-    assert!(matches!(result, Err(ReflectError::WrongShape { .. })));
+    assert!(
+        matches!(result, Err(ref err) if matches!(err.kind, ReflectErrorKind::WrongShape { .. }))
+    );
 }
 
 #[test]
@@ -95,7 +97,9 @@ fn poke_struct_no_such_field() {
     let mut poke_struct = poke.into_struct().expect("Point is a struct");
 
     let result = poke_struct.set_field_by_name("z", 100i32);
-    assert!(matches!(result, Err(ReflectError::FieldError { .. })));
+    assert!(
+        matches!(result, Err(ref err) if matches!(err.kind, ReflectErrorKind::FieldError { .. }))
+    );
 }
 
 #[test]
@@ -112,7 +116,9 @@ fn poke_struct_field_index_out_of_bounds() {
     let mut poke_struct = poke.into_struct().expect("Point is a struct");
 
     let result = poke_struct.set_field(99, 100i32);
-    assert!(matches!(result, Err(ReflectError::FieldError { .. })));
+    assert!(
+        matches!(result, Err(ref err) if matches!(err.kind, ReflectErrorKind::FieldError { .. }))
+    );
 }
 
 #[test]

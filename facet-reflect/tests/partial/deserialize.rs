@@ -1,7 +1,7 @@
 use facet_testhelpers::{IPanic, test};
 
 use facet::{Facet, Opaque};
-use facet_reflect::{Partial, ReflectError};
+use facet_reflect::{Partial, ReflectErrorKind};
 
 #[test]
 fn wip_opaque_custom_deserialize() -> Result<(), IPanic> {
@@ -296,15 +296,19 @@ fn wip_custom_deserialize_errors() -> Result<(), IPanic> {
     assert_eq!(partial.shape(), NotDerivingFacetProxy::SHAPE);
     partial = partial.set(NotDerivingFacetProxy(35))?;
     let end_result = partial.end();
-    if let Err(ReflectError::CustomDeserializationError {
-        message,
-        src_shape,
-        dst_shape,
-    }) = end_result
-    {
-        assert_eq!(message, "35 is not allowed!");
-        assert_eq!(src_shape, NotDerivingFacetProxy::SHAPE);
-        assert_eq!(dst_shape, Opaque::<NotDerivingFacet>::SHAPE);
+    if let Err(err) = end_result {
+        if let ReflectErrorKind::CustomDeserializationError {
+            message,
+            src_shape,
+            dst_shape,
+        } = err.kind
+        {
+            assert_eq!(message, "35 is not allowed!");
+            assert_eq!(src_shape, NotDerivingFacetProxy::SHAPE);
+            assert_eq!(dst_shape, Opaque::<NotDerivingFacet>::SHAPE);
+        } else {
+            panic!("expected custom deserialization error, got: {err:?}");
+        }
     } else {
         panic!("expected custom deserialization error");
     }
@@ -373,15 +377,19 @@ fn wip_custom_deserialize_zst() -> Result<(), IPanic> {
     assert_eq!(partial.shape(), UnitProxy::SHAPE);
     partial = partial.set(UnitProxy(20))?;
     let end_result = partial.end();
-    if let Err(ReflectError::CustomDeserializationError {
-        message,
-        src_shape,
-        dst_shape,
-    }) = end_result
-    {
-        assert_eq!(message, "must never be 20!");
-        assert_eq!(src_shape, UnitProxy::SHAPE);
-        assert_eq!(dst_shape, <() as Facet>::SHAPE);
+    if let Err(err) = end_result {
+        if let ReflectErrorKind::CustomDeserializationError {
+            message,
+            src_shape,
+            dst_shape,
+        } = err.kind
+        {
+            assert_eq!(message, "must never be 20!");
+            assert_eq!(src_shape, UnitProxy::SHAPE);
+            assert_eq!(dst_shape, <() as Facet>::SHAPE);
+        } else {
+            panic!("expected custom deserialization error, got: {err:?}");
+        }
     } else {
         panic!("expected custom deserialization error");
     }

@@ -1,5 +1,5 @@
 use facet::Facet;
-use facet_reflect::{Poke, ReflectError};
+use facet_reflect::{Poke, ReflectErrorKind};
 
 #[derive(Debug, Facet, PartialEq)]
 #[facet(pod)]
@@ -101,7 +101,7 @@ fn poke_enum_non_pod_fails() {
 
     // Setting field on non-POD should fail
     let result = poke_enum.set_field(0, 100u32);
-    assert!(matches!(result, Err(ReflectError::NotPod { .. })));
+    assert!(matches!(result, Err(ref err) if matches!(err.kind, ReflectErrorKind::NotPod { .. })));
 }
 
 #[test]
@@ -112,7 +112,9 @@ fn poke_enum_wrong_field_type() {
 
     // Try to set u32 field with i32
     let result = poke_enum.set_field(0, 100i32);
-    assert!(matches!(result, Err(ReflectError::WrongShape { .. })));
+    assert!(
+        matches!(result, Err(ref err) if matches!(err.kind, ReflectErrorKind::WrongShape { .. }))
+    );
 }
 
 #[test]
@@ -123,7 +125,9 @@ fn poke_enum_field_index_out_of_bounds() {
 
     // Tuple variant only has one field (index 0)
     let result = poke_enum.set_field(99, 100u32);
-    assert!(matches!(result, Err(ReflectError::FieldError { .. })));
+    assert!(
+        matches!(result, Err(ref err) if matches!(err.kind, ReflectErrorKind::FieldError { .. }))
+    );
 }
 
 #[test]
@@ -136,7 +140,9 @@ fn poke_enum_no_such_field() {
     let mut poke_enum = poke.into_enum().unwrap();
 
     let result = poke_enum.set_field_by_name("nonexistent", 100u32);
-    assert!(matches!(result, Err(ReflectError::FieldError { .. })));
+    assert!(
+        matches!(result, Err(ref err) if matches!(err.kind, ReflectErrorKind::FieldError { .. }))
+    );
 }
 
 #[test]
@@ -181,5 +187,5 @@ fn poke_not_enum_fails() {
     let poke = Poke::new(&mut value);
 
     let result = poke.into_enum();
-    assert!(matches!(result, Err(ReflectError::WasNotA { .. })));
+    assert!(matches!(result, Err(ref err) if matches!(err.kind, ReflectErrorKind::WasNotA { .. })));
 }

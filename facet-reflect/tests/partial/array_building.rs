@@ -3,7 +3,7 @@
 #![allow(unused_assignments)]
 
 use facet::Facet;
-use facet_reflect::{Partial, ReflectError};
+use facet_reflect::{Partial, ReflectErrorKind};
 use facet_testhelpers::{IPanic, test};
 
 #[test]
@@ -89,16 +89,18 @@ fn test_too_many_items_in_array() -> Result<(), IPanic> {
     let result = partial.begin_nth_field(2); // This is the 3rd element, but the array can only hold 2 items
 
     match result {
-        Err(ReflectError::OperationFailed {
-            shape: _,
-            operation,
-        }) => {
-            assert_eq!(operation, "array index out of bounds");
-        }
+        Err(err) => match err.kind {
+            ReflectErrorKind::OperationFailed {
+                shape: _,
+                operation,
+            } => {
+                assert_eq!(operation, "array index out of bounds");
+            }
+            _ => panic!("Expected OperationFailed error, but got: {err:?}"),
+        },
         Ok(_) => panic!(
             "Expected OperationFailed error for array index out of bounds, but operation succeeded"
         ),
-        Err(e) => panic!("Expected OperationFailed error, but got: {e:?}"),
     }
     Ok(())
 }

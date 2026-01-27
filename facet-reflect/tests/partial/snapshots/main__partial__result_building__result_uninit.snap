@@ -2,4 +2,4 @@
 source: facet-reflect/tests/partial/result_building.rs
 expression: "Partial::alloc::<Result<f64, String>>()? .build().unwrap_err()"
 ---
-Value 'Result' was not initialized. If you need to leave values partially initialized and come back later, use deferred mode (begin_deferred/finish_deferred)
+Value 'Result' was not initialized. If you need to leave values partially initialized and come back later, use deferred mode (begin_deferred/finish_deferred) at Path { shape: Shape { type_identifier: "Result", type_params: «(T: f64, E: String)», ty: User(Opaque), layout: Sized(«24 align 8»), def: Result<f64, String>, .. }, steps: [] }

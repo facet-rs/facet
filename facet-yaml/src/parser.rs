@@ -86,11 +86,6 @@ impl<'de> YamlParser<'de> {
         self.input
     }
 
-    /// Get a span pointing to EOF.
-    fn eof_span(&self) -> Span {
-        Span::new(self.input.len(), 0)
-    }
-
     /// Get the next raw event from saphyr, updating span tracking.
     fn next_raw_event(&mut self) -> Result<Option<(Event<'de>, SaphyrSpan)>, ParseError> {
         match self.parser.next_event() {

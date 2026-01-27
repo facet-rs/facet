@@ -628,7 +628,7 @@ fn gh_354_leak_1() -> Result<(), IPanic> {
     }
 
     fn leak1() -> Result<(), ReflectError> {
-        let mut partial: Partial<'_> = Partial::alloc::<Foo>()?;
+        let mut partial: Partial<'_> = Partial::alloc::<Foo>().unwrap();
         partial = partial.begin_field("a")?;
         partial = partial.set(String::from("Hello, World!"))?;
         partial = partial.end()?;
@@ -649,7 +649,7 @@ fn gh_354_leak_2() -> Result<(), IPanic> {
     }
 
     fn leak2() -> Result<(), ReflectError> {
-        let mut partial: Partial<'_> = Partial::alloc::<Foo>()?;
+        let mut partial: Partial<'_> = Partial::alloc::<Foo>().unwrap();
         partial = partial.begin_field("a")?;
         partial = partial.set(String::from("Hello, World!"))?;
         partial = partial.end()?;

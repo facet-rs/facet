@@ -1,5 +1,5 @@
 ---
 source: facet-reflect/tests/partial/misc.rs
-expression: result.unwrap_err()
+expression: err
 ---
-Field error for shape Config: no such field
+Field error for shape Config: no such field at Path { shape: Shape { type_identifier: "Config", ty: User(Enum(«variants: (Server, Client)»)), layout: Sized(«40 align 8»), .. }, steps: [Variant(1)] }

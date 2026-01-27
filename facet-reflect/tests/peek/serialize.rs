@@ -1,7 +1,7 @@
 use facet_testhelpers::{IPanic, test};
 
 use facet::{Facet, Opaque};
-use facet_reflect::{HasFields, Peek, ReflectError};
+use facet_reflect::{HasFields, Peek, ReflectErrorKind};
 
 #[test]
 fn peek_opaque_custom_serialize() -> Result<(), IPanic> {
@@ -399,17 +399,21 @@ fn peek_custom_serialize_errors() -> Result<(), IPanic> {
         assert_eq!(inner_field.id(), peek.id());
         assert!(field.field.unwrap().has_proxy());
         let cust_ser_result = peek.custom_serialization(field.field.unwrap());
-        if let Err(ReflectError::CustomSerializationError {
-            message,
-            src_shape,
-            dst_shape,
-        }) = cust_ser_result
-        {
-            assert_eq!(message, "35 is not allowed!");
-            assert_eq!(src_shape, Opaque::<NotDerivingFacet>::SHAPE);
-            assert_eq!(dst_shape, NotDerivingFacetProxy::SHAPE);
+        if let Err(err) = cust_ser_result {
+            if let ReflectErrorKind::CustomSerializationError {
+                message,
+                src_shape,
+                dst_shape,
+            } = err.kind
+            {
+                assert_eq!(message, "35 is not allowed!");
+                assert_eq!(src_shape, Opaque::<NotDerivingFacet>::SHAPE);
+                assert_eq!(dst_shape, NotDerivingFacetProxy::SHAPE);
+            } else {
+                panic!("expected custom serialization error, got: {err:?}");
+            }
         } else {
-            panic!("expected custom deserialization error");
+            panic!("expected custom serialization error");
         }
     }
     assert!(tested);
