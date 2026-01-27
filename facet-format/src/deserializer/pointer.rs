@@ -1,11 +1,9 @@
-extern crate alloc;
-
 use facet_core::Def;
 use facet_reflect::Partial;
 
 use crate::{
     DeserializeError, DeserializeErrorKind, FormatDeserializer, ParseEvent, ScalarTypeHint,
-    ScalarValue,
+    ScalarValue, SpanGuard,
 };
 
 impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
@@ -31,21 +29,20 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                 // Hint to non-self-describing parsers that a string is expected
                 self.parser.hint_scalar_type(ScalarTypeHint::String);
                 let event = self.expect_event("string for Cow<str>")?;
+                let _guard = SpanGuard::new(self.last_span);
                 match event {
                     ParseEvent::Scalar(ScalarValue::Str(s)) => {
                         // Pass through the Cow as-is to preserve borrowing
-                        wip = wip.set(s)?;
-                        return Ok(wip);
+                        return Ok(wip.set(s)?);
                     }
                     _ => {
-                        return Err(DeserializeError {
-                            span: Some(self.last_span),
-                            path: None,
-                            kind: DeserializeErrorKind::UnexpectedToken {
+                        return Err(self.mk_err(
+                            &wip,
+                            DeserializeErrorKind::UnexpectedToken {
                                 expected: "string for Cow<str>",
                                 got: event.kind_name().into(),
                             },
-                        });
+                        ));
                     }
                 }
             }
@@ -58,25 +55,26 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                 // Hint to non-self-describing parsers that bytes are expected
                 self.parser.hint_scalar_type(ScalarTypeHint::Bytes);
                 let event = self.expect_event("bytes for Cow<[u8]>")?;
+                let _guard = SpanGuard::new(self.last_span);
                 if let ParseEvent::Scalar(ScalarValue::Bytes(b)) = event {
                     // Pass through the Cow as-is to preserve borrowing
-                    wip = wip.set(b)?;
-                    return Ok(wip);
+                    return Ok(wip.set(b)?);
                 } else {
-                    return Err(DeserializeError {
-                        span: Some(self.last_span),
-                        path: None,
-                        kind: DeserializeErrorKind::UnexpectedToken {
+                    return Err(self.mk_err(
+                        &wip,
+                        DeserializeErrorKind::UnexpectedToken {
                             expected: "bytes for Cow<[u8]>",
                             got: event.kind_name().into(),
                         },
-                    });
+                    ));
                 }
             }
             // Other Cow types - use begin_inner
-            wip = wip.begin_inner()?;
-            wip = self.deserialize_into(wip)?;
-            wip = wip.end()?;
+            let _guard = SpanGuard::new(self.last_span);
+            wip = wip
+                .begin_inner()?
+                .with(|w| self.deserialize_into(w))?
+                .end()?;
             return Ok(wip);
         }
 
@@ -95,14 +93,13 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                     return self.set_string_value(wip, s);
                 }
                 _ => {
-                    return Err(DeserializeError {
-                        span: Some(self.last_span),
-                        path: None,
-                        kind: DeserializeErrorKind::UnexpectedToken {
+                    return Err(self.mk_err(
+                        &wip,
+                        DeserializeErrorKind::UnexpectedToken {
                             expected: "string for &str",
                             got: event.kind_name().into(),
                         },
-                    });
+                    ));
                 }
             }
         }
@@ -120,52 +117,49 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
             if let ParseEvent::Scalar(ScalarValue::Bytes(b)) = event {
                 return self.set_bytes_value(wip, b);
             } else {
-                return Err(DeserializeError {
-                    span: Some(self.last_span),
-                    path: None,
-                    kind: DeserializeErrorKind::UnexpectedToken {
+                return Err(self.mk_err(
+                    &wip,
+                    DeserializeErrorKind::UnexpectedToken {
                         expected: "bytes for &[u8]",
                         got: event.kind_name().into(),
                     },
-                });
+                ));
             }
         }
 
         // Regular smart pointer (Box, Arc, Rc)
+        let _guard = SpanGuard::new(self.last_span);
         wip = wip.begin_smart_ptr()?;
 
         // Check if begin_smart_ptr set up a slice builder (for Arc<[T]>, Rc<[T]>, Box<[T]>)
         // In this case, we need to deserialize as a list manually
-        let is_slice_builder = wip.is_building_smart_ptr_slice();
-
-        if is_slice_builder {
+        if wip.is_building_smart_ptr_slice() {
             // Deserialize the list elements into the slice builder
             // We can't use deserialize_list() because it calls begin_list() which interferes
             // Hint to non-self-describing parsers that a sequence is expected
             self.parser.hint_sequence();
             let event = self.expect_event("value")?;
+            let _guard = SpanGuard::new(self.last_span);
 
             match event {
                 ParseEvent::SequenceStart(_) => {}
                 ParseEvent::StructStart(kind) => {
-                    return Err(DeserializeError {
-                        span: Some(self.last_span),
-                        path: None,
-                        kind: DeserializeErrorKind::UnexpectedToken {
+                    return Err(self.mk_err(
+                        &wip,
+                        DeserializeErrorKind::UnexpectedToken {
                             expected: "array",
                             got: kind.name().into(),
                         },
-                    });
+                    ));
                 }
                 _ => {
-                    return Err(DeserializeError {
-                        span: Some(self.last_span),
-                        path: None,
-                        kind: DeserializeErrorKind::UnexpectedToken {
+                    return Err(self.mk_err(
+                        &wip,
+                        DeserializeErrorKind::UnexpectedToken {
                             expected: "sequence start for Arc<[T]>/Rc<[T]>/Box<[T]>",
                             got: event.kind_name().into(),
                         },
-                    });
+                    ));
                 }
             };
 
@@ -178,18 +172,20 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                     break;
                 }
 
-                wip = wip.begin_list_item()?;
-                wip = self.deserialize_into(wip)?;
-                wip = wip.end()?;
+                let _guard = SpanGuard::new(self.last_span);
+                wip = wip
+                    .begin_list_item()?
+                    .with(|w| self.deserialize_into(w))?
+                    .end()?;
             }
 
             // Convert the slice builder to Arc/Rc/Box and mark as initialized
+            let _guard = SpanGuard::new(self.last_span);
             wip = wip.end()?;
             // DON'T call end() again - the caller (deserialize_struct) will do that
         } else {
             // Regular smart pointer with sized pointee
-            wip = self.deserialize_into(wip)?;
-            wip = wip.end()?;
+            wip = wip.with(|w| self.deserialize_into(w))?.end()?;
         }
 
         Ok(wip)

@@ -145,7 +145,9 @@ mod dynamic;
 /// Enum handling
 mod eenum;
 
-// mod pointer;
+/// Smart pointers (Box, Arc, etc.)
+mod pointer;
+
 // mod scalar_matches;
 // mod struct_simple;
 // mod struct_with_flatten;
