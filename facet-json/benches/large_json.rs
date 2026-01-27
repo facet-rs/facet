@@ -8,6 +8,8 @@
 
 use divan::{Bencher, black_box};
 use facet::Facet;
+use facet_format::FormatDeserializer;
+use facet_json::JsonParser;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -138,6 +140,84 @@ fn facet_json_str(bencher: Bencher) {
     let data = &*JSON_STR;
     bencher.bench(|| {
         let result: CitmCatalog = black_box(facet_json::from_str(black_box(data)).unwrap());
+        black_box(result)
+    });
+}
+
+// =============================================================================
+// Buffer size comparison benchmarks
+// =============================================================================
+
+/// Helper to deserialize with a specific buffer capacity
+fn deserialize_with_buffer_capacity<T: facet_core::Facet<'static>>(
+    input: &[u8],
+    buffer_capacity: usize,
+) -> T {
+    let parser = JsonParser::<false>::new(input);
+    let mut de = FormatDeserializer::with_buffer_capacity_owned(parser, buffer_capacity);
+    de.deserialize_root().unwrap()
+}
+
+#[divan::bench]
+fn facet_json_buf_16(bencher: Bencher) {
+    let data = &*JSON_DATA;
+    bencher.bench(|| {
+        let result: CitmCatalog = black_box(deserialize_with_buffer_capacity(black_box(data), 16));
+        black_box(result)
+    });
+}
+
+#[divan::bench]
+fn facet_json_buf_32(bencher: Bencher) {
+    let data = &*JSON_DATA;
+    bencher.bench(|| {
+        let result: CitmCatalog = black_box(deserialize_with_buffer_capacity(black_box(data), 32));
+        black_box(result)
+    });
+}
+
+#[divan::bench]
+fn facet_json_buf_64(bencher: Bencher) {
+    let data = &*JSON_DATA;
+    bencher.bench(|| {
+        let result: CitmCatalog = black_box(deserialize_with_buffer_capacity(black_box(data), 64));
+        black_box(result)
+    });
+}
+
+#[divan::bench]
+fn facet_json_buf_128(bencher: Bencher) {
+    let data = &*JSON_DATA;
+    bencher.bench(|| {
+        let result: CitmCatalog = black_box(deserialize_with_buffer_capacity(black_box(data), 128));
+        black_box(result)
+    });
+}
+
+#[divan::bench]
+fn facet_json_buf_256(bencher: Bencher) {
+    let data = &*JSON_DATA;
+    bencher.bench(|| {
+        let result: CitmCatalog = black_box(deserialize_with_buffer_capacity(black_box(data), 256));
+        black_box(result)
+    });
+}
+
+#[divan::bench]
+fn facet_json_buf_512(bencher: Bencher) {
+    let data = &*JSON_DATA;
+    bencher.bench(|| {
+        let result: CitmCatalog = black_box(deserialize_with_buffer_capacity(black_box(data), 512));
+        black_box(result)
+    });
+}
+
+#[divan::bench]
+fn facet_json_buf_1024(bencher: Bencher) {
+    let data = &*JSON_DATA;
+    bencher.bench(|| {
+        let result: CitmCatalog =
+            black_box(deserialize_with_buffer_capacity(black_box(data), 1024));
         black_box(result)
     });
 }
