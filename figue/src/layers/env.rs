@@ -269,15 +269,10 @@ pub fn parse_env(schema: &Schema, env_config: &EnvConfig, source: &dyn EnvSource
         let leaf_value = parse_env_value(&value);
 
         // Set the value with its provenance
+        // Unknown keys are tracked in unused_keys by the builder.
+        // In strict mode, they'll be reported by the driver alongside the config dump.
         if builder.set(&path, leaf_value, None, prov) {
             prefixed_paths.push(path);
-        } else if env_config.strict {
-            let suggestion = crate::suggest::suggest_config_path(config_schema, &path);
-            builder.error(format!(
-                "unknown configuration key: {}{}",
-                path.join("."),
-                suggestion
-            ));
         }
     }
 
@@ -908,26 +903,39 @@ mod tests {
     }
 
     #[test]
-    fn test_strict_mode_unknown_field_error() {
+    fn test_strict_mode_tracks_unknown_keys() {
+        // In strict mode, unknown keys are tracked in unused_keys.
+        // The driver will report them alongside the config dump (not as early errors).
         let schema = Schema::from_shape(ArgsWithConfig::SHAPE).unwrap();
         let env = MockEnv::from_pairs([("REEF__PORTT", "8080")]);
         let config = env_config_strict("REEF");
 
         let output = parse_env(&schema, &config, &env);
 
-        // In strict mode, unknown keys should produce an error diagnostic
-        let error = output
+        // Unknown keys should be tracked in unused_keys
+        assert!(
+            !output.unused_keys.is_empty(),
+            "should track unknown key in unused_keys"
+        );
+        assert!(
+            output
+                .unused_keys
+                .iter()
+                .any(|uk| uk.key.join(".") == "portt"),
+            "unused_keys should contain 'portt': {:?}",
+            output.unused_keys
+        );
+
+        // No error diagnostics at parse time - driver handles reporting with dump
+        let errors: Vec<_> = output
             .diagnostics
             .iter()
-            .find(|d| d.severity == Severity::Error);
-        assert!(error.is_some(), "should have an error diagnostic");
-
-        // Error should suggest 'port' since "portt" is a typo
-        let error_msg = &error.unwrap().message;
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
         assert!(
-            error_msg.contains("Did you mean 'port'?"),
-            "error should suggest similar field: {}",
-            error_msg
+            errors.is_empty(),
+            "should not have error diagnostics at parse time, got: {:?}",
+            errors
         );
     }
 
