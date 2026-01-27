@@ -169,7 +169,8 @@ async fn introspect_columns(client: &Client, table_name: &str) -> Result<Vec<Col
                 data_type,
                 udt_name,
                 is_nullable,
-                column_default
+                column_default,
+                is_identity
             FROM information_schema.columns
             WHERE table_schema = 'public' AND table_name = $1
             ORDER BY ordinal_position
@@ -185,6 +186,7 @@ async fn introspect_columns(client: &Client, table_name: &str) -> Result<Vec<Col
         let udt_name: String = row.get(2);
         let is_nullable: String = row.get(3);
         let column_default: Option<String> = row.get(4);
+        let is_identity: String = row.get(5);
 
         let pg_type = pg_type_from_info_schema(&data_type, &udt_name);
         let nullable = is_nullable == "YES";
@@ -193,7 +195,8 @@ async fn introspect_columns(client: &Client, table_name: &str) -> Result<Vec<Col
         let default = column_default.map(|d| clean_default_value(&d));
 
         // Detect auto-generated columns (serial, identity, uuid default, etc.)
-        let auto_generated = is_auto_generated(&default);
+        // is_identity is "YES" for GENERATED ALWAYS/BY DEFAULT AS IDENTITY columns
+        let auto_generated = is_identity == "YES" || is_auto_generated(&default);
 
         columns.push(Column {
             name,
