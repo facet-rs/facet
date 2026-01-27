@@ -123,10 +123,13 @@
 //! This keeps the "begin/deserialize/end" pattern visually grouped and makes
 //! the nesting structure clearer.
 
+use std::collections::VecDeque;
 use std::marker::PhantomData;
+use std::sync::Arc;
 
 use facet_core::{Facet, Shape};
 use facet_reflect::{HeapValue, Partial, Span};
+use facet_solver::{KeyResult, Schema, Solver};
 
 use crate::{FormatParser, ParseEvent};
 
@@ -162,6 +165,9 @@ mod path_navigator;
 
 mod validate;
 
+/// Default size of the event buffer for batched parsing.
+pub const DEFAULT_EVENT_BUFFER_SIZE: usize = 512;
+
 /// Generic deserializer that drives a format-specific parser directly into `Partial`.
 ///
 /// The const generic `BORROW` controls whether string data can be borrowed:
@@ -177,15 +183,40 @@ pub struct FormatDeserializer<'parser, 'input, const BORROW: bool> {
     /// The span of the most recently consumed event (for error reporting).
     last_span: Span,
 
+    /// Buffer for batched event reading (push back, pop front).
+    event_buffer: VecDeque<ParseEvent<'input>>,
+    /// Maximum number of events to buffer at once.
+    buffer_capacity: usize,
+
+    /// Events recorded since save() was called (for restore).
+    recording: Option<Vec<ParseEvent<'input>>>,
+
+    /// Whether the parser is non-self-describing (postcard, etc.).
+    /// For these formats, we bypass buffering entirely because hints
+    /// clear the parser's peeked event and must take effect immediately.
+    is_non_self_describing: Option<bool>,
+
     _marker: PhantomData<&'input ()>,
 }
 
 impl<'parser, 'input> FormatDeserializer<'parser, 'input, true> {
     /// Create a new deserializer that can borrow strings from input.
     pub fn new(parser: impl FormatParser<'input> + 'parser) -> Self {
+        Self::with_buffer_capacity(parser, DEFAULT_EVENT_BUFFER_SIZE)
+    }
+
+    /// Create a new deserializer with a custom buffer capacity.
+    pub fn with_buffer_capacity(
+        parser: impl FormatParser<'input> + 'parser,
+        buffer_capacity: usize,
+    ) -> Self {
         Self {
             parser: Box::new(parser),
             last_span: Span { offset: 0, len: 0 },
+            event_buffer: VecDeque::with_capacity(buffer_capacity),
+            buffer_capacity,
+            recording: None,
+            is_non_self_describing: None,
             _marker: PhantomData,
         }
     }
@@ -194,9 +225,21 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, true> {
 impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
     /// Create a new deserializer that produces owned strings.
     pub fn new_owned(parser: impl FormatParser<'input> + 'parser) -> Self {
+        Self::with_buffer_capacity_owned(parser, DEFAULT_EVENT_BUFFER_SIZE)
+    }
+
+    /// Create a new deserializer with a custom buffer capacity.
+    pub fn with_buffer_capacity_owned(
+        parser: impl FormatParser<'input> + 'parser,
+        buffer_capacity: usize,
+    ) -> Self {
         Self {
             parser: Box::new(parser),
             last_span: Span { offset: 0, len: 0 },
+            event_buffer: VecDeque::with_capacity(buffer_capacity),
+            buffer_capacity,
+            recording: None,
+            is_non_self_describing: None,
             _marker: PhantomData,
         }
     }
@@ -375,21 +418,78 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
 }
 
 impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BORROW> {
+    /// Refill the event buffer from the parser.
+    #[inline]
+    fn refill_buffer(&mut self) -> Result<(), ParseError> {
+        // Use a temporary Vec for next_events, then extend the VecDeque
+        let mut temp = vec![
+            ParseEvent::new(crate::ParseEventKind::StructEnd, Span::new(0, 0));
+            self.buffer_capacity
+        ];
+        let count = self.parser.next_events(&mut temp)?;
+        self.event_buffer.extend(temp.into_iter().take(count));
+        Ok(())
+    }
+
+    /// Check if parser is non-self-describing (caches result).
+    #[inline]
+    fn is_non_self_describing(&mut self) -> bool {
+        *self
+            .is_non_self_describing
+            .get_or_insert_with(|| !self.parser.is_self_describing())
+    }
+
     /// Read the next event, returning an error if EOF is reached.
     #[inline]
     fn expect_event(
         &mut self,
         expected: &'static str,
     ) -> Result<ParseEvent<'input>, DeserializeError> {
-        let event = self.parser.next_event()?.ok_or_else(|| {
+        // For non-self-describing formats, bypass buffering entirely
+        // because hints clear the parser's peeked event and must take effect immediately
+        if self.is_non_self_describing() {
+            let event = self.parser.next_event()?.ok_or_else(|| {
+                DeserializeErrorKind::UnexpectedEof { expected }.with_span(self.last_span)
+            })?;
+            trace!(?event, expected, "expect_event (direct): got event");
+            self.last_span = event.span;
+            return Ok(event);
+        }
+
+        // Refill if empty
+        if self.event_buffer.is_empty() {
+            self.refill_buffer()?;
+        }
+
+        let event = self.event_buffer.pop_front().ok_or_else(|| {
             DeserializeErrorKind::UnexpectedEof { expected }.with_span(self.last_span)
         })?;
-        trace!(?event, expected, "expect_event: got event");
-        // Capture the span of the consumed event for error reporting
-        if let Some(span) = self.parser.current_span() {
-            self.last_span = span;
+
+        // Record event if we're in save mode
+        if let Some(ref mut rec) = self.recording {
+            rec.push(event.clone());
         }
+
+        trace!(?event, expected, "expect_event: got event");
+        self.last_span = event.span;
         Ok(event)
+    }
+
+    /// Save the current position for later restore.
+    #[inline]
+    fn save(&mut self) {
+        self.recording = Some(Vec::new());
+    }
+
+    /// Restore to the saved position, replaying recorded events.
+    #[inline]
+    fn restore(&mut self) {
+        if let Some(recorded) = self.recording.take() {
+            // Prepend recorded events to front of buffer (in reverse order)
+            for event in recorded.into_iter().rev() {
+                self.event_buffer.push_front(event);
+            }
+        }
     }
 
     /// Peek at the next event, returning an error if EOF is reached.
@@ -398,11 +498,216 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         &mut self,
         expected: &'static str,
     ) -> Result<ParseEvent<'input>, DeserializeError> {
-        let event = self.parser.peek_event()?.ok_or_else(|| {
+        self.peek_event_opt()?.ok_or_else(|| {
             DeserializeErrorKind::UnexpectedEof { expected }.with_span(self.last_span)
-        })?;
-        trace!(?event, expected, "expect_peek: peeked event");
+        })
+    }
+
+    /// Peek at the next event, returning None if EOF is reached.
+    #[inline]
+    fn peek_event_opt(&mut self) -> Result<Option<ParseEvent<'input>>, DeserializeError> {
+        // For non-self-describing formats, bypass buffering entirely
+        if self.is_non_self_describing() {
+            let event = self.parser.peek_event()?;
+            if let Some(ref _e) = event {
+                trace!(?_e, "peek_event_opt (direct): peeked event");
+            }
+            return Ok(event);
+        }
+
+        // Refill if empty
+        if self.event_buffer.is_empty() {
+            self.refill_buffer()?;
+        }
+
+        let event = self.event_buffer.front().cloned();
+        if let Some(ref _e) = event {
+            trace!(?_e, "peek_event_opt: peeked event");
+        }
         Ok(event)
+    }
+
+    /// Skip the current value using the buffer, returning start and end offsets.
+    #[inline]
+    fn skip_value_with_span(&mut self) -> Result<(usize, usize), DeserializeError> {
+        use crate::ParseEventKind;
+
+        // Peek to get the start offset
+        let first_event = self.expect_peek("value to skip")?;
+        let start_offset = first_event.span.offset;
+        #[allow(unused_assignments)]
+        let mut end_offset = 0;
+
+        let mut depth = 0i32;
+        loop {
+            let event = self.expect_event("value to skip")?;
+            // Track the end of each event
+            end_offset = event.span.offset + event.span.len;
+
+            match &event.kind {
+                ParseEventKind::StructStart(_) | ParseEventKind::SequenceStart(_) => {
+                    depth += 1;
+                }
+                ParseEventKind::StructEnd | ParseEventKind::SequenceEnd => {
+                    depth -= 1;
+                    if depth <= 0 {
+                        return Ok((start_offset, end_offset));
+                    }
+                }
+                ParseEventKind::Scalar(_) if depth == 0 => {
+                    return Ok((start_offset, end_offset));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Skip the current value using the buffer.
+    #[inline]
+    fn skip_value(&mut self) -> Result<(), DeserializeError> {
+        self.skip_value_with_span()?;
+        Ok(())
+    }
+
+    /// Capture the raw bytes of the current value without parsing it.
+    #[inline]
+    fn capture_raw(&mut self) -> Result<Option<&'input str>, DeserializeError> {
+        let Some(input) = self.parser.input() else {
+            // Parser doesn't provide raw input access
+            self.skip_value()?;
+            return Ok(None);
+        };
+
+        let (start, end) = self.skip_value_with_span()?;
+
+        // Slice the input
+        if end <= input.len() {
+            // SAFETY: We trust the parser's spans to be valid UTF-8 boundaries
+            let raw = core::str::from_utf8(&input[start..end]).map_err(|_| {
+                DeserializeErrorKind::InvalidValue {
+                    message: "raw capture contains invalid UTF-8".into(),
+                }
+                .with_span(self.last_span)
+            })?;
+            Ok(Some(raw))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Read the next event, returning None if EOF is reached.
+    #[inline]
+    fn next_event_opt(&mut self) -> Result<Option<ParseEvent<'input>>, DeserializeError> {
+        // Refill if empty
+        if self.event_buffer.is_empty() {
+            self.refill_buffer()?;
+        }
+
+        let Some(event) = self.event_buffer.pop_front() else {
+            return Ok(None);
+        };
+
+        // Record event if we're in save mode
+        if let Some(ref mut rec) = self.recording {
+            rec.push(event.clone());
+        }
+
+        self.last_span = event.span;
+        Ok(Some(event))
+    }
+
+    /// Attempt to solve which enum variant matches the input.
+    ///
+    /// This uses save/restore to read ahead and determine the variant without
+    /// consuming the events permanently. After this returns, the position
+    /// is restored so the actual deserialization can proceed.
+    pub(crate) fn solve_variant(
+        &mut self,
+        shape: &'static facet_core::Shape,
+    ) -> Result<Option<crate::SolveOutcome>, crate::SolveVariantError> {
+        let schema = Arc::new(Schema::build_auto(shape)?);
+        let mut solver = Solver::new(&schema);
+
+        // Save position and start recording events
+        self.save();
+
+        let mut depth = 0i32;
+        let mut in_struct = false;
+        let mut expecting_value = false;
+
+        let result = loop {
+            let event = self.next_event_opt().map_err(|e| {
+                crate::SolveVariantError::Parser(ParseError::new(
+                    e.span.unwrap_or(self.last_span),
+                    e.kind,
+                ))
+            })?;
+
+            let Some(event) = event else {
+                // EOF reached
+                self.restore();
+                return Ok(None);
+            };
+
+            match event.kind {
+                crate::ParseEventKind::StructStart(_) => {
+                    depth += 1;
+                    if depth == 1 {
+                        in_struct = true;
+                    }
+                }
+                crate::ParseEventKind::StructEnd => {
+                    depth -= 1;
+                    if depth == 0 {
+                        // Done with top-level struct
+                        break None;
+                    }
+                }
+                crate::ParseEventKind::SequenceStart(_) => {
+                    depth += 1;
+                }
+                crate::ParseEventKind::SequenceEnd => {
+                    depth -= 1;
+                }
+                crate::ParseEventKind::FieldKey(ref key) => {
+                    if depth == 1 && in_struct {
+                        // Top-level field - feed to solver
+                        if let Some(ref name) = key.name {
+                            match solver.see_key(name.clone()) {
+                                KeyResult::Solved(handle) => {
+                                    break Some(handle);
+                                }
+                                KeyResult::Unknown
+                                | KeyResult::Unambiguous { .. }
+                                | KeyResult::Ambiguous { .. } => {}
+                            }
+                        }
+                        expecting_value = true;
+                    }
+                }
+                crate::ParseEventKind::Scalar(_)
+                | crate::ParseEventKind::OrderedField
+                | crate::ParseEventKind::VariantTag(_) => {
+                    if expecting_value {
+                        expecting_value = false;
+                    }
+                }
+            }
+        };
+
+        // Restore position regardless of outcome
+        self.restore();
+
+        match result {
+            Some(handle) => {
+                let idx = handle.index();
+                Ok(Some(crate::SolveOutcome {
+                    schema,
+                    resolution_index: idx,
+                }))
+            }
+            None => Ok(None),
+        }
     }
 
     /// Check if a field matches a given name by effective name or alias.

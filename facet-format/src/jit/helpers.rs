@@ -8,7 +8,7 @@
 use std::borrow::Cow;
 use std::cell::RefCell;
 
-use crate::{FormatParser, ParseEvent, ScalarValue};
+use crate::{FormatParser, ParseEvent, ParseEventKind, ScalarValue};
 use facet_core::Shape;
 
 use super::jit_debug;
@@ -406,34 +406,34 @@ pub const JIT_CONTEXT_FIELDS_SEEN_OFFSET: usize = std::mem::offset_of!(JitContex
 
 /// Convert a ParseEvent to a RawEvent for FFI.
 fn convert_event_to_raw(event: ParseEvent<'_>) -> RawEvent {
-    match event {
-        ParseEvent::StructStart(_) => RawEvent {
+    match event.kind {
+        ParseEventKind::StructStart(_) => RawEvent {
             tag: EventTag::StructStart,
             scalar_tag: ScalarTag::None,
             payload: EventPayload { empty: () },
         },
-        ParseEvent::StructEnd => RawEvent {
+        ParseEventKind::StructEnd => RawEvent {
             tag: EventTag::StructEnd,
             scalar_tag: ScalarTag::None,
             payload: EventPayload { empty: () },
         },
-        ParseEvent::SequenceStart(_) => RawEvent {
+        ParseEventKind::SequenceStart(_) => RawEvent {
             tag: EventTag::ArrayStart,
             scalar_tag: ScalarTag::None,
             payload: EventPayload { empty: () },
         },
-        ParseEvent::SequenceEnd => RawEvent {
+        ParseEventKind::SequenceEnd => RawEvent {
             tag: EventTag::ArrayEnd,
             scalar_tag: ScalarTag::None,
             payload: EventPayload { empty: () },
         },
-        ParseEvent::VariantTag(_) => RawEvent {
+        ParseEventKind::VariantTag(_) => RawEvent {
             // Variant tags are handled by the solver, not JIT
             tag: EventTag::Error,
             scalar_tag: ScalarTag::None,
             payload: EventPayload { error_code: -2 },
         },
-        ParseEvent::FieldKey(key) => {
+        ParseEventKind::FieldKey(key) => {
             // For JIT, unit keys become empty strings (we don't have a way to represent None)
             let (ptr, len) = match key.name {
                 Some(Cow::Borrowed(s)) => (s.as_ptr(), s.len()),
@@ -461,12 +461,12 @@ fn convert_event_to_raw(event: ParseEvent<'_>) -> RawEvent {
                 },
             }
         }
-        ParseEvent::OrderedField => RawEvent {
+        ParseEventKind::OrderedField => RawEvent {
             tag: EventTag::OrderedField,
             scalar_tag: ScalarTag::None,
             payload: EventPayload { empty: () },
         },
-        ParseEvent::Scalar(scalar) => {
+        ParseEventKind::Scalar(scalar) => {
             let (scalar_tag, payload) = match scalar {
                 ScalarValue::Null => (
                     ScalarTag::Null,

@@ -7,7 +7,8 @@ use facet_solver::PathSegment;
 
 use super::path_navigator::PathNavigator;
 use crate::{
-    DeserializeError, DeserializeErrorKind, FormatDeserializer, ParseEvent, ScalarValue, SpanGuard,
+    DeserializeError, DeserializeErrorKind, FormatDeserializer, ParseEventKind, ScalarValue,
+    SpanGuard,
 };
 
 impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BORROW> {
@@ -32,7 +33,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         let struct_type_has_default = wip.shape().is(Characteristic::Default);
 
         // Peek at the next event first to handle EOF and null gracefully
-        let maybe_event = self.parser.peek_event()?;
+        let maybe_event = self.peek_event_opt()?;
 
         // Handle EOF (empty input / comment-only files): use Default if available
         if maybe_event.is_none() {
@@ -48,7 +49,8 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         }
 
         // Handle Scalar(Null): use Default if available
-        if let Some(ParseEvent::Scalar(ScalarValue::Null)) = &maybe_event
+        if let Some(ref event) = maybe_event
+            && matches!(event.kind, ParseEventKind::Scalar(ScalarValue::Null))
             && struct_type_has_default
         {
             let _ = self.expect_event("null")?;
@@ -110,7 +112,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         // ========== PASS 2: Parse the struct with resolved paths ==========
         // Expect StructStart
         let event = self.expect_event("value")?;
-        if !matches!(event, ParseEvent::StructStart(_)) {
+        if !matches!(event.kind, ParseEventKind::StructStart(_)) {
             return Err(self.mk_err(
                 &wip,
                 DeserializeErrorKind::UnexpectedToken {
@@ -139,14 +141,14 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             let event = self.expect_event("value")?;
             nav.set_span(self.last_span);
 
-            match event {
-                ParseEvent::StructEnd => break,
-                ParseEvent::FieldKey(key) => {
+            match event.kind {
+                ParseEventKind::StructEnd => break,
+                ParseEventKind::FieldKey(key) => {
                     // Unit keys don't make sense for struct fields
                     let key_name = match &key.name {
                         Some(name) => name.as_ref(),
                         None => {
-                            self.parser.skip_value()?;
+                            self.skip_value()?;
                             continue;
                         }
                     };
@@ -169,8 +171,8 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                                     self.expect_event("internally-tagged enum tag value")?;
                                 nav.set_span(self.last_span);
 
-                                let actual_tag = match &tag_event {
-                                    ParseEvent::Scalar(ScalarValue::Str(s)) => s.as_ref(),
+                                let actual_tag = match &tag_event.kind {
+                                    ParseEventKind::Scalar(ScalarValue::Str(s)) => s.as_ref(),
                                     _ => {
                                         return Err(self.mk_err(
                                             nav.wip(),
@@ -247,7 +249,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                             },
                         ));
                     } else {
-                        self.parser.skip_value()?;
+                        self.skip_value()?;
                     }
                 }
                 other => {

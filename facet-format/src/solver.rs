@@ -7,7 +7,7 @@ use facet_core::Shape;
 
 use facet_solver::{KeyResult, Resolution, ResolutionHandle, Schema, Solver};
 
-use crate::{FormatParser, ParseError, ParseEvent};
+use crate::{FormatParser, ParseError, ParseEventKind};
 
 /// High-level outcome from solving an untagged enum.
 pub struct SolveOutcome {
@@ -79,27 +79,27 @@ pub fn solve_variant<'de>(
             return Ok(None);
         };
 
-        match event {
-            ParseEvent::StructStart(_) => {
+        match event.kind {
+            ParseEventKind::StructStart(_) => {
                 depth += 1;
                 if depth == 1 {
                     in_struct = true;
                 }
             }
-            ParseEvent::StructEnd => {
+            ParseEventKind::StructEnd => {
                 depth -= 1;
                 if depth == 0 {
                     // Done with top-level struct
                     break None;
                 }
             }
-            ParseEvent::SequenceStart(_) => {
+            ParseEventKind::SequenceStart(_) => {
                 depth += 1;
             }
-            ParseEvent::SequenceEnd => {
+            ParseEventKind::SequenceEnd => {
                 depth -= 1;
             }
-            ParseEvent::FieldKey(key) => {
+            ParseEventKind::FieldKey(key) => {
                 if depth == 1 && in_struct {
                     // Top-level field - feed to solver
                     if let Some(name) = key.name
@@ -110,7 +110,9 @@ pub fn solve_variant<'de>(
                     expecting_value = true;
                 }
             }
-            ParseEvent::Scalar(_) | ParseEvent::OrderedField | ParseEvent::VariantTag(_) => {
+            ParseEventKind::Scalar(_)
+            | ParseEventKind::OrderedField
+            | ParseEventKind::VariantTag(_) => {
                 if expecting_value {
                     expecting_value = false;
                 }

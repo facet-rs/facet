@@ -2,7 +2,7 @@ use facet_core::Def;
 use facet_reflect::Partial;
 
 use crate::{
-    DeserializeError, DeserializeErrorKind, FormatDeserializer, ParseEvent, ScalarTypeHint,
+    DeserializeError, DeserializeErrorKind, FormatDeserializer, ParseEventKind, ScalarTypeHint,
     ScalarValue, SpanGuard,
 };
 
@@ -30,8 +30,8 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 self.parser.hint_scalar_type(ScalarTypeHint::String);
                 let event = self.expect_event("string for Cow<str>")?;
                 let _guard = SpanGuard::new(self.last_span);
-                match event {
-                    ParseEvent::Scalar(ScalarValue::Str(s)) => {
+                match event.kind {
+                    ParseEventKind::Scalar(ScalarValue::Str(s)) => {
                         // Pass through the Cow as-is to preserve borrowing
                         return Ok(wip.set(s)?);
                     }
@@ -56,7 +56,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 self.parser.hint_scalar_type(ScalarTypeHint::Bytes);
                 let event = self.expect_event("bytes for Cow<[u8]>")?;
                 let _guard = SpanGuard::new(self.last_span);
-                if let ParseEvent::Scalar(ScalarValue::Bytes(b)) = event {
+                if let ParseEventKind::Scalar(ScalarValue::Bytes(b)) = event.kind {
                     // Pass through the Cow as-is to preserve borrowing
                     return Ok(wip.set(b)?);
                 } else {
@@ -88,8 +88,8 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             // Hint to non-self-describing parsers that a string is expected
             self.parser.hint_scalar_type(ScalarTypeHint::String);
             let event = self.expect_event("string for &str")?;
-            match event {
-                ParseEvent::Scalar(ScalarValue::Str(s)) => {
+            match event.kind {
+                ParseEventKind::Scalar(ScalarValue::Str(s)) => {
                     return self.set_string_value(wip, s);
                 }
                 _ => {
@@ -114,7 +114,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             // Hint to non-self-describing parsers that bytes are expected
             self.parser.hint_scalar_type(ScalarTypeHint::Bytes);
             let event = self.expect_event("bytes for &[u8]")?;
-            if let ParseEvent::Scalar(ScalarValue::Bytes(b)) = event {
+            if let ParseEventKind::Scalar(ScalarValue::Bytes(b)) = event.kind {
                 return self.set_bytes_value(wip, b);
             } else {
                 return Err(self.mk_err(
@@ -141,9 +141,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             let event = self.expect_event("value")?;
             let _guard = SpanGuard::new(self.last_span);
 
-            match event {
-                ParseEvent::SequenceStart(_) => {}
-                ParseEvent::StructStart(kind) => {
+            match event.kind {
+                ParseEventKind::SequenceStart(_) => {}
+                ParseEventKind::StructStart(kind) => {
                     return Err(self.mk_err(
                         &wip,
                         DeserializeErrorKind::UnexpectedToken {
@@ -167,7 +167,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 let event = self.expect_peek("value")?;
 
                 // Check for end of sequence
-                if matches!(event, ParseEvent::SequenceEnd) {
+                if matches!(event.kind, ParseEventKind::SequenceEnd) {
                     self.expect_event("value")?;
                     break;
                 }

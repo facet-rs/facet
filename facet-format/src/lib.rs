@@ -58,7 +58,8 @@ pub use deserializer::{
     DeserializeError, DeserializeErrorKind, FormatDeserializer, ParseError, SpanGuard,
 };
 pub use event::{
-    ContainerKind, FieldKey, FieldLocationHint, ParseEvent, ScalarValue, ValueTypeHint,
+    ContainerKind, FieldKey, FieldLocationHint, ParseEvent, ParseEventKind, ScalarValue,
+    ValueTypeHint,
 };
 pub use evidence::FieldEvidence;
 #[cfg(feature = "jit")]

@@ -10,7 +10,7 @@ use alloc::{borrow::Cow, format, vec::Vec};
 use crate::error::codes;
 use facet_format::{
     ContainerKind, DeserializeErrorKind, FieldKey, FieldLocationHint, FormatParser, ParseError,
-    ParseEvent, SavePoint, ScalarValue,
+    ParseEvent, ParseEventKind, SavePoint, ScalarValue,
 };
 use facet_reflect::Span;
 
@@ -208,20 +208,18 @@ impl<'de> MsgPackParser<'de> {
         let prefix = self.read_byte()?;
         let len = self.read_str_len(prefix)?;
         let bytes = self.read_bytes(len)?;
-        core::str::from_utf8(bytes)
-            .map(Cow::Borrowed)
-            .map_err(|_| {
-                let mut context = [0u8; 16];
-                let context_len = len.min(16);
-                context[..context_len].copy_from_slice(&bytes[..context_len]);
-                ParseError::new(
-                    Span::new(self.pos - len, len),
-                    DeserializeErrorKind::InvalidUtf8 {
-                        context,
-                        context_len: context_len as u8,
-                    },
-                )
-            })
+        core::str::from_utf8(bytes).map(Cow::Borrowed).map_err(|_| {
+            let mut context = [0u8; 16];
+            let context_len = len.min(16);
+            context[..context_len].copy_from_slice(&bytes[..context_len]);
+            ParseError::new(
+                Span::new(self.pos - len, len),
+                DeserializeErrorKind::InvalidUtf8 {
+                    context,
+                    context_len: context_len as u8,
+                },
+            )
+        })
     }
 
     /// Read an array length.
@@ -283,12 +281,12 @@ impl<'de> MsgPackParser<'de> {
                 ContextState::MapKey { remaining: 0 } => {
                     self.stack.pop();
                     self.finish_value();
-                    return Ok(Some(ParseEvent::StructEnd));
+                    return Ok(Some(self.event(ParseEventKind::StructEnd)));
                 }
                 ContextState::Array { remaining: 0 } => {
                     self.stack.pop();
                     self.finish_value();
-                    return Ok(Some(ParseEvent::SequenceEnd));
+                    return Ok(Some(self.event(ParseEventKind::SequenceEnd)));
                 }
                 _ => {}
             }
@@ -318,10 +316,10 @@ impl<'de> MsgPackParser<'de> {
                 };
             }
 
-            return Ok(Some(ParseEvent::FieldKey(FieldKey::new(
+            return Ok(Some(self.event(ParseEventKind::FieldKey(FieldKey::new(
                 key,
                 FieldLocationHint::KeyValue,
-            ))));
+            )))));
         }
 
         // Parse the next value
@@ -331,87 +329,113 @@ impl<'de> MsgPackParser<'de> {
             // Nil
             MSGPACK_NIL => {
                 self.finish_value();
-                Ok(Some(ParseEvent::Scalar(ScalarValue::Null)))
+                Ok(Some(self.event(ParseEventKind::Scalar(ScalarValue::Null))))
             }
 
             // Boolean
             MSGPACK_FALSE => {
                 self.finish_value();
-                Ok(Some(ParseEvent::Scalar(ScalarValue::Bool(false))))
+                Ok(Some(
+                    self.event(ParseEventKind::Scalar(ScalarValue::Bool(false))),
+                ))
             }
             MSGPACK_TRUE => {
                 self.finish_value();
-                Ok(Some(ParseEvent::Scalar(ScalarValue::Bool(true))))
+                Ok(Some(
+                    self.event(ParseEventKind::Scalar(ScalarValue::Bool(true))),
+                ))
             }
 
             // Positive fixint (0x00-0x7f)
             0x00..=MSGPACK_POSFIXINT_MAX => {
                 self.finish_value();
-                Ok(Some(ParseEvent::Scalar(ScalarValue::U64(prefix as u64))))
+                Ok(Some(self.event(ParseEventKind::Scalar(ScalarValue::U64(
+                    prefix as u64,
+                )))))
             }
 
             // Negative fixint (0xe0-0xff)
             MSGPACK_NEGFIXINT_MIN..=0xff => {
                 self.finish_value();
-                Ok(Some(ParseEvent::Scalar(ScalarValue::I64(
+                Ok(Some(self.event(ParseEventKind::Scalar(ScalarValue::I64(
                     prefix as i8 as i64,
-                ))))
+                )))))
             }
 
             // Unsigned integers
             MSGPACK_UINT8 => {
                 let v = self.read_byte()? as u64;
                 self.finish_value();
-                Ok(Some(ParseEvent::Scalar(ScalarValue::U64(v))))
+                Ok(Some(
+                    self.event(ParseEventKind::Scalar(ScalarValue::U64(v))),
+                ))
             }
             MSGPACK_UINT16 => {
                 let v = self.read_u16()? as u64;
                 self.finish_value();
-                Ok(Some(ParseEvent::Scalar(ScalarValue::U64(v))))
+                Ok(Some(
+                    self.event(ParseEventKind::Scalar(ScalarValue::U64(v))),
+                ))
             }
             MSGPACK_UINT32 => {
                 let v = self.read_u32()? as u64;
                 self.finish_value();
-                Ok(Some(ParseEvent::Scalar(ScalarValue::U64(v))))
+                Ok(Some(
+                    self.event(ParseEventKind::Scalar(ScalarValue::U64(v))),
+                ))
             }
             MSGPACK_UINT64 => {
                 let v = self.read_u64()?;
                 self.finish_value();
-                Ok(Some(ParseEvent::Scalar(ScalarValue::U64(v))))
+                Ok(Some(
+                    self.event(ParseEventKind::Scalar(ScalarValue::U64(v))),
+                ))
             }
 
             // Signed integers
             MSGPACK_INT8 => {
                 let v = self.read_i8()? as i64;
                 self.finish_value();
-                Ok(Some(ParseEvent::Scalar(ScalarValue::I64(v))))
+                Ok(Some(
+                    self.event(ParseEventKind::Scalar(ScalarValue::I64(v))),
+                ))
             }
             MSGPACK_INT16 => {
                 let v = self.read_i16()? as i64;
                 self.finish_value();
-                Ok(Some(ParseEvent::Scalar(ScalarValue::I64(v))))
+                Ok(Some(
+                    self.event(ParseEventKind::Scalar(ScalarValue::I64(v))),
+                ))
             }
             MSGPACK_INT32 => {
                 let v = self.read_i32()? as i64;
                 self.finish_value();
-                Ok(Some(ParseEvent::Scalar(ScalarValue::I64(v))))
+                Ok(Some(
+                    self.event(ParseEventKind::Scalar(ScalarValue::I64(v))),
+                ))
             }
             MSGPACK_INT64 => {
                 let v = self.read_i64()?;
                 self.finish_value();
-                Ok(Some(ParseEvent::Scalar(ScalarValue::I64(v))))
+                Ok(Some(
+                    self.event(ParseEventKind::Scalar(ScalarValue::I64(v))),
+                ))
             }
 
             // Floats
             MSGPACK_FLOAT32 => {
                 let v = self.read_f32()? as f64;
                 self.finish_value();
-                Ok(Some(ParseEvent::Scalar(ScalarValue::F64(v))))
+                Ok(Some(
+                    self.event(ParseEventKind::Scalar(ScalarValue::F64(v))),
+                ))
             }
             MSGPACK_FLOAT64 => {
                 let v = self.read_f64()?;
                 self.finish_value();
-                Ok(Some(ParseEvent::Scalar(ScalarValue::F64(v))))
+                Ok(Some(
+                    self.event(ParseEventKind::Scalar(ScalarValue::F64(v))),
+                ))
             }
 
             // Strings (fixstr, str8, str16, str32)
@@ -421,20 +445,24 @@ impl<'de> MsgPackParser<'de> {
             | MSGPACK_STR32 => {
                 let len = self.read_str_len(prefix)?;
                 let bytes = self.read_bytes(len)?;
-                let s = core::str::from_utf8(bytes).map(Cow::Borrowed).map_err(|_| {
-                    let mut context = [0u8; 16];
-                    let context_len = len.min(16);
-                    context[..context_len].copy_from_slice(&bytes[..context_len]);
-                    ParseError::new(
-                        Span::new(self.pos - len, len),
-                        DeserializeErrorKind::InvalidUtf8 {
-                            context,
-                            context_len: context_len as u8,
-                        },
-                    )
-                })?;
+                let s = core::str::from_utf8(bytes)
+                    .map(Cow::Borrowed)
+                    .map_err(|_| {
+                        let mut context = [0u8; 16];
+                        let context_len = len.min(16);
+                        context[..context_len].copy_from_slice(&bytes[..context_len]);
+                        ParseError::new(
+                            Span::new(self.pos - len, len),
+                            DeserializeErrorKind::InvalidUtf8 {
+                                context,
+                                context_len: context_len as u8,
+                            },
+                        )
+                    })?;
                 self.finish_value();
-                Ok(Some(ParseEvent::Scalar(ScalarValue::Str(s))))
+                Ok(Some(
+                    self.event(ParseEventKind::Scalar(ScalarValue::Str(s))),
+                ))
             }
 
             // Binary data
@@ -442,39 +470,43 @@ impl<'de> MsgPackParser<'de> {
                 let len = self.read_byte()? as usize;
                 let bytes = self.read_bytes(len)?;
                 self.finish_value();
-                Ok(Some(ParseEvent::Scalar(ScalarValue::Bytes(Cow::Borrowed(
-                    bytes,
-                )))))
+                Ok(Some(self.event(ParseEventKind::Scalar(
+                    ScalarValue::Bytes(Cow::Borrowed(bytes)),
+                ))))
             }
             MSGPACK_BIN16 => {
                 let len = self.read_u16()? as usize;
                 let bytes = self.read_bytes(len)?;
                 self.finish_value();
-                Ok(Some(ParseEvent::Scalar(ScalarValue::Bytes(Cow::Borrowed(
-                    bytes,
-                )))))
+                Ok(Some(self.event(ParseEventKind::Scalar(
+                    ScalarValue::Bytes(Cow::Borrowed(bytes)),
+                ))))
             }
             MSGPACK_BIN32 => {
                 let len = self.read_u32()? as usize;
                 let bytes = self.read_bytes(len)?;
                 self.finish_value();
-                Ok(Some(ParseEvent::Scalar(ScalarValue::Bytes(Cow::Borrowed(
-                    bytes,
-                )))))
+                Ok(Some(self.event(ParseEventKind::Scalar(
+                    ScalarValue::Bytes(Cow::Borrowed(bytes)),
+                ))))
             }
 
             // Arrays
             MSGPACK_FIXARRAY_MIN..=MSGPACK_FIXARRAY_MAX | MSGPACK_ARRAY16 | MSGPACK_ARRAY32 => {
                 let len = self.read_array_len(prefix)?;
                 self.stack.push(ContextState::Array { remaining: len });
-                Ok(Some(ParseEvent::SequenceStart(ContainerKind::Array)))
+                Ok(Some(self.event(ParseEventKind::SequenceStart(
+                    ContainerKind::Array,
+                ))))
             }
 
             // Maps
             MSGPACK_FIXMAP_MIN..=MSGPACK_FIXMAP_MAX | MSGPACK_MAP16 | MSGPACK_MAP32 => {
                 let len = self.read_map_len(prefix)?;
                 self.stack.push(ContextState::MapKey { remaining: len });
-                Ok(Some(ParseEvent::StructStart(ContainerKind::Object)))
+                Ok(Some(
+                    self.event(ParseEventKind::StructStart(ContainerKind::Object)),
+                ))
             }
 
             // Unsupported types (ext, etc.)
@@ -687,6 +719,14 @@ impl<'de> MsgPackParser<'de> {
                 },
             )),
         }
+    }
+}
+
+impl<'de> MsgPackParser<'de> {
+    /// Create an event with the current span.
+    #[inline]
+    fn event(&self, kind: ParseEventKind<'de>) -> ParseEvent<'de> {
+        ParseEvent::new(kind, Span::new(self.pos, 1))
     }
 }
 

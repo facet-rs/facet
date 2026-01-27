@@ -5,7 +5,7 @@ use alloc::{borrow::Cow, vec::Vec};
 use facet_core::Facet as _;
 use facet_format::{
     ContainerKind, DeserializeErrorKind, FieldKey, FieldLocationHint, FormatParser, ParseError,
-    ParseEvent, SavePoint, ScalarValue,
+    ParseEvent, ParseEventKind, SavePoint, ScalarValue,
 };
 
 use crate::adapter::{
@@ -154,66 +154,93 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
 
         self.state.root_started = true;
 
+        let span = token.span;
         match token.token {
             AdapterToken::ObjectStart => {
                 self.state
                     .stack
                     .push(ContextState::Object(ObjectState::KeyOrEnd));
-                Ok(ParseEvent::StructStart(ContainerKind::Object))
+                Ok(ParseEvent::new(
+                    ParseEventKind::StructStart(ContainerKind::Object),
+                    span,
+                ))
             }
             AdapterToken::ArrayStart => {
                 self.state
                     .stack
                     .push(ContextState::Array(ArrayState::ValueOrEnd));
-                Ok(ParseEvent::SequenceStart(ContainerKind::Array))
+                Ok(ParseEvent::new(
+                    ParseEventKind::SequenceStart(ContainerKind::Array),
+                    span,
+                ))
             }
             AdapterToken::String(s) => {
-                let event = ParseEvent::Scalar(ScalarValue::Str(s));
+                let event = ParseEvent::new(ParseEventKind::Scalar(ScalarValue::Str(s)), span);
                 self.finish_value_in_parent();
                 Ok(event)
             }
             AdapterToken::True => {
                 self.finish_value_in_parent();
-                Ok(ParseEvent::Scalar(ScalarValue::Bool(true)))
+                Ok(ParseEvent::new(
+                    ParseEventKind::Scalar(ScalarValue::Bool(true)),
+                    span,
+                ))
             }
             AdapterToken::False => {
                 self.finish_value_in_parent();
-                Ok(ParseEvent::Scalar(ScalarValue::Bool(false)))
+                Ok(ParseEvent::new(
+                    ParseEventKind::Scalar(ScalarValue::Bool(false)),
+                    span,
+                ))
             }
             AdapterToken::Null => {
                 self.finish_value_in_parent();
-                Ok(ParseEvent::Scalar(ScalarValue::Null))
+                Ok(ParseEvent::new(
+                    ParseEventKind::Scalar(ScalarValue::Null),
+                    span,
+                ))
             }
             AdapterToken::U64(n) => {
                 self.finish_value_in_parent();
-                Ok(ParseEvent::Scalar(ScalarValue::U64(n)))
+                Ok(ParseEvent::new(
+                    ParseEventKind::Scalar(ScalarValue::U64(n)),
+                    span,
+                ))
             }
             AdapterToken::I64(n) => {
                 self.finish_value_in_parent();
-                Ok(ParseEvent::Scalar(ScalarValue::I64(n)))
+                Ok(ParseEvent::new(
+                    ParseEventKind::Scalar(ScalarValue::I64(n)),
+                    span,
+                ))
             }
             AdapterToken::U128(n) => {
                 self.finish_value_in_parent();
-                Ok(ParseEvent::Scalar(ScalarValue::Str(Cow::Owned(
-                    n.to_string(),
-                ))))
+                Ok(ParseEvent::new(
+                    ParseEventKind::Scalar(ScalarValue::Str(Cow::Owned(n.to_string()))),
+                    span,
+                ))
             }
             AdapterToken::I128(n) => {
                 self.finish_value_in_parent();
-                Ok(ParseEvent::Scalar(ScalarValue::Str(Cow::Owned(
-                    n.to_string(),
-                ))))
+                Ok(ParseEvent::new(
+                    ParseEventKind::Scalar(ScalarValue::Str(Cow::Owned(n.to_string()))),
+                    span,
+                ))
             }
             AdapterToken::F64(n) => {
                 self.finish_value_in_parent();
-                Ok(ParseEvent::Scalar(ScalarValue::F64(n)))
+                Ok(ParseEvent::new(
+                    ParseEventKind::Scalar(ScalarValue::F64(n)),
+                    span,
+                ))
             }
             AdapterToken::ObjectEnd | AdapterToken::ArrayEnd => {
                 Err(self.unexpected(&token, "value"))
             }
             AdapterToken::Comma | AdapterToken::Colon => Err(self.unexpected(&token, "value")),
             AdapterToken::Eof => Err(ParseError::new(
-                token.span,
+                span,
                 DeserializeErrorKind::UnexpectedEof { expected: "value" },
             )),
         }
@@ -308,25 +335,29 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
             match self.determine_action() {
                 NextAction::ObjectKey => {
                     let token = self.consume_token()?;
+                    let span = token.span;
                     match token.token {
                         AdapterToken::ObjectEnd => {
                             self.state.stack.pop();
                             self.finish_value_in_parent();
-                            return Ok(Some(ParseEvent::StructEnd));
+                            return Ok(Some(ParseEvent::new(ParseEventKind::StructEnd, span)));
                         }
                         AdapterToken::String(name) => {
                             self.expect_colon()?;
                             if let Some(ContextState::Object(state)) = self.state.stack.last_mut() {
                                 *state = ObjectState::Value;
                             }
-                            return Ok(Some(ParseEvent::FieldKey(FieldKey::new(
-                                name,
-                                FieldLocationHint::KeyValue,
-                            ))));
+                            return Ok(Some(ParseEvent::new(
+                                ParseEventKind::FieldKey(FieldKey::new(
+                                    name,
+                                    FieldLocationHint::KeyValue,
+                                )),
+                                span,
+                            )));
                         }
                         AdapterToken::Eof => {
                             return Err(ParseError::new(
-                                token.span,
+                                span,
                                 DeserializeErrorKind::UnexpectedEof {
                                     expected: "field name or '}'",
                                 },
@@ -340,6 +371,7 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
                 }
                 NextAction::ObjectComma => {
                     let token = self.consume_token()?;
+                    let span = token.span;
                     match token.token {
                         AdapterToken::Comma => {
                             if let Some(ContextState::Object(state)) = self.state.stack.last_mut() {
@@ -350,11 +382,11 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
                         AdapterToken::ObjectEnd => {
                             self.state.stack.pop();
                             self.finish_value_in_parent();
-                            return Ok(Some(ParseEvent::StructEnd));
+                            return Ok(Some(ParseEvent::new(ParseEventKind::StructEnd, span)));
                         }
                         AdapterToken::Eof => {
                             return Err(ParseError::new(
-                                token.span,
+                                span,
                                 DeserializeErrorKind::UnexpectedEof {
                                     expected: "',' or '}'",
                                 },
@@ -365,15 +397,16 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
                 }
                 NextAction::ArrayValue => {
                     let token = self.consume_token()?;
+                    let span = token.span;
                     match token.token {
                         AdapterToken::ArrayEnd => {
                             self.state.stack.pop();
                             self.finish_value_in_parent();
-                            return Ok(Some(ParseEvent::SequenceEnd));
+                            return Ok(Some(ParseEvent::new(ParseEventKind::SequenceEnd, span)));
                         }
                         AdapterToken::Eof => {
                             return Err(ParseError::new(
-                                token.span,
+                                span,
                                 DeserializeErrorKind::UnexpectedEof {
                                     expected: "value or ']'",
                                 },
@@ -389,6 +422,7 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
                 }
                 NextAction::ArrayComma => {
                     let token = self.consume_token()?;
+                    let span = token.span;
                     match token.token {
                         AdapterToken::Comma => {
                             if let Some(ContextState::Array(state)) = self.state.stack.last_mut() {
@@ -399,11 +433,11 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
                         AdapterToken::ArrayEnd => {
                             self.state.stack.pop();
                             self.finish_value_in_parent();
-                            return Ok(Some(ParseEvent::SequenceEnd));
+                            return Ok(Some(ParseEvent::new(ParseEventKind::SequenceEnd, span)));
                         }
                         AdapterToken::Eof => {
                             return Err(ParseError::new(
-                                token.span,
+                                span,
                                 DeserializeErrorKind::UnexpectedEof {
                                     expected: "',' or ']'",
                                 },
@@ -428,12 +462,44 @@ impl<'de, const TRUSTED_UTF8: bool> FormatParser<'de> for JsonParser<'de, TRUSTE
         Some(crate::RawJson::SHAPE)
     }
 
+    fn input(&self) -> Option<&'de [u8]> {
+        Some(self.input)
+    }
+
     fn next_event(&mut self) -> Result<Option<ParseEvent<'de>>, ParseError> {
         if let Some(event) = self.state.event_peek.take() {
             self.state.peek_start_offset = None;
             return Ok(Some(event));
         }
         self.produce_event()
+    }
+
+    fn next_events(&mut self, buf: &mut [ParseEvent<'de>]) -> Result<usize, ParseError> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+
+        let mut count = 0;
+
+        // First, drain any peeked event
+        if let Some(event) = self.state.event_peek.take() {
+            self.state.peek_start_offset = None;
+            buf[count] = event;
+            count += 1;
+        }
+
+        // Simple implementation: just call produce_event in a loop
+        while count < buf.len() {
+            match self.produce_event()? {
+                Some(event) => {
+                    buf[count] = event;
+                    count += 1;
+                }
+                None => break,
+            }
+        }
+
+        Ok(count)
     }
 
     fn save(&mut self) -> SavePoint {
@@ -480,8 +546,8 @@ impl<'de, const TRUSTED_UTF8: bool> FormatParser<'de> for JsonParser<'de, TRUSTE
             // Based on the peeked event, we may need to skip the rest of a container.
             // Note: When peeking a StructStart/SequenceStart, the parser already pushed
             // to self.state.stack. We need to pop it after skipping the container.
-            match event {
-                ParseEvent::StructStart(_) => {
+            match event.kind {
+                ParseEventKind::StructStart(_) => {
                     let res = self.skip_container(DelimKind::Object);
                     // Pop the stack entry that was pushed during peek, even if skip_container errored
                     self.state.stack.pop();
@@ -489,7 +555,7 @@ impl<'de, const TRUSTED_UTF8: bool> FormatParser<'de> for JsonParser<'de, TRUSTE
                     // Update the parent's state after skipping the container
                     self.finish_value_in_parent();
                 }
-                ParseEvent::SequenceStart(_) => {
+                ParseEventKind::SequenceStart(_) => {
                     let res = self.skip_container(DelimKind::Array);
                     // Pop the stack entry that was pushed during peek, even if skip_container errored
                     self.state.stack.pop();
@@ -523,20 +589,20 @@ impl<'de, const TRUSTED_UTF8: bool> FormatParser<'de> for JsonParser<'de, TRUSTE
             // Based on the peeked event, we may need to skip the rest of a container.
             // Note: When peeking a StructStart/SequenceStart, the parser already pushed
             // to self.state.stack. We need to pop it after skipping the container.
-            match event {
-                ParseEvent::StructStart(_) => {
+            match event.kind {
+                ParseEventKind::StructStart(_) => {
                     let res = self.skip_container(DelimKind::Object);
                     // Pop the stack entry that was pushed during peek, even if skip_container errored
                     self.state.stack.pop();
                     res?;
                 }
-                ParseEvent::SequenceStart(_) => {
+                ParseEventKind::SequenceStart(_) => {
                     let res = self.skip_container(DelimKind::Array);
                     // Pop the stack entry that was pushed during peek, even if skip_container errored
                     self.state.stack.pop();
                     res?;
                 }
-                ParseEvent::StructEnd | ParseEvent::SequenceEnd => {
+                ParseEventKind::StructEnd | ParseEventKind::SequenceEnd => {
                     // This shouldn't happen in valid usage, but handle gracefully
                     return Err(ParseError::new(
                         facet_reflect::Span::new(start, 0),

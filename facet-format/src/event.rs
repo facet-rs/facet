@@ -251,7 +251,24 @@ impl<'de> ScalarValue<'de> {
 
 /// Event emitted by a format parser while streaming through input.
 #[derive(Clone, PartialEq)]
-pub enum ParseEvent<'de> {
+pub struct ParseEvent<'de> {
+    /// The kind of event.
+    pub kind: ParseEventKind<'de>,
+    /// Source span of this event in the input.
+    pub span: facet_reflect::Span,
+}
+
+impl<'de> ParseEvent<'de> {
+    /// Create a new event with the given kind and span.
+    #[inline]
+    pub fn new(kind: ParseEventKind<'de>, span: facet_reflect::Span) -> Self {
+        Self { kind, span }
+    }
+}
+
+/// The kind of parse event.
+#[derive(Clone, PartialEq)]
+pub enum ParseEventKind<'de> {
     /// Beginning of a struct/object/node.
     StructStart(ContainerKind),
     /// End of a struct/object/node.
@@ -282,15 +299,24 @@ pub enum ParseEvent<'de> {
 
 impl<'de> fmt::Debug for ParseEvent<'de> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Delegate to kind's debug, span is secondary
+        write!(f, "{:?}@{:?}", self.kind, self.span)
+    }
+}
+
+impl<'de> fmt::Debug for ParseEventKind<'de> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ParseEvent::StructStart(kind) => f.debug_tuple("StructStart").field(kind).finish(),
-            ParseEvent::StructEnd => f.write_str("StructEnd"),
-            ParseEvent::FieldKey(key) => f.debug_tuple("FieldKey").field(key).finish(),
-            ParseEvent::OrderedField => f.write_str("OrderedField"),
-            ParseEvent::SequenceStart(kind) => f.debug_tuple("SequenceStart").field(kind).finish(),
-            ParseEvent::SequenceEnd => f.write_str("SequenceEnd"),
-            ParseEvent::Scalar(value) => f.debug_tuple("Scalar").field(value).finish(),
-            ParseEvent::VariantTag(tag) => f.debug_tuple("VariantTag").field(tag).finish(),
+            ParseEventKind::StructStart(kind) => f.debug_tuple("StructStart").field(kind).finish(),
+            ParseEventKind::StructEnd => f.write_str("StructEnd"),
+            ParseEventKind::FieldKey(key) => f.debug_tuple("FieldKey").field(key).finish(),
+            ParseEventKind::OrderedField => f.write_str("OrderedField"),
+            ParseEventKind::SequenceStart(kind) => {
+                f.debug_tuple("SequenceStart").field(kind).finish()
+            }
+            ParseEventKind::SequenceEnd => f.write_str("SequenceEnd"),
+            ParseEventKind::Scalar(value) => f.debug_tuple("Scalar").field(value).finish(),
+            ParseEventKind::VariantTag(tag) => f.debug_tuple("VariantTag").field(tag).finish(),
         }
     }
 }
@@ -299,15 +325,23 @@ impl ParseEvent<'_> {
     /// Returns a static string describing the kind of event for error messages.
     #[inline]
     pub const fn kind_name(&self) -> &'static str {
+        self.kind.kind_name()
+    }
+}
+
+impl ParseEventKind<'_> {
+    /// Returns a static string describing the kind of event for error messages.
+    #[inline]
+    pub const fn kind_name(&self) -> &'static str {
         match self {
-            ParseEvent::StructStart(_) => "struct start",
-            ParseEvent::StructEnd => "struct end",
-            ParseEvent::FieldKey(_) => "field key",
-            ParseEvent::OrderedField => "ordered field",
-            ParseEvent::SequenceStart(_) => "sequence start",
-            ParseEvent::SequenceEnd => "sequence end",
-            ParseEvent::Scalar(_) => "scalar",
-            ParseEvent::VariantTag(_) => "variant tag",
+            ParseEventKind::StructStart(_) => "struct start",
+            ParseEventKind::StructEnd => "struct end",
+            ParseEventKind::FieldKey(_) => "field key",
+            ParseEventKind::OrderedField => "ordered field",
+            ParseEventKind::SequenceStart(_) => "sequence start",
+            ParseEventKind::SequenceEnd => "sequence end",
+            ParseEventKind::Scalar(_) => "scalar",
+            ParseEventKind::VariantTag(_) => "variant tag",
         }
     }
 }

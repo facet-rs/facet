@@ -6,8 +6,8 @@ use alloc::borrow::Cow;
 use alloc::vec::Vec;
 
 use facet_format::{
-    ContainerKind, DeserializeErrorKind, FormatParser, ParseError, ParseEvent, SavePoint,
-    ScalarTypeHint, ScalarValue,
+    ContainerKind, DeserializeErrorKind, FormatParser, ParseError, ParseEvent, ParseEventKind,
+    SavePoint, ScalarTypeHint, ScalarValue,
 };
 use facet_reflect::Span;
 
@@ -95,7 +95,10 @@ impl<'de> CsvParser<'de> {
         if let Some(hint) = self.pending_scalar_type.take() {
             if self.field_index > 0 && self.field_index <= self.fields.len() {
                 let field = &self.fields[self.field_index - 1];
-                return Ok(ParseEvent::Scalar(parse_scalar_with_hint(field.value, hint)));
+                return Ok(self.event(ParseEventKind::Scalar(parse_scalar_with_hint(
+                    field.value,
+                    hint,
+                ))));
             } else {
                 return Err(ParseError::new(
                     Span::new(self.input.len(), 0),
@@ -111,7 +114,7 @@ impl<'de> CsvParser<'de> {
             self.state_stack.push(ParserState::InStruct {
                 remaining_fields: num_fields,
             });
-            return Ok(ParseEvent::StructStart(ContainerKind::Object));
+            return Ok(self.event(ParseEventKind::StructStart(ContainerKind::Object)));
         }
 
         // Process based on current state
@@ -131,7 +134,7 @@ impl<'de> CsvParser<'de> {
                 if remaining_fields == 0 {
                     // Struct complete
                     self.state_stack.pop();
-                    Ok(ParseEvent::StructEnd)
+                    Ok(self.event(ParseEventKind::StructEnd))
                 } else {
                     // More fields to go - emit OrderedField and decrement
                     if let Some(ParserState::InStruct { remaining_fields }) =
@@ -141,7 +144,7 @@ impl<'de> CsvParser<'de> {
                     }
                     // Advance field index when emitting OrderedField
                     self.field_index += 1;
-                    Ok(ParseEvent::OrderedField)
+                    Ok(self.event(ParseEventKind::OrderedField))
                 }
             }
         }
@@ -302,7 +305,10 @@ impl<'de> FormatParser<'de> for CsvParser<'de> {
     fn hint_struct_fields(&mut self, num_fields: usize) {
         self.pending_struct_fields = Some(num_fields);
         // Clear any peeked OrderedField placeholder
-        if matches!(self.peeked, Some(ParseEvent::OrderedField)) {
+        if matches!(
+            self.peeked.as_ref().map(|e| &e.kind),
+            Some(ParseEventKind::OrderedField)
+        ) {
             self.peeked = None;
         }
     }
@@ -310,12 +316,23 @@ impl<'de> FormatParser<'de> for CsvParser<'de> {
     fn hint_scalar_type(&mut self, hint: ScalarTypeHint) {
         self.pending_scalar_type = Some(hint);
         // Clear any peeked OrderedField placeholder
-        if matches!(self.peeked, Some(ParseEvent::OrderedField)) {
+        if matches!(
+            self.peeked.as_ref().map(|e| &e.kind),
+            Some(ParseEventKind::OrderedField)
+        ) {
             self.peeked = None;
         }
     }
 
     fn current_span(&self) -> Option<Span> {
         Some(self.current_field_span())
+    }
+}
+
+impl<'de> CsvParser<'de> {
+    /// Create an event with the current span.
+    #[inline]
+    fn event(&self, kind: ParseEventKind<'de>) -> ParseEvent<'de> {
+        ParseEvent::new(kind, self.current_field_span())
     }
 }

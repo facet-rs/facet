@@ -28,6 +28,29 @@ pub trait FormatParser<'de> {
     /// from the internal buffer before reading new events from the input.
     fn next_event(&mut self) -> Result<Option<crate::ParseEvent<'de>>, ParseError>;
 
+    /// Read multiple parse events into a buffer, returning the number of events read.
+    ///
+    /// This is an optimization for parsers that can produce multiple events efficiently
+    /// in a single call, amortizing function call overhead and improving cache locality.
+    ///
+    /// Returns `Ok(0)` at end-of-input (EOF).
+    ///
+    /// The default implementation calls `next_event` repeatedly to fill the buffer.
+    /// Parsers can override this for better performance.
+    fn next_events(&mut self, buf: &mut [crate::ParseEvent<'de>]) -> Result<usize, ParseError> {
+        let mut count = 0;
+        for slot in buf.iter_mut() {
+            match self.next_event()? {
+                Some(event) => {
+                    *slot = event;
+                    count += 1;
+                }
+                None => break,
+            }
+        }
+        Ok(count)
+    }
+
     /// Peek at the next event without consuming it, or `None` if at EOF.
     fn peek_event(&mut self) -> Result<Option<crate::ParseEvent<'de>>, ParseError>;
 
@@ -65,6 +88,17 @@ pub trait FormatParser<'de> {
         // Default: not supported
         self.skip_value()?;
         Ok(None)
+    }
+
+    /// Returns the raw input bytes, if available.
+    ///
+    /// This is used by the deserializer to implement raw capture when buffering
+    /// events. The deserializer tracks value boundaries using event spans and
+    /// slices the input directly.
+    ///
+    /// Returns `None` for streaming parsers that don't have the full input.
+    fn input(&self) -> Option<&'de [u8]> {
+        None
     }
 
     /// Returns the shape of the format's raw capture type (e.g., `RawJson::SHAPE`).
@@ -259,6 +293,10 @@ impl<'de> FormatParser<'de> for &mut dyn FormatParser<'de> {
         (**self).next_event()
     }
 
+    fn next_events(&mut self, buf: &mut [crate::ParseEvent<'de>]) -> Result<usize, ParseError> {
+        (**self).next_events(buf)
+    }
+
     fn peek_event(&mut self) -> Result<Option<crate::ParseEvent<'de>>, ParseError> {
         (**self).peek_event()
     }
@@ -277,6 +315,10 @@ impl<'de> FormatParser<'de> for &mut dyn FormatParser<'de> {
 
     fn capture_raw(&mut self) -> Result<Option<&'de str>, ParseError> {
         (**self).capture_raw()
+    }
+
+    fn input(&self) -> Option<&'de [u8]> {
+        (**self).input()
     }
 
     fn raw_capture_shape(&self) -> Option<&'static facet_core::Shape> {
