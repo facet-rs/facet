@@ -142,11 +142,16 @@ fn generate_scalar_schema(scalar: ScalarType) -> String {
         ScalarType::U8 => "{ kind: 'u8' }".into(),
         ScalarType::U16 => "{ kind: 'u16' }".into(),
         ScalarType::U32 => "{ kind: 'u32' }".into(),
-        ScalarType::U64 | ScalarType::USize | ScalarType::U128 => "{ kind: 'u64' }".into(),
+        ScalarType::U64 | ScalarType::USize => "{ kind: 'u64' }".into(),
         ScalarType::I8 => "{ kind: 'i8' }".into(),
         ScalarType::I16 => "{ kind: 'i16' }".into(),
         ScalarType::I32 => "{ kind: 'i32' }".into(),
-        ScalarType::I64 | ScalarType::ISize | ScalarType::I128 => "{ kind: 'i64' }".into(),
+        ScalarType::I64 | ScalarType::ISize => "{ kind: 'i64' }".into(),
+        ScalarType::U128 | ScalarType::I128 => {
+            panic!(
+                "u128/i128 types are not supported in TypeScript codegen - use smaller integer types or encode as bytes"
+            )
+        }
         ScalarType::F32 => "{ kind: 'f32' }".into(),
         ScalarType::F64 => "{ kind: 'f64' }".into(),
         ScalarType::Char | ScalarType::Str | ScalarType::String | ScalarType::CowStr => {
@@ -217,19 +222,19 @@ pub fn generate_binding_serializers(service: &ServiceDetail) -> String {
     // getTxSerializer: given element schema, return a serializer function
     out.push_str("  getTxSerializer(schema: Schema): (value: unknown) => Uint8Array {\n");
     out.push_str("    switch (schema.kind) {\n");
-    out.push_str("      case 'bool': return (v) => encodeBool(v as boolean);\n");
-    out.push_str("      case 'u8': return (v) => encodeU8(v as number);\n");
-    out.push_str("      case 'i8': return (v) => encodeI8(v as number);\n");
-    out.push_str("      case 'u16': return (v) => encodeU16(v as number);\n");
-    out.push_str("      case 'i16': return (v) => encodeI16(v as number);\n");
-    out.push_str("      case 'u32': return (v) => encodeU32(v as number);\n");
-    out.push_str("      case 'i32': return (v) => encodeI32(v as number);\n");
-    out.push_str("      case 'u64': return (v) => encodeU64(v as bigint);\n");
-    out.push_str("      case 'i64': return (v) => encodeI64(v as bigint);\n");
-    out.push_str("      case 'f32': return (v) => encodeF32(v as number);\n");
-    out.push_str("      case 'f64': return (v) => encodeF64(v as number);\n");
-    out.push_str("      case 'string': return (v) => encodeString(v as string);\n");
-    out.push_str("      case 'bytes': return (v) => encodeBytes(v as Uint8Array);\n");
+    out.push_str("      case 'bool': return (v) => pc.encodeBool(v as boolean);\n");
+    out.push_str("      case 'u8': return (v) => pc.encodeU8(v as number);\n");
+    out.push_str("      case 'i8': return (v) => pc.encodeI8(v as number);\n");
+    out.push_str("      case 'u16': return (v) => pc.encodeU16(v as number);\n");
+    out.push_str("      case 'i16': return (v) => pc.encodeI16(v as number);\n");
+    out.push_str("      case 'u32': return (v) => pc.encodeU32(v as number);\n");
+    out.push_str("      case 'i32': return (v) => pc.encodeI32(v as number);\n");
+    out.push_str("      case 'u64': return (v) => pc.encodeU64(v as bigint);\n");
+    out.push_str("      case 'i64': return (v) => pc.encodeI64(v as bigint);\n");
+    out.push_str("      case 'f32': return (v) => pc.encodeF32(v as number);\n");
+    out.push_str("      case 'f64': return (v) => pc.encodeF64(v as number);\n");
+    out.push_str("      case 'string': return (v) => pc.encodeString(v as string);\n");
+    out.push_str("      case 'bytes': return (v) => pc.encodeBytes(v as Uint8Array);\n");
     out.push_str(
         "      default: throw new Error(`Unsupported schema kind for Tx: ${schema.kind}`);\n",
     );
@@ -239,19 +244,19 @@ pub fn generate_binding_serializers(service: &ServiceDetail) -> String {
     // getRxDeserializer: given element schema, return a deserializer function
     out.push_str("  getRxDeserializer(schema: Schema): (bytes: Uint8Array) => unknown {\n");
     out.push_str("    switch (schema.kind) {\n");
-    out.push_str("      case 'bool': return (b) => decodeBool(b, 0).value;\n");
-    out.push_str("      case 'u8': return (b) => decodeU8(b, 0).value;\n");
-    out.push_str("      case 'i8': return (b) => decodeI8(b, 0).value;\n");
-    out.push_str("      case 'u16': return (b) => decodeU16(b, 0).value;\n");
-    out.push_str("      case 'i16': return (b) => decodeI16(b, 0).value;\n");
-    out.push_str("      case 'u32': return (b) => decodeU32(b, 0).value;\n");
-    out.push_str("      case 'i32': return (b) => decodeI32(b, 0).value;\n");
-    out.push_str("      case 'u64': return (b) => decodeU64(b, 0).value;\n");
-    out.push_str("      case 'i64': return (b) => decodeI64(b, 0).value;\n");
-    out.push_str("      case 'f32': return (b) => decodeF32(b, 0).value;\n");
-    out.push_str("      case 'f64': return (b) => decodeF64(b, 0).value;\n");
-    out.push_str("      case 'string': return (b) => decodeString(b, 0).value;\n");
-    out.push_str("      case 'bytes': return (b) => decodeBytes(b, 0).value;\n");
+    out.push_str("      case 'bool': return (b) => pc.decodeBool(b, 0).value;\n");
+    out.push_str("      case 'u8': return (b) => pc.decodeU8(b, 0).value;\n");
+    out.push_str("      case 'i8': return (b) => pc.decodeI8(b, 0).value;\n");
+    out.push_str("      case 'u16': return (b) => pc.decodeU16(b, 0).value;\n");
+    out.push_str("      case 'i16': return (b) => pc.decodeI16(b, 0).value;\n");
+    out.push_str("      case 'u32': return (b) => pc.decodeU32(b, 0).value;\n");
+    out.push_str("      case 'i32': return (b) => pc.decodeI32(b, 0).value;\n");
+    out.push_str("      case 'u64': return (b) => pc.decodeU64(b, 0).value;\n");
+    out.push_str("      case 'i64': return (b) => pc.decodeI64(b, 0).value;\n");
+    out.push_str("      case 'f32': return (b) => pc.decodeF32(b, 0).value;\n");
+    out.push_str("      case 'f64': return (b) => pc.decodeF64(b, 0).value;\n");
+    out.push_str("      case 'string': return (b) => pc.decodeString(b, 0).value;\n");
+    out.push_str("      case 'bytes': return (b) => pc.decodeBytes(b, 0).value;\n");
     out.push_str(
         "      default: throw new Error(`Unsupported schema kind for Rx: ${schema.kind}`);\n",
     );

@@ -23,7 +23,7 @@ pub fn generate_decode_stmt_client(
             // TODO: Need Connection access to create proper Tx handle
             let inner_type = ts_type_client_return(inner);
             format!(
-                "const _{var_name}_r = decodeU64(buf, {offset_var}); const {var_name} = {{ channelId: _{var_name}_r.value }} as Tx<{inner_type}>; {offset_var} = _{var_name}_r.next; /* TODO: create real Tx handle */"
+                "const _{var_name}_r = pc.decodeU64(buf, {offset_var}); const {var_name} = {{ channelId: _{var_name}_r.value }} as Tx<{inner_type}>; {offset_var} = _{var_name}_r.next; /* TODO: create real Tx handle */"
             )
         }
         ShapeKind::Rx { inner } => {
@@ -32,7 +32,7 @@ pub fn generate_decode_stmt_client(
             // TODO: Need Connection access to create proper Rx handle
             let inner_type = ts_type_client_return(inner);
             format!(
-                "const _{var_name}_r = decodeU64(buf, {offset_var}); const {var_name} = {{ channelId: _{var_name}_r.value }} as Rx<{inner_type}>; {offset_var} = _{var_name}_r.next; /* TODO: create real Rx handle */"
+                "const _{var_name}_r = pc.decodeU64(buf, {offset_var}); const {var_name} = {{ channelId: _{var_name}_r.value }} as Rx<{inner_type}>; {offset_var} = _{var_name}_r.next; /* TODO: create real Rx handle */"
             )
         }
         // For non-streaming types, use the regular decode
@@ -55,7 +55,7 @@ pub fn generate_decode_stmt_server(
             // r[impl channeling.type] - Channel types decode as channel_id on wire.
             let inner_type = ts_type_server_arg(inner);
             format!(
-                "const _{var_name}_r = decodeU64(buf, {offset_var}); const {var_name} = {{ channelId: _{var_name}_r.value }} as Tx<{inner_type}>; {offset_var} = _{var_name}_r.next; /* TODO: create real Tx handle */"
+                "const _{var_name}_r = pc.decodeU64(buf, {offset_var}); const {var_name} = {{ channelId: _{var_name}_r.value }} as Tx<{inner_type}>; {offset_var} = _{var_name}_r.next; /* TODO: create real Tx handle */"
             )
         }
         ShapeKind::Rx { inner } => {
@@ -63,7 +63,7 @@ pub fn generate_decode_stmt_server(
             // r[impl channeling.type] - Channel types decode as channel_id on wire.
             let inner_type = ts_type_server_arg(inner);
             format!(
-                "const _{var_name}_r = decodeU64(buf, {offset_var}); const {var_name} = {{ channelId: _{var_name}_r.value }} as Rx<{inner_type}>; {offset_var} = _{var_name}_r.next; /* TODO: create real Rx handle */"
+                "const _{var_name}_r = pc.decodeU64(buf, {offset_var}); const {var_name} = {{ channelId: _{var_name}_r.value }} as Rx<{inner_type}>; {offset_var} = _{var_name}_r.next; /* TODO: create real Rx handle */"
             )
         }
         // For non-streaming types, use the regular decode
@@ -87,7 +87,7 @@ pub fn generate_decode_stmt_server_streaming(
             let inner_type = ts_type_server_arg(inner);
             let encode_fn = super::encode::generate_encode_fn_inline(inner);
             format!(
-                "const _{var_name}_r = decodeU64(buf, {offset_var}); \
+                "const _{var_name}_r = pc.decodeU64(buf, {offset_var}); \
                  const {var_name} = createServerTx<{inner_type}>(_{var_name}_r.value, {task_sender_var}, {encode_fn}); \
                  {offset_var} = _{var_name}_r.next;"
             )
@@ -98,7 +98,7 @@ pub fn generate_decode_stmt_server_streaming(
             let inner_type = ts_type_server_arg(inner);
             let decode_fn = generate_decode_fn_inline(inner);
             format!(
-                "const _{var_name}_r = decodeU64(buf, {offset_var}); \
+                "const _{var_name}_r = pc.decodeU64(buf, {offset_var}); \
                  const _{var_name}_receiver = {registry_var}.registerIncoming(_{var_name}_r.value); \
                  const {var_name} = createServerRx<{inner_type}>(_{var_name}_r.value, _{var_name}_receiver, {decode_fn}); \
                  {offset_var} = _{var_name}_r.next;"
@@ -117,7 +117,7 @@ pub fn generate_decode_stmt(shape: &'static Shape, var_name: &str, offset_var: &
     // Check for bytes first
     if is_bytes(shape) {
         return format!(
-            "const _{var_name}_r = decodeBytes(buf, {offset_var}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
+            "const _{var_name}_r = pc.decodeBytes(buf, {offset_var}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
         );
     }
 
@@ -126,26 +126,26 @@ pub fn generate_decode_stmt(shape: &'static Shape, var_name: &str, offset_var: &
         ShapeKind::List { element } => {
             let decode_fn = generate_decode_fn(element, "item");
             format!(
-                "const _{var_name}_r = decodeVec(buf, {offset_var}, {decode_fn}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
+                "const _{var_name}_r = pc.decodeVec(buf, {offset_var}, {decode_fn}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
             )
         }
         ShapeKind::Option { inner } => {
             let decode_fn = generate_decode_fn(inner, "inner");
             format!(
-                "const _{var_name}_r = decodeOption(buf, {offset_var}, {decode_fn}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
+                "const _{var_name}_r = pc.decodeOption(buf, {offset_var}, {decode_fn}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
             )
         }
         ShapeKind::Array { element, .. } | ShapeKind::Slice { element } => {
             let decode_fn = generate_decode_fn(element, "item");
             format!(
-                "const _{var_name}_r = decodeVec(buf, {offset_var}, {decode_fn}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
+                "const _{var_name}_r = pc.decodeVec(buf, {offset_var}, {decode_fn}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
             )
         }
         ShapeKind::Tuple { elements } if elements.len() == 2 => {
             let decode_a = generate_decode_fn(elements[0].shape, "a");
             let decode_b = generate_decode_fn(elements[1].shape, "b");
             format!(
-                "const _{var_name}_r = decodeTuple2(buf, {offset_var}, {decode_a}, {decode_b}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
+                "const _{var_name}_r = pc.decodeTuple2(buf, {offset_var}, {decode_a}, {decode_b}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
             )
         }
         ShapeKind::Tuple { elements } if elements.len() == 3 => {
@@ -153,7 +153,7 @@ pub fn generate_decode_stmt(shape: &'static Shape, var_name: &str, offset_var: &
             let decode_b = generate_decode_fn(elements[1].shape, "b");
             let decode_c = generate_decode_fn(elements[2].shape, "c");
             format!(
-                "const _{var_name}_r = decodeTuple3(buf, {offset_var}, {decode_a}, {decode_b}, {decode_c}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
+                "const _{var_name}_r = pc.decodeTuple3(buf, {offset_var}, {decode_a}, {decode_b}, {decode_c}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
             )
         }
         ShapeKind::Tuple { elements } => {
@@ -200,7 +200,7 @@ pub fn generate_decode_stmt(shape: &'static Shape, var_name: &str, offset_var: &
         }
         ShapeKind::Enum(EnumInfo { variants, .. }) => {
             let mut code = format!(
-                "const _{var_name}_disc = decodeEnumVariant(buf, {offset_var}); {offset_var} = _{var_name}_disc.next;\n"
+                "const _{var_name}_disc = pc.decodeEnumVariant(buf, {offset_var}); {offset_var} = _{var_name}_disc.next;\n"
             );
             code.push_str(&format!("let {var_name}: {};\n", ts_type_base_named(shape)));
             code.push_str(&format!("switch (_{var_name}_disc.value) {{\n"));
@@ -248,7 +248,7 @@ pub fn generate_decode_stmt(shape: &'static Shape, var_name: &str, offset_var: &
             let decode_k = generate_decode_fn(key, "k");
             let decode_v = generate_decode_fn(value, "v");
             format!(
-                "const _{var_name}_r = decodeVec(buf, {offset_var}, (buf, off) => {{ \
+                "const _{var_name}_r = pc.decodeVec(buf, {offset_var}, (buf, off) => {{ \
                 const kr = ({decode_k})(buf, off); \
                 const vr = ({decode_v})(buf, kr.next); \
                 return {{ value: [kr.value, vr.value] as [any, any], next: vr.next }}; \
@@ -258,19 +258,19 @@ pub fn generate_decode_stmt(shape: &'static Shape, var_name: &str, offset_var: &
         ShapeKind::Set { element } => {
             let decode_fn = generate_decode_fn(element, "item");
             format!(
-                "const _{var_name}_r = decodeVec(buf, {offset_var}, {decode_fn}); const {var_name} = new Set(_{var_name}_r.value); {offset_var} = _{var_name}_r.next;"
+                "const _{var_name}_r = pc.decodeVec(buf, {offset_var}, {decode_fn}); const {var_name} = new Set(_{var_name}_r.value); {offset_var} = _{var_name}_r.next;"
             )
         }
         ShapeKind::Tx { inner } => {
             let inner_type = ts_type_base_named(inner);
             format!(
-                "const _{var_name}_r = decodeU64(buf, {offset_var}); const {var_name} = {{ channelId: _{var_name}_r.value }} as Tx<{inner_type}>; {offset_var} = _{var_name}_r.next;"
+                "const _{var_name}_r = pc.decodeU64(buf, {offset_var}); const {var_name} = {{ channelId: _{var_name}_r.value }} as Tx<{inner_type}>; {offset_var} = _{var_name}_r.next;"
             )
         }
         ShapeKind::Rx { inner } => {
             let inner_type = ts_type_base_named(inner);
             format!(
-                "const _{var_name}_r = decodeU64(buf, {offset_var}); const {var_name} = {{ channelId: _{var_name}_r.value }} as Rx<{inner_type}>; {offset_var} = _{var_name}_r.next;"
+                "const _{var_name}_r = pc.decodeU64(buf, {offset_var}); const {var_name} = {{ channelId: _{var_name}_r.value }} as Rx<{inner_type}>; {offset_var} = _{var_name}_r.next;"
             )
         }
         ShapeKind::Pointer { pointee } => generate_decode_stmt(pointee, var_name, offset_var),
@@ -309,46 +309,45 @@ pub fn generate_decode_stmt(shape: &'static Shape, var_name: &str, offset_var: &
 fn decode_scalar_stmt(scalar: ScalarType, var_name: &str, offset_var: &str) -> String {
     match scalar {
         ScalarType::Bool => format!(
-            "const _{var_name}_r = decodeBool(buf, {offset_var}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
+            "const _{var_name}_r = pc.decodeBool(buf, {offset_var}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
         ),
         ScalarType::U8 => format!(
-            "const _{var_name}_r = decodeU8(buf, {offset_var}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
+            "const _{var_name}_r = pc.decodeU8(buf, {offset_var}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
         ),
         ScalarType::I8 => format!(
-            "const _{var_name}_r = decodeI8(buf, {offset_var}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
+            "const _{var_name}_r = pc.decodeI8(buf, {offset_var}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
         ),
         ScalarType::U16 => format!(
-            "const _{var_name}_r = decodeU16(buf, {offset_var}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
+            "const _{var_name}_r = pc.decodeU16(buf, {offset_var}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
         ),
         ScalarType::I16 => format!(
-            "const _{var_name}_r = decodeI16(buf, {offset_var}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
+            "const _{var_name}_r = pc.decodeI16(buf, {offset_var}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
         ),
         ScalarType::U32 => format!(
-            "const _{var_name}_r = decodeU32(buf, {offset_var}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
+            "const _{var_name}_r = pc.decodeU32(buf, {offset_var}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
         ),
         ScalarType::I32 => format!(
-            "const _{var_name}_r = decodeI32(buf, {offset_var}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
+            "const _{var_name}_r = pc.decodeI32(buf, {offset_var}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
         ),
         ScalarType::U64 | ScalarType::USize => format!(
-            "const _{var_name}_r = decodeU64(buf, {offset_var}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
+            "const _{var_name}_r = pc.decodeU64(buf, {offset_var}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
         ),
         ScalarType::I64 | ScalarType::ISize => format!(
-            "const _{var_name}_r = decodeI64(buf, {offset_var}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
+            "const _{var_name}_r = pc.decodeI64(buf, {offset_var}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
         ),
-        ScalarType::U128 => format!(
-            "const _{var_name}_r = decodeU64(buf, {offset_var}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
-        ),
-        ScalarType::I128 => format!(
-            "const _{var_name}_r = decodeI64(buf, {offset_var}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
-        ),
+        ScalarType::U128 | ScalarType::I128 => {
+            panic!(
+                "u128/i128 types are not supported in TypeScript codegen - use smaller integer types or encode as bytes"
+            )
+        }
         ScalarType::F32 => format!(
-            "const _{var_name}_r = decodeF32(buf, {offset_var}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
+            "const _{var_name}_r = pc.decodeF32(buf, {offset_var}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
         ),
         ScalarType::F64 => format!(
-            "const _{var_name}_r = decodeF64(buf, {offset_var}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
+            "const _{var_name}_r = pc.decodeF64(buf, {offset_var}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
         ),
         ScalarType::Char | ScalarType::Str | ScalarType::String | ScalarType::CowStr => format!(
-            "const _{var_name}_r = decodeString(buf, {offset_var}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
+            "const _{var_name}_r = pc.decodeString(buf, {offset_var}); const {var_name} = _{var_name}_r.value; {offset_var} = _{var_name}_r.next;"
         ),
         ScalarType::Unit => format!("const {var_name} = undefined;"),
         _ => format!("const {var_name} = undefined; /* unsupported scalar */"),
@@ -359,33 +358,33 @@ fn decode_scalar_stmt(scalar: ScalarType, var_name: &str, offset_var: &str) -> S
 pub fn generate_decode_fn(shape: &'static Shape, _var_hint: &str) -> String {
     // Check for bytes first
     if is_bytes(shape) {
-        return "(buf, off) => decodeBytes(buf, off)".into();
+        return "(buf, off) => pc.decodeBytes(buf, off)".into();
     }
 
     match classify_shape(shape) {
         ShapeKind::Scalar(scalar) => decode_scalar_fn(scalar),
         ShapeKind::List { element } => {
             let inner_fn = generate_decode_fn(element, "item");
-            format!("(buf, off) => decodeVec(buf, off, {inner_fn})")
+            format!("(buf, off) => pc.decodeVec(buf, off, {inner_fn})")
         }
         ShapeKind::Option { inner } => {
             let inner_fn = generate_decode_fn(inner, "inner");
-            format!("(buf, off) => decodeOption(buf, off, {inner_fn})")
+            format!("(buf, off) => pc.decodeOption(buf, off, {inner_fn})")
         }
         ShapeKind::Array { element, .. } | ShapeKind::Slice { element } => {
             let inner_fn = generate_decode_fn(element, "item");
-            format!("(buf, off) => decodeVec(buf, off, {inner_fn})")
+            format!("(buf, off) => pc.decodeVec(buf, off, {inner_fn})")
         }
         ShapeKind::Tuple { elements } if elements.len() == 2 => {
             let a_fn = generate_decode_fn(elements[0].shape, "a");
             let b_fn = generate_decode_fn(elements[1].shape, "b");
-            format!("(buf, off) => decodeTuple2(buf, off, {a_fn}, {b_fn})")
+            format!("(buf, off) => pc.decodeTuple2(buf, off, {a_fn}, {b_fn})")
         }
         ShapeKind::Tuple { elements } if elements.len() == 3 => {
             let a_fn = generate_decode_fn(elements[0].shape, "a");
             let b_fn = generate_decode_fn(elements[1].shape, "b");
             let c_fn = generate_decode_fn(elements[2].shape, "c");
-            format!("(buf, off) => decodeTuple3(buf, off, {a_fn}, {b_fn}, {c_fn})")
+            format!("(buf, off) => pc.decodeTuple3(buf, off, {a_fn}, {b_fn}, {c_fn})")
         }
         ShapeKind::Tuple { elements: [] } => {
             "(buf, off) => ({ value: undefined, next: off })".into()
@@ -415,8 +414,9 @@ pub fn generate_decode_fn(shape: &'static Shape, _var_hint: &str) -> String {
         ShapeKind::Enum(EnumInfo { variants, .. }) => {
             // Generate inline enum decoder
             let mut code =
-                "(buf: Uint8Array, off: number): DecodeResult<any> => { let o = off;\n".to_string();
-            code.push_str("  const disc = decodeEnumVariant(buf, o); o = disc.next;\n");
+                "(buf: Uint8Array, off: number): pc.DecodeResult<any> => { let o = off;\n"
+                    .to_string();
+            code.push_str("  const disc = pc.decodeEnumVariant(buf, o); o = disc.next;\n");
             code.push_str("  switch (disc.value) {\n");
             for (i, v) in variants.iter().enumerate() {
                 code.push_str(&format!("    case {i}: "));
@@ -471,21 +471,24 @@ pub fn generate_decode_fn(shape: &'static Shape, _var_hint: &str) -> String {
 /// Generate decode function for scalar types.
 fn decode_scalar_fn(scalar: ScalarType) -> String {
     match scalar {
-        ScalarType::Bool => "(buf, off) => decodeBool(buf, off)".into(),
-        ScalarType::U8 => "(buf, off) => decodeU8(buf, off)".into(),
-        ScalarType::I8 => "(buf, off) => decodeI8(buf, off)".into(),
-        ScalarType::U16 => "(buf, off) => decodeU16(buf, off)".into(),
-        ScalarType::I16 => "(buf, off) => decodeI16(buf, off)".into(),
-        ScalarType::U32 => "(buf, off) => decodeU32(buf, off)".into(),
-        ScalarType::I32 => "(buf, off) => decodeI32(buf, off)".into(),
-        ScalarType::U64 | ScalarType::USize => "(buf, off) => decodeU64(buf, off)".into(),
-        ScalarType::I64 | ScalarType::ISize => "(buf, off) => decodeI64(buf, off)".into(),
-        ScalarType::U128 => "(buf, off) => decodeU64(buf, off)".into(),
-        ScalarType::I128 => "(buf, off) => decodeI64(buf, off)".into(),
-        ScalarType::F32 => "(buf, off) => decodeF32(buf, off)".into(),
-        ScalarType::F64 => "(buf, off) => decodeF64(buf, off)".into(),
+        ScalarType::Bool => "(buf, off) => pc.decodeBool(buf, off)".into(),
+        ScalarType::U8 => "(buf, off) => pc.decodeU8(buf, off)".into(),
+        ScalarType::I8 => "(buf, off) => pc.decodeI8(buf, off)".into(),
+        ScalarType::U16 => "(buf, off) => pc.decodeU16(buf, off)".into(),
+        ScalarType::I16 => "(buf, off) => pc.decodeI16(buf, off)".into(),
+        ScalarType::U32 => "(buf, off) => pc.decodeU32(buf, off)".into(),
+        ScalarType::I32 => "(buf, off) => pc.decodeI32(buf, off)".into(),
+        ScalarType::U64 | ScalarType::USize => "(buf, off) => pc.decodeU64(buf, off)".into(),
+        ScalarType::I64 | ScalarType::ISize => "(buf, off) => pc.decodeI64(buf, off)".into(),
+        ScalarType::U128 | ScalarType::I128 => {
+            panic!(
+                "u128/i128 types are not supported in TypeScript codegen - use smaller integer types or encode as bytes"
+            )
+        }
+        ScalarType::F32 => "(buf, off) => pc.decodeF32(buf, off)".into(),
+        ScalarType::F64 => "(buf, off) => pc.decodeF64(buf, off)".into(),
         ScalarType::Char | ScalarType::Str | ScalarType::String | ScalarType::CowStr => {
-            "(buf, off) => decodeString(buf, off)".into()
+            "(buf, off) => pc.decodeString(buf, off)".into()
         }
         ScalarType::Unit => "(buf, off) => ({ value: undefined, next: off })".into(),
         _ => "(buf, off) => { throw new Error('unsupported scalar'); }".into(),
@@ -512,23 +515,23 @@ pub fn generate_decode_fn_inline(shape: &'static Shape) -> String {
 /// Generate inline decode function for scalars.
 fn decode_scalar_fn_inline(scalar: ScalarType) -> String {
     match scalar {
-        ScalarType::Bool => "(bytes: Uint8Array) => decodeBool(bytes, 0).value".into(),
-        ScalarType::U8 => "(bytes: Uint8Array) => decodeU8(bytes, 0).value".into(),
-        ScalarType::I8 => "(bytes: Uint8Array) => decodeI8(bytes, 0).value".into(),
-        ScalarType::U16 => "(bytes: Uint8Array) => decodeU16(bytes, 0).value".into(),
-        ScalarType::I16 => "(bytes: Uint8Array) => decodeI16(bytes, 0).value".into(),
-        ScalarType::U32 => "(bytes: Uint8Array) => decodeU32(bytes, 0).value".into(),
-        ScalarType::I32 => "(bytes: Uint8Array) => decodeI32(bytes, 0).value".into(),
+        ScalarType::Bool => "(bytes: Uint8Array) => pc.decodeBool(bytes, 0).value".into(),
+        ScalarType::U8 => "(bytes: Uint8Array) => pc.decodeU8(bytes, 0).value".into(),
+        ScalarType::I8 => "(bytes: Uint8Array) => pc.decodeI8(bytes, 0).value".into(),
+        ScalarType::U16 => "(bytes: Uint8Array) => pc.decodeU16(bytes, 0).value".into(),
+        ScalarType::I16 => "(bytes: Uint8Array) => pc.decodeI16(bytes, 0).value".into(),
+        ScalarType::U32 => "(bytes: Uint8Array) => pc.decodeU32(bytes, 0).value".into(),
+        ScalarType::I32 => "(bytes: Uint8Array) => pc.decodeI32(bytes, 0).value".into(),
         ScalarType::U64 | ScalarType::USize => {
-            "(bytes: Uint8Array) => decodeU64(bytes, 0).value".into()
+            "(bytes: Uint8Array) => pc.decodeU64(bytes, 0).value".into()
         }
         ScalarType::I64 | ScalarType::ISize => {
-            "(bytes: Uint8Array) => decodeI64(bytes, 0).value".into()
+            "(bytes: Uint8Array) => pc.decodeI64(bytes, 0).value".into()
         }
-        ScalarType::F32 => "(bytes: Uint8Array) => decodeF32(bytes, 0).value".into(),
-        ScalarType::F64 => "(bytes: Uint8Array) => decodeF64(bytes, 0).value".into(),
+        ScalarType::F32 => "(bytes: Uint8Array) => pc.decodeF32(bytes, 0).value".into(),
+        ScalarType::F64 => "(bytes: Uint8Array) => pc.decodeF64(bytes, 0).value".into(),
         ScalarType::Char | ScalarType::Str | ScalarType::String | ScalarType::CowStr => {
-            "(bytes: Uint8Array) => decodeString(bytes, 0).value".into()
+            "(bytes: Uint8Array) => pc.decodeString(bytes, 0).value".into()
         }
         ScalarType::Unit => "(bytes: Uint8Array) => undefined".into(),
         _ => "(bytes: Uint8Array) => undefined".into(),

@@ -135,10 +135,12 @@ pub fn generate_method_handlers(service: &ServiceDetail) -> String {
                 let ok_encode = generate_encode_expr(ok, "result.value");
                 let err_encode = generate_encode_expr(err, "result.error");
                 out.push_str("    if (result.ok) {\n");
-                out.push_str(&format!("      return concat(encodeU8(0), {ok_encode});\n"));
+                out.push_str(&format!(
+                    "      return pc.concat(pc.encodeU8(0), {ok_encode});\n"
+                ));
                 out.push_str("    } else {\n");
                 out.push_str(&format!(
-                    "      return concat(encodeU8(1), encodeU8(0), {err_encode});\n"
+                    "      return pc.concat(pc.encodeU8(1), pc.encodeU8(0), {err_encode});\n"
                 ));
                 out.push_str("    }\n");
             } else {
@@ -241,11 +243,11 @@ pub fn generate_streaming_handlers(service: &ServiceDetail) -> String {
             let err_encode = generate_encode_expr(err, "result.error");
             out.push_str("      if (result.ok) {\n");
             out.push_str(&format!(
-                "        taskSender({{ kind: 'response', requestId, payload: concat(encodeU8(0), {ok_encode}) }});\n"
+                "        taskSender({{ kind: 'response', requestId, payload: pc.concat(pc.encodeU8(0), {ok_encode}) }});\n"
             ));
             out.push_str("      } else {\n");
             out.push_str(&format!(
-                "        taskSender({{ kind: 'response', requestId, payload: concat(encodeU8(1), encodeU8(0), {err_encode}) }});\n"
+                "        taskSender({{ kind: 'response', requestId, payload: pc.concat(pc.encodeU8(1), pc.encodeU8(0), {err_encode}) }});\n"
             ));
             out.push_str("      }\n");
         } else {

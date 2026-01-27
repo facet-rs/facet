@@ -102,254 +102,13 @@ pub fn generate_service(service: &ServiceDetail) -> String {
     output
 }
 
-/// Tracks which imports are needed based on the types used in a service.
-#[derive(Default)]
-struct ImportTracker {
-    // Scalars
-    bool: bool,
-    u8: bool,
-    i8: bool,
-    u16: bool,
-    i16: bool,
-    u32: bool,
-    i32: bool,
-    u64: bool,
-    i64: bool,
-    f32: bool,
-    f64: bool,
-    string: bool,
-    bytes: bool,
-    // Composites
-    option: bool,
-    vec: bool,
-    tuple2: bool,
-    tuple3: bool,
-    enum_variant: bool,
-    // Always needed
-    concat: bool,
-}
-
-impl ImportTracker {
-    fn visit_service(&mut self, service: &ServiceDetail) {
-        for method in &service.methods {
-            for arg in &method.args {
-                self.visit_shape(arg.ty);
-            }
-            self.visit_shape(method.return_type);
-        }
-    }
-
-    fn visit_shape(&mut self, shape: &'static facet_core::Shape) {
-        use facet_core::ScalarType;
-        use roam_schema::{
-            EnumInfo, ShapeKind, StructInfo, VariantKind, classify_shape, classify_variant,
-            is_bytes,
-        };
-
-        if is_bytes(shape) {
-            self.bytes = true;
-            return;
-        }
-
-        match classify_shape(shape) {
-            ShapeKind::Scalar(scalar) => match scalar {
-                ScalarType::Bool => self.bool = true,
-                ScalarType::U8 => self.u8 = true,
-                ScalarType::I8 => self.i8 = true,
-                ScalarType::U16 => self.u16 = true,
-                ScalarType::I16 => self.i16 = true,
-                ScalarType::U32 => self.u32 = true,
-                ScalarType::I32 => self.i32 = true,
-                ScalarType::U64 => self.u64 = true,
-                ScalarType::I64 => self.i64 = true,
-                ScalarType::F32 => self.f32 = true,
-                ScalarType::F64 => self.f64 = true,
-                // String-like types
-                ScalarType::Char | ScalarType::Str | ScalarType::String | ScalarType::CowStr => {
-                    self.string = true
-                }
-                // Unit type doesn't need any imports
-                ScalarType::Unit => {}
-                // Large integers (u128/i128) and size types - treat as u64/i64
-                ScalarType::U128 | ScalarType::USize => self.u64 = true,
-                ScalarType::I128 | ScalarType::ISize => self.i64 = true,
-                // Catch-all for any future scalar types
-                _ => {}
-            },
-            ShapeKind::List { element }
-            | ShapeKind::Array { element, .. }
-            | ShapeKind::Slice { element }
-            | ShapeKind::Set { element } => {
-                self.vec = true;
-                self.visit_shape(element);
-            }
-            ShapeKind::Option { inner } => {
-                self.option = true;
-                self.visit_shape(inner);
-            }
-            ShapeKind::Map { key, value } => {
-                self.vec = true;
-                self.concat = true;
-                self.visit_shape(key);
-                self.visit_shape(value);
-            }
-            ShapeKind::Tuple { elements } => {
-                if elements.len() == 2 {
-                    self.tuple2 = true;
-                } else if elements.len() == 3 {
-                    self.tuple3 = true;
-                }
-                if elements.len() > 1 {
-                    self.concat = true;
-                }
-                for elem in elements {
-                    self.visit_shape(elem.shape);
-                }
-            }
-            ShapeKind::TupleStruct { fields } => {
-                if fields.len() == 2 {
-                    self.tuple2 = true;
-                } else if fields.len() == 3 {
-                    self.tuple3 = true;
-                }
-                if fields.len() > 1 {
-                    self.concat = true;
-                }
-                for field in fields {
-                    self.visit_shape(field.shape());
-                }
-            }
-            ShapeKind::Struct(StructInfo { fields, .. }) => {
-                if fields.len() > 1 {
-                    self.concat = true;
-                }
-                for field in fields {
-                    self.visit_shape(field.shape());
-                }
-            }
-            ShapeKind::Enum(EnumInfo { variants, .. }) => {
-                self.enum_variant = true;
-                for variant in variants {
-                    match classify_variant(variant) {
-                        VariantKind::Unit => {}
-                        VariantKind::Newtype { inner } => {
-                            self.concat = true;
-                            self.visit_shape(inner);
-                        }
-                        VariantKind::Struct { fields } | VariantKind::Tuple { fields } => {
-                            self.concat = true;
-                            for field in fields {
-                                self.visit_shape(field.shape());
-                            }
-                        }
-                    }
-                }
-            }
-            ShapeKind::Result { ok, err } => {
-                self.visit_shape(ok);
-                self.visit_shape(err);
-            }
-            ShapeKind::Tx { inner } | ShapeKind::Rx { inner } => {
-                self.visit_shape(inner);
-            }
-            ShapeKind::Pointer { pointee } => {
-                self.visit_shape(pointee);
-            }
-            ShapeKind::Opaque => {}
-        }
-    }
-
-    fn generate_scalar_imports(&self) -> Vec<&'static str> {
-        let mut imports = Vec::new();
-        if self.bool {
-            imports.push("encodeBool");
-            imports.push("decodeBool");
-        }
-        if self.u8 {
-            imports.push("encodeU8");
-            imports.push("decodeU8");
-        }
-        if self.i8 {
-            imports.push("encodeI8");
-            imports.push("decodeI8");
-        }
-        if self.u16 {
-            imports.push("encodeU16");
-            imports.push("decodeU16");
-        }
-        if self.i16 {
-            imports.push("encodeI16");
-            imports.push("decodeI16");
-        }
-        if self.u32 {
-            imports.push("encodeU32");
-            imports.push("decodeU32");
-        }
-        if self.i32 {
-            imports.push("encodeI32");
-            imports.push("decodeI32");
-        }
-        if self.u64 {
-            imports.push("encodeU64");
-            imports.push("decodeU64");
-        }
-        if self.i64 {
-            imports.push("encodeI64");
-            imports.push("decodeI64");
-        }
-        if self.f32 {
-            imports.push("encodeF32");
-            imports.push("decodeF32");
-        }
-        if self.f64 {
-            imports.push("encodeF64");
-            imports.push("decodeF64");
-        }
-        if self.string {
-            imports.push("encodeString");
-            imports.push("decodeString");
-        }
-        if self.bytes {
-            imports.push("encodeBytes");
-            imports.push("decodeBytes");
-        }
-        imports
-    }
-
-    fn generate_composite_imports(&self) -> Vec<&'static str> {
-        let mut imports = Vec::new();
-        if self.option {
-            imports.push("encodeOption");
-            imports.push("decodeOption");
-        }
-        if self.vec {
-            imports.push("encodeVec");
-            imports.push("decodeVec");
-        }
-        if self.tuple2 {
-            imports.push("encodeTuple2");
-            imports.push("decodeTuple2");
-        }
-        if self.tuple3 {
-            imports.push("encodeTuple3");
-            imports.push("decodeTuple3");
-        }
-        if self.enum_variant {
-            imports.push("encodeEnumVariant");
-            imports.push("decodeEnumVariant");
-        }
-        imports
-    }
-}
-
-/// Generate imports from @bearcove/roam-core
+/// Generate imports for the service module.
+///
+/// Uses namespace imports for postcard encoding functions to avoid tracking
+/// which specific functions are used. The bundler will tree-shake unused exports.
 fn generate_imports(service: &ServiceDetail, w: &mut CodeWriter<&mut String>) {
     use crate::cw_writeln;
     use roam_schema::{ShapeKind, classify_shape, is_rx, is_tx};
-
-    // Analyze what types are used
-    let mut tracker = ImportTracker::default();
-    tracker.visit_service(service);
 
     // Check if any method uses streaming
     let has_streaming = service.methods.iter().any(|m| {
@@ -364,50 +123,23 @@ fn generate_imports(service: &ServiceDetail, w: &mut CodeWriter<&mut String>) {
         .iter()
         .any(|m| matches!(classify_shape(m.return_type), ShapeKind::Result { .. }));
 
-    // Type imports - only include what's actually used
-    let type_imports = ["MethodHandler", "MethodSchema", "Caller"];
-    // Connection, MessageTransport, DecodeResult are not currently used in generated code
+    // Type imports
     cw_writeln!(
         w,
-        "import type {{ {} }} from \"@bearcove/roam-core\";",
-        type_imports.join(", ")
+        "import type {{ MethodHandler, MethodSchema, Caller }} from \"@bearcove/roam-core\";"
     )
     .unwrap();
 
-    // Collect runtime function imports
-    let mut runtime_imports = vec![
-        "encodeResultOk",
-        "encodeResultErr",
-        "encodeInvalidPayload",
-        "decodeRpcResult",
-        "encodeWithSchema",
-        "decodeWithSchema",
-        "helloExchangeInitiator",
-        "defaultHello",
-        "CallBuilder",
-    ];
+    // Namespace import for all postcard encoding/decoding functions
+    // This avoids tracking which specific functions are used - bundler will tree-shake
+    cw_writeln!(w, "import * as pc from \"@bearcove/roam-postcard\";").unwrap();
 
-    // Add concat if needed
-    if tracker.concat || tracker.vec || tracker.option || tracker.enum_variant {
-        runtime_imports.push("concat");
-    }
-
-    // Add scalar encode/decode functions
-    runtime_imports.extend(tracker.generate_scalar_imports());
-
-    // Add composite encode/decode functions
-    runtime_imports.extend(tracker.generate_composite_imports());
-
-    // Generate the import statement
-    cw_writeln!(w, "import {{").unwrap();
-    {
-        let _indent = w.indent();
-        // Group imports nicely (8 per line max)
-        for chunk in runtime_imports.chunks(6) {
-            cw_writeln!(w, "{},", chunk.join(", ")).unwrap();
-        }
-    }
-    cw_writeln!(w, "}} from \"@bearcove/roam-core\";").unwrap();
+    // Core runtime imports (non-postcard)
+    cw_writeln!(
+        w,
+        "import {{ encodeResultOk, encodeResultErr, encodeInvalidPayload, decodeRpcResult, encodeWithSchema, decodeWithSchema, helloExchangeInitiator, defaultHello, CallBuilder }} from \"@bearcove/roam-core\";"
+    )
+    .unwrap();
 
     // WebSocket transport for connect helper
     cw_writeln!(w, "import {{ connectWs }} from \"@bearcove/roam-ws\";").unwrap();

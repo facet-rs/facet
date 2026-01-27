@@ -2,14 +2,8 @@
 // DO NOT EDIT - regenerate with `cargo xtask codegen --typescript`
 
 import type { MethodHandler, MethodSchema, Caller } from "@bearcove/roam-core";
-import {
-  encodeResultOk, encodeResultErr, encodeInvalidPayload, decodeRpcResult, encodeWithSchema, decodeWithSchema,
-  helloExchangeInitiator, defaultHello, CallBuilder, concat, encodeU8, decodeU8,
-  encodeU32, decodeU32, encodeI32, decodeI32, encodeI64, decodeI64,
-  encodeF64, decodeF64, encodeString, decodeString, encodeBytes, decodeBytes,
-  encodeOption, decodeOption, encodeVec, decodeVec, encodeTuple2, decodeTuple2,
-  encodeEnumVariant, decodeEnumVariant,
-} from "@bearcove/roam-core";
+import * as pc from "@bearcove/roam-postcard";
+import { encodeResultOk, encodeResultErr, encodeInvalidPayload, decodeRpcResult, encodeWithSchema, decodeWithSchema, helloExchangeInitiator, defaultHello, CallBuilder } from "@bearcove/roam-core";
 import { connectWs } from "@bearcove/roam-ws";
 import { RpcError } from "@bearcove/roam-core";
 import { Tx, Rx, createServerTx, createServerRx, bindChannels } from "@bearcove/roam-core";
@@ -571,7 +565,7 @@ export const testbed_methodHandlers = new Map<bigint, MethodHandler<TestbedHandl
     try {
       const buf = payload;
       let offset = 0;
-      const _message_r = decodeString(buf, offset); const message = _message_r.value; offset = _message_r.next;
+      const _message_r = pc.decodeString(buf, offset); const message = _message_r.value; offset = _message_r.next;
       if (offset !== buf.length) throw new Error("args: trailing bytes");
       args = { message };
     } catch (_decodeError) {
@@ -580,7 +574,7 @@ export const testbed_methodHandlers = new Map<bigint, MethodHandler<TestbedHandl
 
     // Call handler - errors propagate for infallible methods
     const result = await handler.echo(args.message);
-    return encodeResultOk(encodeString(result));
+    return encodeResultOk(pc.encodeString(result));
   }],
   [0xcba154600f640175n, async (handler, payload) => {
     // Decode arguments - errors here are InvalidPayload
@@ -588,7 +582,7 @@ export const testbed_methodHandlers = new Map<bigint, MethodHandler<TestbedHandl
     try {
       const buf = payload;
       let offset = 0;
-      const _message_r = decodeString(buf, offset); const message = _message_r.value; offset = _message_r.next;
+      const _message_r = pc.decodeString(buf, offset); const message = _message_r.value; offset = _message_r.next;
       if (offset !== buf.length) throw new Error("args: trailing bytes");
       args = { message };
     } catch (_decodeError) {
@@ -597,7 +591,7 @@ export const testbed_methodHandlers = new Map<bigint, MethodHandler<TestbedHandl
 
     // Call handler - errors propagate for infallible methods
     const result = await handler.reverse(args.message);
-    return encodeResultOk(encodeString(result));
+    return encodeResultOk(pc.encodeString(result));
   }],
   [0xc3964cbee4b1d590n, async (handler, payload) => {
     // Decode arguments - errors here are InvalidPayload
@@ -605,8 +599,8 @@ export const testbed_methodHandlers = new Map<bigint, MethodHandler<TestbedHandl
     try {
       const buf = payload;
       let offset = 0;
-      const _dividend_r = decodeI64(buf, offset); const dividend = _dividend_r.value; offset = _dividend_r.next;
-      const _divisor_r = decodeI64(buf, offset); const divisor = _divisor_r.value; offset = _divisor_r.next;
+      const _dividend_r = pc.decodeI64(buf, offset); const dividend = _dividend_r.value; offset = _dividend_r.next;
+      const _divisor_r = pc.decodeI64(buf, offset); const divisor = _divisor_r.value; offset = _divisor_r.next;
       if (offset !== buf.length) throw new Error("args: trailing bytes");
       args = { dividend, divisor };
     } catch (_decodeError) {
@@ -616,11 +610,11 @@ export const testbed_methodHandlers = new Map<bigint, MethodHandler<TestbedHandl
     // Call handler - errors propagate for infallible methods
     const result = await handler.divide(args.dividend, args.divisor);
     if (result.ok) {
-      return concat(encodeU8(0), encodeI64(result.value));
+      return pc.concat(pc.encodeU8(0), pc.encodeI64(result.value));
     } else {
-      return concat(encodeU8(1), encodeU8(0), (() => { switch (result.error.tag) {
-      case 'DivisionByZero': return encodeEnumVariant(0);
-      case 'Overflow': return encodeEnumVariant(1);
+      return pc.concat(pc.encodeU8(1), pc.encodeU8(0), (() => { switch (result.error.tag) {
+      case 'DivisionByZero': return pc.encodeEnumVariant(0);
+      case 'Overflow': return pc.encodeEnumVariant(1);
       default: throw new Error('unknown enum variant'); } })());
     }
   }],
@@ -630,7 +624,7 @@ export const testbed_methodHandlers = new Map<bigint, MethodHandler<TestbedHandl
     try {
       const buf = payload;
       let offset = 0;
-      const _id_r = decodeU32(buf, offset); const id = _id_r.value; offset = _id_r.next;
+      const _id_r = pc.decodeU32(buf, offset); const id = _id_r.value; offset = _id_r.next;
       if (offset !== buf.length) throw new Error("args: trailing bytes");
       args = { id };
     } catch (_decodeError) {
@@ -640,11 +634,11 @@ export const testbed_methodHandlers = new Map<bigint, MethodHandler<TestbedHandl
     // Call handler - errors propagate for infallible methods
     const result = await handler.lookup(args.id);
     if (result.ok) {
-      return concat(encodeU8(0), concat(encodeString(result.value.name), encodeU8(result.value.age), encodeOption(result.value.email, (v) => encodeString(v))));
+      return pc.concat(pc.encodeU8(0), pc.concat(pc.encodeString(result.value.name), pc.encodeU8(result.value.age), pc.encodeOption(result.value.email, (v) => pc.encodeString(v))));
     } else {
-      return concat(encodeU8(1), encodeU8(0), (() => { switch (result.error.tag) {
-      case 'NotFound': return encodeEnumVariant(0);
-      case 'AccessDenied': return encodeEnumVariant(1);
+      return pc.concat(pc.encodeU8(1), pc.encodeU8(0), (() => { switch (result.error.tag) {
+      case 'NotFound': return pc.encodeEnumVariant(0);
+      case 'AccessDenied': return pc.encodeEnumVariant(1);
       default: throw new Error('unknown enum variant'); } })());
     }
   }],
@@ -666,8 +660,8 @@ export const testbed_methodHandlers = new Map<bigint, MethodHandler<TestbedHandl
     try {
       const buf = payload;
       let offset = 0;
-      const _point_f0_r = decodeI32(buf, offset); const point_f0 = _point_f0_r.value; offset = _point_f0_r.next;
-const _point_f1_r = decodeI32(buf, offset); const point_f1 = _point_f1_r.value; offset = _point_f1_r.next;
+      const _point_f0_r = pc.decodeI32(buf, offset); const point_f0 = _point_f0_r.value; offset = _point_f0_r.next;
+const _point_f1_r = pc.decodeI32(buf, offset); const point_f1 = _point_f1_r.value; offset = _point_f1_r.next;
 const point = { x: point_f0, y: point_f1 };
       if (offset !== buf.length) throw new Error("args: trailing bytes");
       args = { point };
@@ -677,7 +671,7 @@ const point = { x: point_f0, y: point_f1 };
 
     // Call handler - errors propagate for infallible methods
     const result = await handler.echoPoint(args.point);
-    return encodeResultOk(concat(encodeI32(result.x), encodeI32(result.y)));
+    return encodeResultOk(pc.concat(pc.encodeI32(result.x), pc.encodeI32(result.y)));
   }],
   [0x3dd231f57b1bca21n, async (handler, payload) => {
     // Decode arguments - errors here are InvalidPayload
@@ -685,9 +679,9 @@ const point = { x: point_f0, y: point_f1 };
     try {
       const buf = payload;
       let offset = 0;
-      const _name_r = decodeString(buf, offset); const name = _name_r.value; offset = _name_r.next;
-      const _age_r = decodeU8(buf, offset); const age = _age_r.value; offset = _age_r.next;
-      const _email_r = decodeOption(buf, offset, (buf, off) => decodeString(buf, off)); const email = _email_r.value; offset = _email_r.next;
+      const _name_r = pc.decodeString(buf, offset); const name = _name_r.value; offset = _name_r.next;
+      const _age_r = pc.decodeU8(buf, offset); const age = _age_r.value; offset = _age_r.next;
+      const _email_r = pc.decodeOption(buf, offset, (buf, off) => pc.decodeString(buf, off)); const email = _email_r.value; offset = _email_r.next;
       if (offset !== buf.length) throw new Error("args: trailing bytes");
       args = { name, age, email };
     } catch (_decodeError) {
@@ -696,7 +690,7 @@ const point = { x: point_f0, y: point_f1 };
 
     // Call handler - errors propagate for infallible methods
     const result = await handler.createPerson(args.name, args.age, args.email);
-    return encodeResultOk(concat(encodeString(result.name), encodeU8(result.age), encodeOption(result.email, (v) => encodeString(v))));
+    return encodeResultOk(pc.concat(pc.encodeString(result.name), pc.encodeU8(result.age), pc.encodeOption(result.email, (v) => pc.encodeString(v))));
   }],
   [0x04ef653fdf0653c4n, async (handler, payload) => {
     // Decode arguments - errors here are InvalidPayload
@@ -704,13 +698,13 @@ const point = { x: point_f0, y: point_f1 };
     try {
       const buf = payload;
       let offset = 0;
-      const _rect_f0_f0_r = decodeI32(buf, offset); const rect_f0_f0 = _rect_f0_f0_r.value; offset = _rect_f0_f0_r.next;
-const _rect_f0_f1_r = decodeI32(buf, offset); const rect_f0_f1 = _rect_f0_f1_r.value; offset = _rect_f0_f1_r.next;
+      const _rect_f0_f0_r = pc.decodeI32(buf, offset); const rect_f0_f0 = _rect_f0_f0_r.value; offset = _rect_f0_f0_r.next;
+const _rect_f0_f1_r = pc.decodeI32(buf, offset); const rect_f0_f1 = _rect_f0_f1_r.value; offset = _rect_f0_f1_r.next;
 const rect_f0 = { x: rect_f0_f0, y: rect_f0_f1 };
-const _rect_f1_f0_r = decodeI32(buf, offset); const rect_f1_f0 = _rect_f1_f0_r.value; offset = _rect_f1_f0_r.next;
-const _rect_f1_f1_r = decodeI32(buf, offset); const rect_f1_f1 = _rect_f1_f1_r.value; offset = _rect_f1_f1_r.next;
+const _rect_f1_f0_r = pc.decodeI32(buf, offset); const rect_f1_f0 = _rect_f1_f0_r.value; offset = _rect_f1_f0_r.next;
+const _rect_f1_f1_r = pc.decodeI32(buf, offset); const rect_f1_f1 = _rect_f1_f1_r.value; offset = _rect_f1_f1_r.next;
 const rect_f1 = { x: rect_f1_f0, y: rect_f1_f1 };
-const _rect_f2_r = decodeOption(buf, offset, (buf, off) => decodeString(buf, off)); const rect_f2 = _rect_f2_r.value; offset = _rect_f2_r.next;
+const _rect_f2_r = pc.decodeOption(buf, offset, (buf, off) => pc.decodeString(buf, off)); const rect_f2 = _rect_f2_r.value; offset = _rect_f2_r.next;
 const rect = { top_left: rect_f0, bottom_right: rect_f1, label: rect_f2 };
       if (offset !== buf.length) throw new Error("args: trailing bytes");
       args = { rect };
@@ -720,7 +714,7 @@ const rect = { top_left: rect_f0, bottom_right: rect_f1, label: rect_f2 };
 
     // Call handler - errors propagate for infallible methods
     const result = await handler.rectangleArea(args.rect);
-    return encodeResultOk(encodeF64(result));
+    return encodeResultOk(pc.encodeF64(result));
   }],
   [0xe285f31c6dfffbfcn, async (handler, payload) => {
     // Decode arguments - errors here are InvalidPayload
@@ -728,7 +722,7 @@ const rect = { top_left: rect_f0, bottom_right: rect_f1, label: rect_f2 };
     try {
       const buf = payload;
       let offset = 0;
-      const _name_r = decodeString(buf, offset); const name = _name_r.value; offset = _name_r.next;
+      const _name_r = pc.decodeString(buf, offset); const name = _name_r.value; offset = _name_r.next;
       if (offset !== buf.length) throw new Error("args: trailing bytes");
       args = { name };
     } catch (_decodeError) {
@@ -737,10 +731,10 @@ const rect = { top_left: rect_f0, bottom_right: rect_f1, label: rect_f2 };
 
     // Call handler - errors propagate for infallible methods
     const result = await handler.parseColor(args.name);
-    return encodeResultOk(encodeOption(result, (v) => (() => { switch (v.tag) {
-      case 'Red': return encodeEnumVariant(0);
-      case 'Green': return encodeEnumVariant(1);
-      case 'Blue': return encodeEnumVariant(2);
+    return encodeResultOk(pc.encodeOption(result, (v) => (() => { switch (v.tag) {
+      case 'Red': return pc.encodeEnumVariant(0);
+      case 'Green': return pc.encodeEnumVariant(1);
+      case 'Blue': return pc.encodeEnumVariant(2);
       default: throw new Error('unknown enum variant'); } })()));
   }],
   [0x6e706354167c00c2n, async (handler, payload) => {
@@ -749,17 +743,17 @@ const rect = { top_left: rect_f0, bottom_right: rect_f1, label: rect_f2 };
     try {
       const buf = payload;
       let offset = 0;
-      const _shape_disc = decodeEnumVariant(buf, offset); offset = _shape_disc.next;
+      const _shape_disc = pc.decodeEnumVariant(buf, offset); offset = _shape_disc.next;
 let shape: Shape;
 switch (_shape_disc.value) {
   case 0: {
-    const _shape_f0_r = decodeF64(buf, offset); const shape_f0 = _shape_f0_r.value; offset = _shape_f0_r.next;
+    const _shape_f0_r = pc.decodeF64(buf, offset); const shape_f0 = _shape_f0_r.value; offset = _shape_f0_r.next;
     shape = { tag: 'Circle', radius: shape_f0 };
     break;
   }
   case 1: {
-    const _shape_f0_r = decodeF64(buf, offset); const shape_f0 = _shape_f0_r.value; offset = _shape_f0_r.next;
-    const _shape_f1_r = decodeF64(buf, offset); const shape_f1 = _shape_f1_r.value; offset = _shape_f1_r.next;
+    const _shape_f0_r = pc.decodeF64(buf, offset); const shape_f0 = _shape_f0_r.value; offset = _shape_f0_r.next;
+    const _shape_f1_r = pc.decodeF64(buf, offset); const shape_f1 = _shape_f1_r.value; offset = _shape_f1_r.next;
     shape = { tag: 'Rectangle', width: shape_f0, height: shape_f1 };
     break;
   }
@@ -777,7 +771,7 @@ switch (_shape_disc.value) {
 
     // Call handler - errors propagate for infallible methods
     const result = await handler.shapeArea(args.shape);
-    return encodeResultOk(encodeF64(result));
+    return encodeResultOk(pc.encodeF64(result));
   }],
   [0xa914982e7d3c7b55n, async (handler, payload) => {
     // Decode arguments - errors here are InvalidPayload
@@ -785,24 +779,24 @@ switch (_shape_disc.value) {
     try {
       const buf = payload;
       let offset = 0;
-      const _name_r = decodeString(buf, offset); const name = _name_r.value; offset = _name_r.next;
-      const _shapes_r = decodeVec(buf, offset, (buf: Uint8Array, off: number): DecodeResult<any> => { let o = off;
-  const disc = decodeEnumVariant(buf, o); o = disc.next;
+      const _name_r = pc.decodeString(buf, offset); const name = _name_r.value; offset = _name_r.next;
+      const _shapes_r = pc.decodeVec(buf, offset, (buf: Uint8Array, off: number): pc.DecodeResult<any> => { let o = off;
+  const disc = pc.decodeEnumVariant(buf, o); o = disc.next;
   switch (disc.value) {
     case 0: {
-      const _f0_r = decodeF64(buf, o); const f0 = _f0_r.value; o = _f0_r.next;
+      const _f0_r = pc.decodeF64(buf, o); const f0 = _f0_r.value; o = _f0_r.next;
       return { value: { tag: 'Circle', radius: f0 }, next: o };
     }
     case 1: {
-      const _f0_r = decodeF64(buf, o); const f0 = _f0_r.value; o = _f0_r.next;
-      const _f1_r = decodeF64(buf, o); const f1 = _f1_r.value; o = _f1_r.next;
+      const _f0_r = pc.decodeF64(buf, o); const f0 = _f0_r.value; o = _f0_r.next;
+      const _f1_r = pc.decodeF64(buf, o); const f1 = _f1_r.value; o = _f1_r.next;
       return { value: { tag: 'Rectangle', width: f0, height: f1 }, next: o };
     }
     case 2: return { value: { tag: 'Point' }, next: o };
     default: throw new Error(`unknown enum variant: ${disc.value}`);
   }
 }); const shapes = _shapes_r.value; offset = _shapes_r.next;
-      const _background_disc = decodeEnumVariant(buf, offset); offset = _background_disc.next;
+      const _background_disc = pc.decodeEnumVariant(buf, offset); offset = _background_disc.next;
 let background: Color;
 switch (_background_disc.value) {
   case 0: {
@@ -827,14 +821,14 @@ switch (_background_disc.value) {
 
     // Call handler - errors propagate for infallible methods
     const result = await handler.createCanvas(args.name, args.shapes, args.background);
-    return encodeResultOk(concat(encodeString(result.name), encodeVec(result.shapes, (item) => (() => { switch (item.tag) {
-      case 'Circle': return concat(encodeEnumVariant(0), encodeF64(item.radius));
-      case 'Rectangle': return concat(encodeEnumVariant(1), encodeF64(item.width), encodeF64(item.height));
-      case 'Point': return encodeEnumVariant(2);
+    return encodeResultOk(pc.concat(pc.encodeString(result.name), pc.encodeVec(result.shapes, (item) => (() => { switch (item.tag) {
+      case 'Circle': return pc.concat(pc.encodeEnumVariant(0), pc.encodeF64(item.radius));
+      case 'Rectangle': return pc.concat(pc.encodeEnumVariant(1), pc.encodeF64(item.width), pc.encodeF64(item.height));
+      case 'Point': return pc.encodeEnumVariant(2);
       default: throw new Error('unknown enum variant'); } })()), (() => { switch (result.background.tag) {
-      case 'Red': return encodeEnumVariant(0);
-      case 'Green': return encodeEnumVariant(1);
-      case 'Blue': return encodeEnumVariant(2);
+      case 'Red': return pc.encodeEnumVariant(0);
+      case 'Green': return pc.encodeEnumVariant(1);
+      case 'Blue': return pc.encodeEnumVariant(2);
       default: throw new Error('unknown enum variant'); } })()));
   }],
   [0xed1dc0c625889d30n, async (handler, payload) => {
@@ -843,21 +837,21 @@ switch (_background_disc.value) {
     try {
       const buf = payload;
       let offset = 0;
-      const _msg_disc = decodeEnumVariant(buf, offset); offset = _msg_disc.next;
+      const _msg_disc = pc.decodeEnumVariant(buf, offset); offset = _msg_disc.next;
 let msg: Message;
 switch (_msg_disc.value) {
   case 0: {
-    const _msg_inner_r = decodeString(buf, offset); const msg_inner = _msg_inner_r.value; offset = _msg_inner_r.next;
+    const _msg_inner_r = pc.decodeString(buf, offset); const msg_inner = _msg_inner_r.value; offset = _msg_inner_r.next;
     msg = { tag: 'Text', value: msg_inner };
     break;
   }
   case 1: {
-    const _msg_inner_r = decodeI64(buf, offset); const msg_inner = _msg_inner_r.value; offset = _msg_inner_r.next;
+    const _msg_inner_r = pc.decodeI64(buf, offset); const msg_inner = _msg_inner_r.value; offset = _msg_inner_r.next;
     msg = { tag: 'Number', value: msg_inner };
     break;
   }
   case 2: {
-    const _msg_inner_r = decodeBytes(buf, offset); const msg_inner = _msg_inner_r.value; offset = _msg_inner_r.next;
+    const _msg_inner_r = pc.decodeBytes(buf, offset); const msg_inner = _msg_inner_r.value; offset = _msg_inner_r.next;
     msg = { tag: 'Data', value: msg_inner };
     break;
   }
@@ -872,9 +866,9 @@ switch (_msg_disc.value) {
     // Call handler - errors propagate for infallible methods
     const result = await handler.processMessage(args.msg);
     return encodeResultOk((() => { switch (result.tag) {
-      case 'Text': return concat(encodeEnumVariant(0), encodeString(result.value));
-      case 'Number': return concat(encodeEnumVariant(1), encodeI64(result.value));
-      case 'Data': return concat(encodeEnumVariant(2), encodeBytes(result.value));
+      case 'Text': return pc.concat(pc.encodeEnumVariant(0), pc.encodeString(result.value));
+      case 'Number': return pc.concat(pc.encodeEnumVariant(1), pc.encodeI64(result.value));
+      case 'Data': return pc.concat(pc.encodeEnumVariant(2), pc.encodeBytes(result.value));
       default: throw new Error('unknown enum variant'); } })());
   }],
   [0x5c8707f5ae4ccbccn, async (handler, payload) => {
@@ -883,7 +877,7 @@ switch (_msg_disc.value) {
     try {
       const buf = payload;
       let offset = 0;
-      const _count_r = decodeU32(buf, offset); const count = _count_r.value; offset = _count_r.next;
+      const _count_r = pc.decodeU32(buf, offset); const count = _count_r.value; offset = _count_r.next;
       if (offset !== buf.length) throw new Error("args: trailing bytes");
       args = { count };
     } catch (_decodeError) {
@@ -892,7 +886,7 @@ switch (_msg_disc.value) {
 
     // Call handler - errors propagate for infallible methods
     const result = await handler.getPoints(args.count);
-    return encodeResultOk(encodeVec(result, (item) => concat(encodeI32(item.x), encodeI32(item.y))));
+    return encodeResultOk(pc.encodeVec(result, (item) => pc.concat(pc.encodeI32(item.x), pc.encodeI32(item.y))));
   }],
   [0xacd19a29fe0d470cn, async (handler, payload) => {
     // Decode arguments - errors here are InvalidPayload
@@ -900,8 +894,8 @@ switch (_msg_disc.value) {
     try {
       const buf = payload;
       let offset = 0;
-      const _pair_0_r = decodeI32(buf, offset); const pair_0 = _pair_0_r.value; offset = _pair_0_r.next;
-const _pair_1_r = decodeString(buf, offset); const pair_1 = _pair_1_r.value; offset = _pair_1_r.next;
+      const _pair_0_r = pc.decodeI32(buf, offset); const pair_0 = _pair_0_r.value; offset = _pair_0_r.next;
+const _pair_1_r = pc.decodeString(buf, offset); const pair_1 = _pair_1_r.value; offset = _pair_1_r.next;
 const pair = [pair_0, pair_1] as [number, string];
       if (offset !== buf.length) throw new Error("args: trailing bytes");
       args = { pair };
@@ -911,7 +905,7 @@ const pair = [pair_0, pair_1] as [number, string];
 
     // Call handler - errors propagate for infallible methods
     const result = await handler.swapPair(args.pair);
-    return encodeResultOk(concat(encodeString(result[0]), encodeI32(result[1])));
+    return encodeResultOk(pc.concat(pc.encodeString(result[0]), pc.encodeI32(result[1])));
   }],
 ]);
 
@@ -930,10 +924,10 @@ export const testbed_streamingHandlers = new Map<bigint, ChannelingMethodHandler
     try {
       const buf = payload;
       let offset = 0;
-      const _message_r = decodeString(buf, offset); const message = _message_r.value; offset = _message_r.next;
+      const _message_r = pc.decodeString(buf, offset); const message = _message_r.value; offset = _message_r.next;
       if (offset !== buf.length) throw new Error("args: trailing bytes");
       const result = await handler.echo(message);
-      taskSender({ kind: 'response', requestId, payload: encodeResultOk(encodeString(result)) });
+      taskSender({ kind: 'response', requestId, payload: encodeResultOk(pc.encodeString(result)) });
     } catch (e) {
       taskSender({ kind: 'response', requestId, payload: encodeResultErr(encodeInvalidPayload()) });
     }
@@ -942,10 +936,10 @@ export const testbed_streamingHandlers = new Map<bigint, ChannelingMethodHandler
     try {
       const buf = payload;
       let offset = 0;
-      const _message_r = decodeString(buf, offset); const message = _message_r.value; offset = _message_r.next;
+      const _message_r = pc.decodeString(buf, offset); const message = _message_r.value; offset = _message_r.next;
       if (offset !== buf.length) throw new Error("args: trailing bytes");
       const result = await handler.reverse(message);
-      taskSender({ kind: 'response', requestId, payload: encodeResultOk(encodeString(result)) });
+      taskSender({ kind: 'response', requestId, payload: encodeResultOk(pc.encodeString(result)) });
     } catch (e) {
       taskSender({ kind: 'response', requestId, payload: encodeResultErr(encodeInvalidPayload()) });
     }
@@ -954,16 +948,16 @@ export const testbed_streamingHandlers = new Map<bigint, ChannelingMethodHandler
     try {
       const buf = payload;
       let offset = 0;
-      const _dividend_r = decodeI64(buf, offset); const dividend = _dividend_r.value; offset = _dividend_r.next;
-      const _divisor_r = decodeI64(buf, offset); const divisor = _divisor_r.value; offset = _divisor_r.next;
+      const _dividend_r = pc.decodeI64(buf, offset); const dividend = _dividend_r.value; offset = _dividend_r.next;
+      const _divisor_r = pc.decodeI64(buf, offset); const divisor = _divisor_r.value; offset = _divisor_r.next;
       if (offset !== buf.length) throw new Error("args: trailing bytes");
       const result = await handler.divide(dividend, divisor);
       if (result.ok) {
-        taskSender({ kind: 'response', requestId, payload: concat(encodeU8(0), encodeI64(result.value)) });
+        taskSender({ kind: 'response', requestId, payload: pc.concat(pc.encodeU8(0), pc.encodeI64(result.value)) });
       } else {
-        taskSender({ kind: 'response', requestId, payload: concat(encodeU8(1), encodeU8(0), (() => { switch (result.error.tag) {
-      case 'DivisionByZero': return encodeEnumVariant(0);
-      case 'Overflow': return encodeEnumVariant(1);
+        taskSender({ kind: 'response', requestId, payload: pc.concat(pc.encodeU8(1), pc.encodeU8(0), (() => { switch (result.error.tag) {
+      case 'DivisionByZero': return pc.encodeEnumVariant(0);
+      case 'Overflow': return pc.encodeEnumVariant(1);
       default: throw new Error('unknown enum variant'); } })()) });
       }
     } catch (e) {
@@ -974,15 +968,15 @@ export const testbed_streamingHandlers = new Map<bigint, ChannelingMethodHandler
     try {
       const buf = payload;
       let offset = 0;
-      const _id_r = decodeU32(buf, offset); const id = _id_r.value; offset = _id_r.next;
+      const _id_r = pc.decodeU32(buf, offset); const id = _id_r.value; offset = _id_r.next;
       if (offset !== buf.length) throw new Error("args: trailing bytes");
       const result = await handler.lookup(id);
       if (result.ok) {
-        taskSender({ kind: 'response', requestId, payload: concat(encodeU8(0), concat(encodeString(result.value.name), encodeU8(result.value.age), encodeOption(result.value.email, (v) => encodeString(v)))) });
+        taskSender({ kind: 'response', requestId, payload: pc.concat(pc.encodeU8(0), pc.concat(pc.encodeString(result.value.name), pc.encodeU8(result.value.age), pc.encodeOption(result.value.email, (v) => pc.encodeString(v)))) });
       } else {
-        taskSender({ kind: 'response', requestId, payload: concat(encodeU8(1), encodeU8(0), (() => { switch (result.error.tag) {
-      case 'NotFound': return encodeEnumVariant(0);
-      case 'AccessDenied': return encodeEnumVariant(1);
+        taskSender({ kind: 'response', requestId, payload: pc.concat(pc.encodeU8(1), pc.encodeU8(0), (() => { switch (result.error.tag) {
+      case 'NotFound': return pc.encodeEnumVariant(0);
+      case 'AccessDenied': return pc.encodeEnumVariant(1);
       default: throw new Error('unknown enum variant'); } })()) });
       }
     } catch (e) {
@@ -993,10 +987,10 @@ export const testbed_streamingHandlers = new Map<bigint, ChannelingMethodHandler
     try {
       const buf = payload;
       let offset = 0;
-      const _numbers_r = decodeU64(buf, offset); const _numbers_receiver = registry.registerIncoming(_numbers_r.value); const numbers = createServerRx<number>(_numbers_r.value, _numbers_receiver, (bytes: Uint8Array) => decodeI32(bytes, 0).value); offset = _numbers_r.next;
+      const _numbers_r = pc.decodeU64(buf, offset); const _numbers_receiver = registry.registerIncoming(_numbers_r.value); const numbers = createServerRx<number>(_numbers_r.value, _numbers_receiver, (bytes: Uint8Array) => pc.decodeI32(bytes, 0).value); offset = _numbers_r.next;
       if (offset !== buf.length) throw new Error("args: trailing bytes");
       const result = await handler.sum(numbers);
-      taskSender({ kind: 'response', requestId, payload: encodeResultOk(encodeI64(result)) });
+      taskSender({ kind: 'response', requestId, payload: encodeResultOk(pc.encodeI64(result)) });
     } catch (e) {
       taskSender({ kind: 'response', requestId, payload: encodeResultErr(encodeInvalidPayload()) });
     }
@@ -1005,8 +999,8 @@ export const testbed_streamingHandlers = new Map<bigint, ChannelingMethodHandler
     try {
       const buf = payload;
       let offset = 0;
-      const _count_r = decodeU32(buf, offset); const count = _count_r.value; offset = _count_r.next;
-      const _output_r = decodeU64(buf, offset); const output = createServerTx<number>(_output_r.value, taskSender, (v: number) => encodeI32(v)); offset = _output_r.next;
+      const _count_r = pc.decodeU32(buf, offset); const count = _count_r.value; offset = _count_r.next;
+      const _output_r = pc.decodeU64(buf, offset); const output = createServerTx<number>(_output_r.value, taskSender, (v: number) => pc.encodeI32(v)); offset = _output_r.next;
       if (offset !== buf.length) throw new Error("args: trailing bytes");
       const result = await handler.generate(count, output);
       output.close();
@@ -1019,8 +1013,8 @@ export const testbed_streamingHandlers = new Map<bigint, ChannelingMethodHandler
     try {
       const buf = payload;
       let offset = 0;
-      const _input_r = decodeU64(buf, offset); const _input_receiver = registry.registerIncoming(_input_r.value); const input = createServerRx<string>(_input_r.value, _input_receiver, (bytes: Uint8Array) => decodeString(bytes, 0).value); offset = _input_r.next;
-      const _output_r = decodeU64(buf, offset); const output = createServerTx<string>(_output_r.value, taskSender, (v: string) => encodeString(v)); offset = _output_r.next;
+      const _input_r = pc.decodeU64(buf, offset); const _input_receiver = registry.registerIncoming(_input_r.value); const input = createServerRx<string>(_input_r.value, _input_receiver, (bytes: Uint8Array) => pc.decodeString(bytes, 0).value); offset = _input_r.next;
+      const _output_r = pc.decodeU64(buf, offset); const output = createServerTx<string>(_output_r.value, taskSender, (v: string) => pc.encodeString(v)); offset = _output_r.next;
       if (offset !== buf.length) throw new Error("args: trailing bytes");
       const result = await handler.transform(input, output);
       output.close();
@@ -1033,12 +1027,12 @@ export const testbed_streamingHandlers = new Map<bigint, ChannelingMethodHandler
     try {
       const buf = payload;
       let offset = 0;
-      const _point_f0_r = decodeI32(buf, offset); const point_f0 = _point_f0_r.value; offset = _point_f0_r.next;
-const _point_f1_r = decodeI32(buf, offset); const point_f1 = _point_f1_r.value; offset = _point_f1_r.next;
+      const _point_f0_r = pc.decodeI32(buf, offset); const point_f0 = _point_f0_r.value; offset = _point_f0_r.next;
+const _point_f1_r = pc.decodeI32(buf, offset); const point_f1 = _point_f1_r.value; offset = _point_f1_r.next;
 const point = { x: point_f0, y: point_f1 };
       if (offset !== buf.length) throw new Error("args: trailing bytes");
       const result = await handler.echoPoint(point);
-      taskSender({ kind: 'response', requestId, payload: encodeResultOk(concat(encodeI32(result.x), encodeI32(result.y))) });
+      taskSender({ kind: 'response', requestId, payload: encodeResultOk(pc.concat(pc.encodeI32(result.x), pc.encodeI32(result.y))) });
     } catch (e) {
       taskSender({ kind: 'response', requestId, payload: encodeResultErr(encodeInvalidPayload()) });
     }
@@ -1047,12 +1041,12 @@ const point = { x: point_f0, y: point_f1 };
     try {
       const buf = payload;
       let offset = 0;
-      const _name_r = decodeString(buf, offset); const name = _name_r.value; offset = _name_r.next;
-      const _age_r = decodeU8(buf, offset); const age = _age_r.value; offset = _age_r.next;
-      const _email_r = decodeOption(buf, offset, (buf, off) => decodeString(buf, off)); const email = _email_r.value; offset = _email_r.next;
+      const _name_r = pc.decodeString(buf, offset); const name = _name_r.value; offset = _name_r.next;
+      const _age_r = pc.decodeU8(buf, offset); const age = _age_r.value; offset = _age_r.next;
+      const _email_r = pc.decodeOption(buf, offset, (buf, off) => pc.decodeString(buf, off)); const email = _email_r.value; offset = _email_r.next;
       if (offset !== buf.length) throw new Error("args: trailing bytes");
       const result = await handler.createPerson(name, age, email);
-      taskSender({ kind: 'response', requestId, payload: encodeResultOk(concat(encodeString(result.name), encodeU8(result.age), encodeOption(result.email, (v) => encodeString(v)))) });
+      taskSender({ kind: 'response', requestId, payload: encodeResultOk(pc.concat(pc.encodeString(result.name), pc.encodeU8(result.age), pc.encodeOption(result.email, (v) => pc.encodeString(v)))) });
     } catch (e) {
       taskSender({ kind: 'response', requestId, payload: encodeResultErr(encodeInvalidPayload()) });
     }
@@ -1061,17 +1055,17 @@ const point = { x: point_f0, y: point_f1 };
     try {
       const buf = payload;
       let offset = 0;
-      const _rect_f0_f0_r = decodeI32(buf, offset); const rect_f0_f0 = _rect_f0_f0_r.value; offset = _rect_f0_f0_r.next;
-const _rect_f0_f1_r = decodeI32(buf, offset); const rect_f0_f1 = _rect_f0_f1_r.value; offset = _rect_f0_f1_r.next;
+      const _rect_f0_f0_r = pc.decodeI32(buf, offset); const rect_f0_f0 = _rect_f0_f0_r.value; offset = _rect_f0_f0_r.next;
+const _rect_f0_f1_r = pc.decodeI32(buf, offset); const rect_f0_f1 = _rect_f0_f1_r.value; offset = _rect_f0_f1_r.next;
 const rect_f0 = { x: rect_f0_f0, y: rect_f0_f1 };
-const _rect_f1_f0_r = decodeI32(buf, offset); const rect_f1_f0 = _rect_f1_f0_r.value; offset = _rect_f1_f0_r.next;
-const _rect_f1_f1_r = decodeI32(buf, offset); const rect_f1_f1 = _rect_f1_f1_r.value; offset = _rect_f1_f1_r.next;
+const _rect_f1_f0_r = pc.decodeI32(buf, offset); const rect_f1_f0 = _rect_f1_f0_r.value; offset = _rect_f1_f0_r.next;
+const _rect_f1_f1_r = pc.decodeI32(buf, offset); const rect_f1_f1 = _rect_f1_f1_r.value; offset = _rect_f1_f1_r.next;
 const rect_f1 = { x: rect_f1_f0, y: rect_f1_f1 };
-const _rect_f2_r = decodeOption(buf, offset, (buf, off) => decodeString(buf, off)); const rect_f2 = _rect_f2_r.value; offset = _rect_f2_r.next;
+const _rect_f2_r = pc.decodeOption(buf, offset, (buf, off) => pc.decodeString(buf, off)); const rect_f2 = _rect_f2_r.value; offset = _rect_f2_r.next;
 const rect = { top_left: rect_f0, bottom_right: rect_f1, label: rect_f2 };
       if (offset !== buf.length) throw new Error("args: trailing bytes");
       const result = await handler.rectangleArea(rect);
-      taskSender({ kind: 'response', requestId, payload: encodeResultOk(encodeF64(result)) });
+      taskSender({ kind: 'response', requestId, payload: encodeResultOk(pc.encodeF64(result)) });
     } catch (e) {
       taskSender({ kind: 'response', requestId, payload: encodeResultErr(encodeInvalidPayload()) });
     }
@@ -1080,13 +1074,13 @@ const rect = { top_left: rect_f0, bottom_right: rect_f1, label: rect_f2 };
     try {
       const buf = payload;
       let offset = 0;
-      const _name_r = decodeString(buf, offset); const name = _name_r.value; offset = _name_r.next;
+      const _name_r = pc.decodeString(buf, offset); const name = _name_r.value; offset = _name_r.next;
       if (offset !== buf.length) throw new Error("args: trailing bytes");
       const result = await handler.parseColor(name);
-      taskSender({ kind: 'response', requestId, payload: encodeResultOk(encodeOption(result, (v) => (() => { switch (v.tag) {
-      case 'Red': return encodeEnumVariant(0);
-      case 'Green': return encodeEnumVariant(1);
-      case 'Blue': return encodeEnumVariant(2);
+      taskSender({ kind: 'response', requestId, payload: encodeResultOk(pc.encodeOption(result, (v) => (() => { switch (v.tag) {
+      case 'Red': return pc.encodeEnumVariant(0);
+      case 'Green': return pc.encodeEnumVariant(1);
+      case 'Blue': return pc.encodeEnumVariant(2);
       default: throw new Error('unknown enum variant'); } })())) });
     } catch (e) {
       taskSender({ kind: 'response', requestId, payload: encodeResultErr(encodeInvalidPayload()) });
@@ -1096,17 +1090,17 @@ const rect = { top_left: rect_f0, bottom_right: rect_f1, label: rect_f2 };
     try {
       const buf = payload;
       let offset = 0;
-      const _shape_disc = decodeEnumVariant(buf, offset); offset = _shape_disc.next;
+      const _shape_disc = pc.decodeEnumVariant(buf, offset); offset = _shape_disc.next;
 let shape: Shape;
 switch (_shape_disc.value) {
   case 0: {
-    const _shape_f0_r = decodeF64(buf, offset); const shape_f0 = _shape_f0_r.value; offset = _shape_f0_r.next;
+    const _shape_f0_r = pc.decodeF64(buf, offset); const shape_f0 = _shape_f0_r.value; offset = _shape_f0_r.next;
     shape = { tag: 'Circle', radius: shape_f0 };
     break;
   }
   case 1: {
-    const _shape_f0_r = decodeF64(buf, offset); const shape_f0 = _shape_f0_r.value; offset = _shape_f0_r.next;
-    const _shape_f1_r = decodeF64(buf, offset); const shape_f1 = _shape_f1_r.value; offset = _shape_f1_r.next;
+    const _shape_f0_r = pc.decodeF64(buf, offset); const shape_f0 = _shape_f0_r.value; offset = _shape_f0_r.next;
+    const _shape_f1_r = pc.decodeF64(buf, offset); const shape_f1 = _shape_f1_r.value; offset = _shape_f1_r.next;
     shape = { tag: 'Rectangle', width: shape_f0, height: shape_f1 };
     break;
   }
@@ -1118,7 +1112,7 @@ switch (_shape_disc.value) {
 }
       if (offset !== buf.length) throw new Error("args: trailing bytes");
       const result = await handler.shapeArea(shape);
-      taskSender({ kind: 'response', requestId, payload: encodeResultOk(encodeF64(result)) });
+      taskSender({ kind: 'response', requestId, payload: encodeResultOk(pc.encodeF64(result)) });
     } catch (e) {
       taskSender({ kind: 'response', requestId, payload: encodeResultErr(encodeInvalidPayload()) });
     }
@@ -1127,24 +1121,24 @@ switch (_shape_disc.value) {
     try {
       const buf = payload;
       let offset = 0;
-      const _name_r = decodeString(buf, offset); const name = _name_r.value; offset = _name_r.next;
-      const _shapes_r = decodeVec(buf, offset, (buf: Uint8Array, off: number): DecodeResult<any> => { let o = off;
-  const disc = decodeEnumVariant(buf, o); o = disc.next;
+      const _name_r = pc.decodeString(buf, offset); const name = _name_r.value; offset = _name_r.next;
+      const _shapes_r = pc.decodeVec(buf, offset, (buf: Uint8Array, off: number): pc.DecodeResult<any> => { let o = off;
+  const disc = pc.decodeEnumVariant(buf, o); o = disc.next;
   switch (disc.value) {
     case 0: {
-      const _f0_r = decodeF64(buf, o); const f0 = _f0_r.value; o = _f0_r.next;
+      const _f0_r = pc.decodeF64(buf, o); const f0 = _f0_r.value; o = _f0_r.next;
       return { value: { tag: 'Circle', radius: f0 }, next: o };
     }
     case 1: {
-      const _f0_r = decodeF64(buf, o); const f0 = _f0_r.value; o = _f0_r.next;
-      const _f1_r = decodeF64(buf, o); const f1 = _f1_r.value; o = _f1_r.next;
+      const _f0_r = pc.decodeF64(buf, o); const f0 = _f0_r.value; o = _f0_r.next;
+      const _f1_r = pc.decodeF64(buf, o); const f1 = _f1_r.value; o = _f1_r.next;
       return { value: { tag: 'Rectangle', width: f0, height: f1 }, next: o };
     }
     case 2: return { value: { tag: 'Point' }, next: o };
     default: throw new Error(`unknown enum variant: ${disc.value}`);
   }
 }); const shapes = _shapes_r.value; offset = _shapes_r.next;
-      const _background_disc = decodeEnumVariant(buf, offset); offset = _background_disc.next;
+      const _background_disc = pc.decodeEnumVariant(buf, offset); offset = _background_disc.next;
 let background: Color;
 switch (_background_disc.value) {
   case 0: {
@@ -1163,14 +1157,14 @@ switch (_background_disc.value) {
 }
       if (offset !== buf.length) throw new Error("args: trailing bytes");
       const result = await handler.createCanvas(name, shapes, background);
-      taskSender({ kind: 'response', requestId, payload: encodeResultOk(concat(encodeString(result.name), encodeVec(result.shapes, (item) => (() => { switch (item.tag) {
-      case 'Circle': return concat(encodeEnumVariant(0), encodeF64(item.radius));
-      case 'Rectangle': return concat(encodeEnumVariant(1), encodeF64(item.width), encodeF64(item.height));
-      case 'Point': return encodeEnumVariant(2);
+      taskSender({ kind: 'response', requestId, payload: encodeResultOk(pc.concat(pc.encodeString(result.name), pc.encodeVec(result.shapes, (item) => (() => { switch (item.tag) {
+      case 'Circle': return pc.concat(pc.encodeEnumVariant(0), pc.encodeF64(item.radius));
+      case 'Rectangle': return pc.concat(pc.encodeEnumVariant(1), pc.encodeF64(item.width), pc.encodeF64(item.height));
+      case 'Point': return pc.encodeEnumVariant(2);
       default: throw new Error('unknown enum variant'); } })()), (() => { switch (result.background.tag) {
-      case 'Red': return encodeEnumVariant(0);
-      case 'Green': return encodeEnumVariant(1);
-      case 'Blue': return encodeEnumVariant(2);
+      case 'Red': return pc.encodeEnumVariant(0);
+      case 'Green': return pc.encodeEnumVariant(1);
+      case 'Blue': return pc.encodeEnumVariant(2);
       default: throw new Error('unknown enum variant'); } })())) });
     } catch (e) {
       taskSender({ kind: 'response', requestId, payload: encodeResultErr(encodeInvalidPayload()) });
@@ -1180,21 +1174,21 @@ switch (_background_disc.value) {
     try {
       const buf = payload;
       let offset = 0;
-      const _msg_disc = decodeEnumVariant(buf, offset); offset = _msg_disc.next;
+      const _msg_disc = pc.decodeEnumVariant(buf, offset); offset = _msg_disc.next;
 let msg: Message;
 switch (_msg_disc.value) {
   case 0: {
-    const _msg_inner_r = decodeString(buf, offset); const msg_inner = _msg_inner_r.value; offset = _msg_inner_r.next;
+    const _msg_inner_r = pc.decodeString(buf, offset); const msg_inner = _msg_inner_r.value; offset = _msg_inner_r.next;
     msg = { tag: 'Text', value: msg_inner };
     break;
   }
   case 1: {
-    const _msg_inner_r = decodeI64(buf, offset); const msg_inner = _msg_inner_r.value; offset = _msg_inner_r.next;
+    const _msg_inner_r = pc.decodeI64(buf, offset); const msg_inner = _msg_inner_r.value; offset = _msg_inner_r.next;
     msg = { tag: 'Number', value: msg_inner };
     break;
   }
   case 2: {
-    const _msg_inner_r = decodeBytes(buf, offset); const msg_inner = _msg_inner_r.value; offset = _msg_inner_r.next;
+    const _msg_inner_r = pc.decodeBytes(buf, offset); const msg_inner = _msg_inner_r.value; offset = _msg_inner_r.next;
     msg = { tag: 'Data', value: msg_inner };
     break;
   }
@@ -1203,9 +1197,9 @@ switch (_msg_disc.value) {
       if (offset !== buf.length) throw new Error("args: trailing bytes");
       const result = await handler.processMessage(msg);
       taskSender({ kind: 'response', requestId, payload: encodeResultOk((() => { switch (result.tag) {
-      case 'Text': return concat(encodeEnumVariant(0), encodeString(result.value));
-      case 'Number': return concat(encodeEnumVariant(1), encodeI64(result.value));
-      case 'Data': return concat(encodeEnumVariant(2), encodeBytes(result.value));
+      case 'Text': return pc.concat(pc.encodeEnumVariant(0), pc.encodeString(result.value));
+      case 'Number': return pc.concat(pc.encodeEnumVariant(1), pc.encodeI64(result.value));
+      case 'Data': return pc.concat(pc.encodeEnumVariant(2), pc.encodeBytes(result.value));
       default: throw new Error('unknown enum variant'); } })()) });
     } catch (e) {
       taskSender({ kind: 'response', requestId, payload: encodeResultErr(encodeInvalidPayload()) });
@@ -1215,10 +1209,10 @@ switch (_msg_disc.value) {
     try {
       const buf = payload;
       let offset = 0;
-      const _count_r = decodeU32(buf, offset); const count = _count_r.value; offset = _count_r.next;
+      const _count_r = pc.decodeU32(buf, offset); const count = _count_r.value; offset = _count_r.next;
       if (offset !== buf.length) throw new Error("args: trailing bytes");
       const result = await handler.getPoints(count);
-      taskSender({ kind: 'response', requestId, payload: encodeResultOk(encodeVec(result, (item) => concat(encodeI32(item.x), encodeI32(item.y)))) });
+      taskSender({ kind: 'response', requestId, payload: encodeResultOk(pc.encodeVec(result, (item) => pc.concat(pc.encodeI32(item.x), pc.encodeI32(item.y)))) });
     } catch (e) {
       taskSender({ kind: 'response', requestId, payload: encodeResultErr(encodeInvalidPayload()) });
     }
@@ -1227,12 +1221,12 @@ switch (_msg_disc.value) {
     try {
       const buf = payload;
       let offset = 0;
-      const _pair_0_r = decodeI32(buf, offset); const pair_0 = _pair_0_r.value; offset = _pair_0_r.next;
-const _pair_1_r = decodeString(buf, offset); const pair_1 = _pair_1_r.value; offset = _pair_1_r.next;
+      const _pair_0_r = pc.decodeI32(buf, offset); const pair_0 = _pair_0_r.value; offset = _pair_0_r.next;
+const _pair_1_r = pc.decodeString(buf, offset); const pair_1 = _pair_1_r.value; offset = _pair_1_r.next;
 const pair = [pair_0, pair_1] as [number, string];
       if (offset !== buf.length) throw new Error("args: trailing bytes");
       const result = await handler.swapPair(pair);
-      taskSender({ kind: 'response', requestId, payload: encodeResultOk(concat(encodeString(result[0]), encodeI32(result[1]))) });
+      taskSender({ kind: 'response', requestId, payload: encodeResultOk(pc.concat(pc.encodeString(result[0]), pc.encodeI32(result[1]))) });
     } catch (e) {
       taskSender({ kind: 'response', requestId, payload: encodeResultErr(encodeInvalidPayload()) });
     }
@@ -1263,37 +1257,37 @@ export const testbed_schemas: Record<string, MethodSchema> = {
 export const testbed_serializers: BindingSerializers = {
   getTxSerializer(schema: Schema): (value: unknown) => Uint8Array {
     switch (schema.kind) {
-      case 'bool': return (v) => encodeBool(v as boolean);
-      case 'u8': return (v) => encodeU8(v as number);
-      case 'i8': return (v) => encodeI8(v as number);
-      case 'u16': return (v) => encodeU16(v as number);
-      case 'i16': return (v) => encodeI16(v as number);
-      case 'u32': return (v) => encodeU32(v as number);
-      case 'i32': return (v) => encodeI32(v as number);
-      case 'u64': return (v) => encodeU64(v as bigint);
-      case 'i64': return (v) => encodeI64(v as bigint);
-      case 'f32': return (v) => encodeF32(v as number);
-      case 'f64': return (v) => encodeF64(v as number);
-      case 'string': return (v) => encodeString(v as string);
-      case 'bytes': return (v) => encodeBytes(v as Uint8Array);
+      case 'bool': return (v) => pc.encodeBool(v as boolean);
+      case 'u8': return (v) => pc.encodeU8(v as number);
+      case 'i8': return (v) => pc.encodeI8(v as number);
+      case 'u16': return (v) => pc.encodeU16(v as number);
+      case 'i16': return (v) => pc.encodeI16(v as number);
+      case 'u32': return (v) => pc.encodeU32(v as number);
+      case 'i32': return (v) => pc.encodeI32(v as number);
+      case 'u64': return (v) => pc.encodeU64(v as bigint);
+      case 'i64': return (v) => pc.encodeI64(v as bigint);
+      case 'f32': return (v) => pc.encodeF32(v as number);
+      case 'f64': return (v) => pc.encodeF64(v as number);
+      case 'string': return (v) => pc.encodeString(v as string);
+      case 'bytes': return (v) => pc.encodeBytes(v as Uint8Array);
       default: throw new Error(`Unsupported schema kind for Tx: ${schema.kind}`);
     }
   },
   getRxDeserializer(schema: Schema): (bytes: Uint8Array) => unknown {
     switch (schema.kind) {
-      case 'bool': return (b) => decodeBool(b, 0).value;
-      case 'u8': return (b) => decodeU8(b, 0).value;
-      case 'i8': return (b) => decodeI8(b, 0).value;
-      case 'u16': return (b) => decodeU16(b, 0).value;
-      case 'i16': return (b) => decodeI16(b, 0).value;
-      case 'u32': return (b) => decodeU32(b, 0).value;
-      case 'i32': return (b) => decodeI32(b, 0).value;
-      case 'u64': return (b) => decodeU64(b, 0).value;
-      case 'i64': return (b) => decodeI64(b, 0).value;
-      case 'f32': return (b) => decodeF32(b, 0).value;
-      case 'f64': return (b) => decodeF64(b, 0).value;
-      case 'string': return (b) => decodeString(b, 0).value;
-      case 'bytes': return (b) => decodeBytes(b, 0).value;
+      case 'bool': return (b) => pc.decodeBool(b, 0).value;
+      case 'u8': return (b) => pc.decodeU8(b, 0).value;
+      case 'i8': return (b) => pc.decodeI8(b, 0).value;
+      case 'u16': return (b) => pc.decodeU16(b, 0).value;
+      case 'i16': return (b) => pc.decodeI16(b, 0).value;
+      case 'u32': return (b) => pc.decodeU32(b, 0).value;
+      case 'i32': return (b) => pc.decodeI32(b, 0).value;
+      case 'u64': return (b) => pc.decodeU64(b, 0).value;
+      case 'i64': return (b) => pc.decodeI64(b, 0).value;
+      case 'f32': return (b) => pc.decodeF32(b, 0).value;
+      case 'f64': return (b) => pc.decodeF64(b, 0).value;
+      case 'string': return (b) => pc.decodeString(b, 0).value;
+      case 'bytes': return (b) => pc.decodeBytes(b, 0).value;
       default: throw new Error(`Unsupported schema kind for Rx: ${schema.kind}`);
     }
   },

@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@bearcove/roam-core": "workspace:*",
+    "@bearcove/roam-postcard": "workspace:*",
     "@bearcove/roam-ws": "workspace:*"
   }
 }
