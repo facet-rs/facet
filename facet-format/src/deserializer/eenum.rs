@@ -230,7 +230,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                 Type::User(UserType::Enum(e)) => e,
                 _ => {
                     return Err(self.mk_err(
-                        wip,
+                        &wip,
                         DeserializeErrorKind::TypeMismatch {
                             expected: shape,
                             got: "non-enum type".into(),
@@ -332,7 +332,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
             Type::User(UserType::Enum(e)) => e,
             _ => {
                 return Err(self.mk_err(
-                    wip,
+                    &wip,
                     DeserializeErrorKind::TypeMismatch {
                         expected: shape,
                         got: "non-enum type".into(),
@@ -431,7 +431,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
             Type::User(UserType::Enum(e)) => e,
             _ => {
                 return Err(self.mk_err(
-                    wip,
+                    &wip,
                     DeserializeErrorKind::Unsupported {
                         message: "expected enum for internally tagged".into(),
                     },
@@ -604,20 +604,12 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         mut wip: Partial<'input, BORROW>,
         enum_def: &'static facet_core::EnumType,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
-        // Capture path early for error reporting
-        let path = wip.path();
-        let mk_err = |this: &Self, kind: DeserializeErrorKind| DeserializeError {
-            span: Some(this.last_span),
-            path: Some(path.clone()),
-            kind,
-        };
-
         // Get the variant name from FieldKey
         let field_event = self.expect_event("enum field key")?;
         let variant_name = match field_event {
             ParseEvent::FieldKey(key) => key.name.ok_or_else(|| {
-                mk_err(
-                    self,
+                self.mk_err(
+                    &wip,
                     DeserializeErrorKind::UnexpectedToken {
                         expected: "variant name",
                         got: "unit key".into(),
@@ -626,16 +618,16 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
             })?,
             ParseEvent::StructEnd => {
                 // Empty struct - this shouldn't happen for valid enums
-                return Err(mk_err(
-                    self,
+                return Err(self.mk_err(
+                    &wip,
                     DeserializeErrorKind::Unsupported {
                         message: "unexpected empty struct for enum".into(),
                     },
                 ));
             }
             _ => {
-                return Err(mk_err(
-                    self,
+                return Err(self.mk_err(
+                    &wip,
                     DeserializeErrorKind::UnexpectedToken {
                         expected: "field key for enum variant",
                         got: field_event.kind_name().into(),
@@ -650,11 +642,11 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
             .iter()
             .find(|v| v.name == variant_name.as_ref())
             .ok_or_else(|| {
-                mk_err(
-                    self,
+                self.mk_err(
+                    &wip,
                     DeserializeErrorKind::UnknownVariant {
                         variant: variant_name.clone(),
-                        enum_name: enum_def.type_identifier,
+                        enum_name: wip.shape().type_identifier,
                     },
                 )
             })?;
@@ -916,7 +908,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
             StructKind::TupleStruct | StructKind::Tuple => {
                 // Multi-element tuple variant - not yet supported in this context
                 return Err(self.mk_err(
-                    wip,
+                    &wip,
                     DeserializeErrorKind::Unsupported {
                         message: "multi-element tuple variants in flatten not yet supported".into(),
                     },
@@ -1051,7 +1043,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         let event = self.expect_event("value")?;
         if !matches!(event, ParseEvent::StructStart(_)) {
             return Err(self.mk_err(
-                wip,
+                &wip,
                 DeserializeErrorKind::UnexpectedToken {
                     expected: "struct for adjacently tagged enum",
                     got: event.kind_name().into(),
@@ -1065,7 +1057,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
             Type::User(UserType::Enum(e)) => e,
             _ => {
                 return Err(self.mk_err(
-                    wip,
+                    &wip,
                     DeserializeErrorKind::Unsupported {
                         message: "expected enum for adjacently tagged".into(),
                     },
@@ -1457,17 +1449,17 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
 
     fn deserialize_enum_untagged(
         &mut self,
-        wip: Partial<'input, BORROW>,
+        mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         let shape = wip.shape();
-        let variants_by_format = VariantsByFormat::from_shape(shape).ok_or_else(|| {
-            self.mk_err(
-                wip.clone(),
+        let Some(variants_by_format) = VariantsByFormat::from_shape(shape) else {
+            return Err(self.mk_err(
+                &wip,
                 DeserializeErrorKind::Unsupported {
                     message: "expected enum type for untagged".into(),
                 },
-            )
-        })?;
+            ));
+        };
 
         let event = self.expect_peek("value")?;
 
@@ -1540,28 +1532,61 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
             }
             ParseEvent::StructStart(_) => {
                 // For struct input, use solve_variant for proper field-based matching
-                match self.solve_variant(shape)? {
-                    Some(variant_name) => {
-                        // Successfully identified which variant matches based on fields
-                        wip = wip.select_variant_named(variant_name)?;
+                let solve_result =
+                    crate::solve_variant(shape, &mut *self.parser).map_err(|e| match e {
+                        crate::SolveVariantError::Parser(e) => e,
+                        crate::SolveVariantError::NoMatch => self.mk_err(
+                            &wip,
+                            DeserializeErrorKind::NoMatchingVariant {
+                                enum_name: shape.type_identifier,
+                                input_kind: "struct",
+                            },
+                        ),
+                        crate::SolveVariantError::SchemaError(e) => self.mk_err(
+                            &wip,
+                            DeserializeErrorKind::Solver {
+                                message: e.to_string().into(),
+                            },
+                        ),
+                    })?;
+
+                if let Some(outcome) = solve_result {
+                    // Successfully identified which variant matches based on fields
+                    // Extract the variant name from the first variant selection
+                    let variant_name = outcome
+                        .resolution()
+                        .variant_selections()
+                        .first()
+                        .map(|vs| vs.variant_name)
+                        .ok_or_else(|| {
+                            self.mk_err(
+                                &wip,
+                                DeserializeErrorKind::Unsupported {
+                                    message:
+                                        "solve_variant returned outcome with no variant selection"
+                                            .into(),
+                                },
+                            )
+                        })?;
+                    wip = wip.select_variant_named(variant_name)?;
+                    wip = self.deserialize_enum_variant_content(wip)?;
+                    Ok(wip)
+                } else {
+                    // No variant matched - fall back to trying the first struct variant
+                    // (we can't backtrack parser state to try multiple variants)
+                    if let Some(variant) = variants_by_format.struct_variants.first() {
+                        wip = wip.select_variant_named(variant.effective_name())?;
                         wip = self.deserialize_enum_variant_content(wip)?;
                         Ok(wip)
-                    }
-                    None => {
-                        // No variant matched - fall back to trying the first struct variant
-                        // (we can't backtrack parser state to try multiple variants)
-                        if let Some(variant) = variants_by_format.struct_variants.first() {
-                            wip = wip.select_variant_named(variant.effective_name())?;
-                            wip = self.deserialize_enum_variant_content(wip)?;
-                            Ok(wip)
-                        } else {
-                            Err(self.mk_err(
-                                wip,
-                                DeserializeErrorKind::Unsupported {
-                                    message: "no struct variant found for untagged enum with struct input".into(),
-                                },
-                            ))
-                        }
+                    } else {
+                        Err(self.mk_err(
+                            &wip,
+                            DeserializeErrorKind::Unsupported {
+                                message:
+                                    "no struct variant found for untagged enum with struct input"
+                                        .into(),
+                            },
+                        ))
                     }
                 }
             }
@@ -1574,7 +1599,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                 }
 
                 Err(self.mk_err(
-                    wip,
+                    &wip,
                     DeserializeErrorKind::Unsupported {
                         message: "no tuple variant found for untagged enum with sequence input"
                             .into(),
@@ -1582,7 +1607,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                 ))
             }
             _ => Err(self.mk_err(
-                wip,
+                &wip,
                 DeserializeErrorKind::UnexpectedToken {
                     expected: "scalar, struct, or sequence for untagged enum",
                     got: event.kind_name().into(),

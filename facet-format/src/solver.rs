@@ -3,6 +3,7 @@ extern crate alloc;
 use alloc::borrow::Cow;
 use alloc::sync::Arc;
 use core::fmt;
+use facet_core::Shape;
 
 use facet_solver::{KeyResult, Resolution, ResolutionHandle, Schema, Solver};
 
@@ -54,52 +55,21 @@ impl core::error::Error for SolveVariantError {}
 ///
 /// Returns `Ok(Some(_))` if a unique variant was found, `Ok(None)` if
 /// no variant matched, or `Err(_)` on error.
-pub fn solve_variant<'de, P>(
-    shape: &'static facet_core::Shape,
-    parser: &mut P,
-) -> Result<Option<SolveOutcome>, SolveVariantError>
-where
-    P: FormatParser<'de>,
-{
+pub fn solve_variant<'de>(
+    shape: &'static Shape,
+    parser: &mut dyn FormatParser<'de>,
+) -> Result<Option<SolveOutcome>, SolveVariantError> {
     let schema = Arc::new(Schema::build_auto(shape)?);
     let mut solver = Solver::new(&schema);
 
     // Save position and start recording events
     let save_point = parser.save();
 
-    // Read through the structure, looking for field keys
-    let result = solve_variant_inner(&mut solver, parser);
-
-    // Restore position regardless of outcome
-    parser.restore(save_point);
-
-    match result {
-        Ok(Some(handle)) => {
-            let idx = handle.index();
-            Ok(Some(SolveOutcome {
-                schema,
-                resolution_index: idx,
-            }))
-        }
-        Ok(None) => Ok(None),
-        Err(e) => Err(e),
-    }
-}
-
-/// Inner function that reads events and feeds field names to the solver.
-fn solve_variant_inner<'de, 'a, P>(
-    solver: &mut Solver<'a>,
-    parser: &mut P,
-) -> Result<Option<ResolutionHandle<'a>>, SolveVariantError>
-where
-    'de: 'a,
-    P: FormatParser<'de>,
-{
     let mut depth = 0i32;
     let mut in_struct = false;
     let mut expecting_value = false;
 
-    loop {
+    let result = loop {
         let event = parser
             .next_event()
             .map_err(SolveVariantError::from_parser)?;
@@ -120,7 +90,7 @@ where
                 depth -= 1;
                 if depth == 0 {
                     // Done with top-level struct
-                    return Ok(None);
+                    break None;
                 }
             }
             ParseEvent::SequenceStart(_) => {
@@ -133,9 +103,9 @@ where
                 if depth == 1 && in_struct {
                     // Top-level field - feed to solver
                     if let Some(name) = key.name
-                        && let Some(handle) = handle_key(solver, name)
+                        && let Some(handle) = handle_key(&mut solver, name)
                     {
-                        return Ok(Some(handle));
+                        break Some(handle);
                     }
                     expecting_value = true;
                 }
@@ -146,6 +116,20 @@ where
                 }
             }
         }
+    };
+
+    // Restore position regardless of outcome
+    parser.restore(save_point);
+
+    match result {
+        Some(handle) => {
+            let idx = handle.index();
+            Ok(Some(SolveOutcome {
+                schema,
+                resolution_index: idx,
+            }))
+        }
+        None => Ok(None),
     }
 }
 
