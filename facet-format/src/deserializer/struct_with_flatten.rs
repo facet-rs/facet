@@ -7,33 +7,22 @@ use alloc::string::ToString;
 use alloc::vec::Vec;
 
 use facet_core::{Characteristic, Def};
-use facet_reflect::{FieldCategory, FieldInfo, Partial, ReflectError};
+use facet_reflect::{FieldCategory, FieldInfo, Partial};
 use facet_solver::PathSegment;
 
-use crate::deserializer::coro::{
-    DeserializeYielder, request_collect_evidence, request_deserialize_into,
-    request_deserialize_variant_struct_fields, request_event, request_peek_raw,
-    request_set_string_value, request_skip, request_span, run_deserialize_coro,
-};
 use crate::{
-    DeserializeError, FormatDeserializer, FormatParser, InnerDeserializeError, ParseEvent,
-    ScalarValue,
+    DeserializeError, DynParser, FormatDeserializer, FormatParser, ParseEvent, ScalarValue,
 };
 
-/// Inner implementation of `deserialize_struct_with_flatten` that runs in a coroutine.
+/// Inner implementation of `deserialize_struct_with_flatten` using dyn dispatch.
 ///
 /// This function is non-generic over the parser type, reducing monomorphization.
 fn deserialize_struct_with_flatten_inner<'input, const BORROW: bool>(
-    yielder: &DeserializeYielder<'input, BORROW>,
+    deser: &mut FormatDeserializer<'input, BORROW, &mut dyn DynParser<'input>>,
     mut wip: Partial<'input, BORROW>,
-) -> Result<Partial<'input, BORROW>, InnerDeserializeError> {
+) -> Result<Partial<'input, BORROW>, DeserializeError> {
+    use super::dyn_helpers::*;
     use facet_solver::{Schema, Solver};
-
-    let reflect_err = |e: ReflectError| InnerDeserializeError::Reflect {
-        error: e,
-        span: request_span(yielder),
-        path: None,
-    };
 
     trace!(
         "deserialize_struct_with_flatten: starting shape={}",
@@ -44,40 +33,40 @@ fn deserialize_struct_with_flatten_inner<'input, const BORROW: bool>(
     let struct_type_has_default = wip.shape().is(Characteristic::Default);
 
     // Peek at the next event first to handle EOF and null gracefully
-    let maybe_event = request_peek_raw(yielder)?;
+    let maybe_event = peek_raw(deser)?;
 
     // Handle EOF (empty input / comment-only files): use Default if available
     if maybe_event.is_none() {
         if struct_type_has_default {
-            wip = wip.set_default().map_err(&reflect_err)?;
+            wip = wip.set_default()?;
             return Ok(wip);
         }
-        return Err(InnerDeserializeError::UnexpectedEof { expected: "value" });
+        return Err(DeserializeError::UnexpectedEof { expected: "value" });
     }
 
     // Handle Scalar(Null): use Default if available
     if let Some(ParseEvent::Scalar(ScalarValue::Null)) = &maybe_event
         && struct_type_has_default
     {
-        let _ = request_event(yielder, "null")?;
-        wip = wip.set_default().map_err(&reflect_err)?;
+        let _ = expect_event(deser, "null")?;
+        wip = wip.set_default()?;
         return Ok(wip);
     }
 
     // Build the schema for this type - this recursively expands all flatten fields
     let schema = Schema::build_auto(wip.shape())
-        .map_err(|e| InnerDeserializeError::Unsupported(format!("failed to build schema: {e}")))?;
+        .map_err(|e| DeserializeError::Unsupported(format!("failed to build schema: {e}")))?;
 
     // Check if we have multiple resolutions (i.e., flattened enums)
     let resolutions = schema.resolutions();
     if resolutions.is_empty() {
-        return Err(InnerDeserializeError::Unsupported(
+        return Err(DeserializeError::Unsupported(
             "schema has no resolutions".into(),
         ));
     }
 
     // ========== PASS 1: Probe to collect all field keys ==========
-    let evidence = request_collect_evidence(yielder)?;
+    let evidence = collect_evidence(deser)?;
 
     let mut solver = Solver::new(&schema);
 
@@ -97,17 +86,17 @@ fn deserialize_struct_with_flatten_inner<'input, const BORROW: bool>(
     // Get the resolved configuration
     let config_handle = solver
         .finish()
-        .map_err(|e| InnerDeserializeError::Unsupported(format!("solver failed: {e}")))?;
+        .map_err(|e| DeserializeError::Unsupported(format!("solver failed: {e}")))?;
     let resolution = config_handle.resolution();
 
     // ========== PASS 2: Parse the struct with resolved paths ==========
     // Expect StructStart
-    let event = request_event(yielder, "value")?;
+    let event = expect_event(deser, "value")?;
     if !matches!(event, ParseEvent::StructStart(_)) {
-        return Err(InnerDeserializeError::TypeMismatch {
+        return Err(DeserializeError::TypeMismatch {
             expected: "struct start",
             got: format!("{event:?}"),
-            span: request_span(yielder),
+            span: deser.last_span,
             path: None,
         });
     }
@@ -115,7 +104,7 @@ fn deserialize_struct_with_flatten_inner<'input, const BORROW: bool>(
     // Enter deferred mode for flatten handling (if not already in deferred mode)
     let already_deferred = wip.is_deferred();
     if !already_deferred {
-        wip = wip.begin_deferred().map_err(&reflect_err)?;
+        wip = wip.begin_deferred()?;
     }
 
     // Track which fields have been set (by serialized name - uses 'static str from resolution)
@@ -128,7 +117,7 @@ fn deserialize_struct_with_flatten_inner<'input, const BORROW: bool>(
     let variant_selections = resolution.variant_selections();
 
     loop {
-        let event = request_event(yielder, "value")?;
+        let event = expect_event(deser, "value")?;
         match event {
             ParseEvent::StructEnd => break,
             ParseEvent::FieldKey(key) => {
@@ -137,7 +126,7 @@ fn deserialize_struct_with_flatten_inner<'input, const BORROW: bool>(
                     Some(name) => name.as_ref(),
                     None => {
                         // Skip unit keys in struct context
-                        request_skip(yielder)?;
+                        skip(deser)?;
                         continue;
                     }
                 };
@@ -171,9 +160,9 @@ fn deserialize_struct_with_flatten_inner<'input, const BORROW: bool>(
                     while open_segments.len() > common_len {
                         let (_, is_option, _) = open_segments.pop().unwrap();
                         if is_option {
-                            wip = wip.end().map_err(&reflect_err)?;
+                            wip = wip.end()?;
                         }
-                        wip = wip.end().map_err(&reflect_err)?;
+                        wip = wip.end()?;
                     }
 
                     // Open new segments (all except last)
@@ -189,10 +178,10 @@ fn deserialize_struct_with_flatten_inner<'input, const BORROW: bool>(
 
                     // Open intermediate segments (these are flatten containers, always enter Some)
                     for &segment in intermediate_segments {
-                        wip = wip.begin_field(segment).map_err(&reflect_err)?;
+                        wip = wip.begin_field(segment)?;
                         let is_option = matches!(wip.shape().def, Def::Option(_));
                         if is_option {
-                            wip = wip.begin_some().map_err(&reflect_err)?;
+                            wip = wip.begin_some()?;
                         }
 
                         // Check if we need to select a variant at this point
@@ -218,9 +207,7 @@ fn deserialize_struct_with_flatten_inner<'input, const BORROW: bool>(
 
                             // Check if current path matches the variant selection path
                             if current_path == vs_fields {
-                                wip = wip
-                                    .select_variant_named(vs.variant_name)
-                                    .map_err(&reflect_err)?;
+                                wip = wip.select_variant_named(vs.variant_name)?;
                                 selected_variant = true;
                                 break;
                             }
@@ -231,35 +218,35 @@ fn deserialize_struct_with_flatten_inner<'input, const BORROW: bool>(
 
                     // Open the last segment (the actual field being deserialized)
                     if let Some(segment) = last_segment {
-                        wip = wip.begin_field(segment).map_err(&reflect_err)?;
+                        wip = wip.begin_field(segment)?;
 
                         let is_option = matches!(wip.shape().def, Def::Option(_));
 
                         if is_option {
                             // Check if the value is null before deciding to enter Some
-                            let peeked = request_peek_raw(yielder)?;
+                            let peeked = peek_raw(deser)?;
                             if matches!(
                                 peeked,
                                 Some(ParseEvent::Scalar(ScalarValue::Null | ScalarValue::Unit))
                             ) {
                                 // Value is null - consume it and set Option to None
-                                let _ = request_event(yielder, "null or unit")?;
+                                let _ = expect_event(deser, "null or unit")?;
                                 // Set default (None) for the Option field
-                                wip = wip.set_default().map_err(&reflect_err)?;
+                                wip = wip.set_default()?;
                                 open_segments.push((segment, false, false));
                                 // Close segments we just opened
                                 while open_segments.len() > common_len {
                                     let (_, is_opt, _) = open_segments.pop().unwrap();
                                     if is_opt {
-                                        wip = wip.end().map_err(&reflect_err)?;
+                                        wip = wip.end()?;
                                     }
-                                    wip = wip.end().map_err(&reflect_err)?;
+                                    wip = wip.end()?;
                                 }
                                 fields_set.insert(field_info.serialized_name);
                                 continue;
                             }
                             // Value is not null - enter Some and deserialize
-                            wip = wip.begin_some().map_err(&reflect_err)?;
+                            wip = wip.begin_some()?;
                         }
                         open_segments.push((segment, is_option, false));
                     }
@@ -275,35 +262,33 @@ fn deserialize_struct_with_flatten_inner<'input, const BORROW: bool>(
                             if is_internally_tagged_tag {
                                 // Read and validate the tag value
                                 let tag_event =
-                                    request_event(yielder, "internally-tagged enum tag value")?;
+                                    expect_event(deser, "internally-tagged enum tag value")?;
                                 let actual_tag = match &tag_event {
                                     ParseEvent::Scalar(ScalarValue::Str(s)) => s.as_ref(),
                                     _ => {
-                                        return Err(InnerDeserializeError::TypeMismatch {
+                                        return Err(DeserializeError::TypeMismatch {
                                             expected: "string tag value",
                                             got: format!("{tag_event:?}"),
-                                            span: request_span(yielder),
+                                            span: deser.last_span,
                                             path: None,
                                         });
                                     }
                                 };
 
                                 if actual_tag != *variant_name {
-                                    return Err(InnerDeserializeError::TypeMismatch {
+                                    return Err(DeserializeError::TypeMismatch {
                                         expected: format!(
                                             "tag value matching variant '{}'",
                                             variant_name
                                         )
                                         .leak(),
                                         got: actual_tag.to_string(),
-                                        span: request_span(yielder),
+                                        span: deser.last_span,
                                         path: None,
                                     });
                                 }
 
-                                wip = wip
-                                    .select_variant_named(variant_name)
-                                    .map_err(&reflect_err)?;
+                                wip = wip.select_variant_named(variant_name)?;
 
                                 // Mark this segment as having a variant selected
                                 if let Some(last) = open_segments.last_mut() {
@@ -315,23 +300,21 @@ fn deserialize_struct_with_flatten_inner<'input, const BORROW: bool>(
                             }
 
                             // For externally-tagged enums: select variant and deserialize content
-                            wip = wip
-                                .select_variant_named(variant_name)
-                                .map_err(&reflect_err)?;
-                            wip = request_deserialize_variant_struct_fields(yielder, wip)?;
+                            wip = wip.select_variant_named(variant_name)?;
+                            wip = deserialize_variant_struct_fields(deser, wip)?;
                         }
                     } else {
                         // Regular field: deserialize into it
-                        wip = request_deserialize_into(yielder, wip)?;
+                        wip = deserialize_into(deser, wip)?;
                     }
 
                     // Close segments we just opened (we're done with this field)
                     while open_segments.len() > common_len {
                         let (_, is_option, _) = open_segments.pop().unwrap();
                         if is_option {
-                            wip = wip.end().map_err(&reflect_err)?;
+                            wip = wip.end()?;
                         }
-                        wip = wip.end().map_err(&reflect_err)?;
+                        wip = wip.end()?;
                     }
 
                     fields_set.insert(field_info.serialized_name);
@@ -342,7 +325,7 @@ fn deserialize_struct_with_flatten_inner<'input, const BORROW: bool>(
                 if let Some(catch_all_info) = resolution.catch_all_map(FieldCategory::Flat) {
                     // Route unknown field to catch-all map
                     wip = insert_into_catch_all_map_inner(
-                        yielder,
+                        deser,
                         wip,
                         catch_all_info,
                         Cow::Borrowed(key_name),
@@ -353,20 +336,20 @@ fn deserialize_struct_with_flatten_inner<'input, const BORROW: bool>(
                 }
 
                 if deny_unknown_fields {
-                    return Err(InnerDeserializeError::UnknownField {
+                    return Err(DeserializeError::UnknownField {
                         field: key_name.to_owned(),
-                        span: request_span(yielder),
+                        span: deser.last_span,
                         path: None,
                     });
                 } else {
-                    request_skip(yielder)?;
+                    skip(deser)?;
                 }
             }
             other => {
-                return Err(InnerDeserializeError::TypeMismatch {
+                return Err(DeserializeError::TypeMismatch {
                     expected: "field key or struct end",
                     got: format!("{other:?}"),
-                    span: request_span(yielder),
+                    span: deser.last_span,
                     path: None,
                 });
             }
@@ -376,9 +359,9 @@ fn deserialize_struct_with_flatten_inner<'input, const BORROW: bool>(
     // Close any remaining open segments
     while let Some((_, is_option, _)) = open_segments.pop() {
         if is_option {
-            wip = wip.end().map_err(&reflect_err)?;
+            wip = wip.end()?;
         }
-        wip = wip.end().map_err(&reflect_err)?;
+        wip = wip.end()?;
     }
 
     // Initialize catch-all map/value if it was never touched (no unknown fields)
@@ -390,7 +373,7 @@ fn deserialize_struct_with_flatten_inner<'input, const BORROW: bool>(
 
     // Finish deferred mode (only if we started it)
     if !already_deferred {
-        wip = wip.finish_deferred().map_err(&reflect_err)?;
+        wip = wip.finish_deferred()?;
     }
 
     Ok(wip)
@@ -398,21 +381,17 @@ fn deserialize_struct_with_flatten_inner<'input, const BORROW: bool>(
 
 /// Inner helper for inserting a key-value pair into a catch-all map field.
 fn insert_into_catch_all_map_inner<'input, 'a, const BORROW: bool>(
-    yielder: &DeserializeYielder<'input, BORROW>,
+    deser: &mut FormatDeserializer<'input, BORROW, &mut dyn DynParser<'input>>,
     mut wip: Partial<'input, BORROW>,
     catch_all_info: &FieldInfo,
     key: Cow<'_, str>,
     fields_set: &mut BTreeSet<&'static str>,
     open_segments: &mut Vec<(&'a str, bool, bool)>,
-) -> Result<Partial<'input, BORROW>, InnerDeserializeError>
+) -> Result<Partial<'input, BORROW>, DeserializeError>
 where
     'input: 'a,
 {
-    let reflect_err = |e: ReflectError| InnerDeserializeError::Reflect {
-        error: e,
-        span: request_span(yielder),
-        path: None,
-    };
+    use super::dyn_helpers::*;
 
     let segments = catch_all_info.path.segments();
 
@@ -436,17 +415,17 @@ where
     while open_segments.len() > common_len {
         let (_, is_option, _) = open_segments.pop().unwrap();
         if is_option {
-            wip = wip.end().map_err(&reflect_err)?;
+            wip = wip.end()?;
         }
-        wip = wip.end().map_err(&reflect_err)?;
+        wip = wip.end()?;
     }
 
     // Open new segments needed for the catch-all map path
     for &segment in &field_segments[common_len..] {
-        wip = wip.begin_field(segment).map_err(&reflect_err)?;
+        wip = wip.begin_field(segment)?;
         let is_option = matches!(wip.shape().def, Def::Option(_));
         if is_option {
-            wip = wip.begin_some().map_err(&reflect_err)?;
+            wip = wip.begin_some()?;
         }
         open_segments.push((segment, is_option, false));
     }
@@ -455,25 +434,25 @@ where
     let map_field_name = catch_all_info.serialized_name;
     let is_dynamic_value = matches!(wip.shape().def, Def::DynamicValue(_));
     if !fields_set.contains(map_field_name) {
-        wip = wip.init_map().map_err(&reflect_err)?;
+        wip = wip.init_map()?;
         fields_set.insert(map_field_name);
     }
 
     // Insert the key-value pair - use different API for DynamicValue vs Map
     if is_dynamic_value {
         let key_owned = key.into_owned();
-        wip = wip.begin_object_entry(&key_owned).map_err(&reflect_err)?;
-        wip = request_deserialize_into(yielder, wip)?;
-        wip = wip.end().map_err(&reflect_err)?;
+        wip = wip.begin_object_entry(&key_owned)?;
+        wip = deserialize_into(deser, wip)?;
+        wip = wip.end()?;
     } else {
         // Map uses begin_key() + set value + end() + begin_value() + deserialize + end()
-        wip = wip.begin_key().map_err(&reflect_err)?;
-        wip = request_set_string_value(yielder, wip, Cow::Owned(key.into_owned()))?;
-        wip = wip.end().map_err(&reflect_err)?;
+        wip = wip.begin_key()?;
+        wip = set_string_value(deser, wip, Cow::Owned(key.into_owned()))?;
+        wip = wip.end()?;
 
-        wip = wip.begin_value().map_err(&reflect_err)?;
-        wip = request_deserialize_into(yielder, wip)?;
-        wip = wip.end().map_err(&reflect_err)?;
+        wip = wip.begin_value()?;
+        wip = deserialize_into(deser, wip)?;
+        wip = wip.end()?;
     }
 
     Ok(wip)
@@ -483,13 +462,7 @@ where
 fn initialize_empty_catch_all_inner<'input, const BORROW: bool>(
     mut wip: Partial<'input, BORROW>,
     catch_all_info: &FieldInfo,
-) -> Result<Partial<'input, BORROW>, InnerDeserializeError> {
-    let reflect_err = |e: ReflectError| InnerDeserializeError::Reflect {
-        error: e,
-        span: None,
-        path: None,
-    };
-
+) -> Result<Partial<'input, BORROW>, DeserializeError> {
     let segments = catch_all_info.path.segments();
 
     // Extract field names from the path
@@ -506,10 +479,10 @@ fn initialize_empty_catch_all_inner<'input, const BORROW: bool>(
 
     // Navigate to the catch-all field
     for &segment in &field_segments {
-        wip = wip.begin_field(segment).map_err(&reflect_err)?;
+        wip = wip.begin_field(segment)?;
         let is_option = matches!(wip.shape().def, Def::Option(_));
         if is_option {
-            wip = wip.begin_some().map_err(&reflect_err)?;
+            wip = wip.begin_some()?;
         }
         opened_segments.push(is_option);
     }
@@ -517,11 +490,11 @@ fn initialize_empty_catch_all_inner<'input, const BORROW: bool>(
     // Initialize as empty based on the field's type
     match &wip.shape().def {
         Def::Map(_) | Def::DynamicValue(_) => {
-            wip = wip.init_map().map_err(&reflect_err)?;
+            wip = wip.init_map()?;
         }
         _ => {
             if wip.shape().is(Characteristic::Default) {
-                wip = wip.set_default().map_err(&reflect_err)?;
+                wip = wip.set_default()?;
             }
         }
     }
@@ -529,9 +502,9 @@ fn initialize_empty_catch_all_inner<'input, const BORROW: bool>(
     // Close segments in reverse order
     for is_option in opened_segments.into_iter().rev() {
         if is_option {
-            wip = wip.end().map_err(&reflect_err)?;
+            wip = wip.end()?;
         }
-        wip = wip.end().map_err(&reflect_err)?;
+        wip = wip.end()?;
     }
 
     Ok(wip)
@@ -550,10 +523,17 @@ where
     pub(crate) fn deserialize_struct_with_flatten(
         &mut self,
         wip: Partial<'input, BORROW>,
-    ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
-        run_deserialize_coro(
-            self,
-            Box::new(move |yielder| deserialize_struct_with_flatten_inner(yielder, wip)),
-        )
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        use crate::DynParser;
+        let dyn_parser: &mut dyn DynParser<'input> = &mut self.parser;
+        let mut dyn_deser = crate::FormatDeserializer {
+            parser: dyn_parser,
+            last_span: self.last_span,
+            current_path: self.current_path.clone(),
+            _marker: core::marker::PhantomData,
+        };
+        let result = deserialize_struct_with_flatten_inner(&mut dyn_deser, wip);
+        self.last_span = dyn_deser.last_span;
+        result
     }
 }

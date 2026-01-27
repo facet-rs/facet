@@ -14,7 +14,7 @@ where
     pub(crate) fn deserialize_pointer(
         &mut self,
         mut wip: Partial<'input, BORROW>,
-    ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         use facet_core::KnownPointer;
 
         let shape = wip.shape();
@@ -36,7 +36,7 @@ where
                 match event {
                     ParseEvent::Scalar(ScalarValue::Str(s)) => {
                         // Pass through the Cow as-is to preserve borrowing
-                        wip = wip.set(s).map_err(DeserializeError::reflect)?;
+                        wip = wip.set(s)?;
                         return Ok(wip);
                     }
                     _ => {
@@ -60,7 +60,7 @@ where
                 let event = self.expect_event("bytes for Cow<[u8]>")?;
                 if let ParseEvent::Scalar(ScalarValue::Bytes(b)) = event {
                     // Pass through the Cow as-is to preserve borrowing
-                    wip = wip.set(b).map_err(DeserializeError::reflect)?;
+                    wip = wip.set(b)?;
                     return Ok(wip);
                 } else {
                     return Err(DeserializeError::TypeMismatch {
@@ -72,9 +72,9 @@ where
                 }
             }
             // Other Cow types - use begin_inner
-            wip = wip.begin_inner().map_err(DeserializeError::reflect)?;
+            wip = wip.begin_inner()?;
             wip = self.deserialize_into(wip)?;
-            wip = wip.end().map_err(DeserializeError::reflect)?;
+            wip = wip.end()?;
             return Ok(wip);
         }
 
@@ -126,7 +126,7 @@ where
         }
 
         // Regular smart pointer (Box, Arc, Rc)
-        wip = wip.begin_smart_ptr().map_err(DeserializeError::reflect)?;
+        wip = wip.begin_smart_ptr()?;
 
         // Check if begin_smart_ptr set up a slice builder (for Arc<[T]>, Rc<[T]>, Box<[T]>)
         // In this case, we need to deserialize as a list manually
@@ -168,18 +168,18 @@ where
                     break;
                 }
 
-                wip = wip.begin_list_item().map_err(DeserializeError::reflect)?;
+                wip = wip.begin_list_item()?;
                 wip = self.deserialize_into(wip)?;
-                wip = wip.end().map_err(DeserializeError::reflect)?;
+                wip = wip.end()?;
             }
 
             // Convert the slice builder to Arc/Rc/Box and mark as initialized
-            wip = wip.end().map_err(DeserializeError::reflect)?;
+            wip = wip.end()?;
             // DON'T call end() again - the caller (deserialize_struct) will do that
         } else {
             // Regular smart pointer with sized pointee
             wip = self.deserialize_into(wip)?;
-            wip = wip.end().map_err(DeserializeError::reflect)?;
+            wip = wip.end()?;
         }
 
         Ok(wip)

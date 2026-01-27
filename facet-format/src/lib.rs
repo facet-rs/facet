@@ -57,7 +57,7 @@ pub mod jit;
 
 pub use deserializer::{
     DeserializeError, DynDeserializeError, DynDeserializer, DynDeserializerOwned,
-    FormatDeserializer, InnerDeserializeError,
+    FormatDeserializer,
 };
 pub use dyn_parser::{DynParser, DynParserError, DynParserWrapper, DynResult};
 pub use event::{

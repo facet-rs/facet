@@ -7,14 +7,12 @@ use facet_core::{Def, Facet, Shape, StructKind, Type, UserType};
 pub use facet_path::{Path, PathStep};
 use facet_reflect::{HeapValue, Partial};
 
-use crate::{
-    ContainerKind, DynParser, DynParserError, FormatParser, ParseEvent, ScalarTypeHint, ScalarValue,
-};
+use crate::{ContainerKind, DynParser, FormatParser, ParseEvent, ScalarTypeHint, ScalarValue};
 
 mod error;
 pub use error::*;
 
-mod coro;
+pub(crate) mod dyn_helpers;
 mod dynamic;
 mod eenum;
 mod pointer;
@@ -56,7 +54,10 @@ pub type DynDeserializerOwned<'input, 'p> =
     FormatDeserializer<'input, false, &'p mut dyn DynParser<'input>>;
 
 /// Type alias for deserialization errors when using dynamic dispatch.
-pub type DynDeserializeError = DeserializeError<DynParserError>;
+///
+/// This is now just an alias for `DeserializeError` since the error type is concrete.
+#[deprecated(note = "Use DeserializeError directly")]
+pub type DynDeserializeError = DeserializeError;
 
 /// Generic deserializer that drives a format-specific parser directly into `Partial`.
 ///
@@ -113,22 +114,36 @@ where
     P: FormatParser<'input>,
 {
     /// Deserialize the next value in the stream into `T`, allowing borrowed strings.
-    pub fn deserialize<T>(&mut self) -> Result<T, DeserializeError<P::Error>>
+    pub fn deserialize<T>(&mut self) -> Result<T, DeserializeError>
     where
         T: Facet<'input>,
     {
-        let wip: Partial<'input, true> =
-            Partial::alloc::<T>().map_err(DeserializeError::reflect)?;
-        let partial = self.deserialize_into(wip)?;
-        let heap_value: HeapValue<'input, true> =
-            partial.build().map_err(DeserializeError::reflect)?;
+        let wip: Partial<'input, true> = Partial::alloc::<T>()?;
+
+        // Create a dyn-dispatched view for the actual deserialization work.
+        // This ensures the deserialization logic is monomorphized only once (per BORROW value)
+        // instead of once per parser type.
+        let dyn_parser: &mut dyn DynParser<'input> = &mut self.parser;
+        let mut dyn_deser = FormatDeserializer {
+            parser: dyn_parser,
+            last_span: self.last_span,
+            current_path: self.current_path.clone(),
+            _marker: core::marker::PhantomData,
+        };
+
+        let partial = dyn_deser.deserialize_into(wip)?;
+
+        // Sync state back
+        self.last_span = dyn_deser.last_span;
+
+        let heap_value: HeapValue<'input, true> = partial.build()?;
         heap_value
             .materialize::<T>()
             .map_err(DeserializeError::reflect)
     }
 
     /// Deserialize the next value in the stream into `T` (for backward compatibility).
-    pub fn deserialize_root<T>(&mut self) -> Result<T, DeserializeError<P::Error>>
+    pub fn deserialize_root<T>(&mut self) -> Result<T, DeserializeError>
     where
         T: Facet<'input>,
     {
@@ -140,19 +155,29 @@ where
     /// This is required for formats like TOML that allow table reopening, where
     /// fields of a nested struct may be set, then fields of a sibling, then more
     /// fields of the original struct.
-    pub fn deserialize_deferred<T>(&mut self) -> Result<T, DeserializeError<P::Error>>
+    pub fn deserialize_deferred<T>(&mut self) -> Result<T, DeserializeError>
     where
         T: Facet<'input>,
     {
-        let wip: Partial<'input, true> =
-            Partial::alloc::<T>().map_err(DeserializeError::reflect)?;
-        let wip = wip.begin_deferred().map_err(DeserializeError::reflect)?;
-        let partial = self.deserialize_into(wip)?;
-        let partial = partial
-            .finish_deferred()
-            .map_err(DeserializeError::reflect)?;
-        let heap_value: HeapValue<'input, true> =
-            partial.build().map_err(DeserializeError::reflect)?;
+        let wip: Partial<'input, true> = Partial::alloc::<T>()?;
+        let wip = wip.begin_deferred()?;
+
+        // Create a dyn-dispatched view for the actual deserialization work.
+        let dyn_parser: &mut dyn DynParser<'input> = &mut self.parser;
+        let mut dyn_deser = FormatDeserializer {
+            parser: dyn_parser,
+            last_span: self.last_span,
+            current_path: self.current_path.clone(),
+            _marker: core::marker::PhantomData,
+        };
+
+        let partial = dyn_deser.deserialize_into(wip)?;
+
+        // Sync state back
+        self.last_span = dyn_deser.last_span;
+
+        let partial = partial.finish_deferred()?;
+        let heap_value: HeapValue<'input, true> = partial.build()?;
         heap_value
             .materialize::<T>()
             .map_err(DeserializeError::reflect)
@@ -164,7 +189,7 @@ where
     P: FormatParser<'input>,
 {
     /// Deserialize the next value in the stream into `T`, using owned strings.
-    pub fn deserialize<T>(&mut self) -> Result<T, DeserializeError<P::Error>>
+    pub fn deserialize<T>(&mut self) -> Result<T, DeserializeError>
     where
         T: Facet<'static>,
     {
@@ -174,12 +199,25 @@ where
         #[allow(unsafe_code)]
         let wip: Partial<'input, false> = unsafe {
             core::mem::transmute::<Partial<'static, false>, Partial<'input, false>>(
-                Partial::alloc_owned::<T>().map_err(DeserializeError::reflect)?,
+                Partial::alloc_owned::<T>()?,
             )
         };
-        let partial = self.deserialize_into(wip)?;
-        let heap_value: HeapValue<'input, false> =
-            partial.build().map_err(DeserializeError::reflect)?;
+
+        // Create a dyn-dispatched view for the actual deserialization work.
+        let dyn_parser: &mut dyn DynParser<'input> = &mut self.parser;
+        let mut dyn_deser = FormatDeserializer {
+            parser: dyn_parser,
+            last_span: self.last_span,
+            current_path: self.current_path.clone(),
+            _marker: core::marker::PhantomData,
+        };
+
+        let partial = dyn_deser.deserialize_into(wip)?;
+
+        // Sync state back
+        self.last_span = dyn_deser.last_span;
+
+        let heap_value: HeapValue<'input, false> = partial.build()?;
 
         // SAFETY: HeapValue<'input, false> contains no borrowed data because BORROW=false.
         // The transmute only changes the phantom lifetime marker.
@@ -194,7 +232,7 @@ where
     }
 
     /// Deserialize the next value in the stream into `T` (for backward compatibility).
-    pub fn deserialize_root<T>(&mut self) -> Result<T, DeserializeError<P::Error>>
+    pub fn deserialize_root<T>(&mut self) -> Result<T, DeserializeError>
     where
         T: Facet<'static>,
     {
@@ -206,7 +244,7 @@ where
     /// This is required for formats like TOML that allow table reopening, where
     /// fields of a nested struct may be set, then fields of a sibling, then more
     /// fields of the original struct.
-    pub fn deserialize_deferred<T>(&mut self) -> Result<T, DeserializeError<P::Error>>
+    pub fn deserialize_deferred<T>(&mut self) -> Result<T, DeserializeError>
     where
         T: Facet<'static>,
     {
@@ -216,16 +254,27 @@ where
         #[allow(unsafe_code)]
         let wip: Partial<'input, false> = unsafe {
             core::mem::transmute::<Partial<'static, false>, Partial<'input, false>>(
-                Partial::alloc_owned::<T>().map_err(DeserializeError::reflect)?,
+                Partial::alloc_owned::<T>()?,
             )
         };
-        let wip = wip.begin_deferred().map_err(DeserializeError::reflect)?;
-        let partial = self.deserialize_into(wip)?;
-        let partial = partial
-            .finish_deferred()
-            .map_err(DeserializeError::reflect)?;
-        let heap_value: HeapValue<'input, false> =
-            partial.build().map_err(DeserializeError::reflect)?;
+        let wip = wip.begin_deferred()?;
+
+        // Create a dyn-dispatched view for the actual deserialization work.
+        let dyn_parser: &mut dyn DynParser<'input> = &mut self.parser;
+        let mut dyn_deser = FormatDeserializer {
+            parser: dyn_parser,
+            last_span: self.last_span,
+            current_path: self.current_path.clone(),
+            _marker: core::marker::PhantomData,
+        };
+
+        let partial = dyn_deser.deserialize_into(wip)?;
+
+        // Sync state back
+        self.last_span = dyn_deser.last_span;
+
+        let partial = partial.finish_deferred()?;
+        let heap_value: HeapValue<'input, false> = partial.build()?;
 
         // SAFETY: HeapValue<'input, false> contains no borrowed data because BORROW=false.
         // The transmute only changes the phantom lifetime marker.
@@ -249,19 +298,32 @@ where
     pub fn deserialize_with_shape<T>(
         &mut self,
         source_shape: &'static Shape,
-    ) -> Result<T, DeserializeError<P::Error>>
+    ) -> Result<T, DeserializeError>
     where
         T: Facet<'static>,
     {
         #[allow(unsafe_code)]
         let wip: Partial<'input, false> = unsafe {
             core::mem::transmute::<Partial<'static, false>, Partial<'input, false>>(
-                Partial::alloc_owned::<T>().map_err(DeserializeError::reflect)?,
+                Partial::alloc_owned::<T>()?,
             )
         };
-        let partial = self.deserialize_into_with_shape(wip, source_shape)?;
-        let heap_value: HeapValue<'input, false> =
-            partial.build().map_err(DeserializeError::reflect)?;
+
+        // Create a dyn-dispatched view for the actual deserialization work.
+        let dyn_parser: &mut dyn DynParser<'input> = &mut self.parser;
+        let mut dyn_deser = FormatDeserializer {
+            parser: dyn_parser,
+            last_span: self.last_span,
+            current_path: self.current_path.clone(),
+            _marker: core::marker::PhantomData,
+        };
+
+        let partial = dyn_deser.deserialize_into_with_shape(wip, source_shape)?;
+
+        // Sync state back
+        self.last_span = dyn_deser.last_span;
+
+        let heap_value: HeapValue<'input, false> = partial.build()?;
 
         #[allow(unsafe_code)]
         let heap_value: HeapValue<'static, false> = unsafe {
@@ -283,11 +345,11 @@ where
     fn expect_event(
         &mut self,
         expected: &'static str,
-    ) -> Result<ParseEvent<'input>, DeserializeError<P::Error>> {
+    ) -> Result<ParseEvent<'input>, DeserializeError> {
         let event = self
             .parser
             .next_event()
-            .map_err(DeserializeError::Parser)?
+            .map_err(DeserializeError::parser)?
             .ok_or(DeserializeError::UnexpectedEof { expected })?;
         trace!(?event, expected, "expect_event: got event");
         // Capture the span of the consumed event for error reporting
@@ -300,11 +362,11 @@ where
     fn expect_peek(
         &mut self,
         expected: &'static str,
-    ) -> Result<ParseEvent<'input>, DeserializeError<P::Error>> {
+    ) -> Result<ParseEvent<'input>, DeserializeError> {
         let event = self
             .parser
             .peek_event()
-            .map_err(DeserializeError::Parser)?
+            .map_err(DeserializeError::parser)?
             .ok_or(DeserializeError::UnexpectedEof { expected })?;
         trace!(?event, expected, "expect_peek: peeked event");
         Ok(event)
@@ -332,7 +394,7 @@ where
     pub fn deserialize_into(
         &mut self,
         mut wip: Partial<'input, BORROW>,
-    ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         let shape = wip.shape();
         trace!(
             shape_name = shape.type_identifier,
@@ -347,21 +409,20 @@ where
             && let Some(raw) = self
                 .parser
                 .capture_raw()
-                .map_err(DeserializeError::Parser)?
+                .map_err(DeserializeError::parser)?
         {
             // The raw type is a tuple struct like RawJson(Cow<str>)
             // Access field 0 (the Cow<str>) and set it
-            wip = wip.begin_nth_field(0).map_err(DeserializeError::reflect)?;
+            wip = wip.begin_nth_field(0)?;
             wip = self.set_string_value(wip, Cow::Borrowed(raw))?;
-            wip = wip.end().map_err(DeserializeError::reflect)?;
+            wip = wip.end()?;
             return Ok(wip);
         }
 
         // Check for container-level proxy (format-specific proxies take precedence)
         let format_ns = self.parser.format_namespace();
-        let (wip_returned, has_proxy) = wip
-            .begin_custom_deserialization_from_shape_with_format(format_ns)
-            .map_err(DeserializeError::reflect)?;
+        let (wip_returned, has_proxy) =
+            wip.begin_custom_deserialization_from_shape_with_format(format_ns)?;
         wip = wip_returned;
         if has_proxy {
             wip = self.deserialize_into(wip)?;
@@ -375,11 +436,9 @@ where
             .and_then(|field| field.effective_proxy(format_ns))
             .is_some()
         {
-            wip = wip
-                .begin_custom_deserialization_with_format(format_ns)
-                .map_err(DeserializeError::reflect)?;
+            wip = wip.begin_custom_deserialization_with_format(format_ns)?;
             wip = self.deserialize_into(wip)?;
-            wip = wip.end().map_err(DeserializeError::reflect)?;
+            wip = wip.end()?;
             return Ok(wip);
         }
 
@@ -395,9 +454,9 @@ where
 
         // Priority 1: Check for builder_shape (immutable collections like Bytes -> BytesMut)
         if shape.builder_shape.is_some() {
-            wip = wip.begin_inner().map_err(DeserializeError::reflect)?;
+            wip = wip.begin_inner()?;
             wip = self.deserialize_into(wip)?;
-            wip = wip.end().map_err(DeserializeError::reflect)?;
+            wip = wip.end()?;
             return Ok(wip);
         }
 
@@ -419,9 +478,9 @@ where
                 Def::List(_) | Def::Map(_) | Def::Set(_) | Def::Array(_)
             )
         {
-            wip = wip.begin_inner().map_err(DeserializeError::reflect)?;
+            wip = wip.begin_inner()?;
             wip = self.deserialize_into(wip)?;
-            wip = wip.end().map_err(DeserializeError::reflect)?;
+            wip = wip.end()?;
             return Ok(wip);
         }
 
@@ -435,41 +494,33 @@ where
                     match field.metadata_kind() {
                         Some("span") => {
                             // Populate span from parser's current position
-                            wip = wip
-                                .begin_field(field.effective_name())
-                                .map_err(DeserializeError::reflect)?;
+                            wip = wip.begin_field(field.effective_name())?;
                             if let Some(span) = self.last_span {
-                                wip = wip.begin_some().map_err(DeserializeError::reflect)?;
+                                wip = wip.begin_some()?;
                                 // Set the span struct fields
-                                wip = wip
-                                    .begin_field("offset")
-                                    .map_err(DeserializeError::reflect)?;
-                                wip = wip.set(span.offset).map_err(DeserializeError::reflect)?;
-                                wip = wip.end().map_err(DeserializeError::reflect)?;
-                                wip = wip.begin_field("len").map_err(DeserializeError::reflect)?;
-                                wip = wip.set(span.len).map_err(DeserializeError::reflect)?;
-                                wip = wip.end().map_err(DeserializeError::reflect)?;
-                                wip = wip.end().map_err(DeserializeError::reflect)?;
+                                wip = wip.begin_field("offset")?;
+                                wip = wip.set(span.offset)?;
+                                wip = wip.end()?;
+                                wip = wip.begin_field("len")?;
+                                wip = wip.set(span.len)?;
+                                wip = wip.end()?;
+                                wip = wip.end()?;
                             } else {
-                                wip = wip.set_default().map_err(DeserializeError::reflect)?;
+                                wip = wip.set_default()?;
                             }
-                            wip = wip.end().map_err(DeserializeError::reflect)?;
+                            wip = wip.end()?;
                         }
                         Some(_other) => {
                             // Other metadata types (doc, tag) - set to default for now
-                            wip = wip
-                                .begin_field(field.effective_name())
-                                .map_err(DeserializeError::reflect)?;
-                            wip = wip.set_default().map_err(DeserializeError::reflect)?;
-                            wip = wip.end().map_err(DeserializeError::reflect)?;
+                            wip = wip.begin_field(field.effective_name())?;
+                            wip = wip.set_default()?;
+                            wip = wip.end()?;
                         }
                         None => {
                             // This is the value field - recurse into it
-                            wip = wip
-                                .begin_field(field.effective_name())
-                                .map_err(DeserializeError::reflect)?;
+                            wip = wip.begin_field(field.effective_name())?;
                             wip = self.deserialize_into(wip)?;
-                            wip = wip.end().map_err(DeserializeError::reflect)?;
+                            wip = wip.end()?;
                         }
                     }
                 }
@@ -535,7 +586,7 @@ where
         &mut self,
         wip: Partial<'input, BORROW>,
         hint_shape: &'static Shape,
-    ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         self.deserialize_value_recursive(wip, hint_shape)
     }
 
@@ -544,7 +595,7 @@ where
         &mut self,
         mut wip: Partial<'input, BORROW>,
         hint_shape: &'static Shape,
-    ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         // Handle Option
         if let Def::Option(opt_def) = &hint_shape.def {
             self.parser.hint_option();
@@ -556,7 +607,7 @@ where
                 ParseEvent::Scalar(ScalarValue::Null | ScalarValue::Unit)
             ) {
                 let _ = self.expect_event("null or unit")?;
-                wip = wip.set_default().map_err(DeserializeError::reflect)?;
+                wip = wip.set_default()?;
             } else {
                 wip = self.deserialize_value_recursive(wip, opt_def.t)?;
             }
@@ -609,7 +660,7 @@ where
     fn deserialize_option(
         &mut self,
         mut wip: Partial<'input, BORROW>,
-    ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         // Hint to non-self-describing parsers that an Option is expected
         self.parser.hint_option();
 
@@ -624,12 +675,12 @@ where
             // Consume the null/unit
             let _ = self.expect_event("null or unit")?;
             // Set to None (default)
-            wip = wip.set_default().map_err(DeserializeError::reflect)?;
+            wip = wip.set_default()?;
         } else {
             // Some(value)
-            wip = wip.begin_some().map_err(DeserializeError::reflect)?;
+            wip = wip.begin_some()?;
             wip = self.deserialize_into(wip)?;
-            wip = wip.end().map_err(DeserializeError::reflect)?;
+            wip = wip.end()?;
         }
         Ok(wip)
     }
@@ -642,7 +693,7 @@ where
     fn deserialize_struct(
         &mut self,
         wip: Partial<'input, BORROW>,
-    ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         // Get struct fields for lookup
         let struct_def = match &wip.shape().ty {
             Type::User(UserType::Struct(def)) => def,
@@ -667,7 +718,7 @@ where
     fn deserialize_tuple(
         &mut self,
         mut wip: Partial<'input, BORROW>,
-    ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         // Get field count for tuple hints
         let field_count = match &wip.shape().ty {
             Type::User(UserType::Struct(def)) => def.fields.len(),
@@ -687,9 +738,9 @@ where
         // Plain tuple structs without the transparent attribute use array syntax.
         if field_count == 1 && wip.shape().is_transparent() {
             // Unwrap into field "0" and deserialize directly
-            wip = wip.begin_field("0").map_err(DeserializeError::reflect)?;
+            wip = wip.begin_field("0")?;
             wip = self.deserialize_into(wip)?;
-            wip = wip.end().map_err(DeserializeError::reflect)?;
+            wip = wip.end()?;
             return Ok(wip);
         }
 
@@ -754,11 +805,9 @@ where
 
             // Select field by index
             let field_name = alloc::string::ToString::to_string(&index);
-            wip = wip
-                .begin_field(&field_name)
-                .map_err(DeserializeError::reflect)?;
+            wip = wip.begin_field(&field_name)?;
             wip = self.deserialize_into(wip)?;
-            wip = wip.end().map_err(DeserializeError::reflect)?;
+            wip = wip.end()?;
             index += 1;
         }
 
@@ -771,7 +820,7 @@ where
     /// collect field names and their scalar values, then restores the position.
     fn collect_evidence(
         &mut self,
-    ) -> Result<alloc::vec::Vec<crate::FieldEvidence<'input>>, DeserializeError<P::Error>> {
+    ) -> Result<alloc::vec::Vec<crate::FieldEvidence<'input>>, DeserializeError> {
         use crate::{FieldEvidence, FieldLocationHint};
 
         let save_point = self.parser.save();
@@ -782,7 +831,7 @@ where
 
         // Read through the structure
         loop {
-            let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
+            let event = self.parser.next_event().map_err(DeserializeError::parser)?;
             let Some(event) = event else { break };
 
             match event {
@@ -868,7 +917,7 @@ where
     fn deserialize_list(
         &mut self,
         mut wip: Partial<'input, BORROW>,
-    ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         trace!("deserialize_list: starting");
 
         // Check if this is a Vec<u8> - if so, try the optimized byte sequence path
@@ -927,7 +976,7 @@ where
         };
 
         // Initialize the list
-        wip = wip.init_list().map_err(DeserializeError::reflect)?;
+        wip = wip.init_list()?;
         trace!("deserialize_list: initialized list, starting loop");
 
         loop {
@@ -942,9 +991,9 @@ where
             }
 
             trace!("deserialize_list: deserializing list item");
-            wip = wip.begin_list_item().map_err(DeserializeError::reflect)?;
+            wip = wip.begin_list_item()?;
             wip = self.deserialize_into(wip)?;
-            wip = wip.end().map_err(DeserializeError::reflect)?;
+            wip = wip.end()?;
         }
 
         trace!("deserialize_list: completed");
@@ -954,7 +1003,7 @@ where
     fn deserialize_array(
         &mut self,
         mut wip: Partial<'input, BORROW>,
-    ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         // Get the fixed array length from the type definition
         let array_len = match &wip.shape().def {
             Def::Array(array_def) => array_def.n,
@@ -995,7 +1044,7 @@ where
         // Transition to Array tracker state. This is important for empty arrays
         // like [u8; 0] which have no elements to initialize but still need
         // their tracker state set correctly for require_full_initialization to pass.
-        wip = wip.init_array().map_err(DeserializeError::reflect)?;
+        wip = wip.init_array()?;
 
         let mut index = 0usize;
         loop {
@@ -1007,11 +1056,9 @@ where
                 break;
             }
 
-            wip = wip
-                .begin_nth_field(index)
-                .map_err(DeserializeError::reflect)?;
+            wip = wip.begin_nth_field(index)?;
             wip = self.deserialize_into(wip)?;
-            wip = wip.end().map_err(DeserializeError::reflect)?;
+            wip = wip.end()?;
             index += 1;
         }
 
@@ -1021,7 +1068,7 @@ where
     fn deserialize_set(
         &mut self,
         mut wip: Partial<'input, BORROW>,
-    ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         // Hint to non-self-describing parsers that a sequence is expected
         self.parser.hint_sequence();
 
@@ -1049,7 +1096,7 @@ where
         };
 
         // Initialize the set
-        wip = wip.init_set().map_err(DeserializeError::reflect)?;
+        wip = wip.init_set()?;
 
         loop {
             let event = self.expect_peek("value")?;
@@ -1060,9 +1107,9 @@ where
                 break;
             }
 
-            wip = wip.begin_set_item().map_err(DeserializeError::reflect)?;
+            wip = wip.begin_set_item()?;
             wip = self.deserialize_into(wip)?;
-            wip = wip.end().map_err(DeserializeError::reflect)?;
+            wip = wip.end()?;
         }
 
         Ok(wip)
@@ -1071,14 +1118,14 @@ where
     fn deserialize_map(
         &mut self,
         mut wip: Partial<'input, BORROW>,
-    ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         // For non-self-describing formats, hint that a map is expected
         self.parser.hint_map();
 
         let event = self.expect_event("value")?;
 
         // Initialize the map
-        wip = wip.init_map().map_err(DeserializeError::reflect)?;
+        wip = wip.init_map()?;
 
         // Handle both self-describing (StructStart) and non-self-describing (SequenceStart) formats
         match event {
@@ -1090,14 +1137,14 @@ where
                         ParseEvent::StructEnd => break,
                         ParseEvent::FieldKey(key) => {
                             // Begin key
-                            wip = wip.begin_key().map_err(DeserializeError::reflect)?;
+                            wip = wip.begin_key()?;
                             wip = self.deserialize_map_key(wip, key.name, key.doc, key.tag)?;
-                            wip = wip.end().map_err(DeserializeError::reflect)?;
+                            wip = wip.end()?;
 
                             // Begin value
-                            wip = wip.begin_value().map_err(DeserializeError::reflect)?;
+                            wip = wip.begin_value()?;
                             wip = self.deserialize_into(wip)?;
-                            wip = wip.end().map_err(DeserializeError::reflect)?;
+                            wip = wip.end()?;
                         }
                         other => {
                             return Err(DeserializeError::TypeMismatch {
@@ -1123,14 +1170,14 @@ where
                             self.expect_event("value")?;
 
                             // Deserialize key
-                            wip = wip.begin_key().map_err(DeserializeError::reflect)?;
+                            wip = wip.begin_key()?;
                             wip = self.deserialize_into(wip)?;
-                            wip = wip.end().map_err(DeserializeError::reflect)?;
+                            wip = wip.end()?;
 
                             // Deserialize value
-                            wip = wip.begin_value().map_err(DeserializeError::reflect)?;
+                            wip = wip.begin_value()?;
                             wip = self.deserialize_into(wip)?;
-                            wip = wip.end().map_err(DeserializeError::reflect)?;
+                            wip = wip.end()?;
                         }
                         other => {
                             return Err(DeserializeError::TypeMismatch {
@@ -1159,7 +1206,7 @@ where
     fn deserialize_scalar(
         &mut self,
         mut wip: Partial<'input, BORROW>,
-    ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         // Hint to non-self-describing parsers what scalar type is expected
         let shape = wip.shape();
 
@@ -1226,11 +1273,11 @@ where
                                     found_scalar = Some(scalar);
                                 } else {
                                     // Skip non-scalar argument
-                                    self.parser.skip_value().map_err(DeserializeError::Parser)?;
+                                    self.parser.skip_value().map_err(DeserializeError::parser)?;
                                 }
                             } else {
                                 // Skip other fields (_node_name, _arguments, properties, etc.)
-                                self.parser.skip_value().map_err(DeserializeError::Parser)?;
+                                self.parser.skip_value().map_err(DeserializeError::parser)?;
                             }
                         }
                         _ => {
@@ -1279,7 +1326,7 @@ where
         key: Option<Cow<'input, str>>,
         doc: Option<Vec<Cow<'input, str>>>,
         tag: Option<Cow<'input, str>>,
-    ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         let shape = wip.shape();
 
         trace!(shape_name = %shape, shape_def = ?shape.def, ?key, ?doc, ?tag, "deserialize_map_key");
@@ -1293,48 +1340,42 @@ where
                 for field in st.fields {
                     if field.metadata_kind() == Some("doc") {
                         // This is the doc field - set it from the doc parameter
-                        wip = wip
-                            .begin_field(field.effective_name())
-                            .map_err(DeserializeError::reflect)?;
+                        wip = wip.begin_field(field.effective_name())?;
                         if let Some(ref doc_lines) = doc {
                             // Set as Some(Vec<String>)
-                            wip = wip.begin_some().map_err(DeserializeError::reflect)?;
-                            wip = wip.init_list().map_err(DeserializeError::reflect)?;
+                            wip = wip.begin_some()?;
+                            wip = wip.init_list()?;
                             for line in doc_lines {
-                                wip = wip.begin_list_item().map_err(DeserializeError::reflect)?;
+                                wip = wip.begin_list_item()?;
                                 wip = self.set_string_value(wip, line.clone())?;
-                                wip = wip.end().map_err(DeserializeError::reflect)?;
+                                wip = wip.end()?;
                             }
-                            wip = wip.end().map_err(DeserializeError::reflect)?;
+                            wip = wip.end()?;
                         } else {
                             // Set as None
-                            wip = wip.set_default().map_err(DeserializeError::reflect)?;
+                            wip = wip.set_default()?;
                         }
-                        wip = wip.end().map_err(DeserializeError::reflect)?;
+                        wip = wip.end()?;
                     } else if field.metadata_kind() == Some("tag") {
                         // This is the tag field - set it from the tag parameter
-                        wip = wip
-                            .begin_field(field.effective_name())
-                            .map_err(DeserializeError::reflect)?;
+                        wip = wip.begin_field(field.effective_name())?;
                         if let Some(ref tag_name) = tag {
                             // Set as Some(String)
-                            wip = wip.begin_some().map_err(DeserializeError::reflect)?;
+                            wip = wip.begin_some()?;
                             wip = self.set_string_value(wip, tag_name.clone())?;
-                            wip = wip.end().map_err(DeserializeError::reflect)?;
+                            wip = wip.end()?;
                         } else {
                             // Set as None (not a tagged key)
-                            wip = wip.set_default().map_err(DeserializeError::reflect)?;
+                            wip = wip.set_default()?;
                         }
-                        wip = wip.end().map_err(DeserializeError::reflect)?;
+                        wip = wip.end()?;
                     } else if field.metadata_kind().is_none() {
                         // This is the value field - recurse with the key and tag.
                         // Doc is already consumed by this container, but tag may be needed
                         // by a nested metadata container (e.g., Documented<ObjectKey>).
-                        wip = wip
-                            .begin_field(field.effective_name())
-                            .map_err(DeserializeError::reflect)?;
+                        wip = wip.begin_field(field.effective_name())?;
                         wip = self.deserialize_map_key(wip, key.clone(), None, tag.clone())?;
-                        wip = wip.end().map_err(DeserializeError::reflect)?;
+                        wip = wip.end()?;
                     }
                 }
             }
@@ -1347,14 +1388,14 @@ where
             match key {
                 None => {
                     // Unit key -> None variant (use set_default to mark as initialized)
-                    wip = wip.set_default().map_err(DeserializeError::reflect)?;
+                    wip = wip.set_default()?;
                     return Ok(wip);
                 }
                 Some(inner_key) => {
                     // Named key -> Some(inner)
-                    wip = wip.begin_some().map_err(DeserializeError::reflect)?;
+                    wip = wip.begin_some()?;
                     wip = self.deserialize_map_key(wip, Some(inner_key), None, None)?;
-                    wip = wip.end().map_err(DeserializeError::reflect)?;
+                    wip = wip.end()?;
                     return Ok(wip);
                 }
             }
@@ -1373,9 +1414,9 @@ where
         // which are handled directly.
         let is_pointer = matches!(shape.def, Def::Pointer(_));
         if shape.inner.is_some() && !is_pointer {
-            wip = wip.begin_inner().map_err(DeserializeError::reflect)?;
+            wip = wip.begin_inner()?;
             wip = self.deserialize_map_key(wip, Some(key), None, None)?;
-            wip = wip.end().map_err(DeserializeError::reflect)?;
+            wip = wip.end()?;
             return Ok(wip);
         }
 
@@ -1386,7 +1427,7 @@ where
         match deserialize_map_key_terminal_inner(wip, key, self.last_span) {
             Ok(wip) => Ok(wip),
             Err(MapKeyTerminalResult::NeedsSetString { wip, s }) => self.set_string_value(wip, s),
-            Err(MapKeyTerminalResult::Error(e)) => Err(e.into_deserialize_error()),
+            Err(MapKeyTerminalResult::Error(e)) => Err(e),
         }
     }
 }
