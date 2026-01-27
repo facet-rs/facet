@@ -166,7 +166,7 @@ mod path_navigator;
 mod validate;
 
 /// Default size of the event buffer for batched parsing.
-pub const DEFAULT_EVENT_BUFFER_SIZE: usize = 128;
+pub const DEFAULT_EVENT_BUFFER_SIZE: usize = 512;
 
 /// Generic deserializer that drives a format-specific parser directly into `Partial`.
 ///
