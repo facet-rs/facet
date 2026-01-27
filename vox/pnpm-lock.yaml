@@ -117,6 +117,15 @@ importers:
         specifier: ^6
         version: 6.4.1(@types/node@22.19.3)
 
+  typescript/tests/browser-wasm:
+    devDependencies:
+      vite:
+        specifier: ^6
+        version: 6.4.1(@types/node@22.19.3)
+      vite-plugin-wasm:
+        specifier: ^3
+        version: 3.5.0(vite@6.4.1(@types/node@22.19.3))
+
   typescript/tests/playwright:
     devDependencies:
       '@playwright/test':
@@ -851,6 +860,11 @@ packages:
     engines: {node: ^18.0.0 || >=20.0.0}
     hasBin: true
 
+  vite-plugin-wasm@3.5.0:
+    resolution: {integrity: sha512-X5VWgCnqiQEGb+omhlBVsvTfxikKtoOgAzQ95+BZ8gQ+VfMHIjSHr0wyvXFQCa0eKQ0fKyaL0kWcEnYqBac4lQ==}
+    peerDependencies:
+      vite: ^2 || ^3 || ^4 || ^5 || ^6 || ^7
+
   vite@5.4.21:
     resolution: {integrity: sha512-o5a9xKjbtuhY6Bi5S3+HvbRERmouabWbyUcpXXUA1u+GNUKoROi9byOJ8M0nHbHYHkYICiMlqxkg1KkYmm25Sw==}
     engines: {node: ^18.0.0 || >=20.0.0}
@@ -1492,6 +1506,10 @@ snapshots:
       - sugarss
       - supports-color
       - terser
+
+  vite-plugin-wasm@3.5.0(vite@6.4.1(@types/node@22.19.3)):
+    dependencies:
+      vite: 6.4.1(@types/node@22.19.3)
 
   vite@5.4.21(@types/node@22.19.3):
     dependencies:

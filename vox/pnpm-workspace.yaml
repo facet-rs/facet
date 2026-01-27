@@ -3,4 +3,5 @@ packages:
   - "typescript/subject"
   - "typescript/generated"
   - "typescript/tests/browser"
+  - "typescript/tests/browser-wasm"
   - "typescript/tests/playwright"

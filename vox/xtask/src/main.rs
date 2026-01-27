@@ -91,7 +91,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         Commands::Clippy => {
             println!("=== Running clippy ===");
-            cmd!(sh, "cargo clippy --workspace --all-targets -- -D warnings").run()?;
+            // Exclude wasm-browser-tests which only compiles for wasm32
+            cmd!(
+                sh,
+                "cargo clippy --workspace --all-targets --exclude wasm-browser-tests -- -D warnings"
+            )
+            .run()?;
         }
         Commands::Fmt { fix } => {
             if fix {

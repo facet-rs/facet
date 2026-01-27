@@ -191,6 +191,7 @@ impl Caller for ConnectionHandle {
     }
 
     #[allow(unsafe_code)]
+    #[cfg(not(target_arch = "wasm32"))]
     fn call_with_metadata_by_shape(
         &self,
         method_id: u64,
@@ -198,6 +199,27 @@ impl Caller for ConnectionHandle {
         args_shape: &'static Shape,
         metadata: roam_wire::Metadata,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send {
+        // SAFETY: Caller guarantees args_ptr is valid, initialized, and Send
+        unsafe {
+            ConnectionHandle::call_with_metadata_by_shape(
+                self,
+                method_id,
+                args_ptr.as_ptr(),
+                args_shape,
+                metadata,
+            )
+        }
+    }
+
+    #[allow(unsafe_code)]
+    #[cfg(target_arch = "wasm32")]
+    fn call_with_metadata_by_shape(
+        &self,
+        method_id: u64,
+        args_ptr: SendPtr,
+        args_shape: &'static Shape,
+        metadata: roam_wire::Metadata,
+    ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> {
         // SAFETY: Caller guarantees args_ptr is valid, initialized, and Send
         unsafe {
             ConnectionHandle::call_with_metadata_by_shape(

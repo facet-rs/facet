@@ -195,6 +195,65 @@ jobs:
         env:
           SUBJECT_CMD: "sh swift/subject/subject-swift.sh"
 
+  rust-wasm:
+    name: Rust / WebAssembly
+    runs-on: depot-ubuntu-24.04-4
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check roam-websocket for wasm32
+        run: cargo check --target wasm32-unknown-unknown -p roam-websocket
+
+      - name: Check wasm-browser-tests for wasm32
+        run: cargo check --target wasm32-unknown-unknown -p wasm-browser-tests
+
+  wasm-browser-tests:
+    name: Browser / Rust-Wasm
+    runs-on: depot-ubuntu-24.04-4
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '25'
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack
+
+      - name: Build wasm-browser-tests
+        run: wasm-pack build --target web rust/wasm-browser-tests --out-dir ../../typescript/tests/browser-wasm/pkg
+
+      - name: Install TypeScript dependencies
+        run: cd typescript && pnpm install
+
+      - name: Install Playwright browsers
+        run: cd typescript && pnpm exec playwright install --with-deps chromium
+
+      - name: Run Wasm browser tests
+        run: cd typescript/tests/playwright && pnpm exec playwright test wasm.spec.ts
+
   rust-windows:
     name: Rust / Windows
     runs-on: depot-windows-2025-16
