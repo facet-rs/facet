@@ -9,7 +9,7 @@ use facet_core::{Facet, Shape, Type, UserType};
 // Note: Shape is still used by fill_defaults_from_shape and coerce_types_from_shape
 use facet_format::{
     ContainerKind, FieldKey, FieldLocationHint, FormatDeserializer, FormatParser, ParseError,
-    ParseEvent, SavePoint, ScalarValue,
+    ParseEvent, ParseEventKind, SavePoint, ScalarValue,
 };
 use facet_reflect::Span;
 use indexmap::IndexMap;
@@ -1211,13 +1211,13 @@ impl<'input> FormatParser<'input> for ConfigValueParser<'input> {
                         self.stack.push(StackFrame::Value(value));
 
                         // Emit key as-is (no Shape-based translation)
-                        return Ok(Some(ParseEvent::FieldKey(FieldKey::new(
+                        return Ok(Some(self.event(ParseEventKind::FieldKey(FieldKey::new(
                             key,
                             FieldLocationHint::KeyValue,
-                        ))));
+                        )))));
                     } else {
                         // Object entries done
-                        return Ok(Some(ParseEvent::StructEnd));
+                        return Ok(Some(self.event(ParseEventKind::StructEnd)));
                     }
                 }
                 StackFrame::Array { items, index } => {
@@ -1235,7 +1235,7 @@ impl<'input> FormatParser<'input> for ConfigValueParser<'input> {
                         continue;
                     } else {
                         // Array is done
-                        return Ok(Some(ParseEvent::SequenceEnd));
+                        return Ok(Some(self.event(ParseEventKind::SequenceEnd)));
                     }
                 }
                 StackFrame::Enum {
@@ -1253,10 +1253,10 @@ impl<'input> FormatParser<'input> for ConfigValueParser<'input> {
                                 phase: 1,
                                 is_unit,
                             });
-                            return Ok(Some(ParseEvent::FieldKey(FieldKey::new(
+                            return Ok(Some(self.event(ParseEventKind::FieldKey(FieldKey::new(
                                 variant,
                                 FieldLocationHint::KeyValue,
-                            ))));
+                            )))));
                         }
                         1 => {
                             // Phase 1: emit variant content
@@ -1270,19 +1270,23 @@ impl<'input> FormatParser<'input> for ConfigValueParser<'input> {
 
                             if is_unit {
                                 // Unit variant: emit Unit scalar
-                                return Ok(Some(ParseEvent::Scalar(ScalarValue::Unit)));
+                                return Ok(Some(
+                                    self.event(ParseEventKind::Scalar(ScalarValue::Unit)),
+                                ));
                             } else {
                                 // Struct/tuple variant: emit StructStart and push Object processing
                                 self.stack.push(StackFrame::Object {
                                     entries: fields,
                                     index: 0,
                                 });
-                                return Ok(Some(ParseEvent::StructStart(ContainerKind::Object)));
+                                return Ok(Some(
+                                    self.event(ParseEventKind::StructStart(ContainerKind::Object)),
+                                ));
                             }
                         }
                         _ => {
                             // Phase 2: emit outer StructEnd (the enum wrapper)
-                            return Ok(Some(ParseEvent::StructEnd));
+                            return Ok(Some(self.event(ParseEventKind::StructEnd)));
                         }
                     }
                 }
@@ -1326,28 +1330,35 @@ impl<'input> FormatParser<'input> for ConfigValueParser<'input> {
 
 /// Helper methods for emitting values.
 impl<'input> ConfigValueParser<'input> {
+    /// Create a ParseEvent with the current span.
+    fn event(&self, kind: ParseEventKind<'input>) -> ParseEvent<'input> {
+        ParseEvent::new(kind, self.last_span.unwrap_or_default())
+    }
+
     /// Emit an event for a single value.
     fn emit_value(&mut self, value: &'input ConfigValue) -> ParseEvent<'input> {
         match value {
             ConfigValue::Null(sourced) => {
                 self.update_span(sourced);
-                ParseEvent::Scalar(ScalarValue::Null)
+                self.event(ParseEventKind::Scalar(ScalarValue::Null))
             }
             ConfigValue::Bool(sourced) => {
                 self.update_span(sourced);
-                ParseEvent::Scalar(ScalarValue::Bool(sourced.value))
+                self.event(ParseEventKind::Scalar(ScalarValue::Bool(sourced.value)))
             }
             ConfigValue::Integer(sourced) => {
                 self.update_span(sourced);
-                ParseEvent::Scalar(ScalarValue::I64(sourced.value))
+                self.event(ParseEventKind::Scalar(ScalarValue::I64(sourced.value)))
             }
             ConfigValue::Float(sourced) => {
                 self.update_span(sourced);
-                ParseEvent::Scalar(ScalarValue::F64(sourced.value))
+                self.event(ParseEventKind::Scalar(ScalarValue::F64(sourced.value)))
             }
             ConfigValue::String(sourced) => {
                 self.update_span(sourced);
-                ParseEvent::Scalar(ScalarValue::Str(std::borrow::Cow::Borrowed(&sourced.value)))
+                self.event(ParseEventKind::Scalar(ScalarValue::Str(
+                    std::borrow::Cow::Borrowed(&sourced.value),
+                )))
             }
             ConfigValue::Array(sourced) => {
                 self.update_span(sourced);
@@ -1358,7 +1369,7 @@ impl<'input> ConfigValueParser<'input> {
                     index: 0,
                 });
 
-                ParseEvent::SequenceStart(ContainerKind::Array)
+                self.event(ParseEventKind::SequenceStart(ContainerKind::Array))
             }
             ConfigValue::Object(sourced) => {
                 self.update_span(sourced);
@@ -1370,7 +1381,7 @@ impl<'input> ConfigValueParser<'input> {
                 // Push object processing
                 self.stack.push(StackFrame::Object { entries, index: 0 });
 
-                ParseEvent::StructStart(ContainerKind::Object)
+                self.event(ParseEventKind::StructStart(ContainerKind::Object))
             }
             ConfigValue::Enum(sourced) => {
                 self.update_span(sourced);
@@ -1399,7 +1410,7 @@ impl<'input> ConfigValueParser<'input> {
                 });
 
                 // Emit the outer struct start (the enum wrapper)
-                ParseEvent::StructStart(ContainerKind::Object)
+                self.event(ParseEventKind::StructStart(ContainerKind::Object))
             }
         }
     }
@@ -1607,7 +1618,13 @@ mod tests {
         let mut parser = ConfigValueParser::new(&value);
 
         let event = parser.next_event().unwrap();
-        assert!(matches!(event, Some(ParseEvent::Scalar(ScalarValue::Null))));
+        assert!(matches!(
+            event,
+            Some(ParseEvent {
+                kind: ParseEventKind::Scalar(ScalarValue::Null),
+                ..
+            })
+        ));
 
         let event = parser.next_event().unwrap();
         assert!(event.is_none());
@@ -1621,7 +1638,10 @@ mod tests {
         let event = parser.next_event().unwrap();
         assert!(matches!(
             event,
-            Some(ParseEvent::Scalar(ScalarValue::Bool(true)))
+            Some(ParseEvent {
+                kind: ParseEventKind::Scalar(ScalarValue::Bool(true)),
+                ..
+            })
         ));
     }
 
@@ -1633,7 +1653,10 @@ mod tests {
         let event = parser.next_event().unwrap();
         assert!(matches!(
             event,
-            Some(ParseEvent::Scalar(ScalarValue::I64(42)))
+            Some(ParseEvent {
+                kind: ParseEventKind::Scalar(ScalarValue::I64(42)),
+                ..
+            })
         ));
     }
 
@@ -1643,7 +1666,11 @@ mod tests {
         let mut parser = ConfigValueParser::new(&value);
 
         let event = parser.next_event().unwrap();
-        if let Some(ParseEvent::Scalar(ScalarValue::Str(s))) = event {
+        if let Some(ParseEvent {
+            kind: ParseEventKind::Scalar(ScalarValue::Str(s)),
+            ..
+        }) = event
+        {
             assert_eq!(s.as_ref(), "hello");
         } else {
             panic!("expected string scalar");
@@ -1659,11 +1686,20 @@ mod tests {
         let event = parser.next_event().unwrap();
         assert!(matches!(
             event,
-            Some(ParseEvent::SequenceStart(ContainerKind::Array))
+            Some(ParseEvent {
+                kind: ParseEventKind::SequenceStart(ContainerKind::Array),
+                ..
+            })
         ));
 
         let event = parser.next_event().unwrap();
-        assert!(matches!(event, Some(ParseEvent::SequenceEnd)));
+        assert!(matches!(
+            event,
+            Some(ParseEvent {
+                kind: ParseEventKind::SequenceEnd,
+                ..
+            })
+        ));
 
         let event = parser.next_event().unwrap();
         assert!(event.is_none());
@@ -1679,28 +1715,49 @@ mod tests {
         let mut parser = ConfigValueParser::new(&value);
 
         let event = parser.next_event().unwrap();
-        assert!(matches!(event, Some(ParseEvent::SequenceStart(_))));
-
-        let event = parser.next_event().unwrap();
         assert!(matches!(
             event,
-            Some(ParseEvent::Scalar(ScalarValue::I64(1)))
+            Some(ParseEvent {
+                kind: ParseEventKind::SequenceStart(_),
+                ..
+            })
         ));
 
         let event = parser.next_event().unwrap();
         assert!(matches!(
             event,
-            Some(ParseEvent::Scalar(ScalarValue::I64(2)))
+            Some(ParseEvent {
+                kind: ParseEventKind::Scalar(ScalarValue::I64(1)),
+                ..
+            })
         ));
 
         let event = parser.next_event().unwrap();
         assert!(matches!(
             event,
-            Some(ParseEvent::Scalar(ScalarValue::I64(3)))
+            Some(ParseEvent {
+                kind: ParseEventKind::Scalar(ScalarValue::I64(2)),
+                ..
+            })
         ));
 
         let event = parser.next_event().unwrap();
-        assert!(matches!(event, Some(ParseEvent::SequenceEnd)));
+        assert!(matches!(
+            event,
+            Some(ParseEvent {
+                kind: ParseEventKind::Scalar(ScalarValue::I64(3)),
+                ..
+            })
+        ));
+
+        let event = parser.next_event().unwrap();
+        assert!(matches!(
+            event,
+            Some(ParseEvent {
+                kind: ParseEventKind::SequenceEnd,
+                ..
+            })
+        ));
 
         let event = parser.next_event().unwrap();
         assert!(event.is_none());
@@ -1714,11 +1771,20 @@ mod tests {
         let event = parser.next_event().unwrap();
         assert!(matches!(
             event,
-            Some(ParseEvent::StructStart(ContainerKind::Object))
+            Some(ParseEvent {
+                kind: ParseEventKind::StructStart(ContainerKind::Object),
+                ..
+            })
         ));
 
         let event = parser.next_event().unwrap();
-        assert!(matches!(event, Some(ParseEvent::StructEnd)));
+        assert!(matches!(
+            event,
+            Some(ParseEvent {
+                kind: ParseEventKind::StructEnd,
+                ..
+            })
+        ));
 
         let event = parser.next_event().unwrap();
         assert!(event.is_none());
@@ -1737,18 +1803,32 @@ mod tests {
         let mut parser = ConfigValueParser::new(&value);
 
         let event = parser.next_event().unwrap();
-        assert!(matches!(event, Some(ParseEvent::StructStart(_))));
+        assert!(matches!(
+            event,
+            Some(ParseEvent {
+                kind: ParseEventKind::StructStart(_),
+                ..
+            })
+        ));
 
         // First field
         let event = parser.next_event().unwrap();
-        if let Some(ParseEvent::FieldKey(key)) = event {
+        if let Some(ParseEvent {
+            kind: ParseEventKind::FieldKey(key),
+            ..
+        }) = event
+        {
             assert_eq!(key.name.as_ref().map(|s| s.as_ref()), Some("name"));
         } else {
             panic!("expected FieldKey");
         }
 
         let event = parser.next_event().unwrap();
-        if let Some(ParseEvent::Scalar(ScalarValue::Str(s))) = event {
+        if let Some(ParseEvent {
+            kind: ParseEventKind::Scalar(ScalarValue::Str(s)),
+            ..
+        }) = event
+        {
             assert_eq!(s.as_ref(), "Alice");
         } else {
             panic!("expected string value");
@@ -1756,7 +1836,11 @@ mod tests {
 
         // Second field
         let event = parser.next_event().unwrap();
-        if let Some(ParseEvent::FieldKey(key)) = event {
+        if let Some(ParseEvent {
+            kind: ParseEventKind::FieldKey(key),
+            ..
+        }) = event
+        {
             assert_eq!(key.name.as_ref().map(|s| s.as_ref()), Some("age"));
         } else {
             panic!("expected FieldKey");
@@ -1765,11 +1849,20 @@ mod tests {
         let event = parser.next_event().unwrap();
         assert!(matches!(
             event,
-            Some(ParseEvent::Scalar(ScalarValue::I64(30)))
+            Some(ParseEvent {
+                kind: ParseEventKind::Scalar(ScalarValue::I64(30)),
+                ..
+            })
         ));
 
         let event = parser.next_event().unwrap();
-        assert!(matches!(event, Some(ParseEvent::StructEnd)));
+        assert!(matches!(
+            event,
+            Some(ParseEvent {
+                kind: ParseEventKind::StructEnd,
+                ..
+            })
+        ));
 
         let event = parser.next_event().unwrap();
         assert!(event.is_none());
