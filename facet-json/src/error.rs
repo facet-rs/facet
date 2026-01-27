@@ -7,7 +7,6 @@ use core::fmt::{self, Display};
 
 use facet_reflect::{ReflectError, Span};
 
-use crate::adapter::{AdapterError, AdapterErrorKind};
 use crate::scanner::ScanErrorKind;
 
 /// Error type for JSON deserialization.
@@ -248,22 +247,6 @@ impl JsonErrorKind {
             JsonErrorKind::InvalidUtf8 => "invalid UTF-8".into(),
             JsonErrorKind::Solver(_) => "solver error".into(),
             JsonErrorKind::Io(_) => "I/O error".into(),
-        }
-    }
-}
-
-impl From<AdapterError> for JsonError {
-    fn from(err: AdapterError) -> Self {
-        let kind = match err.kind {
-            AdapterErrorKind::Scan(scan_err) => JsonErrorKind::Scan(scan_err),
-            AdapterErrorKind::NeedMore => JsonErrorKind::UnexpectedEof {
-                expected: "more data",
-            },
-        };
-        JsonError {
-            kind,
-            span: Some(err.span),
-            source_code: None,
         }
     }
 }
