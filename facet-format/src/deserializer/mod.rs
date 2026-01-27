@@ -162,6 +162,17 @@ mod path_navigator;
 
 mod validate;
 
+/// Size of the event buffer for batched parsing.
+#[allow(dead_code)]
+const EVENT_BUFFER_SIZE: usize = 64;
+
+/// An event paired with its source span.
+#[allow(dead_code)]
+struct SpannedEvent<'de> {
+    event: ParseEvent<'de>,
+    span: Span,
+}
+
 /// Generic deserializer that drives a format-specific parser directly into `Partial`.
 ///
 /// The const generic `BORROW` controls whether string data can be borrowed:
@@ -177,6 +188,13 @@ pub struct FormatDeserializer<'parser, 'input, const BORROW: bool> {
     /// The span of the most recently consumed event (for error reporting).
     last_span: Span,
 
+    /// Buffer for batched event reading, with spans.
+    #[allow(dead_code)]
+    event_buffer: Vec<SpannedEvent<'input>>,
+    /// Read position in the buffer.
+    #[allow(dead_code)]
+    event_read_pos: usize,
+
     _marker: PhantomData<&'input ()>,
 }
 
@@ -186,6 +204,8 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, true> {
         Self {
             parser: Box::new(parser),
             last_span: Span { offset: 0, len: 0 },
+            event_buffer: Vec::with_capacity(EVENT_BUFFER_SIZE),
+            event_read_pos: 0,
             _marker: PhantomData,
         }
     }
@@ -197,6 +217,8 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
         Self {
             parser: Box::new(parser),
             last_span: Span { offset: 0, len: 0 },
+            event_buffer: Vec::with_capacity(EVENT_BUFFER_SIZE),
+            event_read_pos: 0,
             _marker: PhantomData,
         }
     }

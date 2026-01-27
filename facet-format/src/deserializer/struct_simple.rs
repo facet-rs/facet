@@ -2,7 +2,8 @@ use facet_core::{Type, UserType};
 use facet_reflect::Partial;
 
 use crate::{
-    DeserializeError, DeserializeErrorKind, FormatDeserializer, ParseEvent, ScalarValue, SpanGuard,
+    DeserializeError, DeserializeErrorKind, FormatDeserializer, ParseEventKind, ScalarValue,
+    SpanGuard,
 };
 
 impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BORROW> {
@@ -49,7 +50,8 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         }
 
         // Handle Scalar(Null): use Default if available
-        if let Some(ParseEvent::Scalar(ScalarValue::Null)) = &maybe_event
+        if let Some(ref event) = maybe_event
+            && matches!(event.kind, ParseEventKind::Scalar(ScalarValue::Null))
             && struct_type_has_default
         {
             let _ = self.expect_event("null")?;
@@ -60,7 +62,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
         let event = self.expect_event("value")?;
 
-        if !matches!(event, ParseEvent::StructStart(_)) {
+        if !matches!(event.kind, ParseEventKind::StructStart(_)) {
             return Err(self.mk_err(
                 &wip,
                 DeserializeErrorKind::UnexpectedToken {
@@ -83,11 +85,11 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 ?event,
                 "deserialize_struct_simple: loop iteration, got event"
             );
-            match event {
-                ParseEvent::StructEnd => {
+            match event.kind {
+                ParseEventKind::StructEnd => {
                     break;
                 }
-                ParseEvent::OrderedField => {
+                ParseEventKind::OrderedField => {
                     // Non-self-describing formats emit OrderedField events in order
                     let idx = ordered_field_index;
                     ordered_field_index += 1;
@@ -100,7 +102,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                         fields_set[idx] = true;
                     }
                 }
-                ParseEvent::FieldKey(key) => {
+                ParseEventKind::FieldKey(key) => {
                     trace!(?key, "deserialize_struct_simple: got FieldKey");
 
                     // Unit keys don't make sense for struct fields

@@ -5,7 +5,7 @@ use facet_reflect::Partial;
 
 use crate::{
     ContainerKind, DeserializeError, DeserializeErrorKind, FieldEvidence, FieldLocationHint,
-    FormatDeserializer, ParseEvent, ScalarTypeHint, ScalarValue, SpanGuard,
+    FormatDeserializer, ParseEventKind, ScalarTypeHint, ScalarValue, SpanGuard,
 };
 
 impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BORROW> {
@@ -220,8 +220,8 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             // Treat both Null and Unit as None
             // Unit is used by Styx for tags without payload (e.g., @string vs @string{...})
             if matches!(
-                event,
-                ParseEvent::Scalar(ScalarValue::Null | ScalarValue::Unit)
+                event.kind,
+                ParseEventKind::Scalar(ScalarValue::Null | ScalarValue::Unit)
             ) {
                 let _ = self.expect_event("null or unit")?;
                 wip = wip.set_default()?;
@@ -292,8 +292,8 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         // Treat both Null and Unit as None
         // Unit is used by Styx for tags without payload (e.g., @string vs @string{...})
         if matches!(
-            event,
-            ParseEvent::Scalar(ScalarValue::Null | ScalarValue::Unit)
+            event.kind,
+            ParseEventKind::Scalar(ScalarValue::Null | ScalarValue::Unit)
         ) {
             // Consume the null/unit
             let _ = self.expect_event("null or unit")?;
@@ -369,29 +369,30 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         // Special case: unit type () can accept Scalar(Unit) or Scalar(Null) directly
         // This enables patterns like styx bare identifiers: { id, name } -> IndexMap<String, ()>
         // and JSON null values for unit types (e.g., ConfigValue::Null(Spanned<()>))
-        if field_count == 0
-            && matches!(
-                self.expect_peek("value")?,
-                ParseEvent::Scalar(ScalarValue::Unit | ScalarValue::Null)
-            )
-        {
-            self.expect_event("value")?; // consume the unit/null scalar
-            return Ok(wip);
+        if field_count == 0 {
+            let peeked = self.expect_peek("value")?;
+            if matches!(
+                peeked.kind,
+                ParseEventKind::Scalar(ScalarValue::Unit | ScalarValue::Null)
+            ) {
+                self.expect_event("value")?; // consume the unit/null scalar
+                return Ok(wip);
+            }
         }
 
         let event = self.expect_event("value")?;
 
         // Accept either SequenceStart (JSON arrays) or StructStart (for
         // non-self-describing formats like postcard where tuples are positional structs)
-        let struct_mode = match event {
-            ParseEvent::SequenceStart(_) => false,
+        let struct_mode = match event.kind {
+            ParseEventKind::SequenceStart(_) => false,
             // For non-self-describing formats, StructStart(Object) is valid for tuples
             // because hint_struct_fields was called and tuples are positional structs
-            ParseEvent::StructStart(_) if !self.parser.is_self_describing() => true,
+            ParseEventKind::StructStart(_) if !self.parser.is_self_describing() => true,
             // For self-describing formats like TOML/JSON, objects with numeric keys
             // (e.g., { "0" = true, "1" = 1 }) are valid tuple representations
-            ParseEvent::StructStart(ContainerKind::Object) => true,
-            ParseEvent::StructStart(kind) => {
+            ParseEventKind::StructStart(ContainerKind::Object) => true,
+            ParseEventKind::StructStart(kind) => {
                 return Err(DeserializeError {
                     span: Some(self.last_span),
                     path: Some(wip.path()),
@@ -418,13 +419,16 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             let event = self.expect_peek("value")?;
 
             // Check for end of container
-            if matches!(event, ParseEvent::SequenceEnd | ParseEvent::StructEnd) {
+            if matches!(
+                event.kind,
+                ParseEventKind::SequenceEnd | ParseEventKind::StructEnd
+            ) {
                 self.expect_event("value")?;
                 break;
             }
 
             // In struct mode, skip FieldKey events
-            if struct_mode && matches!(event, ParseEvent::FieldKey(_)) {
+            if struct_mode && matches!(event.kind, ParseEventKind::FieldKey(_)) {
                 self.expect_event("value")?;
                 continue;
             }
@@ -458,8 +462,8 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             let event = self.parser.next_event()?;
             let Some(event) = event else { break };
 
-            match event {
-                ParseEvent::StructStart(_) => {
+            match event.kind {
+                ParseEventKind::StructStart(_) => {
                     depth += 1;
                     // If we were expecting a value, record field with no scalar
                     if depth > 1
@@ -473,13 +477,13 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                         });
                     }
                 }
-                ParseEvent::StructEnd => {
+                ParseEventKind::StructEnd => {
                     depth -= 1;
                     if depth == 0 {
                         break;
                     }
                 }
-                ParseEvent::SequenceStart(_) => {
+                ParseEventKind::SequenceStart(_) => {
                     depth += 1;
                     // If we were expecting a value, record field with no scalar
                     if let Some(name) = pending_field_name.take() {
@@ -491,10 +495,10 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                         });
                     }
                 }
-                ParseEvent::SequenceEnd => {
+                ParseEventKind::SequenceEnd => {
                     depth -= 1;
                 }
-                ParseEvent::FieldKey(key) => {
+                ParseEventKind::FieldKey(key) => {
                     // If there's a pending field, record it without a value
                     if let Some(name) = pending_field_name.take() {
                         evidence.push(FieldEvidence {
@@ -509,7 +513,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                         pending_field_name = key.name;
                     }
                 }
-                ParseEvent::Scalar(scalar) => {
+                ParseEventKind::Scalar(scalar) => {
                     if let Some(name) = pending_field_name.take() {
                         // Record field with its scalar value
                         evidence.push(FieldEvidence {
@@ -520,7 +524,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                         });
                     }
                 }
-                ParseEvent::OrderedField | ParseEvent::VariantTag(_) => {}
+                ParseEventKind::OrderedField | ParseEventKind::VariantTag(_) => {}
             }
         }
 
@@ -558,8 +562,10 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             let event = self.expect_event("bytes")?;
             trace!(?event, "deserialize_list: got bytes event");
 
-            return match event {
-                ParseEvent::Scalar(ScalarValue::Bytes(bytes)) => self.set_bytes_value(wip, bytes),
+            return match event.kind {
+                ParseEventKind::Scalar(ScalarValue::Bytes(bytes)) => {
+                    self.set_bytes_value(wip, bytes)
+                }
                 _ => Err(DeserializeError {
                     span: Some(self.last_span),
                     path: Some(wip.path()),
@@ -579,11 +585,11 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         trace!(?event, "deserialize_list: got container start event");
 
         // Expect SequenceStart for lists
-        match event {
-            ParseEvent::SequenceStart(_) => {
+        match event.kind {
+            ParseEventKind::SequenceStart(_) => {
                 trace!("deserialize_list: got sequence start");
             }
-            ParseEvent::StructStart(kind) => {
+            ParseEventKind::StructStart(kind) => {
                 return Err(DeserializeError {
                     span: Some(self.last_span),
                     path: Some(wip.path()),
@@ -614,7 +620,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             trace!(?event, "deserialize_list: loop iteration");
 
             // Check for end of sequence
-            if matches!(event, ParseEvent::SequenceEnd) {
+            if matches!(event.kind, ParseEventKind::SequenceEnd) {
                 self.expect_event("value")?;
                 trace!("deserialize_list: reached end of sequence");
                 break;
@@ -655,9 +661,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         let event = self.expect_event("value")?;
 
         // Expect SequenceStart for arrays
-        match event {
-            ParseEvent::SequenceStart(_) => {}
-            ParseEvent::StructStart(kind) => {
+        match event.kind {
+            ParseEventKind::SequenceStart(_) => {}
+            ParseEventKind::StructStart(kind) => {
                 return Err(DeserializeError {
                     span: Some(self.last_span),
                     path: Some(wip.path()),
@@ -689,7 +695,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             let event = self.expect_peek("value")?;
 
             // Check for end of sequence
-            if matches!(event, ParseEvent::SequenceEnd) {
+            if matches!(event.kind, ParseEventKind::SequenceEnd) {
                 self.expect_event("value")?;
                 break;
             }
@@ -716,9 +722,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         let event = self.expect_event("value")?;
 
         // Expect SequenceStart for sets
-        match event {
-            ParseEvent::SequenceStart(_) => {}
-            ParseEvent::StructStart(kind) => {
+        match event.kind {
+            ParseEventKind::SequenceStart(_) => {}
+            ParseEventKind::StructStart(kind) => {
                 return Err(DeserializeError {
                     span: Some(self.last_span),
                     path: Some(wip.path()),
@@ -747,7 +753,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             let event = self.expect_peek("value")?;
 
             // Check for end of sequence
-            if matches!(event, ParseEvent::SequenceEnd) {
+            if matches!(event.kind, ParseEventKind::SequenceEnd) {
                 self.expect_event("value")?;
                 break;
             }
@@ -776,14 +782,14 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         wip = wip.init_map()?;
 
         // Handle both self-describing (StructStart) and non-self-describing (SequenceStart) formats
-        match event {
-            ParseEvent::StructStart(_) => {
+        match event.kind {
+            ParseEventKind::StructStart(_) => {
                 // Self-describing format (e.g., JSON): maps are represented as objects
                 loop {
                     let event = self.expect_event("value")?;
-                    match event {
-                        ParseEvent::StructEnd => break,
-                        ParseEvent::FieldKey(key) => {
+                    match event.kind {
+                        ParseEventKind::StructEnd => break,
+                        ParseEventKind::FieldKey(key) => {
                             // Begin key
                             wip = wip
                                 .begin_key()?
@@ -796,29 +802,29 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                                 .with(|w| self.deserialize_into(w))?
                                 .end()?;
                         }
-                        other => {
+                        _ => {
                             return Err(DeserializeError {
                                 span: Some(self.last_span),
                                 path: Some(wip.path()),
                                 kind: DeserializeErrorKind::UnexpectedToken {
                                     expected: "field key or struct end for map",
-                                    got: other.kind_name().into(),
+                                    got: event.kind_name().into(),
                                 },
                             });
                         }
                     }
                 }
             }
-            ParseEvent::SequenceStart(_) => {
+            ParseEventKind::SequenceStart(_) => {
                 // Non-self-describing format (e.g., postcard): maps are sequences of key-value pairs
                 loop {
                     let event = self.expect_peek("value")?;
-                    match event {
-                        ParseEvent::SequenceEnd => {
+                    match event.kind {
+                        ParseEventKind::SequenceEnd => {
                             self.expect_event("value")?;
                             break;
                         }
-                        ParseEvent::OrderedField => {
+                        ParseEventKind::OrderedField => {
                             self.expect_event("value")?;
 
                             // Deserialize key
@@ -830,26 +836,26 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                                 .with(|w| self.deserialize_into(w))?
                                 .end()?;
                         }
-                        other => {
+                        _ => {
                             return Err(DeserializeError {
                                 span: Some(self.last_span),
                                 path: Some(wip.path()),
                                 kind: DeserializeErrorKind::UnexpectedToken {
                                     expected: "ordered field or sequence end for map",
-                                    got: other.kind_name().into(),
+                                    got: event.kind_name().into(),
                                 },
                             });
                         }
                     }
                 }
             }
-            other => {
+            _ => {
                 return Err(DeserializeError {
                     span: Some(self.last_span),
                     path: Some(wip.path()),
                     kind: DeserializeErrorKind::UnexpectedToken {
                         expected: "struct start or sequence start for map",
-                        got: other.kind_name().into(),
+                        got: event.kind_name().into(),
                     },
                 });
             }
@@ -907,24 +913,24 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
         let event = self.expect_event("value")?;
 
-        match event {
-            ParseEvent::Scalar(scalar) => {
+        match event.kind {
+            ParseEventKind::Scalar(scalar) => {
                 wip = self.set_scalar(wip, scalar)?;
                 Ok(wip)
             }
-            ParseEvent::StructStart(_container_kind) => {
+            ParseEventKind::StructStart(_container_kind) => {
                 // When deserializing into a scalar, extract the _arg value.
                 let mut found_scalar: Option<ScalarValue<'input>> = None;
 
                 loop {
                     let inner_event = self.expect_event("field or struct end")?;
-                    match inner_event {
-                        ParseEvent::StructEnd => break,
-                        ParseEvent::FieldKey(key) => {
+                    match inner_event.kind {
+                        ParseEventKind::StructEnd => break,
+                        ParseEventKind::FieldKey(key) => {
                             // Look for _arg field (single argument)
                             if key.name.as_deref() == Some("_arg") {
                                 let value_event = self.expect_event("argument value")?;
-                                if let ParseEvent::Scalar(scalar) = value_event {
+                                if let ParseEventKind::Scalar(scalar) = value_event.kind {
                                     found_scalar = Some(scalar);
                                 } else {
                                     // Skip non-scalar argument
@@ -955,12 +961,12 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                     })
                 }
             }
-            other => Err(DeserializeError {
+            _ => Err(DeserializeError {
                 span: Some(self.last_span),
                 path: Some(wip.path()),
                 kind: DeserializeErrorKind::UnexpectedToken {
                     expected: "scalar value",
-                    got: other.kind_name().into(),
+                    got: event.kind_name().into(),
                 },
             }),
         }

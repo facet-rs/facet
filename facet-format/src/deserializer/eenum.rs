@@ -6,7 +6,7 @@ use facet_solver::VariantsByFormat;
 
 use crate::{
     ContainerKind, DeserializeError, DeserializeErrorKind, EnumVariantHint, FieldEvidence,
-    FormatDeserializer, ParseEvent, ScalarValue, SpanGuard,
+    FormatDeserializer, ParseEventKind, ScalarValue, SpanGuard,
     deserializer::scalar_matches::scalar_matches_shape,
 };
 
@@ -75,10 +75,12 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         let _guard = SpanGuard::new(self.last_span);
         let event = self.parser.peek_event()?;
 
-        if let Some(ParseEvent::Scalar(scalar)) = event {
+        if let Some(ref event) = event
+            && let ParseEventKind::Scalar(scalar) = &event.kind
+        {
             wip = match scalar {
-                ScalarValue::I64(discriminant) => wip.select_variant(discriminant)?,
-                ScalarValue::U64(discriminant) => wip.select_variant(discriminant as i64)?,
+                ScalarValue::I64(discriminant) => wip.select_variant(*discriminant)?,
+                ScalarValue::U64(discriminant) => wip.select_variant(*discriminant as i64)?,
                 ScalarValue::Str(str_discriminant) => {
                     let discriminant = str_discriminant.parse().map_err(|_| DeserializeError {
                         span: Some(self.last_span),
@@ -121,7 +123,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         trace!(?event, "peeked event");
 
         // Check for any bare scalar (string, bool, int, etc.)
-        if let ParseEvent::Scalar(scalar) = &event {
+        if let ParseEventKind::Scalar(scalar) = &event.kind {
             let shape = wip.shape();
             let enum_def = match &shape.ty {
                 Type::User(UserType::Enum(e)) => e,
@@ -196,7 +198,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         }
 
         // Check for VariantTag (self-describing formats like Styx)
-        if let ParseEvent::VariantTag(tag_name) = &event {
+        if let ParseEventKind::VariantTag(tag_name) = &event.kind {
             let tag_name = *tag_name;
             self.expect_event("value")?; // consume VariantTag
 
@@ -266,7 +268,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         }
 
         // Otherwise expect a struct { VariantName: ... }
-        if !matches!(event, ParseEvent::StructStart(_)) {
+        if !matches!(event.kind, ParseEventKind::StructStart(_)) {
             return Err(DeserializeError {
                 span: Some(self.last_span),
                 path: Some(wip.path()),
@@ -281,8 +283,8 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
         // Get the variant name from the field key
         let event = self.expect_event("value")?;
-        let field_key_name = match event {
-            ParseEvent::FieldKey(key) => key.name.ok_or_else(|| DeserializeError {
+        let field_key_name = match event.kind {
+            ParseEventKind::FieldKey(key) => key.name.ok_or_else(|| DeserializeError {
                 span: Some(self.last_span),
                 path: Some(wip.path()),
                 kind: DeserializeErrorKind::UnexpectedToken {
@@ -340,7 +342,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         // For #[facet(other)] fallback variants, if the content is Unit, use the field key name as the value
         if is_using_other_fallback {
             let event = self.expect_peek("value")?;
-            if matches!(event, ParseEvent::Scalar(ScalarValue::Unit)) {
+            if matches!(event.kind, ParseEventKind::Scalar(ScalarValue::Unit)) {
                 self.expect_event("value")?; // consume Unit
                 wip = wip
                     .begin_nth_field(0)?
@@ -355,7 +357,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
         // Consume StructEnd
         let event = self.expect_event("value")?;
-        if !matches!(event, ParseEvent::StructEnd) {
+        if !matches!(event.kind, ParseEventKind::StructEnd) {
             return Err(DeserializeError {
                 span: Some(self.last_span),
                 path: Some(wip.path()),
@@ -393,7 +395,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
         // Step 2: Consume StructStart
         let event = self.expect_event("value")?;
-        if !matches!(event, ParseEvent::StructStart(_)) {
+        if !matches!(event.kind, ParseEventKind::StructStart(_)) {
             return Err(DeserializeError {
                 span: Some(self.last_span),
                 path: Some(wip.path()),
@@ -437,9 +439,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             // Consume remaining fields in the object
             loop {
                 let event = self.expect_event("value")?;
-                match event {
-                    ParseEvent::StructEnd => break,
-                    ParseEvent::FieldKey(_) => {
+                match event.kind {
+                    ParseEventKind::StructEnd => break,
+                    ParseEventKind::FieldKey(_) => {
                         self.parser.skip_value()?;
                     }
                     other => {
@@ -466,9 +468,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         // Process all fields (they can come in any order now)
         loop {
             let event = self.expect_event("value")?;
-            match event {
-                ParseEvent::StructEnd => break,
-                ParseEvent::FieldKey(key) => {
+            match event.kind {
+                ParseEventKind::StructEnd => break,
+                ParseEventKind::FieldKey(key) => {
                     // Unit keys don't make sense for struct fields
                     let key_name = match &key.name {
                         Some(name) => name.as_ref(),
@@ -588,8 +590,8 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
         // Get the variant name from FieldKey
         let field_event = self.expect_event("enum field key")?;
-        let variant_name = match field_event {
-            ParseEvent::FieldKey(key) => key.name.ok_or_else(|| {
+        let variant_name = match field_event.kind {
+            ParseEventKind::FieldKey(key) => key.name.ok_or_else(|| {
                 self.mk_err(
                     &wip,
                     DeserializeErrorKind::UnexpectedToken {
@@ -598,7 +600,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                     },
                 )
             })?,
-            ParseEvent::StructEnd => {
+            ParseEventKind::StructEnd => {
                 // Empty struct - this shouldn't happen for valid enums
                 return Err(self.mk_err(
                     &wip,
@@ -648,7 +650,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 } else {
                     // Multi-field tuple variant - parser emits SequenceStart
                     let seq_event = self.expect_event("tuple variant start")?;
-                    if !matches!(seq_event, ParseEvent::SequenceStart(_)) {
+                    if !matches!(seq_event.kind, ParseEventKind::SequenceStart(_)) {
                         return Err(DeserializeError {
                             span: Some(self.last_span),
                             path: Some(wip.path()),
@@ -670,7 +672,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                     }
 
                     let seq_end = self.expect_event("tuple variant end")?;
-                    if !matches!(seq_end, ParseEvent::SequenceEnd) {
+                    if !matches!(seq_end.kind, ParseEventKind::SequenceEnd) {
                         return Err(DeserializeError {
                             span: Some(self.last_span),
                             path: Some(wip.path()),
@@ -687,7 +689,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             StructKind::Struct => {
                 // The parser auto-emits StructStart and pushes InStruct state
                 let struct_event = self.expect_event("struct variant start")?;
-                if !matches!(struct_event, ParseEvent::StructStart(_)) {
+                if !matches!(struct_event.kind, ParseEventKind::StructStart(_)) {
                     return Err(DeserializeError {
                         span: Some(self.last_span),
                         path: Some(wip.path()),
@@ -706,15 +708,15 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 // Deserialize each field - parser will emit OrderedField for each
                 for field in variant.data.fields {
                     let field_event = self.expect_event("struct field")?;
-                    match field_event {
-                        ParseEvent::OrderedField | ParseEvent::FieldKey(_) => {
+                    match field_event.kind {
+                        ParseEventKind::OrderedField | ParseEventKind::FieldKey(_) => {
                             let key = field.rename.unwrap_or(field.name);
                             wip = wip
                                 .begin_object_entry(key)?
                                 .with(|w| self.deserialize_value_recursive(w, field.shape.get()))?
                                 .end()?;
                         }
-                        ParseEvent::StructEnd => {
+                        ParseEventKind::StructEnd => {
                             return Err(DeserializeError {
                                 span: Some(self.last_span),
                                 path: Some(wip.path()),
@@ -739,7 +741,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
                 // Consume inner StructEnd
                 let inner_end = self.expect_event("struct variant inner end")?;
-                if !matches!(inner_end, ParseEvent::StructEnd) {
+                if !matches!(inner_end.kind, ParseEventKind::StructEnd) {
                     return Err(DeserializeError {
                         span: Some(self.last_span),
                         path: Some(wip.path()),
@@ -756,7 +758,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
         // Consume the outer StructEnd
         let end_event = self.expect_event("enum struct end")?;
-        if !matches!(end_event, ParseEvent::StructEnd) {
+        if !matches!(end_event.kind, ParseEventKind::StructEnd) {
             return Err(DeserializeError {
                 span: Some(self.last_span),
                 path: Some(wip.path()),
@@ -794,7 +796,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
         // Read the StructStart emitted by the parser after hint_enum
         let event = self.expect_event("struct start for Result")?;
-        if !matches!(event, ParseEvent::StructStart(_)) {
+        if !matches!(event.kind, ParseEventKind::StructStart(_)) {
             return Err(DeserializeError {
                 span: Some(self.last_span),
                 path: Some(wip.path()),
@@ -807,8 +809,8 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
         // Read the FieldKey with the variant name ("Ok" or "Err")
         let key_event = self.expect_event("variant key for Result")?;
-        let variant_name = match key_event {
-            ParseEvent::FieldKey(key) => key.name.ok_or_else(|| DeserializeError {
+        let variant_name = match key_event.kind {
+            ParseEventKind::FieldKey(key) => key.name.ok_or_else(|| DeserializeError {
                 span: Some(self.last_span),
                 path: Some(wip.path()),
                 kind: DeserializeErrorKind::UnexpectedToken {
@@ -816,13 +818,13 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                     got: "unit key".into(),
                 },
             })?,
-            other => {
+            _ => {
                 return Err(DeserializeError {
                     span: Some(self.last_span),
                     path: Some(wip.path()),
                     kind: DeserializeErrorKind::UnexpectedToken {
                         expected: "field key with variant name",
-                        got: other.kind_name().into(),
+                        got: key_event.kind_name().into(),
                     },
                 });
             }
@@ -850,7 +852,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
         // Consume StructEnd
         let end_event = self.expect_event("struct end for Result")?;
-        if !matches!(end_event, ParseEvent::StructEnd) {
+        if !matches!(end_event.kind, ParseEventKind::StructEnd) {
             return Err(DeserializeError {
                 span: Some(self.last_span),
                 path: Some(wip.path()),
@@ -915,7 +917,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         // Struct variant: deserialize as a struct with named fields
         // Expect StructStart for the variant content
         let event = self.expect_event("value")?;
-        if !matches!(event, ParseEvent::StructStart(_)) {
+        if !matches!(event.kind, ParseEventKind::StructStart(_)) {
             return Err(DeserializeError {
                 span: Some(self.last_span),
                 path: Some(wip.path()),
@@ -933,9 +935,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         // Process all fields
         loop {
             let event = self.expect_event("value")?;
-            match event {
-                ParseEvent::StructEnd => break,
-                ParseEvent::FieldKey(key) => {
+            match event.kind {
+                ParseEventKind::StructEnd => break,
+                ParseEventKind::FieldKey(key) => {
                     // Unit keys don't make sense for struct fields
                     let key_name = match &key.name {
                         Some(name) => name.as_ref(),
@@ -1031,7 +1033,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
         // Step 2: Consume StructStart
         let event = self.expect_event("value")?;
-        if !matches!(event, ParseEvent::StructStart(_)) {
+        if !matches!(event.kind, ParseEventKind::StructStart(_)) {
             return Err(self.mk_err(
                 &wip,
                 DeserializeErrorKind::UnexpectedToken {
@@ -1061,9 +1063,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         let mut content_seen = false;
         loop {
             let event = self.expect_event("value")?;
-            match event {
-                ParseEvent::StructEnd => break,
-                ParseEvent::FieldKey(key) => {
+            match event.kind {
+                ParseEventKind::StructEnd => break,
+                ParseEventKind::FieldKey(key) => {
                     // Unit keys don't make sense for adjacently tagged enums
                     let key_name = match &key.name {
                         Some(name) => name.as_ref(),
@@ -1145,13 +1147,13 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 // Unit variant - normally nothing to deserialize
                 // But some formats may emit extra tokens
                 let event = self.expect_peek("value")?;
-                if matches!(event, ParseEvent::Scalar(ScalarValue::Unit)) {
+                if matches!(event.kind, ParseEventKind::Scalar(ScalarValue::Unit)) {
                     self.expect_event("value")?; // consume Unit
-                } else if matches!(event, ParseEvent::StructStart(_)) {
+                } else if matches!(event.kind, ParseEventKind::StructStart(_)) {
                     self.expect_event("value")?; // consume StructStart
                     // Expect immediate StructEnd for empty struct
                     let end_event = self.expect_event("value")?;
-                    if !matches!(end_event, ParseEvent::StructEnd) {
+                    if !matches!(end_event.kind, ParseEventKind::StructEnd) {
                         return Err(DeserializeError {
                             span: Some(self.last_span),
                             path: Some(wip.path()),
@@ -1175,10 +1177,10 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                     // Multi-field tuple variant - expect array or struct
                     let event = self.expect_event("value")?;
 
-                    let struct_mode = match event {
-                        ParseEvent::SequenceStart(_) => false,
-                        ParseEvent::StructStart(ContainerKind::Object) => true,
-                        ParseEvent::StructStart(kind) => {
+                    let struct_mode = match event.kind {
+                        ParseEventKind::SequenceStart(_) => false,
+                        ParseEventKind::StructStart(ContainerKind::Object) => true,
+                        ParseEventKind::StructStart(kind) => {
                             return Err(DeserializeError {
                                 span: Some(self.last_span),
                                 path: Some(wip.path()),
@@ -1205,7 +1207,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                         // In struct mode, skip FieldKey events
                         if struct_mode {
                             let event = self.expect_peek("value")?;
-                            if matches!(event, ParseEvent::FieldKey(_)) {
+                            if matches!(event.kind, ParseEventKind::FieldKey(_)) {
                                 self.expect_event("value")?;
                                 continue;
                             }
@@ -1219,7 +1221,10 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                     }
 
                     let event = self.expect_event("value")?;
-                    if !matches!(event, ParseEvent::SequenceEnd | ParseEvent::StructEnd) {
+                    if !matches!(
+                        event.kind,
+                        ParseEventKind::SequenceEnd | ParseEventKind::StructEnd
+                    ) {
                         return Err(DeserializeError {
                             span: Some(self.last_span),
                             path: Some(wip.path()),
@@ -1235,7 +1240,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             StructKind::Struct => {
                 // Struct variant - expect object with fields
                 let event = self.expect_event("value")?;
-                if !matches!(event, ParseEvent::StructStart(_)) {
+                if !matches!(event.kind, ParseEventKind::StructStart(_)) {
                     return Err(DeserializeError {
                         span: Some(self.last_span),
                         path: Some(wip.path()),
@@ -1268,9 +1273,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
                 loop {
                     let event = self.expect_event("value")?;
-                    match event {
-                        ParseEvent::StructEnd => break,
-                        ParseEvent::OrderedField => {
+                    match event.kind {
+                        ParseEventKind::StructEnd => break,
+                        ParseEventKind::OrderedField => {
                             let idx = ordered_field_index;
                             ordered_field_index += 1;
                             if idx < num_fields {
@@ -1281,7 +1286,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                                 fields_set[idx] = true;
                             }
                         }
-                        ParseEvent::FieldKey(key) => {
+                        ParseEventKind::FieldKey(key) => {
                             let key_name = match &key.name {
                                 Some(name) => name.as_ref(),
                                 None => {
@@ -1459,8 +1464,8 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
         let event = self.expect_peek("value")?;
 
-        match &event {
-            ParseEvent::Scalar(scalar) => {
+        match &event.kind {
+            ParseEventKind::Scalar(scalar) => {
                 // Try unit variants for null
                 if matches!(scalar, ScalarValue::Null)
                     && let Some(variant) = variants_by_format.unit_variants.first()
@@ -1526,7 +1531,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                     },
                 })
             }
-            ParseEvent::StructStart(_) => {
+            ParseEventKind::StructStart(_) => {
                 // For struct input, use solve_variant for proper field-based matching
                 let solve_result =
                     crate::solve_variant(shape, &mut *self.parser).map_err(|e| match e {
@@ -1589,7 +1594,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                     }
                 }
             }
-            ParseEvent::SequenceStart(_) => {
+            ParseEventKind::SequenceStart(_) => {
                 // For sequence input, use first tuple variant
                 if let Some((variant, _arity)) = variants_by_format.tuple_variants.first() {
                     wip = wip.select_variant_named(variant.effective_name())?;
@@ -1673,7 +1678,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         } else {
             // No content field - the payload must be Unit
             let event = self.expect_peek("value")?;
-            if matches!(event, ParseEvent::Scalar(ScalarValue::Unit)) {
+            if matches!(event.kind, ParseEventKind::Scalar(ScalarValue::Unit)) {
                 self.expect_event("value")?; // consume Unit
             } else {
                 return Err(DeserializeError {

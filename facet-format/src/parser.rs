@@ -90,6 +90,17 @@ pub trait FormatParser<'de> {
         Ok(None)
     }
 
+    /// Returns the raw input bytes, if available.
+    ///
+    /// This is used by the deserializer to implement raw capture when buffering
+    /// events. The deserializer tracks value boundaries using event spans and
+    /// slices the input directly.
+    ///
+    /// Returns `None` for streaming parsers that don't have the full input.
+    fn input(&self) -> Option<&'de [u8]> {
+        None
+    }
+
     /// Returns the shape of the format's raw capture type (e.g., `RawJson::SHAPE`).
     ///
     /// When the deserializer encounters a shape that matches this, it will use
@@ -304,6 +315,10 @@ impl<'de> FormatParser<'de> for &mut dyn FormatParser<'de> {
 
     fn capture_raw(&mut self) -> Result<Option<&'de str>, ParseError> {
         (**self).capture_raw()
+    }
+
+    fn input(&self) -> Option<&'de [u8]> {
+        (**self).input()
     }
 
     fn raw_capture_shape(&self) -> Option<&'static facet_core::Shape> {
