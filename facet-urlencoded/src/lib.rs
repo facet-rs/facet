@@ -2,7 +2,7 @@
 #![doc = include_str!("../README.md")]
 
 use facet_core::{Def, Facet, Type, UserType};
-use facet_reflect::{Partial, ReflectError, ShapeMismatchError};
+use facet_reflect::{AllocError, Partial, ReflectError, ShapeMismatchError};
 use log::*;
 
 #[cfg(test)]
@@ -365,6 +365,15 @@ impl From<ShapeMismatchError> for UrlEncodedError {
         UrlEncodedError::UnsupportedShape(format!(
             "shape mismatch: expected {}, got {}",
             err.expected, err.actual
+        ))
+    }
+}
+
+impl From<AllocError> for UrlEncodedError {
+    fn from(err: AllocError) -> Self {
+        UrlEncodedError::UnsupportedShape(format!(
+            "allocation failed for {}: {}",
+            err.shape, err.operation
         ))
     }
 }

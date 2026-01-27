@@ -1,4 +1,3 @@
-mod dyn_dispatch;
 mod flatten_defaults;
 mod flatten_in_externally_tagged_enum;
 mod format_specific_proxy;

@@ -15,10 +15,10 @@ fn test_simple_field_path() {
         enabled: bool,
     }
 
-    let mut path = Path::new();
+    let mut path = Path::new(Config::SHAPE);
     path.push(PathStep::Field(1)); // max_retries
 
-    let formatted = path.format_with_shape(Config::SHAPE);
+    let formatted = path.format();
     insta::assert_snapshot!(formatted);
 }
 
@@ -39,11 +39,11 @@ fn test_nested_struct_path() {
         inner: Inner,
     }
 
-    let mut path = Path::new();
+    let mut path = Path::new(Outer::SHAPE);
     path.push(PathStep::Field(1)); // inner
     path.push(PathStep::Field(0)); // value
 
-    let formatted = path.format_with_shape(Outer::SHAPE);
+    let formatted = path.format();
     insta::assert_snapshot!(formatted);
 }
 
@@ -63,12 +63,12 @@ fn test_vec_index_path() {
         items: Vec<Item>,
     }
 
-    let mut path = Path::new();
+    let mut path = Path::new(Container::SHAPE);
     path.push(PathStep::Field(0)); // items
     path.push(PathStep::Index(2)); // [2]
     path.push(PathStep::Field(0)); // id
 
-    let formatted = path.format_with_shape(Container::SHAPE);
+    let formatted = path.format();
     insta::assert_snapshot!(formatted);
 }
 
@@ -83,11 +83,11 @@ fn test_option_path() {
         debug_info: Option<String>,
     }
 
-    let mut path = Path::new();
+    let mut path = Path::new(Config::SHAPE);
     path.push(PathStep::Field(1)); // debug_info
     path.push(PathStep::OptionSome);
 
-    let formatted = path.format_with_shape(Config::SHAPE);
+    let formatted = path.format();
     insta::assert_snapshot!(formatted);
 }
 
@@ -103,11 +103,11 @@ fn test_enum_variant_path() {
         WithData { value: u32, name: String },
     }
 
-    let mut path = Path::new();
+    let mut path = Path::new(Message::SHAPE);
     path.push(PathStep::Variant(1)); // WithData
     path.push(PathStep::Field(1)); // name
 
-    let formatted = path.format_with_shape(Message::SHAPE);
+    let formatted = path.format();
     insta::assert_snapshot!(formatted);
 }
 
@@ -123,18 +123,18 @@ fn test_map_path() {
         settings: HashMap<String, u32>,
     }
 
-    let mut path = Path::new();
+    let mut path = Path::new(Config::SHAPE);
     path.push(PathStep::Field(0)); // settings
     path.push(PathStep::MapKey);
 
-    let formatted = path.format_with_shape(Config::SHAPE);
+    let formatted = path.format();
     insta::assert_snapshot!("map_key_path", formatted);
 
-    let mut path = Path::new();
+    let mut path = Path::new(Config::SHAPE);
     path.push(PathStep::Field(0)); // settings
     path.push(PathStep::MapValue);
 
-    let formatted = path.format_with_shape(Config::SHAPE);
+    let formatted = path.format();
     insta::assert_snapshot!("map_value_path", formatted);
 }
 
@@ -148,7 +148,7 @@ fn test_empty_path() {
         name: String,
     }
 
-    let path = Path::new();
-    let formatted = path.format_with_shape(Config::SHAPE);
+    let path = Path::new(Config::SHAPE);
+    let formatted = path.format();
     insta::assert_snapshot!(formatted);
 }
