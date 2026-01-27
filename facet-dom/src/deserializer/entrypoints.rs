@@ -45,14 +45,10 @@ where
     where
         T: Facet<'de>,
     {
-        let wip: Partial<'de, true> =
-            Partial::alloc::<T>().map_err(DomDeserializeError::Reflect)?;
+        let wip: Partial<'de, true> = Partial::alloc::<T>()?;
         let partial = self.deserialize_into(wip)?;
-        let heap_value: HeapValue<'de, true> =
-            partial.build().map_err(DomDeserializeError::Reflect)?;
-        heap_value
-            .materialize::<T>()
-            .map_err(DomDeserializeError::Reflect)
+        let heap_value: HeapValue<'de, true> = partial.build()?;
+        Ok(heap_value.materialize::<T>()?)
     }
 }
 
@@ -72,7 +68,7 @@ where
         #[allow(unsafe_code)]
         let wip: Partial<'de, false> = unsafe {
             core::mem::transmute::<Partial<'static, false>, Partial<'de, false>>(
-                Partial::alloc_owned::<T>().map_err(DomDeserializeError::Reflect)?,
+                Partial::alloc_owned::<T>()?,
             )
         };
         let partial = self.deserialize_into(wip)?;
@@ -82,11 +78,9 @@ where
         #[allow(unsafe_code)]
         let heap_value: HeapValue<'static, false> = unsafe {
             core::mem::transmute::<HeapValue<'de, false>, HeapValue<'static, false>>(
-                partial.build().map_err(DomDeserializeError::Reflect)?,
+                partial.build()?,
             )
         };
-        heap_value
-            .materialize::<T>()
-            .map_err(DomDeserializeError::Reflect)
+        Ok(heap_value.materialize::<T>()?)
     }
 }

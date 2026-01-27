@@ -539,7 +539,7 @@ mod tests {
 
     #[test]
     fn test_svg_float_tolerance() {
-        use facet_assert::{SameOptions, SameReport, check_same_with_report};
+        use rediff::{SameOptions, SameReport, check_same_with_report};
 
         // Simulate C vs Rust precision - C has 3 decimals, Rust has 10
         // (Without style difference to isolate float tolerance test)

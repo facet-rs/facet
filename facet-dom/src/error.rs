@@ -11,6 +11,12 @@ pub enum DomDeserializeError<E> {
     /// Reflection error.
     Reflect(facet_reflect::ReflectError),
 
+    /// Allocation error.
+    Alloc(facet_reflect::AllocError),
+
+    /// Shape mismatch error.
+    ShapeMismatch(facet_reflect::ShapeMismatchError),
+
     /// Unexpected end of input.
     UnexpectedEof {
         /// What was expected.
@@ -54,6 +60,20 @@ impl<E> From<facet_reflect::ReflectError> for DomDeserializeError<E> {
     }
 }
 
+impl<E> From<facet_reflect::AllocError> for DomDeserializeError<E> {
+    fn from(e: facet_reflect::AllocError) -> Self {
+        crate::trace!("🚨 AllocError -> DomDeserializeError: {e}");
+        Self::Alloc(e)
+    }
+}
+
+impl<E> From<facet_reflect::ShapeMismatchError> for DomDeserializeError<E> {
+    fn from(e: facet_reflect::ShapeMismatchError) -> Self {
+        crate::trace!("🚨 ShapeMismatchError -> DomDeserializeError: {e}");
+        Self::ShapeMismatch(e)
+    }
+}
+
 impl<E> From<facet_dessert::DessertError> for DomDeserializeError<E> {
     fn from(e: facet_dessert::DessertError) -> Self {
         crate::trace!("🚨 DessertError -> DomDeserializeError: {e}");
@@ -71,6 +91,8 @@ impl<E: std::error::Error> fmt::Display for DomDeserializeError<E> {
         match self {
             Self::Parser(e) => write!(f, "parser error: {e}"),
             Self::Reflect(e) => write!(f, "reflection error: {e}"),
+            Self::Alloc(e) => write!(f, "allocation error: {e}"),
+            Self::ShapeMismatch(e) => write!(f, "shape mismatch: {e}"),
             Self::UnexpectedEof { expected } => write!(f, "unexpected EOF, expected {expected}"),
             Self::TypeMismatch { expected, got } => {
                 write!(f, "type mismatch: expected {expected}, got {got}")
@@ -88,6 +110,8 @@ impl<E: std::error::Error + 'static> std::error::Error for DomDeserializeError<E
         match self {
             Self::Parser(e) => Some(e),
             Self::Reflect(e) => Some(e),
+            Self::Alloc(e) => Some(e),
+            Self::ShapeMismatch(e) => Some(e),
             _ => None,
         }
     }

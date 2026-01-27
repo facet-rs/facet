@@ -829,7 +829,7 @@ mod tests {
 
     #[test]
     fn test_float_tolerance_in_diff() {
-        use facet_assert::{SameOptions, SameReport, check_same_with_report};
+        use rediff::{SameOptions, SameReport, check_same_with_report};
 
         // Simulate C vs Rust precision difference
         // C: "118.239" parses to this f64
