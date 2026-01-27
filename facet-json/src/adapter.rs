@@ -88,8 +88,10 @@ impl From<ScanError> for AdapterError {
     }
 }
 
-/// Default chunk size for windowed scanning (small for testing boundary conditions)
-pub const DEFAULT_CHUNK_SIZE: usize = 4;
+/// Default chunk size for windowed scanning.
+/// Using usize::MAX effectively gives us the full input in one window,
+/// avoiding NeedMore overhead for non-streaming use cases.
+pub const DEFAULT_CHUNK_SIZE: usize = usize::MAX;
 
 /// Token adapter for slice-based parsing with fixed-size windowing.
 ///
@@ -146,7 +148,7 @@ impl<'input, const BORROW: bool, const TRUSTED_UTF8: bool>
     /// original input.
     pub fn new_with_offset(input: &'input [u8], offset: usize) -> Self {
         let offset = offset.min(input.len());
-        let initial_end = (offset + DEFAULT_CHUNK_SIZE).min(input.len());
+        let initial_end = offset.saturating_add(DEFAULT_CHUNK_SIZE).min(input.len());
         Self {
             input,
             window_start: offset,
@@ -165,14 +167,20 @@ impl<'input, const BORROW: bool, const TRUSTED_UTF8: bool>
     /// Grow the window by one chunk (or to end of input).
     #[inline]
     fn grow_window(&mut self) {
-        self.window_end = (self.window_end + self.chunk_size).min(self.input.len());
+        self.window_end = self
+            .window_end
+            .saturating_add(self.chunk_size)
+            .min(self.input.len());
     }
 
     /// Slide the window forward past consumed bytes, reset scanner.
     #[inline]
     fn slide_window(&mut self, consumed_in_window: usize) {
         self.window_start += consumed_in_window;
-        self.window_end = (self.window_start + self.chunk_size).min(self.input.len());
+        self.window_end = self
+            .window_start
+            .saturating_add(self.chunk_size)
+            .min(self.input.len());
         self.scanner.set_pos(0);
     }
 
