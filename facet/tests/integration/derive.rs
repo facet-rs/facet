@@ -1575,3 +1575,95 @@ fn non_metadata_container_flag() {
     let shape = Regular::SHAPE;
     assert!(!shape.is_metadata_container());
 }
+
+// Test for issue #1941 - macro_rules_attribute visibility parsing
+// When $vis:vis is used in macro_rules, it gets wrapped in a Group with Delimiter::None
+// This test verifies that the derive macro handles this correctly
+#[test]
+fn macro_rules_visibility_fragment() {
+    // This simulates what macro_rules_attribute does
+    macro_rules! with_vis {
+        ($vis:vis struct $name:ident;) => {
+            #[derive(Facet)]
+            $vis struct $name;
+        };
+    }
+
+    with_vis!(
+        pub struct VisibleCat;
+    );
+    with_vis!(
+        struct PrivateCat;
+    );
+
+    // Just verify these compile and have correct shapes
+    let shape = VisibleCat::SHAPE;
+    assert_eq!(format!("{shape}"), "VisibleCat");
+
+    let shape = PrivateCat::SHAPE;
+    assert_eq!(format!("{shape}"), "PrivateCat");
+}
+
+// Test macro_rules visibility with struct fields
+#[test]
+fn macro_rules_visibility_fragment_with_fields() {
+    macro_rules! with_vis_fields {
+        ($vis:vis struct $name:ident { $field_vis:vis $field:ident: $ty:ty $(,)? }) => {
+            #[derive(Facet)]
+            $vis struct $name {
+                $field_vis $field: $ty,
+            }
+        };
+    }
+
+    with_vis_fields!(
+        pub struct VisibleDog {
+            pub name: String,
+        }
+    );
+
+    let shape = VisibleDog::SHAPE;
+    assert_eq!(format!("{shape}"), "VisibleDog");
+
+    if let Type::User(UserType::Struct(StructType { fields, .. })) = shape.ty {
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].name, "name");
+    } else {
+        panic!("Expected struct type");
+    }
+}
+
+// Test macro_rules visibility with enum
+#[test]
+fn macro_rules_visibility_fragment_enum() {
+    macro_rules! with_vis_enum {
+        ($vis:vis enum $name:ident { $($variant:ident),* $(,)? }) => {
+            #[derive(Facet)]
+            #[repr(u8)]
+            #[allow(dead_code)]
+            $vis enum $name {
+                $($variant),*
+            }
+        };
+    }
+
+    with_vis_enum!(
+        pub enum VisibleColor {
+            Red,
+            Green,
+            Blue,
+        }
+    );
+
+    let shape = VisibleColor::SHAPE;
+    assert_eq!(format!("{shape}"), "VisibleColor");
+
+    if let Type::User(UserType::Enum(enum_kind)) = shape.ty {
+        assert_eq!(enum_kind.variants.len(), 3);
+        assert_eq!(enum_kind.variants[0].name, "Red");
+        assert_eq!(enum_kind.variants[1].name, "Green");
+        assert_eq!(enum_kind.variants[2].name, "Blue");
+    } else {
+        panic!("Expected enum type");
+    }
+}
