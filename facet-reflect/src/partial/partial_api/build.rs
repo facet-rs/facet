@@ -7,9 +7,9 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// Builds the value, consuming the Partial.
     pub fn build(mut self) -> Result<HeapValue<'facet, BORROW>, ReflectError> {
         if self.frames().len() != 1 {
-            return Err(ReflectError::InvariantViolation {
+            return Err(self.err(ReflectErrorKind::InvariantViolation {
                 invariant: "Partial::build() expects a single frame — call end() until that's the case",
-            });
+            }));
         }
 
         let frame = self.frames_mut().last_mut().unwrap();
@@ -58,7 +58,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     // Put the frame back so Drop can handle cleanup properly
                     let shape = frame.allocated.shape();
                     self.frames_mut().push(frame);
-                    return Err(ReflectError::UserInvariantFailed { message, shape });
+                    return Err(self.err(ReflectErrorKind::UserInvariantFailed { message, shape }));
                 }
             }
         }
@@ -71,9 +71,11 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             .shape()
             .layout
             .sized_layout()
-            .map_err(|_layout_err| ReflectError::Unsized {
-                shape: frame.allocated.shape(),
-                operation: "build (final check for sized layout)",
+            .map_err(|_layout_err| {
+                self.err(ReflectErrorKind::Unsized {
+                    shape: frame.allocated.shape(),
+                    operation: "build (final check for sized layout)",
+                })
             }) {
             Ok(layout) => {
                 // Determine if we should deallocate based on ownership
@@ -132,9 +134,9 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// ```
     pub fn finish_in_place(mut self) -> Result<(), ReflectError> {
         if self.frames().len() != 1 {
-            return Err(ReflectError::InvariantViolation {
+            return Err(self.err(ReflectErrorKind::InvariantViolation {
                 invariant: "Partial::finish_in_place() expects a single frame — call end() until that's the case",
-            });
+            }));
         }
 
         let frame = self.frames_mut().last_mut().unwrap();
@@ -183,7 +185,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     // Put the frame back so Drop can handle cleanup properly
                     let shape = frame.allocated.shape();
                     self.frames_mut().push(frame);
-                    return Err(ReflectError::UserInvariantFailed { message, shape });
+                    return Err(self.err(ReflectErrorKind::UserInvariantFailed { message, shape }));
                 }
             }
         }

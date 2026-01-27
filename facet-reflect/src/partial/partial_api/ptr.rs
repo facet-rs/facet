@@ -18,19 +18,19 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     let pointee_shape = match smart_ptr_def.pointee() {
                         Some(shape) => shape,
                         None => {
-                            return Err(ReflectError::OperationFailed {
+                            return Err(self.err(ReflectErrorKind::OperationFailed {
                                 shape: frame.allocated.shape(),
                                 operation: "Smart pointer must have a pointee shape",
-                            });
+                            }));
                         }
                     };
                     (*smart_ptr_def, pointee_shape)
                 }
                 _ => {
-                    return Err(ReflectError::OperationFailed {
+                    return Err(self.err(ReflectErrorKind::OperationFailed {
                         shape: frame.allocated.shape(),
                         operation: "push_smart_ptr can only be called on compatible types",
-                    });
+                    }));
                 }
             }
         };
@@ -49,18 +49,18 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             let inner_layout = match pointee_shape.layout.sized_layout() {
                 Ok(layout) => layout,
                 Err(_) => {
-                    return Err(ReflectError::Unsized {
+                    return Err(self.err(ReflectErrorKind::Unsized {
                         shape: pointee_shape,
                         operation: "begin_smart_ptr, calculating inner value layout",
-                    });
+                    }));
                 }
             };
             let inner_ptr: *mut u8 = unsafe { ::alloc::alloc::alloc(inner_layout) };
             let Some(inner_ptr) = NonNull::new(inner_ptr) else {
-                return Err(ReflectError::OperationFailed {
+                return Err(self.err(ReflectErrorKind::OperationFailed {
                     shape: frame.allocated.shape(),
                     operation: "failed to allocate memory for smart pointer inner value",
-                });
+                }));
             };
 
             // Push a new frame for the inner value
@@ -81,10 +81,10 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     .expect("String must have a sized layout");
                 let string_ptr: *mut u8 = unsafe { ::alloc::alloc::alloc(string_layout) };
                 let Some(string_ptr) = NonNull::new(string_ptr) else {
-                    return Err(ReflectError::OperationFailed {
+                    return Err(self.err(ReflectErrorKind::OperationFailed {
                         shape: frame.allocated.shape(),
                         operation: "failed to allocate memory for string",
-                    });
+                    }));
                 };
                 let string_size = string_layout.size();
                 let frame = Frame::new(
@@ -98,12 +98,13 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 crate::trace!("Pointee is [{}]", _st.t);
 
                 // Get the slice builder vtable
-                let slice_builder_vtable = smart_ptr_def.vtable.slice_builder_vtable.ok_or(
-                    ReflectError::OperationFailed {
-                        shape: frame.allocated.shape(),
-                        operation: "smart pointer does not support slice building",
-                    },
-                )?;
+                let slice_builder_vtable =
+                    smart_ptr_def.vtable.slice_builder_vtable.ok_or_else(|| {
+                        self.err(ReflectErrorKind::OperationFailed {
+                            shape: frame.allocated.shape(),
+                            operation: "smart pointer does not support slice building",
+                        })
+                    })?;
 
                 // Create a new builder
                 let builder_ptr = (slice_builder_vtable.new_fn)();
@@ -125,10 +126,10 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 // Keep the original ownership (e.g., Field) so parent tracking works correctly.
                 // The slice builder memory itself is managed by the vtable's convert_fn/free_fn.
             } else {
-                return Err(ReflectError::OperationFailed {
+                return Err(self.err(ReflectErrorKind::OperationFailed {
                     shape: frame.allocated.shape(),
                     operation: "push_smart_ptr can only be called on pointers to supported pointee types",
-                });
+                }));
             }
         }
 

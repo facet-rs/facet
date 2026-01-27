@@ -1,6 +1,6 @@
 use facet_core::{MapDef, PtrMut};
 
-use crate::ReflectError;
+use crate::{ReflectError, ReflectErrorKind};
 
 use super::Peek;
 
@@ -109,7 +109,7 @@ impl<'mem, 'facet> PeekMap<'mem, 'facet> {
             return Ok(unsafe { (self.def.vtable.contains_key)(self.value.data(), key.data()) });
         }
 
-        Err(ReflectError::WrongShape {
+        Err(ReflectErrorKind::WrongShape {
             expected: self.def.k(),
             actual: key.shape,
         })
@@ -132,7 +132,7 @@ impl<'mem, 'facet> PeekMap<'mem, 'facet> {
             });
         }
 
-        Err(ReflectError::WrongShape {
+        Err(ReflectErrorKind::WrongShape {
             expected: self.def.k(),
             actual: key.shape,
         })

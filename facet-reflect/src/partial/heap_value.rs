@@ -1,5 +1,5 @@
 use crate::Peek;
-use crate::ReflectError;
+use crate::ShapeMismatchError;
 use crate::trace;
 use core::ptr::NonNull;
 use core::{alloc::Layout, marker::PhantomData};
@@ -45,7 +45,7 @@ impl<'facet, const BORROW: bool> HeapValue<'facet, BORROW> {
     }
 
     /// Turn this heapvalue into a concrete type
-    pub fn materialize<T: Facet<'facet>>(mut self) -> Result<T, ReflectError> {
+    pub fn materialize<T: Facet<'facet>>(mut self) -> Result<T, ShapeMismatchError> {
         trace!(
             "HeapValue::materialize: Materializing heap value with shape {} to type {}",
             self.shape,
@@ -57,9 +57,9 @@ impl<'facet, const BORROW: bool> HeapValue<'facet, BORROW> {
                 T::SHAPE,
                 self.shape
             );
-            return Err(ReflectError::WrongShape {
-                expected: self.shape,
-                actual: T::SHAPE,
+            return Err(ShapeMismatchError {
+                expected: T::SHAPE,
+                actual: self.shape,
             });
         }
 

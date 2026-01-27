@@ -1,6 +1,6 @@
 use facet_core::{Def, EnumRepr, EnumType, Facet, FieldError};
 
-use crate::{ReflectError, peek::VariantError};
+use crate::{ReflectError, ReflectErrorKind, peek::VariantError};
 
 use super::Poke;
 
@@ -216,20 +216,20 @@ impl<'mem, 'facet> PokeEnum<'mem, 'facet> {
     ) -> Result<(), ReflectError> {
         // Check that the parent enum is POD before allowing field mutation
         if !self.value.shape.is_pod() {
-            return Err(ReflectError::NotPod {
+            return Err(ReflectErrorKind::NotPod {
                 shape: self.value.shape,
             });
         }
 
         let variant = self
             .active_variant()
-            .map_err(|_| ReflectError::OperationFailed {
+            .map_err(|_| ReflectErrorKind::OperationFailed {
                 shape: self.value.shape,
                 operation: "get active variant",
             })?;
         let fields = &variant.data.fields;
 
-        let field = fields.get(index).ok_or(ReflectError::FieldError {
+        let field = fields.get(index).ok_or(ReflectErrorKind::FieldError {
             shape: self.value.shape,
             field_error: FieldError::IndexOutOfBounds {
                 index,
@@ -239,7 +239,7 @@ impl<'mem, 'facet> PokeEnum<'mem, 'facet> {
 
         let field_shape = field.shape();
         if field_shape != T::SHAPE {
-            return Err(ReflectError::WrongShape {
+            return Err(ReflectErrorKind::WrongShape {
                 expected: field_shape,
                 actual: T::SHAPE,
             });
@@ -268,12 +268,12 @@ impl<'mem, 'facet> PokeEnum<'mem, 'facet> {
     ) -> Result<(), ReflectError> {
         let index = self
             .field_index(name)
-            .map_err(|_| ReflectError::OperationFailed {
+            .map_err(|_| ReflectErrorKind::OperationFailed {
                 shape: self.value.shape,
                 operation: "get active variant",
             })?;
 
-        let index = index.ok_or(ReflectError::FieldError {
+        let index = index.ok_or(ReflectErrorKind::FieldError {
             shape: self.value.shape,
             field_error: FieldError::NoSuchField,
         })?;

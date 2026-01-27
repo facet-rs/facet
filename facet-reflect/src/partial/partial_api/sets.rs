@@ -33,10 +33,10 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 }
             }
             _ => {
-                return Err(ReflectError::UnexpectedTracker {
+                return Err(self.err(ReflectErrorKind::UnexpectedTracker {
                     message: "init_set called but tracker isn't something set-like",
                     current_tracker: frame.tracker.kind(),
-                });
+                }));
             }
         };
 
@@ -44,10 +44,10 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         let set_def = match &frame.allocated.shape().def {
             Def::Set(set_def) => set_def,
             _ => {
-                return Err(ReflectError::OperationFailed {
+                return Err(self.err(ReflectErrorKind::OperationFailed {
                     shape: frame.allocated.shape(),
                     operation: "init_set can only be called on Set types",
-                });
+                }));
             }
         };
 
@@ -77,10 +77,10 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         let set_def = match &frame.allocated.shape().def {
             Def::Set(set_def) => set_def,
             _ => {
-                return Err(ReflectError::OperationFailed {
+                return Err(self.err(ReflectErrorKind::OperationFailed {
                     shape: frame.allocated.shape(),
                     operation: "init_set_item can only be called on Set types",
-                });
+                }));
             }
         };
 
@@ -88,18 +88,18 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         match &mut frame.tracker {
             Tracker::Set { current_child } if frame.is_init => {
                 if *current_child {
-                    return Err(ReflectError::OperationFailed {
+                    return Err(self.err(ReflectErrorKind::OperationFailed {
                         shape: frame.allocated.shape(),
                         operation: "already pushing an element, call end() first",
-                    });
+                    }));
                 }
                 *current_child = true;
             }
             _ => {
-                return Err(ReflectError::OperationFailed {
+                return Err(self.err(ReflectErrorKind::OperationFailed {
                     shape: frame.allocated.shape(),
                     operation: "must call init_set() before begin_set_item()",
-                });
+                }));
             }
         }
 
@@ -110,19 +110,19 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         let element_layout = match element_shape.layout.sized_layout() {
             Ok(layout) => layout,
             Err(_) => {
-                return Err(ReflectError::Unsized {
+                return Err(self.err(ReflectErrorKind::Unsized {
                     shape: element_shape,
                     operation: "begin_set_item: calculating element layout",
-                });
+                }));
             }
         };
         let element_ptr: *mut u8 = unsafe { ::alloc::alloc::alloc(element_layout) };
 
         let Some(element_ptr) = NonNull::new(element_ptr) else {
-            return Err(ReflectError::OperationFailed {
+            return Err(self.err(ReflectErrorKind::OperationFailed {
                 shape: frame.allocated.shape(),
                 operation: "failed to allocate memory for set element",
-            });
+            }));
         };
 
         // Push a new frame for the element

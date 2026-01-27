@@ -57,10 +57,10 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                         // Fall through to initialize as Object below
                     }
                     _ => {
-                        return Err(ReflectError::OperationFailed {
+                        return Err(self.err(ReflectErrorKind::OperationFailed {
                             shape: frame.allocated.shape(),
                             operation: "init_map can only be called on Map or DynamicValue types",
-                        });
+                        }));
                     }
                 }
             }
@@ -82,10 +82,10 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 frame.deinit_for_replace();
             }
             _ => {
-                return Err(ReflectError::UnexpectedTracker {
+                return Err(self.err(ReflectErrorKind::UnexpectedTracker {
                     message: "init_map called but tracker isn't Scalar, Map, or DynamicValue",
                     current_tracker: frame.tracker.kind(),
-                });
+                }));
             }
         }
 
@@ -120,10 +120,10 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 frame.is_init = true;
             }
             _ => {
-                return Err(ReflectError::OperationFailed {
+                return Err(self.err(ReflectErrorKind::OperationFailed {
                     shape: frame.allocated.shape(),
                     operation: "init_map can only be called on Map or DynamicValue types",
-                });
+                }));
             }
         }
 
@@ -150,10 +150,10 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     insert_state: MapInsertState::PushingKey { .. },
                 },
             ) => {
-                return Err(ReflectError::OperationFailed {
+                return Err(self.err(ReflectErrorKind::OperationFailed {
                     shape: frame.allocated.shape(),
                     operation: "already pushing a key, call end() first",
-                });
+                }));
             }
             (
                 Def::Map(_),
@@ -161,16 +161,16 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     insert_state: MapInsertState::PushingValue { .. },
                 },
             ) => {
-                return Err(ReflectError::OperationFailed {
+                return Err(self.err(ReflectErrorKind::OperationFailed {
                     shape: frame.allocated.shape(),
                     operation: "must complete current operation before begin_key()",
-                });
+                }));
             }
             _ => {
-                return Err(ReflectError::OperationFailed {
+                return Err(self.err(ReflectErrorKind::OperationFailed {
                     shape: frame.allocated.shape(),
                     operation: "must call init_map() before begin_key()",
-                });
+                }));
             }
         };
 
@@ -181,19 +181,19 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         let key_layout = match key_shape.layout.sized_layout() {
             Ok(layout) => layout,
             Err(_) => {
-                return Err(ReflectError::Unsized {
+                return Err(self.err(ReflectErrorKind::Unsized {
                     shape: key_shape,
                     operation: "begin_key allocating key",
-                });
+                }));
             }
         };
         let key_ptr_raw: *mut u8 = unsafe { ::alloc::alloc::alloc(key_layout) };
 
         let Some(key_ptr_raw) = NonNull::new(key_ptr_raw) else {
-            return Err(ReflectError::OperationFailed {
+            return Err(self.err(ReflectErrorKind::OperationFailed {
                 shape: frame.allocated.shape(),
                 operation: "failed to allocate memory for map key",
-            });
+            }));
         };
 
         let key_ptr = PtrUninit::new(key_ptr_raw.as_ptr());
@@ -249,16 +249,16 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     ..
                 },
             ) => {
-                return Err(ReflectError::OperationFailed {
+                return Err(self.err(ReflectErrorKind::OperationFailed {
                     shape: frame.allocated.shape(),
                     operation: "already pushing a value, call end() first",
-                });
+                }));
             }
             _ => {
-                return Err(ReflectError::OperationFailed {
+                return Err(self.err(ReflectErrorKind::OperationFailed {
                     shape: frame.allocated.shape(),
                     operation: "must complete key before begin_value()",
-                });
+                }));
             }
         };
 
@@ -269,19 +269,19 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         let value_layout = match value_shape.layout.sized_layout() {
             Ok(layout) => layout,
             Err(_) => {
-                return Err(ReflectError::Unsized {
+                return Err(self.err(ReflectErrorKind::Unsized {
                     shape: value_shape,
                     operation: "begin_value allocating value",
-                });
+                }));
             }
         };
         let value_ptr_raw: *mut u8 = unsafe { ::alloc::alloc::alloc(value_layout) };
 
         let Some(value_ptr_raw) = NonNull::new(value_ptr_raw) else {
-            return Err(ReflectError::OperationFailed {
+            return Err(self.err(ReflectErrorKind::OperationFailed {
                 shape: frame.allocated.shape(),
                 operation: "failed to allocate memory for map value",
-            });
+            }));
         };
 
         let value_ptr = PtrUninit::new(value_ptr_raw.as_ptr());
@@ -344,22 +344,22 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                         },
                 },
             ) => {
-                return Err(ReflectError::OperationFailed {
+                return Err(self.err(ReflectErrorKind::OperationFailed {
                     shape: frame.allocated.shape(),
                     operation: "already building a value, call end() first",
-                });
+                }));
             }
             (Def::DynamicValue(_), _) => {
-                return Err(ReflectError::OperationFailed {
+                return Err(self.err(ReflectErrorKind::OperationFailed {
                     shape: frame.allocated.shape(),
                     operation: "must call init_map() before begin_object_entry()",
-                });
+                }));
             }
             _ => {
-                return Err(ReflectError::OperationFailed {
+                return Err(self.err(ReflectErrorKind::OperationFailed {
                     shape: frame.allocated.shape(),
                     operation: "begin_object_entry can only be called on DynamicValue types",
-                });
+                }));
             }
         };
 
@@ -400,19 +400,19 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         let value_layout = match value_shape.layout.sized_layout() {
             Ok(layout) => layout,
             Err(_) => {
-                return Err(ReflectError::Unsized {
+                return Err(self.err(ReflectErrorKind::Unsized {
                     shape: value_shape,
                     operation: "begin_object_entry: calculating value layout",
-                });
+                }));
             }
         };
 
         let value_ptr: *mut u8 = unsafe { ::alloc::alloc::alloc(value_layout) };
         let Some(value_ptr) = NonNull::new(value_ptr) else {
-            return Err(ReflectError::OperationFailed {
+            return Err(self.err(ReflectErrorKind::OperationFailed {
                 shape: frame.allocated.shape(),
                 operation: "failed to allocate memory for object value",
-            });
+            }));
         };
 
         // Update the insert state with the key

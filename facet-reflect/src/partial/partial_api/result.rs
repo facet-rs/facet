@@ -13,10 +13,10 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             match frame.allocated.shape().def {
                 Def::Result(def) => def,
                 _ => {
-                    return Err(ReflectError::WasNotA {
+                    return Err(self.err(ReflectErrorKind::WasNotA {
                         expected: "Result",
                         actual: frame.allocated.shape(),
-                    });
+                    }));
                 }
             }
         };
@@ -49,14 +49,12 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         let inner_shape = result_def.t;
 
         // Allocate memory for the inner value
-        let inner_layout =
-            inner_shape
-                .layout
-                .sized_layout()
-                .map_err(|_| ReflectError::Unsized {
-                    shape: inner_shape,
-                    operation: "begin_ok, allocating Result Ok value",
-                })?;
+        let inner_layout = inner_shape.layout.sized_layout().map_err(|_| {
+            self.err(ReflectErrorKind::Unsized {
+                shape: inner_shape,
+                operation: "begin_ok, allocating Result Ok value",
+            })
+        })?;
 
         let inner_data = if inner_layout.size() == 0 {
             // For ZST, use a non-null but unallocated pointer
@@ -89,10 +87,10 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             match frame.allocated.shape().def {
                 Def::Result(def) => def,
                 _ => {
-                    return Err(ReflectError::WasNotA {
+                    return Err(self.err(ReflectErrorKind::WasNotA {
                         expected: "Result",
                         actual: frame.allocated.shape(),
-                    });
+                    }));
                 }
             }
         };
@@ -125,14 +123,12 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         let inner_shape = result_def.e;
 
         // Allocate memory for the inner value
-        let inner_layout =
-            inner_shape
-                .layout
-                .sized_layout()
-                .map_err(|_| ReflectError::Unsized {
-                    shape: inner_shape,
-                    operation: "begin_err, allocating Result Err value",
-                })?;
+        let inner_layout = inner_shape.layout.sized_layout().map_err(|_| {
+            self.err(ReflectErrorKind::Unsized {
+                shape: inner_shape,
+                operation: "begin_err, allocating Result Err value",
+            })
+        })?;
 
         let inner_data = if inner_layout.size() == 0 {
             // For ZST, use a non-null but unallocated pointer

@@ -39,20 +39,28 @@ pub enum PathStep {
 /// This is a lightweight representation that only stores indices.
 /// The actual field names and type information can be reconstructed
 /// by replaying these steps against the original [`Shape`].
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct Path {
-    steps: Vec<PathStep>,
+    /// The root [`Shape`] from which this path originates.
+    pub shape: &'static Shape,
+
+    /// The sequence of [`PathStep`]s representing navigation through the type structure.
+    pub steps: Vec<PathStep>,
 }
 
 impl Path {
     /// Create a new empty path.
-    pub const fn new() -> Self {
-        Self { steps: Vec::new() }
+    pub const fn new(shape: &'static Shape) -> Self {
+        Self {
+            shape,
+            steps: Vec::new(),
+        }
     }
 
     /// Create a path with pre-allocated capacity.
-    pub fn with_capacity(capacity: usize) -> Self {
+    pub fn with_capacity(shape: &'static Shape, capacity: usize) -> Self {
         Self {
+            shape,
             steps: Vec::with_capacity(capacity),
         }
     }

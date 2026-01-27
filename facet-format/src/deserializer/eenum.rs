@@ -646,7 +646,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                 self.mk_err(
                     &wip,
                     DeserializeErrorKind::UnknownVariant {
-                        variant: variant_name.to_owned(),
+                        variant: Cow::Owned(variant_name.to_string()),
                         enum_shape: wip.shape(),
                     },
                 )

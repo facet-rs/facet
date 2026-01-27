@@ -1,6 +1,6 @@
 use facet_core::{Facet, FieldError, StructType};
 
-use crate::ReflectError;
+use crate::{ReflectError, ReflectErrorKind};
 
 use super::Poke;
 
@@ -38,13 +38,17 @@ impl<'mem, 'facet> PokeStruct<'mem, 'facet> {
     /// you try to mutate via [`Poke::set`] on the returned field poke, or
     /// when calling [`PokeStruct::set_field`] which checks the parent struct.
     pub fn field(&mut self, index: usize) -> Result<Poke<'_, 'facet>, ReflectError> {
-        let field = self.ty.fields.get(index).ok_or(ReflectError::FieldError {
-            shape: self.value.shape,
-            field_error: FieldError::IndexOutOfBounds {
-                index,
-                bound: self.ty.fields.len(),
-            },
-        })?;
+        let field = self
+            .ty
+            .fields
+            .get(index)
+            .ok_or(ReflectErrorKind::FieldError {
+                shape: self.value.shape,
+                field_error: FieldError::IndexOutOfBounds {
+                    index,
+                    bound: self.ty.fields.len(),
+                },
+            })?;
 
         let field_data = unsafe { self.value.data.field(field.offset) };
         let field_shape = field.shape();
@@ -61,7 +65,7 @@ impl<'mem, 'facet> PokeStruct<'mem, 'facet> {
                 return self.field(i);
             }
         }
-        Err(ReflectError::FieldError {
+        Err(ReflectErrorKind::FieldError {
             shape: self.value.shape,
             field_error: FieldError::NoSuchField,
         })
@@ -81,22 +85,26 @@ impl<'mem, 'facet> PokeStruct<'mem, 'facet> {
     ) -> Result<(), ReflectError> {
         // Check that the parent struct is POD before allowing field mutation
         if !self.value.shape.is_pod() {
-            return Err(ReflectError::NotPod {
+            return Err(ReflectErrorKind::NotPod {
                 shape: self.value.shape,
             });
         }
 
-        let field = self.ty.fields.get(index).ok_or(ReflectError::FieldError {
-            shape: self.value.shape,
-            field_error: FieldError::IndexOutOfBounds {
-                index,
-                bound: self.ty.fields.len(),
-            },
-        })?;
+        let field = self
+            .ty
+            .fields
+            .get(index)
+            .ok_or(ReflectErrorKind::FieldError {
+                shape: self.value.shape,
+                field_error: FieldError::IndexOutOfBounds {
+                    index,
+                    bound: self.ty.fields.len(),
+                },
+            })?;
 
         let field_shape = field.shape();
         if field_shape != T::SHAPE {
-            return Err(ReflectError::WrongShape {
+            return Err(ReflectErrorKind::WrongShape {
                 expected: field_shape,
                 actual: T::SHAPE,
             });
@@ -125,7 +133,7 @@ impl<'mem, 'facet> PokeStruct<'mem, 'facet> {
                 return self.set_field(i, value);
             }
         }
-        Err(ReflectError::FieldError {
+        Err(ReflectErrorKind::FieldError {
             shape: self.value.shape,
             field_error: FieldError::NoSuchField,
         })

@@ -2,7 +2,7 @@ use core::marker::PhantomData;
 
 use facet_core::{Def, Facet, PtrConst, PtrMut, Shape, Type, UserType};
 
-use crate::ReflectError;
+use crate::{ReflectError, ReflectErrorKind};
 
 use super::{PokeList, PokeStruct};
 
@@ -126,7 +126,7 @@ impl<'mem, 'facet> Poke<'mem, 'facet> {
                 value: self,
                 ty: struct_type,
             }),
-            _ => Err(ReflectError::WasNotA {
+            _ => Err(ReflectErrorKind::WasNotA {
                 expected: "struct",
                 actual: self.shape,
             }),
@@ -140,7 +140,7 @@ impl<'mem, 'facet> Poke<'mem, 'facet> {
                 value: self,
                 ty: enum_type,
             }),
-            _ => Err(ReflectError::WasNotA {
+            _ => Err(ReflectErrorKind::WasNotA {
                 expected: "enum",
                 actual: self.shape,
             }),
@@ -157,7 +157,7 @@ impl<'mem, 'facet> Poke<'mem, 'facet> {
             return Ok(unsafe { PokeList::new(self, def) });
         }
 
-        Err(ReflectError::WasNotA {
+        Err(ReflectErrorKind::WasNotA {
             expected: "list",
             actual: self.shape,
         })
@@ -168,7 +168,7 @@ impl<'mem, 'facet> Poke<'mem, 'facet> {
     /// Returns an error if the shape doesn't match `T`.
     pub fn get<T: Facet<'facet>>(&self) -> Result<&T, ReflectError> {
         if self.shape != T::SHAPE {
-            return Err(ReflectError::WrongShape {
+            return Err(ReflectErrorKind::WrongShape {
                 expected: self.shape,
                 actual: T::SHAPE,
             });
@@ -181,7 +181,7 @@ impl<'mem, 'facet> Poke<'mem, 'facet> {
     /// Returns an error if the shape doesn't match `T`.
     pub fn get_mut<T: Facet<'facet>>(&mut self) -> Result<&mut T, ReflectError> {
         if self.shape != T::SHAPE {
-            return Err(ReflectError::WrongShape {
+            return Err(ReflectErrorKind::WrongShape {
                 expected: self.shape,
                 actual: T::SHAPE,
             });
@@ -194,7 +194,7 @@ impl<'mem, 'facet> Poke<'mem, 'facet> {
     /// This replaces the entire value. The new value must have the same shape.
     pub fn set<T: Facet<'facet>>(&mut self, value: T) -> Result<(), ReflectError> {
         if self.shape != T::SHAPE {
-            return Err(ReflectError::WrongShape {
+            return Err(ReflectErrorKind::WrongShape {
                 expected: self.shape,
                 actual: T::SHAPE,
             });
@@ -250,7 +250,7 @@ mod tests {
         let poke = Poke::new(&mut x);
 
         let result = poke.get::<u32>();
-        assert!(matches!(result, Err(ReflectError::WrongShape { .. })));
+        assert!(matches!(result, Err(ReflectErrorKind::WrongShape { .. })));
     }
 
     #[test]
@@ -259,7 +259,7 @@ mod tests {
         let mut poke = Poke::new(&mut x);
 
         let result = poke.set(42u32);
-        assert!(matches!(result, Err(ReflectError::WrongShape { .. })));
+        assert!(matches!(result, Err(ReflectErrorKind::WrongShape { .. })));
     }
 
     #[test]

@@ -5,7 +5,7 @@ use ::alloc::{boxed::Box, collections::BTreeMap, string::String, vec::Vec};
 use core::{marker::PhantomData, mem::ManuallyDrop, ptr::NonNull};
 
 use crate::{
-    Guard, HeapValue, Partial, Peek, ReflectError,
+    Guard, HeapValue, Partial, Peek, ReflectError, ReflectErrorKind,
     partial::{
         DynamicObjectInsertState, DynamicValueState, Frame, FrameMode, FrameOwnership,
         MapInsertState, PartialState, Tracker, iset::ISet,

@@ -139,9 +139,11 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         let allocated_size = shape
             .layout
             .sized_layout()
-            .map_err(|_| ReflectError::Unsized {
-                shape,
-                operation: "from_raw",
+            .map_err(|_| {
+                ReflectError::without_path(ReflectErrorKind::Unsized {
+                    shape,
+                    operation: "from_raw",
+                })
             })?
             .size();
 
@@ -170,9 +172,11 @@ fn alloc_shape_inner<'facet, const BORROW: bool>(
         shape.layout.sized_layout()
     );
 
-    let data = shape.allocate().map_err(|_| ReflectError::Unsized {
-        shape,
-        operation: "alloc_shape",
+    let data = shape.allocate().map_err(|_| {
+        ReflectError::without_path(ReflectErrorKind::Unsized {
+            shape,
+            operation: "alloc_shape",
+        })
     })?;
 
     // Get the actual allocated size
