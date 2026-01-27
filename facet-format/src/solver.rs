@@ -6,7 +6,7 @@ use core::fmt;
 
 use facet_solver::{KeyResult, Resolution, ResolutionHandle, Schema, Solver};
 
-use crate::{FormatParser, ParseEvent};
+use crate::{DeserializeError, FormatParser, ParseEvent};
 
 /// High-level outcome from solving an untagged enum.
 pub struct SolveOutcome {
@@ -18,23 +18,23 @@ pub struct SolveOutcome {
 
 /// Error when variant solving fails.
 #[derive(Debug)]
-pub enum SolveVariantError<E> {
+pub enum SolveVariantError {
     /// No variant matched the evidence.
     NoMatch,
     /// Parser error while reading events.
-    Parser(E),
+    Parser(DeserializeError),
     /// Schema construction error.
     SchemaError(facet_solver::SchemaError),
 }
 
-impl<E> SolveVariantError<E> {
+impl SolveVariantError {
     /// Wrap a parser error into [`SolveVariantError::Parser`].
-    pub const fn from_parser(e: E) -> Self {
+    pub const fn from_parser(e: DeserializeError) -> Self {
         Self::Parser(e)
     }
 }
 
-impl<E: fmt::Display> fmt::Display for SolveVariantError<E> {
+impl fmt::Display for SolveVariantError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NoMatch => write!(f, "No variant matched"),
@@ -44,7 +44,7 @@ impl<E: fmt::Display> fmt::Display for SolveVariantError<E> {
     }
 }
 
-impl<E: fmt::Debug + fmt::Display> core::error::Error for SolveVariantError<E> {}
+impl core::error::Error for SolveVariantError {}
 
 /// Attempt to solve which enum variant matches the input.
 ///
@@ -57,7 +57,7 @@ impl<E: fmt::Debug + fmt::Display> core::error::Error for SolveVariantError<E> {
 pub fn solve_variant<'de, P>(
     shape: &'static facet_core::Shape,
     parser: &mut P,
-) -> Result<Option<SolveOutcome>, SolveVariantError<P::Error>>
+) -> Result<Option<SolveOutcome>, SolveVariantError>
 where
     P: FormatParser<'de>,
 {
@@ -90,7 +90,7 @@ where
 fn solve_variant_inner<'de, 'a, P>(
     solver: &mut Solver<'a>,
     parser: &mut P,
-) -> Result<Option<ResolutionHandle<'a>>, SolveVariantError<P::Error>>
+) -> Result<Option<ResolutionHandle<'a>>, SolveVariantError>
 where
     'de: 'a,
     P: FormatParser<'de>,
@@ -156,7 +156,7 @@ fn handle_key<'a>(solver: &mut Solver<'a>, name: Cow<'a, str>) -> Option<Resolut
     }
 }
 
-impl<E> From<facet_solver::SchemaError> for SolveVariantError<E> {
+impl From<facet_solver::SchemaError> for SolveVariantError {
     fn from(e: facet_solver::SchemaError) -> Self {
         Self::SchemaError(e)
     }

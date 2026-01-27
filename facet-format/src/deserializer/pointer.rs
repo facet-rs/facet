@@ -44,7 +44,7 @@ where
                         return Err(DeserializeError {
                             span: self.last_span,
                             path: None,
-                            kind: DeserializeErrorKind::TypeMismatchStr {
+                            kind: DeserializeErrorKind::UnexpectedToken {
                                 expected: "string for Cow<str>",
                                 got: event.kind_name().into(),
                             },
@@ -69,7 +69,7 @@ where
                     return Err(DeserializeError {
                         span: self.last_span,
                         path: None,
-                        kind: DeserializeErrorKind::TypeMismatchStr {
+                        kind: DeserializeErrorKind::UnexpectedToken {
                             expected: "bytes for Cow<[u8]>",
                             got: event.kind_name().into(),
                         },
@@ -101,7 +101,7 @@ where
                     return Err(DeserializeError {
                         span: self.last_span,
                         path: None,
-                        kind: DeserializeErrorKind::TypeMismatchStr {
+                        kind: DeserializeErrorKind::UnexpectedToken {
                             expected: "string for &str",
                             got: event.kind_name().into(),
                         },
@@ -126,7 +126,7 @@ where
                 return Err(DeserializeError {
                     span: self.last_span,
                     path: None,
-                    kind: DeserializeErrorKind::TypeMismatchStr {
+                    kind: DeserializeErrorKind::UnexpectedToken {
                         expected: "bytes for &[u8]",
                         got: event.kind_name().into(),
                     },
@@ -154,7 +154,7 @@ where
                     return Err(DeserializeError {
                         span: self.last_span,
                         path: None,
-                        kind: DeserializeErrorKind::TypeMismatchStr {
+                        kind: DeserializeErrorKind::UnexpectedToken {
                             expected: "array",
                             got: kind.name().into(),
                         },
@@ -164,7 +164,7 @@ where
                     return Err(DeserializeError {
                         span: self.last_span,
                         path: None,
-                        kind: DeserializeErrorKind::TypeMismatchStr {
+                        kind: DeserializeErrorKind::UnexpectedToken {
                             expected: "sequence start for Arc<[T]>/Rc<[T]>/Box<[T]>",
                             got: event.kind_name().into(),
                         },

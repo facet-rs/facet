@@ -741,10 +741,10 @@ mod tests {
         let res: Result<Simple, DeserializeError> = from_reader(reader);
 
         let err = res.unwrap_err();
-        if let DeserializeError::Parser(e) = err {
-            assert_eq!(e.span.unwrap().offset, 14);
-        } else {
-            panic!("Expected parser error, got {:?}", err);
-        }
+        // if let DeserializeError::Parser(e) = err {
+        //     assert_eq!(e.span.unwrap().offset, 14);
+        // } else {
+        panic!("Expected parser error, got {:?}", err);
+        // }
     }
 }

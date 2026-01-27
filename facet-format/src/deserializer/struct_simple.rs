@@ -37,7 +37,7 @@ where
         let struct_type_has_default = wip.shape().is(Characteristic::Default);
 
         // Peek at the next event first to handle EOF and null gracefully
-        let maybe_event = self.parser.peek_event().map_err(DeserializeError::parser)?;
+        let maybe_event = self.parser.peek_event()?;
 
         // Handle EOF (empty input / comment-only files): use Default if available
         if maybe_event.is_none() {
@@ -63,7 +63,7 @@ where
             return Err(DeserializeError {
                 span: self.last_span,
                 path: None,
-                kind: DeserializeErrorKind::TypeMismatchStr {
+                kind: DeserializeErrorKind::UnexpectedToken {
                     expected: "struct start",
                     got: event.kind_name().into(),
                 },
@@ -125,7 +125,7 @@ where
                         Some(name) => name.as_ref(),
                         None => {
                             // Skip unit keys in struct context
-                            self.parser.skip_value().map_err(DeserializeError::parser)?;
+                            self.parser.skip_value()?;
                             continue;
                         }
                     };
@@ -192,14 +192,14 @@ where
                     } else {
                         // Unknown field - skip it
                         trace!(field_name = ?key_name, "deserialize_struct_simple: skipping unknown field");
-                        self.parser.skip_value().map_err(DeserializeError::parser)?;
+                        self.parser.skip_value()?;
                     }
                 }
                 other => {
                     return Err(DeserializeError {
                         span: self.last_span,
                         path: None,
-                        kind: DeserializeErrorKind::TypeMismatchStr {
+                        kind: DeserializeErrorKind::UnexpectedToken {
                             expected: "field key or struct end",
                             got: other.kind_name().into(),
                         },

@@ -11,15 +11,15 @@ use facet_reflect::{FieldCategory, FieldInfo, Partial};
 use facet_solver::PathSegment;
 
 use crate::{
-    DeserializeError, DeserializeErrorKind, DynParser, FormatDeserializer, FormatParser,
-    ParseEvent, ScalarValue,
+    DeserializeError, DeserializeErrorKind, FormatDeserializer, FormatParser, ParseEvent,
+    ScalarValue,
 };
 
 /// Inner implementation of `deserialize_struct_with_flatten` using dyn dispatch.
 ///
 /// This function is non-generic over the parser type, reducing monomorphization.
 fn deserialize_struct_with_flatten_inner<'input, const BORROW: bool>(
-    deser: &mut FormatDeserializer<'input, BORROW, &mut dyn DynParser<'input>>,
+    deser: &mut FormatDeserializer<'input, BORROW, &mut dyn FormatParser<'input>>,
     mut wip: Partial<'input, BORROW>,
 ) -> Result<Partial<'input, BORROW>, DeserializeError> {
     use super::dyn_helpers::*;
@@ -95,7 +95,7 @@ fn deserialize_struct_with_flatten_inner<'input, const BORROW: bool>(
         return Err(DeserializeError {
             span: deser.last_span,
             path: None,
-            kind: DeserializeErrorKind::TypeMismatchStr {
+            kind: DeserializeErrorKind::UnexpectedToken {
                 expected: "struct start",
                 got: event.kind_name().into(),
             },
@@ -270,7 +270,7 @@ fn deserialize_struct_with_flatten_inner<'input, const BORROW: bool>(
                                         return Err(DeserializeError {
                                             span: deser.last_span,
                                             path: None,
-                                            kind: DeserializeErrorKind::TypeMismatchStr {
+                                            kind: DeserializeErrorKind::UnexpectedToken {
                                                 expected: "string tag value",
                                                 got: tag_event.kind_name().into(),
                                             },
@@ -282,7 +282,7 @@ fn deserialize_struct_with_flatten_inner<'input, const BORROW: bool>(
                                     return Err(DeserializeError {
                                         span: deser.last_span,
                                         path: None,
-                                        kind: DeserializeErrorKind::TypeMismatchStr {
+                                        kind: DeserializeErrorKind::UnexpectedToken {
                                             expected: format!(
                                                 "tag value matching variant '{}'",
                                                 variant_name
@@ -357,7 +357,7 @@ fn deserialize_struct_with_flatten_inner<'input, const BORROW: bool>(
                 return Err(DeserializeError {
                     span: deser.last_span,
                     path: None,
-                    kind: DeserializeErrorKind::TypeMismatchStr {
+                    kind: DeserializeErrorKind::UnexpectedToken {
                         expected: "field key or struct end",
                         got: other.kind_name().into(),
                     },
@@ -391,7 +391,7 @@ fn deserialize_struct_with_flatten_inner<'input, const BORROW: bool>(
 
 /// Inner helper for inserting a key-value pair into a catch-all map field.
 fn insert_into_catch_all_map_inner<'input, 'a, const BORROW: bool>(
-    deser: &mut FormatDeserializer<'input, BORROW, &mut dyn DynParser<'input>>,
+    deser: &mut FormatDeserializer<'input, BORROW, &mut dyn FormatParser<'input>>,
     mut wip: Partial<'input, BORROW>,
     catch_all_info: &FieldInfo,
     key: Cow<'_, str>,
@@ -534,8 +534,8 @@ where
         &mut self,
         wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
-        use crate::DynParser;
-        let dyn_parser: &mut dyn DynParser<'input> = &mut self.parser;
+        use crate::FormatParser;
+        let dyn_parser: &mut dyn FormatParser<'input> = &mut self.parser;
         let mut dyn_deser = crate::FormatDeserializer {
             parser: dyn_parser,
             last_span: self.last_span,

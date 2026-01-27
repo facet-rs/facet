@@ -239,7 +239,7 @@ pub(crate) fn deserialize_map_key_terminal_inner<'input, const BORROW: bool>(
                     let n: i64 = key.parse().map_err(|_| DeserializeError {
                         span,
                         path: None,
-                        kind: DeserializeErrorKind::TypeMismatchStr {
+                        kind: DeserializeErrorKind::UnexpectedToken {
                             expected: "valid integer for map key",
                             got: alloc::format!("string '{}'", key).into(),
                         },
@@ -250,7 +250,7 @@ pub(crate) fn deserialize_map_key_terminal_inner<'input, const BORROW: bool>(
                     let n: u64 = key.parse().map_err(|_| DeserializeError {
                         span,
                         path: None,
-                        kind: DeserializeErrorKind::TypeMismatchStr {
+                        kind: DeserializeErrorKind::UnexpectedToken {
                             expected: "valid unsigned integer for map key",
                             got: alloc::format!("string '{}'", key).into(),
                         },
@@ -263,7 +263,7 @@ pub(crate) fn deserialize_map_key_terminal_inner<'input, const BORROW: bool>(
                 let n: f64 = key.parse().map_err(|_| DeserializeError {
                     span,
                     path: None,
-                    kind: DeserializeErrorKind::TypeMismatchStr {
+                    kind: DeserializeErrorKind::UnexpectedToken {
                         expected: "valid float for map key",
                         got: alloc::format!("string '{}'", key).into(),
                     },

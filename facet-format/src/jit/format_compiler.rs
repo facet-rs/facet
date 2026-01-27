@@ -345,8 +345,7 @@ impl<'de, T: Facet<'de>, P: FormatJitParser<'de>> CompiledFormatDeserializer<T, 
                 ));
             }
 
-            let err = parser.jit_error(input, scratch.error_pos, scratch.error_code);
-            Err(DeserializeError::parser(err))
+            Err(parser.jit_error(input, scratch.error_pos, scratch.error_code))
         }
     }
 }

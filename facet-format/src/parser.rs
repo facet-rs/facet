@@ -1,3 +1,4 @@
+use crate::DeserializeError;
 use facet_reflect::Span;
 
 /// Opaque token returned by [`FormatParser::save`].
@@ -16,9 +17,6 @@ impl SavePoint {
 
 /// Streaming parser for a specific wire format.
 pub trait FormatParser<'de> {
-    /// Parser-specific error type.
-    type Error: core::fmt::Debug;
-
     /// Read the next parse event, or `None` if the input is exhausted.
     ///
     /// Returns `Ok(None)` at end-of-input (EOF). For formats like TOML where
@@ -28,13 +26,13 @@ pub trait FormatParser<'de> {
     ///
     /// If [`restore`](Self::restore) was called, events are first replayed
     /// from the internal buffer before reading new events from the input.
-    fn next_event(&mut self) -> Result<Option<crate::ParseEvent<'de>>, Self::Error>;
+    fn next_event(&mut self) -> Result<Option<crate::ParseEvent<'de>>, DeserializeError>;
 
     /// Peek at the next event without consuming it, or `None` if at EOF.
-    fn peek_event(&mut self) -> Result<Option<crate::ParseEvent<'de>>, Self::Error>;
+    fn peek_event(&mut self) -> Result<Option<crate::ParseEvent<'de>>, DeserializeError>;
 
     /// Skip the current value (for unknown fields, etc.).
-    fn skip_value(&mut self) -> Result<(), Self::Error>;
+    fn skip_value(&mut self) -> Result<(), DeserializeError>;
 
     /// Save the current parser position and start recording events.
     ///
@@ -63,7 +61,7 @@ pub trait FormatParser<'de> {
     ///
     /// Returns `Ok(None)` if raw capture is not supported (e.g., streaming mode
     /// or formats where raw capture doesn't make sense).
-    fn capture_raw(&mut self) -> Result<Option<&'de str>, Self::Error> {
+    fn capture_raw(&mut self) -> Result<Option<&'de str>, DeserializeError> {
         // Default: not supported
         self.skip_value()?;
         Ok(None)
@@ -253,6 +251,94 @@ pub trait FormatParser<'de> {
     }
 }
 
+// Implement FormatParser for &mut dyn FormatParser trait objects.
+// This allows using `&mut dyn FormatParser<'de>` wherever `P: FormatParser<'de>` is expected.
+impl<'de> FormatParser<'de> for &mut dyn FormatParser<'de> {
+    fn next_event(&mut self) -> Result<Option<crate::ParseEvent<'de>>, DeserializeError> {
+        (**self).next_event()
+    }
+
+    fn peek_event(&mut self) -> Result<Option<crate::ParseEvent<'de>>, DeserializeError> {
+        (**self).peek_event()
+    }
+
+    fn skip_value(&mut self) -> Result<(), DeserializeError> {
+        (**self).skip_value()
+    }
+
+    fn save(&mut self) -> SavePoint {
+        (**self).save()
+    }
+
+    fn restore(&mut self, save_point: SavePoint) {
+        (**self).restore(save_point)
+    }
+
+    fn capture_raw(&mut self) -> Result<Option<&'de str>, DeserializeError> {
+        (**self).capture_raw()
+    }
+
+    fn raw_capture_shape(&self) -> Option<&'static facet_core::Shape> {
+        (**self).raw_capture_shape()
+    }
+
+    fn is_self_describing(&self) -> bool {
+        (**self).is_self_describing()
+    }
+
+    fn hint_struct_fields(&mut self, num_fields: usize) {
+        (**self).hint_struct_fields(num_fields)
+    }
+
+    fn hint_scalar_type(&mut self, hint: ScalarTypeHint) {
+        (**self).hint_scalar_type(hint)
+    }
+
+    fn hint_sequence(&mut self) {
+        (**self).hint_sequence()
+    }
+
+    fn hint_byte_sequence(&mut self) -> bool {
+        (**self).hint_byte_sequence()
+    }
+
+    fn hint_array(&mut self, len: usize) {
+        (**self).hint_array(len)
+    }
+
+    fn hint_option(&mut self) {
+        (**self).hint_option()
+    }
+
+    fn hint_map(&mut self) {
+        (**self).hint_map()
+    }
+
+    fn hint_dynamic_value(&mut self) {
+        (**self).hint_dynamic_value()
+    }
+
+    fn hint_enum(&mut self, variants: &[EnumVariantHint]) {
+        (**self).hint_enum(variants)
+    }
+
+    fn hint_opaque_scalar(
+        &mut self,
+        type_identifier: &'static str,
+        shape: &'static facet_core::Shape,
+    ) -> bool {
+        (**self).hint_opaque_scalar(type_identifier, shape)
+    }
+
+    fn current_span(&self) -> Option<facet_reflect::Span> {
+        (**self).current_span()
+    }
+
+    fn format_namespace(&self) -> Option<&'static str> {
+        (**self).format_namespace()
+    }
+}
+
 /// Metadata about an enum variant for use with `hint_enum`.
 ///
 /// Provides the information needed by non-self-describing formats to correctly
@@ -345,6 +431,6 @@ pub trait FormatJitParser<'de>: FormatParser<'de> {
     /// Return a format JIT emitter instance (usually a ZST).
     fn jit_format(&self) -> Self::FormatJit;
 
-    /// Convert a Tier 2 error (code + position) into `Self::Error`.
-    fn jit_error(&self, input: &'de [u8], error_pos: usize, error_code: i32) -> Self::Error;
+    /// Convert a Tier 2 error (code + position) into `DeserializeError`.
+    fn jit_error(&self, input: &'de [u8], error_pos: usize, error_code: i32) -> DeserializeError;
 }

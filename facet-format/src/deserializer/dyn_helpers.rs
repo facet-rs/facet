@@ -10,11 +10,11 @@ use alloc::vec::Vec;
 
 use facet_reflect::Partial;
 
-use crate::{DeserializeError, DynParser, FieldEvidence, FormatDeserializer, ParseEvent};
+use crate::{DeserializeError, FieldEvidence, FormatDeserializer, FormatParser, ParseEvent};
 
 /// Type alias for the dyn-dispatched deserializer used by inner functions.
 pub type DynDeser<'input, 'p, const BORROW: bool> =
-    FormatDeserializer<'input, BORROW, &'p mut dyn DynParser<'input>>;
+    FormatDeserializer<'input, BORROW, &'p mut dyn FormatParser<'input>>;
 
 /// Read and consume the next event, returning an error if EOF.
 #[inline]
@@ -39,7 +39,7 @@ pub fn expect_peek<'input, const BORROW: bool>(
 pub fn peek_raw<'input, const BORROW: bool>(
     deser: &mut DynDeser<'input, '_, BORROW>,
 ) -> Result<Option<ParseEvent<'input>>, DeserializeError> {
-    deser.parser.peek_event().map_err(DeserializeError::parser)
+    deser.parser.peek_event()
 }
 
 /// Skip the current value.
@@ -47,7 +47,7 @@ pub fn peek_raw<'input, const BORROW: bool>(
 pub fn skip<'input, const BORROW: bool>(
     deser: &mut DynDeser<'input, '_, BORROW>,
 ) -> Result<(), DeserializeError> {
-    deser.parser.skip_value().map_err(DeserializeError::parser)
+    deser.parser.skip_value()
 }
 
 /// Recursively deserialize into a Partial.

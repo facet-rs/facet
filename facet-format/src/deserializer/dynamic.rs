@@ -6,13 +6,13 @@ use facet_core::{ScalarType, Shape, StructKind};
 use facet_reflect::Partial;
 
 use crate::{
-    DeserializeError, DeserializeErrorKind, DynParser, EnumVariantHint, FormatDeserializer,
-    FormatParser, ParseEvent, ScalarTypeHint, ScalarValue,
+    DeserializeError, DeserializeErrorKind, EnumVariantHint, FormatDeserializer, FormatParser,
+    ParseEvent, ScalarTypeHint, ScalarValue,
 };
 
 /// Inner implementation of `deserialize_enum_dynamic` using dyn dispatch.
 fn deserialize_enum_dynamic_inner<'input, const BORROW: bool>(
-    deser: &mut FormatDeserializer<'input, BORROW, &mut dyn DynParser<'input>>,
+    deser: &mut FormatDeserializer<'input, BORROW, &mut dyn FormatParser<'input>>,
     mut wip: Partial<'input, BORROW>,
     enum_def: &'static facet_core::EnumType,
 ) -> Result<Partial<'input, BORROW>, DeserializeError> {
@@ -136,7 +136,7 @@ fn deserialize_enum_dynamic_inner<'input, const BORROW: bool>(
             return Err(DeserializeError {
                 span: deser.last_span,
                 path: None,
-                kind: DeserializeErrorKind::TypeMismatchStr {
+                kind: DeserializeErrorKind::UnexpectedToken {
                     expected: "enum variant",
                     got: format!("{event:?}").into(),
                 },
@@ -219,7 +219,7 @@ where
                             return Err(DeserializeError {
                                 span: self.last_span,
                                 path: None,
-                                kind: DeserializeErrorKind::TypeMismatchStr {
+                                kind: DeserializeErrorKind::UnexpectedToken {
                                     expected: "field key",
                                     got: key_event.kind_name().into(),
                                 },
@@ -237,7 +237,7 @@ where
                 return Err(DeserializeError {
                     span: self.last_span,
                     path: None,
-                    kind: DeserializeErrorKind::TypeMismatchStr {
+                    kind: DeserializeErrorKind::UnexpectedToken {
                         expected: "scalar, sequence, or struct",
                         got: event.kind_name().into(),
                     },
@@ -260,7 +260,7 @@ where
             return Err(DeserializeError {
                 span: self.last_span,
                 path: Some(self.path_clone()),
-                kind: DeserializeErrorKind::TypeMismatchStr {
+                kind: DeserializeErrorKind::UnexpectedToken {
                     expected: "struct",
                     got: event.kind_name().into(),
                 },
@@ -284,7 +284,7 @@ where
                     return Err(DeserializeError {
                         span: self.last_span,
                         path: Some(self.path_clone()),
-                        kind: DeserializeErrorKind::TypeMismatchStr {
+                        kind: DeserializeErrorKind::UnexpectedToken {
                             expected: "field or struct end",
                             got: event.kind_name().into(),
                         },
@@ -318,7 +318,7 @@ where
             return Err(DeserializeError {
                 span: self.last_span,
                 path: Some(self.path_clone()),
-                kind: DeserializeErrorKind::TypeMismatchStr {
+                kind: DeserializeErrorKind::UnexpectedToken {
                     expected: "tuple",
                     got: event.kind_name().into(),
                 },
@@ -341,7 +341,7 @@ where
                     return Err(DeserializeError {
                         span: self.last_span,
                         path: Some(self.path_clone()),
-                        kind: DeserializeErrorKind::TypeMismatchStr {
+                        kind: DeserializeErrorKind::UnexpectedToken {
                             expected: "tuple element or end",
                             got: event.kind_name().into(),
                         },
@@ -364,8 +364,8 @@ where
         wip: Partial<'input, BORROW>,
         enum_def: &'static facet_core::EnumType,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
-        use crate::DynParser;
-        let dyn_parser: &mut dyn DynParser<'input> = &mut self.parser;
+        use crate::FormatParser;
+        let dyn_parser: &mut dyn FormatParser<'input> = &mut self.parser;
         let mut dyn_deser = crate::FormatDeserializer {
             parser: dyn_parser,
             last_span: self.last_span,
@@ -451,7 +451,7 @@ where
                 return Err(DeserializeError {
                     span: self.last_span,
                     path: Some(self.path_clone()),
-                    kind: DeserializeErrorKind::TypeMismatchStr {
+                    kind: DeserializeErrorKind::UnexpectedToken {
                         expected: "scalar",
                         got: event.kind_name().into(),
                     },
@@ -474,7 +474,7 @@ where
             return Err(DeserializeError {
                 span: self.last_span,
                 path: Some(self.path_clone()),
-                kind: DeserializeErrorKind::TypeMismatchStr {
+                kind: DeserializeErrorKind::UnexpectedToken {
                     expected: "sequence",
                     got: event.kind_name().into(),
                 },
@@ -511,7 +511,7 @@ where
             return Err(DeserializeError {
                 span: self.last_span,
                 path: Some(self.path_clone()),
-                kind: DeserializeErrorKind::TypeMismatchStr {
+                kind: DeserializeErrorKind::UnexpectedToken {
                     expected: "array",
                     got: event.kind_name().into(),
                 },
@@ -531,7 +531,7 @@ where
             return Err(DeserializeError {
                 span: self.last_span,
                 path: Some(self.path_clone()),
-                kind: DeserializeErrorKind::TypeMismatchStr {
+                kind: DeserializeErrorKind::UnexpectedToken {
                     expected: "array end",
                     got: event.kind_name().into(),
                 },
@@ -557,7 +557,7 @@ where
             return Err(DeserializeError {
                 span: self.last_span,
                 path: Some(self.path_clone()),
-                kind: DeserializeErrorKind::TypeMismatchStr {
+                kind: DeserializeErrorKind::UnexpectedToken {
                     expected: "map",
                     got: event.kind_name().into(),
                 },
@@ -606,7 +606,7 @@ where
                     return Err(DeserializeError {
                         span: self.last_span,
                         path: Some(self.path_clone()),
-                        kind: DeserializeErrorKind::TypeMismatchStr {
+                        kind: DeserializeErrorKind::UnexpectedToken {
                             expected: "map key",
                             got: key_event.kind_name().into(),
                         },
