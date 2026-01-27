@@ -1592,6 +1592,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// The returned pointer is valid only while the frame exists.
     /// The caller must ensure the frame is fully initialized before
     /// reading through this pointer.
+    #[deprecated(note = "use initialized_data_ptr() instead, which checks initialization")]
     pub fn data_ptr(&self) -> Option<facet_core::PtrConst> {
         if self.state != PartialState::Active {
             return None;
@@ -1601,5 +1602,62 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             // The caller is responsible for ensuring the data is initialized.
             unsafe { f.data.assume_init().as_const() }
         })
+    }
+
+    /// Returns a const pointer to the current frame's data, but only if fully initialized.
+    ///
+    /// This is the safe way to get a pointer for validation - it verifies that
+    /// the frame is fully initialized before returning the pointer.
+    ///
+    /// Returns `None` if:
+    /// - The partial is not in active state
+    /// - The current frame is not fully initialized
+    #[allow(unsafe_code)]
+    pub fn initialized_data_ptr(&self) -> Option<facet_core::PtrConst> {
+        if self.state != PartialState::Active {
+            return None;
+        }
+        let frame = self.frames().last()?;
+
+        // Check if fully initialized
+        if frame.require_full_initialization().is_err() {
+            return None;
+        }
+
+        // SAFETY: We've verified the partial is active and the frame is fully initialized.
+        Some(unsafe { frame.data.assume_init().as_const() })
+    }
+
+    /// Returns a typed reference to the current frame's data if:
+    /// 1. The partial is in active state
+    /// 2. The current frame is fully initialized
+    /// 3. The shape matches `T::SHAPE`
+    ///
+    /// This is the safe way to read a value from a Partial for validation purposes.
+    #[allow(unsafe_code)]
+    pub fn read_as<T: facet_core::Facet<'facet>>(&self) -> Option<&T> {
+        if self.state != PartialState::Active {
+            return None;
+        }
+        let frame = self.frames().last()?;
+
+        // Check if fully initialized
+        if frame.require_full_initialization().is_err() {
+            return None;
+        }
+
+        // Check shape matches
+        if frame.allocated.shape() != T::SHAPE {
+            return None;
+        }
+
+        // SAFETY: We've verified:
+        // 1. The partial is active (frame is valid)
+        // 2. The frame is fully initialized
+        // 3. The shape matches T::SHAPE
+        unsafe {
+            let ptr = frame.data.assume_init().as_const();
+            Some(&*ptr.as_ptr::<T>())
+        }
     }
 }
