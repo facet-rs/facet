@@ -39,6 +39,7 @@ libc = { version = "0.2", optional = true }
 
 [features]
 default = []
+alloc = []
 # Enable logging via tracing
 tracing = ["dep:tracing"]
 # Network types (IpAddr, SocketAddr, etc.)
