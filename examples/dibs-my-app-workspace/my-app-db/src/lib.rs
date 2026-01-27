@@ -66,7 +66,7 @@ pub struct Product {
     pub active: bool,
 
     /// Flexible metadata (JSON)
-    pub metadata: Option<String>, // JSONB when we add support
+    pub metadata: Option<Jsonb<facet_value::Value>>,
 
     /// When the product was created
     #[facet(dibs::default = "now()")]
