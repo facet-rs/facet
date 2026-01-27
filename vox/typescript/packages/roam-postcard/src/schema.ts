@@ -7,8 +7,6 @@
 // - Composite types (struct, enum, tuple)
 // - Type references (ref) for deduplication and circular types
 
-import type { DecodeResult } from "./index.ts";
-
 // ============================================================================
 // Primitive Schema Kinds
 // ============================================================================

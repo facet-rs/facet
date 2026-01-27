@@ -1,6 +1,6 @@
 // Tests for auto-reconnecting WebSocket client.
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   ReconnectingWsClient,
   createReconnectingClient,
@@ -264,8 +264,9 @@ describe("ReconnectingWsClient", () => {
     it("returns same promise when already connecting", () => {
       const client = createReconnectingClient({ url: "ws://localhost:8080" });
 
-      const promise1 = client.connect();
-      const promise2 = client.connect();
+      // Call connect twice - should return same promise and only create one WebSocket
+      client.connect();
+      client.connect();
 
       // Should be the same underlying connection attempt
       expect(MockWebSocket.instances.length).toBe(1);

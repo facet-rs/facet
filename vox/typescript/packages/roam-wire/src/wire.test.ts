@@ -3,8 +3,6 @@
 import { describe, it, expect } from "vitest";
 import {
   // Types
-  type Hello,
-  type MetadataValue,
   type MetadataEntry,
   type Message,
   // Discriminants

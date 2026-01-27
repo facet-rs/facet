@@ -69,7 +69,14 @@ import {
 export { encodeResultOk, encodeResultErr, encodeUnknownMethod, encodeInvalidPayload, ROAM_ERROR };
 
 // RPC error types (for client-side error handling)
-export { RpcError, RpcErrorCode, decodeRpcResult, decodeUserError, tryDecodeRpcResult, type RpcResult } from "@bearcove/roam-wire";
+export {
+  RpcError,
+  RpcErrorCode,
+  decodeRpcResult,
+  decodeUserError,
+  tryDecodeRpcResult,
+  type RpcResult,
+} from "@bearcove/roam-wire";
 
 // Wire types, schemas, and codec
 export type {
@@ -245,12 +252,11 @@ export class RpcDispatcher<H> {
       return encodeResultErr(encodeUnknownMethod());
     }
 
-    try {
-      return await methodHandler(handler, payload);
-    } catch (_error) {
-      // r[impl call.error.invalid-payload]
-      return encodeResultErr(encodeInvalidPayload());
-    }
+    // Method handlers are responsible for their own error handling:
+    // - Decode errors return InvalidPayload (per r[impl call.error.invalid-payload])
+    // - Fallible methods encode errors as RoamError::User(E)
+    // - Infallible methods that throw indicate bugs and should propagate
+    return await methodHandler(handler, payload);
   }
 }
 

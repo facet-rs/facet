@@ -2,7 +2,7 @@
 //
 // Walks argument structures using schemas to find and bind Tx/Rx channels.
 
-import type { Schema, EnumSchema } from "./schema.ts";
+import type { Schema } from "./schema.ts";
 import {
   findVariantByName,
   getVariantFieldSchemas,
@@ -218,7 +218,14 @@ function bindValue(
           const tupleValues = enumVal.values as unknown[] | undefined;
           if (tupleValues) {
             for (let i = 0; i < fieldSchemas.length; i++) {
-              bindValue(fieldSchemas[i], tupleValues[i], allocator, registry, serializers, channelIds);
+              bindValue(
+                fieldSchemas[i],
+                tupleValues[i],
+                allocator,
+                registry,
+                serializers,
+                channelIds,
+              );
             }
           }
         }

@@ -9,10 +9,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  type Hello,
-  type MetadataValue,
   type MetadataEntry,
-  type Message,
   helloV2,
   metadataString,
   messageHello,

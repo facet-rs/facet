@@ -13,7 +13,6 @@ import type {
   VecSchema,
   OptionSchema,
   MapSchema,
-  EnumVariant,
 } from "./schema.ts";
 import {
   resolveSchema,

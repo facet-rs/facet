@@ -2,13 +2,7 @@
 
 import { describe, it, expect } from "vitest";
 import { encodeWithSchema, decodeWithSchema } from "./schema_codec.ts";
-import type {
-  Schema,
-  SchemaRegistry,
-  EnumSchema,
-  StructSchema,
-  TupleSchema,
-} from "./schema.ts";
+import type { Schema, SchemaRegistry, EnumSchema, StructSchema, TupleSchema } from "./schema.ts";
 
 // ============================================================================
 // Test Schemas
@@ -167,7 +161,7 @@ describe("encodeWithSchema/decodeWithSchema primitives", () => {
 
   it("roundtrips f64", () => {
     const schema: Schema = { kind: "f64" };
-    const value = 3.141592653589793;
+    const value = Math.PI;
     const encoded = encodeWithSchema(value, schema);
     const decoded = decodeWithSchema(encoded, 0, schema);
     expect(decoded.value).toBe(value);

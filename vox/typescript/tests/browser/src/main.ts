@@ -3,15 +3,9 @@
 // This test connects to a Rust WebSocket server and makes RPC calls
 // using generated client code for the Testbed service.
 
-import { WsTransport, connectWs } from "@bearcove/roam-ws";
-import { helloExchangeInitiator, defaultHello, Connection, channel } from "@bearcove/roam-core";
-import {
-  TestbedClient,
-  type Point,
-  type Color,
-  type Shape,
-  type Message,
-} from "@bearcove/roam-generated/testbed.ts";
+import { connectWs } from "@bearcove/roam-ws";
+import { helloExchangeInitiator, defaultHello, channel } from "@bearcove/roam-core";
+import { TestbedClient } from "@bearcove/roam-generated/testbed.ts";
 
 // Make test results available to Playwright
 declare global {
@@ -65,7 +59,7 @@ async function testEcho(client: TestbedClient): Promise<void> {
   log("Testing reverse...");
   const reverseMessage = "Hello";
   const reverseResult = await client.reverse(reverseMessage);
-  const expectedReverse = reverseMessage.split("").reverse().join("");
+  const expectedReverse = reverseMessage.split("").toReversed().join("");
   if (reverseResult !== expectedReverse) {
     throw new Error(`Reverse mismatch: expected "${expectedReverse}", got "${reverseResult}"`);
   }

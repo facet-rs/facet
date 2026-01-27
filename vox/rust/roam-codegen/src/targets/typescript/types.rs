@@ -376,7 +376,7 @@ pub fn is_fully_supported(shape: &'static Shape) -> bool {
         }
         ShapeKind::Pointer { pointee } => is_fully_supported(pointee),
         ShapeKind::Scalar(_) => true,
-        ShapeKind::Result { .. } => false,
+        ShapeKind::Result { ok, err } => is_fully_supported(ok) && is_fully_supported(err),
         ShapeKind::Opaque => false,
     }
 }

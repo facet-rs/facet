@@ -9,9 +9,7 @@ import type { ClientMetadataValue } from "./middleware.ts";
  * Executor function type for CallBuilder.
  * Takes metadata and returns the call result.
  */
-export type CallExecutor<T> = (
-  metadata: Map<string, ClientMetadataValue>
-) => Promise<T>;
+export type CallExecutor<T> = (metadata: Map<string, ClientMetadataValue>) => Promise<T>;
 
 /**
  * Fluent builder for RPC calls.
@@ -52,9 +50,10 @@ export class CallBuilder<T> implements PromiseLike<T> {
   /**
    * Implement PromiseLike for await support.
    */
+  // oxlint-disable-next-line unicorn/no-thenable -- intentional: CallBuilder implements PromiseLike
   then<TResult1 = T, TResult2 = never>(
     onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | null,
-    onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
+    onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
   ): Promise<TResult1 | TResult2> {
     return this.resultPromise.then(onfulfilled, onrejected);
   }
@@ -63,7 +62,7 @@ export class CallBuilder<T> implements PromiseLike<T> {
    * Support for catch.
    */
   catch<TResult = never>(
-    onrejected?: ((reason: unknown) => TResult | PromiseLike<TResult>) | null
+    onrejected?: ((reason: unknown) => TResult | PromiseLike<TResult>) | null,
   ): Promise<T | TResult> {
     return this.resultPromise.catch(onrejected);
   }
@@ -96,7 +95,7 @@ export class CallBuilder<T> implements PromiseLike<T> {
  */
 export function withMeta<T>(
   metadata: Map<string, ClientMetadataValue>,
-  executor: CallExecutor<T>
+  executor: CallExecutor<T>,
 ): CallBuilder<T> {
   return new CallBuilder(executor, metadata);
 }

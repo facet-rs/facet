@@ -4,7 +4,6 @@ import { describe, it, expect } from "vitest";
 import {
   type Schema,
   type EnumSchema,
-  type EnumVariant,
   type StructSchema,
   type TupleSchema,
   type RefSchema,

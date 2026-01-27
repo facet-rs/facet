@@ -47,6 +47,10 @@ pub fn generate_handler_interface(service: &ServiceDetail) -> String {
 }
 
 /// Generate RPC method handlers map.
+///
+/// r[impl call.error.invalid-payload] - Deserialization errors return InvalidPayload.
+/// Handler errors for infallible methods propagate (they indicate bugs).
+/// Handler errors for fallible methods are encoded as RoamError::User(E).
 pub fn generate_method_handlers(service: &ServiceDetail) -> String {
     use crate::render::hex_u64;
 
@@ -70,7 +74,6 @@ pub fn generate_method_handlers(service: &ServiceDetail) -> String {
             "  [{}n, async (handler, payload) => {{\n",
             hex_u64(id)
         ));
-        out.push_str("    try {\n");
 
         // Check if we can fully implement this method
         let can_decode_args = method.args.iter().all(|a| is_fully_supported(a.ty));
@@ -78,6 +81,15 @@ pub fn generate_method_handlers(service: &ServiceDetail) -> String {
 
         if can_decode_args && can_encode_return && !method_has_streaming {
             // Non-streaming method - decode and call directly
+            //
+            // Deserialization is wrapped in try/catch - errors here are InvalidPayload.
+            // Handler execution is NOT wrapped - for infallible methods, errors propagate.
+            // For fallible methods, the handler returns { ok, value/error } which we encode.
+
+            // Step 1: Decode arguments (InvalidPayload on error)
+            out.push_str("    // Decode arguments - errors here are InvalidPayload\n");
+            out.push_str("    let args;\n");
+            out.push_str("    try {\n");
             out.push_str("      const buf = payload;\n");
             out.push_str("      let offset = 0;\n");
             for arg in &method.args {
@@ -89,29 +101,59 @@ pub fn generate_method_handlers(service: &ServiceDetail) -> String {
                 "      if (offset !== buf.length) throw new Error(\"args: trailing bytes\");\n",
             );
 
-            let arg_names = method
+            // Collect decoded args into object
+            let arg_names: Vec<_> = method
                 .args
                 .iter()
                 .map(|a| a.name.to_lower_camel_case())
+                .collect();
+            if arg_names.is_empty() {
+                out.push_str("      args = {};\n");
+            } else {
+                out.push_str(&format!("      args = {{ {} }};\n", arg_names.join(", ")));
+            }
+            out.push_str("    } catch (_decodeError) {\n");
+            out.push_str("      return encodeResultErr(encodeInvalidPayload());\n");
+            out.push_str("    }\n\n");
+
+            // Step 2: Call handler (no try/catch for infallible, encode result for fallible)
+            out.push_str("    // Call handler - errors propagate for infallible methods\n");
+            let call_args = arg_names
+                .iter()
+                .map(|n| format!("args.{n}"))
                 .collect::<Vec<_>>()
                 .join(", ");
             out.push_str(&format!(
-                "      const result = await handler.{method_name}({arg_names});\n"
+                "    const result = await handler.{method_name}({call_args});\n"
             ));
 
-            let encode_expr = generate_encode_expr(method.return_type, "result");
-            out.push_str(&format!("      return encodeResultOk({encode_expr});\n"));
+            // Step 3: Encode response
+            // Check if return type is Result<T, E>
+            if let ShapeKind::Result { ok, err } = classify_shape(method.return_type) {
+                // Fallible method - handler returns { ok: true; value: T } | { ok: false; error: E }
+                // Wire format: [0] + T for success, [1, 0] + E for User error
+                let ok_encode = generate_encode_expr(ok, "result.value");
+                let err_encode = generate_encode_expr(err, "result.error");
+                out.push_str("    if (result.ok) {\n");
+                out.push_str(&format!("      return concat(encodeU8(0), {ok_encode});\n"));
+                out.push_str("    } else {\n");
+                out.push_str(&format!(
+                    "      return concat(encodeU8(1), encodeU8(0), {err_encode});\n"
+                ));
+                out.push_str("    }\n");
+            } else {
+                // Infallible method - just encode the result
+                let encode_expr = generate_encode_expr(method.return_type, "result");
+                out.push_str(&format!("    return encodeResultOk({encode_expr});\n"));
+            }
         } else {
             // Streaming method - must use streaming dispatcher
             out.push_str(
-                "      // Channeling method - use streamingDispatch() instead of simple RPC dispatch\n",
+                "    // Channeling method - use streamingDispatch() instead of simple RPC dispatch\n",
             );
-            out.push_str("      return encodeResultErr(encodeInvalidPayload());\n");
+            out.push_str("    return encodeResultErr(encodeInvalidPayload());\n");
         }
 
-        out.push_str("    } catch (e) {\n");
-        out.push_str("      return encodeResultErr(encodeInvalidPayload());\n");
-        out.push_str("    }\n");
         out.push_str("  }],\n");
     }
 

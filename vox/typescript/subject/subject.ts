@@ -29,7 +29,6 @@ import {
   type Rx,
   channel,
   encodeResultErr,
-  encodeInvalidPayload,
   encodeUnknownMethod,
   ConnectionError,
 } from "@bearcove/roam-core";
@@ -42,7 +41,7 @@ class TestbedService implements TestbedHandler {
   }
 
   reverse(message: string): string {
-    return Array.from(message).reverse().join("");
+    return Array.from(message).toReversed().join("");
   }
 
   // Fallible methods

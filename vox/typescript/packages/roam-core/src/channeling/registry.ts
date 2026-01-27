@@ -1,7 +1,7 @@
 // Channel registry for managing active channels on a connection.
 
 import { type ChannelId, ChannelError } from "./types.ts";
-import { createChannel, type Channel, ChannelSender, ChannelReceiver } from "./channel.ts";
+import { createChannel, type Channel, ChannelReceiver } from "./channel.ts";
 
 /** Message sent on an outgoing channel. */
 export type OutgoingMessage = { kind: "data"; payload: Uint8Array } | { kind: "close" };
@@ -102,42 +102,7 @@ export class ChannelRegistry {
   }
 
   /**
-   * Poll all outgoing channels for data to send.
-   *
-   * Returns the first available message, or pending if none are ready.
-   */
-  pollOutgoing(): OutgoingPoll {
-    if (this.outgoing.size === 0) {
-      return { kind: "done" };
-    }
-
-    const toRemove: ChannelId[] = [];
-
-    for (const [channelId, channel] of this.outgoing) {
-      // Try to receive without blocking
-      // We need a sync check here - use a trick with immediate promise resolution
-      let value: OutgoingMessage | null = null;
-      let hasValue = false;
-
-      // Check buffer synchronously via recv that resolves immediately if data available
-      const checkPromise = channel.recv();
-
-      // This is a bit hacky - we check if the promise resolves synchronously
-      // by seeing if the buffer had data. Let's simplify with a tryRecv approach.
-      // Actually, we need to redesign the channel to support try_recv...
-
-      // For now, let's use a different approach: check if channel has pending data
-      // We'll need to modify the channel interface.
-
-      // TEMPORARY: Return pending and rely on async flushing
-      // TODO: Add tryRecv to channel for proper sync polling
-    }
-
-    return { kind: "pending" };
-  }
-
-  /**
-   * Async version - wait for outgoing data.
+   * Wait for outgoing data from any registered channel.
    */
   async waitOutgoing(): Promise<OutgoingPoll> {
     if (this.outgoing.size === 0) {

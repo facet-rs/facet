@@ -1066,6 +1066,7 @@ pub trait ServiceDispatcher: Send + Sync {
 ///
 /// Methods handled by `primary` (via [`ServiceDispatcher::method_ids`]) are
 /// routed to it; all other methods are routed to `fallback`.
+#[derive(Clone)]
 pub struct RoutedDispatcher<A, B> {
     primary: A,
     fallback: B,
