@@ -26,7 +26,7 @@ impl FormatSuite for TomlSlice {
         T: Facet<'static> + core::fmt::Debug,
     {
         let input_str = std::str::from_utf8(input).expect("input should be valid UTF-8");
-        let parser = TomlParser::new(input_str).map_err(DeserializeError::parser)?;
+        let parser = TomlParser::new(input_str)?;
         let mut de = FormatDeserializer::new_owned(parser);
         de.deserialize_deferred::<T>()
     }
@@ -239,7 +239,7 @@ impl FormatSuite for TomlSlice {
 
     fn error_type_mismatch_object_to_array() -> CaseSpec {
         // Object (nested struct) provided where array expected
-        CaseSpec::expect_error("[items]\nkey = \"value\"", "type mismatch")
+        CaseSpec::expect_error("[items]\nkey = \"value\"", "got object, expected array")
     }
 
     fn error_missing_required_field() -> CaseSpec {

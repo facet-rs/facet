@@ -81,7 +81,7 @@ where
     T: facet_core::Facet<'static>,
 {
     use facet_format::FormatDeserializer;
-    let parser = TomlParser::new(input).map_err(DeserializeError::parser)?;
+    let parser = TomlParser::new(input)?;
     let mut de = FormatDeserializer::new_owned(parser);
     // TOML requires deferred mode to handle table reopening
     de.deserialize_deferred()
@@ -119,7 +119,14 @@ where
     T: facet_core::Facet<'static>,
 {
     let s = core::str::from_utf8(input).map_err(|e| {
-        DeserializeError::parser(TomlError::without_span(TomlErrorKind::InvalidUtf8(e)))
+        let mut context = [0u8; 16];
+        let context_len = e.valid_up_to().min(16);
+        context[..context_len].copy_from_slice(&input[..context_len]);
+        facet_format::DeserializeErrorKind::InvalidUtf8 {
+            context,
+            context_len: context_len as u8,
+        }
+        .with_span(facet_reflect::Span::new(e.valid_up_to(), 1))
     })?;
     from_str(s)
 }
@@ -160,7 +167,7 @@ where
     'input: 'facet,
 {
     use facet_format::FormatDeserializer;
-    let parser = TomlParser::new(input).map_err(DeserializeError::parser)?;
+    let parser = TomlParser::new(input)?;
     let mut de = FormatDeserializer::new(parser);
     // TOML requires deferred mode to handle table reopening
     de.deserialize_deferred()
@@ -202,7 +209,14 @@ where
     'input: 'facet,
 {
     let s = core::str::from_utf8(input).map_err(|e| {
-        DeserializeError::parser(TomlError::without_span(TomlErrorKind::InvalidUtf8(e)))
+        let mut context = [0u8; 16];
+        let context_len = e.valid_up_to().min(16);
+        context[..context_len].copy_from_slice(&input[..context_len]);
+        facet_format::DeserializeErrorKind::InvalidUtf8 {
+            context,
+            context_len: context_len as u8,
+        }
+        .with_span(facet_reflect::Span::new(e.valid_up_to(), 1))
     })?;
     from_str_borrowed(s)
 }
