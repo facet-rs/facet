@@ -28,6 +28,29 @@ pub trait FormatParser<'de> {
     /// from the internal buffer before reading new events from the input.
     fn next_event(&mut self) -> Result<Option<crate::ParseEvent<'de>>, ParseError>;
 
+    /// Read multiple parse events into a buffer, returning the number of events read.
+    ///
+    /// This is an optimization for parsers that can produce multiple events efficiently
+    /// in a single call, amortizing function call overhead and improving cache locality.
+    ///
+    /// Returns `Ok(0)` at end-of-input (EOF).
+    ///
+    /// The default implementation calls `next_event` repeatedly to fill the buffer.
+    /// Parsers can override this for better performance.
+    fn next_events(&mut self, buf: &mut [crate::ParseEvent<'de>]) -> Result<usize, ParseError> {
+        let mut count = 0;
+        for slot in buf.iter_mut() {
+            match self.next_event()? {
+                Some(event) => {
+                    *slot = event;
+                    count += 1;
+                }
+                None => break,
+            }
+        }
+        Ok(count)
+    }
+
     /// Peek at the next event without consuming it, or `None` if at EOF.
     fn peek_event(&mut self) -> Result<Option<crate::ParseEvent<'de>>, ParseError>;
 
@@ -257,6 +280,10 @@ pub trait FormatParser<'de> {
 impl<'de> FormatParser<'de> for &mut dyn FormatParser<'de> {
     fn next_event(&mut self) -> Result<Option<crate::ParseEvent<'de>>, ParseError> {
         (**self).next_event()
+    }
+
+    fn next_events(&mut self, buf: &mut [crate::ParseEvent<'de>]) -> Result<usize, ParseError> {
+        (**self).next_events(buf)
     }
 
     fn peek_event(&mut self) -> Result<Option<crate::ParseEvent<'de>>, ParseError> {

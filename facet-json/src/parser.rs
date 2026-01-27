@@ -436,6 +436,151 @@ impl<'de, const TRUSTED_UTF8: bool> FormatParser<'de> for JsonParser<'de, TRUSTE
         self.produce_event()
     }
 
+    fn next_events(&mut self, buf: &mut [ParseEvent<'de>]) -> Result<usize, ParseError> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+
+        let mut count = 0;
+
+        // First, drain any peeked event
+        if let Some(event) = self.state.event_peek.take() {
+            self.state.peek_start_offset = None;
+            buf[count] = event;
+            count += 1;
+            if count >= buf.len() {
+                return Ok(count);
+            }
+        }
+
+        // Fast path: when inside an object expecting key, we can batch
+        // FieldKey + scalar value pairs efficiently
+        'outer: while count < buf.len() {
+            // Check if we're in object key position - the common hot path
+            if let Some(ContextState::Object(ObjectState::KeyOrEnd)) = self.state.stack.last() {
+                // Try to batch object fields
+                while count + 1 < buf.len() {
+                    let token = self.consume_token()?;
+                    match token.token {
+                        AdapterToken::ObjectEnd => {
+                            self.state.stack.pop();
+                            self.finish_value_in_parent();
+                            buf[count] = ParseEvent::StructEnd;
+                            count += 1;
+                            continue 'outer;
+                        }
+                        AdapterToken::String(name) => {
+                            self.expect_colon()?;
+                            // Emit FieldKey
+                            buf[count] = ParseEvent::FieldKey(FieldKey::new(
+                                name,
+                                FieldLocationHint::KeyValue,
+                            ));
+                            count += 1;
+
+                            // Now read the value
+                            let value_token = self.consume_token()?;
+                            match value_token.token {
+                                // Scalar values - emit directly and stay in object
+                                AdapterToken::String(s) => {
+                                    buf[count] = ParseEvent::Scalar(ScalarValue::Str(s));
+                                    count += 1;
+                                }
+                                AdapterToken::U64(n) => {
+                                    buf[count] = ParseEvent::Scalar(ScalarValue::U64(n));
+                                    count += 1;
+                                }
+                                AdapterToken::I64(n) => {
+                                    buf[count] = ParseEvent::Scalar(ScalarValue::I64(n));
+                                    count += 1;
+                                }
+                                AdapterToken::F64(n) => {
+                                    buf[count] = ParseEvent::Scalar(ScalarValue::F64(n));
+                                    count += 1;
+                                }
+                                AdapterToken::True => {
+                                    buf[count] = ParseEvent::Scalar(ScalarValue::Bool(true));
+                                    count += 1;
+                                }
+                                AdapterToken::False => {
+                                    buf[count] = ParseEvent::Scalar(ScalarValue::Bool(false));
+                                    count += 1;
+                                }
+                                AdapterToken::Null => {
+                                    buf[count] = ParseEvent::Scalar(ScalarValue::Null);
+                                    count += 1;
+                                }
+                                // Nested container - emit start and let normal path handle it
+                                AdapterToken::ObjectStart => {
+                                    self.state.root_started = true;
+                                    self.state
+                                        .stack
+                                        .push(ContextState::Object(ObjectState::KeyOrEnd));
+                                    buf[count] = ParseEvent::StructStart(ContainerKind::Object);
+                                    count += 1;
+                                    continue 'outer;
+                                }
+                                AdapterToken::ArrayStart => {
+                                    self.state.root_started = true;
+                                    self.state
+                                        .stack
+                                        .push(ContextState::Array(ArrayState::ValueOrEnd));
+                                    buf[count] = ParseEvent::SequenceStart(ContainerKind::Array);
+                                    count += 1;
+                                    continue 'outer;
+                                }
+                                _ => {
+                                    return Err(self.unexpected(&value_token, "value"));
+                                }
+                            }
+
+                            // After scalar value, expect comma or end
+                            let sep_token = self.consume_token()?;
+                            match sep_token.token {
+                                AdapterToken::Comma => {
+                                    // Continue to next field
+                                    continue;
+                                }
+                                AdapterToken::ObjectEnd => {
+                                    self.state.stack.pop();
+                                    self.finish_value_in_parent();
+                                    if count < buf.len() {
+                                        buf[count] = ParseEvent::StructEnd;
+                                        count += 1;
+                                    }
+                                    continue 'outer;
+                                }
+                                _ => {
+                                    return Err(self.unexpected(&sep_token, "',' or '}'"));
+                                }
+                            }
+                        }
+                        AdapterToken::Eof => {
+                            return Err(ParseError::new(
+                                token.span,
+                                DeserializeErrorKind::UnexpectedEof {
+                                    expected: "field name or '}'",
+                                },
+                            ));
+                        }
+                        _ => return Err(self.unexpected(&token, "field name or '}'")),
+                    }
+                }
+            }
+
+            // Fall back to produce_event for other cases
+            match self.produce_event()? {
+                Some(event) => {
+                    buf[count] = event;
+                    count += 1;
+                }
+                None => break,
+            }
+        }
+
+        Ok(count)
+    }
+
     fn save(&mut self) -> SavePoint {
         self.save_counter += 1;
         self.saved_states
