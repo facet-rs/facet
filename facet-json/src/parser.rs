@@ -7,7 +7,6 @@ use facet_format::{
     ContainerKind, DeserializeErrorKind, FieldKey, FieldLocationHint, FormatParser, ParseError,
     ParseEvent, ParseEventKind, SavePoint, ScalarValue,
 };
-use facet_reflect::Span;
 
 use crate::adapter::{
     AdapterError, AdapterErrorKind, SliceAdapter, SpannedAdapterToken, Token as AdapterToken,

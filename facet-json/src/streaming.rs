@@ -14,7 +14,8 @@ use corosensei::{Coroutine, CoroutineResult};
 use facet_core::Facet;
 use facet_format::{
     ContainerKind, DeserializeError, DeserializeErrorKind, FieldKey, FieldLocationHint,
-    FormatDeserializer, FormatParser, ParseError, ParseEvent, SavePoint, ScalarValue,
+    FormatDeserializer, FormatParser, ParseError, ParseEvent, ParseEventKind, SavePoint,
+    ScalarValue,
 };
 use facet_reflect::Span;
 
@@ -423,52 +424,68 @@ impl<A: TokenSource<'static>> StreamingJsonParser<A> {
         match token.token {
             AdapterToken::ObjectStart => {
                 self.stack.push(ContextState::Object(ObjectState::KeyOrEnd));
-                Ok(ParseEvent::StructStart(ContainerKind::Object))
+                Ok(ParseEvent::from_kind(ParseEventKind::StructStart(
+                    ContainerKind::Object,
+                )))
             }
             AdapterToken::ArrayStart => {
                 self.stack.push(ContextState::Array(ArrayState::ValueOrEnd));
-                Ok(ParseEvent::SequenceStart(ContainerKind::Array))
+                Ok(ParseEvent::from_kind(ParseEventKind::SequenceStart(
+                    ContainerKind::Array,
+                )))
             }
             AdapterToken::String(s) => {
-                let event = ParseEvent::Scalar(ScalarValue::Str(s));
+                let event = ParseEvent::from_kind(ParseEventKind::Scalar(ScalarValue::Str(s)));
                 self.finish_value_in_parent();
                 Ok(event)
             }
             AdapterToken::True => {
                 self.finish_value_in_parent();
-                Ok(ParseEvent::Scalar(ScalarValue::Bool(true)))
+                Ok(ParseEvent::from_kind(ParseEventKind::Scalar(
+                    ScalarValue::Bool(true),
+                )))
             }
             AdapterToken::False => {
                 self.finish_value_in_parent();
-                Ok(ParseEvent::Scalar(ScalarValue::Bool(false)))
+                Ok(ParseEvent::from_kind(ParseEventKind::Scalar(
+                    ScalarValue::Bool(false),
+                )))
             }
             AdapterToken::Null => {
                 self.finish_value_in_parent();
-                Ok(ParseEvent::Scalar(ScalarValue::Null))
+                Ok(ParseEvent::from_kind(ParseEventKind::Scalar(
+                    ScalarValue::Null,
+                )))
             }
             AdapterToken::U64(n) => {
                 self.finish_value_in_parent();
-                Ok(ParseEvent::Scalar(ScalarValue::U64(n)))
+                Ok(ParseEvent::from_kind(ParseEventKind::Scalar(
+                    ScalarValue::U64(n),
+                )))
             }
             AdapterToken::I64(n) => {
                 self.finish_value_in_parent();
-                Ok(ParseEvent::Scalar(ScalarValue::I64(n)))
+                Ok(ParseEvent::from_kind(ParseEventKind::Scalar(
+                    ScalarValue::I64(n),
+                )))
             }
             AdapterToken::U128(n) => {
                 self.finish_value_in_parent();
-                Ok(ParseEvent::Scalar(ScalarValue::Str(Cow::Owned(
-                    n.to_string(),
-                ))))
+                Ok(ParseEvent::from_kind(ParseEventKind::Scalar(
+                    ScalarValue::Str(Cow::Owned(n.to_string())),
+                )))
             }
             AdapterToken::I128(n) => {
                 self.finish_value_in_parent();
-                Ok(ParseEvent::Scalar(ScalarValue::Str(Cow::Owned(
-                    n.to_string(),
-                ))))
+                Ok(ParseEvent::from_kind(ParseEventKind::Scalar(
+                    ScalarValue::Str(Cow::Owned(n.to_string())),
+                )))
             }
             AdapterToken::F64(n) => {
                 self.finish_value_in_parent();
-                Ok(ParseEvent::Scalar(ScalarValue::F64(n)))
+                Ok(ParseEvent::from_kind(ParseEventKind::Scalar(
+                    ScalarValue::F64(n),
+                )))
             }
             AdapterToken::ObjectEnd | AdapterToken::ArrayEnd => {
                 Err(self.unexpected(&token, "value"))
@@ -490,16 +507,15 @@ impl<A: TokenSource<'static>> StreamingJsonParser<A> {
                         AdapterToken::ObjectEnd => {
                             self.stack.pop();
                             self.finish_value_in_parent();
-                            return Ok(Some(ParseEvent::StructEnd));
+                            return Ok(Some(ParseEvent::from_kind(ParseEventKind::StructEnd)));
                         }
                         AdapterToken::String(name) => {
                             self.expect_colon()?;
                             if let Some(ContextState::Object(state)) = self.stack.last_mut() {
                                 *state = ObjectState::Value;
                             }
-                            return Ok(Some(ParseEvent::FieldKey(FieldKey::new(
-                                name,
-                                FieldLocationHint::KeyValue,
+                            return Ok(Some(ParseEvent::from_kind(ParseEventKind::FieldKey(
+                                FieldKey::new(name, FieldLocationHint::KeyValue),
                             ))));
                         }
                         AdapterToken::Eof => {
@@ -528,7 +544,7 @@ impl<A: TokenSource<'static>> StreamingJsonParser<A> {
                         AdapterToken::ObjectEnd => {
                             self.stack.pop();
                             self.finish_value_in_parent();
-                            return Ok(Some(ParseEvent::StructEnd));
+                            return Ok(Some(ParseEvent::from_kind(ParseEventKind::StructEnd)));
                         }
                         AdapterToken::Eof => {
                             return Err(ParseError::new(
@@ -547,7 +563,7 @@ impl<A: TokenSource<'static>> StreamingJsonParser<A> {
                         AdapterToken::ArrayEnd => {
                             self.stack.pop();
                             self.finish_value_in_parent();
-                            return Ok(Some(ParseEvent::SequenceEnd));
+                            return Ok(Some(ParseEvent::from_kind(ParseEventKind::SequenceEnd)));
                         }
                         AdapterToken::Eof => {
                             return Err(ParseError::new(
@@ -577,7 +593,7 @@ impl<A: TokenSource<'static>> StreamingJsonParser<A> {
                         AdapterToken::ArrayEnd => {
                             self.stack.pop();
                             self.finish_value_in_parent();
-                            return Ok(Some(ParseEvent::SequenceEnd));
+                            return Ok(Some(ParseEvent::from_kind(ParseEventKind::SequenceEnd)));
                         }
                         AdapterToken::Eof => {
                             return Err(ParseError::new(
@@ -637,14 +653,16 @@ impl<A: TokenSource<'static>> StreamingJsonParser<A> {
         let event = &self.event_buffer[self.buffer_idx];
         self.buffer_idx += 1;
 
-        match event {
-            ParseEvent::StructStart(_) | ParseEvent::SequenceStart(_) => {
+        match &event.kind {
+            ParseEventKind::StructStart(_) | ParseEventKind::SequenceStart(_) => {
                 // Skip the entire container
                 let mut depth = 1;
                 while depth > 0 && self.buffer_idx < self.event_buffer.len() {
-                    match &self.event_buffer[self.buffer_idx] {
-                        ParseEvent::StructStart(_) | ParseEvent::SequenceStart(_) => depth += 1,
-                        ParseEvent::StructEnd | ParseEvent::SequenceEnd => depth -= 1,
+                    match &self.event_buffer[self.buffer_idx].kind {
+                        ParseEventKind::StructStart(_) | ParseEventKind::SequenceStart(_) => {
+                            depth += 1
+                        }
+                        ParseEventKind::StructEnd | ParseEventKind::SequenceEnd => depth -= 1,
                         _ => {}
                     }
                     self.buffer_idx += 1;

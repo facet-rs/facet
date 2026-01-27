@@ -8,8 +8,8 @@ extern crate alloc;
 use alloc::{borrow::Cow, format, vec::Vec};
 
 use facet_format::{
-    ContainerKind, DeserializeErrorKind, FormatParser, ParseError, ParseEvent, SavePoint,
-    ScalarValue,
+    ContainerKind, DeserializeErrorKind, FormatParser, ParseError, ParseEvent, ParseEventKind,
+    SavePoint, ScalarValue,
 };
 use facet_reflect::Span;
 
@@ -85,9 +85,7 @@ impl<'de> Asn1Parser<'de> {
         self.input.get(self.pos).copied().ok_or_else(|| {
             ParseError::new(
                 Span::new(self.pos, 0),
-                DeserializeErrorKind::UnexpectedEof {
-                    expected: "byte",
-                },
+                DeserializeErrorKind::UnexpectedEof { expected: "byte" },
             )
         })
     }
@@ -358,9 +356,9 @@ impl<'de> Asn1Parser<'de> {
             let state = self.stack.pop().unwrap();
             self.field_indices.pop();
             if state.is_sequence {
-                return Ok(Some(ParseEvent::StructEnd));
+                return Ok(Some(ParseEvent::from_kind(ParseEventKind::StructEnd)));
             } else {
-                return Ok(Some(ParseEvent::SequenceEnd));
+                return Ok(Some(ParseEvent::from_kind(ParseEventKind::SequenceEnd)));
             }
         }
 
@@ -381,7 +379,7 @@ impl<'de> Asn1Parser<'de> {
                 state.remaining_fields -= 1;
                 state.awaiting_value = true;
             }
-            return Ok(Some(ParseEvent::OrderedField));
+            return Ok(Some(ParseEvent::from_kind(ParseEventKind::OrderedField)));
         }
 
         // Clear the awaiting_value flag since we're about to produce a value
@@ -418,9 +416,13 @@ impl<'de> Asn1Parser<'de> {
                 self.field_indices.push(0);
 
                 if as_array {
-                    Ok(Some(ParseEvent::SequenceStart(ContainerKind::Array)))
+                    Ok(Some(ParseEvent::from_kind(ParseEventKind::SequenceStart(
+                        ContainerKind::Array,
+                    ))))
                 } else {
-                    Ok(Some(ParseEvent::StructStart(ContainerKind::Object)))
+                    Ok(Some(ParseEvent::from_kind(ParseEventKind::StructStart(
+                        ContainerKind::Object,
+                    ))))
                 }
             }
 
@@ -428,44 +430,54 @@ impl<'de> Asn1Parser<'de> {
             (CLASS_UNIVERSAL, false, 0x01) => {
                 let value = self.read_bool()?;
                 self.finish_value();
-                Ok(Some(ParseEvent::Scalar(ScalarValue::Bool(value))))
+                Ok(Some(ParseEvent::from_kind(ParseEventKind::Scalar(
+                    ScalarValue::Bool(value),
+                ))))
             }
 
             // Universal primitive INTEGER
             (CLASS_UNIVERSAL, false, 0x02) => {
                 let value = self.read_integer()?;
                 self.finish_value();
-                Ok(Some(ParseEvent::Scalar(ScalarValue::I64(value))))
+                Ok(Some(ParseEvent::from_kind(ParseEventKind::Scalar(
+                    ScalarValue::I64(value),
+                ))))
             }
 
             // Universal primitive OCTET STRING
             (CLASS_UNIVERSAL, false, 0x04) => {
                 let bytes = self.read_octet_string()?;
                 self.finish_value();
-                Ok(Some(ParseEvent::Scalar(ScalarValue::Bytes(Cow::Borrowed(
-                    bytes,
-                )))))
+                Ok(Some(ParseEvent::from_kind(ParseEventKind::Scalar(
+                    ScalarValue::Bytes(Cow::Borrowed(bytes)),
+                ))))
             }
 
             // Universal primitive NULL
             (CLASS_UNIVERSAL, false, 0x05) => {
                 let _ = self.read_tlv()?;
                 self.finish_value();
-                Ok(Some(ParseEvent::Scalar(ScalarValue::Null)))
+                Ok(Some(ParseEvent::from_kind(ParseEventKind::Scalar(
+                    ScalarValue::Null,
+                ))))
             }
 
             // Universal primitive REAL
             (CLASS_UNIVERSAL, false, 0x09) => {
                 let value = self.read_real()?;
                 self.finish_value();
-                Ok(Some(ParseEvent::Scalar(ScalarValue::F64(value))))
+                Ok(Some(ParseEvent::from_kind(ParseEventKind::Scalar(
+                    ScalarValue::F64(value),
+                ))))
             }
 
             // Universal primitive UTF8String
             (CLASS_UNIVERSAL, false, 0x0C) => {
                 let s = self.read_string()?;
                 self.finish_value();
-                Ok(Some(ParseEvent::Scalar(ScalarValue::Str(Cow::Borrowed(s)))))
+                Ok(Some(ParseEvent::from_kind(ParseEventKind::Scalar(
+                    ScalarValue::Str(Cow::Borrowed(s)),
+                ))))
             }
 
             // Context-specific tags (used for enum variants and optional fields)
@@ -479,13 +491,15 @@ impl<'de> Asn1Parser<'de> {
                         awaiting_value: false,
                     });
                     self.field_indices.push(0);
-                    Ok(Some(ParseEvent::StructStart(ContainerKind::Object)))
+                    Ok(Some(ParseEvent::from_kind(ParseEventKind::StructStart(
+                        ContainerKind::Object,
+                    ))))
                 } else {
                     // For primitive context-specific, treat as variant discriminant
                     // The tag number is often used as the variant index
                     self.finish_value();
-                    Ok(Some(ParseEvent::Scalar(ScalarValue::U64(
-                        tag_number as u64,
+                    Ok(Some(ParseEvent::from_kind(ParseEventKind::Scalar(
+                        ScalarValue::U64(tag_number as u64),
                     ))))
                 }
             }
@@ -558,7 +572,11 @@ impl<'de> FormatParser<'de> for Asn1Parser<'de> {
     fn hint_struct_fields(&mut self, num_fields: usize) {
         self.pending_struct_fields = Some(num_fields);
         // Clear any peeked event since the interpretation may change
-        if matches!(self.event_peek, Some(ParseEvent::OrderedField)) {
+        if self
+            .event_peek
+            .as_ref()
+            .is_some_and(|e| matches!(e.kind, ParseEventKind::OrderedField))
+        {
             self.event_peek = None;
         }
     }
@@ -566,7 +584,11 @@ impl<'de> FormatParser<'de> for Asn1Parser<'de> {
     fn hint_scalar_type(&mut self, hint: facet_format::ScalarTypeHint) {
         self.pending_scalar_type = Some(hint);
         // Clear any peeked OrderedField since we're about to read a value
-        if matches!(self.event_peek, Some(ParseEvent::OrderedField)) {
+        if self
+            .event_peek
+            .as_ref()
+            .is_some_and(|e| matches!(e.kind, ParseEventKind::OrderedField))
+        {
             self.event_peek = None;
         }
     }
@@ -574,7 +596,11 @@ impl<'de> FormatParser<'de> for Asn1Parser<'de> {
     fn hint_sequence(&mut self) {
         self.pending_sequence = true;
         // Clear any peeked event since the interpretation may change
-        if matches!(self.event_peek, Some(ParseEvent::StructStart(_))) {
+        if self
+            .event_peek
+            .as_ref()
+            .is_some_and(|e| matches!(e.kind, ParseEventKind::StructStart(_)))
+        {
             self.event_peek = None;
         }
     }

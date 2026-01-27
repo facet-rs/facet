@@ -43,7 +43,7 @@ use alloc::{
 
 use facet_format::{
     ContainerKind, DeserializeErrorKind, FieldKey, FieldLocationHint, FormatParser, ParseError,
-    ParseEvent, SavePoint, ScalarValue,
+    ParseEvent, ParseEventKind, SavePoint, ScalarValue,
 };
 use toml_parser::{
     ErrorSink, Raw, Source,
@@ -340,11 +340,11 @@ impl<'de> TomlParser<'de> {
     }
 
     /// Emit the "end" event for a path segment based on its kind.
-    const fn end_event_for_segment(segment: &PathSegment<'_>) -> ParseEvent<'static> {
+    fn end_event_for_segment(segment: &PathSegment<'_>) -> ParseEvent<'static> {
         match segment.kind {
-            SegmentKind::Table => ParseEvent::StructEnd,
-            SegmentKind::Array => ParseEvent::SequenceEnd,
-            SegmentKind::ArrayElement => ParseEvent::StructEnd,
+            SegmentKind::Table => ParseEvent::from_kind(ParseEventKind::StructEnd),
+            SegmentKind::Array => ParseEvent::from_kind(ParseEventKind::SequenceEnd),
+            SegmentKind::ArrayElement => ParseEvent::from_kind(ParseEventKind::StructEnd),
         }
     }
 
@@ -403,11 +403,12 @@ impl<'de> TomlParser<'de> {
         // Navigate down to target - all segments are Tables for [table.path]
         let mut new_path: Vec<PathSegment<'de>> = self.current_path[..current_idx].to_vec();
         for name in &target_names[target_idx..] {
-            events.push(ParseEvent::FieldKey(FieldKey::new(
-                name.clone(),
-                FieldLocationHint::KeyValue,
+            events.push(ParseEvent::from_kind(ParseEventKind::FieldKey(
+                FieldKey::new(name.clone(), FieldLocationHint::KeyValue),
             )));
-            events.push(ParseEvent::StructStart(ContainerKind::Object));
+            events.push(ParseEvent::from_kind(ParseEventKind::StructStart(
+                ContainerKind::Object,
+            )));
             new_path.push(PathSegment {
                 name: name.clone(),
                 kind: SegmentKind::Table,
@@ -493,11 +494,12 @@ impl<'de> TomlParser<'de> {
         if target_names.len() > target_idx {
             // Navigate to parent tables first
             for name in &target_names[target_idx..target_names.len() - 1] {
-                events.push(ParseEvent::FieldKey(FieldKey::new(
-                    name.clone(),
-                    FieldLocationHint::KeyValue,
+                events.push(ParseEvent::from_kind(ParseEventKind::FieldKey(
+                    FieldKey::new(name.clone(), FieldLocationHint::KeyValue),
                 )));
-                events.push(ParseEvent::StructStart(ContainerKind::Object));
+                events.push(ParseEvent::from_kind(ParseEventKind::StructStart(
+                    ContainerKind::Object,
+                )));
                 new_path.push(PathSegment {
                     name: name.clone(),
                     kind: SegmentKind::Table,
@@ -506,12 +508,15 @@ impl<'de> TomlParser<'de> {
 
             // Last segment is the array table
             let array_name = target_names.last().unwrap();
-            events.push(ParseEvent::FieldKey(FieldKey::new(
-                array_name.clone(),
-                FieldLocationHint::KeyValue,
+            events.push(ParseEvent::from_kind(ParseEventKind::FieldKey(
+                FieldKey::new(array_name.clone(), FieldLocationHint::KeyValue),
             )));
-            events.push(ParseEvent::SequenceStart(ContainerKind::Array));
-            events.push(ParseEvent::StructStart(ContainerKind::Object));
+            events.push(ParseEvent::from_kind(ParseEventKind::SequenceStart(
+                ContainerKind::Array,
+            )));
+            events.push(ParseEvent::from_kind(ParseEventKind::StructStart(
+                ContainerKind::Object,
+            )));
 
             new_path.push(PathSegment {
                 name: array_name.clone(),
@@ -541,7 +546,9 @@ impl<'de> TomlParser<'de> {
         // Emit root StructStart if we haven't yet
         if !self.root_started {
             self.root_started = true;
-            return Ok(Some(ParseEvent::StructStart(ContainerKind::Object)));
+            return Ok(Some(ParseEvent::from_kind(ParseEventKind::StructStart(
+                ContainerKind::Object,
+            ))));
         }
 
         // Get next raw event
@@ -559,7 +566,8 @@ impl<'de> TomlParser<'de> {
             self.current_path.clear();
 
             // Final StructEnd for root
-            self.pending_events.push_back(ParseEvent::StructEnd);
+            self.pending_events
+                .push_back(ParseEvent::from_kind(ParseEventKind::StructEnd));
             self.root_ended = true;
 
             return Ok(self.pending_events.pop_front());
@@ -631,21 +639,22 @@ impl<'de> TomlParser<'de> {
                 if key_parts.len() > 1 {
                     // Navigate into nested structs
                     for name in &key_parts[..key_parts.len() - 1] {
-                        self.pending_events
-                            .push_back(ParseEvent::FieldKey(FieldKey::new(
+                        self.pending_events.push_back(ParseEvent::from_kind(
+                            ParseEventKind::FieldKey(FieldKey::new(
                                 name.clone(),
                                 FieldLocationHint::KeyValue,
-                            )));
-                        self.pending_events
-                            .push_back(ParseEvent::StructStart(ContainerKind::Object));
+                            )),
+                        ));
+                        self.pending_events.push_back(ParseEvent::from_kind(
+                            ParseEventKind::StructStart(ContainerKind::Object),
+                        ));
                     }
 
                     // Emit the final key
                     let final_key = key_parts.last().unwrap();
                     self.pending_events
-                        .push_back(ParseEvent::FieldKey(FieldKey::new(
-                            final_key.clone(),
-                            FieldLocationHint::KeyValue,
+                        .push_back(ParseEvent::from_kind(ParseEventKind::FieldKey(
+                            FieldKey::new(final_key.clone(), FieldLocationHint::KeyValue),
                         )));
 
                     // Track inline stack depth before parsing value
@@ -666,7 +675,8 @@ impl<'de> TomlParser<'de> {
                     } else {
                         // Navigate back out of nested structs immediately (for scalar values)
                         for _ in 0..key_parts.len() - 1 {
-                            self.pending_events.push_back(ParseEvent::StructEnd);
+                            self.pending_events
+                                .push_back(ParseEvent::from_kind(ParseEventKind::StructEnd));
                         }
                     }
 
@@ -675,9 +685,8 @@ impl<'de> TomlParser<'de> {
                     // Simple key
                     let key = key_parts.into_iter().next().unwrap();
                     self.pending_events
-                        .push_back(ParseEvent::FieldKey(FieldKey::new(
-                            key,
-                            FieldLocationHint::KeyValue,
+                        .push_back(ParseEvent::from_kind(ParseEventKind::FieldKey(
+                            FieldKey::new(key, FieldLocationHint::KeyValue),
                         )));
 
                     // Parse the value
@@ -725,20 +734,24 @@ impl<'de> TomlParser<'de> {
                     span.end() - span.start(),
                 ));
                 self.next_raw();
-                self.pending_events.push_back(ParseEvent::Scalar(scalar));
+                self.pending_events
+                    .push_back(ParseEvent::from_kind(ParseEventKind::Scalar(scalar)));
             }
 
             EventKind::InlineTableOpen => {
                 self.next_raw();
                 self.pending_events
-                    .push_back(ParseEvent::StructStart(ContainerKind::Object));
+                    .push_back(ParseEvent::from_kind(ParseEventKind::StructStart(
+                        ContainerKind::Object,
+                    )));
                 self.inline_stack.push((true, 0)); // true = inline table, 0 deferred closes
             }
 
             EventKind::ArrayOpen => {
                 self.next_raw();
-                self.pending_events
-                    .push_back(ParseEvent::SequenceStart(ContainerKind::Array));
+                self.pending_events.push_back(ParseEvent::from_kind(
+                    ParseEventKind::SequenceStart(ContainerKind::Array),
+                ));
                 self.inline_stack.push((false, 0)); // false = array, 0 deferred closes
             }
 
@@ -780,10 +793,12 @@ impl<'de> TomlParser<'de> {
                 self.next_raw();
                 let (_, deferred_closes) = self.inline_stack.pop().unwrap();
                 // Emit the StructEnd for the inline table
-                self.pending_events.push_back(ParseEvent::StructEnd);
+                self.pending_events
+                    .push_back(ParseEvent::from_kind(ParseEventKind::StructEnd));
                 // Then emit any deferred StructEnd events from dotted keys
                 for _ in 0..deferred_closes {
-                    self.pending_events.push_back(ParseEvent::StructEnd);
+                    self.pending_events
+                        .push_back(ParseEvent::from_kind(ParseEventKind::StructEnd));
                 }
                 Ok(self.pending_events.pop_front())
             }
@@ -792,10 +807,12 @@ impl<'de> TomlParser<'de> {
                 self.next_raw();
                 let (_, deferred_closes) = self.inline_stack.pop().unwrap();
                 // Emit the SequenceEnd for the array
-                self.pending_events.push_back(ParseEvent::SequenceEnd);
+                self.pending_events
+                    .push_back(ParseEvent::from_kind(ParseEventKind::SequenceEnd));
                 // Then emit any deferred StructEnd events from dotted keys
                 for _ in 0..deferred_closes {
-                    self.pending_events.push_back(ParseEvent::StructEnd);
+                    self.pending_events
+                        .push_back(ParseEvent::from_kind(ParseEventKind::StructEnd));
                 }
                 Ok(self.pending_events.pop_front())
             }
@@ -820,20 +837,21 @@ impl<'de> TomlParser<'de> {
                 // Handle dotted keys
                 if key_parts.len() > 1 {
                     for name in &key_parts[..key_parts.len() - 1] {
-                        self.pending_events
-                            .push_back(ParseEvent::FieldKey(FieldKey::new(
+                        self.pending_events.push_back(ParseEvent::from_kind(
+                            ParseEventKind::FieldKey(FieldKey::new(
                                 name.clone(),
                                 FieldLocationHint::KeyValue,
-                            )));
-                        self.pending_events
-                            .push_back(ParseEvent::StructStart(ContainerKind::Object));
+                            )),
+                        ));
+                        self.pending_events.push_back(ParseEvent::from_kind(
+                            ParseEventKind::StructStart(ContainerKind::Object),
+                        ));
                     }
 
                     let final_key = key_parts.last().unwrap();
                     self.pending_events
-                        .push_back(ParseEvent::FieldKey(FieldKey::new(
-                            final_key.clone(),
-                            FieldLocationHint::KeyValue,
+                        .push_back(ParseEvent::from_kind(ParseEventKind::FieldKey(
+                            FieldKey::new(final_key.clone(), FieldLocationHint::KeyValue),
                         )));
 
                     // Track inline stack depth before parsing value
@@ -853,7 +871,8 @@ impl<'de> TomlParser<'de> {
                     } else {
                         // Navigate back out of nested structs immediately (for scalar values)
                         for _ in 0..key_parts.len() - 1 {
-                            self.pending_events.push_back(ParseEvent::StructEnd);
+                            self.pending_events
+                                .push_back(ParseEvent::from_kind(ParseEventKind::StructEnd));
                         }
                     }
 
@@ -861,9 +880,8 @@ impl<'de> TomlParser<'de> {
                 } else {
                     let key = key_parts.into_iter().next().unwrap();
                     self.pending_events
-                        .push_back(ParseEvent::FieldKey(FieldKey::new(
-                            key,
-                            FieldLocationHint::KeyValue,
+                        .push_back(ParseEvent::from_kind(ParseEventKind::FieldKey(
+                            FieldKey::new(key, FieldLocationHint::KeyValue),
                         )));
                     self.parse_value_into_pending()?;
                     Ok(self.pending_events.pop_front())
@@ -880,21 +898,25 @@ impl<'de> TomlParser<'de> {
                     span.end() - span.start(),
                 ));
                 self.next_raw();
-                Ok(Some(ParseEvent::Scalar(scalar)))
+                Ok(Some(ParseEvent::from_kind(ParseEventKind::Scalar(scalar))))
             }
 
             EventKind::InlineTableOpen if !is_inline_table => {
                 // Inline table inside array
                 self.next_raw();
                 self.inline_stack.push((true, 0));
-                Ok(Some(ParseEvent::StructStart(ContainerKind::Object)))
+                Ok(Some(ParseEvent::from_kind(ParseEventKind::StructStart(
+                    ContainerKind::Object,
+                ))))
             }
 
             EventKind::ArrayOpen if !is_inline_table => {
                 // Nested array
                 self.next_raw();
                 self.inline_stack.push((false, 0));
-                Ok(Some(ParseEvent::SequenceStart(ContainerKind::Array)))
+                Ok(Some(ParseEvent::from_kind(ParseEventKind::SequenceStart(
+                    ContainerKind::Array,
+                ))))
             }
 
             _ => {
@@ -918,12 +940,12 @@ impl<'de> TomlParser<'de> {
             return Ok(());
         };
 
-        match event {
-            ParseEvent::Scalar(_) => {
+        match event.kind {
+            ParseEventKind::Scalar(_) => {
                 // Scalar value - already consumed by next_event
                 Ok(())
             }
-            ParseEvent::StructStart(_) => {
+            ParseEventKind::StructStart(_) => {
                 // Need to skip the entire struct
                 let mut depth = 1;
                 while depth > 0 {
@@ -935,15 +957,15 @@ impl<'de> TomlParser<'de> {
                             },
                         ));
                     };
-                    match event {
-                        ParseEvent::StructStart(_) => depth += 1,
-                        ParseEvent::StructEnd => depth -= 1,
+                    match event.kind {
+                        ParseEventKind::StructStart(_) => depth += 1,
+                        ParseEventKind::StructEnd => depth -= 1,
                         _ => {}
                     }
                 }
                 Ok(())
             }
-            ParseEvent::SequenceStart(_) => {
+            ParseEventKind::SequenceStart(_) => {
                 // Need to skip the entire sequence
                 let mut depth = 1;
                 while depth > 0 {
@@ -955,9 +977,9 @@ impl<'de> TomlParser<'de> {
                             },
                         ));
                     };
-                    match event {
-                        ParseEvent::SequenceStart(_) => depth += 1,
-                        ParseEvent::SequenceEnd => depth -= 1,
+                    match event.kind {
+                        ParseEventKind::SequenceStart(_) => depth += 1,
+                        ParseEventKind::SequenceEnd => depth -= 1,
                         _ => {}
                     }
                 }
@@ -1075,37 +1097,46 @@ value = 42
         // StructStart (root)
         assert!(matches!(
             parser.next_event().unwrap(),
-            Some(ParseEvent::StructStart(ContainerKind::Object))
+            Some(ParseEvent {
+                kind: ParseEventKind::StructStart(ContainerKind::Object),
+                ..
+            })
         ));
 
         // FieldKey("name")
         assert!(matches!(
             parser.next_event().unwrap(),
-            Some(ParseEvent::FieldKey(key)) if key.name.as_deref() == Some("name")
+            Some(ParseEvent { kind: ParseEventKind::FieldKey(key), .. }) if key.name.as_deref() == Some("name")
         ));
 
         // Scalar("test")
         assert!(matches!(
             parser.next_event().unwrap(),
-            Some(ParseEvent::Scalar(ScalarValue::Str(s))) if s == "test"
+            Some(ParseEvent { kind: ParseEventKind::Scalar(ScalarValue::Str(s)), .. }) if s == "test"
         ));
 
         // FieldKey("value")
         assert!(matches!(
             parser.next_event().unwrap(),
-            Some(ParseEvent::FieldKey(key)) if key.name.as_deref() == Some("value")
+            Some(ParseEvent { kind: ParseEventKind::FieldKey(key), .. }) if key.name.as_deref() == Some("value")
         ));
 
         // Scalar(42)
         assert!(matches!(
             parser.next_event().unwrap(),
-            Some(ParseEvent::Scalar(ScalarValue::I64(42)))
+            Some(ParseEvent {
+                kind: ParseEventKind::Scalar(ScalarValue::I64(42)),
+                ..
+            })
         ));
 
         // StructEnd (root)
         assert!(matches!(
             parser.next_event().unwrap(),
-            Some(ParseEvent::StructEnd)
+            Some(ParseEvent {
+                kind: ParseEventKind::StructEnd,
+                ..
+            })
         ));
 
         // EOF
@@ -1124,20 +1155,53 @@ port = 8080
 
         // Expected: StructStart, FieldKey(server), StructStart, FieldKey(host), Scalar,
         //           FieldKey(port), Scalar, StructEnd, StructEnd
-        assert!(matches!(&events[0], ParseEvent::StructStart(_)));
+        assert!(matches!(
+            &events[0],
+            ParseEvent {
+                kind: ParseEventKind::StructStart(_),
+                ..
+            }
+        ));
         assert!(
-            matches!(&events[1], ParseEvent::FieldKey(k) if k.name.as_deref() == Some("server"))
+            matches!(&events[1], ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name.as_deref() == Some("server"))
         );
-        assert!(matches!(&events[2], ParseEvent::StructStart(_)));
-        assert!(matches!(&events[3], ParseEvent::FieldKey(k) if k.name.as_deref() == Some("host")));
-        assert!(matches!(&events[4], ParseEvent::Scalar(ScalarValue::Str(s)) if s == "localhost"));
-        assert!(matches!(&events[5], ParseEvent::FieldKey(k) if k.name.as_deref() == Some("port")));
+        assert!(matches!(
+            &events[2],
+            ParseEvent {
+                kind: ParseEventKind::StructStart(_),
+                ..
+            }
+        ));
+        assert!(
+            matches!(&events[3], ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name.as_deref() == Some("host"))
+        );
+        assert!(
+            matches!(&events[4], ParseEvent { kind: ParseEventKind::Scalar(ScalarValue::Str(s)), .. } if s == "localhost")
+        );
+        assert!(
+            matches!(&events[5], ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name.as_deref() == Some("port"))
+        );
         assert!(matches!(
             &events[6],
-            ParseEvent::Scalar(ScalarValue::I64(8080))
+            ParseEvent {
+                kind: ParseEventKind::Scalar(ScalarValue::I64(8080)),
+                ..
+            }
         ));
-        assert!(matches!(&events[7], ParseEvent::StructEnd)); // server
-        assert!(matches!(&events[8], ParseEvent::StructEnd)); // root
+        assert!(matches!(
+            &events[7],
+            ParseEvent {
+                kind: ParseEventKind::StructEnd,
+                ..
+            }
+        )); // server
+        assert!(matches!(
+            &events[8],
+            ParseEvent {
+                kind: ParseEventKind::StructEnd,
+                ..
+            }
+        )); // root
     }
 
     #[test]
@@ -1165,27 +1229,75 @@ name = "beta"
         let event_str = format_events(&events);
         eprintln!("Events:\n{}", event_str);
 
-        assert!(matches!(&events[0], ParseEvent::StructStart(_))); // root
+        assert!(matches!(
+            &events[0],
+            ParseEvent {
+                kind: ParseEventKind::StructStart(_),
+                ..
+            }
+        )); // root
         assert!(
-            matches!(&events[1], ParseEvent::FieldKey(k) if k.name.as_deref() == Some("servers"))
+            matches!(&events[1], ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name.as_deref() == Some("servers"))
         );
-        assert!(matches!(&events[2], ParseEvent::SequenceStart(_)));
-        assert!(matches!(&events[3], ParseEvent::StructStart(_))); // element 0
-        assert!(matches!(&events[4], ParseEvent::FieldKey(k) if k.name.as_deref() == Some("name")));
-        assert!(matches!(&events[5], ParseEvent::Scalar(ScalarValue::Str(s)) if s == "alpha"));
-        assert!(matches!(&events[6], ParseEvent::StructEnd)); // element 0
-        assert!(matches!(&events[7], ParseEvent::SequenceEnd)); // servers array (navigate up)
+        assert!(matches!(
+            &events[2],
+            ParseEvent {
+                kind: ParseEventKind::SequenceStart(_),
+                ..
+            }
+        ));
+        assert!(matches!(
+            &events[3],
+            ParseEvent {
+                kind: ParseEventKind::StructStart(_),
+                ..
+            }
+        )); // element 0
+        assert!(
+            matches!(&events[4], ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name.as_deref() == Some("name"))
+        );
+        assert!(
+            matches!(&events[5], ParseEvent { kind: ParseEventKind::Scalar(ScalarValue::Str(s)), .. } if s == "alpha")
+        );
+        assert!(matches!(
+            &events[6],
+            ParseEvent {
+                kind: ParseEventKind::StructEnd,
+                ..
+            }
+        )); // element 0
+        assert!(matches!(
+            &events[7],
+            ParseEvent {
+                kind: ParseEventKind::SequenceEnd,
+                ..
+            }
+        )); // servers array (navigate up)
 
         // Reopen servers array
         assert!(
-            matches!(&events[8], ParseEvent::FieldKey(k) if k.name.as_deref() == Some("servers"))
+            matches!(&events[8], ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name.as_deref() == Some("servers"))
         );
-        assert!(matches!(&events[9], ParseEvent::SequenceStart(_)));
-        assert!(matches!(&events[10], ParseEvent::StructStart(_))); // element 1
+        assert!(matches!(
+            &events[9],
+            ParseEvent {
+                kind: ParseEventKind::SequenceStart(_),
+                ..
+            }
+        ));
+        assert!(matches!(
+            &events[10],
+            ParseEvent {
+                kind: ParseEventKind::StructStart(_),
+                ..
+            }
+        )); // element 1
         assert!(
-            matches!(&events[11], ParseEvent::FieldKey(k) if k.name.as_deref() == Some("name"))
+            matches!(&events[11], ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name.as_deref() == Some("name"))
         );
-        assert!(matches!(&events[12], ParseEvent::Scalar(ScalarValue::Str(s)) if s == "beta"));
+        assert!(
+            matches!(&events[12], ParseEvent { kind: ParseEventKind::Scalar(ScalarValue::Str(s)), .. } if s == "beta")
+        );
     }
 
     #[test]
@@ -1215,7 +1327,11 @@ name = "beta"
         let mut servers_count = 0;
 
         for event in events.iter() {
-            if let ParseEvent::FieldKey(k) = event {
+            if let ParseEvent {
+                kind: ParseEventKind::FieldKey(k),
+                ..
+            } = event
+            {
                 if k.name.as_deref() == Some("servers") {
                     servers_count += 1;
                     if !saw_database {
@@ -1260,7 +1376,7 @@ y = 2
         // Count how many times we see FieldKey("bar")
         let bar_count = events
             .iter()
-            .filter(|e| matches!(e, ParseEvent::FieldKey(k) if k.name.as_deref() == Some("bar")))
+            .filter(|e| matches!(e, ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name.as_deref() == Some("bar")))
             .count();
 
         assert_eq!(bar_count, 2, "Should see bar twice (reopened)");
@@ -1279,20 +1395,65 @@ foo.bar.baz = 1
 
         // Expected: StructStart, FieldKey(foo), StructStart, FieldKey(bar), StructStart,
         //           FieldKey(baz), Scalar(1), StructEnd, StructEnd, StructEnd
-        assert!(matches!(&events[0], ParseEvent::StructStart(_))); // root
-        assert!(matches!(&events[1], ParseEvent::FieldKey(k) if k.name.as_deref() == Some("foo")));
-        assert!(matches!(&events[2], ParseEvent::StructStart(_)));
-        assert!(matches!(&events[3], ParseEvent::FieldKey(k) if k.name.as_deref() == Some("bar")));
-        assert!(matches!(&events[4], ParseEvent::StructStart(_)));
-        assert!(matches!(&events[5], ParseEvent::FieldKey(k) if k.name.as_deref() == Some("baz")));
+        assert!(matches!(
+            &events[0],
+            ParseEvent {
+                kind: ParseEventKind::StructStart(_),
+                ..
+            }
+        )); // root
+        assert!(
+            matches!(&events[1], ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name.as_deref() == Some("foo"))
+        );
+        assert!(matches!(
+            &events[2],
+            ParseEvent {
+                kind: ParseEventKind::StructStart(_),
+                ..
+            }
+        ));
+        assert!(
+            matches!(&events[3], ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name.as_deref() == Some("bar"))
+        );
+        assert!(matches!(
+            &events[4],
+            ParseEvent {
+                kind: ParseEventKind::StructStart(_),
+                ..
+            }
+        ));
+        assert!(
+            matches!(&events[5], ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name.as_deref() == Some("baz"))
+        );
         assert!(matches!(
             &events[6],
-            ParseEvent::Scalar(ScalarValue::I64(1))
+            ParseEvent {
+                kind: ParseEventKind::Scalar(ScalarValue::I64(1)),
+                ..
+            }
         ));
         // Three StructEnds for the nested structs, plus root
-        assert!(matches!(&events[7], ParseEvent::StructEnd));
-        assert!(matches!(&events[8], ParseEvent::StructEnd));
-        assert!(matches!(&events[9], ParseEvent::StructEnd));
+        assert!(matches!(
+            &events[7],
+            ParseEvent {
+                kind: ParseEventKind::StructEnd,
+                ..
+            }
+        ));
+        assert!(matches!(
+            &events[8],
+            ParseEvent {
+                kind: ParseEventKind::StructEnd,
+                ..
+            }
+        ));
+        assert!(matches!(
+            &events[9],
+            ParseEvent {
+                kind: ParseEventKind::StructEnd,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -1306,20 +1467,53 @@ server = { host = "localhost", port = 8080 }
         let event_str = format_events(&events);
         eprintln!("Inline table events:\n{}", event_str);
 
-        assert!(matches!(&events[0], ParseEvent::StructStart(_))); // root
+        assert!(matches!(
+            &events[0],
+            ParseEvent {
+                kind: ParseEventKind::StructStart(_),
+                ..
+            }
+        )); // root
         assert!(
-            matches!(&events[1], ParseEvent::FieldKey(k) if k.name.as_deref() == Some("server"))
+            matches!(&events[1], ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name.as_deref() == Some("server"))
         );
-        assert!(matches!(&events[2], ParseEvent::StructStart(_))); // inline table
-        assert!(matches!(&events[3], ParseEvent::FieldKey(k) if k.name.as_deref() == Some("host")));
-        assert!(matches!(&events[4], ParseEvent::Scalar(ScalarValue::Str(s)) if s == "localhost"));
-        assert!(matches!(&events[5], ParseEvent::FieldKey(k) if k.name.as_deref() == Some("port")));
+        assert!(matches!(
+            &events[2],
+            ParseEvent {
+                kind: ParseEventKind::StructStart(_),
+                ..
+            }
+        )); // inline table
+        assert!(
+            matches!(&events[3], ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name.as_deref() == Some("host"))
+        );
+        assert!(
+            matches!(&events[4], ParseEvent { kind: ParseEventKind::Scalar(ScalarValue::Str(s)), .. } if s == "localhost")
+        );
+        assert!(
+            matches!(&events[5], ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name.as_deref() == Some("port"))
+        );
         assert!(matches!(
             &events[6],
-            ParseEvent::Scalar(ScalarValue::I64(8080))
+            ParseEvent {
+                kind: ParseEventKind::Scalar(ScalarValue::I64(8080)),
+                ..
+            }
         ));
-        assert!(matches!(&events[7], ParseEvent::StructEnd)); // inline table
-        assert!(matches!(&events[8], ParseEvent::StructEnd)); // root
+        assert!(matches!(
+            &events[7],
+            ParseEvent {
+                kind: ParseEventKind::StructEnd,
+                ..
+            }
+        )); // inline table
+        assert!(matches!(
+            &events[8],
+            ParseEvent {
+                kind: ParseEventKind::StructEnd,
+                ..
+            }
+        )); // root
     }
 
     #[test]
@@ -1333,25 +1527,58 @@ numbers = [1, 2, 3]
         let event_str = format_events(&events);
         eprintln!("Inline array events:\n{}", event_str);
 
-        assert!(matches!(&events[0], ParseEvent::StructStart(_))); // root
+        assert!(matches!(
+            &events[0],
+            ParseEvent {
+                kind: ParseEventKind::StructStart(_),
+                ..
+            }
+        )); // root
         assert!(
-            matches!(&events[1], ParseEvent::FieldKey(k) if k.name.as_deref() == Some("numbers"))
+            matches!(&events[1], ParseEvent { kind: ParseEventKind::FieldKey(k), .. } if k.name.as_deref() == Some("numbers"))
         );
-        assert!(matches!(&events[2], ParseEvent::SequenceStart(_)));
+        assert!(matches!(
+            &events[2],
+            ParseEvent {
+                kind: ParseEventKind::SequenceStart(_),
+                ..
+            }
+        ));
         assert!(matches!(
             &events[3],
-            ParseEvent::Scalar(ScalarValue::I64(1))
+            ParseEvent {
+                kind: ParseEventKind::Scalar(ScalarValue::I64(1)),
+                ..
+            }
         ));
         assert!(matches!(
             &events[4],
-            ParseEvent::Scalar(ScalarValue::I64(2))
+            ParseEvent {
+                kind: ParseEventKind::Scalar(ScalarValue::I64(2)),
+                ..
+            }
         ));
         assert!(matches!(
             &events[5],
-            ParseEvent::Scalar(ScalarValue::I64(3))
+            ParseEvent {
+                kind: ParseEventKind::Scalar(ScalarValue::I64(3)),
+                ..
+            }
         ));
-        assert!(matches!(&events[6], ParseEvent::SequenceEnd));
-        assert!(matches!(&events[7], ParseEvent::StructEnd)); // root
+        assert!(matches!(
+            &events[6],
+            ParseEvent {
+                kind: ParseEventKind::SequenceEnd,
+                ..
+            }
+        ));
+        assert!(matches!(
+            &events[7],
+            ParseEvent {
+                kind: ParseEventKind::StructEnd,
+                ..
+            }
+        )); // root
     }
 
     // ========================================================================
