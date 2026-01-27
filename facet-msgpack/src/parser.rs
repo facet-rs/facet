@@ -7,10 +7,12 @@ extern crate alloc;
 
 use alloc::{borrow::Cow, format, vec::Vec};
 
-use crate::error::{MsgPackError, codes};
+use crate::error::codes;
 use facet_format::{
-    ContainerKind, FieldKey, FieldLocationHint, FormatParser, ParseEvent, SavePoint, ScalarValue,
+    ContainerKind, DeserializeErrorKind, FieldKey, FieldLocationHint, FormatParser, ParseError,
+    ParseEvent, SavePoint, ScalarValue,
 };
+use facet_reflect::Span;
 
 // MsgPack format constants
 const MSGPACK_NIL: u8 = 0xc0;
@@ -68,6 +70,28 @@ enum ContextState {
     Array { remaining: usize },
 }
 
+/// Create a ParseError from an error code and position.
+fn error_from_code(code: i32, pos: usize) -> ParseError {
+    let message = match code {
+        codes::UNEXPECTED_EOF => "unexpected end of input",
+        codes::EXPECTED_BOOL => "expected bool (0xC2 or 0xC3)",
+        codes::EXPECTED_ARRAY => "expected array tag (fixarray/array16/array32)",
+        codes::EXPECTED_BIN => "expected bin tag (bin8/bin16/bin32)",
+        codes::EXPECTED_INT => "expected integer tag",
+        codes::INT_OVERFLOW => "integer value overflows target type",
+        codes::COUNT_OVERFLOW => "count too large for platform",
+        codes::SEQ_UNDERFLOW => "sequence underflow (internal error)",
+        codes::UNSUPPORTED => "unsupported operation",
+        _ => "unknown error",
+    };
+    ParseError::new(
+        Span::new(pos, 1),
+        DeserializeErrorKind::InvalidValue {
+            message: message.into(),
+        },
+    )
+}
+
 impl<'de> MsgPackParser<'de> {
     /// Create a new MsgPack parser from input bytes.
     pub const fn new(input: &'de [u8]) -> Self {
@@ -80,24 +104,24 @@ impl<'de> MsgPackParser<'de> {
     }
 
     /// Peek at the next byte without consuming it.
-    fn peek_byte(&self) -> Result<u8, MsgPackError> {
+    fn peek_byte(&self) -> Result<u8, ParseError> {
         self.input
             .get(self.pos)
             .copied()
-            .ok_or_else(|| MsgPackError::from_code(codes::UNEXPECTED_EOF, self.pos))
+            .ok_or_else(|| error_from_code(codes::UNEXPECTED_EOF, self.pos))
     }
 
     /// Read a single byte.
-    fn read_byte(&mut self) -> Result<u8, MsgPackError> {
+    fn read_byte(&mut self) -> Result<u8, ParseError> {
         let byte = self.peek_byte()?;
         self.pos += 1;
         Ok(byte)
     }
 
     /// Read N bytes as a slice.
-    fn read_bytes(&mut self, n: usize) -> Result<&'de [u8], MsgPackError> {
+    fn read_bytes(&mut self, n: usize) -> Result<&'de [u8], ParseError> {
         if self.pos + n > self.input.len() {
-            return Err(MsgPackError::from_code(codes::UNEXPECTED_EOF, self.pos));
+            return Err(error_from_code(codes::UNEXPECTED_EOF, self.pos));
         }
         let slice = &self.input[self.pos..self.pos + n];
         self.pos += n;
@@ -105,19 +129,19 @@ impl<'de> MsgPackParser<'de> {
     }
 
     /// Read a u16 in big-endian.
-    fn read_u16(&mut self) -> Result<u16, MsgPackError> {
+    fn read_u16(&mut self) -> Result<u16, ParseError> {
         let bytes = self.read_bytes(2)?;
         Ok(u16::from_be_bytes([bytes[0], bytes[1]]))
     }
 
     /// Read a u32 in big-endian.
-    fn read_u32(&mut self) -> Result<u32, MsgPackError> {
+    fn read_u32(&mut self) -> Result<u32, ParseError> {
         let bytes = self.read_bytes(4)?;
         Ok(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
     }
 
     /// Read a u64 in big-endian.
-    fn read_u64(&mut self) -> Result<u64, MsgPackError> {
+    fn read_u64(&mut self) -> Result<u64, ParseError> {
         let bytes = self.read_bytes(8)?;
         Ok(u64::from_be_bytes([
             bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
@@ -125,24 +149,24 @@ impl<'de> MsgPackParser<'de> {
     }
 
     /// Read an i8.
-    fn read_i8(&mut self) -> Result<i8, MsgPackError> {
+    fn read_i8(&mut self) -> Result<i8, ParseError> {
         Ok(self.read_byte()? as i8)
     }
 
     /// Read an i16 in big-endian.
-    fn read_i16(&mut self) -> Result<i16, MsgPackError> {
+    fn read_i16(&mut self) -> Result<i16, ParseError> {
         let bytes = self.read_bytes(2)?;
         Ok(i16::from_be_bytes([bytes[0], bytes[1]]))
     }
 
     /// Read an i32 in big-endian.
-    fn read_i32(&mut self) -> Result<i32, MsgPackError> {
+    fn read_i32(&mut self) -> Result<i32, ParseError> {
         let bytes = self.read_bytes(4)?;
         Ok(i32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
     }
 
     /// Read an i64 in big-endian.
-    fn read_i64(&mut self) -> Result<i64, MsgPackError> {
+    fn read_i64(&mut self) -> Result<i64, ParseError> {
         let bytes = self.read_bytes(8)?;
         Ok(i64::from_be_bytes([
             bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
@@ -150,13 +174,13 @@ impl<'de> MsgPackParser<'de> {
     }
 
     /// Read an f32 in big-endian.
-    fn read_f32(&mut self) -> Result<f32, MsgPackError> {
+    fn read_f32(&mut self) -> Result<f32, ParseError> {
         let bytes = self.read_bytes(4)?;
         Ok(f32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
     }
 
     /// Read an f64 in big-endian.
-    fn read_f64(&mut self) -> Result<f64, MsgPackError> {
+    fn read_f64(&mut self) -> Result<f64, ParseError> {
         let bytes = self.read_bytes(8)?;
         Ok(f64::from_be_bytes([
             bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
@@ -164,55 +188,64 @@ impl<'de> MsgPackParser<'de> {
     }
 
     /// Read a string length based on prefix.
-    fn read_str_len(&mut self, prefix: u8) -> Result<usize, MsgPackError> {
+    fn read_str_len(&mut self, prefix: u8) -> Result<usize, ParseError> {
         match prefix {
             MSGPACK_FIXSTR_MIN..=MSGPACK_FIXSTR_MAX => Ok((prefix & 0x1f) as usize),
             MSGPACK_STR8 => Ok(self.read_byte()? as usize),
             MSGPACK_STR16 => Ok(self.read_u16()? as usize),
             MSGPACK_STR32 => Ok(self.read_u32()? as usize),
-            _ => Err(MsgPackError {
-                code: codes::EXPECTED_INT,
-                pos: self.pos,
-                message: format!("expected string, got 0x{:02x}", prefix),
-            }),
+            _ => Err(ParseError::new(
+                Span::new(self.pos, 1),
+                DeserializeErrorKind::InvalidValue {
+                    message: format!("expected string, got 0x{:02x}", prefix).into(),
+                },
+            )),
         }
     }
 
     /// Read a string value.
-    fn read_string(&mut self) -> Result<Cow<'de, str>, MsgPackError> {
+    fn read_string(&mut self) -> Result<Cow<'de, str>, ParseError> {
         let prefix = self.read_byte()?;
         let len = self.read_str_len(prefix)?;
         let bytes = self.read_bytes(len)?;
         core::str::from_utf8(bytes)
             .map(Cow::Borrowed)
-            .map_err(|_| MsgPackError {
-                code: codes::EXPECTED_INT,
-                pos: self.pos - len,
-                message: "invalid UTF-8 in string".into(),
+            .map_err(|_| {
+                let mut context = [0u8; 16];
+                let context_len = len.min(16);
+                context[..context_len].copy_from_slice(&bytes[..context_len]);
+                ParseError::new(
+                    Span::new(self.pos - len, len),
+                    DeserializeErrorKind::InvalidUtf8 {
+                        context,
+                        context_len: context_len as u8,
+                    },
+                )
             })
     }
 
     /// Read an array length.
-    fn read_array_len(&mut self, prefix: u8) -> Result<usize, MsgPackError> {
+    fn read_array_len(&mut self, prefix: u8) -> Result<usize, ParseError> {
         match prefix {
             MSGPACK_FIXARRAY_MIN..=MSGPACK_FIXARRAY_MAX => Ok((prefix & 0x0f) as usize),
             MSGPACK_ARRAY16 => Ok(self.read_u16()? as usize),
             MSGPACK_ARRAY32 => Ok(self.read_u32()? as usize),
-            _ => Err(MsgPackError::from_code(codes::EXPECTED_ARRAY, self.pos)),
+            _ => Err(error_from_code(codes::EXPECTED_ARRAY, self.pos)),
         }
     }
 
     /// Read a map length.
-    fn read_map_len(&mut self, prefix: u8) -> Result<usize, MsgPackError> {
+    fn read_map_len(&mut self, prefix: u8) -> Result<usize, ParseError> {
         match prefix {
             MSGPACK_FIXMAP_MIN..=MSGPACK_FIXMAP_MAX => Ok((prefix & 0x0f) as usize),
             MSGPACK_MAP16 => Ok(self.read_u16()? as usize),
             MSGPACK_MAP32 => Ok(self.read_u32()? as usize),
-            _ => Err(MsgPackError {
-                code: codes::EXPECTED_INT,
-                pos: self.pos,
-                message: format!("expected map, got 0x{:02x}", prefix),
-            }),
+            _ => Err(ParseError::new(
+                Span::new(self.pos, 1),
+                DeserializeErrorKind::InvalidValue {
+                    message: format!("expected map, got 0x{:02x}", prefix).into(),
+                },
+            )),
         }
     }
 
@@ -242,7 +275,7 @@ impl<'de> MsgPackParser<'de> {
     }
 
     /// Produce the next parse event.
-    fn produce_event(&mut self) -> Result<Option<ParseEvent<'de>>, MsgPackError> {
+    fn produce_event(&mut self) -> Result<Option<ParseEvent<'de>>, ParseError> {
         // Check if we need to emit container end events
         // This can happen when a container has been fully consumed
         if let Some(context) = self.stack.last() {
@@ -388,13 +421,18 @@ impl<'de> MsgPackParser<'de> {
             | MSGPACK_STR32 => {
                 let len = self.read_str_len(prefix)?;
                 let bytes = self.read_bytes(len)?;
-                let s = core::str::from_utf8(bytes)
-                    .map(Cow::Borrowed)
-                    .map_err(|_| MsgPackError {
-                        code: codes::EXPECTED_INT,
-                        pos: self.pos - len,
-                        message: "invalid UTF-8 in string".into(),
-                    })?;
+                let s = core::str::from_utf8(bytes).map(Cow::Borrowed).map_err(|_| {
+                    let mut context = [0u8; 16];
+                    let context_len = len.min(16);
+                    context[..context_len].copy_from_slice(&bytes[..context_len]);
+                    ParseError::new(
+                        Span::new(self.pos - len, len),
+                        DeserializeErrorKind::InvalidUtf8 {
+                            context,
+                            context_len: context_len as u8,
+                        },
+                    )
+                })?;
                 self.finish_value();
                 Ok(Some(ParseEvent::Scalar(ScalarValue::Str(s))))
             }
@@ -440,16 +478,17 @@ impl<'de> MsgPackParser<'de> {
             }
 
             // Unsupported types (ext, etc.)
-            _ => Err(MsgPackError {
-                code: codes::UNSUPPORTED,
-                pos: self.pos - 1,
-                message: format!("unsupported MsgPack type: 0x{:02x}", prefix),
-            }),
+            _ => Err(ParseError::new(
+                Span::new(self.pos - 1, 1),
+                DeserializeErrorKind::InvalidValue {
+                    message: format!("unsupported MsgPack type: 0x{:02x}", prefix).into(),
+                },
+            )),
         }
     }
 
     /// Skip a complete value (used for skip_value and probing).
-    fn skip_value_internal(&mut self) -> Result<(), MsgPackError> {
+    fn skip_value_internal(&mut self) -> Result<(), ParseError> {
         let prefix = self.read_byte()?;
 
         match prefix {
@@ -641,26 +680,25 @@ impl<'de> MsgPackParser<'de> {
                 Ok(())
             }
 
-            _ => Err(MsgPackError {
-                code: codes::UNSUPPORTED,
-                pos: self.pos - 1,
-                message: format!("unsupported MsgPack type: 0x{:02x}", prefix),
-            }),
+            _ => Err(ParseError::new(
+                Span::new(self.pos - 1, 1),
+                DeserializeErrorKind::InvalidValue {
+                    message: format!("unsupported MsgPack type: 0x{:02x}", prefix).into(),
+                },
+            )),
         }
     }
 }
 
 impl<'de> FormatParser<'de> for MsgPackParser<'de> {
-    type Error = MsgPackError;
-
-    fn next_event(&mut self) -> Result<Option<ParseEvent<'de>>, Self::Error> {
+    fn next_event(&mut self) -> Result<Option<ParseEvent<'de>>, ParseError> {
         if let Some(event) = self.event_peek.take() {
             return Ok(Some(event));
         }
         self.produce_event()
     }
 
-    fn peek_event(&mut self) -> Result<Option<ParseEvent<'de>>, Self::Error> {
+    fn peek_event(&mut self) -> Result<Option<ParseEvent<'de>>, ParseError> {
         if let Some(event) = self.event_peek.clone() {
             return Ok(Some(event));
         }
@@ -671,7 +709,7 @@ impl<'de> FormatParser<'de> for MsgPackParser<'de> {
         Ok(event)
     }
 
-    fn skip_value(&mut self) -> Result<(), Self::Error> {
+    fn skip_value(&mut self) -> Result<(), ParseError> {
         debug_assert!(
             self.event_peek.is_none(),
             "skip_value called while an event is buffered"
@@ -724,7 +762,7 @@ impl<'de> facet_format::FormatJitParser<'de> for MsgPackParser<'de> {
         crate::jit::MsgPackJitFormat
     }
 
-    fn jit_error(&self, _input: &'de [u8], error_pos: usize, error_code: i32) -> Self::Error {
-        MsgPackError::from_code(error_code, error_pos)
+    fn jit_error(&self, _input: &'de [u8], error_pos: usize, error_code: i32) -> ParseError {
+        error_from_code(error_code, error_pos)
     }
 }
