@@ -35,16 +35,14 @@ macro_rules! reflect {
 
 mod setters;
 
-// TODO: uncomment all the below:
-
-// mod dynamic;
+mod dynamic;
 mod eenum;
 mod entry;
 mod pointer;
 mod scalar_matches;
 mod struct_simple;
-// mod struct_with_flatten;
-// mod validate;
+mod struct_with_flatten;
+mod validate;
 
 /// Generic deserializer that drives a format-specific parser directly into `Partial`.
 ///

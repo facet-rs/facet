@@ -115,24 +115,25 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                     match field.metadata_kind() {
                         Some("span") => {
                             // Populate span from parser's current position
-                            wip = wip.begin_field(field.effective_name())?;
                             let span = self.last_span;
-                            wip = wip.begin_some()?;
-                            // Set the span struct fields
-                            wip = wip.begin_field("offset")?;
-                            wip = wip.set(span.offset)?;
-                            wip = wip.end()?;
-                            wip = wip.begin_field("len")?;
-                            wip = wip.set(span.len)?;
-                            wip = wip.end()?;
-                            wip = wip.end()?;
-                            wip = wip.end()?;
+                            wip = wip
+                                .begin_field(field.effective_name())?
+                                .begin_some()?
+                                .begin_field("offset")?
+                                .set(span.offset)?
+                                .end()?
+                                .begin_field("len")?
+                                .set(span.len)?
+                                .end()?
+                                .end()?
+                                .end()?;
                         }
                         Some(_other) => {
                             // Other metadata types (doc, tag) - set to default for now
-                            wip = wip.begin_field(field.effective_name())?;
-                            wip = wip.set_default()?;
-                            wip = wip.end()?;
+                            wip = wip
+                                .begin_field(field.effective_name())?
+                                .set_default()?
+                                .end()?;
                         }
                         None => {
                             // This is the value field - recurse into it
@@ -998,8 +999,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                         wip = wip.begin_field(field.effective_name())?;
                         if let Some(ref doc_lines) = doc {
                             // Set as Some(Vec<String>)
-                            wip = wip.begin_some()?;
-                            wip = wip.init_list()?;
+                            wip = wip.begin_some()?.init_list()?;
                             for line in doc_lines {
                                 wip = wip.begin_list_item()?;
                                 wip = self.set_string_value(wip, line.clone())?;

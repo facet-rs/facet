@@ -6,6 +6,25 @@ use super::*;
 // Misc.
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
+    /// Applies a closure to this Partial, enabling chaining with operations that
+    /// take ownership and return `Result<Self, E>`.
+    ///
+    /// This is useful for chaining deserializer methods that need `&mut self`:
+    ///
+    /// ```ignore
+    /// wip = wip
+    ///     .begin_field("name")?
+    ///     .with(|w| deserializer.deserialize_into(w))?
+    ///     .end()?;
+    /// ```
+    #[inline]
+    pub fn with<F, E>(self, f: F) -> Result<Self, E>
+    where
+        F: FnOnce(Self) -> Result<Self, E>,
+    {
+        f(self)
+    }
+
     /// Returns true if the Partial is in an active state (not built or poisoned).
     ///
     /// After `build()` succeeds or after an error causes poisoning, the Partial
