@@ -17,7 +17,7 @@
 //!
 //! let schema = Schema::from_shape(MyConfig::SHAPE)?;
 //! let config = FileConfig::new()
-//!     .path("config.json")
+//!     .default_paths(["config.json", "~/.config/app/config.json"])
 //!     .registry(FormatRegistry::with_defaults());
 //!
 //! let output = parse_file(&schema, &config)?;
@@ -360,6 +360,7 @@ impl<'a> FileParseContext<'a> {
                     unused_keys: Vec::new(),
                     diagnostics: self.early_diagnostics,
                     source_text: None,
+                    config_file_path: None,
                 }
             }
         } else {
@@ -369,6 +370,7 @@ impl<'a> FileParseContext<'a> {
                 unused_keys: Vec::new(),
                 diagnostics: self.early_diagnostics,
                 source_text: None,
+                config_file_path: None,
             }
         };
 

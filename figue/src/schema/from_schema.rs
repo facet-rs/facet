@@ -72,7 +72,7 @@ impl Schema {
             Some(config_struct_schema_from_shape(
                 config_shape,
                 &field_ctx,
-                Some(field.name.to_string()),
+                Some(field.effective_name().to_string()),
                 env_prefix,
             )?)
         } else {

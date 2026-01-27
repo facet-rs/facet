@@ -308,6 +308,7 @@ impl<'a> ValueBuilder<'a> {
             unused_keys: self.unused_keys,
             diagnostics: self.diagnostics,
             source_text: None,
+            config_file_path: None,
         }
     }
 
@@ -403,6 +404,7 @@ impl<'a> ValueBuilder<'a> {
             unused_keys: self.unused_keys,
             diagnostics: self.diagnostics,
             source_text: None,
+            config_file_path: None,
         }
     }
 
