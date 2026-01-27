@@ -131,11 +131,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                         wip = self.deserialize_into(wip)?;
 
                         // Run validation on the field value before finalizing
-                        #[cfg(feature = "validate")]
                         self.run_field_validators(field, &wip)?;
-
-                        #[cfg(not(feature = "validate"))]
-                        let _ = field;
 
                         let _guard = SpanGuard::new(self.last_span);
                         wip = wip.end()?;

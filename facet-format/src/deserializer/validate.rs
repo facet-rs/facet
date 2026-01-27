@@ -1,16 +1,12 @@
-#[cfg(feature = "validate")]
 use facet_reflect::Partial;
 
-use crate::FormatDeserializer;
-#[cfg(feature = "validate")]
-use crate::{DeserializeError, DeserializeErrorKind};
+use crate::{DeserializeError, DeserializeErrorKind, FormatDeserializer};
 
 impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
     /// Run validation on a field value.
     ///
     /// This checks for `validate::*` attributes on the field and runs
     /// the appropriate validators on the deserialized value.
-    #[cfg(feature = "validate")]
     #[allow(unsafe_code)]
     pub(crate) fn run_field_validators(
         &self,
@@ -32,34 +28,50 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
 
             let validation_result: Result<(), String> = match attr.key {
                 "custom" => {
-                    // Custom validators store a ValidatorFn function pointer
+                    // Custom validators store a ValidatorFn function pointer.
+                    // ValidatorFn is a function pointer type alias and doesn't implement Facet,
+                    // so we need to use unsafe access here.
+                    // SAFETY: The validate::custom attribute is defined to store a ValidatorFn.
                     let validator_fn = unsafe { *attr.data.ptr().get::<ValidatorFn>() };
+                    // SAFETY: validator_fn was registered by the user and data_ptr points to the field value
                     unsafe { validator_fn(data_ptr) }
                 }
                 "min" => {
-                    let min_val = unsafe { *attr.data.ptr().get::<i64>() };
+                    let &min_val = attr
+                        .get_as::<i64>()
+                        .expect("validate::min attribute must contain i64");
                     self.validate_min(data_ptr, wip.shape(), min_val)
                 }
                 "max" => {
-                    let max_val = unsafe { *attr.data.ptr().get::<i64>() };
+                    let &max_val = attr
+                        .get_as::<i64>()
+                        .expect("validate::max attribute must contain i64");
                     self.validate_max(data_ptr, wip.shape(), max_val)
                 }
                 "min_length" => {
-                    let min_len = unsafe { *attr.data.ptr().get::<usize>() };
+                    let &min_len = attr
+                        .get_as::<usize>()
+                        .expect("validate::min_length attribute must contain usize");
                     self.validate_min_length(data_ptr, wip.shape(), min_len)
                 }
                 "max_length" => {
-                    let max_len = unsafe { *attr.data.ptr().get::<usize>() };
+                    let &max_len = attr
+                        .get_as::<usize>()
+                        .expect("validate::max_length attribute must contain usize");
                     self.validate_max_length(data_ptr, wip.shape(), max_len)
                 }
                 "email" => self.validate_email(data_ptr, wip.shape()),
                 "url" => self.validate_url(data_ptr, wip.shape()),
                 "regex" => {
-                    let pattern = unsafe { *attr.data.ptr().get::<&'static str>() };
+                    let &pattern = attr
+                        .get_as::<&'static str>()
+                        .expect("validate::regex attribute must contain &'static str");
                     self.validate_regex(data_ptr, wip.shape(), pattern)
                 }
                 "contains" => {
-                    let needle = unsafe { *attr.data.ptr().get::<&'static str>() };
+                    let &needle = attr
+                        .get_as::<&'static str>()
+                        .expect("validate::contains attribute must contain &'static str");
                     self.validate_contains(data_ptr, wip.shape(), needle)
                 }
                 _ => Ok(()), // Unknown validator, skip
@@ -68,7 +80,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
             if let Err(message) = validation_result {
                 return Err(DeserializeError {
                     span: Some(self.last_span),
-                    path: Some(self.current_path.clone()),
+                    path: Some(wip.path()),
                     kind: DeserializeErrorKind::Validation {
                         field: field.name,
                         message: message.into(),
@@ -80,7 +92,6 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         Ok(())
     }
 
-    #[cfg(feature = "validate")]
     #[allow(unsafe_code)]
     fn validate_min(
         &self,
@@ -113,7 +124,6 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         }
     }
 
-    #[cfg(feature = "validate")]
     #[allow(unsafe_code)]
     fn validate_max(
         &self,
@@ -146,7 +156,6 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         }
     }
 
-    #[cfg(feature = "validate")]
     #[allow(unsafe_code)]
     fn validate_min_length(
         &self,
@@ -162,7 +171,6 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         }
     }
 
-    #[cfg(feature = "validate")]
     #[allow(unsafe_code)]
     fn validate_max_length(
         &self,
@@ -178,7 +186,6 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         }
     }
 
-    #[cfg(feature = "validate")]
     #[allow(unsafe_code)]
     fn get_length(
         &self,
@@ -200,7 +207,6 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         Ok(0)
     }
 
-    #[cfg(feature = "validate")]
     #[allow(unsafe_code)]
     fn validate_email(
         &self,
@@ -215,7 +221,6 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         }
     }
 
-    #[cfg(feature = "validate")]
     #[allow(unsafe_code)]
     fn validate_url(
         &self,
@@ -230,7 +235,6 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         }
     }
 
-    #[cfg(feature = "validate")]
     #[allow(unsafe_code)]
     fn validate_regex(
         &self,
@@ -246,7 +250,6 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         }
     }
 
-    #[cfg(feature = "validate")]
     #[allow(unsafe_code)]
     fn validate_contains(
         &self,
@@ -262,7 +265,6 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         }
     }
 
-    #[cfg(feature = "validate")]
     #[allow(unsafe_code)]
     fn get_string<'s>(
         &self,
