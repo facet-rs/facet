@@ -62,12 +62,8 @@ describe("loggingMiddleware", () => {
     middleware.post?.(ctx, request, outcome);
     expect(consoleLogs).toHaveLength(2);
     expect(consoleLogs[1].message).toMatch(/← Service\.method: ✓/);
-    expect(consoleLogs[1].data).toMatchObject({
-      type: "response",
-      method: "Service.method",
-      ok: true,
-      result: "result",
-    });
+    // When logResults is enabled (default), the data is the result value directly
+    expect(consoleLogs[1].data).toBe("result");
   });
 
   it("logs request arguments when enabled", () => {
@@ -111,10 +107,8 @@ describe("loggingMiddleware", () => {
     const outcome: CallOutcome = { ok: true, value: { foo: "bar" } };
     middleware.post?.(ctx, request, outcome);
 
-    expect(consoleLogs[1].data).toMatchObject({
-      ok: true,
-      result: { foo: "bar" },
-    });
+    // When results are enabled, the logged data is the result value directly (not wrapped in metadata)
+    expect(consoleLogs[1].data).toMatchObject({ foo: "bar" });
   });
 
   it("does not log results when disabled", async () => {
@@ -130,6 +124,8 @@ describe("loggingMiddleware", () => {
     const outcome: CallOutcome = { ok: true, value: { foo: "bar" } };
     middleware.post?.(ctx, request, outcome);
 
+    // When results are disabled, we log the metadata object which has ok but no result
+    expect(consoleLogs[1].data).toMatchObject({ ok: true });
     expect(consoleLogs[1].data).not.toHaveProperty("result");
   });
 

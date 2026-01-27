@@ -177,7 +177,9 @@ export function loggingMiddleware(options: LoggingOptions = {}): ClientMiddlewar
         if (logResults && outcome.value !== undefined) {
           logObj.result = outcome.value;
         }
-        console.log(`← ${request.method}: ✓ ${duration.toFixed(2)}ms`, logObj);
+        // Log the result directly so expanding shows only the value, not redundant metadata
+        const logValue = logResults && outcome.value !== undefined ? outcome.value : logObj;
+        console.log(`← ${request.method}: ✓ ${duration.toFixed(2)}ms`, logValue);
       } else {
         logObj.ok = false;
         const error = outcome.error;
