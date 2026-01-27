@@ -397,6 +397,24 @@ pub enum DeserializeErrorKind {
         /// What were we doing?
         context: &'static str,
     },
+
+    /// Raw capture is not supported by the current parser.
+    ///
+    /// **Level:** Deserializer (`FormatDeserializer`)
+    ///
+    /// Types like `RawJson` require capturing the raw input without parsing it.
+    /// This error occurs when attempting to deserialize such a type with a parser
+    /// that doesn't support raw capture (e.g., streaming parsers without buffering).
+    ///
+    /// ```text
+    /// // Deserializing RawJson in streaming mode
+    /// raw capture not supported: type `RawJson` requires raw capture, but the
+    /// parser does not support it (e.g., streaming mode without buffering)
+    /// ```
+    RawCaptureNotSupported {
+        /// The type that requires raw capture.
+        type_name: &'static str,
+    },
 }
 
 impl fmt::Display for DeserializeError {
@@ -480,6 +498,13 @@ impl fmt::Display for DeserializeErrorKind {
             DeserializeErrorKind::Bug { error, context } => {
                 write!(f, "internal error: {error} while {context}")
             }
+            DeserializeErrorKind::RawCaptureNotSupported { type_name } => {
+                write!(
+                    f,
+                    "raw capture not supported: type `{type_name}` requires raw capture, \
+                     but the parser does not support it (e.g., streaming mode without buffering)"
+                )
+            }
         }
     }
 }
@@ -509,16 +534,6 @@ impl DeserializeError {
                 error: re.to_string().into(),
                 context,
             },
-        }
-    }
-
-    /// Create a new error with span and path information.
-    #[inline]
-    pub const fn with_context(kind: DeserializeErrorKind, span: Option<Span>, path: Path) -> Self {
-        DeserializeError {
-            span,
-            path: Some(path),
-            kind,
         }
     }
 

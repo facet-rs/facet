@@ -7,7 +7,7 @@ use facet_reflect::Partial;
 
 use crate::{
     DeserializeError, DeserializeErrorKind, EnumVariantHint, FormatDeserializer, ParseEvent,
-    ScalarTypeHint, ScalarValue, deserializer::reflect,
+    ScalarTypeHint, ScalarValue,
 };
 
 /// Helper to get variant display name (used by deserialize_enum_dynamic_inner)

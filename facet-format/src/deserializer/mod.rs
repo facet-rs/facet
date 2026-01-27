@@ -303,6 +303,10 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
 
     /// Make an error using the last span, the current path of the given wip.
     fn mk_err(&self, wip: Partial<'input, BORROW>, kind: DeserializeErrorKind) -> DeserializeError {
-        DeserializeError::with_context(kind, self.last_span, wip.path())
+        DeserializeError {
+            span: Some(self.last_span),
+            path: Some(wip.path()),
+            kind,
+        }
     }
 }

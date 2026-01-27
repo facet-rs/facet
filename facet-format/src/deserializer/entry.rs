@@ -14,19 +14,26 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
 
         // Check for raw capture type (e.g., RawJson)
         // Raw capture types are tuple structs with a single Cow<str> field
-        // If capture_raw returns None (e.g., streaming mode), fall through
-        // and try normal deserialization (which will likely fail with a helpful error)
-        if self.parser.raw_capture_shape() == Some(shape)
-            && let Some(raw) = self.parser.capture_raw()?
-        {
-            // The raw type is a tuple struct like RawJson(Cow<str>)
-            // Access field 0 (the Cow<str>) and set it
-            wip = wip
-                .begin_nth_field(0)
-                .map_err(|e| DeserializeError::bug_from_reflect(e, "beginning field"))?;
-            wip = self.set_string_value(wip, Cow::Borrowed(raw))?;
-            wip = wip.end()?;
-            return Ok(wip);
+        if self.parser.raw_capture_shape() == Some(shape) {
+            match self.parser.capture_raw()? {
+                Some(raw) => {
+                    // The raw type is a tuple struct like RawJson(Cow<str>)
+                    // Access field 0 (the Cow<str>) and set it
+                    wip = wip
+                        .begin_nth_field(0)
+                        .map_err(|e| DeserializeError::bug_from_reflect(e, "beginning field"))?;
+                    wip = self.set_string_value(wip, Cow::Borrowed(raw))?;
+                    wip = wip.end()?;
+                    return Ok(wip);
+                }
+                None => {
+                    // Parser doesn't support raw capture (e.g., streaming mode)
+                    return Err(DeserializeErrorKind::RawCaptureNotSupported {
+                        type_name: shape.type_identifier,
+                    }
+                    .with_span(self.last_span));
+                }
+            }
         }
 
         // Check for container-level proxy (format-specific proxies take precedence)
