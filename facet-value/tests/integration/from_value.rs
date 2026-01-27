@@ -398,3 +398,45 @@ fn deserialize_numeric_enum_from_string() {
     let e: NumericEnum = from_value(v).unwrap();
     assert_eq!(e, NumericEnum::B);
 }
+
+#[test]
+fn deserialize_struct_with_rename() {
+    // Test that from_value respects #[facet(rename = "...")] attribute
+    // This is a regression test for https://github.com/facet-rs/facet/issues/1940
+    #[derive(Debug, Facet, PartialEq)]
+    struct Outer {
+        #[facet(rename = "other")]
+        field: String,
+    }
+
+    let v = value!({
+        "other": "hi"
+    });
+
+    let result: Outer = from_value(v).unwrap();
+    assert_eq!(result.field, "hi");
+}
+
+#[test]
+fn deserialize_struct_with_rename_and_alias() {
+    // Test that both rename and alias work together
+    #[derive(Debug, Facet, PartialEq)]
+    struct Config {
+        #[facet(rename = "primary_name", alias = "alt_name")]
+        value: String,
+    }
+
+    // Using the renamed name should work
+    let v1 = value!({
+        "primary_name": "via rename"
+    });
+    let result1: Config = from_value(v1).unwrap();
+    assert_eq!(result1.value, "via rename");
+
+    // Using the alias should also work
+    let v2 = value!({
+        "alt_name": "via alias"
+    });
+    let result2: Config = from_value(v2).unwrap();
+    assert_eq!(result2.value, "via alias");
+}
