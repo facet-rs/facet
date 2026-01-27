@@ -1,8 +1,45 @@
 use crate::{ToTokens, *};
+use proc_macro2::Delimiter;
 use quote::{TokenStreamExt as _, quote};
 
 use crate::plugin::{extract_derive_plugins, generate_plugin_chain};
 use crate::{LifetimeName, RenameRule, process_enum, process_struct};
+
+/// Recursively flattens transparent groups (groups with `Delimiter::None`) in a token stream.
+///
+/// When macros like `macro_rules_attribute` process metavariables like `$vis:vis`, they wrap
+/// the captured tokens in a `Group` with `Delimiter::None`. This function unwraps such groups
+/// so that the inner tokens can be parsed normally.
+///
+/// For example, if a `$vis:vis` captures `pub`, the token stream might contain:
+/// ```text
+/// Group { delimiter: None, stream: TokenStream [Ident { ident: "pub" }] }
+/// ```
+///
+/// After flattening, this becomes just:
+/// ```text
+/// Ident { ident: "pub" }
+/// ```
+fn flatten_transparent_groups(input: TokenStream) -> TokenStream {
+    input
+        .into_iter()
+        .flat_map(|tt| match tt {
+            TokenTree::Group(group) if group.delimiter() == Delimiter::None => {
+                // Recursively flatten the contents of the transparent group
+                flatten_transparent_groups(group.stream())
+            }
+            TokenTree::Group(group) => {
+                // For non-transparent groups, recursively flatten their contents
+                // but keep the group structure
+                let flattened_stream = flatten_transparent_groups(group.stream());
+                let mut new_group = proc_macro2::Group::new(group.delimiter(), flattened_stream);
+                new_group.set_span(group.span());
+                std::iter::once(TokenTree::Group(new_group)).collect()
+            }
+            other => std::iter::once(other).collect(),
+        })
+        .collect()
+}
 
 /// Generate a static declaration that pre-evaluates `<T as Facet>::SHAPE`.
 /// Only emitted in release builds to avoid slowing down debug compile times.
@@ -32,6 +69,10 @@ pub(crate) fn generate_static_decl(
 ///
 /// If `#[facet(derive(...))]` is present, chains to plugins before generating.
 pub fn facet_macros(input: TokenStream) -> TokenStream {
+    // Flatten transparent groups (Delimiter::None) before parsing.
+    // This handles macros like `macro_rules_attribute` that wrap metavariables
+    // like `$vis:vis` in transparent groups.
+    let input = flatten_transparent_groups(input);
     let mut i = input.clone().to_token_iter();
 
     // Parse as TypeDecl
@@ -232,5 +273,104 @@ pub(crate) fn generate_type_name_fn(
             }
         }
         None => quote! { |_shape, f, _opts| ::core::fmt::Write::write_str(f, #type_name_str) },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_flatten_transparent_groups_simple() {
+        // Test that regular tokens pass through unchanged
+        let input: TokenStream = quote::quote! { pub struct Foo; };
+        let flattened = flatten_transparent_groups(input.clone());
+        assert_eq!(flattened.to_string(), input.to_string());
+    }
+
+    #[test]
+    fn test_flatten_transparent_groups_with_none_delimiter() {
+        // Simulate what macro_rules_attribute does with $vis:vis
+        // Create a Group with None delimiter containing "pub"
+        let pub_token: TokenStream = quote::quote! { pub };
+        let none_group = proc_macro2::Group::new(proc_macro2::Delimiter::None, pub_token.clone());
+
+        let mut input = TokenStream::new();
+        input.extend(std::iter::once(TokenTree::Group(none_group)));
+        input.extend(quote::quote! { struct Cat; });
+
+        let flattened = flatten_transparent_groups(input);
+
+        // After flattening, should be "pub struct Cat;"
+        let expected: TokenStream = quote::quote! { pub struct Cat; };
+        assert_eq!(flattened.to_string(), expected.to_string());
+    }
+
+    #[test]
+    fn test_flatten_transparent_groups_preserves_braces() {
+        // Test that normal braces are preserved
+        let input: TokenStream = quote::quote! { struct Foo { x: u32 } };
+        let flattened = flatten_transparent_groups(input.clone());
+        assert_eq!(flattened.to_string(), input.to_string());
+    }
+
+    #[test]
+    fn test_flatten_transparent_groups_nested() {
+        // Test nested transparent groups
+        let inner: TokenStream = quote::quote! { pub };
+        let inner_group = proc_macro2::Group::new(proc_macro2::Delimiter::None, inner);
+        let outer_stream: TokenStream = std::iter::once(TokenTree::Group(inner_group)).collect();
+        let outer_group = proc_macro2::Group::new(proc_macro2::Delimiter::None, outer_stream);
+
+        let mut input = TokenStream::new();
+        input.extend(std::iter::once(TokenTree::Group(outer_group)));
+        input.extend(quote::quote! { struct Cat; });
+
+        let flattened = flatten_transparent_groups(input);
+
+        let expected: TokenStream = quote::quote! { pub struct Cat; };
+        assert_eq!(flattened.to_string(), expected.to_string());
+    }
+
+    #[test]
+    fn test_flatten_transparent_groups_inside_braces() {
+        // Test that transparent groups inside braces are also flattened
+        let pub_token: TokenStream = quote::quote! { pub };
+        let none_group = proc_macro2::Group::new(proc_macro2::Delimiter::None, pub_token);
+
+        let mut brace_content = TokenStream::new();
+        brace_content.extend(std::iter::once(TokenTree::Group(none_group)));
+        brace_content.extend(quote::quote! { x: u32 });
+
+        let brace_group = proc_macro2::Group::new(proc_macro2::Delimiter::Brace, brace_content);
+
+        let mut input: TokenStream = quote::quote! { struct Foo };
+        input.extend(std::iter::once(TokenTree::Group(brace_group)));
+
+        let flattened = flatten_transparent_groups(input);
+
+        let expected: TokenStream = quote::quote! { struct Foo { pub x: u32 } };
+        assert_eq!(flattened.to_string(), expected.to_string());
+    }
+
+    #[test]
+    fn test_parse_struct_with_transparent_group_visibility() {
+        // Simulate the exact scenario from the issue: $vis:vis wrapped in None-delimited group
+        let pub_token: TokenStream = quote::quote! { pub };
+        let none_group = proc_macro2::Group::new(proc_macro2::Delimiter::None, pub_token);
+
+        let mut input = TokenStream::new();
+        input.extend(std::iter::once(TokenTree::Group(none_group)));
+        input.extend(quote::quote! { struct Cat; });
+
+        // This should now succeed after flattening
+        let flattened = flatten_transparent_groups(input);
+        let mut iter = flattened.to_token_iter();
+        let result = iter.parse::<Cons<AdtDecl, EndOfStream>>();
+
+        assert!(
+            result.is_ok(),
+            "Parsing should succeed after flattening transparent groups"
+        );
     }
 }
