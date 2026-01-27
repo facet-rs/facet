@@ -23,7 +23,7 @@ fn deserialize_enum_variant_content_inner<'input, const BORROW: bool>(
 
     // Get the selected variant's info
     let variant = wip.selected_variant().ok_or_else(|| DeserializeError {
-        span: deser.last_span,
+        span: Some(deser.last_span),
         path: None,
         kind: DeserializeErrorKind::UnexpectedToken {
             expected: "selected variant",
@@ -47,7 +47,7 @@ fn deserialize_enum_variant_content_inner<'input, const BORROW: bool>(
                 let end_event = deser.expect_event("value")?;
                 if !matches!(end_event, ParseEvent::StructEnd) {
                     return Err(DeserializeError {
-                        span: deser.last_span,
+                        span: Some(deser.last_span),
                         path: None,
                         kind: DeserializeErrorKind::UnexpectedToken {
                             expected: "empty struct for unit variant",
@@ -73,7 +73,7 @@ fn deserialize_enum_variant_content_inner<'input, const BORROW: bool>(
                     ParseEvent::StructStart(ContainerKind::Object) => true,
                     ParseEvent::StructStart(kind) => {
                         return Err(DeserializeError {
-                            span: deser.last_span,
+                            span: Some(deser.last_span),
                             path: None,
                             kind: DeserializeErrorKind::UnexpectedToken {
                                 expected: "array",
@@ -83,7 +83,7 @@ fn deserialize_enum_variant_content_inner<'input, const BORROW: bool>(
                     }
                     _ => {
                         return Err(DeserializeError {
-                            span: deser.last_span,
+                            span: Some(deser.last_span),
                             path: None,
                             kind: DeserializeErrorKind::UnexpectedToken {
                                 expected: "sequence for tuple variant",
@@ -113,7 +113,7 @@ fn deserialize_enum_variant_content_inner<'input, const BORROW: bool>(
                 let event = deser.expect_event("value")?;
                 if !matches!(event, ParseEvent::SequenceEnd | ParseEvent::StructEnd) {
                     return Err(DeserializeError {
-                        span: deser.last_span,
+                        span: Some(deser.last_span),
                         path: None,
                         kind: DeserializeErrorKind::UnexpectedToken {
                             expected: "sequence end for tuple variant",
@@ -129,7 +129,7 @@ fn deserialize_enum_variant_content_inner<'input, const BORROW: bool>(
             let event = deser.expect_event("value")?;
             if !matches!(event, ParseEvent::StructStart(_)) {
                 return Err(DeserializeError {
-                    span: deser.last_span,
+                    span: Some(deser.last_span),
                     path: None,
                     kind: DeserializeErrorKind::UnexpectedToken {
                         expected: "struct for struct variant",
@@ -239,7 +239,7 @@ fn deserialize_enum_variant_content_inner<'input, const BORROW: bool>(
                     }
                     other => {
                         return Err(DeserializeError {
-                            span: deser.last_span,
+                            span: Some(deser.last_span),
                             path: None,
                             kind: DeserializeErrorKind::UnexpectedToken {
                                 expected: "field key, ordered field, or struct end",
@@ -294,7 +294,7 @@ fn deserialize_enum_variant_content_inner<'input, const BORROW: bool>(
                         wip = wip.set_nth_field_to_default(idx)?;
                     } else {
                         return Err(DeserializeError {
-                            span: deser.last_span,
+                            span: Some(deser.last_span),
                             path: None,
                             kind: DeserializeErrorKind::MissingField {
                                 field: field.name,
@@ -399,7 +399,7 @@ fn deserialize_enum_externally_tagged_inner<'input, const BORROW: bool>(
 
                 let scalar_as_string =
                     scalar.to_string_value().ok_or_else(|| DeserializeError {
-                        span: deser.last_span,
+                        span: Some(deser.last_span),
                         path: None,
                         kind: DeserializeErrorKind::UnexpectedToken {
                             expected: "string or struct for enum",
@@ -416,7 +416,7 @@ fn deserialize_enum_externally_tagged_inner<'input, const BORROW: bool>(
 
         // No fallback available - error
         return Err(DeserializeError {
-            span: deser.last_span,
+            span: Some(deser.last_span),
             path: None,
             kind: DeserializeErrorKind::UnexpectedToken {
                 expected: "known enum variant",
@@ -455,7 +455,7 @@ fn deserialize_enum_externally_tagged_inner<'input, const BORROW: bool>(
                             .map(|v| v.effective_name())
                     })
                     .ok_or_else(|| DeserializeError {
-                        span: deser.last_span,
+                        span: Some(deser.last_span),
                         path: None,
                         kind: DeserializeErrorKind::UnexpectedToken {
                             expected: "known enum variant",
@@ -471,7 +471,7 @@ fn deserialize_enum_externally_tagged_inner<'input, const BORROW: bool>(
                     .find(|v| v.is_other())
                     .map(|v| v.effective_name())
                     .ok_or_else(|| DeserializeError {
-                        span: deser.last_span,
+                        span: Some(deser.last_span),
                         path: None,
                         kind: DeserializeErrorKind::UnexpectedToken {
                             expected: "#[facet(other)] fallback variant for unit tag",
@@ -496,7 +496,7 @@ fn deserialize_enum_externally_tagged_inner<'input, const BORROW: bool>(
     // Otherwise expect a struct { VariantName: ... }
     if !matches!(event, ParseEvent::StructStart(_)) {
         return Err(DeserializeError {
-            span: deser.last_span,
+            span: Some(deser.last_span),
             path: None,
             kind: DeserializeErrorKind::UnexpectedToken {
                 expected: "string or struct for enum",
@@ -511,7 +511,7 @@ fn deserialize_enum_externally_tagged_inner<'input, const BORROW: bool>(
     let event = expect_event(deser, "value")?;
     let field_key_name = match event {
         ParseEvent::FieldKey(key) => key.name.ok_or_else(|| DeserializeError {
-            span: deser.last_span,
+            span: Some(deser.last_span),
             path: None,
             kind: DeserializeErrorKind::UnexpectedToken {
                 expected: "variant name",
@@ -520,7 +520,7 @@ fn deserialize_enum_externally_tagged_inner<'input, const BORROW: bool>(
         })?,
         other => {
             return Err(DeserializeError {
-                span: deser.last_span,
+                span: Some(deser.last_span),
                 path: None,
                 kind: DeserializeErrorKind::UnexpectedToken {
                     expected: "variant name",
@@ -551,7 +551,7 @@ fn deserialize_enum_externally_tagged_inner<'input, const BORROW: bool>(
                 .map(|v| v.effective_name())
         })
         .ok_or_else(|| DeserializeError {
-            span: deser.last_span,
+            span: Some(deser.last_span),
             path: None,
             kind: DeserializeErrorKind::UnexpectedToken {
                 expected: "known enum variant",
@@ -581,7 +581,7 @@ fn deserialize_enum_externally_tagged_inner<'input, const BORROW: bool>(
     let event = expect_event(deser, "value")?;
     if !matches!(event, ParseEvent::StructEnd) {
         return Err(DeserializeError {
-            span: deser.last_span,
+            span: Some(deser.last_span),
             path: None,
             kind: DeserializeErrorKind::UnexpectedToken {
                 expected: "struct end after enum variant",
@@ -622,7 +622,7 @@ fn deserialize_enum_internally_tagged_inner<'input, const BORROW: bool>(
 
     let variant_name = find_tag_value(&evidence, tag_key)
         .ok_or(DeserializeError {
-            span: deser.last_span,
+            span: Some(deser.last_span),
             path: None,
             kind: DeserializeErrorKind::MissingField {
                 field: tag_key,
@@ -635,7 +635,7 @@ fn deserialize_enum_internally_tagged_inner<'input, const BORROW: bool>(
     let event = expect_event(deser, "value")?;
     if !matches!(event, ParseEvent::StructStart(_)) {
         return Err(DeserializeError {
-            span: deser.last_span,
+            span: Some(deser.last_span),
             path: None,
             kind: DeserializeErrorKind::UnexpectedToken {
                 expected: "struct for internally tagged enum",
@@ -655,7 +655,7 @@ fn deserialize_enum_internally_tagged_inner<'input, const BORROW: bool>(
 
     // Get the selected variant info
     let variant = wip.selected_variant().ok_or_else(|| DeserializeError {
-        span: deser.last_span,
+        span: Some(deser.last_span),
         path: None,
         kind: DeserializeErrorKind::UnexpectedToken {
             expected: "selected variant",
@@ -677,7 +677,7 @@ fn deserialize_enum_internally_tagged_inner<'input, const BORROW: bool>(
                 }
                 other => {
                     return Err(DeserializeError {
-                        span: deser.last_span,
+                        span: Some(deser.last_span),
                         path: None,
                         kind: DeserializeErrorKind::UnexpectedToken {
                             expected: "field key or struct end",
@@ -781,7 +781,7 @@ fn deserialize_enum_internally_tagged_inner<'input, const BORROW: bool>(
             }
             other => {
                 return Err(DeserializeError {
-                    span: deser.last_span,
+                    span: Some(deser.last_span),
                     path: None,
                     kind: DeserializeErrorKind::UnexpectedToken {
                         expected: "field key or struct end",
@@ -821,7 +821,7 @@ fn deserialize_enum_adjacently_tagged_inner<'input, const BORROW: bool>(
 
     let variant_name = find_tag_value(&evidence, tag_key)
         .ok_or(DeserializeError {
-            span: deser.last_span,
+            span: Some(deser.last_span),
             path: None,
             kind: DeserializeErrorKind::MissingField {
                 field: tag_key,
@@ -834,7 +834,7 @@ fn deserialize_enum_adjacently_tagged_inner<'input, const BORROW: bool>(
     let event = expect_event(deser, "value")?;
     if !matches!(event, ParseEvent::StructStart(_)) {
         return Err(DeserializeError {
-            span: deser.last_span,
+            span: Some(deser.last_span),
             path: None,
             kind: DeserializeErrorKind::UnexpectedToken {
                 expected: "struct for adjacently tagged enum",
@@ -883,7 +883,7 @@ fn deserialize_enum_adjacently_tagged_inner<'input, const BORROW: bool>(
             }
             other => {
                 return Err(DeserializeError {
-                    span: deser.last_span,
+                    span: Some(deser.last_span),
                     path: None,
                     kind: DeserializeErrorKind::UnexpectedToken {
                         expected: "field key or struct end",
@@ -903,7 +903,7 @@ fn deserialize_enum_adjacently_tagged_inner<'input, const BORROW: bool>(
             && !v.data.fields.is_empty()
         {
             return Err(DeserializeError {
-                span: deser.last_span,
+                span: Some(deser.last_span),
                 path: None,
                 kind: DeserializeErrorKind::MissingField {
                     field: content_key,
@@ -926,7 +926,7 @@ fn deserialize_variant_struct_fields_inner<'input, const BORROW: bool>(
     use facet_core::Characteristic;
 
     let variant = wip.selected_variant().ok_or_else(|| DeserializeError {
-        span: deser.last_span,
+        span: Some(deser.last_span),
         path: None,
         kind: DeserializeErrorKind::UnexpectedToken {
             expected: "selected variant",
@@ -966,7 +966,7 @@ fn deserialize_variant_struct_fields_inner<'input, const BORROW: bool>(
     let event = expect_event(deser, "value")?;
     if !matches!(event, ParseEvent::StructStart(_)) {
         return Err(DeserializeError {
-            span: deser.last_span,
+            span: Some(deser.last_span),
             path: None,
             kind: DeserializeErrorKind::UnexpectedToken {
                 expected: "struct start for variant content",
@@ -1013,7 +1013,7 @@ fn deserialize_variant_struct_fields_inner<'input, const BORROW: bool>(
             }
             other => {
                 return Err(DeserializeError {
-                    span: deser.last_span,
+                    span: Some(deser.last_span),
                     path: None,
                     kind: DeserializeErrorKind::UnexpectedToken {
                         expected: "field key or struct end",
@@ -1044,7 +1044,7 @@ fn deserialize_variant_struct_fields_inner<'input, const BORROW: bool>(
             wip = wip.set_nth_field_to_default(idx)?;
         } else {
             return Err(DeserializeError {
-                span: deser.last_span,
+                span: Some(deser.last_span),
                 path: None,
                 kind: DeserializeErrorKind::MissingField {
                     field: field.name,
@@ -1070,7 +1070,7 @@ fn deserialize_enum_as_struct_inner<'input, const BORROW: bool>(
     let field_event = expect_event(deser, "enum field key")?;
     let variant_name = match field_event {
         ParseEvent::FieldKey(key) => key.name.ok_or_else(|| DeserializeError {
-            span: deser.last_span,
+            span: Some(deser.last_span),
             path: None,
             kind: DeserializeErrorKind::UnexpectedToken {
                 expected: "variant name",
@@ -1085,7 +1085,7 @@ fn deserialize_enum_as_struct_inner<'input, const BORROW: bool>(
         }
         _ => {
             return Err(DeserializeError {
-                span: deser.last_span,
+                span: Some(deser.last_span),
                 path: None,
                 kind: DeserializeErrorKind::UnexpectedToken {
                     expected: "field key for enum variant",
@@ -1118,7 +1118,7 @@ fn deserialize_enum_as_struct_inner<'input, const BORROW: bool>(
                 let seq_event = expect_event(deser, "tuple variant start")?;
                 if !matches!(seq_event, ParseEvent::SequenceStart(_)) {
                     return Err(DeserializeError {
-                        span: deser.last_span,
+                        span: Some(deser.last_span),
                         path: None,
                         kind: DeserializeErrorKind::UnexpectedToken {
                             expected: "SequenceStart for tuple variant",
@@ -1139,7 +1139,7 @@ fn deserialize_enum_as_struct_inner<'input, const BORROW: bool>(
                 let seq_end = expect_event(deser, "tuple variant end")?;
                 if !matches!(seq_end, ParseEvent::SequenceEnd) {
                     return Err(DeserializeError {
-                        span: deser.last_span,
+                        span: Some(deser.last_span),
                         path: None,
                         kind: DeserializeErrorKind::UnexpectedToken {
                             expected: "SequenceEnd for tuple variant",
@@ -1156,7 +1156,7 @@ fn deserialize_enum_as_struct_inner<'input, const BORROW: bool>(
             let struct_event = expect_event(deser, "struct variant start")?;
             if !matches!(struct_event, ParseEvent::StructStart(_)) {
                 return Err(DeserializeError {
-                    span: deser.last_span,
+                    span: Some(deser.last_span),
                     path: None,
                     kind: DeserializeErrorKind::UnexpectedToken {
                         expected: "StructStart for struct variant",
@@ -1182,7 +1182,7 @@ fn deserialize_enum_as_struct_inner<'input, const BORROW: bool>(
                     }
                     ParseEvent::StructEnd => {
                         return Err(DeserializeError {
-                            span: deser.last_span,
+                            span: Some(deser.last_span),
                             path: None,
                             kind: DeserializeErrorKind::UnexpectedToken {
                                 expected: "field",
@@ -1192,7 +1192,7 @@ fn deserialize_enum_as_struct_inner<'input, const BORROW: bool>(
                     }
                     _ => {
                         return Err(DeserializeError {
-                            span: deser.last_span,
+                            span: Some(deser.last_span),
                             path: None,
                             kind: DeserializeErrorKind::UnexpectedToken {
                                 expected: "field",
@@ -1207,7 +1207,7 @@ fn deserialize_enum_as_struct_inner<'input, const BORROW: bool>(
             let inner_end = expect_event(deser, "struct variant inner end")?;
             if !matches!(inner_end, ParseEvent::StructEnd) {
                 return Err(DeserializeError {
-                    span: deser.last_span,
+                    span: Some(deser.last_span),
                     path: None,
                     kind: DeserializeErrorKind::UnexpectedToken {
                         expected: "StructEnd for struct variant inner",
@@ -1224,7 +1224,7 @@ fn deserialize_enum_as_struct_inner<'input, const BORROW: bool>(
     let end_event = expect_event(deser, "enum struct end")?;
     if !matches!(end_event, ParseEvent::StructEnd) {
         return Err(DeserializeError {
-            span: deser.last_span,
+            span: Some(deser.last_span),
             path: None,
             kind: DeserializeErrorKind::UnexpectedToken {
                 expected: "StructEnd for enum wrapper",
@@ -1245,7 +1245,7 @@ fn deserialize_other_variant_with_captured_tag_inner<'input, const BORROW: bool>
     use super::dyn_helpers::*;
 
     let variant = wip.selected_variant().ok_or_else(|| DeserializeError {
-        span: deser.last_span,
+        span: Some(deser.last_span),
         path: None,
         kind: DeserializeErrorKind::UnexpectedToken {
             expected: "selected variant",
@@ -1291,7 +1291,7 @@ fn deserialize_other_variant_with_captured_tag_inner<'input, const BORROW: bool>
             expect_event(deser, "value")?; // consume Unit
         } else {
             return Err(DeserializeError {
-                span: deser.last_span,
+                span: Some(deser.last_span),
                 path: None,
                 kind: DeserializeErrorKind::UnexpectedToken {
                     expected: "unit payload for #[facet(other)] variant without #[facet(content)]",
@@ -1333,7 +1333,7 @@ fn deserialize_result_as_enum_inner<'input, const BORROW: bool>(
     let event = expect_event(deser, "struct start for Result")?;
     if !matches!(event, ParseEvent::StructStart(_)) {
         return Err(DeserializeError {
-            span: deser.last_span,
+            span: Some(deser.last_span),
             path: None,
             kind: DeserializeErrorKind::UnexpectedToken {
                 expected: "struct start for Result variant",
@@ -1346,7 +1346,7 @@ fn deserialize_result_as_enum_inner<'input, const BORROW: bool>(
     let key_event = expect_event(deser, "variant key for Result")?;
     let variant_name = match key_event {
         ParseEvent::FieldKey(key) => key.name.ok_or_else(|| DeserializeError {
-            span: deser.last_span,
+            span: Some(deser.last_span),
             path: None,
             kind: DeserializeErrorKind::UnexpectedToken {
                 expected: "variant name",
@@ -1355,7 +1355,7 @@ fn deserialize_result_as_enum_inner<'input, const BORROW: bool>(
         })?,
         other => {
             return Err(DeserializeError {
-                span: deser.last_span,
+                span: Some(deser.last_span),
                 path: None,
                 kind: DeserializeErrorKind::UnexpectedToken {
                     expected: "field key with variant name",
@@ -1372,7 +1372,7 @@ fn deserialize_result_as_enum_inner<'input, const BORROW: bool>(
         wip = wip.begin_err()?;
     } else {
         return Err(DeserializeError {
-            span: deser.last_span,
+            span: Some(deser.last_span),
             path: None,
             kind: DeserializeErrorKind::UnexpectedToken {
                 expected: "Ok or Err variant",
@@ -1389,7 +1389,7 @@ fn deserialize_result_as_enum_inner<'input, const BORROW: bool>(
     let end_event = expect_event(deser, "struct end for Result")?;
     if !matches!(end_event, ParseEvent::StructEnd) {
         return Err(DeserializeError {
-            span: deser.last_span,
+            span: Some(deser.last_span),
             path: None,
             kind: DeserializeErrorKind::UnexpectedToken {
                 expected: "struct end for Result variant",
@@ -1474,7 +1474,7 @@ fn deserialize_enum_untagged_inner<'input, const BORROW: bool>(
             }
 
             Err(DeserializeError {
-                span: deser.last_span,
+                span: Some(deser.last_span),
                 path: None,
                 kind: DeserializeErrorKind::UnexpectedToken {
                     expected: "matching untagged variant for scalar",
@@ -1519,7 +1519,7 @@ fn deserialize_enum_untagged_inner<'input, const BORROW: bool>(
             ))
         }
         _ => Err(DeserializeError {
-            span: deser.last_span,
+            span: Some(deser.last_span),
             path: None,
             kind: DeserializeErrorKind::UnexpectedToken {
                 expected: "scalar, struct, or sequence for untagged enum",
@@ -1597,7 +1597,7 @@ where
         let dyn_parser: &mut dyn FormatParser<'input> = &mut self.parser;
         let mut dyn_deser = crate::FormatDeserializer {
             parser: dyn_parser,
-            last_span: self.last_span,
+            last_span: Some(self.last_span),
             current_path: self.current_path.clone(),
             _marker: core::marker::PhantomData,
         };
@@ -1615,7 +1615,7 @@ where
         let dyn_parser: &mut dyn FormatParser<'input> = &mut self.parser;
         let mut dyn_deser = crate::FormatDeserializer {
             parser: dyn_parser,
-            last_span: self.last_span,
+            last_span: Some(self.last_span),
             current_path: self.current_path.clone(),
             _marker: core::marker::PhantomData,
         };
@@ -1638,7 +1638,7 @@ where
         let dyn_parser: &mut dyn FormatParser<'input> = &mut self.parser;
         let mut dyn_deser = crate::FormatDeserializer {
             parser: dyn_parser,
-            last_span: self.last_span,
+            last_span: Some(self.last_span),
             current_path: self.current_path.clone(),
             _marker: core::marker::PhantomData,
         };
@@ -1655,7 +1655,7 @@ where
         let dyn_parser: &mut dyn FormatParser<'input> = &mut self.parser;
         let mut dyn_deser = crate::FormatDeserializer {
             parser: dyn_parser,
-            last_span: self.last_span,
+            last_span: Some(self.last_span),
             current_path: self.current_path.clone(),
             _marker: core::marker::PhantomData,
         };
@@ -1674,7 +1674,7 @@ where
         let dyn_parser: &mut dyn FormatParser<'input> = &mut self.parser;
         let mut dyn_deser = crate::FormatDeserializer {
             parser: dyn_parser,
-            last_span: self.last_span,
+            last_span: Some(self.last_span),
             current_path: self.current_path.clone(),
             _marker: core::marker::PhantomData,
         };
@@ -1693,7 +1693,7 @@ where
         let dyn_parser: &mut dyn FormatParser<'input> = &mut self.parser;
         let mut dyn_deser = crate::FormatDeserializer {
             parser: dyn_parser,
-            last_span: self.last_span,
+            last_span: Some(self.last_span),
             current_path: self.current_path.clone(),
             _marker: core::marker::PhantomData,
         };
@@ -1715,7 +1715,7 @@ where
         let dyn_parser: &mut dyn FormatParser<'input> = &mut self.parser;
         let mut dyn_deser = crate::FormatDeserializer {
             parser: dyn_parser,
-            last_span: self.last_span,
+            last_span: Some(self.last_span),
             current_path: self.current_path.clone(),
             _marker: core::marker::PhantomData,
         };
@@ -1773,7 +1773,7 @@ where
                 }
                 ScalarValue::Str(str_discriminant) => {
                     let discriminant = str_discriminant.parse().map_err(|_| DeserializeError {
-                        span: self.last_span,
+                        span: Some(self.last_span),
                         path: None,
                         kind: DeserializeErrorKind::UnexpectedToken {
                             expected: "string representing an integer (i64)",
@@ -1810,7 +1810,7 @@ where
         let dyn_parser: &mut dyn FormatParser<'input> = &mut self.parser;
         let mut dyn_deser = crate::FormatDeserializer {
             parser: dyn_parser,
-            last_span: self.last_span,
+            last_span: Some(self.last_span),
             current_path: self.current_path.clone(),
             _marker: core::marker::PhantomData,
         };
@@ -1835,7 +1835,7 @@ where
         let dyn_parser: &mut dyn FormatParser<'input> = &mut self.parser;
         let mut dyn_deser = crate::FormatDeserializer {
             parser: dyn_parser,
-            last_span: self.last_span,
+            last_span: Some(self.last_span),
             current_path: self.current_path.clone(),
             _marker: core::marker::PhantomData,
         };

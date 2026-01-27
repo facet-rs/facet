@@ -93,7 +93,7 @@ fn deserialize_struct_with_flatten_inner<'input, const BORROW: bool>(
     let event = expect_event(deser, "value")?;
     if !matches!(event, ParseEvent::StructStart(_)) {
         return Err(DeserializeError {
-            span: deser.last_span,
+            span: Some(deser.last_span),
             path: None,
             kind: DeserializeErrorKind::UnexpectedToken {
                 expected: "struct start",
@@ -268,7 +268,7 @@ fn deserialize_struct_with_flatten_inner<'input, const BORROW: bool>(
                                     ParseEvent::Scalar(ScalarValue::Str(s)) => s.as_ref(),
                                     _ => {
                                         return Err(DeserializeError {
-                                            span: deser.last_span,
+                                            span: Some(deser.last_span),
                                             path: None,
                                             kind: DeserializeErrorKind::UnexpectedToken {
                                                 expected: "string tag value",
@@ -280,7 +280,7 @@ fn deserialize_struct_with_flatten_inner<'input, const BORROW: bool>(
 
                                 if actual_tag != *variant_name {
                                     return Err(DeserializeError {
-                                        span: deser.last_span,
+                                        span: Some(deser.last_span),
                                         path: None,
                                         kind: DeserializeErrorKind::UnexpectedToken {
                                             expected: format!(
@@ -342,7 +342,7 @@ fn deserialize_struct_with_flatten_inner<'input, const BORROW: bool>(
 
                 if deny_unknown_fields {
                     return Err(DeserializeError {
-                        span: deser.last_span,
+                        span: Some(deser.last_span),
                         path: None,
                         kind: DeserializeErrorKind::UnknownField {
                             field: key_name.to_owned().into(),
@@ -355,7 +355,7 @@ fn deserialize_struct_with_flatten_inner<'input, const BORROW: bool>(
             }
             other => {
                 return Err(DeserializeError {
-                    span: deser.last_span,
+                    span: Some(deser.last_span),
                     path: None,
                     kind: DeserializeErrorKind::UnexpectedToken {
                         expected: "field key or struct end",
@@ -538,7 +538,7 @@ where
         let dyn_parser: &mut dyn FormatParser<'input> = &mut self.parser;
         let mut dyn_deser = crate::FormatDeserializer {
             parser: dyn_parser,
-            last_span: self.last_span,
+            last_span: Some(self.last_span),
             current_path: self.current_path.clone(),
             _marker: core::marker::PhantomData,
         };

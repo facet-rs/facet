@@ -70,7 +70,7 @@ where
 
             if let Err(message) = validation_result {
                 return Err(DeserializeError {
-                    span: self.last_span,
+                    span: Some(self.last_span),
                     path: Some(self.current_path.clone()),
                     kind: DeserializeErrorKind::Validation {
                         field: field.name,

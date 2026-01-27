@@ -12,7 +12,24 @@ use crate::{ContainerKind, FormatParser, ParseEvent, ScalarTypeHint, ScalarValue
 mod error;
 pub use error::*;
 
-pub(crate) mod dyn_helpers;
+/// Convert a ReflectError to a DeserializeError with the current span.
+///
+/// This macro captures `self.last_span` from the enclosing scope, ensuring
+/// reflection errors always have span information attached.
+///
+/// # Usage
+/// ```ignore
+/// reflect!(wip.set(value))?;
+/// reflect!(wip.begin_field("name"))?;
+/// ```
+macro_rules! reflect {
+    ($expr:expr) => {
+        $expr.map_err(|e| crate::DeserializeErrorKind::Reflect(e).with_span(self.last_span))
+    };
+}
+
+pub(crate) use reflect;
+
 mod dynamic;
 mod eenum;
 mod pointer;
@@ -22,118 +39,74 @@ mod struct_simple;
 mod struct_with_flatten;
 mod validate;
 
-/// Type alias for a deserializer using dynamic dispatch.
-///
-/// This uses `&mut dyn FormatParser<'input>` as the parser, which allows a single
-/// monomorphization of `FormatDeserializer` to work with any format parser at runtime.
-///
-/// # Tradeoffs
-///
-/// - **Pros**: Reduces monomorphization bloat (one copy instead of N copies for N formats)
-/// - **Cons**: Dynamic dispatch overhead (likely negligible)
-///
-/// # Example
-///
-/// ```ignore
-/// use facet_json::JsonParser;
-/// use facet_format::{DynDeserializer, FormatParser, FormatDeserializer};
-///
-/// let input = r#"{"name": "Alice"}"#;
-/// let mut parser = JsonParser::new(input.as_bytes());
-/// let mut dyn_parser: &mut dyn FormatParser = &mut parser;
-/// let mut de: DynDeserializer = FormatDeserializer::new(dyn_parser);
-/// let value: MyStruct = de.deserialize().unwrap();
-/// ```
-pub type DynDeserializer<'input, 'p> =
-    FormatDeserializer<'input, true, &'p mut dyn FormatParser<'input>>;
-
-/// Type alias for a deserializer using dynamic dispatch (owned strings variant).
-///
-/// Same as [`DynDeserializer`] but produces owned strings instead of borrowing from input.
-pub type DynDeserializerOwned<'input, 'p> =
-    FormatDeserializer<'input, false, &'p mut dyn FormatParser<'input>>;
-
 /// Generic deserializer that drives a format-specific parser directly into `Partial`.
 ///
 /// The const generic `BORROW` controls whether string data can be borrowed:
 /// - `BORROW=true`: strings without escapes are borrowed from input
 /// - `BORROW=false`: all strings are owned
-pub struct FormatDeserializer<'input, const BORROW: bool, P> {
-    parser: P,
+pub struct FormatDeserializer<'input, const BORROW: bool> {
+    parser: Box<dyn FormatParser<'input>>,
+
     /// The span of the most recently consumed event (for error reporting).
-    last_span: Option<facet_reflect::Span>,
+    last_span: facet_reflect::Span,
+
     /// Current path through the type structure (for error reporting).
     current_path: Path,
+
     _marker: core::marker::PhantomData<&'input ()>,
 }
 
-impl<'input, P> FormatDeserializer<'input, true, P> {
+impl<'input> FormatDeserializer<'input, true> {
     /// Create a new deserializer that can borrow strings from input.
-    pub const fn new(parser: P) -> Self {
+    pub fn new(parser: impl FormatParser<'input> + 'static) -> Self {
         Self {
-            parser,
-            last_span: None,
+            parser: Box::new(parser),
+            last_span: facet_reflect::Span { offset: 0, len: 0 },
             current_path: Path::new(),
             _marker: core::marker::PhantomData,
         }
     }
 }
 
-impl<'input, P> FormatDeserializer<'input, false, P> {
+impl<'input> FormatDeserializer<'input, false> {
     /// Create a new deserializer that produces owned strings.
-    pub const fn new_owned(parser: P) -> Self {
+    pub fn new_owned(parser: impl FormatParser<'input> + 'static) -> Self {
         Self {
-            parser,
-            last_span: None,
+            parser: Box::new(parser),
+            last_span: facet_reflect::Span { offset: 0, len: 0 },
             current_path: Path::new(),
             _marker: core::marker::PhantomData,
         }
     }
 }
 
-impl<'input, const BORROW: bool, P> FormatDeserializer<'input, BORROW, P> {
+impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
     /// Consume the facade and return the underlying parser.
-    pub fn into_inner(self) -> P {
+    pub fn into_inner(self) -> Box<dyn FormatParser<'input>> {
         self.parser
     }
 
     /// Borrow the inner parser mutably.
-    pub const fn parser_mut(&mut self) -> &mut P {
-        &mut self.parser
+    pub fn parser_mut(&mut self) -> &mut dyn FormatParser<'input> {
+        &mut *self.parser
     }
 }
 
-impl<'input, P> FormatDeserializer<'input, true, P>
-where
-    P: FormatParser<'input>,
-{
+impl<'input> FormatDeserializer<'input, true> {
     /// Deserialize the next value in the stream into `T`, allowing borrowed strings.
     pub fn deserialize<T>(&mut self) -> Result<T, DeserializeError>
     where
         T: Facet<'input>,
     {
-        let wip: Partial<'input, true> = Partial::alloc::<T>()?;
-
-        // Create a dyn-dispatched view for the actual deserialization work.
-        // This ensures the deserialization logic is monomorphized only once (per BORROW value)
-        // instead of once per parser type.
-        let dyn_parser: &mut dyn FormatParser<'input> = &mut self.parser;
-        let mut dyn_deser = FormatDeserializer {
-            parser: dyn_parser,
-            last_span: self.last_span,
-            current_path: self.current_path.clone(),
-            _marker: core::marker::PhantomData,
-        };
-
-        let partial = dyn_deser.deserialize_into(wip)?;
-
-        // Sync state back
-        self.last_span = dyn_deser.last_span;
-
-        let heap_value: HeapValue<'input, true> = partial.build()?;
+        let wip: Partial<'input, true> = Partial::alloc::<T>()
+            .map_err(|e| DeserializeError::bug_from_reflect(e, "allocating partial"))?;
+        let partial = self.deserialize_into(wip)?;
+        let heap_value: HeapValue<'input, true> = partial
+            .build()
+            .map_err(|e| DeserializeError::bug_from_reflect(e, "building heap value"))?;
         heap_value
             .materialize::<T>()
-            .map_err(DeserializeError::reflect)
+            .map_err(|e| DeserializeError::bug_from_reflect(e, "materializing"))
     }
 
     /// Deserialize the next value in the stream into `T` (for backward compatibility).
@@ -153,35 +126,27 @@ where
     where
         T: Facet<'input>,
     {
-        let wip: Partial<'input, true> = Partial::alloc::<T>()?;
-        let wip = wip.begin_deferred()?;
+        let wip: Partial<'input, true> = Partial::alloc::<T>()
+            .map_err(|e| DeserializeError::bug_from_reflect(e, "allocating partial"))?;
+        let wip = wip
+            .begin_deferred()
+            .map_err(|e| DeserializeError::bug_from_reflect(e, "beginning deferred"))?;
 
-        // Create a dyn-dispatched view for the actual deserialization work.
-        let dyn_parser: &mut dyn FormatParser<'input> = &mut self.parser;
-        let mut dyn_deser = FormatDeserializer {
-            parser: dyn_parser,
-            last_span: self.last_span,
-            current_path: self.current_path.clone(),
-            _marker: core::marker::PhantomData,
-        };
+        let partial = self.deserialize_into(wip)?;
+        let partial = partial
+            .finish_deferred()
+            .map_err(|e| DeserializeError::bug_from_reflect(e, "finishing deferred"))?;
 
-        let partial = dyn_deser.deserialize_into(wip)?;
-
-        // Sync state back
-        self.last_span = dyn_deser.last_span;
-
-        let partial = partial.finish_deferred()?;
-        let heap_value: HeapValue<'input, true> = partial.build()?;
+        let heap_value: HeapValue<'input, true> = partial
+            .build()
+            .map_err(|e| DeserializeError::bug_from_reflect(e, "building heap value"))?;
         heap_value
             .materialize::<T>()
-            .map_err(DeserializeError::reflect)
+            .map_err(|e| DeserializeError::bug_from_reflect(e, "materializing"))
     }
 }
 
-impl<'input, P> FormatDeserializer<'input, false, P>
-where
-    P: FormatParser<'input>,
-{
+impl<'input> FormatDeserializer<'input, false> {
     /// Deserialize the next value in the stream into `T`, using owned strings.
     pub fn deserialize<T>(&mut self) -> Result<T, DeserializeError>
     where
@@ -193,25 +158,15 @@ where
         #[allow(unsafe_code)]
         let wip: Partial<'input, false> = unsafe {
             core::mem::transmute::<Partial<'static, false>, Partial<'input, false>>(
-                Partial::alloc_owned::<T>()?,
+                Partial::alloc_owned::<T>()
+                    .map_err(|e| DeserializeError::bug_from_reflect(e, "allocating owned"))?,
             )
         };
 
-        // Create a dyn-dispatched view for the actual deserialization work.
-        let dyn_parser: &mut dyn FormatParser<'input> = &mut self.parser;
-        let mut dyn_deser = FormatDeserializer {
-            parser: dyn_parser,
-            last_span: self.last_span,
-            current_path: self.current_path.clone(),
-            _marker: core::marker::PhantomData,
-        };
-
-        let partial = dyn_deser.deserialize_into(wip)?;
-
-        // Sync state back
-        self.last_span = dyn_deser.last_span;
-
-        let heap_value: HeapValue<'input, false> = partial.build()?;
+        let partial = self.deserialize_into(wip)?;
+        let heap_value: HeapValue<'input, false> = partial
+            .build()
+            .map_err(|e| DeserializeError::bug_from_reflect(e, "building"))?;
 
         // SAFETY: HeapValue<'input, false> contains no borrowed data because BORROW=false.
         // The transmute only changes the phantom lifetime marker.
@@ -222,7 +177,7 @@ where
 
         heap_value
             .materialize::<T>()
-            .map_err(DeserializeError::reflect)
+            .map_err(|e| DeserializeError::bug_from_reflect(e, "materializing"))
     }
 
     /// Deserialize the next value in the stream into `T` (for backward compatibility).
@@ -248,27 +203,21 @@ where
         #[allow(unsafe_code)]
         let wip: Partial<'input, false> = unsafe {
             core::mem::transmute::<Partial<'static, false>, Partial<'input, false>>(
-                Partial::alloc_owned::<T>()?,
+                Partial::alloc_owned::<T>()
+                    .map_err(|e| DeserializeError::bug_from_reflect(e, "allocating owned"))?,
             )
         };
-        let wip = wip.begin_deferred()?;
+        let wip = wip
+            .begin_deferred()
+            .map_err(|e| DeserializeError::bug_from_reflect(e, "beginning deferred"))?;
 
-        // Create a dyn-dispatched view for the actual deserialization work.
-        let dyn_parser: &mut dyn FormatParser<'input> = &mut self.parser;
-        let mut dyn_deser = FormatDeserializer {
-            parser: dyn_parser,
-            last_span: self.last_span,
-            current_path: self.current_path.clone(),
-            _marker: core::marker::PhantomData,
-        };
-
-        let partial = dyn_deser.deserialize_into(wip)?;
-
-        // Sync state back
-        self.last_span = dyn_deser.last_span;
-
-        let partial = partial.finish_deferred()?;
-        let heap_value: HeapValue<'input, false> = partial.build()?;
+        let partial = self.deserialize_into(wip)?;
+        let partial = partial
+            .finish_deferred()
+            .map_err(|e| DeserializeError::bug_from_reflect(e, "finishing deferred"))?;
+        let heap_value: HeapValue<'input, false> = partial
+            .build()
+            .map_err(|e| DeserializeError::bug_from_reflect(e, "building"))?;
 
         // SAFETY: HeapValue<'input, false> contains no borrowed data because BORROW=false.
         // The transmute only changes the phantom lifetime marker.
@@ -279,7 +228,7 @@ where
 
         heap_value
             .materialize::<T>()
-            .map_err(DeserializeError::reflect)
+            .map_err(|e| DeserializeError::bug_from_reflect(e, "materializing"))
     }
 
     /// Deserialize using an explicit source shape for parser hints.
@@ -299,23 +248,13 @@ where
         #[allow(unsafe_code)]
         let wip: Partial<'input, false> = unsafe {
             core::mem::transmute::<Partial<'static, false>, Partial<'input, false>>(
-                Partial::alloc_owned::<T>()?,
+                Partial::alloc_owned::<T>().map_err(|e| {
+                    DeserializeError::bug_from_reflect(e, "allocating partial value")
+                })?,
             )
         };
 
-        // Create a dyn-dispatched view for the actual deserialization work.
-        let dyn_parser: &mut dyn FormatParser<'input> = &mut self.parser;
-        let mut dyn_deser = FormatDeserializer {
-            parser: dyn_parser,
-            last_span: self.last_span,
-            current_path: self.current_path.clone(),
-            _marker: core::marker::PhantomData,
-        };
-
-        let partial = dyn_deser.deserialize_into_with_shape(wip, source_shape)?;
-
-        // Sync state back
-        self.last_span = dyn_deser.last_span;
+        let partial = self.deserialize_into_with_shape(wip, source_shape)?;
 
         let heap_value: HeapValue<'input, false> = partial.build()?;
 
@@ -326,14 +265,11 @@ where
 
         heap_value
             .materialize::<T>()
-            .map_err(DeserializeError::reflect)
+            .map_err(|e| DeserializeError::bug_from_reflect(e, "materializing deserialized value"))
     }
 }
 
-impl<'input, const BORROW: bool, P> FormatDeserializer<'input, BORROW, P>
-where
-    P: FormatParser<'input>,
-{
+impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
     /// Read the next event, returning an error if EOF is reached.
     #[inline]
     fn expect_event(
@@ -341,11 +277,13 @@ where
         expected: &'static str,
     ) -> Result<ParseEvent<'input>, DeserializeError> {
         let event = self.parser.next_event()?.ok_or_else(|| {
-            DeserializeErrorKind::UnexpectedEof { expected }.without_source_span_yes_i_feel_bad()
+            DeserializeErrorKind::UnexpectedEof { expected }.with_span(self.last_span)
         })?;
         trace!(?event, expected, "expect_event: got event");
         // Capture the span of the consumed event for error reporting
-        self.last_span = self.parser.current_span();
+        if let Some(span) = self.parser.current_span() {
+            self.last_span = span;
+        }
         Ok(event)
     }
 
@@ -356,7 +294,7 @@ where
         expected: &'static str,
     ) -> Result<ParseEvent<'input>, DeserializeError> {
         let event = self.parser.peek_event()?.ok_or_else(|| {
-            DeserializeErrorKind::UnexpectedEof { expected }.without_source_span_yes_i_feel_bad()
+            DeserializeErrorKind::UnexpectedEof { expected }.with_span(self.last_span)
         })?;
         trace!(?event, expected, "expect_peek: peeked event");
         Ok(event)
@@ -400,7 +338,9 @@ where
         {
             // The raw type is a tuple struct like RawJson(Cow<str>)
             // Access field 0 (the Cow<str>) and set it
-            wip = wip.begin_nth_field(0)?;
+            wip = wip
+                .begin_nth_field(0)
+                .map_err(|e| DeserializeError::bug_from_reflect(e, "beginning field"))?;
             wip = self.set_string_value(wip, Cow::Borrowed(raw))?;
             wip = wip.end()?;
             return Ok(wip);
@@ -561,7 +501,7 @@ where
             _ => Err(DeserializeErrorKind::Unsupported {
                 message: format!("unsupported shape def: {:?}", shape.def).into(),
             }
-            .without_source_span_yes_i_feel_bad()),
+            .with_span(self.last_span)),
         }
     }
 
@@ -643,7 +583,7 @@ where
                     )
                     .into(),
                 }
-                .without_source_span_yes_i_feel_bad()),
+                .with_span(self.last_span)),
             },
         }
     }
@@ -693,7 +633,7 @@ where
                     expected: "struct",
                     got: format!("{:?}", wip.shape().ty).into(),
                 }
-                .without_source_span_yes_i_feel_bad());
+                .with_span(self.last_span));
             }
         };
 
@@ -763,7 +703,7 @@ where
             ParseEvent::StructStart(ContainerKind::Object) => true,
             ParseEvent::StructStart(kind) => {
                 return Err(DeserializeError {
-                    span: self.last_span,
+                    span: Some(self.last_span),
                     path: None,
                     kind: DeserializeErrorKind::UnexpectedToken {
                         expected: "array",
@@ -773,7 +713,7 @@ where
             }
             _ => {
                 return Err(DeserializeError {
-                    span: self.last_span,
+                    span: Some(self.last_span),
                     path: None,
                     kind: DeserializeErrorKind::UnexpectedToken {
                         expected: "sequence start for tuple",
@@ -933,7 +873,7 @@ where
             return match event {
                 ParseEvent::Scalar(ScalarValue::Bytes(bytes)) => self.set_bytes_value(wip, bytes),
                 _ => Err(DeserializeError {
-                    span: self.last_span,
+                    span: Some(self.last_span),
                     path: None,
                     kind: DeserializeErrorKind::UnexpectedToken {
                         expected: "bytes",
@@ -957,7 +897,7 @@ where
             }
             ParseEvent::StructStart(kind) => {
                 return Err(DeserializeError {
-                    span: self.last_span,
+                    span: Some(self.last_span),
                     path: None,
                     kind: DeserializeErrorKind::UnexpectedToken {
                         expected: "array",
@@ -967,7 +907,7 @@ where
             }
             _ => {
                 return Err(DeserializeError {
-                    span: self.last_span,
+                    span: Some(self.last_span),
                     path: None,
                     kind: DeserializeErrorKind::UnexpectedToken {
                         expected: "sequence start",
@@ -1014,7 +954,7 @@ where
                     expected: "array",
                     got: format!("{:?}", wip.shape().def).into(),
                 }
-                .without_source_span_yes_i_feel_bad());
+                .with_span(self.last_span));
             }
         };
 
@@ -1029,7 +969,7 @@ where
             ParseEvent::SequenceStart(_) => {}
             ParseEvent::StructStart(kind) => {
                 return Err(DeserializeError {
-                    span: self.last_span,
+                    span: Some(self.last_span),
                     path: None,
                     kind: DeserializeErrorKind::UnexpectedToken {
                         expected: "array",
@@ -1039,7 +979,7 @@ where
             }
             _ => {
                 return Err(DeserializeError {
-                    span: self.last_span,
+                    span: Some(self.last_span),
                     path: None,
                     kind: DeserializeErrorKind::UnexpectedToken {
                         expected: "sequence start for array",
@@ -1087,7 +1027,7 @@ where
             ParseEvent::SequenceStart(_) => {}
             ParseEvent::StructStart(kind) => {
                 return Err(DeserializeError {
-                    span: self.last_span,
+                    span: Some(self.last_span),
                     path: None,
                     kind: DeserializeErrorKind::UnexpectedToken {
                         expected: "set",
@@ -1097,7 +1037,7 @@ where
             }
             _ => {
                 return Err(DeserializeError {
-                    span: self.last_span,
+                    span: Some(self.last_span),
                     path: None,
                     kind: DeserializeErrorKind::UnexpectedToken {
                         expected: "sequence start for set",
@@ -1160,7 +1100,7 @@ where
                         }
                         other => {
                             return Err(DeserializeError {
-                                span: self.last_span,
+                                span: Some(self.last_span),
                                 path: None,
                                 kind: DeserializeErrorKind::UnexpectedToken {
                                     expected: "field key or struct end for map",
@@ -1195,7 +1135,7 @@ where
                         }
                         other => {
                             return Err(DeserializeError {
-                                span: self.last_span,
+                                span: Some(self.last_span),
                                 path: None,
                                 kind: DeserializeErrorKind::UnexpectedToken {
                                     expected: "ordered field or sequence end for map",
@@ -1208,7 +1148,7 @@ where
             }
             other => {
                 return Err(DeserializeError {
-                    span: self.last_span,
+                    span: Some(self.last_span),
                     path: None,
                     kind: DeserializeErrorKind::UnexpectedToken {
                         expected: "struct start or sequence start for map",
@@ -1309,7 +1249,7 @@ where
                     Ok(wip)
                 } else {
                     Err(DeserializeError {
-                        span: self.last_span,
+                        span: Some(self.last_span),
                         path: None,
                         kind: DeserializeErrorKind::UnexpectedToken {
                             expected: "scalar value or node with argument",
@@ -1319,7 +1259,7 @@ where
                 }
             }
             other => Err(DeserializeError {
-                span: self.last_span,
+                span: Some(self.last_span),
                 path: None,
                 kind: DeserializeErrorKind::UnexpectedToken {
                     expected: "scalar value",
@@ -1425,7 +1365,7 @@ where
 
         // From here on, we need an actual key name
         let key = key.ok_or_else(|| DeserializeError {
-            span: self.last_span,
+            span: Some(self.last_span),
             path: None,
             kind: DeserializeErrorKind::UnexpectedToken {
                 expected: "named key",

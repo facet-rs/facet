@@ -42,7 +42,7 @@ where
                     }
                     _ => {
                         return Err(DeserializeError {
-                            span: self.last_span,
+                            span: Some(self.last_span),
                             path: None,
                             kind: DeserializeErrorKind::UnexpectedToken {
                                 expected: "string for Cow<str>",
@@ -67,7 +67,7 @@ where
                     return Ok(wip);
                 } else {
                     return Err(DeserializeError {
-                        span: self.last_span,
+                        span: Some(self.last_span),
                         path: None,
                         kind: DeserializeErrorKind::UnexpectedToken {
                             expected: "bytes for Cow<[u8]>",
@@ -99,7 +99,7 @@ where
                 }
                 _ => {
                     return Err(DeserializeError {
-                        span: self.last_span,
+                        span: Some(self.last_span),
                         path: None,
                         kind: DeserializeErrorKind::UnexpectedToken {
                             expected: "string for &str",
@@ -124,7 +124,7 @@ where
                 return self.set_bytes_value(wip, b);
             } else {
                 return Err(DeserializeError {
-                    span: self.last_span,
+                    span: Some(self.last_span),
                     path: None,
                     kind: DeserializeErrorKind::UnexpectedToken {
                         expected: "bytes for &[u8]",
@@ -152,7 +152,7 @@ where
                 ParseEvent::SequenceStart(_) => {}
                 ParseEvent::StructStart(kind) => {
                     return Err(DeserializeError {
-                        span: self.last_span,
+                        span: Some(self.last_span),
                         path: None,
                         kind: DeserializeErrorKind::UnexpectedToken {
                             expected: "array",
@@ -162,7 +162,7 @@ where
                 }
                 _ => {
                     return Err(DeserializeError {
-                        span: self.last_span,
+                        span: Some(self.last_span),
                         path: None,
                         kind: DeserializeErrorKind::UnexpectedToken {
                             expected: "sequence start for Arc<[T]>/Rc<[T]>/Box<[T]>",

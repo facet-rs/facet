@@ -14,8 +14,10 @@ use facet_reflect::{ReflectError, Span};
 pub struct DeserializeError {
     /// Source span where the error occurred (if available).
     pub span: Option<Span>,
+
     /// Path through the type structure where the error occurred.
     pub path: Option<Path>,
+
     /// The specific kind of error.
     pub kind: DeserializeErrorKind,
 }
@@ -378,12 +380,22 @@ pub enum DeserializeErrorKind {
     ///         ^^
     ///         validation failed for field `age`: must be non-negative
     /// ```
-    #[cfg(feature = "validate")]
     Validation {
         /// The field that failed validation.
         field: &'static str,
+
         /// The validation error message.
         message: Cow<'static, str>,
+    },
+
+    /// Internal error indicating a logic bug in facet-format or one of the crates
+    /// that relies on it (facet-json,e tc.)
+    Bug {
+        /// What happened?
+        error: Cow<'static, str>,
+
+        /// What were we doing?
+        context: &'static str,
     },
 }
 
@@ -462,9 +474,11 @@ impl fmt::Display for DeserializeErrorKind {
             DeserializeErrorKind::Unsupported { message } => write!(f, "unsupported: {message}"),
             DeserializeErrorKind::Io { message } => write!(f, "I/O error: {message}"),
             DeserializeErrorKind::Solver { message } => write!(f, "solver error: {message}"),
-            #[cfg(feature = "validate")]
             DeserializeErrorKind::Validation { field, message } => {
                 write!(f, "validation failed for field `{field}`: {message}")
+            }
+            DeserializeErrorKind::Bug { error, context } => {
+                write!(f, "internal error: {error} while {context}")
             }
         }
     }
@@ -482,21 +496,22 @@ impl DeserializeErrorKind {
             kind: self,
         }
     }
-
-    /// Attach an optional span to this error kind.
-    ///
-    /// Use this when you have `Option<Span>` (e.g., `self.last_span` in the deserializer).
-    #[inline]
-    pub const fn with_maybe_span(self, span: Option<Span>) -> DeserializeError {
-        DeserializeError {
-            span,
-            path: None,
-            kind: self,
-        }
-    }
 }
 
 impl DeserializeError {
+    /// Create a new bug error from a reflect error
+    #[inline]
+    pub fn bug_from_reflect(re: ReflectError, context: &'static str) -> Self {
+        DeserializeError {
+            span: None,
+            path: None,
+            kind: DeserializeErrorKind::Bug {
+                error: re.to_string(),
+                context,
+            },
+        }
+    }
+
     /// Create a new error with span and path information.
     #[inline]
     pub const fn with_context(kind: DeserializeErrorKind, span: Option<Span>, path: Path) -> Self {
@@ -538,17 +553,5 @@ impl DeserializeError {
     pub fn with_path(mut self, new_path: Path) -> Self {
         self.path = Some(new_path);
         self
-    }
-
-    /// Check if this is an Unsupported error.
-    #[inline]
-    pub const fn is_unsupported(&self) -> bool {
-        matches!(self.kind, DeserializeErrorKind::Unsupported { .. })
-    }
-}
-
-impl From<ReflectError> for DeserializeError {
-    fn from(err: ReflectError) -> Self {
-        DeserializeErrorKind::Reflect(err).without_source_span_yes_i_feel_bad()
     }
 }

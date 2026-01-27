@@ -61,7 +61,7 @@ where
 
         if !matches!(event, ParseEvent::StructStart(_)) {
             return Err(DeserializeError {
-                span: self.last_span,
+                span: Some(self.last_span),
                 path: None,
                 kind: DeserializeErrorKind::UnexpectedToken {
                     expected: "struct start",
@@ -182,7 +182,7 @@ where
 
                     if deny_unknown_fields {
                         return Err(DeserializeError {
-                            span: self.last_span,
+                            span: Some(self.last_span),
                             path: None,
                             kind: DeserializeErrorKind::UnknownField {
                                 field: key_name.to_owned().into(),
@@ -197,7 +197,7 @@ where
                 }
                 other => {
                     return Err(DeserializeError {
-                        span: self.last_span,
+                        span: Some(self.last_span),
                         path: None,
                         kind: DeserializeErrorKind::UnexpectedToken {
                             expected: "field key or struct end",
