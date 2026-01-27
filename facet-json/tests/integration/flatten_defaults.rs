@@ -21,7 +21,7 @@ struct FlattenOuter {
 fn flatten_default_field_missing_format_deserializer() {
     let input = br#"{"foo":1}"#;
 
-    let parser = JsonParser::new(input);
+    let parser = JsonParser::<false>::new(input);
     let mut de = FormatDeserializer::new_owned(parser);
     let value: FlattenOuter = de
         .deserialize_root()

@@ -5,10 +5,13 @@
 
 extern crate alloc;
 
-use alloc::{borrow::Cow, vec::Vec};
+use alloc::{borrow::Cow, format, vec::Vec};
 
-use crate::error::{Asn1Error, Asn1ErrorKind};
-use facet_format::{ContainerKind, FormatParser, ParseEvent, SavePoint, ScalarValue};
+use facet_format::{
+    ContainerKind, DeserializeErrorKind, FormatParser, ParseError, ParseEvent, SavePoint,
+    ScalarValue,
+};
+use facet_reflect::Span;
 
 // ASN.1 Universal Tags
 const TAG_BOOLEAN: u8 = 0x01;
@@ -78,51 +81,55 @@ impl<'de> Asn1Parser<'de> {
     }
 
     /// Peek at the next byte without consuming it.
-    fn peek_byte(&self) -> Result<u8, Asn1Error> {
-        self.input
-            .get(self.pos)
-            .copied()
-            .ok_or_else(|| Asn1Error::unexpected_eof(self.pos))
+    fn peek_byte(&self) -> Result<u8, ParseError> {
+        self.input.get(self.pos).copied().ok_or_else(|| {
+            ParseError::new(
+                Span::new(self.pos, 0),
+                DeserializeErrorKind::UnexpectedEof {
+                    expected: "byte",
+                },
+            )
+        })
     }
 
     /// Read a single byte.
-    fn read_byte(&mut self) -> Result<u8, Asn1Error> {
+    fn read_byte(&mut self) -> Result<u8, ParseError> {
         let byte = self.peek_byte()?;
         self.pos += 1;
         Ok(byte)
     }
 
     /// Read the length field of a TLV.
-    fn read_length(&mut self) -> Result<usize, Asn1Error> {
+    fn read_length(&mut self) -> Result<usize, ParseError> {
         let first = self.read_byte()?;
         if first < 128 {
             Ok(first as usize)
         } else {
             let num_bytes = (first & 0x7f) as usize;
             if num_bytes == 0 {
-                return Err(Asn1Error::new(
-                    Asn1ErrorKind::Unsupported {
+                return Err(ParseError::new(
+                    Span::new(self.pos, 1),
+                    DeserializeErrorKind::InvalidValue {
                         message: "indefinite length not supported".into(),
                     },
-                    self.pos,
                 ));
             }
             if num_bytes > 8 {
-                return Err(Asn1Error::new(
-                    Asn1ErrorKind::Unsupported {
+                return Err(ParseError::new(
+                    Span::new(self.pos, 1),
+                    DeserializeErrorKind::InvalidValue {
                         message: "length too large".into(),
                     },
-                    self.pos,
                 ));
             }
             let mut len = 0usize;
             for _ in 0..num_bytes {
                 len = len.checked_shl(8).ok_or_else(|| {
-                    Asn1Error::new(
-                        Asn1ErrorKind::Unsupported {
+                    ParseError::new(
+                        Span::new(self.pos, 1),
+                        DeserializeErrorKind::InvalidValue {
                             message: "length overflow".into(),
                         },
-                        self.pos,
                     )
                 })?;
                 len |= self.read_byte()? as usize;
@@ -132,25 +139,30 @@ impl<'de> Asn1Parser<'de> {
     }
 
     /// Read a TLV header (tag + length), return (tag, content_end_position).
-    fn read_tl(&mut self) -> Result<(u8, usize), Asn1Error> {
+    fn read_tl(&mut self) -> Result<(u8, usize), ParseError> {
         let tag = self.read_byte()?;
         let len = self.read_length()?;
         let end = self.pos.checked_add(len).ok_or_else(|| {
-            Asn1Error::new(
-                Asn1ErrorKind::Unsupported {
+            ParseError::new(
+                Span::new(self.pos, 1),
+                DeserializeErrorKind::InvalidValue {
                     message: "content length overflow".into(),
                 },
-                self.pos,
             )
         })?;
         if end > self.input.len() {
-            return Err(Asn1Error::unexpected_eof(self.pos));
+            return Err(ParseError::new(
+                Span::new(self.pos, 0),
+                DeserializeErrorKind::UnexpectedEof {
+                    expected: "content",
+                },
+            ));
         }
         Ok((tag, end))
     }
 
     /// Read a complete TLV, return (tag, value_bytes).
-    fn read_tlv(&mut self) -> Result<(u8, &'de [u8]), Asn1Error> {
+    fn read_tlv(&mut self) -> Result<(u8, &'de [u8]), ParseError> {
         let (tag, end) = self.read_tl()?;
         let start = self.pos;
         self.pos = end;
@@ -158,30 +170,44 @@ impl<'de> Asn1Parser<'de> {
     }
 
     /// Read a boolean value.
-    fn read_bool(&mut self) -> Result<bool, Asn1Error> {
+    fn read_bool(&mut self) -> Result<bool, ParseError> {
         let (tag, bytes) = self.read_tlv()?;
         if tag != TAG_BOOLEAN {
-            return Err(Asn1Error::unknown_tag(tag, self.pos));
+            return Err(ParseError::new(
+                Span::new(self.pos, 1),
+                DeserializeErrorKind::InvalidValue {
+                    message: format!("unknown tag 0x{:02x}, expected BOOLEAN", tag).into(),
+                },
+            ));
         }
         match bytes {
             [0x00] => Ok(false),
             [0xFF] => Ok(true),
-            [_] => Err(Asn1Error::new(Asn1ErrorKind::InvalidBool, self.pos)),
-            _ => Err(Asn1Error::new(
-                Asn1ErrorKind::LengthMismatch {
-                    expected: 1,
-                    got: bytes.len(),
+            [_] => Err(ParseError::new(
+                Span::new(self.pos, 1),
+                DeserializeErrorKind::InvalidValue {
+                    message: "invalid boolean value".into(),
                 },
-                self.pos,
+            )),
+            _ => Err(ParseError::new(
+                Span::new(self.pos, bytes.len()),
+                DeserializeErrorKind::InvalidValue {
+                    message: format!("length mismatch: expected 1, got {}", bytes.len()).into(),
+                },
             )),
         }
     }
 
     /// Read an integer value as i64.
-    fn read_integer(&mut self) -> Result<i64, Asn1Error> {
+    fn read_integer(&mut self) -> Result<i64, ParseError> {
         let (tag, bytes) = self.read_tlv()?;
         if tag != TAG_INTEGER {
-            return Err(Asn1Error::unknown_tag(tag, self.pos));
+            return Err(ParseError::new(
+                Span::new(self.pos, 1),
+                DeserializeErrorKind::InvalidValue {
+                    message: format!("unknown tag 0x{:02x}, expected INTEGER", tag).into(),
+                },
+            ));
         }
         if bytes.is_empty() {
             return Ok(0);
@@ -195,10 +221,15 @@ impl<'de> Asn1Parser<'de> {
     }
 
     /// Read a real (float) value as f64.
-    fn read_real(&mut self) -> Result<f64, Asn1Error> {
+    fn read_real(&mut self) -> Result<f64, ParseError> {
         let (tag, bytes) = self.read_tlv()?;
         if tag != TAG_REAL {
-            return Err(Asn1Error::unknown_tag(tag, self.pos));
+            return Err(ParseError::new(
+                Span::new(self.pos, 1),
+                DeserializeErrorKind::InvalidValue {
+                    message: format!("unknown tag 0x{:02x}, expected REAL", tag).into(),
+                },
+            ));
         }
         if bytes.is_empty() {
             return Ok(0.0);
@@ -210,17 +241,26 @@ impl<'de> Asn1Parser<'de> {
             REAL_NEG_ZERO => Ok(-0.0),
             struct_byte => {
                 if struct_byte & 0b10111100 != 0b10000000 {
-                    return Err(Asn1Error::new(Asn1ErrorKind::InvalidReal, self.pos));
+                    return Err(ParseError::new(
+                        Span::new(self.pos, 1),
+                        DeserializeErrorKind::InvalidValue {
+                            message: "invalid real format".into(),
+                        },
+                    ));
                 }
                 let sign_negative = (struct_byte >> 6 & 0b1) > 0;
                 let exponent_len = ((struct_byte & 0b11) + 1) as usize;
                 if bytes.len() < exponent_len + 2 {
-                    return Err(Asn1Error::new(
-                        Asn1ErrorKind::LengthMismatch {
-                            expected: exponent_len + 2,
-                            got: bytes.len(),
+                    return Err(ParseError::new(
+                        Span::new(self.pos, bytes.len()),
+                        DeserializeErrorKind::InvalidValue {
+                            message: format!(
+                                "length mismatch: expected {}, got {}",
+                                exponent_len + 2,
+                                bytes.len()
+                            )
+                            .into(),
                         },
-                        self.pos,
                     ));
                 }
 
@@ -262,26 +302,41 @@ impl<'de> Asn1Parser<'de> {
     }
 
     /// Read a UTF-8 string.
-    fn read_string(&mut self) -> Result<&'de str, Asn1Error> {
+    fn read_string(&mut self) -> Result<&'de str, ParseError> {
+        let start_pos = self.pos;
         let (tag, bytes) = self.read_tlv()?;
         if tag != TAG_UTF8STRING {
-            return Err(Asn1Error::unknown_tag(tag, self.pos));
-        }
-        core::str::from_utf8(bytes).map_err(|e| {
-            Asn1Error::new(
-                Asn1ErrorKind::InvalidString {
-                    message: e.to_string(),
+            return Err(ParseError::new(
+                Span::new(self.pos, 1),
+                DeserializeErrorKind::InvalidValue {
+                    message: format!("unknown tag 0x{:02x}, expected UTF8STRING", tag).into(),
                 },
-                self.pos,
+            ));
+        }
+        core::str::from_utf8(bytes).map_err(|_| {
+            let mut context = [0u8; 16];
+            let context_len = bytes.len().min(16);
+            context[..context_len].copy_from_slice(&bytes[..context_len]);
+            ParseError::new(
+                Span::new(start_pos, bytes.len()),
+                DeserializeErrorKind::InvalidUtf8 {
+                    context,
+                    context_len: context_len as u8,
+                },
             )
         })
     }
 
     /// Read an octet string (binary data).
-    fn read_octet_string(&mut self) -> Result<&'de [u8], Asn1Error> {
+    fn read_octet_string(&mut self) -> Result<&'de [u8], ParseError> {
         let (tag, bytes) = self.read_tlv()?;
         if tag != TAG_OCTET_STRING {
-            return Err(Asn1Error::unknown_tag(tag, self.pos));
+            return Err(ParseError::new(
+                Span::new(self.pos, 1),
+                DeserializeErrorKind::InvalidValue {
+                    message: format!("unknown tag 0x{:02x}, expected OCTET STRING", tag).into(),
+                },
+            ));
         }
         Ok(bytes)
     }
@@ -295,7 +350,7 @@ impl<'de> Asn1Parser<'de> {
     }
 
     /// Produce the next parse event.
-    fn produce_event(&mut self) -> Result<Option<ParseEvent<'de>>, Asn1Error> {
+    fn produce_event(&mut self) -> Result<Option<ParseEvent<'de>>, ParseError> {
         // Check if we need to emit container end events
         if let Some(state) = self.stack.last()
             && self.pos >= state.end
@@ -445,7 +500,7 @@ impl<'de> Asn1Parser<'de> {
     }
 
     /// Skip a complete TLV value.
-    fn skip_value_internal(&mut self) -> Result<(), Asn1Error> {
+    fn skip_value_internal(&mut self) -> Result<(), ParseError> {
         let (_, end) = self.read_tl()?;
         self.pos = end;
         Ok(())
@@ -453,16 +508,14 @@ impl<'de> Asn1Parser<'de> {
 }
 
 impl<'de> FormatParser<'de> for Asn1Parser<'de> {
-    type Error = Asn1Error;
-
-    fn next_event(&mut self) -> Result<Option<ParseEvent<'de>>, Self::Error> {
+    fn next_event(&mut self) -> Result<Option<ParseEvent<'de>>, ParseError> {
         if let Some(event) = self.event_peek.take() {
             return Ok(Some(event));
         }
         self.produce_event()
     }
 
-    fn peek_event(&mut self) -> Result<Option<ParseEvent<'de>>, Self::Error> {
+    fn peek_event(&mut self) -> Result<Option<ParseEvent<'de>>, ParseError> {
         if let Some(event) = self.event_peek.clone() {
             return Ok(Some(event));
         }
@@ -473,7 +526,7 @@ impl<'de> FormatParser<'de> for Asn1Parser<'de> {
         Ok(event)
     }
 
-    fn skip_value(&mut self) -> Result<(), Self::Error> {
+    fn skip_value(&mut self) -> Result<(), ParseError> {
         debug_assert!(
             self.event_peek.is_none(),
             "skip_value called while an event is buffered"
@@ -481,6 +534,10 @@ impl<'de> FormatParser<'de> for Asn1Parser<'de> {
         self.skip_value_internal()?;
         self.finish_value();
         Ok(())
+    }
+
+    fn current_span(&self) -> Option<Span> {
+        Some(Span::new(self.pos, 1))
     }
 
     fn save(&mut self) -> SavePoint {

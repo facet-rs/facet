@@ -1,8 +1,9 @@
 use core::marker::PhantomData;
 
 use facet_core::{Def, Facet, PtrConst, PtrMut, Shape, Type, UserType};
+use facet_path::Path;
 
-use crate::ReflectError;
+use crate::{ReflectError, ReflectErrorKind};
 
 use super::{PokeList, PokeStruct};
 
@@ -95,6 +96,12 @@ impl<'mem, 'facet> Poke<'mem, 'facet> {
         self.data.as_const()
     }
 
+    /// Construct a ReflectError with this poke's shape as the root path.
+    #[inline]
+    fn err(&self, kind: ReflectErrorKind) -> ReflectError {
+        ReflectError::new(kind, Path::new(self.shape))
+    }
+
     /// Returns a mutable pointer to the underlying data.
     #[inline(always)]
     pub const fn data_mut(&mut self) -> PtrMut {
@@ -120,36 +127,36 @@ impl<'mem, 'facet> Poke<'mem, 'facet> {
     }
 
     /// Converts this into a `PokeStruct` if the value is a struct.
-    pub const fn into_struct(self) -> Result<PokeStruct<'mem, 'facet>, ReflectError> {
+    pub fn into_struct(self) -> Result<PokeStruct<'mem, 'facet>, ReflectError> {
         match self.shape.ty {
             Type::User(UserType::Struct(struct_type)) => Ok(PokeStruct {
                 value: self,
                 ty: struct_type,
             }),
-            _ => Err(ReflectError::WasNotA {
+            _ => Err(self.err(ReflectErrorKind::WasNotA {
                 expected: "struct",
                 actual: self.shape,
-            }),
+            })),
         }
     }
 
     /// Converts this into a `PokeEnum` if the value is an enum.
-    pub const fn into_enum(self) -> Result<super::PokeEnum<'mem, 'facet>, ReflectError> {
+    pub fn into_enum(self) -> Result<super::PokeEnum<'mem, 'facet>, ReflectError> {
         match self.shape.ty {
             Type::User(UserType::Enum(enum_type)) => Ok(super::PokeEnum {
                 value: self,
                 ty: enum_type,
             }),
-            _ => Err(ReflectError::WasNotA {
+            _ => Err(self.err(ReflectErrorKind::WasNotA {
                 expected: "enum",
                 actual: self.shape,
-            }),
+            })),
         }
     }
 
     /// Converts this into a `PokeList` if the value is a list.
     #[inline]
-    pub const fn into_list(self) -> Result<PokeList<'mem, 'facet>, ReflectError> {
+    pub fn into_list(self) -> Result<PokeList<'mem, 'facet>, ReflectError> {
         if let Def::List(def) = self.shape.def {
             // SAFETY: The ListDef comes from self.shape.def, where self.shape is obtained
             // from a trusted source (either T::SHAPE from the Facet trait, or validated
@@ -157,10 +164,10 @@ impl<'mem, 'facet> Poke<'mem, 'facet> {
             return Ok(unsafe { PokeList::new(self, def) });
         }
 
-        Err(ReflectError::WasNotA {
+        Err(self.err(ReflectErrorKind::WasNotA {
             expected: "list",
             actual: self.shape,
-        })
+        }))
     }
 
     /// Gets a reference to the underlying value.
@@ -168,10 +175,10 @@ impl<'mem, 'facet> Poke<'mem, 'facet> {
     /// Returns an error if the shape doesn't match `T`.
     pub fn get<T: Facet<'facet>>(&self) -> Result<&T, ReflectError> {
         if self.shape != T::SHAPE {
-            return Err(ReflectError::WrongShape {
+            return Err(self.err(ReflectErrorKind::WrongShape {
                 expected: self.shape,
                 actual: T::SHAPE,
-            });
+            }));
         }
         Ok(unsafe { self.data.as_const().get::<T>() })
     }
@@ -181,10 +188,10 @@ impl<'mem, 'facet> Poke<'mem, 'facet> {
     /// Returns an error if the shape doesn't match `T`.
     pub fn get_mut<T: Facet<'facet>>(&mut self) -> Result<&mut T, ReflectError> {
         if self.shape != T::SHAPE {
-            return Err(ReflectError::WrongShape {
+            return Err(self.err(ReflectErrorKind::WrongShape {
                 expected: self.shape,
                 actual: T::SHAPE,
-            });
+            }));
         }
         Ok(unsafe { self.data.as_mut::<T>() })
     }
@@ -194,10 +201,10 @@ impl<'mem, 'facet> Poke<'mem, 'facet> {
     /// This replaces the entire value. The new value must have the same shape.
     pub fn set<T: Facet<'facet>>(&mut self, value: T) -> Result<(), ReflectError> {
         if self.shape != T::SHAPE {
-            return Err(ReflectError::WrongShape {
+            return Err(self.err(ReflectErrorKind::WrongShape {
                 expected: self.shape,
                 actual: T::SHAPE,
-            });
+            }));
         }
         unsafe {
             // Drop the old value and write the new one
@@ -250,7 +257,13 @@ mod tests {
         let poke = Poke::new(&mut x);
 
         let result = poke.get::<u32>();
-        assert!(matches!(result, Err(ReflectError::WrongShape { .. })));
+        assert!(matches!(
+            result,
+            Err(ReflectError {
+                kind: ReflectErrorKind::WrongShape { .. },
+                ..
+            })
+        ));
     }
 
     #[test]
@@ -259,7 +272,13 @@ mod tests {
         let mut poke = Poke::new(&mut x);
 
         let result = poke.set(42u32);
-        assert!(matches!(result, Err(ReflectError::WrongShape { .. })));
+        assert!(matches!(
+            result,
+            Err(ReflectError {
+                kind: ReflectErrorKind::WrongShape { .. },
+                ..
+            })
+        ));
     }
 
     #[test]

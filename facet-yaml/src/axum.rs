@@ -33,7 +33,7 @@ use facet_core::Facet;
 use http::{HeaderValue, StatusCode, header};
 use http_body_util::BodyExt;
 
-use crate::{DeserializeError, YamlError};
+use crate::DeserializeError;
 
 /// A wrapper type for YAML-encoded request/response bodies.
 ///
@@ -80,7 +80,7 @@ enum YamlRejectionKind {
     /// Failed to read the request body.
     Body(axum_core::Error),
     /// Failed to deserialize the YAML data.
-    Deserialize(DeserializeError<YamlError>),
+    Deserialize(DeserializeError),
 }
 
 impl YamlRejection {

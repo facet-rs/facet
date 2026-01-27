@@ -33,7 +33,7 @@ use facet_core::Facet;
 use http::{HeaderValue, StatusCode, header};
 use http_body_util::BodyExt;
 
-use crate::{DeserializeError, MsgPackError, MsgPackSerializeError};
+use crate::{DeserializeError, MsgPackSerializeError};
 
 /// A wrapper type for MsgPack-encoded request/response bodies.
 ///
@@ -80,7 +80,7 @@ enum MsgPackRejectionKind {
     /// Failed to read the request body.
     Body(axum_core::Error),
     /// Failed to deserialize the MsgPack data.
-    Deserialize(DeserializeError<MsgPackError>),
+    Deserialize(DeserializeError),
 }
 
 impl MsgPackRejection {

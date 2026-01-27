@@ -1,6 +1,6 @@
 #![allow(clippy::needless_lifetimes)]
 use facet::Facet;
-use facet_reflect::{Partial, ReflectError};
+use facet_reflect::Partial;
 use facet_testhelpers::test;
 
 #[derive(Debug, Facet)]
@@ -25,7 +25,7 @@ fn covariant_works() {
         token: CovariantLifetime<'a>,
     }
 
-    fn scope<'a>(token: CovariantLifetime<'a>) -> Result<Wrapper<'a>, ReflectError> {
+    fn scope<'a>(token: CovariantLifetime<'a>) -> Wrapper<'a> {
         // SAFETY: Wrapper::<'a>::SHAPE comes from the derived Facet implementation
         let partial: Partial<'a> = unsafe { Partial::alloc_shape(Wrapper::<'a>::SHAPE) }.unwrap();
         partial
@@ -38,11 +38,11 @@ fn covariant_works() {
             .build()
             .unwrap()
             .materialize::<Wrapper>()
+            .unwrap()
     }
-    scope(CovariantLifetime {
+    let _ = scope(CovariantLifetime {
         _pd: std::marker::PhantomData,
-    })
-    .unwrap();
+    });
 }
 
 #[test]
@@ -52,7 +52,7 @@ fn contravariant_works() {
         token: ContravariantLifetime<'a>,
     }
 
-    fn scope<'a>(token: ContravariantLifetime<'a>) -> Result<Wrapper<'a>, ReflectError> {
+    fn scope<'a>(token: ContravariantLifetime<'a>) -> Wrapper<'a> {
         // SAFETY: Wrapper::<'a>::SHAPE comes from the derived Facet implementation
         let partial: Partial<'a> = unsafe { Partial::alloc_shape(Wrapper::<'a>::SHAPE) }.unwrap();
         partial
@@ -65,11 +65,11 @@ fn contravariant_works() {
             .build()
             .unwrap()
             .materialize::<Wrapper>()
+            .unwrap()
     }
-    scope(ContravariantLifetime {
+    let _ = scope(ContravariantLifetime {
         _pd: std::marker::PhantomData,
-    })
-    .unwrap();
+    });
 }
 
 #[test]
@@ -79,7 +79,7 @@ fn invariant_works() {
         token: InvariantLifetime<'a>,
     }
 
-    fn scope<'a>(token: InvariantLifetime<'a>) -> Result<Wrapper<'a>, ReflectError> {
+    fn scope<'a>(token: InvariantLifetime<'a>) -> Wrapper<'a> {
         // SAFETY: Wrapper::<'a>::SHAPE comes from the derived Facet implementation
         let partial: Partial<'a> = unsafe { Partial::alloc_shape(Wrapper::<'a>::SHAPE) }.unwrap();
         partial
@@ -92,9 +92,9 @@ fn invariant_works() {
             .build()
             .unwrap()
             .materialize::<Wrapper>()
+            .unwrap()
     }
-    scope(InvariantLifetime {
+    let _ = scope(InvariantLifetime {
         _pd: std::marker::PhantomData,
-    })
-    .unwrap();
+    });
 }

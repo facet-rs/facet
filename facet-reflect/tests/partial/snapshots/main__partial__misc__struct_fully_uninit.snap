@@ -2,4 +2,4 @@
 source: facet-reflect/tests/partial/misc.rs
 expression: "Partial::alloc::<FooBar>()?.build().unwrap_err()"
 ---
-Field 'FooBar::foo' was not initialized. If you need to leave fields partially initialized and come back later, use deferred mode (begin_deferred/finish_deferred)
+Field 'FooBar::foo' was not initialized. If you need to leave fields partially initialized and come back later, use deferred mode (begin_deferred/finish_deferred) at Path { shape: Shape { type_identifier: "FooBar", ty: User(Struct(«kind: Struct, fields: (foo, bar)»)), layout: Sized(«16 align 8»), .. }, steps: [] }

@@ -1080,7 +1080,6 @@ dependencies = [
 name = "facet-format"
 version = "0.43.2"
 dependencies = [
- "corosensei",
  "cranelift",
  "cranelift-jit",
  "cranelift-module",
@@ -1134,6 +1133,7 @@ dependencies = [
  "axum-core",
  "compact_str",
  "corosensei",
+ "divan",
  "facet",
  "facet-core",
  "facet-format",
@@ -1150,6 +1150,7 @@ dependencies = [
  "libtest-mimic",
  "memchr",
  "mime",
+ "serde",
  "serde_json",
  "smol_str",
  "tendril",
@@ -1298,6 +1299,7 @@ dependencies = [
  "eyre",
  "facet",
  "facet-core",
+ "facet-path",
  "facet-testhelpers",
  "facet-value",
  "insta",

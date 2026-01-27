@@ -19,8 +19,6 @@
 
 extern crate alloc;
 
-use alloc::string::ToString;
-
 mod error;
 mod parser;
 mod serializer;
@@ -54,7 +52,7 @@ pub use facet_format::DeserializeError;
 /// assert_eq!(person.name, "Alice");
 /// assert_eq!(person.age, 30);
 /// ```
-pub fn from_str<T>(input: &str) -> Result<T, DeserializeError<CsvError>>
+pub fn from_str<T>(input: &str) -> Result<T, DeserializeError>
 where
     T: facet_core::Facet<'static>,
 {
@@ -83,9 +81,7 @@ where
 /// assert_eq!(person.name, "Alice");
 /// assert_eq!(person.age, 30);
 /// ```
-pub fn from_str_borrowed<'input, 'facet, T>(
-    input: &'input str,
-) -> Result<T, DeserializeError<CsvError>>
+pub fn from_str_borrowed<'input, 'facet, T>(input: &'input str) -> Result<T, DeserializeError>
 where
     T: facet_core::Facet<'facet>,
     'input: 'facet,
@@ -119,14 +115,19 @@ where
 /// assert_eq!(person.name, "Alice");
 /// assert_eq!(person.age, 30);
 /// ```
-pub fn from_slice<T>(input: &[u8]) -> Result<T, DeserializeError<CsvError>>
+pub fn from_slice<T>(input: &[u8]) -> Result<T, DeserializeError>
 where
     T: facet_core::Facet<'static>,
 {
     let s = core::str::from_utf8(input).map_err(|e| {
-        DeserializeError::Parser(CsvError::new(CsvErrorKind::InvalidUtf8 {
-            message: e.to_string(),
-        }))
+        let mut context = [0u8; 16];
+        let context_len = e.valid_up_to().min(16);
+        context[..context_len].copy_from_slice(&input[..context_len]);
+        facet_format::DeserializeErrorKind::InvalidUtf8 {
+            context,
+            context_len: context_len as u8,
+        }
+        .with_span(facet_reflect::Span::new(e.valid_up_to(), 1))
     })?;
     from_str(s)
 }
@@ -154,17 +155,20 @@ where
 /// assert_eq!(person.name, "Alice");
 /// assert_eq!(person.age, 30);
 /// ```
-pub fn from_slice_borrowed<'input, 'facet, T>(
-    input: &'input [u8],
-) -> Result<T, DeserializeError<CsvError>>
+pub fn from_slice_borrowed<'input, 'facet, T>(input: &'input [u8]) -> Result<T, DeserializeError>
 where
     T: facet_core::Facet<'facet>,
     'input: 'facet,
 {
     let s = core::str::from_utf8(input).map_err(|e| {
-        DeserializeError::Parser(CsvError::new(CsvErrorKind::InvalidUtf8 {
-            message: e.to_string(),
-        }))
+        let mut context = [0u8; 16];
+        let context_len = e.valid_up_to().min(16);
+        context[..context_len].copy_from_slice(&input[..context_len]);
+        facet_format::DeserializeErrorKind::InvalidUtf8 {
+            context,
+            context_len: context_len as u8,
+        }
+        .with_span(facet_reflect::Span::new(e.valid_up_to(), 1))
     })?;
     from_str_borrowed(s)
 }

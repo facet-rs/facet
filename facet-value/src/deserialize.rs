@@ -1,3 +1,4 @@
+#![allow(clippy::result_large_err)]
 //! Deserialize from a `Value` into any type implementing `Facet`.
 //!
 //! This module provides the inverse of serialization: given a `Value`, you can
@@ -34,7 +35,7 @@ use alloc::vec::Vec;
 use facet_core::{
     Def, Facet, NumericType, PrimitiveType, Shape, StructKind, TextualType, Type, UserType, Variant,
 };
-use facet_reflect::{Partial, ReflectError};
+use facet_reflect::{AllocError, Partial, ReflectError, ShapeMismatchError};
 
 use crate::{VNumber, Value, ValueType};
 
@@ -207,6 +208,25 @@ impl core::fmt::Display for ValueErrorKind {
 impl From<ReflectError> for ValueError {
     fn from(err: ReflectError) -> Self {
         ValueError::new(ValueErrorKind::Reflect(err))
+    }
+}
+
+impl From<ShapeMismatchError> for ValueError {
+    fn from(err: ShapeMismatchError) -> Self {
+        ValueError::new(ValueErrorKind::Unsupported {
+            message: format!(
+                "shape mismatch: expected {}, got {}",
+                err.expected, err.actual
+            ),
+        })
+    }
+}
+
+impl From<AllocError> for ValueError {
+    fn from(err: AllocError) -> Self {
+        ValueError::new(ValueErrorKind::Unsupported {
+            message: format!("allocation failed for {}: {}", err.shape, err.operation),
+        })
     }
 }
 

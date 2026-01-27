@@ -41,7 +41,9 @@ mime = { version = "0.3", optional = true }
 
 [dev-dependencies]
 compact_str = { workspace = true }
+divan = { workspace = true }
 facet = { path = "../facet", features = ["doc", "net", "compact_str", "smol_str", "iddqd", "tendril"] }
+serde = { workspace = true }
 tendril = "0.5.0"
 facet-format = { path = "../facet-format", features = ["jit", "net", "tracing"] }
 facet-reflect = { path = "../facet-reflect", features = ["tracing"] }
@@ -56,6 +58,10 @@ tracing = { workspace = true }
 
 [[test]]
 name = "format_suite"
+harness = false
+
+[[bench]]
+name = "large_json"
 harness = false
 
 [[example]]
@@ -76,9 +82,6 @@ tracing = ["dep:tracing", "facet-format/tracing", "facet-reflect/tracing"]
 
 # Axum HTTP integration
 axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util", "dep:mime"]
-
-# Field validation during deserialization
-validate = ["facet-format/validate"]
 
 # compact_str support
 compact_str = ["facet/compact_str", "facet-format/compact_str"]

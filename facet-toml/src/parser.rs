@@ -42,7 +42,8 @@ use alloc::{
 };
 
 use facet_format::{
-    ContainerKind, FieldKey, FieldLocationHint, FormatParser, ParseEvent, SavePoint, ScalarValue,
+    ContainerKind, DeserializeErrorKind, FieldKey, FieldLocationHint, FormatParser, ParseError,
+    ParseEvent, SavePoint, ScalarValue,
 };
 use toml_parser::{
     ErrorSink, Raw, Source,
@@ -50,31 +51,35 @@ use toml_parser::{
     parser::{Event, EventKind, RecursionGuard, parse_document},
 };
 
-use crate::{TomlError, TomlErrorKind};
-
 // ============================================================================
 // Error collection for parsing
 // ============================================================================
 
 /// Collects parse errors from the TOML parser
-struct ParseErrorCollector {
-    error: Option<String>,
+struct TomlParseErrorCollector {
+    error: Option<(String, facet_reflect::Span)>,
 }
 
-impl ParseErrorCollector {
+impl TomlParseErrorCollector {
     const fn new() -> Self {
         Self { error: None }
     }
 
-    const fn take_error(&mut self) -> Option<String> {
+    fn take_error(&mut self) -> Option<(String, facet_reflect::Span)> {
         self.error.take()
     }
 }
 
-impl ErrorSink for ParseErrorCollector {
+impl ErrorSink for TomlParseErrorCollector {
     fn report_error(&mut self, error: toml_parser::ParseError) {
         if self.error.is_none() {
-            self.error = Some(error.description().to_string());
+            let toml_span = error
+                .context()
+                .or(error.unexpected())
+                .expect("toml_parser::ParseError must have either context or unexpected span set");
+            let span =
+                facet_reflect::Span::new(toml_span.start(), toml_span.end() - toml_span.start());
+            self.error = Some((error.description().to_string(), span));
         }
     }
 }
@@ -153,17 +158,22 @@ struct SavedState<'de> {
 
 impl<'de> TomlParser<'de> {
     /// Create a new TOML parser from a string slice.
-    pub fn new(input: &'de str) -> Result<Self, TomlError> {
+    pub fn new(input: &'de str) -> Result<Self, ParseError> {
         let source = Source::new(input);
         let tokens: Vec<_> = source.lex().collect();
         let mut events: Vec<Event> = Vec::new();
         let mut guarded = RecursionGuard::new(&mut events, 128);
-        let mut error_collector = ParseErrorCollector::new();
+        let mut error_collector = TomlParseErrorCollector::new();
 
         parse_document(&tokens, &mut guarded, &mut error_collector);
 
-        if let Some(err_msg) = error_collector.take_error() {
-            return Err(TomlError::without_span(TomlErrorKind::Parse(err_msg)));
+        if let Some((err_msg, span)) = error_collector.take_error() {
+            return Err(ParseError::new(
+                span,
+                DeserializeErrorKind::InvalidValue {
+                    message: err_msg.into(),
+                },
+            ));
         }
 
         Ok(Self {
@@ -185,6 +195,11 @@ impl<'de> TomlParser<'de> {
     /// Get the original input string.
     pub const fn input(&self) -> &'de str {
         self.input
+    }
+
+    /// Get a span pointing to EOF.
+    fn eof_span(&self) -> facet_reflect::Span {
+        facet_reflect::Span::new(self.input.len(), 0)
     }
 
     /// Check if an event should be skipped (whitespace, comment, newline).
@@ -238,10 +253,12 @@ impl<'de> TomlParser<'de> {
     }
 
     /// Decode a raw TOML value into the appropriate scalar.
-    fn decode_scalar(&self, event: &Event) -> Result<ScalarValue<'de>, TomlError> {
+    fn decode_scalar(&self, event: &Event) -> Result<ScalarValue<'de>, ParseError> {
         let raw = self.raw_from_event(event);
         let mut output: Cow<'de, str> = Cow::Borrowed("");
         let kind = raw.decode_scalar(&mut output, &mut ());
+        let span = event.span();
+        let facet_span = facet_reflect::Span::new(span.start(), span.end() - span.start());
 
         match kind {
             ScalarKind::String => {
@@ -253,9 +270,12 @@ impl<'de> TomlParser<'de> {
                 // Remove underscores for parsing
                 let clean: String = output.chars().filter(|c| *c != '_').collect();
                 let n: i64 = i64::from_str_radix(&clean, radix.value()).map_err(|e| {
-                    TomlError::without_span(TomlErrorKind::InvalidValue {
-                        message: e.to_string(),
-                    })
+                    ParseError::new(
+                        facet_span,
+                        DeserializeErrorKind::InvalidValue {
+                            message: e.to_string().into(),
+                        },
+                    )
                 })?;
                 Ok(ScalarValue::I64(n))
             }
@@ -267,9 +287,12 @@ impl<'de> TomlParser<'de> {
                     "-inf" => f64::NEG_INFINITY,
                     "nan" | "+nan" | "-nan" => f64::NAN,
                     _ => clean.parse().map_err(|e: core::num::ParseFloatError| {
-                        TomlError::without_span(TomlErrorKind::InvalidValue {
-                            message: e.to_string(),
-                        })
+                        ParseError::new(
+                            facet_span,
+                            DeserializeErrorKind::InvalidValue {
+                                message: e.to_string().into(),
+                            },
+                        )
                     })?,
                 };
                 Ok(ScalarValue::F64(f))
@@ -504,7 +527,7 @@ impl<'de> TomlParser<'de> {
     }
 
     /// Produce the next parse event.
-    fn produce_event(&mut self) -> Result<Option<ParseEvent<'de>>, TomlError> {
+    fn produce_event(&mut self) -> Result<Option<ParseEvent<'de>>, ParseError> {
         // First, drain any pending navigation events
         if let Some(event) = self.pending_events.pop_front() {
             return Ok(Some(event));
@@ -666,9 +689,13 @@ impl<'de> TomlParser<'de> {
 
             EventKind::Error => {
                 let span_str = self.get_span_str(event);
-                Err(TomlError::without_span(TomlErrorKind::Parse(
-                    span_str.to_string(),
-                )))
+                let span = event.span();
+                Err(ParseError::new(
+                    facet_reflect::Span::new(span.start(), span.end() - span.start()),
+                    DeserializeErrorKind::InvalidValue {
+                        message: span_str.to_string().into(),
+                    },
+                ))
             }
 
             _ => {
@@ -680,11 +707,12 @@ impl<'de> TomlParser<'de> {
     }
 
     /// Parse a value and add its events to pending_events.
-    fn parse_value_into_pending(&mut self) -> Result<(), TomlError> {
+    fn parse_value_into_pending(&mut self) -> Result<(), ParseError> {
         let Some(event) = self.peek_raw() else {
-            return Err(TomlError::without_span(TomlErrorKind::UnexpectedEof {
-                expected: "value",
-            }));
+            return Err(ParseError::new(
+                self.eof_span(),
+                DeserializeErrorKind::UnexpectedEof { expected: "value" },
+            ));
         };
 
         match event.kind() {
@@ -715,10 +743,14 @@ impl<'de> TomlParser<'de> {
             }
 
             _ => {
-                return Err(TomlError::without_span(TomlErrorKind::UnexpectedType {
-                    expected: "value",
-                    got: "unexpected token",
-                }));
+                let span = event.span();
+                return Err(ParseError::new(
+                    facet_reflect::Span::new(span.start(), span.end() - span.start()),
+                    DeserializeErrorKind::UnexpectedToken {
+                        expected: "value",
+                        got: "unexpected token".into(),
+                    },
+                ));
             }
         }
 
@@ -726,7 +758,7 @@ impl<'de> TomlParser<'de> {
     }
 
     /// Produce events while inside inline containers (inline tables or arrays).
-    fn produce_inline_event(&mut self) -> Result<Option<ParseEvent<'de>>, TomlError> {
+    fn produce_inline_event(&mut self) -> Result<Option<ParseEvent<'de>>, ParseError> {
         // Check pending events first
         if let Some(event) = self.pending_events.pop_front() {
             return Ok(Some(event));
@@ -735,9 +767,12 @@ impl<'de> TomlParser<'de> {
         let (is_inline_table, _deferred_closes) = *self.inline_stack.last().unwrap();
 
         let Some(event) = self.peek_raw() else {
-            return Err(TomlError::without_span(TomlErrorKind::UnexpectedEof {
-                expected: if is_inline_table { "}" } else { "]" },
-            }));
+            return Err(ParseError::new(
+                self.eof_span(),
+                DeserializeErrorKind::UnexpectedEof {
+                    expected: if is_inline_table { "}" } else { "]" },
+                },
+            ));
         };
 
         match event.kind() {
@@ -877,7 +912,7 @@ impl<'de> TomlParser<'de> {
     /// - Scalars: consume one Scalar event
     /// - Structs: consume StructStart, all contents, and StructEnd
     /// - Sequences: consume SequenceStart, all contents, and SequenceEnd
-    fn skip_current_value(&mut self) -> Result<(), TomlError> {
+    fn skip_current_value(&mut self) -> Result<(), ParseError> {
         // Peek at the next parse event (not raw token)
         let Some(event) = self.next_event()? else {
             return Ok(());
@@ -893,9 +928,12 @@ impl<'de> TomlParser<'de> {
                 let mut depth = 1;
                 while depth > 0 {
                     let Some(event) = self.next_event()? else {
-                        return Err(TomlError::without_span(TomlErrorKind::UnexpectedEof {
-                            expected: "struct end",
-                        }));
+                        return Err(ParseError::new(
+                            self.eof_span(),
+                            DeserializeErrorKind::UnexpectedEof {
+                                expected: "struct end",
+                            },
+                        ));
                     };
                     match event {
                         ParseEvent::StructStart(_) => depth += 1,
@@ -910,9 +948,12 @@ impl<'de> TomlParser<'de> {
                 let mut depth = 1;
                 while depth > 0 {
                     let Some(event) = self.next_event()? else {
-                        return Err(TomlError::without_span(TomlErrorKind::UnexpectedEof {
-                            expected: "sequence end",
-                        }));
+                        return Err(ParseError::new(
+                            self.eof_span(),
+                            DeserializeErrorKind::UnexpectedEof {
+                                expected: "sequence end",
+                            },
+                        ));
                     };
                     match event {
                         ParseEvent::SequenceStart(_) => depth += 1,
@@ -931,16 +972,14 @@ impl<'de> TomlParser<'de> {
 }
 
 impl<'de> FormatParser<'de> for TomlParser<'de> {
-    type Error = TomlError;
-
-    fn next_event(&mut self) -> Result<Option<ParseEvent<'de>>, Self::Error> {
+    fn next_event(&mut self) -> Result<Option<ParseEvent<'de>>, ParseError> {
         if let Some(event) = self.event_peek.take() {
             return Ok(Some(event));
         }
         self.produce_event()
     }
 
-    fn peek_event(&mut self) -> Result<Option<ParseEvent<'de>>, Self::Error> {
+    fn peek_event(&mut self) -> Result<Option<ParseEvent<'de>>, ParseError> {
         if let Some(event) = self.event_peek.clone() {
             return Ok(Some(event));
         }
@@ -951,7 +990,7 @@ impl<'de> FormatParser<'de> for TomlParser<'de> {
         Ok(event)
     }
 
-    fn skip_value(&mut self) -> Result<(), Self::Error> {
+    fn skip_value(&mut self) -> Result<(), ParseError> {
         debug_assert!(
             self.event_peek.is_none(),
             "skip_value called while an event is buffered"
@@ -991,7 +1030,7 @@ impl<'de> FormatParser<'de> for TomlParser<'de> {
         }
     }
 
-    fn capture_raw(&mut self) -> Result<Option<&'de str>, Self::Error> {
+    fn capture_raw(&mut self) -> Result<Option<&'de str>, ParseError> {
         // TOML doesn't support raw capture (unlike JSON)
         self.skip_value()?;
         Ok(None)

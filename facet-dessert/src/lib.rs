@@ -11,7 +11,7 @@ extern crate alloc;
 use std::borrow::Cow;
 
 use facet_core::{Def, KnownPointer, Type, UserType};
-use facet_reflect::{Partial, ReflectError, Span};
+use facet_reflect::{Partial, ReflectError, ReflectErrorKind, Span};
 
 /// Result of checking if a pointer type needs special handling.
 pub enum PointerAction {
@@ -60,10 +60,10 @@ pub fn begin_pointer<'input, const BORROW: bool>(
         Def::Pointer(ptr_def) => ptr_def,
         _ => {
             return Err(DessertError::Reflect {
-                error: ReflectError::OperationFailed {
+                error: wip.err(ReflectErrorKind::OperationFailed {
                     shape,
                     operation: "begin_pointer requires a pointer type",
-                },
+                }),
                 span: None,
             });
         }
@@ -189,10 +189,10 @@ pub fn set_string_value<'input, const BORROW: bool>(
 
         // No variant found - return an error
         return Err(DessertError::Reflect {
-            error: ReflectError::OperationFailed {
+            error: wip.err(ReflectErrorKind::OperationFailed {
                 shape,
                 operation: "no matching enum variant found for string value",
-            },
+            }),
             span,
         });
     }

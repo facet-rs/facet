@@ -319,12 +319,14 @@ impl Scanner {
     }
 
     fn skip_whitespace(&mut self, buf: &[u8]) {
-        while let Some(&b) = buf.get(self.pos) {
+        let mut pos = self.pos;
+        while let Some(&b) = buf.get(pos) {
             match b {
-                b' ' | b'\t' | b'\n' | b'\r' => self.pos += 1,
+                b' ' | b'\t' | b'\n' | b'\r' => pos += 1,
                 _ => break,
             }
         }
+        self.pos = pos;
     }
 
     /// Scan a string, finding its boundaries and noting if it has escapes.
@@ -507,24 +509,26 @@ impl Scanner {
         start: usize,
         mut hint: NumberHint,
     ) -> ScanResult {
+        let mut pos = self.pos;
+
         // Integer part
-        while let Some(&b) = buf.get(self.pos) {
+        while let Some(&b) = buf.get(pos) {
             if b.is_ascii_digit() {
-                self.pos += 1;
+                pos += 1;
             } else {
                 break;
             }
         }
 
         // Check for decimal part
-        if buf.get(self.pos) == Some(&b'.') {
+        if buf.get(pos) == Some(&b'.') {
             hint = NumberHint::Float;
-            self.pos += 1;
+            pos += 1;
 
             // Fractional digits
-            while let Some(&b) = buf.get(self.pos) {
+            while let Some(&b) = buf.get(pos) {
                 if b.is_ascii_digit() {
-                    self.pos += 1;
+                    pos += 1;
                 } else {
                     break;
                 }
@@ -532,43 +536,45 @@ impl Scanner {
         }
 
         // Check for exponent
-        if matches!(buf.get(self.pos), Some(b'e') | Some(b'E')) {
+        if matches!(buf.get(pos), Some(b'e') | Some(b'E')) {
             hint = NumberHint::Float;
-            self.pos += 1;
+            pos += 1;
 
             // Optional sign
-            if matches!(buf.get(self.pos), Some(b'+') | Some(b'-')) {
-                self.pos += 1;
+            if matches!(buf.get(pos), Some(b'+') | Some(b'-')) {
+                pos += 1;
             }
 
             // Exponent digits
-            while let Some(&b) = buf.get(self.pos) {
+            while let Some(&b) = buf.get(pos) {
                 if b.is_ascii_digit() {
-                    self.pos += 1;
+                    pos += 1;
                 } else {
                     break;
                 }
             }
         }
 
+        self.pos = pos;
+
         // Check if we're at end of buffer - might need more data
         // Numbers end at whitespace, punctuation, or true EOF
-        if self.pos == buf.len() {
+        if pos == buf.len() {
             // At end of buffer - need more data to see terminator
             self.state = ScanState::InNumber { start, hint };
             return Ok(SpannedToken {
                 token: Token::NeedMore { consumed: start },
-                span: Span::new(start, self.pos - start),
+                span: Span::new(start, pos - start),
             });
         }
 
-        let end = self.pos;
+        let end = pos;
 
         // Validate we actually parsed something
         if end == start || (end == start + 1 && buf.get(start) == Some(&b'-')) {
             return Err(ScanError {
                 kind: ScanErrorKind::UnexpectedChar(
-                    buf.get(self.pos).map(|&b| b as char).unwrap_or('?'),
+                    buf.get(pos).map(|&b| b as char).unwrap_or('?'),
                 ),
                 span: Span::new(start, 1),
             });
@@ -855,6 +861,31 @@ pub fn decode_string_borrowed(buf: &[u8], start: usize, end: usize) -> Option<&s
     str::from_utf8(slice).ok()
 }
 
+/// Try to borrow a string directly from the buffer (zero-copy), without UTF-8 validation.
+///
+/// # Safety
+/// The caller must ensure the buffer contains valid UTF-8.
+///
+/// # Arguments
+/// * `buf` - The buffer containing valid UTF-8
+/// * `start` - Start index (after opening quote)
+/// * `end` - End index (before closing quote)
+pub unsafe fn decode_string_borrowed_unchecked(
+    buf: &[u8],
+    start: usize,
+    end: usize,
+) -> Option<&str> {
+    let slice = &buf[start..end];
+
+    // Quick check for backslashes
+    if slice.contains(&b'\\') {
+        return None;
+    }
+
+    // SAFETY: Caller guarantees the buffer is valid UTF-8
+    Some(unsafe { str::from_utf8_unchecked(slice) })
+}
+
 /// Decode a JSON string, returning either a borrowed or owned string.
 ///
 /// Uses `Cow<str>` to avoid allocation when possible.
@@ -870,6 +901,31 @@ pub fn decode_string<'a>(
         decode_string_owned(buf, start, end).map(Cow::Owned)
     } else {
         decode_string_borrowed(buf, start, end)
+            .map(Cow::Borrowed)
+            .ok_or_else(|| ScanError {
+                kind: ScanErrorKind::InvalidUtf8,
+                span: Span::new(start, end - start),
+            })
+    }
+}
+
+/// Decode a JSON string without UTF-8 validation, returning either a borrowed or owned string.
+///
+/// # Safety
+/// The caller must ensure the buffer contains valid UTF-8.
+pub unsafe fn decode_string_unchecked<'a>(
+    buf: &'a [u8],
+    start: usize,
+    end: usize,
+    has_escapes: bool,
+) -> Result<alloc::borrow::Cow<'a, str>, ScanError> {
+    use alloc::borrow::Cow;
+
+    if has_escapes {
+        decode_string_owned(buf, start, end).map(Cow::Owned)
+    } else {
+        // SAFETY: Caller guarantees buffer is valid UTF-8
+        unsafe { decode_string_borrowed_unchecked(buf, start, end) }
             .map(Cow::Borrowed)
             .ok_or_else(|| ScanError {
                 kind: ScanErrorKind::InvalidUtf8,

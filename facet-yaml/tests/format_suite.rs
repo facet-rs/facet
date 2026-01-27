@@ -3,7 +3,7 @@
 use facet::Facet;
 use facet_format::{DeserializeError, FormatDeserializer};
 use facet_format_suite::{CaseOutcome, CaseSpec, FormatSuite, all_cases};
-use facet_yaml::{YamlError, YamlParser, to_string};
+use facet_yaml::{YamlParser, to_string};
 use indoc::indoc;
 use libtest_mimic::{Arguments, Failed, Trial};
 use std::sync::Arc;
@@ -11,7 +11,7 @@ use std::sync::Arc;
 struct YamlSlice;
 
 impl FormatSuite for YamlSlice {
-    type Error = DeserializeError<YamlError>;
+    type Error = DeserializeError;
 
     fn format_name() -> &'static str {
         "facet-yaml/slice"
@@ -26,7 +26,7 @@ impl FormatSuite for YamlSlice {
         T: Facet<'static> + core::fmt::Debug,
     {
         let input_str = std::str::from_utf8(input).expect("input should be valid UTF-8");
-        let parser = YamlParser::new(input_str).map_err(DeserializeError::Parser)?;
+        let parser = YamlParser::new(input_str);
         let mut de = FormatDeserializer::new_owned(parser);
         de.deserialize_root::<T>()
     }
@@ -259,7 +259,7 @@ impl FormatSuite for YamlSlice {
 
     fn error_type_mismatch_object_to_array() -> CaseSpec {
         // Object (nested struct) provided where array expected
-        CaseSpec::expect_error("items:\n  key: value", "type mismatch")
+        CaseSpec::expect_error("items:\n  key: value", "got object, expected array")
     }
 
     fn error_missing_required_field() -> CaseSpec {

@@ -15,11 +15,32 @@ extern crate alloc;
 
 use alloc::{borrow::Cow, string::String, vec::Vec};
 
-use crate::error::{XdrError, codes};
+use crate::error::codes;
 use facet_format::{
-    ContainerKind, EnumVariantHint, FormatParser, ParseEvent, SavePoint, ScalarTypeHint,
-    ScalarValue,
+    ContainerKind, DeserializeErrorKind, EnumVariantHint, FormatParser, ParseError, ParseEvent,
+    SavePoint, ScalarTypeHint, ScalarValue,
 };
+use facet_reflect::Span;
+
+/// Create a ParseError from an error code and position.
+fn error_from_code(code: i32, pos: usize) -> ParseError {
+    let message = match code {
+        codes::UNEXPECTED_EOF => "unexpected end of input",
+        codes::INVALID_BOOL => "invalid boolean value (must be 0 or 1)",
+        codes::INVALID_OPTIONAL => "invalid optional discriminant (must be 0 or 1)",
+        codes::INVALID_VARIANT => "invalid enum discriminant",
+        codes::INVALID_UTF8 => "invalid UTF-8 in string",
+        codes::UNSUPPORTED_TYPE => "unsupported type for XDR",
+        codes::ALIGNMENT_ERROR => "position not aligned to 4 bytes",
+        _ => "unknown error",
+    };
+    ParseError::new(
+        Span::new(pos, 1),
+        DeserializeErrorKind::InvalidValue {
+            message: message.into(),
+        },
+    )
+}
 
 /// Stored variant metadata for enum parsing.
 #[derive(Debug, Clone)]
@@ -94,9 +115,9 @@ impl<'de> XdrParser<'de> {
     }
 
     /// Read a u32 in big-endian (XDR standard).
-    fn read_u32(&mut self) -> Result<u32, XdrError> {
+    fn read_u32(&mut self) -> Result<u32, ParseError> {
         if self.pos + 4 > self.input.len() {
-            return Err(XdrError::from_code(codes::UNEXPECTED_EOF, self.pos));
+            return Err(error_from_code(codes::UNEXPECTED_EOF, self.pos));
         }
         let bytes = &self.input[self.pos..self.pos + 4];
         self.pos += 4;
@@ -104,9 +125,9 @@ impl<'de> XdrParser<'de> {
     }
 
     /// Read a u64 in big-endian.
-    fn read_u64(&mut self) -> Result<u64, XdrError> {
+    fn read_u64(&mut self) -> Result<u64, ParseError> {
         if self.pos + 8 > self.input.len() {
-            return Err(XdrError::from_code(codes::UNEXPECTED_EOF, self.pos));
+            return Err(error_from_code(codes::UNEXPECTED_EOF, self.pos));
         }
         let bytes = &self.input[self.pos..self.pos + 8];
         self.pos += 8;
@@ -116,59 +137,69 @@ impl<'de> XdrParser<'de> {
     }
 
     /// Read an i32 in big-endian.
-    fn read_i32(&mut self) -> Result<i32, XdrError> {
+    fn read_i32(&mut self) -> Result<i32, ParseError> {
         Ok(self.read_u32()? as i32)
     }
 
     /// Read an i64 in big-endian.
-    fn read_i64(&mut self) -> Result<i64, XdrError> {
+    fn read_i64(&mut self) -> Result<i64, ParseError> {
         Ok(self.read_u64()? as i64)
     }
 
     /// Read an f32 in big-endian.
-    fn read_f32(&mut self) -> Result<f32, XdrError> {
+    fn read_f32(&mut self) -> Result<f32, ParseError> {
         let bits = self.read_u32()?;
         Ok(f32::from_bits(bits))
     }
 
     /// Read an f64 in big-endian.
-    fn read_f64(&mut self) -> Result<f64, XdrError> {
+    fn read_f64(&mut self) -> Result<f64, ParseError> {
         let bits = self.read_u64()?;
         Ok(f64::from_bits(bits))
     }
 
     /// Read variable-length opaque data (with length prefix and padding).
-    fn read_opaque_var(&mut self) -> Result<&'de [u8], XdrError> {
+    fn read_opaque_var(&mut self) -> Result<&'de [u8], ParseError> {
         let len = self.read_u32()? as usize;
         if self.pos + len > self.input.len() {
-            return Err(XdrError::from_code(codes::UNEXPECTED_EOF, self.pos));
+            return Err(error_from_code(codes::UNEXPECTED_EOF, self.pos));
         }
         let data = &self.input[self.pos..self.pos + len];
         self.pos += len;
         // Skip padding to align to 4 bytes
         let pad = (4 - (len % 4)) % 4;
         if self.pos + pad > self.input.len() {
-            return Err(XdrError::from_code(codes::UNEXPECTED_EOF, self.pos));
+            return Err(error_from_code(codes::UNEXPECTED_EOF, self.pos));
         }
         self.pos += pad;
         Ok(data)
     }
 
     /// Read a string (variable-length opaque interpreted as UTF-8).
-    fn read_string(&mut self) -> Result<Cow<'de, str>, XdrError> {
+    fn read_string(&mut self) -> Result<Cow<'de, str>, ParseError> {
+        let start_pos = self.pos;
         let bytes = self.read_opaque_var()?;
-        core::str::from_utf8(bytes)
-            .map(Cow::Borrowed)
-            .map_err(|_| XdrError::from_code(codes::INVALID_UTF8, self.pos))
+        core::str::from_utf8(bytes).map(Cow::Borrowed).map_err(|_| {
+            let mut context = [0u8; 16];
+            let context_len = bytes.len().min(16);
+            context[..context_len].copy_from_slice(&bytes[..context_len]);
+            ParseError::new(
+                Span::new(start_pos, bytes.len()),
+                DeserializeErrorKind::InvalidUtf8 {
+                    context,
+                    context_len: context_len as u8,
+                },
+            )
+        })
     }
 
     /// Read a boolean (XDR bool is 4 bytes: 0=false, 1=true).
-    fn read_bool(&mut self) -> Result<bool, XdrError> {
+    fn read_bool(&mut self) -> Result<bool, ParseError> {
         let val = self.read_u32()?;
         match val {
             0 => Ok(false),
             1 => Ok(true),
-            _ => Err(XdrError::from_code(codes::INVALID_BOOL, self.pos - 4)),
+            _ => Err(error_from_code(codes::INVALID_BOOL, self.pos - 4)),
         }
     }
 
@@ -178,7 +209,7 @@ impl<'de> XdrParser<'de> {
     }
 
     /// Generate the next event based on current state and hints.
-    fn generate_next_event(&mut self) -> Result<ParseEvent<'de>, XdrError> {
+    fn generate_next_event(&mut self) -> Result<ParseEvent<'de>, ParseError> {
         // Check if we have a pending option hint
         if self.pending_option {
             self.pending_option = false;
@@ -190,7 +221,7 @@ impl<'de> XdrParser<'de> {
                     return Ok(ParseEvent::OrderedField);
                 }
                 _ => {
-                    return Err(XdrError::from_code(codes::INVALID_OPTIONAL, self.pos - 4));
+                    return Err(error_from_code(codes::INVALID_OPTIONAL, self.pos - 4));
                 }
             }
         }
@@ -200,7 +231,7 @@ impl<'de> XdrParser<'de> {
             let discriminant = self.read_u32()? as usize;
 
             if discriminant >= variants.len() {
-                return Err(XdrError::from_code(codes::INVALID_VARIANT, self.pos - 4));
+                return Err(error_from_code(codes::INVALID_VARIANT, self.pos - 4));
             }
             let variant = &variants[discriminant];
 
@@ -250,10 +281,11 @@ impl<'de> XdrParser<'de> {
         match self.current_state().clone() {
             ParserState::Ready => {
                 // At top level without a hint - error
-                Err(XdrError::new(
-                    codes::UNSUPPORTED_TYPE,
-                    self.pos,
-                    "XDR parser needs type hints (use hint_scalar_type, hint_struct_fields, or hint_sequence)",
+                Err(ParseError::new(
+                    Span::new(self.pos, 1),
+                    DeserializeErrorKind::InvalidValue {
+                        message: "XDR parser needs type hints (use hint_scalar_type, hint_struct_fields, or hint_sequence)".into(),
+                    },
                 ))
             }
             ParserState::InStruct { remaining_fields } => {
@@ -395,7 +427,7 @@ impl<'de> XdrParser<'de> {
     fn parse_scalar_with_hint(
         &mut self,
         hint: ScalarTypeHint,
-    ) -> Result<ParseEvent<'de>, XdrError> {
+    ) -> Result<ParseEvent<'de>, ParseError> {
         let scalar = match hint {
             ScalarTypeHint::Bool => {
                 let val = self.read_bool()?;
@@ -420,7 +452,7 @@ impl<'de> XdrParser<'de> {
             }
             ScalarTypeHint::U128 => {
                 // XDR doesn't support u128
-                return Err(XdrError::from_code(codes::UNSUPPORTED_TYPE, self.pos));
+                return Err(error_from_code(codes::UNSUPPORTED_TYPE, self.pos));
             }
             ScalarTypeHint::Usize => {
                 // Encode usize as u64
@@ -445,7 +477,7 @@ impl<'de> XdrParser<'de> {
             }
             ScalarTypeHint::I128 => {
                 // XDR doesn't support i128
-                return Err(XdrError::from_code(codes::UNSUPPORTED_TYPE, self.pos));
+                return Err(error_from_code(codes::UNSUPPORTED_TYPE, self.pos));
             }
             ScalarTypeHint::Isize => {
                 // Encode isize as i64
@@ -472,7 +504,12 @@ impl<'de> XdrParser<'de> {
                 // XDR encodes char as u32
                 let val = self.read_u32()?;
                 let c = char::from_u32(val).ok_or_else(|| {
-                    XdrError::new(codes::INVALID_UTF8, self.pos - 4, "invalid char codepoint")
+                    ParseError::new(
+                        Span::new(self.pos - 4, 4),
+                        DeserializeErrorKind::InvalidValue {
+                            message: "invalid char codepoint".into(),
+                        },
+                    )
                 })?;
                 ScalarValue::Str(Cow::Owned(c.to_string()))
             }
@@ -482,29 +519,32 @@ impl<'de> XdrParser<'de> {
 }
 
 impl<'de> FormatParser<'de> for XdrParser<'de> {
-    type Error = XdrError;
-
-    fn next_event(&mut self) -> Result<Option<ParseEvent<'de>>, Self::Error> {
+    fn next_event(&mut self) -> Result<Option<ParseEvent<'de>>, ParseError> {
         if let Some(event) = self.peeked.take() {
             return Ok(Some(event));
         }
         Ok(Some(self.generate_next_event()?))
     }
 
-    fn peek_event(&mut self) -> Result<Option<ParseEvent<'de>>, Self::Error> {
+    fn peek_event(&mut self) -> Result<Option<ParseEvent<'de>>, ParseError> {
         if self.peeked.is_none() {
             self.peeked = Some(self.generate_next_event()?);
         }
         Ok(self.peeked.clone())
     }
 
-    fn skip_value(&mut self) -> Result<(), Self::Error> {
+    fn skip_value(&mut self) -> Result<(), ParseError> {
         // XDR is not self-describing, so we can't skip arbitrary values
-        Err(XdrError::new(
-            codes::UNSUPPORTED_TYPE,
-            self.pos,
-            "skip_value not supported for XDR (non-self-describing format)",
+        Err(ParseError::new(
+            Span::new(self.pos, 1),
+            DeserializeErrorKind::InvalidValue {
+                message: "skip_value not supported for XDR (non-self-describing format)".into(),
+            },
         ))
+    }
+
+    fn current_span(&self) -> Option<Span> {
+        Some(Span::new(self.pos, 1))
     }
 
     fn save(&mut self) -> SavePoint {

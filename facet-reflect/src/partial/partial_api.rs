@@ -1,17 +1,11 @@
 // This module contains the public-facing API for `Partial`
 
-use ::alloc::{
-    boxed::Box,
-    collections::BTreeMap,
-    format,
-    string::{String, ToString},
-    vec::Vec,
-};
+use ::alloc::{boxed::Box, collections::BTreeMap, string::String, vec::Vec};
 
 use core::{marker::PhantomData, mem::ManuallyDrop, ptr::NonNull};
 
 use crate::{
-    Guard, HeapValue, Partial, Peek, ReflectError,
+    Guard, HeapValue, Partial, Peek, ReflectError, ReflectErrorKind,
     partial::{
         DynamicObjectInsertState, DynamicValueState, Frame, FrameMode, FrameOwnership,
         MapInsertState, PartialState, Tracker, iset::ISet,

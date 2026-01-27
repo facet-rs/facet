@@ -48,13 +48,13 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// This does _not_ push a frame on the stack.
     pub fn select_nth_variant(mut self, index: usize) -> Result<Self, ReflectError> {
         let frame = self.frames().last().unwrap();
-        let enum_type = frame.get_enum_type()?;
+        let enum_type = frame.get_enum_type().map_err(|e| self.err(e))?;
 
         if index >= enum_type.variants.len() {
-            return Err(ReflectError::OperationFailed {
+            return Err(self.err(ReflectErrorKind::OperationFailed {
                 shape: frame.allocated.shape(),
                 operation: "variant index out of bounds",
-            });
+            }));
         }
         let variant = &enum_type.variants[index];
 
@@ -68,17 +68,18 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     ///
     /// See [Self::select_nth_variant] for more notes.
     pub fn select_variant_named(mut self, variant_name: &str) -> Result<Self, ReflectError> {
-        let frame = self.frames_mut().last_mut().unwrap();
-        let enum_type = frame.get_enum_type()?;
+        let frame = self.frames().last().unwrap();
+        let enum_type = frame.get_enum_type().map_err(|e| self.err(e))?;
+        let shape = frame.allocated.shape();
         let Some(variant) = enum_type
             .variants
             .iter()
             .find(|v| v.effective_name() == variant_name)
         else {
-            return Err(ReflectError::OperationFailed {
-                shape: frame.allocated.shape(),
+            return Err(self.err(ReflectErrorKind::OperationFailed {
+                shape,
                 operation: "No variant found with the given name",
-            });
+            }));
         };
 
         self.select_variant_internal(&enum_type, variant)?;
@@ -97,10 +98,10 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         let enum_type = match frame.allocated.shape().ty {
             Type::User(UserType::Enum(e)) => e,
             _ => {
-                return Err(ReflectError::WasNotA {
+                return Err(self.err(ReflectErrorKind::WasNotA {
                     expected: "enum",
                     actual: frame.allocated.shape(),
-                });
+                }));
             }
         };
 
@@ -110,10 +111,10 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             .iter()
             .find(|v| v.discriminant == Some(discriminant))
         else {
-            return Err(ReflectError::OperationFailed {
+            return Err(self.err(ReflectErrorKind::OperationFailed {
                 shape: frame.allocated.shape(),
                 operation: "No variant found with the given discriminant",
-            });
+            }));
         };
 
         // Update the frame tracker to select the variant

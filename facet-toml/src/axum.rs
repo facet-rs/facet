@@ -42,7 +42,7 @@ use facet_core::Facet;
 use http::{HeaderValue, StatusCode, header};
 use http_body_util::BodyExt;
 
-use crate::{DeserializeError, TomlError};
+use crate::DeserializeError;
 
 /// A wrapper type for TOML-encoded request/response bodies.
 ///
@@ -89,7 +89,7 @@ enum TomlRejectionKind {
     /// Failed to read the request body.
     Body(axum_core::Error),
     /// Failed to deserialize the TOML data.
-    Deserialize(DeserializeError<TomlError>),
+    Deserialize(DeserializeError),
 }
 
 impl TomlRejection {

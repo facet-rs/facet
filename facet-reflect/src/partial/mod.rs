@@ -115,7 +115,7 @@ mod iset;
 
 mod partial_api;
 
-use crate::{KeyPath, ReflectError, TrackerKind, trace};
+use crate::{KeyPath, ReflectErrorKind, TrackerKind, trace};
 
 use core::marker::PhantomData;
 
@@ -414,8 +414,8 @@ pub(crate) enum Tracker {
     /// Partially initialized list (Vec, etc.)
     /// Whether it's initialized is tracked by `Frame::is_init`.
     List {
-        /// If we're pushing another frame for an element
-        current_child: bool,
+        /// If we're pushing another frame for an element, this is the element index
+        current_child: Option<usize>,
     },
 
     /// Partially initialized map (HashMap, BTreeMap, etc.)
@@ -896,7 +896,7 @@ impl Frame {
     ///
     /// Returns Ok(()) if successful, or an error if a field has `#[facet(default)]`
     /// but no default implementation is available.
-    fn fill_defaults(&mut self) -> Result<(), ReflectError> {
+    fn fill_defaults(&mut self) -> Result<(), ReflectErrorKind> {
         // First, check if we need to upgrade from Scalar to Struct tracker
         // This happens when no fields were visited at all in deferred mode
         if !self.is_init
@@ -956,7 +956,7 @@ impl Frame {
                         } else if field.has_default() {
                             // Field has #[facet(default)] but we couldn't find a default function.
                             // This happens with opaque types that don't have default_in_place.
-                            return Err(ReflectError::DefaultAttrButNoDefaultImpl {
+                            return Err(ReflectErrorKind::DefaultAttrButNoDefaultImpl {
                                 shape: field.shape(),
                             });
                         }
@@ -985,7 +985,7 @@ impl Frame {
                         data.set(idx);
                     } else if field.has_default() {
                         // Field has #[facet(default)] but we couldn't find a default function.
-                        return Err(ReflectError::DefaultAttrButNoDefaultImpl {
+                        return Err(ReflectErrorKind::DefaultAttrButNoDefaultImpl {
                             shape: field.shape(),
                         });
                     }
@@ -1078,13 +1078,13 @@ impl Frame {
     }
 
     /// Returns an error if the value is not fully initialized
-    fn require_full_initialization(&self) -> Result<(), ReflectError> {
+    fn require_full_initialization(&self) -> Result<(), ReflectErrorKind> {
         match &self.tracker {
             Tracker::Scalar => {
                 if self.is_init {
                     Ok(())
                 } else {
-                    Err(ReflectError::UninitializedValue {
+                    Err(ReflectErrorKind::UninitializedValue {
                         shape: self.allocated.shape(),
                     })
                 }
@@ -1096,12 +1096,12 @@ impl Frame {
                         if (0..array_def.n).all(|idx| iset.get(idx)) {
                             Ok(())
                         } else {
-                            Err(ReflectError::UninitializedValue {
+                            Err(ReflectErrorKind::UninitializedValue {
                                 shape: self.allocated.shape(),
                             })
                         }
                     }
-                    _ => Err(ReflectError::UninitializedValue {
+                    _ => Err(ReflectErrorKind::UninitializedValue {
                         shape: self.allocated.shape(),
                     }),
                 }
@@ -1117,19 +1117,19 @@ impl Frame {
                                 (0..struct_type.fields.len()).find(|&idx| !iset.get(idx));
                             if let Some(missing_idx) = first_missing_idx {
                                 let field_name = struct_type.fields[missing_idx].name;
-                                Err(ReflectError::UninitializedField {
+                                Err(ReflectErrorKind::UninitializedField {
                                     shape: self.allocated.shape(),
                                     field_name,
                                 })
                             } else {
                                 // fallback, something went wrong
-                                Err(ReflectError::UninitializedValue {
+                                Err(ReflectErrorKind::UninitializedValue {
                                     shape: self.allocated.shape(),
                                 })
                             }
                         }
                     }
-                    _ => Err(ReflectError::UninitializedValue {
+                    _ => Err(ReflectErrorKind::UninitializedValue {
                         shape: self.allocated.shape(),
                     }),
                 }
@@ -1147,13 +1147,13 @@ impl Frame {
                     let first_missing_idx = (0..num_fields).find(|&idx| !data.get(idx));
                     if let Some(missing_idx) = first_missing_idx {
                         let field_name = variant.data.fields[missing_idx].name;
-                        Err(ReflectError::UninitializedEnumField {
+                        Err(ReflectErrorKind::UninitializedEnumField {
                             shape: self.allocated.shape(),
                             field_name,
                             variant_name: variant.name,
                         })
                     } else {
-                        Err(ReflectError::UninitializedValue {
+                        Err(ReflectErrorKind::UninitializedValue {
                             shape: self.allocated.shape(),
                         })
                     }
@@ -1163,14 +1163,14 @@ impl Frame {
                 if self.is_init {
                     Ok(())
                 } else {
-                    Err(ReflectError::UninitializedValue {
+                    Err(ReflectErrorKind::UninitializedValue {
                         shape: self.allocated.shape(),
                     })
                 }
             }
             Tracker::SmartPointerSlice { building_item, .. } => {
                 if *building_item {
-                    Err(ReflectError::UninitializedValue {
+                    Err(ReflectErrorKind::UninitializedValue {
                         shape: self.allocated.shape(),
                     })
                 } else {
@@ -1178,10 +1178,10 @@ impl Frame {
                 }
             }
             Tracker::List { current_child } => {
-                if self.is_init && !current_child {
+                if self.is_init && current_child.is_none() {
                     Ok(())
                 } else {
-                    Err(ReflectError::UninitializedValue {
+                    Err(ReflectErrorKind::UninitializedValue {
                         shape: self.allocated.shape(),
                     })
                 }
@@ -1190,7 +1190,7 @@ impl Frame {
                 if self.is_init && matches!(insert_state, MapInsertState::Idle) {
                     Ok(())
                 } else {
-                    Err(ReflectError::UninitializedValue {
+                    Err(ReflectErrorKind::UninitializedValue {
                         shape: self.allocated.shape(),
                     })
                 }
@@ -1199,14 +1199,14 @@ impl Frame {
                 if self.is_init && !current_child {
                     Ok(())
                 } else {
-                    Err(ReflectError::UninitializedValue {
+                    Err(ReflectErrorKind::UninitializedValue {
                         shape: self.allocated.shape(),
                     })
                 }
             }
             Tracker::Option { building_inner } => {
                 if *building_inner {
-                    Err(ReflectError::UninitializedValue {
+                    Err(ReflectErrorKind::UninitializedValue {
                         shape: self.allocated.shape(),
                     })
                 } else {
@@ -1215,7 +1215,7 @@ impl Frame {
             }
             Tracker::Result { building_inner, .. } => {
                 if *building_inner {
-                    Err(ReflectError::UninitializedValue {
+                    Err(ReflectErrorKind::UninitializedValue {
                         shape: self.allocated.shape(),
                     })
                 } else {
@@ -1224,7 +1224,7 @@ impl Frame {
             }
             Tracker::DynamicValue { state } => {
                 if matches!(state, DynamicValueState::Uninit) {
-                    Err(ReflectError::UninitializedValue {
+                    Err(ReflectErrorKind::UninitializedValue {
                         shape: self.allocated.shape(),
                     })
                 } else {
@@ -1235,10 +1235,10 @@ impl Frame {
     }
 
     /// Get the [EnumType] of the frame's shape, if it is an enum type
-    pub(crate) const fn get_enum_type(&self) -> Result<EnumType, ReflectError> {
+    pub(crate) const fn get_enum_type(&self) -> Result<EnumType, ReflectErrorKind> {
         match self.allocated.shape().ty {
             Type::User(UserType::Enum(e)) => Ok(e),
-            _ => Err(ReflectError::WasNotA {
+            _ => Err(ReflectErrorKind::WasNotA {
                 expected: "enum",
                 actual: self.allocated.shape(),
             }),

@@ -7,11 +7,34 @@
 use alloc::borrow::Cow;
 use alloc::vec::Vec;
 
-use crate::error::{PostcardError, codes};
+use crate::error::codes;
 use facet_format::{
-    ContainerKind, EnumVariantHint, FieldKey, FieldLocationHint, FormatParser, ParseEvent,
-    SavePoint, ScalarTypeHint, ScalarValue,
+    ContainerKind, DeserializeErrorKind, EnumVariantHint, FieldKey, FieldLocationHint,
+    FormatParser, ParseError, ParseEvent, SavePoint, ScalarTypeHint, ScalarValue,
 };
+use facet_reflect::Span;
+
+/// Create a ParseError from an error code and position.
+fn error_from_code(code: i32, pos: usize) -> ParseError {
+    let message = match code {
+        codes::UNEXPECTED_EOF | codes::UNEXPECTED_END_OF_INPUT => "unexpected end of input",
+        codes::VARINT_OVERFLOW => "varint overflow",
+        codes::SEQ_UNDERFLOW => "sequence underflow",
+        codes::INVALID_BOOL => "invalid boolean value",
+        codes::INVALID_UTF8 => "invalid UTF-8",
+        codes::INVALID_OPTION_DISCRIMINANT => "invalid option discriminant",
+        codes::INVALID_ENUM_DISCRIMINANT => "invalid enum discriminant",
+        codes::UNSUPPORTED_OPAQUE_TYPE => "unsupported opaque type",
+        codes::UNSUPPORTED => "unsupported operation",
+        _ => "unknown error",
+    };
+    ParseError::new(
+        Span::new(pos, 1),
+        DeserializeErrorKind::InvalidValue {
+            message: message.into(),
+        },
+    )
+}
 
 /// Stored variant metadata for enum parsing.
 #[derive(Debug, Clone)]
@@ -116,14 +139,9 @@ impl<'de> PostcardParser<'de> {
     }
 
     /// Read a single byte, advancing position.
-    fn read_byte(&mut self) -> Result<u8, PostcardError> {
+    fn read_byte(&mut self) -> Result<u8, ParseError> {
         if self.pos >= self.input.len() {
-            return Err(PostcardError {
-                code: codes::UNEXPECTED_EOF,
-                pos: self.pos,
-                message: "unexpected end of input".into(),
-                source_bytes: None,
-            });
+            return Err(error_from_code(codes::UNEXPECTED_EOF, self.pos));
         }
         let byte = self.input[self.pos];
         self.pos += 1;
@@ -131,7 +149,7 @@ impl<'de> PostcardParser<'de> {
     }
 
     /// Read a varint (LEB128 encoded unsigned integer).
-    fn read_varint(&mut self) -> Result<u64, PostcardError> {
+    fn read_varint(&mut self) -> Result<u64, ParseError> {
         let mut result: u64 = 0;
         let mut shift: u32 = 0;
 
@@ -140,12 +158,7 @@ impl<'de> PostcardParser<'de> {
             let data = (byte & 0x7F) as u64;
 
             if shift >= 64 {
-                return Err(PostcardError {
-                    code: codes::VARINT_OVERFLOW,
-                    pos: self.pos,
-                    message: "varint overflow".into(),
-                    source_bytes: None,
-                });
+                return Err(error_from_code(codes::VARINT_OVERFLOW, self.pos));
             }
 
             result |= data << shift;
@@ -158,7 +171,7 @@ impl<'de> PostcardParser<'de> {
     }
 
     /// Read a signed varint (ZigZag + LEB128).
-    fn read_signed_varint(&mut self) -> Result<i64, PostcardError> {
+    fn read_signed_varint(&mut self) -> Result<i64, ParseError> {
         let unsigned = self.read_varint()?;
         // ZigZag decode: (n >> 1) ^ -(n & 1)
         let decoded = ((unsigned >> 1) as i64) ^ -((unsigned & 1) as i64);
@@ -166,7 +179,7 @@ impl<'de> PostcardParser<'de> {
     }
 
     /// Read a varint for u128 (LEB128 encoded, up to 19 bytes).
-    fn read_varint_u128(&mut self) -> Result<u128, PostcardError> {
+    fn read_varint_u128(&mut self) -> Result<u128, ParseError> {
         let mut result: u128 = 0;
         let mut shift: u32 = 0;
 
@@ -175,12 +188,7 @@ impl<'de> PostcardParser<'de> {
             let data = (byte & 0x7F) as u128;
 
             if shift >= 128 {
-                return Err(PostcardError {
-                    code: codes::VARINT_OVERFLOW,
-                    pos: self.pos,
-                    message: "varint overflow for u128".into(),
-                    source_bytes: None,
-                });
+                return Err(error_from_code(codes::VARINT_OVERFLOW, self.pos));
             }
 
             result |= data << shift;
@@ -193,7 +201,7 @@ impl<'de> PostcardParser<'de> {
     }
 
     /// Read a signed varint for i128 (ZigZag + LEB128).
-    fn read_signed_varint_i128(&mut self) -> Result<i128, PostcardError> {
+    fn read_signed_varint_i128(&mut self) -> Result<i128, ParseError> {
         let unsigned = self.read_varint_u128()?;
         // ZigZag decode: (n >> 1) ^ -(n & 1)
         let decoded = ((unsigned >> 1) as i128) ^ -((unsigned & 1) as i128);
@@ -201,14 +209,9 @@ impl<'de> PostcardParser<'de> {
     }
 
     /// Read N bytes as a slice.
-    fn read_bytes(&mut self, len: usize) -> Result<&'de [u8], PostcardError> {
+    fn read_bytes(&mut self, len: usize) -> Result<&'de [u8], ParseError> {
         if self.pos + len > self.input.len() {
-            return Err(PostcardError {
-                code: codes::UNEXPECTED_EOF,
-                pos: self.pos,
-                message: "unexpected end of input reading bytes".into(),
-                source_bytes: None,
-            });
+            return Err(error_from_code(codes::UNEXPECTED_EOF, self.pos));
         }
         let bytes = &self.input[self.pos..self.pos + len];
         self.pos += len;
@@ -221,7 +224,7 @@ impl<'de> PostcardParser<'de> {
     }
 
     /// Generate the next event based on current state.
-    fn generate_next_event(&mut self) -> Result<ParseEvent<'de>, PostcardError> {
+    fn generate_next_event(&mut self) -> Result<ParseEvent<'de>, ParseError> {
         // Check if we have a pending option hint
         if self.pending_option {
             self.pending_option = false;
@@ -236,12 +239,12 @@ impl<'de> PostcardParser<'de> {
                     return Ok(ParseEvent::OrderedField);
                 }
                 _ => {
-                    return Err(PostcardError {
-                        code: codes::INVALID_OPTION_DISCRIMINANT,
-                        pos: self.pos - 1,
-                        message: format!("invalid Option discriminant: {}", discriminant),
-                        source_bytes: None,
-                    });
+                    return Err(ParseError::new(
+                        Span::new(self.pos - 1, 1),
+                        DeserializeErrorKind::InvalidValue {
+                            message: format!("invalid Option discriminant: {}", discriminant).into(),
+                        },
+                    ));
                 }
             }
         }
@@ -256,16 +259,17 @@ impl<'de> PostcardParser<'de> {
         if let Some(variants) = self.pending_enum.take() {
             let variant_index = self.read_varint()? as usize;
             if variant_index >= variants.len() {
-                return Err(PostcardError {
-                    code: codes::INVALID_ENUM_DISCRIMINANT,
-                    pos: self.pos,
-                    message: format!(
-                        "enum variant index {} out of range (max {})",
-                        variant_index,
-                        variants.len() - 1
-                    ),
-                    source_bytes: None,
-                });
+                return Err(ParseError::new(
+                    Span::new(self.pos, 1),
+                    DeserializeErrorKind::InvalidValue {
+                        message: format!(
+                            "enum variant index {} out of range (max {})",
+                            variant_index,
+                            variants.len() - 1
+                        )
+                        .into(),
+                    },
+                ));
             }
             let variant = &variants[variant_index];
             // Push InEnum state to emit StructStart, FieldKey, content, StructEnd sequence
@@ -337,12 +341,12 @@ impl<'de> PostcardParser<'de> {
         match self.current_state().clone() {
             ParserState::Ready => {
                 // At top level without a hint - error
-                Err(PostcardError {
-                    code: codes::UNSUPPORTED,
-                    pos: self.pos,
-                    message: "postcard parser needs type hints (use hint_scalar_type, hint_struct_fields, or hint_sequence)".into(),
-                    source_bytes: None,
-                })
+                Err(ParseError::new(
+                    Span::new(self.pos, 1),
+                    DeserializeErrorKind::InvalidValue {
+                        message: "postcard parser needs type hints (use hint_scalar_type, hint_struct_fields, or hint_sequence)".into(),
+                    },
+                ))
             }
             ParserState::InStruct { remaining_fields } => {
                 if remaining_fields == 0 {
@@ -555,7 +559,7 @@ impl<'de> PostcardParser<'de> {
     fn parse_scalar_with_hint(
         &mut self,
         hint: ScalarTypeHint,
-    ) -> Result<ParseEvent<'de>, PostcardError> {
+    ) -> Result<ParseEvent<'de>, ParseError> {
         let scalar = match hint {
             ScalarTypeHint::Bool => {
                 let val = self.parse_bool()?;
@@ -632,19 +636,21 @@ impl<'de> PostcardParser<'de> {
                 let s = self.parse_string()?;
                 // Validate it's exactly one char
                 let mut chars = s.chars();
-                let c = chars.next().ok_or_else(|| PostcardError {
-                    code: codes::INVALID_UTF8,
-                    pos: self.pos,
-                    message: "empty string for char".into(),
-                    source_bytes: None,
+                let c = chars.next().ok_or_else(|| {
+                    ParseError::new(
+                        Span::new(self.pos, 1),
+                        DeserializeErrorKind::InvalidValue {
+                            message: "empty string for char".into(),
+                        },
+                    )
                 })?;
                 if chars.next().is_some() {
-                    return Err(PostcardError {
-                        code: codes::INVALID_UTF8,
-                        pos: self.pos,
-                        message: "string contains more than one char".into(),
-                        source_bytes: None,
-                    });
+                    return Err(ParseError::new(
+                        Span::new(self.pos, 1),
+                        DeserializeErrorKind::InvalidValue {
+                            message: "string contains more than one char".into(),
+                        },
+                    ));
                 }
                 // Represent as string since ScalarValue doesn't have Char
                 ScalarValue::Str(Cow::Owned(c.to_string()))
@@ -661,7 +667,7 @@ impl<'de> PostcardParser<'de> {
     fn parse_opaque_scalar(
         &mut self,
         opaque: OpaqueScalarHint,
-    ) -> Result<ParseEvent<'de>, PostcardError> {
+    ) -> Result<ParseEvent<'de>, ParseError> {
         let scalar = match opaque.type_identifier {
             // UUID/ULID: 16 raw bytes (no length prefix)
             "Uuid" | "Ulid" => {
@@ -709,30 +715,22 @@ impl<'de> PostcardParser<'de> {
             }
             // Unknown opaque type - shouldn't happen (hint_opaque_scalar returned true)
             _ => {
-                return Err(PostcardError {
-                    code: codes::UNSUPPORTED_OPAQUE_TYPE,
-                    pos: self.pos,
-                    message: format!("unsupported opaque type: {}", opaque.type_identifier),
-                    source_bytes: None,
-                });
+                return Err(ParseError::new(
+                    Span::new(self.pos, 1),
+                    DeserializeErrorKind::InvalidValue {
+                        message: format!("unsupported opaque type: {}", opaque.type_identifier)
+                            .into(),
+                    },
+                ));
             }
         };
         Ok(ParseEvent::Scalar(scalar))
     }
 
     /// Read exactly N bytes from input without length prefix.
-    fn read_fixed_bytes(&mut self, len: usize) -> Result<&'de [u8], PostcardError> {
+    fn read_fixed_bytes(&mut self, len: usize) -> Result<&'de [u8], ParseError> {
         if self.pos + len > self.input.len() {
-            return Err(PostcardError {
-                code: codes::UNEXPECTED_END_OF_INPUT,
-                pos: self.pos,
-                message: format!(
-                    "expected {} bytes, only {} available",
-                    len,
-                    self.input.len() - self.pos
-                ),
-                source_bytes: None,
-            });
+            return Err(error_from_code(codes::UNEXPECTED_EOF, self.pos));
         }
         let bytes = &self.input[self.pos..self.pos + len];
         self.pos += len;
@@ -740,108 +738,109 @@ impl<'de> PostcardParser<'de> {
     }
 
     /// Parse a boolean value.
-    pub fn parse_bool(&mut self) -> Result<bool, PostcardError> {
+    pub fn parse_bool(&mut self) -> Result<bool, ParseError> {
         let byte = self.read_byte()?;
         match byte {
             0 => Ok(false),
             1 => Ok(true),
-            _ => Err(PostcardError {
-                code: codes::INVALID_BOOL,
-                pos: self.pos - 1,
-                message: "invalid boolean value".into(),
-                source_bytes: None,
-            }),
+            _ => Err(error_from_code(codes::INVALID_BOOL, self.pos - 1)),
         }
     }
 
     /// Parse an unsigned 8-bit integer.
-    pub fn parse_u8(&mut self) -> Result<u8, PostcardError> {
+    pub fn parse_u8(&mut self) -> Result<u8, ParseError> {
         self.read_byte()
     }
 
     /// Parse an unsigned 16-bit integer (varint).
-    pub fn parse_u16(&mut self) -> Result<u16, PostcardError> {
+    pub fn parse_u16(&mut self) -> Result<u16, ParseError> {
         let val = self.read_varint()?;
         Ok(val as u16)
     }
 
     /// Parse an unsigned 32-bit integer (varint).
-    pub fn parse_u32(&mut self) -> Result<u32, PostcardError> {
+    pub fn parse_u32(&mut self) -> Result<u32, ParseError> {
         let val = self.read_varint()?;
         Ok(val as u32)
     }
 
     /// Parse an unsigned 64-bit integer (varint).
-    pub fn parse_u64(&mut self) -> Result<u64, PostcardError> {
+    pub fn parse_u64(&mut self) -> Result<u64, ParseError> {
         self.read_varint()
     }
 
     /// Parse an unsigned 128-bit integer (varint).
-    pub fn parse_u128(&mut self) -> Result<u128, PostcardError> {
+    pub fn parse_u128(&mut self) -> Result<u128, ParseError> {
         self.read_varint_u128()
     }
 
     /// Parse a signed 8-bit integer (single byte, two's complement).
-    pub fn parse_i8(&mut self) -> Result<i8, PostcardError> {
+    pub fn parse_i8(&mut self) -> Result<i8, ParseError> {
         // i8 is encoded as a single byte in two's complement form (not varint)
         let byte = self.read_byte()?;
         Ok(byte as i8)
     }
 
     /// Parse a signed 16-bit integer (zigzag varint).
-    pub fn parse_i16(&mut self) -> Result<i16, PostcardError> {
+    pub fn parse_i16(&mut self) -> Result<i16, ParseError> {
         let val = self.read_signed_varint()?;
         Ok(val as i16)
     }
 
     /// Parse a signed 32-bit integer (zigzag varint).
-    pub fn parse_i32(&mut self) -> Result<i32, PostcardError> {
+    pub fn parse_i32(&mut self) -> Result<i32, ParseError> {
         let val = self.read_signed_varint()?;
         Ok(val as i32)
     }
 
     /// Parse a signed 64-bit integer (zigzag varint).
-    pub fn parse_i64(&mut self) -> Result<i64, PostcardError> {
+    pub fn parse_i64(&mut self) -> Result<i64, ParseError> {
         self.read_signed_varint()
     }
 
     /// Parse a signed 128-bit integer (zigzag varint).
-    pub fn parse_i128(&mut self) -> Result<i128, PostcardError> {
+    pub fn parse_i128(&mut self) -> Result<i128, ParseError> {
         self.read_signed_varint_i128()
     }
 
     /// Parse a 32-bit float (little-endian).
-    pub fn parse_f32(&mut self) -> Result<f32, PostcardError> {
+    pub fn parse_f32(&mut self) -> Result<f32, ParseError> {
         let bytes = self.read_bytes(4)?;
         Ok(f32::from_le_bytes(bytes.try_into().unwrap()))
     }
 
     /// Parse a 64-bit float (little-endian).
-    pub fn parse_f64(&mut self) -> Result<f64, PostcardError> {
+    pub fn parse_f64(&mut self) -> Result<f64, ParseError> {
         let bytes = self.read_bytes(8)?;
         Ok(f64::from_le_bytes(bytes.try_into().unwrap()))
     }
 
     /// Parse a string (varint length + UTF-8 bytes).
-    pub fn parse_string(&mut self) -> Result<&'de str, PostcardError> {
+    pub fn parse_string(&mut self) -> Result<&'de str, ParseError> {
         let len = self.read_varint()? as usize;
         let bytes = self.read_bytes(len)?;
-        core::str::from_utf8(bytes).map_err(|_| PostcardError {
-            code: codes::INVALID_UTF8,
-            pos: self.pos - len,
-            message: "invalid UTF-8 in string".into(),
-            source_bytes: None,
+        core::str::from_utf8(bytes).map_err(|_| {
+            let mut context = [0u8; 16];
+            let context_len = len.min(16);
+            context[..context_len].copy_from_slice(&bytes[..context_len]);
+            ParseError::new(
+                Span::new(self.pos - len, len),
+                DeserializeErrorKind::InvalidUtf8 {
+                    context,
+                    context_len: context_len as u8,
+                },
+            )
         })
     }
 
     /// Parse bytes (varint length + raw bytes).
-    pub fn parse_bytes(&mut self) -> Result<&'de [u8], PostcardError> {
+    pub fn parse_bytes(&mut self) -> Result<&'de [u8], ParseError> {
         let len = self.read_varint()? as usize;
         self.read_bytes(len)
     }
 
     /// Begin parsing a sequence, returning the element count.
-    pub fn begin_sequence(&mut self) -> Result<u64, PostcardError> {
+    pub fn begin_sequence(&mut self) -> Result<u64, ParseError> {
         let count = self.read_varint()?;
         self.state_stack.push(ParserState::InSequence {
             remaining_elements: count,
@@ -849,7 +848,7 @@ impl<'de> PostcardParser<'de> {
         Ok(count)
     }
 
-    fn parse_dynamic_tag_event(&mut self) -> Result<ParseEvent<'de>, PostcardError> {
+    fn parse_dynamic_tag_event(&mut self) -> Result<ParseEvent<'de>, ParseError> {
         // If we're inside a dynamic object and expecting a value, advance entry tracking now.
         if let Some(ParserState::InDynamicObject {
             remaining_entries,
@@ -892,20 +891,18 @@ impl<'de> PostcardParser<'de> {
                 Ok(ParseEvent::StructStart(ContainerKind::Object))
             }
             9 => self.parse_scalar_with_hint(ScalarTypeHint::String),
-            _ => Err(PostcardError {
-                code: codes::UNSUPPORTED,
-                pos: self.pos.saturating_sub(1),
-                message: format!("invalid dynamic value tag: {}", tag),
-                source_bytes: None,
-            }),
+            _ => Err(ParseError::new(
+                Span::new(self.pos.saturating_sub(1), 1),
+                DeserializeErrorKind::InvalidValue {
+                    message: format!("invalid dynamic value tag: {}", tag).into(),
+                },
+            )),
         }
     }
 }
 
 impl<'de> FormatParser<'de> for PostcardParser<'de> {
-    type Error = PostcardError;
-
-    fn next_event(&mut self) -> Result<Option<ParseEvent<'de>>, Self::Error> {
+    fn next_event(&mut self) -> Result<Option<ParseEvent<'de>>, ParseError> {
         // Return peeked event if available
         if let Some(event) = self.peeked.take() {
             return Ok(Some(event));
@@ -913,22 +910,26 @@ impl<'de> FormatParser<'de> for PostcardParser<'de> {
         Ok(Some(self.generate_next_event()?))
     }
 
-    fn peek_event(&mut self) -> Result<Option<ParseEvent<'de>>, Self::Error> {
+    fn peek_event(&mut self) -> Result<Option<ParseEvent<'de>>, ParseError> {
         if self.peeked.is_none() {
             self.peeked = Some(self.generate_next_event()?);
         }
         Ok(self.peeked.clone())
     }
 
-    fn skip_value(&mut self) -> Result<(), Self::Error> {
+    fn skip_value(&mut self) -> Result<(), ParseError> {
         // For non-self-describing formats, skipping is complex because
         // we don't know the type/size of the value.
-        Err(PostcardError {
-            code: codes::UNSUPPORTED,
-            pos: self.pos,
-            message: "skip_value not supported for postcard (non-self-describing)".into(),
-            source_bytes: None,
-        })
+        Err(ParseError::new(
+            Span::new(self.pos, 1),
+            DeserializeErrorKind::InvalidValue {
+                message: "skip_value not supported for postcard (non-self-describing)".into(),
+            },
+        ))
+    }
+
+    fn current_span(&self) -> Option<Span> {
+        Some(Span::new(self.pos, 1))
     }
 
     fn save(&mut self) -> SavePoint {
@@ -1109,7 +1110,7 @@ impl<'de> facet_format::FormatJitParser<'de> for PostcardParser<'de> {
         crate::jit::PostcardJitFormat
     }
 
-    fn jit_error(&self, _input: &'de [u8], error_pos: usize, error_code: i32) -> Self::Error {
-        PostcardError::from_code(error_code, error_pos)
+    fn jit_error(&self, _input: &'de [u8], error_pos: usize, error_code: i32) -> ParseError {
+        error_from_code(error_code, error_pos)
     }
 }

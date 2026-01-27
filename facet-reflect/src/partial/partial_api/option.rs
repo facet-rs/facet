@@ -13,10 +13,10 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             match frame.allocated.shape().def {
                 Def::Option(def) => def,
                 _ => {
-                    return Err(ReflectError::WasNotA {
+                    return Err(self.err(ReflectErrorKind::WasNotA {
                         expected: "Option",
                         actual: frame.allocated.shape(),
-                    });
+                    }));
                 }
             }
         };
@@ -109,14 +109,12 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         let inner_shape = option_def.t;
 
         // Get the inner layout (needed for AllocatedShape later)
-        let inner_layout =
-            inner_shape
-                .layout
-                .sized_layout()
-                .map_err(|_| ReflectError::Unsized {
-                    shape: inner_shape,
-                    operation: "begin_some, getting inner layout",
-                })?;
+        let inner_layout = inner_shape.layout.sized_layout().map_err(|_| {
+            self.err(ReflectErrorKind::Unsized {
+                shape: inner_shape,
+                operation: "begin_some, getting inner layout",
+            })
+        })?;
 
         // If we're re-entering an existing accumulator, get a pointer to the existing inner value
         // instead of allocating new memory
@@ -224,14 +222,12 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 // and the conversion will happen in end()
 
                 // Allocate memory for the inner value (conversion source)
-                let inner_layout =
-                    inner_shape
-                        .layout
-                        .sized_layout()
-                        .map_err(|_| ReflectError::Unsized {
-                            shape: inner_shape,
-                            operation: "begin_inner, getting inner layout",
-                        })?;
+                let inner_layout = inner_shape.layout.sized_layout().map_err(|_| {
+                    self.err(ReflectErrorKind::Unsized {
+                        shape: inner_shape,
+                        operation: "begin_inner, getting inner layout",
+                    })
+                })?;
 
                 let inner_data = if inner_layout.size() == 0 {
                     // For ZST, use a non-null but unallocated pointer
@@ -265,10 +261,10 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 self.begin_nth_field(0)
             }
         } else {
-            Err(ReflectError::OperationFailed {
+            Err(self.err(ReflectErrorKind::OperationFailed {
                 shape: parent_shape,
                 operation: "type does not have an inner value",
-            })
+            }))
         }
     }
 
@@ -283,9 +279,11 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             if let Some(proxy_def) = field.proxy() {
                 // Get the source shape from the proxy definition
                 let source_shape = proxy_def.shape;
-                let source_data = source_shape.allocate().map_err(|_| ReflectError::Unsized {
-                    shape: target_shape,
-                    operation: "Not a Sized type",
+                let source_data = source_shape.allocate().map_err(|_| {
+                    self.err(ReflectErrorKind::Unsized {
+                        shape: target_shape,
+                        operation: "Not a Sized type",
+                    })
                 })?;
                 let source_size = source_shape
                     .layout
@@ -306,16 +304,16 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
 
                 Ok(self)
             } else {
-                Err(ReflectError::OperationFailed {
+                Err(self.err(ReflectErrorKind::OperationFailed {
                     shape: target_shape,
                     operation: "field does not have a proxy definition",
-                })
+                }))
             }
         } else {
-            Err(ReflectError::OperationFailed {
+            Err(self.err(ReflectErrorKind::OperationFailed {
                 shape: target_shape,
                 operation: "not currently processing a field",
-            })
+            }))
         }
     }
 
@@ -356,9 +354,11 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         };
 
         let source_shape = proxy_def.shape;
-        let source_data = source_shape.allocate().map_err(|_| ReflectError::Unsized {
-            shape: target_shape,
-            operation: "Not a Sized type",
+        let source_data = source_shape.allocate().map_err(|_| {
+            self.err(ReflectErrorKind::Unsized {
+                shape: target_shape,
+                operation: "Not a Sized type",
+            })
         })?;
         let source_size = source_shape
             .layout
@@ -408,9 +408,11 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             if let Some(proxy_def) = field.effective_proxy(format_namespace) {
                 // Get the source shape from the proxy definition
                 let source_shape = proxy_def.shape;
-                let source_data = source_shape.allocate().map_err(|_| ReflectError::Unsized {
-                    shape: target_shape,
-                    operation: "Not a Sized type",
+                let source_data = source_shape.allocate().map_err(|_| {
+                    self.err(ReflectErrorKind::Unsized {
+                        shape: target_shape,
+                        operation: "Not a Sized type",
+                    })
                 })?;
                 let source_size = source_shape
                     .layout
@@ -435,16 +437,16 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
 
                 Ok(self)
             } else {
-                Err(ReflectError::OperationFailed {
+                Err(self.err(ReflectErrorKind::OperationFailed {
                     shape: target_shape,
                     operation: "field does not have a proxy",
-                })
+                }))
             }
         } else {
-            Err(ReflectError::OperationFailed {
+            Err(self.err(ReflectErrorKind::OperationFailed {
                 shape: target_shape,
                 operation: "not currently processing a field",
-            })
+            }))
         }
     }
 }

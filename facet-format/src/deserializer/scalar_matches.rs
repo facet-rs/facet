@@ -1,5 +1,3 @@
-extern crate alloc;
-
 use crate::ScalarValue;
 use facet_core::Def;
 

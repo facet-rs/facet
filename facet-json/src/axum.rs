@@ -45,7 +45,7 @@ use facet_core::Facet;
 use http::{HeaderValue, StatusCode, header};
 use http_body_util::BodyExt;
 
-use crate::{DeserializeError, JsonError};
+use crate::DeserializeError;
 
 /// A wrapper type for JSON-encoded request/response bodies.
 ///
@@ -92,7 +92,7 @@ enum JsonRejectionKind {
     /// Failed to read the request body.
     Body(axum_core::Error),
     /// Failed to deserialize the JSON data.
-    Deserialize(DeserializeError<JsonError>),
+    Deserialize(DeserializeError),
     /// Missing `Content-Type: application/json` header.
     MissingContentType,
     /// Invalid `Content-Type` header (not application/json).

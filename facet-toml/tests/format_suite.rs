@@ -3,7 +3,7 @@
 use facet::Facet;
 use facet_format::{DeserializeError, FormatDeserializer};
 use facet_format_suite::{CaseOutcome, CaseSpec, FormatSuite, all_cases};
-use facet_toml::{TomlError, TomlParser, to_string};
+use facet_toml::{TomlParser, to_string};
 use indoc::indoc;
 use libtest_mimic::{Arguments, Failed, Trial};
 use std::sync::Arc;
@@ -11,7 +11,7 @@ use std::sync::Arc;
 struct TomlSlice;
 
 impl FormatSuite for TomlSlice {
-    type Error = DeserializeError<TomlError>;
+    type Error = DeserializeError;
 
     fn format_name() -> &'static str {
         "facet-toml/slice"
@@ -26,7 +26,7 @@ impl FormatSuite for TomlSlice {
         T: Facet<'static> + core::fmt::Debug,
     {
         let input_str = std::str::from_utf8(input).expect("input should be valid UTF-8");
-        let parser = TomlParser::new(input_str).map_err(DeserializeError::Parser)?;
+        let parser = TomlParser::new(input_str)?;
         let mut de = FormatDeserializer::new_owned(parser);
         de.deserialize_deferred::<T>()
     }
@@ -239,7 +239,7 @@ impl FormatSuite for TomlSlice {
 
     fn error_type_mismatch_object_to_array() -> CaseSpec {
         // Object (nested struct) provided where array expected
-        CaseSpec::expect_error("[items]\nkey = \"value\"", "type mismatch")
+        CaseSpec::expect_error("[items]\nkey = \"value\"", "got object, expected array")
     }
 
     fn error_missing_required_field() -> CaseSpec {

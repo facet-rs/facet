@@ -45,7 +45,7 @@ use facet_core::Facet;
 use http::{HeaderValue, StatusCode, header};
 use http_body_util::BodyExt;
 
-use crate::{DeserializeError, PostcardError, SerializeError};
+use crate::{DeserializeError, SerializeError};
 
 /// A wrapper type for postcard-encoded request/response bodies.
 ///
@@ -92,7 +92,7 @@ enum PostcardRejectionKind {
     /// Failed to read the request body.
     Body(axum_core::Error),
     /// Failed to deserialize the postcard data.
-    Deserialize(DeserializeError<PostcardError>),
+    Deserialize(DeserializeError),
 }
 
 impl PostcardRejection {

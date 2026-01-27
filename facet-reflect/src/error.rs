@@ -1,4 +1,49 @@
 use facet_core::{Characteristic, EnumType, FieldError, Shape, TryFromError};
+use facet_path::Path;
+
+/// Error returned when materializing a HeapValue to the wrong type.
+///
+/// This is separate from `ReflectError` because HeapValue operations
+/// don't have path context - they operate on already-constructed values.
+#[derive(Debug, Clone)]
+pub struct ShapeMismatchError {
+    /// The shape that was expected (the target type).
+    pub expected: &'static Shape,
+    /// The shape that was actually found (the HeapValue's shape).
+    pub actual: &'static Shape,
+}
+
+impl core::fmt::Display for ShapeMismatchError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "shape mismatch: expected {}, got {}",
+            self.expected, self.actual
+        )
+    }
+}
+
+impl core::error::Error for ShapeMismatchError {}
+
+/// Error returned when allocating memory for a shape fails.
+///
+/// This is separate from `ReflectError` because allocation happens
+/// before reflection begins - we don't have a path yet.
+#[derive(Debug, Clone)]
+pub struct AllocError {
+    /// The shape we tried to allocate.
+    pub shape: &'static Shape,
+    /// What operation was being attempted.
+    pub operation: &'static str,
+}
+
+impl core::fmt::Display for AllocError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "failed to allocate {}: {}", self.shape, self.operation)
+    }
+}
+
+impl core::error::Error for AllocError {}
 
 /// A kind-only version of Tracker
 #[allow(missing_docs)]
@@ -19,9 +64,28 @@ pub enum TrackerKind {
     DynamicValue,
 }
 
-/// Errors that can occur when reflecting on types.
+/// Error that occurred during reflection, with path context.
 #[derive(Clone)]
-pub enum ReflectError {
+pub struct ReflectError {
+    /// Path through the type structure where the error occurred.
+    pub path: Path,
+
+    /// The specific kind of error.
+    pub kind: ReflectErrorKind,
+}
+
+impl ReflectError {
+    /// Create a new ReflectError with path context.
+    #[inline]
+    pub fn new(kind: ReflectErrorKind, path: Path) -> Self {
+        Self { path, kind }
+    }
+}
+
+/// Specific kinds of reflection errors.
+#[derive(Clone)]
+#[non_exhaustive]
+pub enum ReflectErrorKind {
     /// Tried to set an enum to a variant that does not exist
     NoSuchVariant {
         /// The enum definition containing all known variants.
@@ -229,21 +293,27 @@ pub enum ReflectError {
 
 impl core::fmt::Display for ReflectError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{} at {:?}", self.kind, self.path)
+    }
+}
+
+impl core::fmt::Display for ReflectErrorKind {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            ReflectError::NoSuchVariant { enum_type } => {
+            ReflectErrorKind::NoSuchVariant { enum_type } => {
                 write!(f, "No such variant in enum. Known variants: ")?;
                 for v in enum_type.variants {
                     write!(f, ", {}", v.name)?;
                 }
                 write!(f, ", that's it.")
             }
-            ReflectError::WrongShape { expected, actual } => {
+            ReflectErrorKind::WrongShape { expected, actual } => {
                 write!(f, "Wrong shape: expected {expected}, but got {actual}")
             }
-            ReflectError::WasNotA { expected, actual } => {
+            ReflectErrorKind::WasNotA { expected, actual } => {
                 write!(f, "Wrong shape: expected {expected}, but got {actual}")
             }
-            ReflectError::UninitializedField { shape, field_name } => {
+            ReflectErrorKind::UninitializedField { shape, field_name } => {
                 write!(
                     f,
                     "Field '{shape}::{field_name}' was not initialized. \
@@ -251,7 +321,7 @@ impl core::fmt::Display for ReflectError {
                     use deferred mode (begin_deferred/finish_deferred)"
                 )
             }
-            ReflectError::UninitializedEnumField {
+            ReflectErrorKind::UninitializedEnumField {
                 shape,
                 field_name,
                 variant_name,
@@ -263,7 +333,7 @@ impl core::fmt::Display for ReflectError {
                     use deferred mode (begin_deferred/finish_deferred)"
                 )
             }
-            ReflectError::UninitializedValue { shape } => {
+            ReflectErrorKind::UninitializedValue { shape } => {
                 write!(
                     f,
                     "Value '{shape}' was not initialized. \
@@ -271,26 +341,26 @@ impl core::fmt::Display for ReflectError {
                     use deferred mode (begin_deferred/finish_deferred)"
                 )
             }
-            ReflectError::InvariantViolation { invariant } => {
+            ReflectErrorKind::InvariantViolation { invariant } => {
                 write!(f, "Invariant violation: {invariant}")
             }
-            ReflectError::MissingCharacteristic {
+            ReflectErrorKind::MissingCharacteristic {
                 shape,
                 characteristic,
             } => write!(
                 f,
                 "{shape} does not implement characteristic {characteristic:?}",
             ),
-            ReflectError::OperationFailed { shape, operation } => {
+            ReflectErrorKind::OperationFailed { shape, operation } => {
                 write!(f, "Operation failed on shape {shape}: {operation}")
             }
-            ReflectError::ParseFailed { shape, input } => {
+            ReflectErrorKind::ParseFailed { shape, input } => {
                 write!(f, "failed to parse \"{input}\" as {shape}")
             }
-            ReflectError::FieldError { shape, field_error } => {
+            ReflectErrorKind::FieldError { shape, field_error } => {
                 write!(f, "Field error for shape {shape}: {field_error}")
             }
-            ReflectError::NotPod { shape } => {
+            ReflectErrorKind::NotPod { shape } => {
                 write!(
                     f,
                     "Cannot mutate fields of '{shape}' - it is not POD (Plain Old Data). \
@@ -298,14 +368,14 @@ impl core::fmt::Display for ReflectError {
                      (Wholesale replacement via Poke::set() is always allowed.)"
                 )
             }
-            ReflectError::MissingPushPointee { shape } => {
+            ReflectErrorKind::MissingPushPointee { shape } => {
                 write!(
                     f,
                     "Tried to access a field on smart pointer '{shape}', but you need to call .begin_smart_ptr() first to work with the value it points to (and pop it with .pop() later)"
                 )
             }
-            ReflectError::Unknown => write!(f, "Unknown error"),
-            ReflectError::TryFromError {
+            ReflectErrorKind::Unknown => write!(f, "Unknown error"),
+            ReflectErrorKind::TryFromError {
                 src_shape,
                 dst_shape,
                 inner,
@@ -315,15 +385,15 @@ impl core::fmt::Display for ReflectError {
                     "While trying to put {src_shape} into a {dst_shape}: {inner}"
                 )
             }
-            ReflectError::DefaultAttrButNoDefaultImpl { shape } => write!(
+            ReflectErrorKind::DefaultAttrButNoDefaultImpl { shape } => write!(
                 f,
                 "Shape '{shape}' has a `default` attribute but no default implementation"
             ),
-            ReflectError::Unsized { shape, operation } => write!(
+            ReflectErrorKind::Unsized { shape, operation } => write!(
                 f,
                 "Shape '{shape}' is unsized, can't perform operation {operation}"
             ),
-            ReflectError::ArrayNotFullyInitialized {
+            ReflectErrorKind::ArrayNotFullyInitialized {
                 shape,
                 pushed_count,
                 expected_size,
@@ -333,26 +403,26 @@ impl core::fmt::Display for ReflectError {
                     "Array '{shape}' not fully initialized: expected {expected_size} elements, but got {pushed_count}"
                 )
             }
-            ReflectError::ArrayIndexOutOfBounds { shape, index, size } => {
+            ReflectErrorKind::ArrayIndexOutOfBounds { shape, index, size } => {
                 write!(
                     f,
                     "Array index {index} out of bounds for '{shape}' (array length is {size})"
                 )
             }
-            ReflectError::InvalidOperation { operation, reason } => {
+            ReflectErrorKind::InvalidOperation { operation, reason } => {
                 write!(f, "Invalid operation '{operation}': {reason}")
             }
-            ReflectError::UnexpectedTracker {
+            ReflectErrorKind::UnexpectedTracker {
                 message,
                 current_tracker,
             } => {
                 write!(f, "{message}: current tracker is {current_tracker:?}")
             }
-            ReflectError::NoActiveFrame => {
+            ReflectErrorKind::NoActiveFrame => {
                 write!(f, "No active frame in Partial")
             }
             #[cfg(feature = "alloc")]
-            ReflectError::CustomDeserializationError {
+            ReflectErrorKind::CustomDeserializationError {
                 message,
                 src_shape,
                 dst_shape,
@@ -363,7 +433,7 @@ impl core::fmt::Display for ReflectError {
                 )
             }
             #[cfg(feature = "alloc")]
-            ReflectError::CustomSerializationError {
+            ReflectErrorKind::CustomSerializationError {
                 message,
                 src_shape,
                 dst_shape,
@@ -374,7 +444,7 @@ impl core::fmt::Display for ReflectError {
                 )
             }
             #[cfg(feature = "alloc")]
-            ReflectError::UserInvariantFailed { message, shape } => {
+            ReflectErrorKind::UserInvariantFailed { message, shape } => {
                 write!(f, "Invariant check failed for '{shape}': {message}")
             }
         }
@@ -383,9 +453,19 @@ impl core::fmt::Display for ReflectError {
 
 impl core::fmt::Debug for ReflectError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ReflectError")
+            .field("path", &self.path)
+            .field("kind", &self.kind)
+            .finish()
+    }
+}
+
+impl core::fmt::Debug for ReflectErrorKind {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // Use Display implementation for more readable output
-        write!(f, "ReflectError({self})")
+        write!(f, "ReflectErrorKind({self})")
     }
 }
 
 impl core::error::Error for ReflectError {}
+impl core::error::Error for ReflectErrorKind {}

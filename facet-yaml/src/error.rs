@@ -12,18 +12,6 @@ use facet_reflect::ReflectError;
 // Re-export Span from facet-reflect for consistency across format crates
 pub use facet_reflect::Span;
 
-/// Helper functions for creating Span from saphyr-parser types
-pub(crate) trait SpanExt {
-    /// Create a span from a saphyr-parser Span
-    fn from_saphyr_span(span: &saphyr_parser::Span) -> Span {
-        let start = span.start.index();
-        let end = span.end.index();
-        Span::new(start, end.saturating_sub(start))
-    }
-}
-
-impl SpanExt for Span {}
-
 /// Error type for YAML operations.
 #[derive(Debug)]
 pub struct YamlError {

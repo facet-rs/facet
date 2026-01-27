@@ -16,7 +16,7 @@ use facet_core::{Def, Facet, Field, Shape, Type as FacetType, UserType};
 use super::format::make_c_sig;
 use super::helpers::{self, JitContext, ParserVTable};
 use super::jit_debug;
-use crate::{DeserializeError, FormatParser};
+use crate::{DeserializeError, DeserializeErrorKind, FormatParser};
 
 /// Cached JIT module(s) that own the compiled code memory.
 ///
@@ -95,7 +95,7 @@ impl<T, P> CompiledDeserializer<T, P> {
 
 impl<'de, T: Facet<'de>, P: FormatParser<'de>> CompiledDeserializer<T, P> {
     /// Execute the compiled deserializer.
-    pub fn deserialize(&self, parser: &mut P) -> Result<T, DeserializeError<P::Error>> {
+    pub fn deserialize(&self, parser: &mut P) -> Result<T, DeserializeError> {
         // Create output storage
         let mut output: MaybeUninit<T> = MaybeUninit::uninit();
 
@@ -145,17 +145,23 @@ impl<'de, T: Facet<'de>, P: FormatParser<'de>> CompiledDeserializer<T, P> {
             }
 
             if result == helpers::ERR_MISSING_REQUIRED_FIELD {
-                Err(DeserializeError::MissingField {
-                    field: "unknown", // TODO: Track which field is missing
-                    type_name: T::SHAPE.type_identifier,
-                    span: None, // JIT doesn't have span info
-                    path: None, // JIT doesn't have path info
+                Err(DeserializeError {
+                    span: None, // JIT doesn't track span yet
+                    path: None, // JIT doesn't track path yet
+                    kind: DeserializeErrorKind::MissingField {
+                        field: "unknown", // TODO: Track which field is missing
+                        container_shape: T::SHAPE,
+                    },
                 })
             } else {
-                Err(DeserializeError::Unsupported(format!(
-                    "JIT deserialization failed with code {}",
-                    result
-                )))
+                Err(DeserializeError {
+                    span: None,
+                    path: None,
+                    kind: DeserializeErrorKind::Bug {
+                        error: format!("JIT deserialization failed with code {}", result).into(),
+                        context: "tier-1 JIT execution",
+                    },
+                })
             }
         }
     }

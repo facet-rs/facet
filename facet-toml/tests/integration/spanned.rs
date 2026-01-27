@@ -8,7 +8,7 @@
 
 use facet::Facet;
 use facet_reflect::Span;
-use facet_toml::{self as toml, DeserializeError, TomlError};
+use facet_toml::{self as toml, DeserializeError};
 use std::ops::Deref;
 
 // ============================================================================
@@ -319,7 +319,7 @@ readme = false
         package: PackageMetadata,
     }
 
-    let result: Result<CargoManifest, DeserializeError<TomlError>> = toml::from_str(toml_str);
+    let result: Result<CargoManifest, DeserializeError> = toml::from_str(toml_str);
     assert!(result.is_err(), "Should fail with type mismatch");
 
     let error_msg = format!("{}", result.unwrap_err());

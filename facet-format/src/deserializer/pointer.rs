@@ -1,20 +1,16 @@
-extern crate alloc;
-
 use facet_core::Def;
 use facet_reflect::Partial;
 
 use crate::{
-    DeserializeError, FormatDeserializer, FormatParser, ParseEvent, ScalarTypeHint, ScalarValue,
+    DeserializeError, DeserializeErrorKind, FormatDeserializer, ParseEvent, ScalarTypeHint,
+    ScalarValue, SpanGuard,
 };
 
-impl<'input, const BORROW: bool, P> FormatDeserializer<'input, BORROW, P>
-where
-    P: FormatParser<'input>,
-{
+impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BORROW> {
     pub(crate) fn deserialize_pointer(
         &mut self,
         mut wip: Partial<'input, BORROW>,
-    ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         use facet_core::KnownPointer;
 
         let shape = wip.shape();
@@ -33,19 +29,20 @@ where
                 // Hint to non-self-describing parsers that a string is expected
                 self.parser.hint_scalar_type(ScalarTypeHint::String);
                 let event = self.expect_event("string for Cow<str>")?;
+                let _guard = SpanGuard::new(self.last_span);
                 match event {
                     ParseEvent::Scalar(ScalarValue::Str(s)) => {
                         // Pass through the Cow as-is to preserve borrowing
-                        wip = wip.set(s).map_err(DeserializeError::reflect)?;
-                        return Ok(wip);
+                        return Ok(wip.set(s)?);
                     }
                     _ => {
-                        return Err(DeserializeError::TypeMismatch {
-                            expected: "string for Cow<str>",
-                            got: format!("{event:?}"),
-                            span: self.last_span,
-                            path: None,
-                        });
+                        return Err(self.mk_err(
+                            &wip,
+                            DeserializeErrorKind::UnexpectedToken {
+                                expected: "string for Cow<str>",
+                                got: event.kind_name().into(),
+                            },
+                        ));
                     }
                 }
             }
@@ -58,23 +55,26 @@ where
                 // Hint to non-self-describing parsers that bytes are expected
                 self.parser.hint_scalar_type(ScalarTypeHint::Bytes);
                 let event = self.expect_event("bytes for Cow<[u8]>")?;
+                let _guard = SpanGuard::new(self.last_span);
                 if let ParseEvent::Scalar(ScalarValue::Bytes(b)) = event {
                     // Pass through the Cow as-is to preserve borrowing
-                    wip = wip.set(b).map_err(DeserializeError::reflect)?;
-                    return Ok(wip);
+                    return Ok(wip.set(b)?);
                 } else {
-                    return Err(DeserializeError::TypeMismatch {
-                        expected: "bytes for Cow<[u8]>",
-                        got: format!("{event:?}"),
-                        span: self.last_span,
-                        path: None,
-                    });
+                    return Err(self.mk_err(
+                        &wip,
+                        DeserializeErrorKind::UnexpectedToken {
+                            expected: "bytes for Cow<[u8]>",
+                            got: event.kind_name().into(),
+                        },
+                    ));
                 }
             }
             // Other Cow types - use begin_inner
-            wip = wip.begin_inner().map_err(DeserializeError::reflect)?;
-            wip = self.deserialize_into(wip)?;
-            wip = wip.end().map_err(DeserializeError::reflect)?;
+            let _guard = SpanGuard::new(self.last_span);
+            wip = wip
+                .begin_inner()?
+                .with(|w| self.deserialize_into(w))?
+                .end()?;
             return Ok(wip);
         }
 
@@ -93,12 +93,13 @@ where
                     return self.set_string_value(wip, s);
                 }
                 _ => {
-                    return Err(DeserializeError::TypeMismatch {
-                        expected: "string for &str",
-                        got: format!("{event:?}"),
-                        span: self.last_span,
-                        path: None,
-                    });
+                    return Err(self.mk_err(
+                        &wip,
+                        DeserializeErrorKind::UnexpectedToken {
+                            expected: "string for &str",
+                            got: event.kind_name().into(),
+                        },
+                    ));
                 }
             }
         }
@@ -116,46 +117,49 @@ where
             if let ParseEvent::Scalar(ScalarValue::Bytes(b)) = event {
                 return self.set_bytes_value(wip, b);
             } else {
-                return Err(DeserializeError::TypeMismatch {
-                    expected: "bytes for &[u8]",
-                    got: format!("{event:?}"),
-                    span: self.last_span,
-                    path: None,
-                });
+                return Err(self.mk_err(
+                    &wip,
+                    DeserializeErrorKind::UnexpectedToken {
+                        expected: "bytes for &[u8]",
+                        got: event.kind_name().into(),
+                    },
+                ));
             }
         }
 
         // Regular smart pointer (Box, Arc, Rc)
-        wip = wip.begin_smart_ptr().map_err(DeserializeError::reflect)?;
+        let _guard = SpanGuard::new(self.last_span);
+        wip = wip.begin_smart_ptr()?;
 
         // Check if begin_smart_ptr set up a slice builder (for Arc<[T]>, Rc<[T]>, Box<[T]>)
         // In this case, we need to deserialize as a list manually
-        let is_slice_builder = wip.is_building_smart_ptr_slice();
-
-        if is_slice_builder {
+        if wip.is_building_smart_ptr_slice() {
             // Deserialize the list elements into the slice builder
             // We can't use deserialize_list() because it calls begin_list() which interferes
             // Hint to non-self-describing parsers that a sequence is expected
             self.parser.hint_sequence();
             let event = self.expect_event("value")?;
+            let _guard = SpanGuard::new(self.last_span);
 
             match event {
                 ParseEvent::SequenceStart(_) => {}
                 ParseEvent::StructStart(kind) => {
-                    return Err(DeserializeError::TypeMismatch {
-                        expected: "array",
-                        got: kind.name().into(),
-                        span: self.last_span,
-                        path: None,
-                    });
+                    return Err(self.mk_err(
+                        &wip,
+                        DeserializeErrorKind::UnexpectedToken {
+                            expected: "array",
+                            got: kind.name().into(),
+                        },
+                    ));
                 }
                 _ => {
-                    return Err(DeserializeError::TypeMismatch {
-                        expected: "sequence start for Arc<[T]>/Rc<[T]>/Box<[T]>",
-                        got: format!("{event:?}"),
-                        span: self.last_span,
-                        path: None,
-                    });
+                    return Err(self.mk_err(
+                        &wip,
+                        DeserializeErrorKind::UnexpectedToken {
+                            expected: "sequence start for Arc<[T]>/Rc<[T]>/Box<[T]>",
+                            got: event.kind_name().into(),
+                        },
+                    ));
                 }
             };
 
@@ -168,18 +172,20 @@ where
                     break;
                 }
 
-                wip = wip.begin_list_item().map_err(DeserializeError::reflect)?;
-                wip = self.deserialize_into(wip)?;
-                wip = wip.end().map_err(DeserializeError::reflect)?;
+                let _guard = SpanGuard::new(self.last_span);
+                wip = wip
+                    .begin_list_item()?
+                    .with(|w| self.deserialize_into(w))?
+                    .end()?;
             }
 
             // Convert the slice builder to Arc/Rc/Box and mark as initialized
-            wip = wip.end().map_err(DeserializeError::reflect)?;
+            let _guard = SpanGuard::new(self.last_span);
+            wip = wip.end()?;
             // DON'T call end() again - the caller (deserialize_struct) will do that
         } else {
             // Regular smart pointer with sized pointee
-            wip = self.deserialize_into(wip)?;
-            wip = wip.end().map_err(DeserializeError::reflect)?;
+            wip = wip.with(|w| self.deserialize_into(w))?.end()?;
         }
 
         Ok(wip)

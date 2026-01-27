@@ -1,4 +1,4 @@
-use facet_reflect::{Peek, ReflectError};
+use facet_reflect::{Peek, ReflectErrorKind};
 use facet_testhelpers::test;
 use std::collections::HashSet;
 
@@ -64,5 +64,7 @@ fn test_peek_set_contains_peek_wrong_type() {
     let wrong_type = 42;
     let result = peek_set.contains_peek(Peek::new(&wrong_type));
 
-    assert!(matches!(result, Err(ReflectError::WrongShape { .. })));
+    assert!(
+        matches!(result, Err(ref err) if matches!(err.kind, ReflectErrorKind::WrongShape { .. }))
+    );
 }

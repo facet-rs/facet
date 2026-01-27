@@ -3,14 +3,14 @@
 use facet::Facet;
 use facet_format::{DeserializeError, FormatDeserializer};
 use facet_format_suite::{CaseOutcome, CaseSpec, FormatSuite, all_cases};
-use facet_json::{JsonError, JsonParser, to_vec};
+use facet_json::{JsonParser, to_vec};
 use indoc::indoc;
 use libtest_mimic::{Arguments, Failed, Trial};
 
 struct JsonSlice;
 
 impl FormatSuite for JsonSlice {
-    type Error = DeserializeError<JsonError>;
+    type Error = DeserializeError;
 
     fn format_name() -> &'static str {
         "facet-json/slice"
@@ -24,7 +24,7 @@ impl FormatSuite for JsonSlice {
     where
         T: Facet<'static> + core::fmt::Debug,
     {
-        let parser = JsonParser::new(input);
+        let parser = JsonParser::<false>::new(input);
         let mut de = FormatDeserializer::new_owned(parser);
         de.deserialize_root::<T>()
     }
@@ -301,7 +301,10 @@ impl FormatSuite for JsonSlice {
 
     fn error_type_mismatch_object_to_array() -> CaseSpec {
         // Object provided where array expected
-        CaseSpec::expect_error(r#"{"items":{"wrong":"structure"}}"#, "type mismatch")
+        CaseSpec::expect_error(
+            r#"{"items":{"wrong":"structure"}}"#,
+            "got object, expected array",
+        )
     }
 
     fn error_missing_required_field() -> CaseSpec {

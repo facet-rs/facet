@@ -25,7 +25,7 @@ struct Outer {
 fn nested_flatten_map_captures_unknown_fields() {
     let input = br#"{"known_field":"hello","unknown1":"value1","unknown2":"value2"}"#;
 
-    let parser = JsonParser::new(input);
+    let parser = JsonParser::<false>::new(input);
     let mut de = FormatDeserializer::new_owned(parser);
     let value: Outer = de
         .deserialize_root()
@@ -55,7 +55,7 @@ fn nested_flatten_map_captures_unknown_fields() {
 fn nested_flatten_map_empty_if_no_unknown() {
     let input = br#"{"known_field":"hello"}"#;
 
-    let parser = JsonParser::new(input);
+    let parser = JsonParser::<false>::new(input);
     let mut de = FormatDeserializer::new_owned(parser);
     let value: Outer = de
         .deserialize_root()

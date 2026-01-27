@@ -1,3 +1,4 @@
+#![allow(clippy::result_large_err)]
 //! Streaming adapter that bridges buffer-based scanning to the token source trait.
 
 extern crate alloc;

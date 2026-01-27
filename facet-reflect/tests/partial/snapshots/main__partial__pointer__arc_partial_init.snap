@@ -1,6 +1,5 @@
 ---
 source: facet-reflect/tests/partial/pointer.rs
-assertion_line: 330
 expression: "Partial::alloc::<Arc<u32>>()?.build().unwrap_err()"
 ---
-Value 'Arc<u32>' was not initialized. If you need to leave values partially initialized and come back later, use deferred mode (begin_deferred/finish_deferred)
+Value 'Arc<u32>' was not initialized. If you need to leave values partially initialized and come back later, use deferred mode (begin_deferred/finish_deferred) at Path { shape: Shape { type_identifier: "Arc", type_params: «(T: u32)», inner: Shape { type_identifier: "u32", ty: Primitive(Numeric(Integer { signed: false })), layout: Sized(«4 align 4»), def: Scalar, .. }, ty: User(Opaque), layout: Sized(«8 align 8»), def: SmartPointer<u32>, .. }, steps: [] }

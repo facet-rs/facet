@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
 use facet::Facet;
-use facet_asn1::{Asn1Error, Asn1Parser, to_vec};
+use facet_asn1::{Asn1Parser, to_vec};
 use facet_format::DeserializeError;
 use facet_format_suite::{CaseOutcome, CaseSpec, FormatSuite, all_cases};
 use libtest_mimic::{Arguments, Failed, Trial};
@@ -9,7 +9,7 @@ use libtest_mimic::{Arguments, Failed, Trial};
 struct Asn1Slice;
 
 impl FormatSuite for Asn1Slice {
-    type Error = DeserializeError<Asn1Error>;
+    type Error = DeserializeError;
 
     fn format_name() -> &'static str {
         "facet-asn1/slice"

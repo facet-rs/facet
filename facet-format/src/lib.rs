@@ -44,7 +44,6 @@ pub(crate) use debug;
 pub(crate) use trace;
 
 mod deserializer;
-mod dyn_parser;
 mod event;
 mod evidence;
 mod parser;
@@ -56,10 +55,8 @@ mod visitor;
 pub mod jit;
 
 pub use deserializer::{
-    DeserializeError, DynDeserializeError, DynDeserializer, DynDeserializerOwned,
-    FormatDeserializer, InnerDeserializeError,
+    DeserializeError, DeserializeErrorKind, FormatDeserializer, ParseError, SpanGuard,
 };
-pub use dyn_parser::{DynParser, DynParserError, DynParserWrapper, DynResult};
 pub use event::{
     ContainerKind, FieldKey, FieldLocationHint, ParseEvent, ScalarValue, ValueTypeHint,
 };

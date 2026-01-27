@@ -56,19 +56,21 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         src_value: PtrConst,
         src_shape: &'static Shape,
     ) -> Result<Self, ReflectError> {
+        // Get shape upfront to avoid borrow conflicts
+        let shape = self.frames().last().unwrap().allocated.shape();
         let fr = self.frames_mut().last_mut().unwrap();
         crate::trace!("set_shape({src_shape:?})");
 
         // Check if target is a DynamicValue - if so, convert the source value
-        if let Def::DynamicValue(dyn_def) = &fr.allocated.shape().def {
+        if let Def::DynamicValue(dyn_def) = &shape.def {
             return unsafe { self.set_into_dynamic_value(src_value, src_shape, dyn_def) };
         }
 
-        if !fr.allocated.shape().is_shape(src_shape) {
-            return Err(ReflectError::WrongShape {
-                expected: fr.allocated.shape(),
+        if !shape.is_shape(src_shape) {
+            return Err(self.err(ReflectErrorKind::WrongShape {
+                expected: shape,
                 actual: src_shape,
-            });
+            }));
         }
 
         fr.deinit_for_replace();
@@ -133,25 +135,25 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     let val = unsafe { *(src_value.as_byte_ptr() as *const f64) };
                     let success = unsafe { (vtable.set_f64)(fr.data, val) };
                     if !success {
-                        return Err(ReflectError::OperationFailed {
+                        return Err(self.err(ReflectErrorKind::OperationFailed {
                             shape: src_shape,
                             operation: "f64 value (NaN/Infinity) not representable in dynamic value",
-                        });
+                        }));
                     }
                 } else if size_bits == 32 {
                     let val = unsafe { *(src_value.as_byte_ptr() as *const f32) } as f64;
                     let success = unsafe { (vtable.set_f64)(fr.data, val) };
                     if !success {
-                        return Err(ReflectError::OperationFailed {
+                        return Err(self.err(ReflectErrorKind::OperationFailed {
                             shape: src_shape,
                             operation: "f32 value (NaN/Infinity) not representable in dynamic value",
-                        });
+                        }));
                     }
                 } else {
-                    return Err(ReflectError::OperationFailed {
+                    return Err(self.err(ReflectErrorKind::OperationFailed {
                         shape: src_shape,
                         operation: "unsupported float size for dynamic value",
-                    });
+                    }));
                 }
             }
             Type::Primitive(PrimitiveType::Numeric(NumericType::Integer { signed: true })) => {
@@ -161,10 +163,10 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     32 => (unsafe { *(src_value.as_byte_ptr() as *const i32) }) as i64,
                     64 => unsafe { *(src_value.as_byte_ptr() as *const i64) },
                     _ => {
-                        return Err(ReflectError::OperationFailed {
+                        return Err(self.err(ReflectErrorKind::OperationFailed {
                             shape: src_shape,
                             operation: "unsupported signed integer size for dynamic value",
-                        });
+                        }));
                     }
                 };
                 unsafe { (vtable.set_i64)(fr.data, val) };
@@ -176,10 +178,10 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     32 => (unsafe { *(src_value.as_byte_ptr() as *const u32) }) as u64,
                     64 => unsafe { *(src_value.as_byte_ptr() as *const u64) },
                     _ => {
-                        return Err(ReflectError::OperationFailed {
+                        return Err(self.err(ReflectErrorKind::OperationFailed {
                             shape: src_shape,
                             operation: "unsupported unsigned integer size for dynamic value",
-                        });
+                        }));
                     }
                 };
                 unsafe { (vtable.set_u64)(fr.data, val) };
@@ -229,10 +231,10 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                             .call_drop_in_place(PtrMut::new(src_value.as_byte_ptr() as *mut u8));
                     }
                 } else {
-                    return Err(ReflectError::OperationFailed {
+                    return Err(self.err(ReflectErrorKind::OperationFailed {
                         shape: src_shape,
                         operation: "cannot convert this type to dynamic value",
-                    });
+                    }));
                 }
             }
         }
@@ -261,16 +263,18 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         nanos: u32,
         kind: DynDateTimeKind,
     ) -> Result<Self, ReflectError> {
+        // Get shape upfront to avoid borrow conflicts
+        let shape = self.frames().last().unwrap().allocated.shape();
         let fr = self.frames_mut().last_mut().unwrap();
 
         // Must be a DynamicValue type
-        let dyn_def = match &fr.allocated.shape().def {
+        let dyn_def = match &shape.def {
             Def::DynamicValue(dv) => dv,
             _ => {
-                return Err(ReflectError::OperationFailed {
-                    shape: fr.allocated.shape(),
+                return Err(self.err(ReflectErrorKind::OperationFailed {
+                    shape,
                     operation: "set_datetime requires a DynamicValue target",
-                });
+                }));
             }
         };
 
@@ -278,10 +282,10 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
         // Check if the vtable supports datetime
         let Some(set_datetime_fn) = vtable.set_datetime else {
-            return Err(ReflectError::OperationFailed {
-                shape: fr.allocated.shape(),
+            return Err(self.err(ReflectErrorKind::OperationFailed {
+                shape,
                 operation: "dynamic value type does not support datetime",
-            });
+            }));
         };
 
         fr.deinit_for_replace();
@@ -337,16 +341,22 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     pub fn set_default(self) -> Result<Self, ReflectError> {
         let frame = self.frames().last().unwrap();
         let shape = frame.allocated.shape();
+        let path = self.path();
 
         // SAFETY: `call_default_in_place` fully initializes the passed pointer.
         unsafe {
             self.set_from_function(move |ptr| {
-                shape.call_default_in_place(ptr.assume_init()).ok_or(
-                    ReflectError::OperationFailed {
-                        shape,
-                        operation: "type does not implement Default",
-                    },
-                )?;
+                shape
+                    .call_default_in_place(ptr.assume_init())
+                    .ok_or_else(|| {
+                        ReflectError::new(
+                            ReflectErrorKind::OperationFailed {
+                                shape,
+                                operation: "type does not implement Default",
+                            },
+                            path.clone(),
+                        )
+                    })?;
                 Ok(())
             })
         }
@@ -393,15 +403,15 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             }
             Some(Err(_pe)) => {
                 // Return a ParseFailed error with the input value for better diagnostics
-                Err(ReflectError::ParseFailed {
+                Err(self.err(ReflectErrorKind::ParseFailed {
                     shape,
                     input: s.into(),
-                })
+                }))
             }
-            None => Err(ReflectError::OperationFailed {
+            None => Err(self.err(ReflectErrorKind::OperationFailed {
                 shape,
                 operation: "Type does not support parsing from string",
-            }),
+            })),
         }
     }
 
@@ -430,15 +440,15 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             }
             Some(Err(_pe)) => {
                 // TODO: can we propagate the ParseError somehow?
-                Err(ReflectError::OperationFailed {
+                Err(self.err(ReflectErrorKind::OperationFailed {
                     shape,
                     operation: "Failed to parse bytes value",
-                })
+                }))
             }
-            None => Err(ReflectError::OperationFailed {
+            None => Err(self.err(ReflectErrorKind::OperationFailed {
                 shape,
                 operation: "Type does not support parsing from bytes",
-            }),
+            })),
         }
     }
 }

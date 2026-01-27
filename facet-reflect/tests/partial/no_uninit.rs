@@ -1,7 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use facet::Facet;
-use facet_reflect::{Partial, ReflectError};
+use facet_reflect::{Partial, ReflectErrorKind};
 use facet_testhelpers::test;
 
 // The order of these tests mirrors the Def enum
@@ -19,10 +19,14 @@ fn struct_uninit() {
     }
 
     let partial: Partial<'_> = Partial::alloc::<FooBar>().unwrap();
-    assert!(matches!(
-        partial.build(),
-        Err(ReflectError::UninitializedField { .. })
-    ));
+    let result = partial.build();
+    assert!(
+        matches!(
+            result,
+            Err(ref err) if matches!(err.kind, ReflectErrorKind::UninitializedField { .. })
+        ),
+        "Expected UninitializedField, got {result:?}"
+    );
 }
 
 #[test]
@@ -36,10 +40,14 @@ fn enum_uninit() {
     }
 
     let partial: Partial<'_> = Partial::alloc::<FooBar>().unwrap();
-    assert!(matches!(
-        partial.build(),
-        Err(ReflectError::UninitializedValue { .. })
-    ));
+    let result = partial.build();
+    assert!(
+        matches!(
+            result,
+            Err(ref err) if matches!(err.kind, ReflectErrorKind::UninitializedValue { .. })
+        ),
+        "Expected UninitializedValue, got {result:?}"
+    );
 
     let mut partial: Partial<'_> = Partial::alloc::<FooBar>().unwrap();
     partial = partial.select_variant_named("Foo").unwrap();
@@ -47,10 +55,14 @@ fn enum_uninit() {
 
     let mut partial: Partial<'_> = Partial::alloc::<FooBar>().unwrap();
     partial = partial.select_variant_named("Bar").unwrap();
-    assert!(matches!(
-        partial.build(),
-        Err(ReflectError::UninitializedEnumField { .. })
-    ));
+    let result = partial.build();
+    assert!(
+        matches!(
+            result,
+            Err(ref err) if matches!(err.kind, ReflectErrorKind::UninitializedEnumField { .. })
+        ),
+        "Expected UninitializedEnumField, got {result:?}"
+    );
 }
 
 #[test]
@@ -68,7 +80,7 @@ fn array_uninit() {
     let partial: Partial<'_> = Partial::alloc::<[f32; 8]>().unwrap();
     let res = partial.build();
     assert!(
-        matches!(res, Err(ReflectError::UninitializedValue { .. })),
+        matches!(res, Err(ref err) if matches!(err.kind, ReflectErrorKind::UninitializedValue { .. })),
         "Expected UninitializedValue error, got {res:?}"
     );
 }
@@ -90,9 +102,9 @@ fn smart_pointer_uninit() {
 
 fn test_uninit<T: Facet<'static>>() {
     let partial: Partial<'_> = Partial::alloc::<T>().unwrap();
-    let res = partial.build().map(|_| ());
+    let res = partial.build();
     assert!(
-        matches!(res, Err(ReflectError::UninitializedValue { .. })),
+        matches!(res, Err(ref err) if matches!(err.kind, ReflectErrorKind::UninitializedValue { .. })),
         "Expected UninitializedValue error, got {res:?}"
     );
 }

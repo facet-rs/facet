@@ -6,174 +6,16 @@ use facet_core::{ScalarType, Shape, StructKind};
 use facet_reflect::Partial;
 
 use crate::{
-    DeserializeError, EnumVariantHint, FormatDeserializer, FormatParser, InnerDeserializeError,
-    ParseEvent, ScalarTypeHint, ScalarValue,
-    deserializer::coro::{
-        DeserializeYielder, request_deserialize_enum_as_struct, request_deserialize_struct_dynamic,
-        request_deserialize_tuple_dynamic, request_deserialize_value_recursive, request_event,
-        request_hint_enum, request_set_string_value, request_span, run_deserialize_coro,
-    },
+    DeserializeError, DeserializeErrorKind, EnumVariantHint, FormatDeserializer, ParseEvent,
+    ScalarTypeHint, ScalarValue, SpanGuard,
 };
-
-/// Inner implementation of `deserialize_enum_dynamic` that runs in a coroutine.
-fn deserialize_enum_dynamic_inner<'input, const BORROW: bool>(
-    yielder: &DeserializeYielder<'input, BORROW>,
-    mut wip: Partial<'input, BORROW>,
-    enum_def: &'static facet_core::EnumType,
-) -> Result<Partial<'input, BORROW>, InnerDeserializeError> {
-    use alloc::format;
-    use facet_reflect::ReflectError;
-
-    let reflect_err = |e: ReflectError| InnerDeserializeError::Reflect {
-        error: e,
-        span: request_span(yielder),
-        path: None,
-    };
-
-    // Build and send the hint
-    let variants: alloc::vec::Vec<EnumVariantHint> = enum_def
-        .variants
-        .iter()
-        .map(|v| EnumVariantHint {
-            name: v.effective_name(),
-            kind: v.data.kind,
-            field_count: v.data.fields.len(),
-        })
-        .collect();
-    request_hint_enum(yielder, variants)?;
-
-    let event = request_event(yielder, "enum")?;
-
-    match event {
-        ParseEvent::Scalar(ScalarValue::Str(s)) => {
-            // Unit variant as string (self-describing formats)
-            wip = request_set_string_value(yielder, wip, s)?;
-        }
-        ParseEvent::Scalar(ScalarValue::I64(i)) => {
-            wip = wip.set(i).map_err(reflect_err)?;
-        }
-        ParseEvent::Scalar(ScalarValue::U64(u)) => {
-            wip = wip.set(u).map_err(reflect_err)?;
-        }
-        ParseEvent::VariantTag(input_tag) => {
-            // `input_tag`: the variant name as it appeared in the input (e.g. Some("SomethingUnknown"))
-            //              or None for unit tags (bare `@` in Styx)
-            // `variant.name`: the Rust identifier of the matched variant (e.g. "Other")
-            //
-            // These differ when using #[facet(other)] to catch unknown variants.
-
-            // Find variant by display name (respecting rename) or fall back to #[facet(other)]
-            let (variant, is_using_other_fallback) = match input_tag {
-                Some(tag) => {
-                    let is_fallback = !enum_def
-                        .variants
-                        .iter()
-                        .any(|v| get_variant_display_name(v) == tag);
-                    let variant = enum_def
-                        .variants
-                        .iter()
-                        .find(|v| get_variant_display_name(v) == tag)
-                        .or_else(|| enum_def.variants.iter().find(|v| v.is_other()))
-                        .ok_or_else(|| {
-                            InnerDeserializeError::Unsupported(format!("unknown variant: {tag}"))
-                        })?;
-                    (variant, is_fallback)
-                }
-                None => {
-                    // Unit tag - must use #[facet(other)] fallback
-                    let variant =
-                        enum_def
-                            .variants
-                            .iter()
-                            .find(|v| v.is_other())
-                            .ok_or_else(|| {
-                                InnerDeserializeError::Unsupported(
-                                    "unit tag requires #[facet(other)] fallback".into(),
-                                )
-                            })?;
-                    (variant, true)
-                }
-            };
-
-            match variant.data.kind {
-                StructKind::Unit => {
-                    if is_using_other_fallback {
-                        // #[facet(other)] fallback: preserve the original input tag
-                        // so that "SomethingUnknown" round-trips correctly
-                        if let Some(tag) = input_tag {
-                            wip = request_set_string_value(yielder, wip, Cow::Borrowed(tag))?;
-                        } else {
-                            // Unit tag - set to default (None for Option<String>)
-                            wip = wip.set_default().map_err(reflect_err)?;
-                        }
-                    } else {
-                        // Direct match: use effective_name (wire format name)
-                        wip = request_set_string_value(
-                            yielder,
-                            wip,
-                            Cow::Borrowed(variant.effective_name()),
-                        )?;
-                    }
-                }
-                StructKind::TupleStruct | StructKind::Tuple => {
-                    if variant.data.fields.len() == 1 {
-                        wip = wip.init_map().map_err(reflect_err)?;
-                        wip = wip
-                            .begin_object_entry(variant.effective_name())
-                            .map_err(reflect_err)?;
-                        wip = request_deserialize_value_recursive(
-                            yielder,
-                            wip,
-                            variant.data.fields[0].shape.get(),
-                        )?;
-                        wip = wip.end().map_err(reflect_err)?;
-                    } else {
-                        wip = wip.init_map().map_err(reflect_err)?;
-                        wip = wip
-                            .begin_object_entry(variant.effective_name())
-                            .map_err(reflect_err)?;
-                        wip = request_deserialize_tuple_dynamic(yielder, wip, variant.data.fields)?;
-                        wip = wip.end().map_err(reflect_err)?;
-                    }
-                }
-                StructKind::Struct => {
-                    wip = wip.init_map().map_err(reflect_err)?;
-                    wip = wip
-                        .begin_object_entry(variant.effective_name())
-                        .map_err(reflect_err)?;
-                    wip = request_deserialize_struct_dynamic(yielder, wip, variant.data.fields)?;
-                    wip = wip.end().map_err(reflect_err)?;
-                }
-            }
-        }
-        ParseEvent::StructStart(_) => {
-            // Non-self-describing formats emit enum as {variant_name: value}
-            // The parser has already parsed the discriminant and will emit
-            // FieldKey events for the variant name
-            wip = request_deserialize_enum_as_struct(yielder, wip, enum_def)?;
-        }
-        _ => {
-            return Err(InnerDeserializeError::TypeMismatch {
-                expected: "enum variant",
-                got: format!("{event:?}"),
-                span: request_span(yielder),
-                path: None,
-            });
-        }
-    }
-
-    Ok(wip)
-}
 
 /// Helper to get variant display name (used by deserialize_enum_dynamic_inner)
 fn get_variant_display_name(variant: &'static facet_core::Variant) -> &'static str {
     variant.effective_name()
 }
 
-impl<'input, const BORROW: bool, P> FormatDeserializer<'input, BORROW, P>
-where
-    P: FormatParser<'input>,
-{
+impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BORROW> {
     /// Deserialize any value into a DynamicValue type (e.g., facet_value::Value).
     ///
     /// This handles all value types by inspecting the parse events and calling
@@ -181,7 +23,8 @@ where
     pub(crate) fn deserialize_dynamic_value(
         &mut self,
         mut wip: Partial<'input, BORROW>,
-    ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        let _guard = SpanGuard::new(self.last_span);
         self.parser.hint_dynamic_value();
         let event = self.expect_peek("value for dynamic value")?;
 
@@ -197,7 +40,7 @@ where
             ParseEvent::SequenceStart(_) => {
                 // Array/list
                 self.expect_event("sequence start")?; // consume '['
-                wip = wip.init_list().map_err(DeserializeError::reflect)?;
+                wip = wip.init_list()?;
 
                 loop {
                     let event = self.expect_peek("value or end")?;
@@ -206,15 +49,16 @@ where
                         break;
                     }
 
-                    wip = wip.begin_list_item().map_err(DeserializeError::reflect)?;
-                    wip = self.deserialize_dynamic_value(wip)?;
-                    wip = wip.end().map_err(DeserializeError::reflect)?;
+                    wip = wip
+                        .begin_list_item()?
+                        .with(|w| self.deserialize_dynamic_value(w))?
+                        .end()?;
                 }
             }
             ParseEvent::StructStart(_) => {
                 // Object/map/table
                 self.expect_event("struct start")?; // consume '{'
-                wip = wip.init_map().map_err(DeserializeError::reflect)?;
+                wip = wip.init_map()?;
 
                 loop {
                     let event = self.expect_peek("field key or end")?;
@@ -234,29 +78,32 @@ where
                                 .unwrap_or_else(|| "@".to_owned())
                         }
                         _ => {
-                            return Err(DeserializeError::TypeMismatch {
-                                expected: "field key",
-                                got: format!("{:?}", key_event),
-                                span: self.last_span,
-                                path: None,
+                            return Err(DeserializeError {
+                                span: Some(self.last_span),
+                                path: Some(wip.path()),
+                                kind: DeserializeErrorKind::UnexpectedToken {
+                                    expected: "field key",
+                                    got: key_event.kind_name().into(),
+                                },
                             });
                         }
                     };
 
                     // Begin the object entry and deserialize the value
                     wip = wip
-                        .begin_object_entry(&key)
-                        .map_err(DeserializeError::reflect)?;
-                    wip = self.deserialize_dynamic_value(wip)?;
-                    wip = wip.end().map_err(DeserializeError::reflect)?;
+                        .begin_object_entry(&key)?
+                        .with(|w| self.deserialize_dynamic_value(w))?
+                        .end()?;
                 }
             }
             _ => {
-                return Err(DeserializeError::TypeMismatch {
-                    expected: "scalar, sequence, or struct",
-                    got: format!("{:?}", event),
-                    span: self.last_span,
-                    path: None,
+                return Err(DeserializeError {
+                    span: Some(self.last_span),
+                    path: Some(wip.path()),
+                    kind: DeserializeErrorKind::UnexpectedToken {
+                        expected: "scalar, sequence, or struct",
+                        got: event.kind_name().into(),
+                    },
                 });
             }
         }
@@ -268,20 +115,22 @@ where
         &mut self,
         mut wip: Partial<'input, BORROW>,
         fields: &'static [facet_core::Field],
-    ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        let _guard = SpanGuard::new(self.last_span);
         self.parser.hint_struct_fields(fields.len());
 
         let event = self.expect_event("struct start")?;
         if !matches!(event, ParseEvent::StructStart(_)) {
-            return Err(DeserializeError::TypeMismatch {
-                expected: "struct",
-                got: format!("{event:?}"),
-                span: self.last_span,
-                path: Some(self.path_clone()),
-            });
+            return Err(self.mk_err(
+                &wip,
+                DeserializeErrorKind::UnexpectedToken {
+                    expected: "struct",
+                    got: event.kind_name().into(),
+                },
+            ));
         }
 
-        wip = wip.init_map().map_err(DeserializeError::reflect)?;
+        wip = wip.init_map()?;
 
         for field in fields {
             let field_shape = field.shape.get();
@@ -290,19 +139,19 @@ where
                 ParseEvent::OrderedField | ParseEvent::FieldKey(_) => {
                     let key = field.rename.unwrap_or(field.name);
                     wip = wip
-                        .begin_object_entry(key)
-                        .map_err(DeserializeError::reflect)?;
-                    wip = self.deserialize_value_recursive(wip, field_shape)?;
-                    wip = wip.end().map_err(DeserializeError::reflect)?;
+                        .begin_object_entry(key)?
+                        .with(|w| self.deserialize_value_recursive(w, field_shape))?
+                        .end()?;
                 }
                 ParseEvent::StructEnd => break,
                 _ => {
-                    return Err(DeserializeError::TypeMismatch {
-                        expected: "field or struct end",
-                        got: format!("{event:?}"),
-                        span: self.last_span,
-                        path: Some(self.path_clone()),
-                    });
+                    return Err(self.mk_err(
+                        &wip,
+                        DeserializeErrorKind::UnexpectedToken {
+                            expected: "field or struct end",
+                            got: event.kind_name().into(),
+                        },
+                    ));
                 }
             }
         }
@@ -321,7 +170,8 @@ where
         &mut self,
         mut wip: Partial<'input, BORROW>,
         fields: &'static [facet_core::Field],
-    ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        let _guard = SpanGuard::new(self.last_span);
         self.parser.hint_struct_fields(fields.len());
 
         let event = self.expect_event("tuple start")?;
@@ -329,33 +179,36 @@ where
             event,
             ParseEvent::StructStart(_) | ParseEvent::SequenceStart(_)
         ) {
-            return Err(DeserializeError::TypeMismatch {
-                expected: "tuple",
-                got: format!("{event:?}"),
-                span: self.last_span,
-                path: Some(self.path_clone()),
-            });
+            return Err(self.mk_err(
+                &wip,
+                DeserializeErrorKind::UnexpectedToken {
+                    expected: "tuple",
+                    got: event.kind_name().into(),
+                },
+            ));
         }
 
-        wip = wip.init_list().map_err(DeserializeError::reflect)?;
+        wip = wip.init_list()?;
 
         for field in fields {
             let field_shape = field.shape.get();
             let event = self.expect_event("tuple element")?;
             match event {
                 ParseEvent::OrderedField | ParseEvent::FieldKey(_) => {
-                    wip = wip.begin_list_item().map_err(DeserializeError::reflect)?;
-                    wip = self.deserialize_value_recursive(wip, field_shape)?;
-                    wip = wip.end().map_err(DeserializeError::reflect)?;
+                    wip = wip
+                        .begin_list_item()?
+                        .with(|w| self.deserialize_value_recursive(w, field_shape))?
+                        .end()?;
                 }
                 ParseEvent::StructEnd | ParseEvent::SequenceEnd => break,
                 _ => {
-                    return Err(DeserializeError::TypeMismatch {
-                        expected: "tuple element or end",
-                        got: format!("{event:?}"),
-                        span: self.last_span,
-                        path: Some(self.path_clone()),
-                    });
+                    return Err(self.mk_err(
+                        &wip,
+                        DeserializeErrorKind::UnexpectedToken {
+                            expected: "tuple element or end",
+                            got: event.kind_name().into(),
+                        },
+                    ));
                 }
             }
         }
@@ -371,20 +224,159 @@ where
 
     pub(crate) fn deserialize_enum_dynamic(
         &mut self,
-        wip: Partial<'input, BORROW>,
+        mut wip: Partial<'input, BORROW>,
         enum_def: &'static facet_core::EnumType,
-    ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
-        run_deserialize_coro(
-            self,
-            Box::new(move |yielder| deserialize_enum_dynamic_inner(yielder, wip, enum_def)),
-        )
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        let _guard = SpanGuard::new(self.last_span);
+
+        // Build and send the hint
+        let variants: alloc::vec::Vec<EnumVariantHint> = enum_def
+            .variants
+            .iter()
+            .map(|v| EnumVariantHint {
+                name: v.effective_name(),
+                kind: v.data.kind,
+                field_count: v.data.fields.len(),
+            })
+            .collect();
+        self.parser.hint_enum(&variants);
+
+        let event = self.expect_event("enum")?;
+
+        match event {
+            ParseEvent::Scalar(ScalarValue::Str(s)) => {
+                // Unit variant as string (self-describing formats)
+                wip = self.set_string_value(wip, s)?;
+            }
+            ParseEvent::Scalar(ScalarValue::I64(i)) => {
+                wip = wip.set(i)?;
+            }
+            ParseEvent::Scalar(ScalarValue::U64(u)) => {
+                wip = wip.set(u)?;
+            }
+            ParseEvent::VariantTag(input_tag) => {
+                // `input_tag`: the variant name as it appeared in the input (e.g. Some("SomethingUnknown"))
+                //              or None for unit tags (bare `@` in Styx)
+                // `variant.name`: the Rust identifier of the matched variant (e.g. "Other")
+                //
+                // These differ when using #[facet(other)] to catch unknown variants.
+
+                // Find variant by display name (respecting rename) or fall back to #[facet(other)]
+                let (variant, is_using_other_fallback) = match input_tag {
+                    Some(tag) => {
+                        let is_fallback = !enum_def
+                            .variants
+                            .iter()
+                            .any(|v| get_variant_display_name(v) == tag);
+                        let variant = enum_def
+                            .variants
+                            .iter()
+                            .find(|v| get_variant_display_name(v) == tag)
+                            .or_else(|| enum_def.variants.iter().find(|v| v.is_other()))
+                            .ok_or_else(|| {
+                                self.mk_err(
+                                    &wip,
+                                    DeserializeErrorKind::UnknownVariant {
+                                        variant: Cow::Owned(tag.to_owned()),
+                                        enum_shape: wip.shape(),
+                                    },
+                                )
+                            })?;
+                        (variant, is_fallback)
+                    }
+                    None => {
+                        // Unit tag - must use #[facet(other)] fallback
+                        let variant =
+                            enum_def
+                                .variants
+                                .iter()
+                                .find(|v| v.is_other())
+                                .ok_or_else(|| {
+                                    self.mk_err(
+                                        &wip,
+                                        DeserializeErrorKind::Unsupported {
+                                            message: "unit tag requires #[facet(other)] fallback"
+                                                .into(),
+                                        },
+                                    )
+                                })?;
+                        (variant, true)
+                    }
+                };
+
+                match variant.data.kind {
+                    StructKind::Unit => {
+                        if is_using_other_fallback {
+                            // #[facet(other)] fallback: preserve the original input tag
+                            // so that "SomethingUnknown" round-trips correctly
+                            if let Some(tag) = input_tag {
+                                wip = self.set_string_value(wip, Cow::Borrowed(tag))?;
+                            } else {
+                                // Unit tag - set to default (None for Option<String>)
+                                wip = wip.set_default()?;
+                            }
+                        } else {
+                            // Direct match: use effective_name (wire format name)
+                            wip = self
+                                .set_string_value(wip, Cow::Borrowed(variant.effective_name()))?;
+                        }
+                    }
+                    StructKind::TupleStruct | StructKind::Tuple => {
+                        if variant.data.fields.len() == 1 {
+                            wip = wip.init_map()?;
+                            wip = wip
+                                .begin_object_entry(variant.effective_name())?
+                                .with(|w| {
+                                    self.deserialize_value_recursive(
+                                        w,
+                                        variant.data.fields[0].shape.get(),
+                                    )
+                                })?
+                                .end()?;
+                        } else {
+                            wip = wip.init_map()?;
+                            wip = wip
+                                .begin_object_entry(variant.effective_name())?
+                                .with(|w| self.deserialize_tuple_dynamic(w, variant.data.fields))?
+                                .end()?;
+                        }
+                    }
+                    StructKind::Struct => {
+                        wip = wip.init_map()?;
+                        wip = wip
+                            .begin_object_entry(variant.effective_name())?
+                            .with(|w| self.deserialize_struct_dynamic(w, variant.data.fields))?
+                            .end()?;
+                    }
+                }
+            }
+            ParseEvent::StructStart(_) => {
+                // Non-self-describing formats emit enum as {variant_name: value}
+                // The parser has already parsed the discriminant and will emit
+                // FieldKey events for the variant name
+                wip = self.deserialize_enum_as_struct(wip, enum_def)?;
+            }
+            _ => {
+                return Err(self.mk_err(
+                    &wip,
+                    DeserializeErrorKind::UnexpectedToken {
+                        expected: "enum variant",
+                        got: event.kind_name().into(),
+                    },
+                ));
+            }
+        }
+
+        Ok(wip)
     }
 
     pub(crate) fn deserialize_scalar_dynamic(
         &mut self,
         mut wip: Partial<'input, BORROW>,
         hint_shape: &'static Shape,
-    ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        let _guard = SpanGuard::new(self.last_span);
+
         let hint = match hint_shape.scalar_type() {
             Some(ScalarType::Bool) => Some(ScalarTypeHint::Bool),
             Some(ScalarType::U8) => Some(ScalarTypeHint::U8),
@@ -416,19 +408,19 @@ where
         match event {
             ParseEvent::Scalar(scalar) => match scalar {
                 ScalarValue::Null => {
-                    wip = wip.set_default().map_err(DeserializeError::reflect)?;
+                    wip = wip.set_default()?;
                 }
                 ScalarValue::Bool(b) => {
-                    wip = wip.set(b).map_err(DeserializeError::reflect)?;
+                    wip = wip.set(b)?;
                 }
                 ScalarValue::Char(c) => {
                     wip = self.set_string_value(wip, Cow::Owned(c.to_string()))?;
                 }
                 ScalarValue::I64(i) => {
-                    wip = wip.set(i).map_err(DeserializeError::reflect)?;
+                    wip = wip.set(i)?;
                 }
                 ScalarValue::U64(u) => {
-                    wip = wip.set(u).map_err(DeserializeError::reflect)?;
+                    wip = wip.set(u)?;
                 }
                 ScalarValue::I128(i) => {
                     wip = self.set_string_value(wip, Cow::Owned(i.to_string()))?;
@@ -437,7 +429,7 @@ where
                     wip = self.set_string_value(wip, Cow::Owned(u.to_string()))?;
                 }
                 ScalarValue::F64(f) => {
-                    wip = wip.set(f).map_err(DeserializeError::reflect)?;
+                    wip = wip.set(f)?;
                 }
                 ScalarValue::Str(s) => {
                     wip = self.set_string_value(wip, s)?;
@@ -447,16 +439,17 @@ where
                 }
                 ScalarValue::Unit => {
                     // Unit value - set to default/unit value
-                    wip = wip.set_default().map_err(DeserializeError::reflect)?;
+                    wip = wip.set_default()?;
                 }
             },
             _ => {
-                return Err(DeserializeError::TypeMismatch {
-                    expected: "scalar",
-                    got: format!("{event:?}"),
-                    span: self.last_span,
-                    path: Some(self.path_clone()),
-                });
+                return Err(self.mk_err(
+                    &wip,
+                    DeserializeErrorKind::UnexpectedToken {
+                        expected: "scalar",
+                        got: event.kind_name().into(),
+                    },
+                ));
             }
         }
 
@@ -467,20 +460,22 @@ where
         &mut self,
         mut wip: Partial<'input, BORROW>,
         element_shape: &'static Shape,
-    ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        let _guard = SpanGuard::new(self.last_span);
         self.parser.hint_sequence();
 
         let event = self.expect_event("sequence start")?;
         if !matches!(event, ParseEvent::SequenceStart(_)) {
-            return Err(DeserializeError::TypeMismatch {
-                expected: "sequence",
-                got: format!("{event:?}"),
-                span: self.last_span,
-                path: Some(self.path_clone()),
-            });
+            return Err(self.mk_err(
+                &wip,
+                DeserializeErrorKind::UnexpectedToken {
+                    expected: "sequence",
+                    got: event.kind_name().into(),
+                },
+            ));
         }
 
-        wip = wip.init_list().map_err(DeserializeError::reflect)?;
+        wip = wip.init_list()?;
 
         loop {
             let event = self.expect_peek("element or sequence end")?;
@@ -489,9 +484,10 @@ where
                 break;
             }
 
-            wip = wip.begin_list_item().map_err(DeserializeError::reflect)?;
-            wip = self.deserialize_value_recursive(wip, element_shape)?;
-            wip = wip.end().map_err(DeserializeError::reflect)?;
+            wip = wip
+                .begin_list_item()?
+                .with(|w| self.deserialize_value_recursive(w, element_shape))?
+                .end()?;
         }
 
         Ok(wip)
@@ -502,35 +498,39 @@ where
         mut wip: Partial<'input, BORROW>,
         element_shape: &'static Shape,
         len: usize,
-    ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        let _guard = SpanGuard::new(self.last_span);
         self.parser.hint_array(len);
 
         let event = self.expect_event("array start")?;
         if !matches!(event, ParseEvent::SequenceStart(_)) {
-            return Err(DeserializeError::TypeMismatch {
-                expected: "array",
-                got: format!("{event:?}"),
-                span: self.last_span,
-                path: Some(self.path_clone()),
-            });
+            return Err(self.mk_err(
+                &wip,
+                DeserializeErrorKind::UnexpectedToken {
+                    expected: "array",
+                    got: event.kind_name().into(),
+                },
+            ));
         }
 
-        wip = wip.init_list().map_err(DeserializeError::reflect)?;
+        wip = wip.init_list()?;
 
         for _ in 0..len {
-            wip = wip.begin_list_item().map_err(DeserializeError::reflect)?;
-            wip = self.deserialize_value_recursive(wip, element_shape)?;
-            wip = wip.end().map_err(DeserializeError::reflect)?;
+            wip = wip
+                .begin_list_item()?
+                .with(|w| self.deserialize_value_recursive(w, element_shape))?
+                .end()?;
         }
 
         let event = self.expect_event("array end")?;
         if !matches!(event, ParseEvent::SequenceEnd) {
-            return Err(DeserializeError::TypeMismatch {
-                expected: "array end",
-                got: format!("{event:?}"),
-                span: self.last_span,
-                path: Some(self.path_clone()),
-            });
+            return Err(self.mk_err(
+                &wip,
+                DeserializeErrorKind::UnexpectedToken {
+                    expected: "array end",
+                    got: event.kind_name().into(),
+                },
+            ));
         }
 
         Ok(wip)
@@ -541,7 +541,8 @@ where
         mut wip: Partial<'input, BORROW>,
         key_shape: &'static Shape,
         value_shape: &'static Shape,
-    ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        let _guard = SpanGuard::new(self.last_span);
         self.parser.hint_map();
 
         let event = self.expect_event("map start")?;
@@ -549,15 +550,16 @@ where
             event,
             ParseEvent::SequenceStart(_) | ParseEvent::StructStart(_)
         ) {
-            return Err(DeserializeError::TypeMismatch {
-                expected: "map",
-                got: format!("{event:?}"),
-                span: self.last_span,
-                path: Some(self.path_clone()),
-            });
+            return Err(self.mk_err(
+                &wip,
+                DeserializeErrorKind::UnexpectedToken {
+                    expected: "map",
+                    got: event.kind_name().into(),
+                },
+            ));
         }
 
-        wip = wip.init_map().map_err(DeserializeError::reflect)?;
+        wip = wip.init_map()?;
 
         let key_hint = match key_shape.scalar_type() {
             Some(ScalarType::String | ScalarType::CowStr) => Some(ScalarTypeHint::String),
@@ -596,20 +598,20 @@ where
                 ParseEvent::Scalar(ScalarValue::U64(u)) => Cow::Owned(u.to_string()),
                 ParseEvent::FieldKey(k) => k.name.unwrap_or(Cow::Borrowed("@")),
                 _ => {
-                    return Err(DeserializeError::TypeMismatch {
-                        expected: "map key",
-                        got: format!("{key_event:?}"),
-                        span: self.last_span,
-                        path: Some(self.path_clone()),
-                    });
+                    return Err(self.mk_err(
+                        &wip,
+                        DeserializeErrorKind::UnexpectedToken {
+                            expected: "map key",
+                            got: key_event.kind_name().into(),
+                        },
+                    ));
                 }
             };
 
             wip = wip
-                .begin_object_entry(&key_str)
-                .map_err(DeserializeError::reflect)?;
-            wip = self.deserialize_value_recursive(wip, value_shape)?;
-            wip = wip.end().map_err(DeserializeError::reflect)?;
+                .begin_object_entry(&key_str)?
+                .with(|w| self.deserialize_value_recursive(w, value_shape))?
+                .end()?;
         }
 
         Ok(wip)

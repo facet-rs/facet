@@ -3,10 +3,11 @@ extern crate alloc;
 use alloc::borrow::Cow;
 use alloc::sync::Arc;
 use core::fmt;
+use facet_core::Shape;
 
 use facet_solver::{KeyResult, Resolution, ResolutionHandle, Schema, Solver};
 
-use crate::{FormatParser, ParseEvent};
+use crate::{FormatParser, ParseError, ParseEvent};
 
 /// High-level outcome from solving an untagged enum.
 pub struct SolveOutcome {
@@ -18,23 +19,23 @@ pub struct SolveOutcome {
 
 /// Error when variant solving fails.
 #[derive(Debug)]
-pub enum SolveVariantError<E> {
+pub enum SolveVariantError {
     /// No variant matched the evidence.
     NoMatch,
     /// Parser error while reading events.
-    Parser(E),
+    Parser(ParseError),
     /// Schema construction error.
     SchemaError(facet_solver::SchemaError),
 }
 
-impl<E> SolveVariantError<E> {
-    /// Wrap a parser error into [`SolveVariantError::Parser`].
-    pub const fn from_parser(e: E) -> Self {
+impl SolveVariantError {
+    /// Wrap a parse error into [`SolveVariantError::Parser`].
+    pub const fn from_parser(e: ParseError) -> Self {
         Self::Parser(e)
     }
 }
 
-impl<E: fmt::Display> fmt::Display for SolveVariantError<E> {
+impl fmt::Display for SolveVariantError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NoMatch => write!(f, "No variant matched"),
@@ -44,7 +45,7 @@ impl<E: fmt::Display> fmt::Display for SolveVariantError<E> {
     }
 }
 
-impl<E: fmt::Debug + fmt::Display> core::error::Error for SolveVariantError<E> {}
+impl core::error::Error for SolveVariantError {}
 
 /// Attempt to solve which enum variant matches the input.
 ///
@@ -54,52 +55,21 @@ impl<E: fmt::Debug + fmt::Display> core::error::Error for SolveVariantError<E> {
 ///
 /// Returns `Ok(Some(_))` if a unique variant was found, `Ok(None)` if
 /// no variant matched, or `Err(_)` on error.
-pub fn solve_variant<'de, P>(
-    shape: &'static facet_core::Shape,
-    parser: &mut P,
-) -> Result<Option<SolveOutcome>, SolveVariantError<P::Error>>
-where
-    P: FormatParser<'de>,
-{
+pub fn solve_variant<'de>(
+    shape: &'static Shape,
+    parser: &mut dyn FormatParser<'de>,
+) -> Result<Option<SolveOutcome>, SolveVariantError> {
     let schema = Arc::new(Schema::build_auto(shape)?);
     let mut solver = Solver::new(&schema);
 
     // Save position and start recording events
     let save_point = parser.save();
 
-    // Read through the structure, looking for field keys
-    let result = solve_variant_inner(&mut solver, parser);
-
-    // Restore position regardless of outcome
-    parser.restore(save_point);
-
-    match result {
-        Ok(Some(handle)) => {
-            let idx = handle.index();
-            Ok(Some(SolveOutcome {
-                schema,
-                resolution_index: idx,
-            }))
-        }
-        Ok(None) => Ok(None),
-        Err(e) => Err(e),
-    }
-}
-
-/// Inner function that reads events and feeds field names to the solver.
-fn solve_variant_inner<'de, 'a, P>(
-    solver: &mut Solver<'a>,
-    parser: &mut P,
-) -> Result<Option<ResolutionHandle<'a>>, SolveVariantError<P::Error>>
-where
-    'de: 'a,
-    P: FormatParser<'de>,
-{
     let mut depth = 0i32;
     let mut in_struct = false;
     let mut expecting_value = false;
 
-    loop {
+    let result = loop {
         let event = parser
             .next_event()
             .map_err(SolveVariantError::from_parser)?;
@@ -120,7 +90,7 @@ where
                 depth -= 1;
                 if depth == 0 {
                     // Done with top-level struct
-                    return Ok(None);
+                    break None;
                 }
             }
             ParseEvent::SequenceStart(_) => {
@@ -133,9 +103,9 @@ where
                 if depth == 1 && in_struct {
                     // Top-level field - feed to solver
                     if let Some(name) = key.name
-                        && let Some(handle) = handle_key(solver, name)
+                        && let Some(handle) = handle_key(&mut solver, name)
                     {
-                        return Ok(Some(handle));
+                        break Some(handle);
                     }
                     expecting_value = true;
                 }
@@ -146,6 +116,20 @@ where
                 }
             }
         }
+    };
+
+    // Restore position regardless of outcome
+    parser.restore(save_point);
+
+    match result {
+        Some(handle) => {
+            let idx = handle.index();
+            Ok(Some(SolveOutcome {
+                schema,
+                resolution_index: idx,
+            }))
+        }
+        None => Ok(None),
     }
 }
 
@@ -156,7 +140,7 @@ fn handle_key<'a>(solver: &mut Solver<'a>, name: Cow<'a, str>) -> Option<Resolut
     }
 }
 
-impl<E> From<facet_solver::SchemaError> for SolveVariantError<E> {
+impl From<facet_solver::SchemaError> for SolveVariantError {
     fn from(e: facet_solver::SchemaError) -> Self {
         Self::SchemaError(e)
     }

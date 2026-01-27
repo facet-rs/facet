@@ -6,7 +6,8 @@ use facet_core::{
     VTableErased, Variance,
 };
 
-use crate::{PeekNdArray, PeekSet, ReflectError, ScalarType};
+use crate::{PeekNdArray, PeekSet, ReflectError, ReflectErrorKind, ScalarType};
+use facet_path::Path;
 
 use super::{
     ListLikeDef, PeekDynamicValue, PeekEnum, PeekList, PeekListLike, PeekMap, PeekOption,
@@ -95,6 +96,12 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
             shape: T::SHAPE,
             _invariant: PhantomData,
         }
+    }
+
+    /// Construct a ReflectError with this peek's shape as the root path.
+    #[inline]
+    pub(crate) fn err(&self, kind: ReflectErrorKind) -> ReflectError {
+        ReflectError::new(kind, Path::new(self.shape))
     }
 
     /// Returns a read-only view over a value (given its shape), trusting you
@@ -238,20 +245,20 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     #[inline]
     pub fn partial_eq(&self, other: &Peek<'_, '_>) -> Result<bool, ReflectError> {
         if self.shape != other.shape {
-            return Err(ReflectError::WrongShape {
+            return Err(self.err(ReflectErrorKind::WrongShape {
                 expected: self.shape,
                 actual: other.shape,
-            });
+            }));
         }
 
         if let Some(result) = unsafe { self.shape.call_partial_eq(self.data, other.data) } {
             return Ok(result);
         }
 
-        Err(ReflectError::OperationFailed {
+        Err(self.err(ReflectErrorKind::OperationFailed {
             shape: self.shape(),
             operation: "partial_eq",
-        })
+        }))
     }
 
     /// Compares this scalar with another and returns their ordering
@@ -262,20 +269,20 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     #[inline]
     pub fn partial_cmp(&self, other: &Peek<'_, '_>) -> Result<Option<Ordering>, ReflectError> {
         if self.shape != other.shape {
-            return Err(ReflectError::WrongShape {
+            return Err(self.err(ReflectErrorKind::WrongShape {
                 expected: self.shape,
                 actual: other.shape,
-            });
+            }));
         }
 
         if let Some(result) = unsafe { self.shape.call_partial_cmp(self.data, other.data) } {
             return Ok(result);
         }
 
-        Err(ReflectError::OperationFailed {
+        Err(self.err(ReflectErrorKind::OperationFailed {
             shape: self.shape(),
             operation: "partial_cmp",
-        })
+        }))
     }
 
     /// Hashes this scalar using the vtable hash function.
@@ -290,10 +297,10 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
             return Ok(());
         }
 
-        Err(ReflectError::OperationFailed {
+        Err(self.err(ReflectErrorKind::OperationFailed {
             shape: self.shape(),
             operation: "hash",
-        })
+        }))
     }
 
     /// Computes a structural hash of this value.
@@ -553,10 +560,10 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     #[inline]
     pub fn get<T: Facet<'facet> + ?Sized>(&self) -> Result<&'mem T, ReflectError> {
         if self.shape != T::SHAPE {
-            Err(ReflectError::WrongShape {
+            Err(self.err(ReflectErrorKind::WrongShape {
                 expected: self.shape,
                 actual: T::SHAPE,
-            })
+            }))
         } else {
             Ok(unsafe { self.data.get::<T>() })
         }
@@ -643,65 +650,65 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
 
     /// Tries to identify this value as a struct
     #[inline]
-    pub const fn into_struct(self) -> Result<PeekStruct<'mem, 'facet>, ReflectError> {
+    pub fn into_struct(self) -> Result<PeekStruct<'mem, 'facet>, ReflectError> {
         if let Type::User(UserType::Struct(ty)) = self.shape.ty {
             Ok(PeekStruct { value: self, ty })
         } else {
-            Err(ReflectError::WasNotA {
+            Err(self.err(ReflectErrorKind::WasNotA {
                 expected: "struct",
                 actual: self.shape,
-            })
+            }))
         }
     }
 
     /// Tries to identify this value as an enum
     #[inline]
-    pub const fn into_enum(self) -> Result<PeekEnum<'mem, 'facet>, ReflectError> {
+    pub fn into_enum(self) -> Result<PeekEnum<'mem, 'facet>, ReflectError> {
         if let Type::User(UserType::Enum(ty)) = self.shape.ty {
             Ok(PeekEnum { value: self, ty })
         } else {
-            Err(ReflectError::WasNotA {
+            Err(self.err(ReflectErrorKind::WasNotA {
                 expected: "enum",
                 actual: self.shape,
-            })
+            }))
         }
     }
 
     /// Tries to identify this value as a map
     #[inline]
-    pub const fn into_map(self) -> Result<PeekMap<'mem, 'facet>, ReflectError> {
+    pub fn into_map(self) -> Result<PeekMap<'mem, 'facet>, ReflectError> {
         if let Def::Map(def) = self.shape.def {
             // SAFETY: The MapDef comes from self.shape.def, where self.shape is obtained
             // from a trusted source (either T::SHAPE from the Facet trait, or validated
             // through other safe constructors). The vtable is therefore trusted.
             Ok(unsafe { PeekMap::new(self, def) })
         } else {
-            Err(ReflectError::WasNotA {
+            Err(self.err(ReflectErrorKind::WasNotA {
                 expected: "map",
                 actual: self.shape,
-            })
+            }))
         }
     }
 
     /// Tries to identify this value as a set
     #[inline]
-    pub const fn into_set(self) -> Result<PeekSet<'mem, 'facet>, ReflectError> {
+    pub fn into_set(self) -> Result<PeekSet<'mem, 'facet>, ReflectError> {
         if let Def::Set(def) = self.shape.def {
             // SAFETY: The SetDef comes from self.shape.def, where self.shape is obtained
             // from a trusted source (either T::SHAPE from the Facet trait, or validated
             // through other safe constructors). The vtable is therefore trusted.
             Ok(unsafe { PeekSet::new(self, def) })
         } else {
-            Err(ReflectError::WasNotA {
+            Err(self.err(ReflectErrorKind::WasNotA {
                 expected: "set",
                 actual: self.shape,
-            })
+            }))
         }
     }
 
     /// Tries to identify this value as a list
     #[inline]
-    pub const fn into_list(self) -> Result<PeekList<'mem, 'facet>, ReflectError> {
+    pub fn into_list(self) -> Result<PeekList<'mem, 'facet>, ReflectError> {
         if let Def::List(def) = self.shape.def {
             // SAFETY: The ListDef comes from self.shape.def, where self.shape is obtained
             // from a trusted source (either T::SHAPE from the Facet trait, or validated
@@ -709,15 +716,15 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
             return Ok(unsafe { PeekList::new(self, def) });
         }
 
-        Err(ReflectError::WasNotA {
+        Err(self.err(ReflectErrorKind::WasNotA {
             expected: "list",
             actual: self.shape,
-        })
+        }))
     }
 
     /// Tries to identify this value as a ndarray
     #[inline]
-    pub const fn into_ndarray(self) -> Result<PeekNdArray<'mem, 'facet>, ReflectError> {
+    pub fn into_ndarray(self) -> Result<PeekNdArray<'mem, 'facet>, ReflectError> {
         if let Def::NdArray(def) = self.shape.def {
             // SAFETY: The NdArrayDef comes from self.shape.def, where self.shape is obtained
             // from a trusted source (either T::SHAPE from the Facet trait, or validated
@@ -725,10 +732,10 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
             return Ok(unsafe { PeekNdArray::new(self, def) });
         }
 
-        Err(ReflectError::WasNotA {
+        Err(self.err(ReflectErrorKind::WasNotA {
             expected: "ndarray",
             actual: self.shape,
-        })
+        }))
     }
 
     /// Tries to identify this value as a list, array or slice
@@ -789,50 +796,50 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
                     }
                 }
 
-                Err(ReflectError::WasNotA {
+                Err(self.err(ReflectErrorKind::WasNotA {
                     expected: "list, array or slice",
                     actual: self.shape,
-                })
+                }))
             }
         }
     }
 
     /// Tries to identify this value as a pointer
     #[inline]
-    pub const fn into_pointer(self) -> Result<PeekPointer<'mem, 'facet>, ReflectError> {
+    pub fn into_pointer(self) -> Result<PeekPointer<'mem, 'facet>, ReflectError> {
         if let Def::Pointer(def) = self.shape.def {
             Ok(PeekPointer { value: self, def })
         } else {
-            Err(ReflectError::WasNotA {
+            Err(self.err(ReflectErrorKind::WasNotA {
                 expected: "smart pointer",
                 actual: self.shape,
-            })
+            }))
         }
     }
 
     /// Tries to identify this value as an option
     #[inline]
-    pub const fn into_option(self) -> Result<PeekOption<'mem, 'facet>, ReflectError> {
+    pub fn into_option(self) -> Result<PeekOption<'mem, 'facet>, ReflectError> {
         if let Def::Option(def) = self.shape.def {
             Ok(PeekOption { value: self, def })
         } else {
-            Err(ReflectError::WasNotA {
+            Err(self.err(ReflectErrorKind::WasNotA {
                 expected: "option",
                 actual: self.shape,
-            })
+            }))
         }
     }
 
     /// Tries to identify this value as a result
     #[inline]
-    pub const fn into_result(self) -> Result<PeekResult<'mem, 'facet>, ReflectError> {
+    pub fn into_result(self) -> Result<PeekResult<'mem, 'facet>, ReflectError> {
         if let Def::Result(def) = self.shape.def {
             Ok(PeekResult { value: self, def })
         } else {
-            Err(ReflectError::WasNotA {
+            Err(self.err(ReflectErrorKind::WasNotA {
                 expected: "result",
                 actual: self.shape,
-            })
+            }))
         }
     }
 
@@ -848,29 +855,29 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
                     },
                 })
             } else {
-                Err(ReflectError::WasNotA {
+                Err(self.err(ReflectErrorKind::WasNotA {
                     expected: "tuple",
                     actual: self.shape,
-                })
+                }))
             }
         } else {
-            Err(ReflectError::WasNotA {
+            Err(self.err(ReflectErrorKind::WasNotA {
                 expected: "tuple",
                 actual: self.shape,
-            })
+            }))
         }
     }
 
     /// Tries to identify this value as a dynamic value (like `facet_value::Value`)
     #[inline]
-    pub const fn into_dynamic_value(self) -> Result<PeekDynamicValue<'mem, 'facet>, ReflectError> {
+    pub fn into_dynamic_value(self) -> Result<PeekDynamicValue<'mem, 'facet>, ReflectError> {
         if let Def::DynamicValue(def) = self.shape.def {
             Ok(PeekDynamicValue { value: self, def })
         } else {
-            Err(ReflectError::WasNotA {
+            Err(self.err(ReflectErrorKind::WasNotA {
                 expected: "dynamic value",
                 actual: self.shape,
-            })
+            }))
         }
     }
 
@@ -928,22 +935,24 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     #[cfg(feature = "alloc")]
     pub fn custom_serialization(&self, field: Field) -> Result<OwnedPeek<'mem>, ReflectError> {
         let Some(proxy_def) = field.proxy() else {
-            return Err(ReflectError::OperationFailed {
+            return Err(self.err(ReflectErrorKind::OperationFailed {
                 shape: self.shape,
                 operation: "field does not have a proxy definition",
-            });
+            }));
         };
 
         let target_shape = proxy_def.shape;
-        let tptr = target_shape.allocate().map_err(|_| ReflectError::Unsized {
-            shape: target_shape,
-            operation: "Not a Sized type",
+        let tptr = target_shape.allocate().map_err(|_| {
+            self.err(ReflectErrorKind::Unsized {
+                shape: target_shape,
+                operation: "Not a Sized type",
+            })
         })?;
         let ser_res = unsafe { (proxy_def.convert_out)(self.data(), tptr) };
         let err = match ser_res {
             Ok(rptr) => {
                 if rptr.as_uninit() != tptr {
-                    ReflectError::CustomSerializationError {
+                    ReflectErrorKind::CustomSerializationError {
                         message: "convert_out did not return the expected pointer".into(),
                         src_shape: self.shape,
                         dst_shape: target_shape,
@@ -956,7 +965,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
                     });
                 }
             }
-            Err(message) => ReflectError::CustomSerializationError {
+            Err(message) => ReflectErrorKind::CustomSerializationError {
                 message,
                 src_shape: self.shape,
                 dst_shape: target_shape,
@@ -967,7 +976,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
             // SAFETY: unwrap should be ok since the allocation was ok
             target_shape.deallocate_uninit(tptr).unwrap()
         };
-        Err(err)
+        Err(self.err(err))
     }
 
     /// Performs custom serialization using a specific proxy definition.
@@ -980,15 +989,17 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
         proxy_def: &'static facet_core::ProxyDef,
     ) -> Result<OwnedPeek<'mem>, ReflectError> {
         let target_shape = proxy_def.shape;
-        let tptr = target_shape.allocate().map_err(|_| ReflectError::Unsized {
-            shape: target_shape,
-            operation: "Not a Sized type",
+        let tptr = target_shape.allocate().map_err(|_| {
+            self.err(ReflectErrorKind::Unsized {
+                shape: target_shape,
+                operation: "Not a Sized type",
+            })
         })?;
         let ser_res = unsafe { (proxy_def.convert_out)(self.data(), tptr) };
         let err = match ser_res {
             Ok(rptr) => {
                 if rptr.as_uninit() != tptr {
-                    ReflectError::CustomSerializationError {
+                    ReflectErrorKind::CustomSerializationError {
                         message: "convert_out did not return the expected pointer".into(),
                         src_shape: self.shape,
                         dst_shape: target_shape,
@@ -1001,7 +1012,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
                     });
                 }
             }
-            Err(message) => ReflectError::CustomSerializationError {
+            Err(message) => ReflectErrorKind::CustomSerializationError {
                 message,
                 src_shape: self.shape,
                 dst_shape: target_shape,
@@ -1012,7 +1023,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
             // SAFETY: unwrap should be ok since the allocation was ok
             target_shape.deallocate_uninit(tptr).unwrap()
         };
-        Err(err)
+        Err(self.err(err))
     }
 
     /// Returns an `OwnedPeek` using the shape's container-level proxy for serialization.
@@ -1044,16 +1055,18 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
         };
 
         let target_shape = proxy_def.shape;
-        let tptr = target_shape.allocate().map_err(|_| ReflectError::Unsized {
-            shape: target_shape,
-            operation: "Not a Sized type",
+        let tptr = target_shape.allocate().map_err(|_| {
+            self.err(ReflectErrorKind::Unsized {
+                shape: target_shape,
+                operation: "Not a Sized type",
+            })
         })?;
 
         let ser_res = unsafe { (proxy_def.convert_out)(self.data(), tptr) };
         let err = match ser_res {
             Ok(rptr) => {
                 if rptr.as_uninit() != tptr {
-                    ReflectError::CustomSerializationError {
+                    ReflectErrorKind::CustomSerializationError {
                         message: "proxy convert_out did not return the expected pointer".into(),
                         src_shape: self.shape,
                         dst_shape: target_shape,
@@ -1066,7 +1079,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
                     }));
                 }
             }
-            Err(message) => ReflectError::CustomSerializationError {
+            Err(message) => ReflectErrorKind::CustomSerializationError {
                 message,
                 src_shape: self.shape,
                 dst_shape: target_shape,
@@ -1078,7 +1091,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
             // SAFETY: unwrap should be ok since the allocation was ok
             target_shape.deallocate_uninit(tptr).unwrap()
         };
-        Err(err)
+        Err(self.err(err))
     }
 }
 

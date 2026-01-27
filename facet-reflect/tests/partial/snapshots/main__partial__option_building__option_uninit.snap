@@ -2,4 +2,4 @@
 source: facet-reflect/tests/partial/option_building.rs
 expression: "Partial::alloc::<Option<f64>>()?.build().unwrap_err()"
 ---
-Value 'Option' was not initialized. If you need to leave values partially initialized and come back later, use deferred mode (begin_deferred/finish_deferred)
+Value 'Option' was not initialized. If you need to leave values partially initialized and come back later, use deferred mode (begin_deferred/finish_deferred) at Path { shape: Shape { type_identifier: "Option", type_params: «(T: f64)», inner: Shape { type_identifier: "f64", ty: Primitive(Numeric(Float)), layout: Sized(«8 align 8»), def: Scalar, .. }, ty: User(Opaque), layout: Sized(«16 align 8»), def: Option<f64>, .. }, steps: [] }

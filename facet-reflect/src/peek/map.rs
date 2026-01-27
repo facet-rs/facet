@@ -1,6 +1,6 @@
 use facet_core::{MapDef, PtrMut};
 
-use crate::ReflectError;
+use crate::{ReflectError, ReflectErrorKind};
 
 use super::Peek;
 
@@ -75,6 +75,10 @@ impl<'mem, 'facet> PeekMap<'mem, 'facet> {
         Self { value, def }
     }
 
+    fn err(&self, kind: ReflectErrorKind) -> ReflectError {
+        self.value.err(kind)
+    }
+
     /// Get the number of entries in the map
     #[inline]
     pub fn len(&self) -> usize {
@@ -109,10 +113,10 @@ impl<'mem, 'facet> PeekMap<'mem, 'facet> {
             return Ok(unsafe { (self.def.vtable.contains_key)(self.value.data(), key.data()) });
         }
 
-        Err(ReflectError::WrongShape {
+        Err(self.err(ReflectErrorKind::WrongShape {
             expected: self.def.k(),
             actual: key.shape,
-        })
+        }))
     }
 
     /// Get a value from the map for the given key
@@ -132,10 +136,10 @@ impl<'mem, 'facet> PeekMap<'mem, 'facet> {
             });
         }
 
-        Err(ReflectError::WrongShape {
+        Err(self.err(ReflectErrorKind::WrongShape {
             expected: self.def.k(),
             actual: key.shape,
-        })
+        }))
     }
 
     /// Returns an iterator over the key-value pairs in the map

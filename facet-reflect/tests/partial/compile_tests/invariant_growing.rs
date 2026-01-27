@@ -1,5 +1,5 @@
 use facet::Facet;
-use facet_reflect::{Partial, ReflectError};
+use facet_reflect::Partial;
 
 #[derive(Debug, Facet)]
 struct InvariantLifetime<'facet> {
@@ -12,15 +12,18 @@ fn main() {
         token: InvariantLifetime<'facet>,
     }
 
-    fn scope<'facet>(token: InvariantLifetime<'facet>) -> Result<Wrapper<'static>, ReflectError> {
+    fn scope<'facet>(token: InvariantLifetime<'facet>) -> Wrapper<'static> {
         // SAFETY: Wrapper::<'static>::SHAPE comes from the derived Facet implementation
-        unsafe { Partial::<'static>::alloc_shape(Wrapper::<'static>::SHAPE) }?
-            .set_field("token", token)?
-            .build()?
+        unsafe { Partial::<'static>::alloc_shape(Wrapper::<'static>::SHAPE) }
+            .unwrap()
+            .set_field("token", token)
+            .unwrap()
+            .build()
+            .unwrap()
             .materialize()
+            .unwrap()
     }
-    scope(InvariantLifetime {
+    let _ = scope(InvariantLifetime {
         _pd: std::marker::PhantomData,
-    })
-    .unwrap_err();
+    });
 }

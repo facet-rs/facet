@@ -1,5 +1,5 @@
 use facet::Facet;
-use facet_reflect::{Poke, ReflectError};
+use facet_reflect::{Poke, ReflectErrorKind};
 
 #[test]
 fn poke_pod_struct() {
@@ -43,7 +43,7 @@ fn poke_non_pod_struct_set_field_fails() {
 
     // Setting a field on a non-POD struct should fail
     let result = poke_struct.set_field_by_name("x", 100i32);
-    assert!(matches!(result, Err(ReflectError::NotPod { .. })));
+    assert!(matches!(result, Err(ref err) if matches!(err.kind, ReflectErrorKind::NotPod { .. })));
 }
 
 #[test]
@@ -87,7 +87,9 @@ fn poke_wrong_type_fails() {
     let poke = Poke::new(&mut x);
 
     let result = poke.get::<u32>();
-    assert!(matches!(result, Err(ReflectError::WrongShape { .. })));
+    assert!(
+        matches!(result, Err(ref err) if matches!(err.kind, ReflectErrorKind::WrongShape { .. }))
+    );
 }
 
 #[test]
@@ -96,7 +98,9 @@ fn poke_set_wrong_type_fails() {
     let mut poke = Poke::new(&mut x);
 
     let result = poke.set(42u32);
-    assert!(matches!(result, Err(ReflectError::WrongShape { .. })));
+    assert!(
+        matches!(result, Err(ref err) if matches!(err.kind, ReflectErrorKind::WrongShape { .. }))
+    );
 }
 
 #[test]

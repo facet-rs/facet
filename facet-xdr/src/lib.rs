@@ -73,7 +73,7 @@ pub use facet_format::DeserializeError;
 /// assert_eq!(point.x, 10);
 /// assert_eq!(point.y, 20);
 /// ```
-pub fn from_slice<T>(input: &[u8]) -> Result<T, DeserializeError<XdrError>>
+pub fn from_slice<T>(input: &[u8]) -> Result<T, DeserializeError>
 where
     T: facet_core::Facet<'static>,
 {
@@ -109,9 +109,7 @@ where
 /// assert_eq!(msg.id, 1);
 /// assert_eq!(&*msg.data, &[0xAB, 0xCD, 0xEF]);
 /// ```
-pub fn from_slice_borrowed<'input, 'facet, T>(
-    input: &'input [u8],
-) -> Result<T, DeserializeError<XdrError>>
+pub fn from_slice_borrowed<'input, 'facet, T>(input: &'input [u8]) -> Result<T, DeserializeError>
 where
     T: facet_core::Facet<'facet>,
     'input: 'facet,
