@@ -346,10 +346,45 @@ impl<T: Facet<'static>> Driver<T> {
             &mut missing_fields,
         );
 
-        if !missing_fields.is_empty() {
+        // Collect unused keys from all layers (for strict mode reporting)
+        let cli_strict = self
+            .config
+            .cli_config
+            .as_ref()
+            .map(|c| c.strict())
+            .unwrap_or(false);
+        let env_strict = self
+            .config
+            .env_config
+            .as_ref()
+            .map(|c| c.strict)
+            .unwrap_or(false);
+        let file_strict = self
+            .config
+            .file_config
+            .as_ref()
+            .map(|c| c.strict)
+            .unwrap_or(false);
+
+        let mut unknown_keys: Vec<&UnusedKey> = Vec::new();
+        if cli_strict {
+            unknown_keys.extend(layers.cli.unused_keys.iter());
+        }
+        if env_strict {
+            unknown_keys.extend(layers.env.unused_keys.iter());
+        }
+        if file_strict {
+            unknown_keys.extend(layers.file.unused_keys.iter());
+        }
+
+        let has_missing = !missing_fields.is_empty();
+        let has_unknown = !unknown_keys.is_empty();
+
+        if has_missing || has_unknown {
             // If the only missing field is the subcommand, show help instead of "missing fields"
             let subcommand_field_name = self.config.schema.args().subcommand_field_name();
-            let only_missing_subcommand = subcommand_field_name.is_some()
+            let only_missing_subcommand = !has_unknown
+                && subcommand_field_name.is_some()
                 && missing_fields.len() == 1
                 && missing_fields[0].field_name == subcommand_field_name.unwrap();
 
@@ -378,12 +413,49 @@ impl<T: Facet<'static>> Driver<T> {
             let dump =
                 String::from_utf8(dump_buf).unwrap_or_else(|_| "error rendering dump".into());
 
+            // Build error message with both missing fields and unknown keys
+            let mut message_parts = Vec::new();
+
+            if has_unknown {
+                message_parts.push("Unknown configuration keys:".to_string());
+            }
+            if has_missing {
+                message_parts.push("Missing required fields:".to_string());
+            }
+
+            let header = message_parts.join(" / ");
+
             // Format the summary of missing fields
-            let summary = format_missing_fields_summary(&missing_fields);
+            let missing_summary = if has_missing {
+                format!(
+                    "\nMissing:\n{}",
+                    format_missing_fields_summary(&missing_fields)
+                )
+            } else {
+                String::new()
+            };
+
+            // Format the summary of unknown keys with suggestions
+            let unknown_summary = if has_unknown {
+                let config_schema = self.config.schema.config();
+                let unknown_list: Vec<String> = unknown_keys
+                    .iter()
+                    .map(|uk| {
+                        let source = uk.provenance.source_description();
+                        let suggestion = config_schema
+                            .map(|cs| crate::suggest::suggest_config_path(cs, &uk.key))
+                            .unwrap_or_default();
+                        format!("  {} (from {}){}", uk.key.join("."), source, suggestion)
+                    })
+                    .collect();
+                format!("\nUnknown keys:\n{}", unknown_list.join("\n"))
+            } else {
+                String::new()
+            };
 
             let message = format!(
-                "Missing required fields:\n\n{}\nMissing:\n{}\nRun with --help for usage information.",
-                dump, summary
+                "{}\n\n{}{}{}\nRun with --help for usage information.",
+                header, dump, missing_summary, unknown_summary
             );
 
             return DriverOutcome::err(DriverError::Failed {

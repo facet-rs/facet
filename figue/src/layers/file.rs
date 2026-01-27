@@ -340,25 +340,8 @@ impl<'a> FileParseContext<'a> {
                 let mut builder = ValueBuilder::new(config_schema);
                 builder.import_tree(parsed);
 
-                // In strict mode, convert unused keys to errors
-                if self.config.strict {
-                    let error_msgs: Vec<String> = builder
-                        .unused_keys()
-                        .iter()
-                        .map(|uk| {
-                            let suggestion =
-                                crate::suggest::suggest_config_path(config_schema, &uk.key);
-                            format!(
-                                "unknown configuration key: {}{}",
-                                uk.key.join("."),
-                                suggestion
-                            )
-                        })
-                        .collect();
-                    for msg in error_msgs {
-                        builder.error(msg);
-                    }
-                }
+                // Unknown keys are tracked in unused_keys by the builder.
+                // In strict mode, they'll be reported by the driver alongside the config dump.
 
                 // Get the output from the builder
                 let mut output =
@@ -632,7 +615,9 @@ mod tests {
     }
 
     #[test]
-    fn test_unknown_key_error_in_strict_mode() {
+    fn test_unknown_key_tracked_in_strict_mode() {
+        // In strict mode, unknown keys are tracked in unused_keys.
+        // The driver will report them alongside the config dump (not as early errors).
         let file = create_temp_json(r#"{"port": 8080, "host": "localhost", "unknown_field": 123}"#);
         let path = Utf8PathBuf::from_path_buf(file.path().to_path_buf()).unwrap();
 
@@ -641,14 +626,32 @@ mod tests {
 
         let result = parse_file(&schema, &config);
 
-        // Should have error in strict mode
-        assert!(!result.output.diagnostics.is_empty());
+        // Unknown keys should be tracked in unused_keys
+        assert!(
+            !result.output.unused_keys.is_empty(),
+            "should track unknown key in unused_keys"
+        );
         assert!(
             result
                 .output
-                .diagnostics
+                .unused_keys
                 .iter()
-                .any(|d| d.message.contains("unknown"))
+                .any(|uk| uk.key.join(".") == "unknown_field"),
+            "unused_keys should contain 'unknown_field': {:?}",
+            result.output.unused_keys
+        );
+
+        // No error diagnostics at parse time - driver handles reporting with dump
+        let errors: Vec<_> = result
+            .output
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
+        assert!(
+            errors.is_empty(),
+            "should not have error diagnostics at parse time, got: {:?}",
+            errors
         );
     }
 

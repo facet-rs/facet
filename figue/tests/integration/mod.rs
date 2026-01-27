@@ -11,3 +11,4 @@ mod short_chaining;
 mod simple;
 mod subcommand;
 mod subspans;
+mod unknown_keys;

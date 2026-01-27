@@ -317,11 +317,6 @@ impl<'a> ValueBuilder<'a> {
         self.schema
     }
 
-    /// Get access to unused keys collected so far.
-    pub fn unused_keys(&self) -> &[UnusedKey] {
-        &self.unused_keys
-    }
-
     /// Import values from an already-parsed ConfigValue tree.
     ///
     /// This walks the tree and calls `set()` for each leaf value, which means:
