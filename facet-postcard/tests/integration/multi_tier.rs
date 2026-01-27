@@ -11,14 +11,14 @@
 #![cfg(feature = "jit")]
 
 use facet::Facet;
-use facet_postcard::{PostcardError, PostcardParser, from_slice};
+use facet_postcard::{PostcardParser, from_slice};
 use postcard::to_allocvec as postcard_to_vec;
 use serde::{Deserialize, Serialize};
 
 /// Helper to test deserialization at a specific tier
 mod tier_helpers {
     use super::*;
-    use facet_format::{DeserializeError, FormatDeserializer};
+    use facet_format::{DeserializeError, DeserializeErrorKind, FormatDeserializer};
 
     /// Deserialize using Tier-0 (pure reflection, no JIT)
     pub fn deserialize_tier0<'de, T>(input: &'de [u8]) -> Result<T, DeserializeError>
@@ -39,9 +39,13 @@ mod tier_helpers {
         let mut parser = PostcardParser::new(input);
         match facet_format::jit::try_deserialize::<T, _>(&mut parser) {
             Some(result) => result,
-            None => Err(DeserializeError::Unsupported(
-                "Tier-1 JIT not supported for this type".into(),
-            )),
+            None => Err(DeserializeError {
+                span: None,
+                path: None,
+                kind: DeserializeErrorKind::Unsupported {
+                    message: "Tier-1 JIT not supported for this type".into(),
+                },
+            }),
         }
     }
 
