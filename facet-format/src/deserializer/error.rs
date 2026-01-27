@@ -1,10 +1,8 @@
-extern crate alloc;
-
-use alloc::borrow::Cow;
-use core::fmt;
 use facet_core::Shape;
 use facet_path::Path;
 use facet_reflect::{ReflectError, Span};
+use std::borrow::Cow;
+use std::fmt;
 
 /// Error produced by the format deserializer.
 ///
@@ -546,6 +544,9 @@ impl DeserializeErrorKind {
             kind: self,
         }
     }
+
+    // Note: there is no "without_span" method because you should always indicate
+    // where an error happened. Hope this helps.
 }
 
 impl DeserializeError {

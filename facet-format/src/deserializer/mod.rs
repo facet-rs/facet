@@ -1,6 +1,4 @@
-extern crate alloc;
-
-use core::marker::PhantomData;
+use std::marker::PhantomData;
 
 use facet_core::{Facet, Shape};
 use facet_reflect::{HeapValue, Partial, Span};
@@ -10,26 +8,27 @@ use crate::{FormatParser, ParseEvent};
 mod error;
 pub use error::*;
 
-/// Convert a ReflectError to a DeserializeError with the current span.
-///
-/// This macro takes a reference to self to access `last_span`, ensuring
-/// reflection errors always have span information attached.
+/// Convert a ReflectError to a DeserializeError with span and path.
 ///
 /// # Usage
 /// ```ignore
-/// reflect!(self, wip.begin_nth_field(0), "raw capture types must be Raw(Cow<'a, str>)")?;
-/// reflect!(self, wip.end(), "raw capture types must be Raw(Cow<'a, str>)")?;
+/// wip = reflect!(self, wip, begin_nth_field(0), "begin Raw's inner field");
+/// wip = reflect!(self, wip, end(), "end Raw wrapper");
 /// ```
 macro_rules! reflect {
-    ($self:expr, $expr:expr, $context:literal) => {
-        $expr.map_err(|e| {
-            crate::DeserializeErrorKind::Reflect {
-                inner: e,
-                context: $context,
+    ($self:expr, $wip:expr, $method:ident($($args:expr),*), $context:literal) => {{
+        let path = $wip.path();
+        $wip.$method($($args),*).map_err(|e| {
+            crate::DeserializeError {
+                span: Some($self.last_span),
+                path: Some(path),
+                kind: crate::DeserializeErrorKind::Reflect {
+                    inner: e,
+                    context: $context,
+                },
             }
-            .with_span($self.last_span)
-        })
-    };
+        })?
+    }};
 }
 
 mod setters;
@@ -37,11 +36,11 @@ mod setters;
 // TODO: uncomment all the below:
 
 // mod dynamic;
-// mod eenum;
+mod eenum;
 mod entry;
-// mod pointer;
-// mod scalar_matches;
-// mod struct_simple;
+mod pointer;
+mod scalar_matches;
+mod struct_simple;
 // mod struct_with_flatten;
 // mod validate;
 
@@ -309,7 +308,11 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
     }
 
     /// Make an error using the last span, the current path of the given wip.
-    fn mk_err(&self, wip: Partial<'input, BORROW>, kind: DeserializeErrorKind) -> DeserializeError {
+    fn mk_err(
+        &self,
+        wip: &Partial<'input, BORROW>,
+        kind: DeserializeErrorKind,
+    ) -> DeserializeError {
         DeserializeError {
             span: Some(self.last_span),
             path: Some(wip.path()),

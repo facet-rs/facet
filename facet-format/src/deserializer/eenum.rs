@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use facet_core::{Characteristic, Def, Field, StructKind, Type, UserType};
+use facet_core::{Characteristic, Def, EnumType, Field, StructKind, Type, UserType};
 use facet_reflect::Partial;
 use facet_solver::VariantsByFormat;
 
@@ -79,17 +79,23 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                 ScalarValue::I64(discriminant) => {
                     wip.select_variant(discriminant)
                         .map_err(|error| DeserializeError {
-                            span,
+                            span: Some(span),
                             path: None,
-                            kind: DeserializeErrorKind::Reflect(error),
+                            kind: DeserializeErrorKind::Reflect {
+                                inner: error,
+                                context: "selecting numeric enum variant",
+                            },
                         })?
                 }
                 ScalarValue::U64(discriminant) => {
                     wip.select_variant(discriminant as i64)
                         .map_err(|error| DeserializeError {
-                            span,
+                            span: Some(span),
                             path: None,
-                            kind: DeserializeErrorKind::Reflect(error),
+                            kind: DeserializeErrorKind::Reflect {
+                                inner: error,
+                                context: "selecting numeric enum variant",
+                            },
                         })?
                 }
                 ScalarValue::Str(str_discriminant) => {
@@ -103,22 +109,31 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                     })?;
                     wip.select_variant(discriminant)
                         .map_err(|error| DeserializeError {
-                            span,
+                            span: Some(span),
                             path: None,
-                            kind: DeserializeErrorKind::Reflect(error),
+                            kind: DeserializeErrorKind::Reflect {
+                                inner: error,
+                                context: "selecting numeric enum variant from string",
+                            },
                         })?
                 }
                 _ => {
-                    return Err(DeserializeError::unsupported(
-                        "Unexpected ScalarValue".to_string(),
+                    return Err(self.mk_err(
+                        &wip,
+                        DeserializeErrorKind::Unsupported {
+                            message: "unexpected scalar for numeric enum".into(),
+                        },
                     ));
                 }
             };
             self.parser.next_event()?;
             Ok(wip)
         } else {
-            Err(DeserializeError::unsupported(
-                "Expected integer value".to_string(),
+            Err(self.mk_err(
+                &wip,
+                DeserializeErrorKind::Unsupported {
+                    message: "expected integer value for numeric enum".into(),
+                },
             ))
         }
     }
@@ -137,11 +152,13 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
             let enum_def = match &shape.ty {
                 Type::User(UserType::Enum(e)) => e,
                 _ => {
-                    return Err(DeserializeErrorKind::TypeMismatch {
-                        expected: shape,
-                        got: "non-enum type".into(),
-                    }
-                    .without_source_span_yes_i_feel_bad());
+                    return Err(self.mk_err(
+                        &wip,
+                        DeserializeErrorKind::TypeMismatch {
+                            expected: shape,
+                            got: "non-enum type".into(),
+                        },
+                    ));
                 }
             };
 
@@ -212,11 +229,13 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
             let enum_def = match &shape.ty {
                 Type::User(UserType::Enum(e)) => e,
                 _ => {
-                    return Err(DeserializeErrorKind::TypeMismatch {
-                        expected: shape,
-                        got: "non-enum type".into(),
-                    }
-                    .without_source_span_yes_i_feel_bad());
+                    return Err(self.mk_err(
+                        wip,
+                        DeserializeErrorKind::TypeMismatch {
+                            expected: shape,
+                            got: "non-enum type".into(),
+                        },
+                    ));
                 }
             };
 
@@ -312,11 +331,13 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         let enum_def = match &shape.ty {
             Type::User(UserType::Enum(e)) => e,
             _ => {
-                return Err(DeserializeErrorKind::TypeMismatch {
-                    expected: shape,
-                    got: "non-enum type".into(),
-                }
-                .without_source_span_yes_i_feel_bad());
+                return Err(self.mk_err(
+                    wip,
+                    DeserializeErrorKind::TypeMismatch {
+                        expected: shape,
+                        got: "non-enum type".into(),
+                    },
+                ));
             }
         };
         let is_using_other_fallback =
@@ -377,9 +398,6 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         mut wip: Partial<'input, BORROW>,
         tag_key: &'static str,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
-        use alloc::string::ToString;
-        use alloc::vec::Vec;
-
         // Step 1: Probe to find the tag value (handles out-of-order fields)
         let evidence = self.collect_evidence()?;
 
@@ -411,7 +429,14 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         // For cow-like enums, redirect Borrowed -> Owned when borrowing is disabled
         let enum_def = match &wip.shape().ty {
             Type::User(UserType::Enum(e)) => e,
-            _ => return Err(DeserializeError::unsupported("expected enum")),
+            _ => {
+                return Err(self.mk_err(
+                    wip,
+                    DeserializeErrorKind::Unsupported {
+                        message: "expected enum for internally tagged".into(),
+                    },
+                ));
+            }
         };
         let actual_variant = cow_redirect_variant_name::<BORROW>(enum_def, &variant_name);
         wip = wip.select_variant_named(actual_variant)?;
@@ -579,34 +604,43 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         mut wip: Partial<'input, BORROW>,
         enum_def: &'static facet_core::EnumType,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
-        use alloc::format;
+        // Capture path early for error reporting
+        let path = wip.path();
+        let mk_err = |this: &Self, kind: DeserializeErrorKind| DeserializeError {
+            span: Some(this.last_span),
+            path: Some(path.clone()),
+            kind,
+        };
 
         // Get the variant name from FieldKey
         let field_event = self.expect_event("enum field key")?;
         let variant_name = match field_event {
-            ParseEvent::FieldKey(key) => key.name.ok_or_else(|| DeserializeError {
-                span: Some(self.last_span),
-                path: None,
-                kind: DeserializeErrorKind::UnexpectedToken {
-                    expected: "variant name",
-                    got: "unit key".into(),
-                },
+            ParseEvent::FieldKey(key) => key.name.ok_or_else(|| {
+                mk_err(
+                    self,
+                    DeserializeErrorKind::UnexpectedToken {
+                        expected: "variant name",
+                        got: "unit key".into(),
+                    },
+                )
             })?,
             ParseEvent::StructEnd => {
                 // Empty struct - this shouldn't happen for valid enums
-                return Err(DeserializeError::unsupported(
-                    "unexpected empty struct for enum",
+                return Err(mk_err(
+                    self,
+                    DeserializeErrorKind::Unsupported {
+                        message: "unexpected empty struct for enum".into(),
+                    },
                 ));
             }
             _ => {
-                return Err(DeserializeError {
-                    span: Some(self.last_span),
-                    path: None,
-                    kind: DeserializeErrorKind::UnexpectedToken {
+                return Err(mk_err(
+                    self,
+                    DeserializeErrorKind::UnexpectedToken {
                         expected: "field key for enum variant",
                         got: field_event.kind_name().into(),
                     },
-                });
+                ));
             }
         };
 
@@ -616,7 +650,13 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
             .iter()
             .find(|v| v.name == variant_name.as_ref())
             .ok_or_else(|| {
-                DeserializeError::unsupported(format!("unknown variant: {variant_name}"))
+                mk_err(
+                    self,
+                    DeserializeErrorKind::UnknownVariant {
+                        variant: variant_name.clone(),
+                        enum_name: enum_def.type_identifier,
+                    },
+                )
             })?;
 
         match variant.data.kind {
@@ -758,9 +798,6 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
-        use alloc::format;
-        use alloc::vec;
-
         // Hint to non-self-describing parsers that a Result enum is expected
         // Result is encoded as a 2-variant enum: Ok (index 0) and Err (index 1)
         let variant_hints = vec![
@@ -855,9 +892,6 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
-        use alloc::vec;
-        use facet_core::Characteristic;
-
         let variant = wip.selected_variant().ok_or_else(|| DeserializeError {
             span: Some(self.last_span),
             path: None,
@@ -881,8 +915,11 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
             }
             StructKind::TupleStruct | StructKind::Tuple => {
                 // Multi-element tuple variant - not yet supported in this context
-                return Err(DeserializeError::unsupported(
-                    "multi-element tuple variants in flatten not yet supported",
+                return Err(self.mk_err(
+                    wip,
+                    DeserializeErrorKind::Unsupported {
+                        message: "multi-element tuple variants in flatten not yet supported".into(),
+                    },
                 ));
             }
             StructKind::Unit => {
@@ -996,8 +1033,6 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         tag_key: &'static str,
         content_key: &'static str,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
-        use alloc::string::ToString;
-
         // Step 1: Probe to find the tag value (handles out-of-order fields)
         let evidence = self.collect_evidence()?;
 
@@ -1015,21 +1050,27 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         // Step 2: Consume StructStart
         let event = self.expect_event("value")?;
         if !matches!(event, ParseEvent::StructStart(_)) {
-            return Err(DeserializeError {
-                span: Some(self.last_span),
-                path: None,
-                kind: DeserializeErrorKind::UnexpectedToken {
+            return Err(self.mk_err(
+                wip,
+                DeserializeErrorKind::UnexpectedToken {
                     expected: "struct for adjacently tagged enum",
                     got: event.kind_name().into(),
                 },
-            });
+            ));
         }
 
         // Step 3: Select the variant
         // For cow-like enums, redirect Borrowed -> Owned when borrowing is disabled
         let enum_def = match &wip.shape().ty {
             Type::User(UserType::Enum(e)) => e,
-            _ => return Err(DeserializeError::unsupported("expected enum")),
+            _ => {
+                return Err(self.mk_err(
+                    wip,
+                    DeserializeErrorKind::Unsupported {
+                        message: "expected enum for adjacently tagged".into(),
+                    },
+                ));
+            }
         };
         let actual_variant = cow_redirect_variant_name::<BORROW>(enum_def, &variant_name);
         wip = wip.select_variant_named(actual_variant)?;
@@ -1234,11 +1275,11 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                 let mut ordered_field_index = 0usize;
 
                 // Track currently open path segments for flatten handling
-                let mut open_segments: alloc::vec::Vec<(&str, bool)> = alloc::vec::Vec::new();
+                let mut open_segments: Vec<(&str, bool)> = Vec::new();
 
                 // Track which top-level fields have been touched
-                let mut touched_fields: alloc::collections::BTreeSet<&str> =
-                    alloc::collections::BTreeSet::new();
+                let mut touched_fields: std::collections::BTreeSet<&str> =
+                    std::collections::BTreeSet::new();
 
                 loop {
                     let event = self.expect_event("value")?;
@@ -1419,10 +1460,16 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         let shape = wip.shape();
-        let variants_by_format = VariantsByFormat::from_shape(shape)
-            .ok_or_else(|| DeserializeError::unsupported("expected enum type for untagged"))?;
+        let variants_by_format = VariantsByFormat::from_shape(shape).ok_or_else(|| {
+            self.mk_err(
+                wip.clone(),
+                DeserializeErrorKind::Unsupported {
+                    message: "expected enum type for untagged".into(),
+                },
+            )
+        })?;
 
-        let event = expect_peek(deser, "value")?;
+        let event = self.expect_peek("value")?;
 
         match &event {
             ParseEvent::Scalar(scalar) => {
@@ -1432,7 +1479,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                 {
                     wip = wip.select_variant_named(variant.effective_name())?;
                     // Consume the null
-                    expect_event(deser, "value")?;
+                    self.expect_event("value")?;
                     return Ok(wip);
                 }
 
@@ -1448,7 +1495,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                         if s.as_ref() == variant_display_name {
                             wip = wip.select_variant_named(variant.effective_name())?;
                             // Consume the string
-                            expect_event(deser, "value")?;
+                            self.expect_event("value")?;
                             return Ok(wip);
                         }
                     }
@@ -1458,7 +1505,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                 for (variant, inner_shape) in &variants_by_format.scalar_variants {
                     if scalar_matches_shape(scalar, inner_shape) {
                         wip = wip.select_variant_named(variant.effective_name())?;
-                        wip = deserialize_enum_variant_content(deser, wip)?;
+                        wip = self.deserialize_enum_variant_content(wip)?;
                         return Ok(wip);
                     }
                 }
@@ -1477,13 +1524,13 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                         wip = wip.select_variant_named(variant.effective_name())?;
                         // Try to deserialize - if this fails, it will bubble up as an error.
                         // TODO: Implement proper variant trying with backtracking for better error messages
-                        wip = deserialize_enum_variant_content(deser, wip)?;
+                        wip = self.deserialize_enum_variant_content(wip)?;
                         return Ok(wip);
                     }
                 }
 
                 Err(DeserializeError {
-                    span: Some(deser.last_span),
+                    span: Some(self.last_span),
                     path: None,
                     kind: DeserializeErrorKind::UnexpectedToken {
                         expected: "matching untagged variant for scalar",
@@ -1493,11 +1540,11 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
             }
             ParseEvent::StructStart(_) => {
                 // For struct input, use solve_variant for proper field-based matching
-                match solve_variant(deser, shape)? {
+                match self.solve_variant(shape)? {
                     Some(variant_name) => {
                         // Successfully identified which variant matches based on fields
                         wip = wip.select_variant_named(variant_name)?;
-                        wip = deserialize_enum_variant_content(deser, wip)?;
+                        wip = self.deserialize_enum_variant_content(wip)?;
                         Ok(wip)
                     }
                     None => {
@@ -1505,11 +1552,14 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                         // (we can't backtrack parser state to try multiple variants)
                         if let Some(variant) = variants_by_format.struct_variants.first() {
                             wip = wip.select_variant_named(variant.effective_name())?;
-                            wip = deserialize_enum_variant_content(deser, wip)?;
+                            wip = self.deserialize_enum_variant_content(wip)?;
                             Ok(wip)
                         } else {
-                            Err(DeserializeError::unsupported(
-                                "no struct variant found for untagged enum with struct input",
+                            Err(self.mk_err(
+                                wip,
+                                DeserializeErrorKind::Unsupported {
+                                    message: "no struct variant found for untagged enum with struct input".into(),
+                                },
                             ))
                         }
                     }
@@ -1519,22 +1569,25 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                 // For sequence input, use first tuple variant
                 if let Some((variant, _arity)) = variants_by_format.tuple_variants.first() {
                     wip = wip.select_variant_named(variant.effective_name())?;
-                    wip = deserialize_enum_variant_content(deser, wip)?;
+                    wip = self.deserialize_enum_variant_content(wip)?;
                     return Ok(wip);
                 }
 
-                Err(DeserializeError::unsupported(
-                    "no tuple variant found for untagged enum with sequence input",
+                Err(self.mk_err(
+                    wip,
+                    DeserializeErrorKind::Unsupported {
+                        message: "no tuple variant found for untagged enum with sequence input"
+                            .into(),
+                    },
                 ))
             }
-            _ => Err(DeserializeError {
-                span: Some(deser.last_span),
-                path: None,
-                kind: DeserializeErrorKind::UnexpectedToken {
+            _ => Err(self.mk_err(
+                wip,
+                DeserializeErrorKind::UnexpectedToken {
                     expected: "scalar, struct, or sequence for untagged enum",
                     got: event.kind_name().into(),
                 },
-            }),
+            )),
         }
     }
 
@@ -1547,11 +1600,11 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
     /// `captured_tag` is `None` for unit tags (bare `@` in Styx).
     pub(crate) fn deserialize_other_variant_with_captured_tag(
         &mut self,
-        wip: Partial<'input, BORROW>,
+        mut wip: Partial<'input, BORROW>,
         captured_tag: Option<&'input str>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         let variant = wip.selected_variant().ok_or_else(|| DeserializeError {
-            span: Some(deser.last_span),
+            span: Some(self.last_span),
             path: None,
             kind: DeserializeErrorKind::UnexpectedToken {
                 expected: "selected variant",
@@ -1567,7 +1620,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
 
         // If no tag field and no content field, fall back to regular deserialization
         if tag_field_idx.is_none() && content_field_idx.is_none() {
-            return deserialize_enum_variant_content(deser, wip);
+            return self.deserialize_enum_variant_content(wip);
         }
 
         // Set the tag field to the captured tag name (or None for unit tags)
@@ -1575,7 +1628,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
             wip = wip.begin_nth_field(idx)?;
             match captured_tag {
                 Some(tag) => {
-                    wip = set_string_value(deser, wip, Cow::Borrowed(tag))?;
+                    wip = self.set_string_value(wip, Cow::Borrowed(tag))?;
                 }
                 None => {
                     // Unit tag - set the field to its default (None for Option<String>)
@@ -1588,16 +1641,16 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         // Deserialize the content into the content field (if present)
         if let Some(idx) = content_field_idx {
             wip = wip.begin_nth_field(idx)?;
-            wip = deserialize_into(deser, wip)?;
+            wip = self.deserialize_into(wip)?;
             wip = wip.end()?;
         } else {
             // No content field - the payload must be Unit
-            let event = expect_peek(deser, "value")?;
+            let event = self.expect_peek("value")?;
             if matches!(event, ParseEvent::Scalar(ScalarValue::Unit)) {
-                expect_event(deser, "value")?; // consume Unit
+                self.expect_event("value")?; // consume Unit
             } else {
                 return Err(DeserializeError {
-                    span: Some(deser.last_span),
+                    span: Some(self.last_span),
                     path: None,
                     kind: DeserializeErrorKind::UnexpectedToken {
                         expected: "unit payload for #[facet(other)] variant without #[facet(content)]",

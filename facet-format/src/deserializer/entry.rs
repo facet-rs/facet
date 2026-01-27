@@ -1,13 +1,11 @@
-extern crate alloc;
-
 use std::borrow::Cow;
 
 use facet_core::{Def, Shape, StructKind, Type, UserType};
 use facet_reflect::Partial;
 
 use crate::{
-    ContainerKind, DeserializeError, DeserializeErrorKind, FormatDeserializer, ParseEvent,
-    ScalarTypeHint, ScalarValue,
+    ContainerKind, DeserializeError, DeserializeErrorKind, FieldEvidence, FieldLocationHint,
+    FormatDeserializer, ParseEvent, ScalarTypeHint, ScalarValue,
 };
 
 impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
@@ -33,17 +31,9 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
 
             // The raw type is a tuple struct like RawJson(Cow<str>)
             // Access field 0 (the Cow<str>) and set it
-            wip = reflect!(
-                self,
-                wip.begin_nth_field(0),
-                "raw capture types must be Raw(Cow<'a, str>)"
-            )?;
+            wip = reflect!(self, wip, begin_nth_field(0), "begin Raw's inner field");
             wip = self.set_string_value(wip, Cow::Borrowed(raw))?;
-            wip = reflect!(
-                self,
-                wip.end(),
-                "raw capture types must be Raw(Cow<'a, str>)"
-            )?;
+            wip = reflect!(self, wip, end(), "end Raw wrapper");
 
             return Ok(wip);
         }
@@ -55,11 +45,8 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         wip = wip_returned;
         if has_proxy {
             wip = self.deserialize_into(wip)?;
-            return reflect!(
-                self,
-                wip.end(),
-                "ending container-level proxy deserialization"
-            );
+            wip = reflect!(self, wip, end(), "end container-level proxy");
+            return Ok(wip);
         }
 
         // Check for field-level proxy (opaque types with proxy attribute)
@@ -71,7 +58,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         {
             wip = wip.begin_custom_deserialization_with_format(format_ns)?;
             wip = self.deserialize_into(wip)?;
-            wip = reflect!(self, wip.end(), "ending field-level proxy deserialization")?;
+            wip = reflect!(self, wip, end(), "end field-level proxy");
             return Ok(wip);
         }
 
@@ -87,9 +74,9 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
 
         // Priority 1: Check for builder_shape (immutable collections like Bytes -> BytesMut)
         if shape.builder_shape.is_some() {
-            wip = reflect!(self, wip.begin_inner(), "beginning builder_shape inner")?;
+            wip = reflect!(self, wip, begin_inner(), "begin builder inner");
             wip = self.deserialize_into(wip)?;
-            wip = reflect!(self, wip.end(), "ending builder_shape inner")?;
+            wip = reflect!(self, wip, end(), "end builder inner");
             return Ok(wip);
         }
 
@@ -111,13 +98,9 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                 Def::List(_) | Def::Map(_) | Def::Set(_) | Def::Array(_)
             )
         {
-            wip = reflect!(
-                self,
-                wip.begin_inner(),
-                "beginning transparent wrapper inner"
-            )?;
+            wip = reflect!(self, wip, begin_inner(), "begin transparent wrapper");
             wip = self.deserialize_into(wip)?;
-            wip = reflect!(self, wip.end(), "ending transparent wrapper inner")?;
+            wip = reflect!(self, wip, end(), "end transparent wrapper");
             return Ok(wip);
         }
 
@@ -133,60 +116,43 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                             // Populate span from parser's current position
                             wip = reflect!(
                                 self,
-                                wip.begin_field(field.effective_name()),
-                                "metadata container span field"
-                            )?;
+                                wip,
+                                begin_field(field.effective_name()),
+                                "begin span field"
+                            );
                             let span = self.last_span;
-                            wip = reflect!(self, wip.begin_some(), "metadata container span Some")?;
+                            wip = reflect!(self, wip, begin_some(), "span Some");
                             // Set the span struct fields
-                            wip = reflect!(
-                                self,
-                                wip.begin_field("offset"),
-                                "metadata container span.offset"
-                            )?;
-                            wip = reflect!(
-                                self,
-                                wip.set(span.offset),
-                                "metadata container span.offset value"
-                            )?;
-                            wip = reflect!(self, wip.end(), "metadata container span.offset")?;
-                            wip = reflect!(
-                                self,
-                                wip.begin_field("len"),
-                                "metadata container span.len"
-                            )?;
-                            wip = reflect!(
-                                self,
-                                wip.set(span.len),
-                                "metadata container span.len value"
-                            )?;
-                            wip = reflect!(self, wip.end(), "metadata container span.len")?;
-                            wip = reflect!(self, wip.end(), "metadata container span Some")?;
-                            wip = reflect!(self, wip.end(), "metadata container span field")?;
+                            wip = reflect!(self, wip, begin_field("offset"), "begin span.offset");
+                            wip = reflect!(self, wip, set(span.offset), "set span.offset");
+                            wip = reflect!(self, wip, end(), "end span.offset");
+                            wip = reflect!(self, wip, begin_field("len"), "begin span.len");
+                            wip = reflect!(self, wip, set(span.len), "set span.len");
+                            wip = reflect!(self, wip, end(), "end span.len");
+                            wip = reflect!(self, wip, end(), "end span Some");
+                            wip = reflect!(self, wip, end(), "end span field");
                         }
                         Some(_other) => {
                             // Other metadata types (doc, tag) - set to default for now
                             wip = reflect!(
                                 self,
-                                wip.begin_field(field.effective_name()),
-                                "metadata container other field"
-                            )?;
-                            wip = reflect!(
-                                self,
-                                wip.set_default(),
-                                "metadata container other field default"
-                            )?;
-                            wip = reflect!(self, wip.end(), "metadata container other field")?;
+                                wip,
+                                begin_field(field.effective_name()),
+                                "begin metadata field"
+                            );
+                            wip = reflect!(self, wip, set_default(), "set metadata default");
+                            wip = reflect!(self, wip, end(), "end metadata field");
                         }
                         None => {
                             // This is the value field - recurse into it
                             wip = reflect!(
                                 self,
-                                wip.begin_field(field.effective_name()),
-                                "metadata container value field"
-                            )?;
+                                wip,
+                                begin_field(field.effective_name()),
+                                "begin value field"
+                            );
                             wip = self.deserialize_into(wip)?;
-                            wip = reflect!(self, wip.end(), "metadata container value field")?;
+                            wip = reflect!(self, wip, end(), "end value field");
                         }
                     }
                 }
@@ -348,9 +314,9 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
             wip = wip.set_default()?;
         } else {
             // Some(value)
-            wip = reflect!(self, wip.begin_some(), "Option::Some")?;
+            wip = reflect!(self, wip, begin_some(), "Option::Some");
             wip = self.deserialize_into(wip)?;
-            wip = reflect!(self, wip.end(), "Option::Some")?;
+            wip = reflect!(self, wip, end(), "Option::Some");
         }
         Ok(wip)
     }
@@ -404,9 +370,9 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         // Plain tuple structs without the transparent attribute use array syntax.
         if field_count == 1 && wip.shape().is_transparent() {
             // Unwrap into field "0" and deserialize directly
-            wip = reflect!(self, wip.begin_field("0"), "transparent newtype field 0")?;
+            wip = reflect!(self, wip, begin_field("0"), "begin newtype field");
             wip = self.deserialize_into(wip)?;
-            wip = reflect!(self, wip.end(), "transparent newtype field 0")?;
+            wip = reflect!(self, wip, end(), "end newtype field");
             return Ok(wip);
         }
 
@@ -474,10 +440,9 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
             }
 
             // Select field by index
-            let field_name = alloc::string::ToString::to_string(&index);
-            wip = reflect!(self, wip.begin_field(&field_name), "tuple field by index")?;
+            wip = reflect!(self, wip, begin_nth_field(index), "begin tuple field");
             wip = self.deserialize_into(wip)?;
-            wip = reflect!(self, wip.end(), "tuple field by index")?;
+            wip = reflect!(self, wip, end(), "end tuple field");
             index += 1;
         }
 
@@ -490,14 +455,12 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
     /// collect field names and their scalar values, then restores the position.
     pub(crate) fn collect_evidence(
         &mut self,
-    ) -> Result<alloc::vec::Vec<crate::FieldEvidence<'input>>, DeserializeError> {
-        use crate::{FieldEvidence, FieldLocationHint};
-
+    ) -> Result<Vec<FieldEvidence<'input>>, DeserializeError> {
         let save_point = self.parser.save();
 
-        let mut evidence = alloc::vec::Vec::new();
+        let mut evidence = Vec::new();
         let mut depth = 0i32;
-        let mut pending_field_name: Option<alloc::borrow::Cow<'input, str>> = None;
+        let mut pending_field_name: Option<Cow<'input, str>> = None;
 
         // Read through the structure
         loop {
@@ -667,9 +630,9 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
             }
 
             trace!("deserialize_list: deserializing list item");
-            wip = reflect!(self, wip.begin_list_item(), "list item")?;
+            wip = reflect!(self, wip, begin_list_item(), "begin list item");
             wip = self.deserialize_into(wip)?;
-            wip = reflect!(self, wip.end(), "list item")?;
+            wip = reflect!(self, wip, end(), "end list item");
         }
 
         trace!("deserialize_list: completed");
@@ -738,9 +701,9 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                 break;
             }
 
-            wip = reflect!(self, wip.begin_nth_field(index), "array element")?;
+            wip = reflect!(self, wip, begin_nth_field(index), "begin array element");
             wip = self.deserialize_into(wip)?;
-            wip = reflect!(self, wip.end(), "array element")?;
+            wip = reflect!(self, wip, end(), "end array element");
             index += 1;
         }
 
@@ -793,9 +756,9 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                 break;
             }
 
-            wip = reflect!(self, wip.begin_set_item(), "set item")?;
+            wip = reflect!(self, wip, begin_set_item(), "begin set item");
             wip = self.deserialize_into(wip)?;
-            wip = reflect!(self, wip.end(), "set item")?;
+            wip = reflect!(self, wip, end(), "end set item");
         }
 
         Ok(wip)
@@ -823,14 +786,14 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                         ParseEvent::StructEnd => break,
                         ParseEvent::FieldKey(key) => {
                             // Begin key
-                            wip = reflect!(self, wip.begin_key(), "map key")?;
+                            wip = reflect!(self, wip, begin_key(), "begin map key");
                             wip = self.deserialize_map_key(wip, key.name, key.doc, key.tag)?;
-                            wip = reflect!(self, wip.end(), "map key")?;
+                            wip = reflect!(self, wip, end(), "end map key");
 
                             // Begin value
-                            wip = reflect!(self, wip.begin_value(), "map value")?;
+                            wip = reflect!(self, wip, begin_value(), "begin map value");
                             wip = self.deserialize_into(wip)?;
-                            wip = reflect!(self, wip.end(), "map value")?;
+                            wip = reflect!(self, wip, end(), "end map value");
                         }
                         other => {
                             return Err(DeserializeError {
@@ -858,14 +821,14 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                             self.expect_event("value")?;
 
                             // Deserialize key
-                            wip = reflect!(self, wip.begin_key(), "map key (ordered)")?;
+                            wip = reflect!(self, wip, begin_key(), "begin ordered map key");
                             wip = self.deserialize_into(wip)?;
-                            wip = reflect!(self, wip.end(), "map key (ordered)")?;
+                            wip = reflect!(self, wip, end(), "end ordered map key");
 
                             // Deserialize value
-                            wip = reflect!(self, wip.begin_value(), "map value (ordered)")?;
+                            wip = reflect!(self, wip, begin_value(), "begin ordered map value");
                             wip = self.deserialize_into(wip)?;
-                            wip = reflect!(self, wip.end(), "map value (ordered)")?;
+                            wip = reflect!(self, wip, end(), "end ordered map value");
                         }
                         other => {
                             return Err(DeserializeError {
@@ -1038,52 +1001,55 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                         // This is the doc field - set it from the doc parameter
                         wip = reflect!(
                             self,
-                            wip.begin_field(field.effective_name()),
-                            "map key doc field"
-                        )?;
+                            wip,
+                            begin_field(field.effective_name()),
+                            "begin doc field"
+                        );
                         if let Some(ref doc_lines) = doc {
                             // Set as Some(Vec<String>)
-                            wip = reflect!(self, wip.begin_some(), "map key doc Some")?;
-                            wip = reflect!(self, wip.init_list(), "map key doc list")?;
+                            wip = reflect!(self, wip, begin_some(), "doc Some");
+                            wip = reflect!(self, wip, init_list(), "doc list");
                             for line in doc_lines {
-                                wip = reflect!(self, wip.begin_list_item(), "map key doc line")?;
+                                wip = reflect!(self, wip, begin_list_item(), "begin doc line");
                                 wip = self.set_string_value(wip, line.clone())?;
-                                wip = reflect!(self, wip.end(), "map key doc line")?;
+                                wip = reflect!(self, wip, end(), "end doc line");
                             }
-                            wip = reflect!(self, wip.end(), "map key doc Some")?;
+                            wip = reflect!(self, wip, end(), "end doc Some");
                         } else {
                             // Set as None
-                            wip = reflect!(self, wip.set_default(), "map key doc None")?;
+                            wip = reflect!(self, wip, set_default(), "doc None");
                         }
-                        wip = reflect!(self, wip.end(), "map key doc field")?;
+                        wip = reflect!(self, wip, end(), "end doc field");
                     } else if field.metadata_kind() == Some("tag") {
                         // This is the tag field - set it from the tag parameter
                         wip = reflect!(
                             self,
-                            wip.begin_field(field.effective_name()),
-                            "map key tag field"
-                        )?;
+                            wip,
+                            begin_field(field.effective_name()),
+                            "begin tag field"
+                        );
                         if let Some(ref tag_name) = tag {
                             // Set as Some(String)
-                            wip = reflect!(self, wip.begin_some(), "map key tag Some")?;
+                            wip = reflect!(self, wip, begin_some(), "tag Some");
                             wip = self.set_string_value(wip, tag_name.clone())?;
-                            wip = reflect!(self, wip.end(), "map key tag Some")?;
+                            wip = reflect!(self, wip, end(), "end tag Some");
                         } else {
                             // Set as None (not a tagged key)
-                            wip = reflect!(self, wip.set_default(), "map key tag None")?;
+                            wip = reflect!(self, wip, set_default(), "tag None");
                         }
-                        wip = reflect!(self, wip.end(), "map key tag field")?;
+                        wip = reflect!(self, wip, end(), "end tag field");
                     } else if field.metadata_kind().is_none() {
                         // This is the value field - recurse with the key and tag.
                         // Doc is already consumed by this container, but tag may be needed
                         // by a nested metadata container (e.g., Documented<ObjectKey>).
                         wip = reflect!(
                             self,
-                            wip.begin_field(field.effective_name()),
-                            "map key value field"
-                        )?;
+                            wip,
+                            begin_field(field.effective_name()),
+                            "begin key value field"
+                        );
                         wip = self.deserialize_map_key(wip, key.clone(), None, tag.clone())?;
-                        wip = reflect!(self, wip.end(), "map key value field")?;
+                        wip = reflect!(self, wip, end(), "end key value field");
                     }
                 }
             }
@@ -1101,9 +1067,9 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                 }
                 Some(inner_key) => {
                     // Named key -> Some(inner)
-                    wip = reflect!(self, wip.begin_some(), "map key Option::Some")?;
+                    wip = reflect!(self, wip, begin_some(), "Option key Some");
                     wip = self.deserialize_map_key(wip, Some(inner_key), None, None)?;
-                    wip = reflect!(self, wip.end(), "map key Option::Some")?;
+                    wip = reflect!(self, wip, end(), "Option key Some");
                     return Ok(wip);
                 }
             }
@@ -1124,9 +1090,9 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         // which are handled directly.
         let is_pointer = matches!(shape.def, Def::Pointer(_));
         if shape.inner.is_some() && !is_pointer {
-            wip = reflect!(self, wip.begin_inner(), "map key transparent inner")?;
+            wip = reflect!(self, wip, begin_inner(), "begin transparent key inner");
             wip = self.deserialize_map_key(wip, Some(key), None, None)?;
-            wip = reflect!(self, wip.end(), "map key transparent inner")?;
+            wip = reflect!(self, wip, end(), "end transparent key inner");
             return Ok(wip);
         }
 
