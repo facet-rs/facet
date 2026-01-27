@@ -73,7 +73,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
-        let event = self.parser.peek_event()?;
+        let event = self.peek_event_opt()?;
 
         if let Some(ref event) = event
             && let ParseEventKind::Scalar(scalar) = &event.kind
@@ -101,7 +101,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                     ));
                 }
             };
-            self.parser.next_event()?;
+            self.expect_event("numeric enum value")?;
             Ok(wip)
         } else {
             Err(self.mk_err(
@@ -442,7 +442,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 match event.kind {
                     ParseEventKind::StructEnd => break,
                     ParseEventKind::FieldKey(_) => {
-                        self.parser.skip_value()?;
+                        self.skip_value()?;
                     }
                     other => {
                         return Err(DeserializeError {
@@ -476,14 +476,14 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                         Some(name) => name.as_ref(),
                         None => {
                             // Skip unit keys in struct context
-                            self.parser.skip_value()?;
+                            self.skip_value()?;
                             continue;
                         }
                     };
 
                     // Skip the tag field - already used
                     if key_name == tag_key {
-                        self.parser.skip_value()?;
+                        self.skip_value()?;
                         continue;
                     }
 
@@ -529,7 +529,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                             }
                         } else {
                             // Unknown field - skip
-                            self.parser.skip_value()?;
+                            self.skip_value()?;
                         }
                     } else {
                         // Simple case: direct field lookup by name/alias
@@ -545,7 +545,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                                 .end()?;
                         } else {
                             // Unknown field - skip
-                            self.parser.skip_value()?;
+                            self.skip_value()?;
                         }
                     }
                 }
@@ -943,7 +943,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                         Some(name) => name.as_ref(),
                         None => {
                             // Skip unit keys in struct context
-                            self.parser.skip_value()?;
+                            self.skip_value()?;
                             continue;
                         }
                     };
@@ -962,7 +962,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                         fields_set[idx] = true;
                     } else {
                         // Unknown field - skip
-                        self.parser.skip_value()?;
+                        self.skip_value()?;
                     }
                 }
                 other => {
@@ -1071,21 +1071,21 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                         Some(name) => name.as_ref(),
                         None => {
                             // Skip unit keys
-                            self.parser.skip_value()?;
+                            self.skip_value()?;
                             continue;
                         }
                     };
 
                     if key_name == tag_key {
                         // Skip the tag field - already used
-                        self.parser.skip_value()?;
+                        self.skip_value()?;
                     } else if key_name == content_key {
                         // Deserialize the content
                         wip = self.deserialize_enum_variant_content(wip)?;
                         content_seen = true;
                     } else {
                         // Unknown field - skip
-                        self.parser.skip_value()?;
+                        self.skip_value()?;
                     }
                 }
                 other => {
@@ -1290,7 +1290,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                             let key_name = match &key.name {
                                 Some(name) => name.as_ref(),
                                 None => {
-                                    self.parser.skip_value()?;
+                                    self.skip_value()?;
                                     continue;
                                 }
                             };
@@ -1333,7 +1333,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                                         wip = wip.end()?;
                                     }
                                 } else {
-                                    self.parser.skip_value()?;
+                                    self.skip_value()?;
                                 }
                             } else {
                                 let field_info = variant_fields
@@ -1348,7 +1348,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                                         .end()?;
                                     fields_set[idx] = true;
                                 } else {
-                                    self.parser.skip_value()?;
+                                    self.skip_value()?;
                                 }
                             }
                         }
@@ -1533,26 +1533,25 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             }
             ParseEventKind::StructStart(_) => {
                 // For struct input, use solve_variant for proper field-based matching
-                let solve_result =
-                    crate::solve_variant(shape, &mut *self.parser).map_err(|e| match e {
-                        crate::SolveVariantError::Parser(e) => {
-                            // Convert ParseError to DeserializeError, adding path
-                            DeserializeError::from(e).set_path(wip.path())
-                        }
-                        crate::SolveVariantError::NoMatch => self.mk_err(
-                            &wip,
-                            DeserializeErrorKind::NoMatchingVariant {
-                                enum_shape: shape,
-                                input_kind: "struct",
-                            },
-                        ),
-                        crate::SolveVariantError::SchemaError(e) => self.mk_err(
-                            &wip,
-                            DeserializeErrorKind::Solver {
-                                message: e.to_string().into(),
-                            },
-                        ),
-                    })?;
+                let solve_result = self.solve_variant(shape).map_err(|e| match e {
+                    crate::SolveVariantError::Parser(e) => {
+                        // Convert ParseError to DeserializeError, adding path
+                        DeserializeError::from(e).set_path(wip.path())
+                    }
+                    crate::SolveVariantError::NoMatch => self.mk_err(
+                        &wip,
+                        DeserializeErrorKind::NoMatchingVariant {
+                            enum_shape: shape,
+                            input_kind: "struct",
+                        },
+                    ),
+                    crate::SolveVariantError::SchemaError(e) => self.mk_err(
+                        &wip,
+                        DeserializeErrorKind::Solver {
+                            message: e.to_string().into(),
+                        },
+                    ),
+                })?;
 
                 if let Some(outcome) = solve_result {
                     // Successfully identified which variant matches based on fields

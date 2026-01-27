@@ -124,9 +124,11 @@
 //! the nesting structure clearer.
 
 use std::marker::PhantomData;
+use std::sync::Arc;
 
 use facet_core::{Facet, Shape};
 use facet_reflect::{HeapValue, Partial, Span};
+use facet_solver::{KeyResult, Schema, Solver};
 
 use crate::{FormatParser, ParseEvent};
 
@@ -163,15 +165,7 @@ mod path_navigator;
 mod validate;
 
 /// Size of the event buffer for batched parsing.
-#[allow(dead_code)]
-const EVENT_BUFFER_SIZE: usize = 64;
-
-/// An event paired with its source span.
-#[allow(dead_code)]
-struct SpannedEvent<'de> {
-    event: ParseEvent<'de>,
-    span: Span,
-}
+const EVENT_BUFFER_SIZE: usize = 128;
 
 /// Generic deserializer that drives a format-specific parser directly into `Partial`.
 ///
@@ -188,12 +182,24 @@ pub struct FormatDeserializer<'parser, 'input, const BORROW: bool> {
     /// The span of the most recently consumed event (for error reporting).
     last_span: Span,
 
-    /// Buffer for batched event reading, with spans.
-    #[allow(dead_code)]
-    event_buffer: Vec<SpannedEvent<'input>>,
+    /// Buffer for batched event reading.
+    event_buffer: Vec<ParseEvent<'input>>,
+    /// Number of valid events in the buffer (events are stored at indices 0..event_count).
+    event_count: usize,
     /// Read position in the buffer.
-    #[allow(dead_code)]
     event_read_pos: usize,
+
+    /// Events recorded since save() was called (for restore).
+    recording: Option<Vec<ParseEvent<'input>>>,
+
+    /// Whether the parser provides spans in events (detected at first refill).
+    /// If false, we fall back to single-event mode to call current_span().
+    parser_provides_spans: Option<bool>,
+
+    /// Whether the parser is non-self-describing (postcard, etc.).
+    /// For these formats, we bypass buffering entirely because hints
+    /// clear the parser's peeked event and must take effect immediately.
+    is_non_self_describing: Option<bool>,
 
     _marker: PhantomData<&'input ()>,
 }
@@ -205,7 +211,11 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, true> {
             parser: Box::new(parser),
             last_span: Span { offset: 0, len: 0 },
             event_buffer: Vec::with_capacity(EVENT_BUFFER_SIZE),
+            event_count: 0,
             event_read_pos: 0,
+            recording: None,
+            parser_provides_spans: None,
+            is_non_self_describing: None,
             _marker: PhantomData,
         }
     }
@@ -218,7 +228,11 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
             parser: Box::new(parser),
             last_span: Span { offset: 0, len: 0 },
             event_buffer: Vec::with_capacity(EVENT_BUFFER_SIZE),
+            event_count: 0,
             event_read_pos: 0,
+            recording: None,
+            parser_provides_spans: None,
+            is_non_self_describing: None,
             _marker: PhantomData,
         }
     }
@@ -397,21 +411,154 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
 }
 
 impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BORROW> {
+    /// Refill the event buffer from the parser (batched mode for parsers with spans).
+    #[inline]
+    fn refill_buffer_batched(&mut self) -> Result<(), ParseError> {
+        // Ensure buffer has capacity
+        if self.event_buffer.len() < EVENT_BUFFER_SIZE {
+            self.event_buffer.resize_with(EVENT_BUFFER_SIZE, || {
+                ParseEvent::from_kind(crate::ParseEventKind::StructEnd)
+            });
+        }
+        self.event_count = self.parser.next_events(&mut self.event_buffer)?;
+        self.event_read_pos = 0;
+        Ok(())
+    }
+
+    /// Refill with a single event (for parsers without spans in events).
+    #[inline]
+    fn refill_buffer_single(&mut self) -> Result<(), ParseError> {
+        // Ensure buffer has at least one slot
+        if self.event_buffer.is_empty() {
+            self.event_buffer
+                .push(ParseEvent::from_kind(crate::ParseEventKind::StructEnd));
+        }
+
+        if let Some(event) = self.parser.next_event()? {
+            // Get span from parser's current_span
+            let span = self
+                .parser
+                .current_span()
+                .unwrap_or(Span { offset: 0, len: 0 });
+            self.event_buffer[0] = ParseEvent::new(event.kind, span);
+            self.event_count = 1;
+        } else {
+            self.event_count = 0;
+        }
+        self.event_read_pos = 0;
+        Ok(())
+    }
+
+    /// Refill the event buffer from the parser.
+    #[inline]
+    fn refill_buffer(&mut self) -> Result<(), ParseError> {
+        // Note: this is only called for self-describing formats.
+        // Non-self-describing formats bypass buffering in expect_event/peek_event_opt.
+        match self.parser_provides_spans {
+            Some(true) => self.refill_buffer_batched(),
+            Some(false) => self.refill_buffer_single(),
+            None => {
+                // First refill - check if events have spans to decide batched vs single mode
+                self.refill_buffer_single()?;
+                if self.event_count > 0 {
+                    // Check if the event has a valid span
+                    self.parser_provides_spans = Some(self.event_buffer[0].span.len > 0);
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// Check if parser is non-self-describing (caches result).
+    #[inline]
+    fn is_non_self_describing(&mut self) -> bool {
+        *self
+            .is_non_self_describing
+            .get_or_insert_with(|| !self.parser.is_self_describing())
+    }
+
     /// Read the next event, returning an error if EOF is reached.
     #[inline]
     fn expect_event(
         &mut self,
         expected: &'static str,
     ) -> Result<ParseEvent<'input>, DeserializeError> {
-        let event = self.parser.next_event()?.ok_or_else(|| {
-            DeserializeErrorKind::UnexpectedEof { expected }.with_span(self.last_span)
-        })?;
+        // For non-self-describing formats, bypass buffering entirely
+        // because hints clear the parser's peeked event and must take effect immediately
+        if self.is_non_self_describing() {
+            let event = self.parser.next_event()?.ok_or_else(|| {
+                DeserializeErrorKind::UnexpectedEof { expected }.with_span(self.last_span)
+            })?;
+            trace!(?event, expected, "expect_event (direct): got event");
+            if let Some(span) = self.parser.current_span() {
+                self.last_span = span;
+            }
+            return Ok(event);
+        }
+
+        // Check if we need to refill the buffer
+        if self.event_read_pos >= self.event_count {
+            self.refill_buffer()?;
+            if self.event_count == 0 {
+                return Err(
+                    DeserializeErrorKind::UnexpectedEof { expected }.with_span(self.last_span)
+                );
+            }
+        }
+
+        // Read from buffer
+        let event = self.event_buffer[self.event_read_pos].clone();
+        self.event_read_pos += 1;
+
+        // Record event if we're in save mode
+        if let Some(ref mut rec) = self.recording {
+            rec.push(event.clone());
+        }
+
         trace!(?event, expected, "expect_event: got event");
-        // Capture the span of the consumed event for error reporting
-        if let Some(span) = self.parser.current_span() {
-            self.last_span = span;
+        // Capture the span from the event for error reporting (if event has a valid span)
+        if event.span.len > 0 {
+            self.last_span = event.span;
         }
         Ok(event)
+    }
+
+    /// Save the current position for later restore.
+    #[inline]
+    fn save(&mut self) {
+        self.recording = Some(Vec::new());
+    }
+
+    /// Restore to the saved position, replaying recorded events.
+    #[inline]
+    fn restore(&mut self) {
+        if let Some(mut recorded) = self.recording.take() {
+            // Prepend recorded events to the unread portion of the buffer
+            // recorded is in order [first, second, ...], we need to insert at event_read_pos
+            let remaining = self.event_count - self.event_read_pos;
+            let new_count = recorded.len() + remaining;
+
+            // Ensure buffer has enough capacity
+            if self.event_buffer.len() < new_count {
+                self.event_buffer.resize_with(new_count, || {
+                    ParseEvent::from_kind(crate::ParseEventKind::StructEnd)
+                });
+            }
+
+            // Move remaining events to the end
+            for i in (0..remaining).rev() {
+                self.event_buffer[recorded.len() + i] =
+                    self.event_buffer[self.event_read_pos + i].clone();
+            }
+
+            // Copy recorded events to the front
+            for (i, event) in recorded.drain(..).enumerate() {
+                self.event_buffer[i] = event;
+            }
+
+            self.event_read_pos = 0;
+            self.event_count = new_count;
+        }
     }
 
     /// Peek at the next event, returning an error if EOF is reached.
@@ -420,11 +567,224 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         &mut self,
         expected: &'static str,
     ) -> Result<ParseEvent<'input>, DeserializeError> {
-        let event = self.parser.peek_event()?.ok_or_else(|| {
+        self.peek_event_opt()?.ok_or_else(|| {
             DeserializeErrorKind::UnexpectedEof { expected }.with_span(self.last_span)
-        })?;
-        trace!(?event, expected, "expect_peek: peeked event");
-        Ok(event)
+        })
+    }
+
+    /// Peek at the next event, returning None if EOF is reached.
+    #[inline]
+    fn peek_event_opt(&mut self) -> Result<Option<ParseEvent<'input>>, DeserializeError> {
+        // For non-self-describing formats, bypass buffering entirely
+        if self.is_non_self_describing() {
+            let event = self.parser.peek_event()?;
+            if let Some(ref e) = event {
+                trace!(?e, "peek_event_opt (direct): peeked event");
+            }
+            return Ok(event);
+        }
+
+        // Check if we need to refill the buffer
+        if self.event_read_pos >= self.event_count {
+            self.refill_buffer()?;
+            if self.event_count == 0 {
+                return Ok(None);
+            }
+        }
+
+        // Peek from buffer (don't advance read_pos)
+        let event = self.event_buffer[self.event_read_pos].clone();
+        trace!(?event, "peek_event_opt: peeked event");
+        Ok(Some(event))
+    }
+
+    /// Skip the current value using the buffer, returning start and end offsets.
+    #[inline]
+    fn skip_value_with_span(&mut self) -> Result<(usize, usize), DeserializeError> {
+        use crate::ParseEventKind;
+
+        // Peek to get the start offset
+        let first_event = self.expect_peek("value to skip")?;
+        let start_offset = first_event.span.offset;
+        #[allow(unused_assignments)]
+        let mut end_offset = 0;
+
+        let mut depth = 0i32;
+        loop {
+            let event = self.expect_event("value to skip")?;
+            // Track the end of each event
+            end_offset = event.span.offset + event.span.len;
+
+            match &event.kind {
+                ParseEventKind::StructStart(_) | ParseEventKind::SequenceStart(_) => {
+                    depth += 1;
+                }
+                ParseEventKind::StructEnd | ParseEventKind::SequenceEnd => {
+                    depth -= 1;
+                    if depth <= 0 {
+                        return Ok((start_offset, end_offset));
+                    }
+                }
+                ParseEventKind::Scalar(_) if depth == 0 => {
+                    return Ok((start_offset, end_offset));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Skip the current value using the buffer.
+    #[inline]
+    fn skip_value(&mut self) -> Result<(), DeserializeError> {
+        self.skip_value_with_span()?;
+        Ok(())
+    }
+
+    /// Capture the raw bytes of the current value without parsing it.
+    #[inline]
+    fn capture_raw(&mut self) -> Result<Option<&'input str>, DeserializeError> {
+        let Some(input) = self.parser.input() else {
+            // Parser doesn't provide raw input access
+            self.skip_value()?;
+            return Ok(None);
+        };
+
+        let (start, end) = self.skip_value_with_span()?;
+
+        // Slice the input
+        if end <= input.len() {
+            // SAFETY: We trust the parser's spans to be valid UTF-8 boundaries
+            let raw = core::str::from_utf8(&input[start..end]).map_err(|_| {
+                DeserializeErrorKind::InvalidValue {
+                    message: "raw capture contains invalid UTF-8".into(),
+                }
+                .with_span(self.last_span)
+            })?;
+            Ok(Some(raw))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Read the next event, returning None if EOF is reached.
+    #[inline]
+    fn next_event_opt(&mut self) -> Result<Option<ParseEvent<'input>>, DeserializeError> {
+        // Check if we need to refill the buffer
+        if self.event_read_pos >= self.event_count {
+            self.refill_buffer()?;
+            if self.event_count == 0 {
+                return Ok(None);
+            }
+        }
+
+        // Read from buffer
+        let event = self.event_buffer[self.event_read_pos].clone();
+        self.event_read_pos += 1;
+
+        // Record event if we're in save mode
+        if let Some(ref mut rec) = self.recording {
+            rec.push(event.clone());
+        }
+
+        // Capture the span from the event for error reporting (if event has a valid span)
+        if event.span.len > 0 {
+            self.last_span = event.span;
+        }
+        Ok(Some(event))
+    }
+
+    /// Attempt to solve which enum variant matches the input.
+    ///
+    /// This uses save/restore to read ahead and determine the variant without
+    /// consuming the events permanently. After this returns, the position
+    /// is restored so the actual deserialization can proceed.
+    pub(crate) fn solve_variant(
+        &mut self,
+        shape: &'static facet_core::Shape,
+    ) -> Result<Option<crate::SolveOutcome>, crate::SolveVariantError> {
+        let schema = Arc::new(Schema::build_auto(shape)?);
+        let mut solver = Solver::new(&schema);
+
+        // Save position and start recording events
+        self.save();
+
+        let mut depth = 0i32;
+        let mut in_struct = false;
+        let mut expecting_value = false;
+
+        let result = loop {
+            let event = self.next_event_opt().map_err(|e| {
+                crate::SolveVariantError::Parser(ParseError::new(
+                    e.span.unwrap_or(self.last_span),
+                    e.kind,
+                ))
+            })?;
+
+            let Some(event) = event else {
+                // EOF reached
+                self.restore();
+                return Ok(None);
+            };
+
+            match event.kind {
+                crate::ParseEventKind::StructStart(_) => {
+                    depth += 1;
+                    if depth == 1 {
+                        in_struct = true;
+                    }
+                }
+                crate::ParseEventKind::StructEnd => {
+                    depth -= 1;
+                    if depth == 0 {
+                        // Done with top-level struct
+                        break None;
+                    }
+                }
+                crate::ParseEventKind::SequenceStart(_) => {
+                    depth += 1;
+                }
+                crate::ParseEventKind::SequenceEnd => {
+                    depth -= 1;
+                }
+                crate::ParseEventKind::FieldKey(ref key) => {
+                    if depth == 1 && in_struct {
+                        // Top-level field - feed to solver
+                        if let Some(ref name) = key.name {
+                            match solver.see_key(name.clone()) {
+                                KeyResult::Solved(handle) => {
+                                    break Some(handle);
+                                }
+                                KeyResult::Unknown
+                                | KeyResult::Unambiguous { .. }
+                                | KeyResult::Ambiguous { .. } => {}
+                            }
+                        }
+                        expecting_value = true;
+                    }
+                }
+                crate::ParseEventKind::Scalar(_)
+                | crate::ParseEventKind::OrderedField
+                | crate::ParseEventKind::VariantTag(_) => {
+                    if expecting_value {
+                        expecting_value = false;
+                    }
+                }
+            }
+        };
+
+        // Restore position regardless of outcome
+        self.restore();
+
+        match result {
+            Some(handle) => {
+                let idx = handle.index();
+                Ok(Some(crate::SolveOutcome {
+                    schema,
+                    resolution_index: idx,
+                }))
+            }
+            None => Ok(None),
+        }
     }
 
     /// Check if a field matches a given name by effective name or alias.

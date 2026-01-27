@@ -34,7 +34,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         let struct_type_has_default = wip.shape().is(Characteristic::Default);
 
         // Peek at the next event first to handle EOF and null gracefully
-        let maybe_event = self.parser.peek_event()?;
+        let maybe_event = self.peek_event_opt()?;
 
         // Handle EOF (empty input / comment-only files): use Default if available
         if maybe_event.is_none() {
@@ -110,7 +110,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                         Some(name) => name.as_ref(),
                         None => {
                             // Skip unit keys in struct context
-                            self.parser.skip_value()?;
+                            self.skip_value()?;
                             continue;
                         }
                     };
@@ -153,7 +153,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                     } else {
                         // Unknown field - skip it
                         trace!(field_name = ?key_name, "deserialize_struct_simple: skipping unknown field");
-                        self.parser.skip_value()?;
+                        self.skip_value()?;
                     }
                 }
                 other => {

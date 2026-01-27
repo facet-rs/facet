@@ -25,7 +25,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         // Raw capture types are tuple structs with a single Cow<str> field
         if self.parser.raw_capture_shape() == Some(shape) {
             // Parser doesn't support raw capture (e.g., streaming mode)
-            let Some(raw) = self.parser.capture_raw()? else {
+            let Some(raw) = self.capture_raw()? else {
                 return Err(DeserializeErrorKind::RawCaptureNotSupported { shape }
                     .with_span(self.last_span));
             };
@@ -451,7 +451,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     pub(crate) fn collect_evidence(
         &mut self,
     ) -> Result<Vec<FieldEvidence<'input>>, DeserializeError> {
-        let save_point = self.parser.save();
+        self.save();
 
         let mut evidence = Vec::new();
         let mut depth = 0i32;
@@ -459,8 +459,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
         // Read through the structure
         loop {
-            let event = self.parser.next_event()?;
-            let Some(event) = event else { break };
+            let Ok(event) = self.expect_event("evidence") else {
+                break;
+            };
 
             match event.kind {
                 ParseEventKind::StructStart(_) => {
@@ -538,7 +539,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             });
         }
 
-        self.parser.restore(save_point);
+        self.restore();
         Ok(evidence)
     }
 
@@ -934,11 +935,11 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                                     found_scalar = Some(scalar);
                                 } else {
                                     // Skip non-scalar argument
-                                    self.parser.skip_value()?;
+                                    self.skip_value()?;
                                 }
                             } else {
                                 // Skip other fields (_node_name, _arguments, properties, etc.)
-                                self.parser.skip_value()?;
+                                self.skip_value()?;
                             }
                         }
                         _ => {

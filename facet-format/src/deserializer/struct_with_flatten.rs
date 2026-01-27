@@ -33,7 +33,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         let struct_type_has_default = wip.shape().is(Characteristic::Default);
 
         // Peek at the next event first to handle EOF and null gracefully
-        let maybe_event = self.parser.peek_event()?;
+        let maybe_event = self.peek_event_opt()?;
 
         // Handle EOF (empty input / comment-only files): use Default if available
         if maybe_event.is_none() {
@@ -148,7 +148,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                     let key_name = match &key.name {
                         Some(name) => name.as_ref(),
                         None => {
-                            self.parser.skip_value()?;
+                            self.skip_value()?;
                             continue;
                         }
                     };
@@ -249,7 +249,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                             },
                         ));
                     } else {
-                        self.parser.skip_value()?;
+                        self.skip_value()?;
                     }
                 }
                 other => {
