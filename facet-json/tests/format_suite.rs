@@ -301,7 +301,10 @@ impl FormatSuite for JsonSlice {
 
     fn error_type_mismatch_object_to_array() -> CaseSpec {
         // Object provided where array expected
-        CaseSpec::expect_error(r#"{"items":{"wrong":"structure"}}"#, "type mismatch")
+        CaseSpec::expect_error(
+            r#"{"items":{"wrong":"structure"}}"#,
+            "got object, expected array",
+        )
     }
 
     fn error_missing_required_field() -> CaseSpec {

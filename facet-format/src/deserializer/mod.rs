@@ -222,6 +222,9 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, true> {
     {
         let wip: Partial<'input, true> = Partial::alloc::<T>()?;
         let partial = self.deserialize_into(wip)?;
+        // SpanGuard must cover build() and materialize() which can fail with ReflectError.
+        // Created AFTER deserialize_into so last_span points to the final token.
+        let _guard = SpanGuard::new(self.last_span);
         let heap_value: HeapValue<'input, true> = partial.build()?;
         Ok(heap_value.materialize::<T>()?)
     }
@@ -247,6 +250,9 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, true> {
         let wip = wip.begin_deferred()?;
         let partial = self.deserialize_into(wip)?;
         let partial = partial.finish_deferred()?;
+        // SpanGuard must cover build() and materialize() which can fail with ReflectError.
+        // Created AFTER deserialize_into so last_span points to the final token.
+        let _guard = SpanGuard::new(self.last_span);
         let heap_value: HeapValue<'input, true> = partial.build()?;
         Ok(heap_value.materialize::<T>()?)
     }
@@ -269,6 +275,10 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
         };
 
         let partial = self.deserialize_into(wip)?;
+
+        // SpanGuard must cover build() and materialize() which can fail with ReflectError.
+        // Created AFTER deserialize_into so last_span points to the final token.
+        let _guard = SpanGuard::new(self.last_span);
         let heap_value: HeapValue<'input, false> = partial.build()?;
 
         // SAFETY: HeapValue<'input, false> contains no borrowed data because BORROW=false.
@@ -310,6 +320,10 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
         let wip = wip.begin_deferred()?;
         let partial = self.deserialize_into(wip)?;
         let partial = partial.finish_deferred()?;
+
+        // SpanGuard must cover build() and materialize() which can fail with ReflectError.
+        // Created AFTER deserialize_into so last_span points to the final token.
+        let _guard = SpanGuard::new(self.last_span);
         let heap_value: HeapValue<'input, false> = partial.build()?;
 
         // SAFETY: HeapValue<'input, false> contains no borrowed data because BORROW=false.
@@ -344,6 +358,10 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
         };
 
         let partial = self.deserialize_into_with_shape(wip, source_shape)?;
+
+        // SpanGuard must cover build() and materialize() which can fail with ReflectError.
+        // Created AFTER deserialize_into so last_span points to the final token.
+        let _guard = SpanGuard::new(self.last_span);
         let heap_value: HeapValue<'input, false> = partial.build()?;
 
         #[allow(unsafe_code)]
