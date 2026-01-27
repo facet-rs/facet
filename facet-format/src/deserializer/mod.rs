@@ -157,6 +157,9 @@ mod struct_simple;
 /// Not-so-simple struct deserialization (flatten)
 mod struct_with_flatten;
 
+/// Path navigation for flattened struct deserialization
+mod path_navigator;
+
 // mod validate;
 
 /// Generic deserializer that drives a format-specific parser directly into `Partial`.
