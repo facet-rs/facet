@@ -290,11 +290,11 @@ fn fill_defaults_from_value_schema(
 /// We do NOT fill integers with 0 here because fields may have explicit defaults.
 fn get_default_from_value_schema(schema: &ValueSchema, _path_prefix: &str) -> Option<ConfigValue> {
     match schema {
-        ValueSchema::Option { .. } => Some(ConfigValue::Null(Sourced {
-            value: (),
-            span: None,
-            provenance: Some(Provenance::Default),
-        })),
+        ValueSchema::Option { .. } => {
+            // Don't fill Option fields - let facet handle the default
+            // Fields may have #[facet(default)] that we can't see from the Schema
+            None
+        }
         ValueSchema::Vec { .. } => {
             // Vec without explicit default - don't provide one
             None

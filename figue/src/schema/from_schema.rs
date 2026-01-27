@@ -769,7 +769,7 @@ fn arg_level_from_fields_with_prefix(
 
                 let sub = Subcommand {
                     name: cli_name.clone(),
-                    effective_name,
+                    effective_name: effective_name.clone(),
                     docs,
                     args: args_schema,
                     is_flattened_tuple,
@@ -785,7 +785,7 @@ fn arg_level_from_fields_with_prefix(
                     .with_label(variant_ctx, "defined again here"));
                 }
                 seen_subcommands.insert(cli_name.clone(), variant_ctx.clone());
-                subcommands.insert(cli_name.clone(), sub);
+                subcommands.insert(effective_name, sub);
             }
 
             continue;
