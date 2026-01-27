@@ -474,9 +474,9 @@ impl<A: TokenSource<'static>> StreamingJsonParser<A> {
                 Err(self.unexpected(&token, "value"))
             }
             AdapterToken::Comma | AdapterToken::Colon => Err(self.unexpected(&token, "value")),
-            AdapterToken::Eof => Err(JsonError::new(
-                JsonErrorKind::UnexpectedEof { expected: "value" },
+            AdapterToken::Eof => Err(ParseError::new(
                 token.span,
+                DeserializeErrorKind::UnexpectedEof { expected: "value" },
             )),
         }
     }
@@ -503,11 +503,11 @@ impl<A: TokenSource<'static>> StreamingJsonParser<A> {
                             ))));
                         }
                         AdapterToken::Eof => {
-                            return Err(JsonError::new(
-                                JsonErrorKind::UnexpectedEof {
+                            return Err(ParseError::new(
+                                token.span,
+                                DeserializeErrorKind::UnexpectedEof {
                                     expected: "field name or '}'",
                                 },
-                                token.span,
                             ));
                         }
                         _ => return Err(self.unexpected(&token, "field name or '}'")),
@@ -531,11 +531,11 @@ impl<A: TokenSource<'static>> StreamingJsonParser<A> {
                             return Ok(Some(ParseEvent::StructEnd));
                         }
                         AdapterToken::Eof => {
-                            return Err(JsonError::new(
-                                JsonErrorKind::UnexpectedEof {
+                            return Err(ParseError::new(
+                                token.span,
+                                DeserializeErrorKind::UnexpectedEof {
                                     expected: "',' or '}'",
                                 },
-                                token.span,
                             ));
                         }
                         _ => return Err(self.unexpected(&token, "',' or '}'")),
@@ -550,11 +550,11 @@ impl<A: TokenSource<'static>> StreamingJsonParser<A> {
                             return Ok(Some(ParseEvent::SequenceEnd));
                         }
                         AdapterToken::Eof => {
-                            return Err(JsonError::new(
-                                JsonErrorKind::UnexpectedEof {
+                            return Err(ParseError::new(
+                                token.span,
+                                DeserializeErrorKind::UnexpectedEof {
                                     expected: "value or ']'",
                                 },
-                                token.span,
                             ));
                         }
                         AdapterToken::Comma | AdapterToken::Colon => {
@@ -580,11 +580,11 @@ impl<A: TokenSource<'static>> StreamingJsonParser<A> {
                             return Ok(Some(ParseEvent::SequenceEnd));
                         }
                         AdapterToken::Eof => {
-                            return Err(JsonError::new(
-                                JsonErrorKind::UnexpectedEof {
+                            return Err(ParseError::new(
+                                token.span,
+                                DeserializeErrorKind::UnexpectedEof {
                                     expected: "',' or ']'",
                                 },
-                                token.span,
                             ));
                         }
                         _ => return Err(self.unexpected(&token, "',' or ']'")),

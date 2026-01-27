@@ -68,7 +68,8 @@ pub use jit::JsonJitFormat;
 #[cfg(feature = "axum")]
 pub use axum::{Json, JsonRejection};
 
-pub use parser::{JsonError, JsonParser};
+pub use error::JsonError;
+pub use parser::JsonParser;
 pub use raw_json::RawJson;
 pub use serializer::{
     JsonSerializeError, JsonSerializer, SerializeOptions, peek_to_string, peek_to_string_pretty,

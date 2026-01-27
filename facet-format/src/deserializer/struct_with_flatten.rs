@@ -10,7 +10,7 @@ use crate::{
     DeserializeError, DeserializeErrorKind, FormatDeserializer, ParseEvent, ScalarValue, SpanGuard,
 };
 
-impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
+impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BORROW> {
     /// Deserialize a struct with flattened fields using facet-solver.
     ///
     /// This uses the solver's Schema/Resolution to handle arbitrarily nested

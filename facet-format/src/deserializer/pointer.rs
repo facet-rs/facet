@@ -6,7 +6,7 @@ use crate::{
     ScalarValue, SpanGuard,
 };
 
-impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
+impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BORROW> {
     pub(crate) fn deserialize_pointer(
         &mut self,
         mut wip: Partial<'input, BORROW>,

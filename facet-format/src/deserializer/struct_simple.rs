@@ -5,7 +5,7 @@ use crate::{
     DeserializeError, DeserializeErrorKind, FormatDeserializer, ParseEvent, ScalarValue, SpanGuard,
 };
 
-impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
+impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BORROW> {
     /// Deserialize a struct without flattened fields (simple case).
     pub(crate) fn deserialize_struct_simple(
         &mut self,

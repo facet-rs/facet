@@ -8,7 +8,7 @@ use crate::{
     FormatDeserializer, ParseEvent, ScalarTypeHint, ScalarValue, SpanGuard,
 };
 
-impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
+impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BORROW> {
     /// Main deserialization entry point - deserialize into a Partial.
     pub fn deserialize_into(
         &mut self,

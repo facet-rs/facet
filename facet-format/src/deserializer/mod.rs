@@ -167,8 +167,12 @@ mod validate;
 /// The const generic `BORROW` controls whether string data can be borrowed:
 /// - `BORROW=true`: strings without escapes are borrowed from input
 /// - `BORROW=false`: all strings are owned
-pub struct FormatDeserializer<'input, const BORROW: bool> {
-    parser: Box<dyn FormatParser<'input>>,
+///
+/// The lifetime `'parser` is the lifetime of the parser itself, which may be shorter
+/// than `'input` (e.g., for streaming parsers that produce owned data but contain
+/// references to internal state).
+pub struct FormatDeserializer<'parser, 'input, const BORROW: bool> {
+    parser: Box<dyn FormatParser<'input> + 'parser>,
 
     /// The span of the most recently consumed event (for error reporting).
     last_span: Span,
@@ -176,9 +180,9 @@ pub struct FormatDeserializer<'input, const BORROW: bool> {
     _marker: PhantomData<&'input ()>,
 }
 
-impl<'input> FormatDeserializer<'input, true> {
+impl<'parser, 'input> FormatDeserializer<'parser, 'input, true> {
     /// Create a new deserializer that can borrow strings from input.
-    pub fn new(parser: impl FormatParser<'input> + 'static) -> Self {
+    pub fn new(parser: impl FormatParser<'input> + 'parser) -> Self {
         Self {
             parser: Box::new(parser),
             last_span: Span { offset: 0, len: 0 },
@@ -187,9 +191,9 @@ impl<'input> FormatDeserializer<'input, true> {
     }
 }
 
-impl<'input> FormatDeserializer<'input, false> {
+impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
     /// Create a new deserializer that produces owned strings.
-    pub fn new_owned(parser: impl FormatParser<'input> + 'static) -> Self {
+    pub fn new_owned(parser: impl FormatParser<'input> + 'parser) -> Self {
         Self {
             parser: Box::new(parser),
             last_span: Span { offset: 0, len: 0 },
@@ -198,9 +202,9 @@ impl<'input> FormatDeserializer<'input, false> {
     }
 }
 
-impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
+impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BORROW> {
     /// Consume the facade and return the underlying parser.
-    pub fn into_inner(self) -> Box<dyn FormatParser<'input>> {
+    pub fn into_inner(self) -> Box<dyn FormatParser<'input> + 'parser> {
         self.parser
     }
 
@@ -210,7 +214,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
     }
 }
 
-impl<'input> FormatDeserializer<'input, true> {
+impl<'parser, 'input> FormatDeserializer<'parser, 'input, true> {
     /// Deserialize the next value in the stream into `T`, allowing borrowed strings.
     pub fn deserialize<T>(&mut self) -> Result<T, DeserializeError>
     where
@@ -248,7 +252,7 @@ impl<'input> FormatDeserializer<'input, true> {
     }
 }
 
-impl<'input> FormatDeserializer<'input, false> {
+impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
     /// Deserialize the next value in the stream into `T`, using owned strings.
     pub fn deserialize<T>(&mut self) -> Result<T, DeserializeError>
     where
@@ -351,7 +355,7 @@ impl<'input> FormatDeserializer<'input, false> {
     }
 }
 
-impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
+impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BORROW> {
     /// Read the next event, returning an error if EOF is reached.
     #[inline]
     fn expect_event(

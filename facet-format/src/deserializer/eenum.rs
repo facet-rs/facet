@@ -10,7 +10,7 @@ use crate::{
     deserializer::scalar_matches::scalar_matches_shape,
 };
 
-impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
+impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BORROW> {
     pub(crate) fn deserialize_enum(
         &mut self,
         wip: Partial<'input, BORROW>,

@@ -2,7 +2,7 @@ use facet_reflect::Partial;
 
 use crate::{DeserializeError, DeserializeErrorKind, FormatDeserializer};
 
-impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
+impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BORROW> {
     /// Run validation on a field value.
     ///
     /// This checks for `validate::*` attributes on the field and runs
