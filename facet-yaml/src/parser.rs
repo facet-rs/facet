@@ -8,12 +8,11 @@ extern crate alloc;
 use alloc::{borrow::Cow, format, vec::Vec};
 
 use facet_format::{
-    ContainerKind, FieldKey, FieldLocationHint, FormatParser, ParseEvent, SavePoint, ScalarValue,
+    ContainerKind, DeserializeErrorKind, FieldKey, FieldLocationHint, FormatParser, ParseError,
+    ParseEvent, SavePoint, ScalarValue,
 };
-use saphyr_parser::{Event, Parser, ScalarStyle, Span as SaphyrSpan, StrInput};
-
-use crate::error::{SpanExt, YamlError, YamlErrorKind};
 use facet_reflect::Span;
+use saphyr_parser::{Event, Parser, ScalarStyle, Span as SaphyrSpan, StrInput};
 
 // ============================================================================
 // Parser State
@@ -59,10 +58,17 @@ pub struct YamlParser<'de> {
     replay_buffer: Vec<ParseEvent<'de>>,
 }
 
+/// Convert a saphyr-parser Span to a facet Span.
+fn span_from_saphyr(span: &SaphyrSpan) -> Span {
+    let start = span.start.index();
+    let end = span.end.index();
+    Span::new(start, end.saturating_sub(start))
+}
+
 impl<'de> YamlParser<'de> {
     /// Create a new YAML parser from a string slice.
-    pub fn new(input: &'de str) -> Result<Self, YamlError> {
-        Ok(Self {
+    pub fn new(input: &'de str) -> Self {
+        Self {
             input,
             parser: Parser::new_from_str(input),
             stack: Vec::new(),
@@ -72,7 +78,7 @@ impl<'de> YamlParser<'de> {
             save_counter: 0,
             recording: None,
             replay_buffer: Vec::new(),
-        })
+        }
     }
 
     /// Get the original input string.
@@ -80,23 +86,34 @@ impl<'de> YamlParser<'de> {
         self.input
     }
 
+    /// Get a span pointing to EOF.
+    fn eof_span(&self) -> Span {
+        Span::new(self.input.len(), 0)
+    }
+
     /// Get the next raw event from saphyr, updating span tracking.
-    fn next_raw_event(&mut self) -> Result<Option<(Event<'de>, SaphyrSpan)>, YamlError> {
+    fn next_raw_event(&mut self) -> Result<Option<(Event<'de>, SaphyrSpan)>, ParseError> {
         match self.parser.next_event() {
             Some(Ok((event, span))) => {
-                self.last_span = Some(Span::from_saphyr_span(&span));
+                self.last_span = Some(span_from_saphyr(&span));
                 Ok(Some((event, span)))
             }
-            Some(Err(e)) => Err(
-                YamlError::without_span(YamlErrorKind::Parse(format!("{e}")))
-                    .with_source(self.input),
-            ),
+            Some(Err(e)) => {
+                // saphyr_parser errors have span info via Marker
+                let span = Span::new(e.marker().index(), 1);
+                Err(ParseError::new(
+                    span,
+                    DeserializeErrorKind::InvalidValue {
+                        message: format!("{e}").into(),
+                    },
+                ))
+            }
             None => Ok(None),
         }
     }
 
     /// Skip stream/document start events.
-    fn skip_preamble(&mut self) -> Result<(), YamlError> {
+    fn skip_preamble(&mut self) -> Result<(), ParseError> {
         if self.started {
             return Ok(());
         }
@@ -117,7 +134,7 @@ impl<'de> YamlParser<'de> {
     }
 
     /// Produce a ParseEvent from the underlying saphyr parser.
-    fn produce_event(&mut self) -> Result<Option<ParseEvent<'de>>, YamlError> {
+    fn produce_event(&mut self) -> Result<Option<ParseEvent<'de>>, ParseError> {
         self.skip_preamble()?;
 
         let (event, _span) = match self.next_raw_event()? {
@@ -233,7 +250,7 @@ impl<'de> YamlParser<'de> {
 
     /// Skip the current value (handles nested structures).
     /// This uses next_event_internal to properly handle replay buffers.
-    fn skip_current_value(&mut self) -> Result<(), YamlError> {
+    fn skip_current_value(&mut self) -> Result<(), ParseError> {
         let mut depth = 0i32;
 
         loop {
@@ -258,7 +275,7 @@ impl<'de> YamlParser<'de> {
     }
 
     /// Internal next_event that handles replay buffer and recording.
-    fn next_event_internal(&mut self) -> Result<Option<ParseEvent<'de>>, YamlError> {
+    fn next_event_internal(&mut self) -> Result<Option<ParseEvent<'de>>, ParseError> {
         // First check replay buffer
         if let Some(event) = self.replay_buffer.pop() {
             return Ok(Some(event));
@@ -286,13 +303,11 @@ impl<'de> YamlParser<'de> {
 }
 
 impl<'de> FormatParser<'de> for YamlParser<'de> {
-    type Error = YamlError;
-
-    fn next_event(&mut self) -> Result<Option<ParseEvent<'de>>, Self::Error> {
+    fn next_event(&mut self) -> Result<Option<ParseEvent<'de>>, ParseError> {
         self.next_event_internal()
     }
 
-    fn peek_event(&mut self) -> Result<Option<ParseEvent<'de>>, Self::Error> {
+    fn peek_event(&mut self) -> Result<Option<ParseEvent<'de>>, ParseError> {
         // First check replay buffer (peek at last element without removing)
         if let Some(event) = self.replay_buffer.last().cloned() {
             return Ok(Some(event));
@@ -309,7 +324,7 @@ impl<'de> FormatParser<'de> for YamlParser<'de> {
         Ok(event)
     }
 
-    fn skip_value(&mut self) -> Result<(), Self::Error> {
+    fn skip_value(&mut self) -> Result<(), ParseError> {
         debug_assert!(
             self.event_peek.is_none(),
             "skip_value called while an event is buffered"
@@ -333,7 +348,7 @@ impl<'de> FormatParser<'de> for YamlParser<'de> {
         }
     }
 
-    fn capture_raw(&mut self) -> Result<Option<&'de str>, Self::Error> {
+    fn capture_raw(&mut self) -> Result<Option<&'de str>, ParseError> {
         // YAML doesn't support raw capture (unlike JSON with RawJson)
         self.skip_value()?;
         Ok(None)
