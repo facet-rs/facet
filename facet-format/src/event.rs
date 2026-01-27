@@ -264,18 +264,6 @@ impl<'de> ParseEvent<'de> {
     pub fn new(kind: ParseEventKind<'de>, span: facet_reflect::Span) -> Self {
         Self { kind, span }
     }
-
-    /// Create a new event from just a kind, with a zero span.
-    ///
-    /// This is a temporary helper for parsers that don't yet track spans.
-    /// Prefer using `new()` with proper span information when available.
-    #[inline]
-    pub fn from_kind(kind: ParseEventKind<'de>) -> Self {
-        Self {
-            kind,
-            span: facet_reflect::Span::new(0, 0),
-        }
-    }
 }
 
 /// The kind of parse event.

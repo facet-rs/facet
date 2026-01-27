@@ -123,6 +123,7 @@
 //! This keeps the "begin/deserialize/end" pattern visually grouped and makes
 //! the nesting structure clearer.
 
+use std::collections::VecDeque;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
@@ -164,8 +165,8 @@ mod path_navigator;
 
 mod validate;
 
-/// Size of the event buffer for batched parsing.
-const EVENT_BUFFER_SIZE: usize = 128;
+/// Default size of the event buffer for batched parsing.
+pub const DEFAULT_EVENT_BUFFER_SIZE: usize = 128;
 
 /// Generic deserializer that drives a format-specific parser directly into `Partial`.
 ///
@@ -182,19 +183,13 @@ pub struct FormatDeserializer<'parser, 'input, const BORROW: bool> {
     /// The span of the most recently consumed event (for error reporting).
     last_span: Span,
 
-    /// Buffer for batched event reading.
-    event_buffer: Vec<ParseEvent<'input>>,
-    /// Number of valid events in the buffer (events are stored at indices 0..event_count).
-    event_count: usize,
-    /// Read position in the buffer.
-    event_read_pos: usize,
+    /// Buffer for batched event reading (push back, pop front).
+    event_buffer: VecDeque<ParseEvent<'input>>,
+    /// Maximum number of events to buffer at once.
+    buffer_capacity: usize,
 
     /// Events recorded since save() was called (for restore).
     recording: Option<Vec<ParseEvent<'input>>>,
-
-    /// Whether the parser provides spans in events (detected at first refill).
-    /// If false, we fall back to single-event mode to call current_span().
-    parser_provides_spans: Option<bool>,
 
     /// Whether the parser is non-self-describing (postcard, etc.).
     /// For these formats, we bypass buffering entirely because hints
@@ -207,14 +202,20 @@ pub struct FormatDeserializer<'parser, 'input, const BORROW: bool> {
 impl<'parser, 'input> FormatDeserializer<'parser, 'input, true> {
     /// Create a new deserializer that can borrow strings from input.
     pub fn new(parser: impl FormatParser<'input> + 'parser) -> Self {
+        Self::with_buffer_capacity(parser, DEFAULT_EVENT_BUFFER_SIZE)
+    }
+
+    /// Create a new deserializer with a custom buffer capacity.
+    pub fn with_buffer_capacity(
+        parser: impl FormatParser<'input> + 'parser,
+        buffer_capacity: usize,
+    ) -> Self {
         Self {
             parser: Box::new(parser),
             last_span: Span { offset: 0, len: 0 },
-            event_buffer: Vec::with_capacity(EVENT_BUFFER_SIZE),
-            event_count: 0,
-            event_read_pos: 0,
+            event_buffer: VecDeque::with_capacity(buffer_capacity),
+            buffer_capacity,
             recording: None,
-            parser_provides_spans: None,
             is_non_self_describing: None,
             _marker: PhantomData,
         }
@@ -224,14 +225,20 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, true> {
 impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
     /// Create a new deserializer that produces owned strings.
     pub fn new_owned(parser: impl FormatParser<'input> + 'parser) -> Self {
+        Self::with_buffer_capacity_owned(parser, DEFAULT_EVENT_BUFFER_SIZE)
+    }
+
+    /// Create a new deserializer with a custom buffer capacity.
+    pub fn with_buffer_capacity_owned(
+        parser: impl FormatParser<'input> + 'parser,
+        buffer_capacity: usize,
+    ) -> Self {
         Self {
             parser: Box::new(parser),
             last_span: Span { offset: 0, len: 0 },
-            event_buffer: Vec::with_capacity(EVENT_BUFFER_SIZE),
-            event_count: 0,
-            event_read_pos: 0,
+            event_buffer: VecDeque::with_capacity(buffer_capacity),
+            buffer_capacity,
             recording: None,
-            parser_provides_spans: None,
             is_non_self_describing: None,
             _marker: PhantomData,
         }
@@ -411,62 +418,17 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
 }
 
 impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BORROW> {
-    /// Refill the event buffer from the parser (batched mode for parsers with spans).
-    #[inline]
-    fn refill_buffer_batched(&mut self) -> Result<(), ParseError> {
-        // Ensure buffer has capacity
-        if self.event_buffer.len() < EVENT_BUFFER_SIZE {
-            self.event_buffer.resize_with(EVENT_BUFFER_SIZE, || {
-                ParseEvent::from_kind(crate::ParseEventKind::StructEnd)
-            });
-        }
-        self.event_count = self.parser.next_events(&mut self.event_buffer)?;
-        self.event_read_pos = 0;
-        Ok(())
-    }
-
-    /// Refill with a single event (for parsers without spans in events).
-    #[inline]
-    fn refill_buffer_single(&mut self) -> Result<(), ParseError> {
-        // Ensure buffer has at least one slot
-        if self.event_buffer.is_empty() {
-            self.event_buffer
-                .push(ParseEvent::from_kind(crate::ParseEventKind::StructEnd));
-        }
-
-        if let Some(event) = self.parser.next_event()? {
-            // Get span from parser's current_span
-            let span = self
-                .parser
-                .current_span()
-                .unwrap_or(Span { offset: 0, len: 0 });
-            self.event_buffer[0] = ParseEvent::new(event.kind, span);
-            self.event_count = 1;
-        } else {
-            self.event_count = 0;
-        }
-        self.event_read_pos = 0;
-        Ok(())
-    }
-
     /// Refill the event buffer from the parser.
     #[inline]
     fn refill_buffer(&mut self) -> Result<(), ParseError> {
-        // Note: this is only called for self-describing formats.
-        // Non-self-describing formats bypass buffering in expect_event/peek_event_opt.
-        match self.parser_provides_spans {
-            Some(true) => self.refill_buffer_batched(),
-            Some(false) => self.refill_buffer_single(),
-            None => {
-                // First refill - check if events have spans to decide batched vs single mode
-                self.refill_buffer_single()?;
-                if self.event_count > 0 {
-                    // Check if the event has a valid span
-                    self.parser_provides_spans = Some(self.event_buffer[0].span.len > 0);
-                }
-                Ok(())
-            }
-        }
+        // Use a temporary Vec for next_events, then extend the VecDeque
+        let mut temp = vec![
+            ParseEvent::new(crate::ParseEventKind::StructEnd, Span::new(0, 0));
+            self.buffer_capacity
+        ];
+        let count = self.parser.next_events(&mut temp)?;
+        self.event_buffer.extend(temp.into_iter().take(count));
+        Ok(())
     }
 
     /// Check if parser is non-self-describing (caches result).
@@ -490,25 +452,18 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 DeserializeErrorKind::UnexpectedEof { expected }.with_span(self.last_span)
             })?;
             trace!(?event, expected, "expect_event (direct): got event");
-            if let Some(span) = self.parser.current_span() {
-                self.last_span = span;
-            }
+            self.last_span = event.span;
             return Ok(event);
         }
 
-        // Check if we need to refill the buffer
-        if self.event_read_pos >= self.event_count {
+        // Refill if empty
+        if self.event_buffer.is_empty() {
             self.refill_buffer()?;
-            if self.event_count == 0 {
-                return Err(
-                    DeserializeErrorKind::UnexpectedEof { expected }.with_span(self.last_span)
-                );
-            }
         }
 
-        // Read from buffer
-        let event = self.event_buffer[self.event_read_pos].clone();
-        self.event_read_pos += 1;
+        let event = self.event_buffer.pop_front().ok_or_else(|| {
+            DeserializeErrorKind::UnexpectedEof { expected }.with_span(self.last_span)
+        })?;
 
         // Record event if we're in save mode
         if let Some(ref mut rec) = self.recording {
@@ -516,10 +471,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         }
 
         trace!(?event, expected, "expect_event: got event");
-        // Capture the span from the event for error reporting (if event has a valid span)
-        if event.span.len > 0 {
-            self.last_span = event.span;
-        }
+        self.last_span = event.span;
         Ok(event)
     }
 
@@ -532,32 +484,11 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     /// Restore to the saved position, replaying recorded events.
     #[inline]
     fn restore(&mut self) {
-        if let Some(mut recorded) = self.recording.take() {
-            // Prepend recorded events to the unread portion of the buffer
-            // recorded is in order [first, second, ...], we need to insert at event_read_pos
-            let remaining = self.event_count - self.event_read_pos;
-            let new_count = recorded.len() + remaining;
-
-            // Ensure buffer has enough capacity
-            if self.event_buffer.len() < new_count {
-                self.event_buffer.resize_with(new_count, || {
-                    ParseEvent::from_kind(crate::ParseEventKind::StructEnd)
-                });
+        if let Some(recorded) = self.recording.take() {
+            // Prepend recorded events to front of buffer (in reverse order)
+            for event in recorded.into_iter().rev() {
+                self.event_buffer.push_front(event);
             }
-
-            // Move remaining events to the end
-            for i in (0..remaining).rev() {
-                self.event_buffer[recorded.len() + i] =
-                    self.event_buffer[self.event_read_pos + i].clone();
-            }
-
-            // Copy recorded events to the front
-            for (i, event) in recorded.drain(..).enumerate() {
-                self.event_buffer[i] = event;
-            }
-
-            self.event_read_pos = 0;
-            self.event_count = new_count;
         }
     }
 
@@ -578,24 +509,22 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         // For non-self-describing formats, bypass buffering entirely
         if self.is_non_self_describing() {
             let event = self.parser.peek_event()?;
-            if let Some(ref e) = event {
-                trace!(?e, "peek_event_opt (direct): peeked event");
+            if let Some(ref _e) = event {
+                trace!(?_e, "peek_event_opt (direct): peeked event");
             }
             return Ok(event);
         }
 
-        // Check if we need to refill the buffer
-        if self.event_read_pos >= self.event_count {
+        // Refill if empty
+        if self.event_buffer.is_empty() {
             self.refill_buffer()?;
-            if self.event_count == 0 {
-                return Ok(None);
-            }
         }
 
-        // Peek from buffer (don't advance read_pos)
-        let event = self.event_buffer[self.event_read_pos].clone();
-        trace!(?event, "peek_event_opt: peeked event");
-        Ok(Some(event))
+        let event = self.event_buffer.front().cloned();
+        if let Some(ref _e) = event {
+            trace!(?_e, "peek_event_opt: peeked event");
+        }
+        Ok(event)
     }
 
     /// Skip the current value using the buffer, returning start and end offsets.
@@ -669,27 +598,21 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     /// Read the next event, returning None if EOF is reached.
     #[inline]
     fn next_event_opt(&mut self) -> Result<Option<ParseEvent<'input>>, DeserializeError> {
-        // Check if we need to refill the buffer
-        if self.event_read_pos >= self.event_count {
+        // Refill if empty
+        if self.event_buffer.is_empty() {
             self.refill_buffer()?;
-            if self.event_count == 0 {
-                return Ok(None);
-            }
         }
 
-        // Read from buffer
-        let event = self.event_buffer[self.event_read_pos].clone();
-        self.event_read_pos += 1;
+        let Some(event) = self.event_buffer.pop_front() else {
+            return Ok(None);
+        };
 
         // Record event if we're in save mode
         if let Some(ref mut rec) = self.recording {
             rec.push(event.clone());
         }
 
-        // Capture the span from the event for error reporting (if event has a valid span)
-        if event.span.len > 0 {
-            self.last_span = event.span;
-        }
+        self.last_span = event.span;
         Ok(Some(event))
     }
 

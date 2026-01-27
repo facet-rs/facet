@@ -216,13 +216,11 @@ impl<'de> XdrParser<'de> {
             let discriminant = self.read_u32()?;
             match discriminant {
                 0 => {
-                    return Ok(ParseEvent::from_kind(ParseEventKind::Scalar(
-                        ScalarValue::Null,
-                    )));
+                    return Ok(self.event(ParseEventKind::Scalar(ScalarValue::Null)));
                 }
                 1 => {
                     // Some(value) - return placeholder, deserializer will call hint for inner
-                    return Ok(ParseEvent::from_kind(ParseEventKind::OrderedField));
+                    return Ok(self.event(ParseEventKind::OrderedField));
                 }
                 _ => {
                     return Err(error_from_code(codes::INVALID_OPTIONAL, self.pos - 4));
@@ -247,9 +245,7 @@ impl<'de> XdrParser<'de> {
                 wrapper_start_emitted: false,
                 wrapper_end_emitted: false,
             });
-            return Ok(ParseEvent::from_kind(ParseEventKind::StructStart(
-                ContainerKind::Object,
-            )));
+            return Ok(self.event(ParseEventKind::StructStart(ContainerKind::Object)));
         }
 
         // Check if we have a pending scalar type hint
@@ -264,9 +260,7 @@ impl<'de> XdrParser<'de> {
             self.state_stack.push(ParserState::InSequence {
                 remaining_elements: count,
             });
-            return Ok(ParseEvent::from_kind(ParseEventKind::SequenceStart(
-                ContainerKind::Array,
-            )));
+            return Ok(self.event(ParseEventKind::SequenceStart(ContainerKind::Array)));
         }
 
         // Check if we have a pending fixed-size array hint
@@ -274,9 +268,7 @@ impl<'de> XdrParser<'de> {
             self.state_stack.push(ParserState::InArray {
                 remaining_elements: len,
             });
-            return Ok(ParseEvent::from_kind(ParseEventKind::SequenceStart(
-                ContainerKind::Array,
-            )));
+            return Ok(self.event(ParseEventKind::SequenceStart(ContainerKind::Array)));
         }
 
         // Check if we have a pending struct hint
@@ -284,9 +276,7 @@ impl<'de> XdrParser<'de> {
             self.state_stack.push(ParserState::InStruct {
                 remaining_fields: num_fields,
             });
-            return Ok(ParseEvent::from_kind(ParseEventKind::StructStart(
-                ContainerKind::Object,
-            )));
+            return Ok(self.event(ParseEventKind::StructStart(ContainerKind::Object)));
         }
 
         // Check current state
@@ -303,40 +293,40 @@ impl<'de> XdrParser<'de> {
             ParserState::InStruct { remaining_fields } => {
                 if remaining_fields == 0 {
                     self.state_stack.pop();
-                    Ok(ParseEvent::from_kind(ParseEventKind::StructEnd))
+                    Ok(self.event(ParseEventKind::StructEnd))
                 } else {
                     if let Some(ParserState::InStruct { remaining_fields }) =
                         self.state_stack.last_mut()
                     {
                         *remaining_fields -= 1;
                     }
-                    Ok(ParseEvent::from_kind(ParseEventKind::OrderedField))
+                    Ok(self.event(ParseEventKind::OrderedField))
                 }
             }
             ParserState::InSequence { remaining_elements } => {
                 if remaining_elements == 0 {
                     self.state_stack.pop();
-                    Ok(ParseEvent::from_kind(ParseEventKind::SequenceEnd))
+                    Ok(self.event(ParseEventKind::SequenceEnd))
                 } else {
                     if let Some(ParserState::InSequence { remaining_elements }) =
                         self.state_stack.last_mut()
                     {
                         *remaining_elements -= 1;
                     }
-                    Ok(ParseEvent::from_kind(ParseEventKind::OrderedField))
+                    Ok(self.event(ParseEventKind::OrderedField))
                 }
             }
             ParserState::InArray { remaining_elements } => {
                 if remaining_elements == 0 {
                     self.state_stack.pop();
-                    Ok(ParseEvent::from_kind(ParseEventKind::SequenceEnd))
+                    Ok(self.event(ParseEventKind::SequenceEnd))
                 } else {
                     if let Some(ParserState::InArray { remaining_elements }) =
                         self.state_stack.last_mut()
                     {
                         *remaining_elements -= 1;
                     }
-                    Ok(ParseEvent::from_kind(ParseEventKind::OrderedField))
+                    Ok(self.event(ParseEventKind::OrderedField))
                 }
             }
             ParserState::InEnum {
@@ -356,17 +346,17 @@ impl<'de> XdrParser<'de> {
                     {
                         *field_key_emitted = true;
                     }
-                    Ok(ParseEvent::from_kind(ParseEventKind::FieldKey(
-                        facet_format::FieldKey::new(
+                    Ok(
+                        self.event(ParseEventKind::FieldKey(facet_format::FieldKey::new(
                             Cow::Owned(variant_name),
                             facet_format::FieldLocationHint::KeyValue,
-                        ),
-                    )))
+                        ))),
+                    )
                 } else if !wrapper_start_emitted {
                     match variant_kind {
                         StructKind::Unit => {
                             self.state_stack.pop();
-                            Ok(ParseEvent::from_kind(ParseEventKind::StructEnd))
+                            Ok(self.event(ParseEventKind::StructEnd))
                         }
                         StructKind::Tuple | StructKind::TupleStruct => {
                             if variant_field_count == 1 {
@@ -389,9 +379,7 @@ impl<'de> XdrParser<'de> {
                                 {
                                     *wrapper_start_emitted = true;
                                 }
-                                Ok(ParseEvent::from_kind(ParseEventKind::SequenceStart(
-                                    ContainerKind::Array,
-                                )))
+                                Ok(self.event(ParseEventKind::SequenceStart(ContainerKind::Array)))
                             }
                         }
                         StructKind::Struct => {
@@ -405,9 +393,7 @@ impl<'de> XdrParser<'de> {
                             self.state_stack.push(ParserState::InStruct {
                                 remaining_fields: variant_field_count,
                             });
-                            Ok(ParseEvent::from_kind(ParseEventKind::StructStart(
-                                ContainerKind::Object,
-                            )))
+                            Ok(self.event(ParseEventKind::StructStart(ContainerKind::Object)))
                         }
                     }
                 } else if !wrapper_end_emitted {
@@ -422,20 +408,20 @@ impl<'de> XdrParser<'de> {
                                 {
                                     *wrapper_end_emitted = true;
                                 }
-                                Ok(ParseEvent::from_kind(ParseEventKind::SequenceEnd))
+                                Ok(self.event(ParseEventKind::SequenceEnd))
                             } else {
                                 self.state_stack.pop();
-                                Ok(ParseEvent::from_kind(ParseEventKind::StructEnd))
+                                Ok(self.event(ParseEventKind::StructEnd))
                             }
                         }
                         StructKind::Struct => {
                             self.state_stack.pop();
-                            Ok(ParseEvent::from_kind(ParseEventKind::StructEnd))
+                            Ok(self.event(ParseEventKind::StructEnd))
                         }
                     }
                 } else {
                     self.state_stack.pop();
-                    Ok(ParseEvent::from_kind(ParseEventKind::StructEnd))
+                    Ok(self.event(ParseEventKind::StructEnd))
                 }
             }
         }
@@ -532,7 +518,7 @@ impl<'de> XdrParser<'de> {
                 ScalarValue::Str(Cow::Owned(c.to_string()))
             }
         };
-        Ok(ParseEvent::from_kind(ParseEventKind::Scalar(scalar)))
+        Ok(self.event(ParseEventKind::Scalar(scalar)))
     }
 }
 
@@ -650,5 +636,13 @@ impl<'de> FormatParser<'de> for XdrParser<'de> {
         {
             self.peeked = None;
         }
+    }
+}
+
+impl<'de> XdrParser<'de> {
+    /// Create an event with the current span.
+    #[inline]
+    fn event(&self, kind: ParseEventKind<'de>) -> ParseEvent<'de> {
+        ParseEvent::new(kind, Span::new(self.pos, 1))
     }
 }

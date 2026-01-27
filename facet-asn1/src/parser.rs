@@ -356,9 +356,9 @@ impl<'de> Asn1Parser<'de> {
             let state = self.stack.pop().unwrap();
             self.field_indices.pop();
             if state.is_sequence {
-                return Ok(Some(ParseEvent::from_kind(ParseEventKind::StructEnd)));
+                return Ok(Some(self.event(ParseEventKind::StructEnd)));
             } else {
-                return Ok(Some(ParseEvent::from_kind(ParseEventKind::SequenceEnd)));
+                return Ok(Some(self.event(ParseEventKind::SequenceEnd)));
             }
         }
 
@@ -379,7 +379,7 @@ impl<'de> Asn1Parser<'de> {
                 state.remaining_fields -= 1;
                 state.awaiting_value = true;
             }
-            return Ok(Some(ParseEvent::from_kind(ParseEventKind::OrderedField)));
+            return Ok(Some(self.event(ParseEventKind::OrderedField)));
         }
 
         // Clear the awaiting_value flag since we're about to produce a value
@@ -416,13 +416,13 @@ impl<'de> Asn1Parser<'de> {
                 self.field_indices.push(0);
 
                 if as_array {
-                    Ok(Some(ParseEvent::from_kind(ParseEventKind::SequenceStart(
+                    Ok(Some(self.event(ParseEventKind::SequenceStart(
                         ContainerKind::Array,
                     ))))
                 } else {
-                    Ok(Some(ParseEvent::from_kind(ParseEventKind::StructStart(
-                        ContainerKind::Object,
-                    ))))
+                    Ok(Some(
+                        self.event(ParseEventKind::StructStart(ContainerKind::Object)),
+                    ))
                 }
             }
 
@@ -430,25 +430,25 @@ impl<'de> Asn1Parser<'de> {
             (CLASS_UNIVERSAL, false, 0x01) => {
                 let value = self.read_bool()?;
                 self.finish_value();
-                Ok(Some(ParseEvent::from_kind(ParseEventKind::Scalar(
-                    ScalarValue::Bool(value),
-                ))))
+                Ok(Some(
+                    self.event(ParseEventKind::Scalar(ScalarValue::Bool(value))),
+                ))
             }
 
             // Universal primitive INTEGER
             (CLASS_UNIVERSAL, false, 0x02) => {
                 let value = self.read_integer()?;
                 self.finish_value();
-                Ok(Some(ParseEvent::from_kind(ParseEventKind::Scalar(
-                    ScalarValue::I64(value),
-                ))))
+                Ok(Some(
+                    self.event(ParseEventKind::Scalar(ScalarValue::I64(value))),
+                ))
             }
 
             // Universal primitive OCTET STRING
             (CLASS_UNIVERSAL, false, 0x04) => {
                 let bytes = self.read_octet_string()?;
                 self.finish_value();
-                Ok(Some(ParseEvent::from_kind(ParseEventKind::Scalar(
+                Ok(Some(self.event(ParseEventKind::Scalar(
                     ScalarValue::Bytes(Cow::Borrowed(bytes)),
                 ))))
             }
@@ -457,27 +457,25 @@ impl<'de> Asn1Parser<'de> {
             (CLASS_UNIVERSAL, false, 0x05) => {
                 let _ = self.read_tlv()?;
                 self.finish_value();
-                Ok(Some(ParseEvent::from_kind(ParseEventKind::Scalar(
-                    ScalarValue::Null,
-                ))))
+                Ok(Some(self.event(ParseEventKind::Scalar(ScalarValue::Null))))
             }
 
             // Universal primitive REAL
             (CLASS_UNIVERSAL, false, 0x09) => {
                 let value = self.read_real()?;
                 self.finish_value();
-                Ok(Some(ParseEvent::from_kind(ParseEventKind::Scalar(
-                    ScalarValue::F64(value),
-                ))))
+                Ok(Some(
+                    self.event(ParseEventKind::Scalar(ScalarValue::F64(value))),
+                ))
             }
 
             // Universal primitive UTF8String
             (CLASS_UNIVERSAL, false, 0x0C) => {
                 let s = self.read_string()?;
                 self.finish_value();
-                Ok(Some(ParseEvent::from_kind(ParseEventKind::Scalar(
-                    ScalarValue::Str(Cow::Borrowed(s)),
-                ))))
+                Ok(Some(self.event(ParseEventKind::Scalar(ScalarValue::Str(
+                    Cow::Borrowed(s),
+                )))))
             }
 
             // Context-specific tags (used for enum variants and optional fields)
@@ -491,16 +489,16 @@ impl<'de> Asn1Parser<'de> {
                         awaiting_value: false,
                     });
                     self.field_indices.push(0);
-                    Ok(Some(ParseEvent::from_kind(ParseEventKind::StructStart(
-                        ContainerKind::Object,
-                    ))))
+                    Ok(Some(
+                        self.event(ParseEventKind::StructStart(ContainerKind::Object)),
+                    ))
                 } else {
                     // For primitive context-specific, treat as variant discriminant
                     // The tag number is often used as the variant index
                     self.finish_value();
-                    Ok(Some(ParseEvent::from_kind(ParseEventKind::Scalar(
-                        ScalarValue::U64(tag_number as u64),
-                    ))))
+                    Ok(Some(self.event(ParseEventKind::Scalar(ScalarValue::U64(
+                        tag_number as u64,
+                    )))))
                 }
             }
 
@@ -603,5 +601,13 @@ impl<'de> FormatParser<'de> for Asn1Parser<'de> {
         {
             self.event_peek = None;
         }
+    }
+}
+
+impl<'de> Asn1Parser<'de> {
+    /// Create an event with the current span.
+    #[inline]
+    fn event(&self, kind: ParseEventKind<'de>) -> ParseEvent<'de> {
+        ParseEvent::new(kind, Span::new(self.pos, 1))
     }
 }

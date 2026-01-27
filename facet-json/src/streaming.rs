@@ -424,68 +424,79 @@ impl<A: TokenSource<'static>> StreamingJsonParser<A> {
         match token.token {
             AdapterToken::ObjectStart => {
                 self.stack.push(ContextState::Object(ObjectState::KeyOrEnd));
-                Ok(ParseEvent::from_kind(ParseEventKind::StructStart(
-                    ContainerKind::Object,
-                )))
+                Ok(ParseEvent::new(
+                    ParseEventKind::StructStart(ContainerKind::Object),
+                    token.span,
+                ))
             }
             AdapterToken::ArrayStart => {
                 self.stack.push(ContextState::Array(ArrayState::ValueOrEnd));
-                Ok(ParseEvent::from_kind(ParseEventKind::SequenceStart(
-                    ContainerKind::Array,
-                )))
+                Ok(ParseEvent::new(
+                    ParseEventKind::SequenceStart(ContainerKind::Array),
+                    token.span,
+                ))
             }
             AdapterToken::String(s) => {
-                let event = ParseEvent::from_kind(ParseEventKind::Scalar(ScalarValue::Str(s)));
+                let event =
+                    ParseEvent::new(ParseEventKind::Scalar(ScalarValue::Str(s)), token.span);
                 self.finish_value_in_parent();
                 Ok(event)
             }
             AdapterToken::True => {
                 self.finish_value_in_parent();
-                Ok(ParseEvent::from_kind(ParseEventKind::Scalar(
-                    ScalarValue::Bool(true),
-                )))
+                Ok(ParseEvent::new(
+                    ParseEventKind::Scalar(ScalarValue::Bool(true)),
+                    token.span,
+                ))
             }
             AdapterToken::False => {
                 self.finish_value_in_parent();
-                Ok(ParseEvent::from_kind(ParseEventKind::Scalar(
-                    ScalarValue::Bool(false),
-                )))
+                Ok(ParseEvent::new(
+                    ParseEventKind::Scalar(ScalarValue::Bool(false)),
+                    token.span,
+                ))
             }
             AdapterToken::Null => {
                 self.finish_value_in_parent();
-                Ok(ParseEvent::from_kind(ParseEventKind::Scalar(
-                    ScalarValue::Null,
-                )))
+                Ok(ParseEvent::new(
+                    ParseEventKind::Scalar(ScalarValue::Null),
+                    token.span,
+                ))
             }
             AdapterToken::U64(n) => {
                 self.finish_value_in_parent();
-                Ok(ParseEvent::from_kind(ParseEventKind::Scalar(
-                    ScalarValue::U64(n),
-                )))
+                Ok(ParseEvent::new(
+                    ParseEventKind::Scalar(ScalarValue::U64(n)),
+                    token.span,
+                ))
             }
             AdapterToken::I64(n) => {
                 self.finish_value_in_parent();
-                Ok(ParseEvent::from_kind(ParseEventKind::Scalar(
-                    ScalarValue::I64(n),
-                )))
+                Ok(ParseEvent::new(
+                    ParseEventKind::Scalar(ScalarValue::I64(n)),
+                    token.span,
+                ))
             }
             AdapterToken::U128(n) => {
                 self.finish_value_in_parent();
-                Ok(ParseEvent::from_kind(ParseEventKind::Scalar(
-                    ScalarValue::Str(Cow::Owned(n.to_string())),
-                )))
+                Ok(ParseEvent::new(
+                    ParseEventKind::Scalar(ScalarValue::Str(Cow::Owned(n.to_string()))),
+                    token.span,
+                ))
             }
             AdapterToken::I128(n) => {
                 self.finish_value_in_parent();
-                Ok(ParseEvent::from_kind(ParseEventKind::Scalar(
-                    ScalarValue::Str(Cow::Owned(n.to_string())),
-                )))
+                Ok(ParseEvent::new(
+                    ParseEventKind::Scalar(ScalarValue::Str(Cow::Owned(n.to_string()))),
+                    token.span,
+                ))
             }
             AdapterToken::F64(n) => {
                 self.finish_value_in_parent();
-                Ok(ParseEvent::from_kind(ParseEventKind::Scalar(
-                    ScalarValue::F64(n),
-                )))
+                Ok(ParseEvent::new(
+                    ParseEventKind::Scalar(ScalarValue::F64(n)),
+                    token.span,
+                ))
             }
             AdapterToken::ObjectEnd | AdapterToken::ArrayEnd => {
                 Err(self.unexpected(&token, "value"))
@@ -507,16 +518,24 @@ impl<A: TokenSource<'static>> StreamingJsonParser<A> {
                         AdapterToken::ObjectEnd => {
                             self.stack.pop();
                             self.finish_value_in_parent();
-                            return Ok(Some(ParseEvent::from_kind(ParseEventKind::StructEnd)));
+                            return Ok(Some(ParseEvent::new(
+                                ParseEventKind::StructEnd,
+                                token.span,
+                            )));
                         }
                         AdapterToken::String(name) => {
+                            let span = token.span;
                             self.expect_colon()?;
                             if let Some(ContextState::Object(state)) = self.stack.last_mut() {
                                 *state = ObjectState::Value;
                             }
-                            return Ok(Some(ParseEvent::from_kind(ParseEventKind::FieldKey(
-                                FieldKey::new(name, FieldLocationHint::KeyValue),
-                            ))));
+                            return Ok(Some(ParseEvent::new(
+                                ParseEventKind::FieldKey(FieldKey::new(
+                                    name,
+                                    FieldLocationHint::KeyValue,
+                                )),
+                                span,
+                            )));
                         }
                         AdapterToken::Eof => {
                             return Err(ParseError::new(
@@ -544,7 +563,10 @@ impl<A: TokenSource<'static>> StreamingJsonParser<A> {
                         AdapterToken::ObjectEnd => {
                             self.stack.pop();
                             self.finish_value_in_parent();
-                            return Ok(Some(ParseEvent::from_kind(ParseEventKind::StructEnd)));
+                            return Ok(Some(ParseEvent::new(
+                                ParseEventKind::StructEnd,
+                                token.span,
+                            )));
                         }
                         AdapterToken::Eof => {
                             return Err(ParseError::new(
@@ -563,7 +585,10 @@ impl<A: TokenSource<'static>> StreamingJsonParser<A> {
                         AdapterToken::ArrayEnd => {
                             self.stack.pop();
                             self.finish_value_in_parent();
-                            return Ok(Some(ParseEvent::from_kind(ParseEventKind::SequenceEnd)));
+                            return Ok(Some(ParseEvent::new(
+                                ParseEventKind::SequenceEnd,
+                                token.span,
+                            )));
                         }
                         AdapterToken::Eof => {
                             return Err(ParseError::new(
@@ -593,7 +618,10 @@ impl<A: TokenSource<'static>> StreamingJsonParser<A> {
                         AdapterToken::ArrayEnd => {
                             self.stack.pop();
                             self.finish_value_in_parent();
-                            return Ok(Some(ParseEvent::from_kind(ParseEventKind::SequenceEnd)));
+                            return Ok(Some(ParseEvent::new(
+                                ParseEventKind::SequenceEnd,
+                                token.span,
+                            )));
                         }
                         AdapterToken::Eof => {
                             return Err(ParseError::new(

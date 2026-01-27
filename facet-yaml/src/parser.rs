@@ -49,7 +49,7 @@ pub struct YamlParser<'de> {
     /// Whether we've consumed the stream/document start events.
     started: bool,
     /// The span of the most recently consumed event (for error reporting).
-    last_span: Option<Span>,
+    last_span: Span,
     /// Counter for save points.
     save_counter: u64,
     /// Events recorded since save() was called.
@@ -74,7 +74,7 @@ impl<'de> YamlParser<'de> {
             stack: Vec::new(),
             event_peek: None,
             started: false,
-            last_span: None,
+            last_span: Span::new(0, 0),
             save_counter: 0,
             recording: None,
             replay_buffer: Vec::new(),
@@ -90,7 +90,7 @@ impl<'de> YamlParser<'de> {
     fn next_raw_event(&mut self) -> Result<Option<(Event<'de>, SaphyrSpan)>, ParseError> {
         match self.parser.next_event() {
             Some(Ok((event, span))) => {
-                self.last_span = Some(span_from_saphyr(&span));
+                self.last_span = span_from_saphyr(&span);
                 Ok(Some((event, span)))
             }
             Some(Err(e)) => {
@@ -148,9 +148,9 @@ impl<'de> YamlParser<'de> {
             }
             Event::MappingStart(_anchor, _tag) => {
                 self.stack.push(ContextState::MappingKey);
-                Ok(Some(ParseEvent::from_kind(ParseEventKind::StructStart(
-                    ContainerKind::Object,
-                ))))
+                Ok(Some(
+                    self.event(ParseEventKind::StructStart(ContainerKind::Object)),
+                ))
             }
             Event::MappingEnd => {
                 self.stack.pop();
@@ -158,11 +158,11 @@ impl<'de> YamlParser<'de> {
                 if let Some(ctx @ ContextState::MappingValue) = self.stack.last_mut() {
                     *ctx = ContextState::MappingKey;
                 }
-                Ok(Some(ParseEvent::from_kind(ParseEventKind::StructEnd)))
+                Ok(Some(self.event(ParseEventKind::StructEnd)))
             }
             Event::SequenceStart(_anchor, _tag) => {
                 self.stack.push(ContextState::SequenceValue);
-                Ok(Some(ParseEvent::from_kind(ParseEventKind::SequenceStart(
+                Ok(Some(self.event(ParseEventKind::SequenceStart(
                     ContainerKind::Array,
                 ))))
             }
@@ -172,22 +172,23 @@ impl<'de> YamlParser<'de> {
                 if let Some(ctx @ ContextState::MappingValue) = self.stack.last_mut() {
                     *ctx = ContextState::MappingKey;
                 }
-                Ok(Some(ParseEvent::from_kind(ParseEventKind::SequenceEnd)))
+                Ok(Some(self.event(ParseEventKind::SequenceEnd)))
             }
             Event::Scalar(value, style, _anchor, _tag) => {
                 // Check if we're expecting a mapping key
                 if let Some(ctx @ ContextState::MappingKey) = self.stack.last_mut() {
                     // This scalar is a key
                     *ctx = ContextState::MappingValue;
-                    Ok(Some(ParseEvent::from_kind(ParseEventKind::FieldKey(
-                        FieldKey::new(value, FieldLocationHint::KeyValue),
-                    ))))
+                    Ok(Some(self.event(ParseEventKind::FieldKey(FieldKey::new(
+                        value,
+                        FieldLocationHint::KeyValue,
+                    )))))
                 } else {
                     // This scalar is a value
                     if let Some(ctx @ ContextState::MappingValue) = self.stack.last_mut() {
                         *ctx = ContextState::MappingKey;
                     }
-                    Ok(Some(ParseEvent::from_kind(ParseEventKind::Scalar(
+                    Ok(Some(self.event(ParseEventKind::Scalar(
                         self.scalar_to_value(value, style),
                     ))))
                 }
@@ -197,9 +198,7 @@ impl<'de> YamlParser<'de> {
                 if let Some(ctx @ ContextState::MappingValue) = self.stack.last_mut() {
                     *ctx = ContextState::MappingKey;
                 }
-                Ok(Some(ParseEvent::from_kind(ParseEventKind::Scalar(
-                    ScalarValue::Null,
-                ))))
+                Ok(Some(self.event(ParseEventKind::Scalar(ScalarValue::Null))))
             }
             Event::Nothing => {
                 // Internal event, skip
@@ -357,7 +356,15 @@ impl<'de> FormatParser<'de> for YamlParser<'de> {
     }
 
     fn current_span(&self) -> Option<Span> {
-        self.last_span
+        Some(self.last_span)
+    }
+}
+
+impl<'de> YamlParser<'de> {
+    /// Create an event with the current span.
+    #[inline]
+    fn event(&self, kind: ParseEventKind<'de>) -> ParseEvent<'de> {
+        ParseEvent::new(kind, self.last_span)
     }
 }
 

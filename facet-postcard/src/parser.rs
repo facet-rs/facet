@@ -231,16 +231,14 @@ impl<'de> PostcardParser<'de> {
             let discriminant = self.read_byte()?;
             match discriminant {
                 0x00 => {
-                    return Ok(ParseEvent::from_kind(ParseEventKind::Scalar(
-                        ScalarValue::Null,
-                    )));
+                    return Ok(self.event(ParseEventKind::Scalar(ScalarValue::Null)));
                 }
                 0x01 => {
                     // Some(value) - consumed the discriminant. The deserializer will peek to check
                     // if it's None, see this is not Null, and then call deserialize_into for the value.
                     // Return a placeholder event (like OrderedField) to signal "not None".
                     // The deserializer will then call hint + expect for the inner value.
-                    return Ok(ParseEvent::from_kind(ParseEventKind::OrderedField));
+                    return Ok(self.event(ParseEventKind::OrderedField));
                 }
                 _ => {
                     return Err(ParseError::new(
@@ -286,9 +284,7 @@ impl<'de> PostcardParser<'de> {
                 wrapper_start_emitted: false,
                 wrapper_end_emitted: false,
             });
-            return Ok(ParseEvent::from_kind(ParseEventKind::StructStart(
-                ContainerKind::Object,
-            )));
+            return Ok(self.event(ParseEventKind::StructStart(ContainerKind::Object)));
         }
 
         // Check if we have a pending opaque scalar hint (format-specific binary encoding)
@@ -308,18 +304,18 @@ impl<'de> PostcardParser<'de> {
             self.state_stack.push(ParserState::InSequence {
                 remaining_elements: count,
             });
-            return Ok(ParseEvent::from_kind(ParseEventKind::SequenceStart(
-                ContainerKind::Array,
-            )));
+            return Ok(self.event(ParseEventKind::SequenceStart(ContainerKind::Array)));
         }
 
         // Check if we have a pending byte sequence hint (bulk read for Vec<u8>)
         if self.pending_byte_sequence {
             self.pending_byte_sequence = false;
             let bytes = self.parse_bytes()?;
-            return Ok(ParseEvent::from_kind(ParseEventKind::Scalar(
-                ScalarValue::Bytes(Cow::Borrowed(bytes)),
-            )));
+            return Ok(
+                self.event(ParseEventKind::Scalar(ScalarValue::Bytes(Cow::Borrowed(
+                    bytes,
+                )))),
+            );
         }
 
         // Check if we have a pending fixed-size array hint (length known from type, no wire prefix)
@@ -327,9 +323,7 @@ impl<'de> PostcardParser<'de> {
             self.state_stack.push(ParserState::InSequence {
                 remaining_elements: len as u64,
             });
-            return Ok(ParseEvent::from_kind(ParseEventKind::SequenceStart(
-                ContainerKind::Array,
-            )));
+            return Ok(self.event(ParseEventKind::SequenceStart(ContainerKind::Array)));
         }
 
         // Check if we have a pending struct hint
@@ -337,9 +331,7 @@ impl<'de> PostcardParser<'de> {
             self.state_stack.push(ParserState::InStruct {
                 remaining_fields: num_fields,
             });
-            return Ok(ParseEvent::from_kind(ParseEventKind::StructStart(
-                ContainerKind::Object,
-            )));
+            return Ok(self.event(ParseEventKind::StructStart(ContainerKind::Object)));
         }
 
         // Check if we have a pending map hint (maps are length-prefixed sequences of key-value pairs)
@@ -349,9 +341,7 @@ impl<'de> PostcardParser<'de> {
             self.state_stack.push(ParserState::InMap {
                 remaining_entries: count,
             });
-            return Ok(ParseEvent::from_kind(ParseEventKind::SequenceStart(
-                ContainerKind::Array,
-            )));
+            return Ok(self.event(ParseEventKind::SequenceStart(ContainerKind::Array)));
         }
 
         // Check current state
@@ -369,7 +359,7 @@ impl<'de> PostcardParser<'de> {
                 if remaining_fields == 0 {
                     // Struct complete
                     self.state_stack.pop();
-                    Ok(ParseEvent::from_kind(ParseEventKind::StructEnd))
+                    Ok(self.event(ParseEventKind::StructEnd))
                 } else {
                     // More fields to go - emit OrderedField and decrement
                     if let Some(ParserState::InStruct { remaining_fields }) =
@@ -377,14 +367,14 @@ impl<'de> PostcardParser<'de> {
                     {
                         *remaining_fields -= 1;
                     }
-                    Ok(ParseEvent::from_kind(ParseEventKind::OrderedField))
+                    Ok(self.event(ParseEventKind::OrderedField))
                 }
             }
             ParserState::InSequence { remaining_elements } => {
                 if remaining_elements == 0 {
                     // Sequence complete
                     self.state_stack.pop();
-                    Ok(ParseEvent::from_kind(ParseEventKind::SequenceEnd))
+                    Ok(self.event(ParseEventKind::SequenceEnd))
                 } else {
                     // More elements remaining. Return OrderedField as a placeholder to indicate
                     // "not end yet". The deserializer will then call hint + expect for the next element.
@@ -394,7 +384,7 @@ impl<'de> PostcardParser<'de> {
                     {
                         *remaining_elements -= 1;
                     }
-                    Ok(ParseEvent::from_kind(ParseEventKind::OrderedField))
+                    Ok(self.event(ParseEventKind::OrderedField))
                 }
             }
             ParserState::InEnum {
@@ -415,19 +405,17 @@ impl<'de> PostcardParser<'de> {
                     {
                         *field_key_emitted = true;
                     }
-                    Ok(ParseEvent::from_kind(ParseEventKind::FieldKey(
-                        FieldKey::new(
-                            Cow::Owned(variant_name.clone()),
-                            FieldLocationHint::KeyValue,
-                        ),
-                    )))
+                    Ok(self.event(ParseEventKind::FieldKey(FieldKey::new(
+                        Cow::Owned(variant_name.clone()),
+                        FieldLocationHint::KeyValue,
+                    ))))
                 } else if !wrapper_start_emitted {
                     // Step 2: After FieldKey, emit wrapper start (if needed)
                     match variant_kind {
                         StructKind::Unit => {
                             // Unit variant - no wrapper, skip directly to StructEnd
                             self.state_stack.pop();
-                            Ok(ParseEvent::from_kind(ParseEventKind::StructEnd))
+                            Ok(self.event(ParseEventKind::StructEnd))
                         }
                         StructKind::Tuple | StructKind::TupleStruct => {
                             // Check if it's a newtype (single-field) or multi-field tuple
@@ -457,9 +445,7 @@ impl<'de> PostcardParser<'de> {
                                 {
                                     *wrapper_start_emitted = true;
                                 }
-                                Ok(ParseEvent::from_kind(ParseEventKind::SequenceStart(
-                                    ContainerKind::Array,
-                                )))
+                                Ok(self.event(ParseEventKind::SequenceStart(ContainerKind::Array)))
                             }
                         }
                         StructKind::Struct => {
@@ -486,9 +472,7 @@ impl<'de> PostcardParser<'de> {
                             self.state_stack.push(ParserState::InStruct {
                                 remaining_fields: field_count,
                             });
-                            Ok(ParseEvent::from_kind(ParseEventKind::StructStart(
-                                ContainerKind::Object,
-                            )))
+                            Ok(self.event(ParseEventKind::StructStart(ContainerKind::Object)))
                         }
                     }
                 } else if !wrapper_end_emitted {
@@ -508,31 +492,31 @@ impl<'de> PostcardParser<'de> {
                                 {
                                     *wrapper_end_emitted = true;
                                 }
-                                Ok(ParseEvent::from_kind(ParseEventKind::SequenceEnd))
+                                Ok(self.event(ParseEventKind::SequenceEnd))
                             } else {
                                 // Newtype - already marked wrapper_end_emitted=true, skip to final StructEnd
                                 self.state_stack.pop();
-                                Ok(ParseEvent::from_kind(ParseEventKind::StructEnd))
+                                Ok(self.event(ParseEventKind::StructEnd))
                             }
                         }
                         StructKind::Struct => {
                             // Struct variants use InStruct which already popped, so we're ready for final StructEnd
                             self.state_stack.pop();
-                            Ok(ParseEvent::from_kind(ParseEventKind::StructEnd))
+                            Ok(self.event(ParseEventKind::StructEnd))
                         }
                     }
                 } else {
                     // Step 4: Emit final outer StructEnd
                     // This is reached after wrapper end has been emitted
                     self.state_stack.pop();
-                    Ok(ParseEvent::from_kind(ParseEventKind::StructEnd))
+                    Ok(self.event(ParseEventKind::StructEnd))
                 }
             }
             ParserState::InMap { remaining_entries } => {
                 if remaining_entries == 0 {
                     // Map complete
                     self.state_stack.pop();
-                    Ok(ParseEvent::from_kind(ParseEventKind::SequenceEnd))
+                    Ok(self.event(ParseEventKind::SequenceEnd))
                 } else {
                     // More entries remaining. Return OrderedField as a placeholder to indicate
                     // "not end yet". The deserializer will call hint + expect for key and value.
@@ -542,13 +526,13 @@ impl<'de> PostcardParser<'de> {
                     {
                         *remaining_entries -= 1;
                     }
-                    Ok(ParseEvent::from_kind(ParseEventKind::OrderedField))
+                    Ok(self.event(ParseEventKind::OrderedField))
                 }
             }
             ParserState::InDynamicArray { remaining_elements } => {
                 if remaining_elements == 0 {
                     self.state_stack.pop();
-                    Ok(ParseEvent::from_kind(ParseEventKind::SequenceEnd))
+                    Ok(self.event(ParseEventKind::SequenceEnd))
                 } else {
                     self.parse_dynamic_tag_event()
                 }
@@ -559,7 +543,7 @@ impl<'de> PostcardParser<'de> {
             } => {
                 if remaining_entries == 0 {
                     self.state_stack.pop();
-                    Ok(ParseEvent::from_kind(ParseEventKind::StructEnd))
+                    Ok(self.event(ParseEventKind::StructEnd))
                 } else if expecting_key {
                     let key = self.parse_string()?;
                     if let Some(ParserState::InDynamicObject { expecting_key, .. }) =
@@ -567,9 +551,10 @@ impl<'de> PostcardParser<'de> {
                     {
                         *expecting_key = false;
                     }
-                    Ok(ParseEvent::from_kind(ParseEventKind::FieldKey(
-                        FieldKey::new(Cow::Borrowed(key), FieldLocationHint::KeyValue),
-                    )))
+                    Ok(self.event(ParseEventKind::FieldKey(FieldKey::new(
+                        Cow::Borrowed(key),
+                        FieldLocationHint::KeyValue,
+                    ))))
                 } else {
                     self.parse_dynamic_tag_event()
                 }
@@ -678,7 +663,7 @@ impl<'de> PostcardParser<'de> {
                 ScalarValue::Str(Cow::Owned(c.to_string()))
             }
         };
-        Ok(ParseEvent::from_kind(ParseEventKind::Scalar(scalar)))
+        Ok(self.event(ParseEventKind::Scalar(scalar)))
     }
 
     /// Parse an opaque scalar value with format-specific binary encoding.
@@ -746,7 +731,7 @@ impl<'de> PostcardParser<'de> {
                 ));
             }
         };
-        Ok(ParseEvent::from_kind(ParseEventKind::Scalar(scalar)))
+        Ok(self.event(ParseEventKind::Scalar(scalar)))
     }
 
     /// Read exactly N bytes from input without length prefix.
@@ -890,9 +875,7 @@ impl<'de> PostcardParser<'de> {
 
         let tag = self.read_byte()?;
         match tag {
-            0 => Ok(ParseEvent::from_kind(ParseEventKind::Scalar(
-                ScalarValue::Null,
-            ))),
+            0 => Ok(self.event(ParseEventKind::Scalar(ScalarValue::Null))),
             1 => self.parse_scalar_with_hint(ScalarTypeHint::Bool),
             2 => self.parse_scalar_with_hint(ScalarTypeHint::I64),
             3 => self.parse_scalar_with_hint(ScalarTypeHint::U64),
@@ -904,9 +887,7 @@ impl<'de> PostcardParser<'de> {
                 self.state_stack.push(ParserState::InDynamicArray {
                     remaining_elements: count,
                 });
-                Ok(ParseEvent::from_kind(ParseEventKind::SequenceStart(
-                    ContainerKind::Array,
-                )))
+                Ok(self.event(ParseEventKind::SequenceStart(ContainerKind::Array)))
             }
             8 => {
                 let count = self.read_varint()?;
@@ -914,9 +895,7 @@ impl<'de> PostcardParser<'de> {
                     remaining_entries: count,
                     expecting_key: true,
                 });
-                Ok(ParseEvent::from_kind(ParseEventKind::StructStart(
-                    ContainerKind::Object,
-                )))
+                Ok(self.event(ParseEventKind::StructStart(ContainerKind::Object)))
             }
             9 => self.parse_scalar_with_hint(ScalarTypeHint::String),
             _ => Err(ParseError::new(
@@ -926,6 +905,14 @@ impl<'de> PostcardParser<'de> {
                 },
             )),
         }
+    }
+}
+
+impl<'de> PostcardParser<'de> {
+    /// Create an event with the current span.
+    #[inline]
+    fn event(&self, kind: ParseEventKind<'de>) -> ParseEvent<'de> {
+        ParseEvent::new(kind, Span::new(self.pos, 1))
     }
 }
 

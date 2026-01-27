@@ -95,9 +95,10 @@ impl<'de> CsvParser<'de> {
         if let Some(hint) = self.pending_scalar_type.take() {
             if self.field_index > 0 && self.field_index <= self.fields.len() {
                 let field = &self.fields[self.field_index - 1];
-                return Ok(ParseEvent::from_kind(ParseEventKind::Scalar(
-                    parse_scalar_with_hint(field.value, hint),
-                )));
+                return Ok(self.event(ParseEventKind::Scalar(parse_scalar_with_hint(
+                    field.value,
+                    hint,
+                ))));
             } else {
                 return Err(ParseError::new(
                     Span::new(self.input.len(), 0),
@@ -113,9 +114,7 @@ impl<'de> CsvParser<'de> {
             self.state_stack.push(ParserState::InStruct {
                 remaining_fields: num_fields,
             });
-            return Ok(ParseEvent::from_kind(ParseEventKind::StructStart(
-                ContainerKind::Object,
-            )));
+            return Ok(self.event(ParseEventKind::StructStart(ContainerKind::Object)));
         }
 
         // Process based on current state
@@ -135,7 +134,7 @@ impl<'de> CsvParser<'de> {
                 if remaining_fields == 0 {
                     // Struct complete
                     self.state_stack.pop();
-                    Ok(ParseEvent::from_kind(ParseEventKind::StructEnd))
+                    Ok(self.event(ParseEventKind::StructEnd))
                 } else {
                     // More fields to go - emit OrderedField and decrement
                     if let Some(ParserState::InStruct { remaining_fields }) =
@@ -145,7 +144,7 @@ impl<'de> CsvParser<'de> {
                     }
                     // Advance field index when emitting OrderedField
                     self.field_index += 1;
-                    Ok(ParseEvent::from_kind(ParseEventKind::OrderedField))
+                    Ok(self.event(ParseEventKind::OrderedField))
                 }
             }
         }
@@ -327,5 +326,13 @@ impl<'de> FormatParser<'de> for CsvParser<'de> {
 
     fn current_span(&self) -> Option<Span> {
         Some(self.current_field_span())
+    }
+}
+
+impl<'de> CsvParser<'de> {
+    /// Create an event with the current span.
+    #[inline]
+    fn event(&self, kind: ParseEventKind<'de>) -> ParseEvent<'de> {
+        ParseEvent::new(kind, self.current_field_span())
     }
 }

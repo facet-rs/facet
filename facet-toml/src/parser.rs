@@ -136,8 +136,8 @@ pub struct TomlParser<'de> {
     /// - is_inline_table: true for inline table, false for array
     /// - deferred_struct_ends: number of StructEnd events to emit when this container closes
     inline_stack: Vec<(bool, usize)>,
-    /// The span of the most recently consumed scalar value (for error reporting).
-    last_scalar_span: Option<facet_reflect::Span>,
+    /// The span of the most recently consumed event (for error reporting).
+    last_span: facet_reflect::Span,
     /// Counter for save points.
     save_counter: u64,
     /// Saved parser states for restore.
@@ -186,7 +186,7 @@ impl<'de> TomlParser<'de> {
             root_started: false,
             root_ended: false,
             inline_stack: Vec::new(),
-            last_scalar_span: None,
+            last_span: facet_reflect::Span::new(0, 0),
             save_counter: 0,
             saved_states: Vec::new(),
         })
@@ -340,11 +340,11 @@ impl<'de> TomlParser<'de> {
     }
 
     /// Emit the "end" event for a path segment based on its kind.
-    fn end_event_for_segment(segment: &PathSegment<'_>) -> ParseEvent<'static> {
+    fn end_event_for_segment(&self, segment: &PathSegment<'_>) -> ParseEvent<'de> {
         match segment.kind {
-            SegmentKind::Table => ParseEvent::from_kind(ParseEventKind::StructEnd),
-            SegmentKind::Array => ParseEvent::from_kind(ParseEventKind::SequenceEnd),
-            SegmentKind::ArrayElement => ParseEvent::from_kind(ParseEventKind::StructEnd),
+            SegmentKind::Table => self.event(ParseEventKind::StructEnd),
+            SegmentKind::Array => self.event(ParseEventKind::SequenceEnd),
+            SegmentKind::ArrayElement => self.event(ParseEventKind::StructEnd),
         }
     }
 
@@ -397,18 +397,17 @@ impl<'de> TomlParser<'de> {
 
         // Pop up to common ancestor - emit end events in reverse order
         for segment in self.current_path[current_idx..].iter().rev() {
-            events.push(Self::end_event_for_segment(segment));
+            events.push(self.end_event_for_segment(segment));
         }
 
         // Navigate down to target - all segments are Tables for [table.path]
         let mut new_path: Vec<PathSegment<'de>> = self.current_path[..current_idx].to_vec();
         for name in &target_names[target_idx..] {
-            events.push(ParseEvent::from_kind(ParseEventKind::FieldKey(
-                FieldKey::new(name.clone(), FieldLocationHint::KeyValue),
-            )));
-            events.push(ParseEvent::from_kind(ParseEventKind::StructStart(
-                ContainerKind::Object,
-            )));
+            events.push(self.event(ParseEventKind::FieldKey(FieldKey::new(
+                name.clone(),
+                FieldLocationHint::KeyValue,
+            ))));
+            events.push(self.event(ParseEventKind::StructStart(ContainerKind::Object)));
             new_path.push(PathSegment {
                 name: name.clone(),
                 kind: SegmentKind::Table,
@@ -485,7 +484,7 @@ impl<'de> TomlParser<'de> {
 
         // Pop up to common ancestor
         for segment in self.current_path[current_idx..].iter().rev() {
-            events.push(Self::end_event_for_segment(segment));
+            events.push(self.end_event_for_segment(segment));
         }
 
         // Navigate down - all but last are Tables, last is Array + ArrayElement
@@ -494,12 +493,11 @@ impl<'de> TomlParser<'de> {
         if target_names.len() > target_idx {
             // Navigate to parent tables first
             for name in &target_names[target_idx..target_names.len() - 1] {
-                events.push(ParseEvent::from_kind(ParseEventKind::FieldKey(
-                    FieldKey::new(name.clone(), FieldLocationHint::KeyValue),
-                )));
-                events.push(ParseEvent::from_kind(ParseEventKind::StructStart(
-                    ContainerKind::Object,
-                )));
+                events.push(self.event(ParseEventKind::FieldKey(FieldKey::new(
+                    name.clone(),
+                    FieldLocationHint::KeyValue,
+                ))));
+                events.push(self.event(ParseEventKind::StructStart(ContainerKind::Object)));
                 new_path.push(PathSegment {
                     name: name.clone(),
                     kind: SegmentKind::Table,
@@ -508,15 +506,12 @@ impl<'de> TomlParser<'de> {
 
             // Last segment is the array table
             let array_name = target_names.last().unwrap();
-            events.push(ParseEvent::from_kind(ParseEventKind::FieldKey(
-                FieldKey::new(array_name.clone(), FieldLocationHint::KeyValue),
-            )));
-            events.push(ParseEvent::from_kind(ParseEventKind::SequenceStart(
-                ContainerKind::Array,
-            )));
-            events.push(ParseEvent::from_kind(ParseEventKind::StructStart(
-                ContainerKind::Object,
-            )));
+            events.push(self.event(ParseEventKind::FieldKey(FieldKey::new(
+                array_name.clone(),
+                FieldLocationHint::KeyValue,
+            ))));
+            events.push(self.event(ParseEventKind::SequenceStart(ContainerKind::Array)));
+            events.push(self.event(ParseEventKind::StructStart(ContainerKind::Object)));
 
             new_path.push(PathSegment {
                 name: array_name.clone(),
@@ -546,9 +541,9 @@ impl<'de> TomlParser<'de> {
         // Emit root StructStart if we haven't yet
         if !self.root_started {
             self.root_started = true;
-            return Ok(Some(ParseEvent::from_kind(ParseEventKind::StructStart(
-                ContainerKind::Object,
-            ))));
+            return Ok(Some(
+                self.event(ParseEventKind::StructStart(ContainerKind::Object)),
+            ));
         }
 
         // Get next raw event
@@ -561,13 +556,13 @@ impl<'de> TomlParser<'de> {
             // Pop all remaining path segments
             for segment in self.current_path.iter().rev() {
                 self.pending_events
-                    .push_back(Self::end_event_for_segment(segment));
+                    .push_back(self.end_event_for_segment(segment));
             }
             self.current_path.clear();
 
             // Final StructEnd for root
             self.pending_events
-                .push_back(ParseEvent::from_kind(ParseEventKind::StructEnd));
+                .push_back(self.event(ParseEventKind::StructEnd));
             self.root_ended = true;
 
             return Ok(self.pending_events.pop_front());
@@ -639,23 +634,23 @@ impl<'de> TomlParser<'de> {
                 if key_parts.len() > 1 {
                     // Navigate into nested structs
                     for name in &key_parts[..key_parts.len() - 1] {
-                        self.pending_events.push_back(ParseEvent::from_kind(
-                            ParseEventKind::FieldKey(FieldKey::new(
+                        self.pending_events
+                            .push_back(self.event(ParseEventKind::FieldKey(FieldKey::new(
                                 name.clone(),
                                 FieldLocationHint::KeyValue,
-                            )),
-                        ));
-                        self.pending_events.push_back(ParseEvent::from_kind(
-                            ParseEventKind::StructStart(ContainerKind::Object),
-                        ));
+                            ))));
+                        self.pending_events.push_back(
+                            self.event(ParseEventKind::StructStart(ContainerKind::Object)),
+                        );
                     }
 
                     // Emit the final key
                     let final_key = key_parts.last().unwrap();
                     self.pending_events
-                        .push_back(ParseEvent::from_kind(ParseEventKind::FieldKey(
-                            FieldKey::new(final_key.clone(), FieldLocationHint::KeyValue),
-                        )));
+                        .push_back(self.event(ParseEventKind::FieldKey(FieldKey::new(
+                            final_key.clone(),
+                            FieldLocationHint::KeyValue,
+                        ))));
 
                     // Track inline stack depth before parsing value
                     let inline_depth_before = self.inline_stack.len();
@@ -676,7 +671,7 @@ impl<'de> TomlParser<'de> {
                         // Navigate back out of nested structs immediately (for scalar values)
                         for _ in 0..key_parts.len() - 1 {
                             self.pending_events
-                                .push_back(ParseEvent::from_kind(ParseEventKind::StructEnd));
+                                .push_back(self.event(ParseEventKind::StructEnd));
                         }
                     }
 
@@ -685,9 +680,10 @@ impl<'de> TomlParser<'de> {
                     // Simple key
                     let key = key_parts.into_iter().next().unwrap();
                     self.pending_events
-                        .push_back(ParseEvent::from_kind(ParseEventKind::FieldKey(
-                            FieldKey::new(key, FieldLocationHint::KeyValue),
-                        )));
+                        .push_back(self.event(ParseEventKind::FieldKey(FieldKey::new(
+                            key,
+                            FieldLocationHint::KeyValue,
+                        ))));
 
                     // Parse the value
                     self.parse_value_into_pending()?;
@@ -728,30 +724,23 @@ impl<'de> TomlParser<'de> {
             EventKind::Scalar => {
                 let scalar = self.decode_scalar(event)?;
                 // Track span for error reporting
-                let span = event.span();
-                self.last_scalar_span = Some(facet_reflect::Span::new(
-                    span.start(),
-                    span.end() - span.start(),
-                ));
+                self.update_span(event.span());
                 self.next_raw();
                 self.pending_events
-                    .push_back(ParseEvent::from_kind(ParseEventKind::Scalar(scalar)));
+                    .push_back(self.event(ParseEventKind::Scalar(scalar)));
             }
 
             EventKind::InlineTableOpen => {
                 self.next_raw();
                 self.pending_events
-                    .push_back(ParseEvent::from_kind(ParseEventKind::StructStart(
-                        ContainerKind::Object,
-                    )));
+                    .push_back(self.event(ParseEventKind::StructStart(ContainerKind::Object)));
                 self.inline_stack.push((true, 0)); // true = inline table, 0 deferred closes
             }
 
             EventKind::ArrayOpen => {
                 self.next_raw();
-                self.pending_events.push_back(ParseEvent::from_kind(
-                    ParseEventKind::SequenceStart(ContainerKind::Array),
-                ));
+                self.pending_events
+                    .push_back(self.event(ParseEventKind::SequenceStart(ContainerKind::Array)));
                 self.inline_stack.push((false, 0)); // false = array, 0 deferred closes
             }
 
@@ -794,11 +783,11 @@ impl<'de> TomlParser<'de> {
                 let (_, deferred_closes) = self.inline_stack.pop().unwrap();
                 // Emit the StructEnd for the inline table
                 self.pending_events
-                    .push_back(ParseEvent::from_kind(ParseEventKind::StructEnd));
+                    .push_back(self.event(ParseEventKind::StructEnd));
                 // Then emit any deferred StructEnd events from dotted keys
                 for _ in 0..deferred_closes {
                     self.pending_events
-                        .push_back(ParseEvent::from_kind(ParseEventKind::StructEnd));
+                        .push_back(self.event(ParseEventKind::StructEnd));
                 }
                 Ok(self.pending_events.pop_front())
             }
@@ -808,11 +797,11 @@ impl<'de> TomlParser<'de> {
                 let (_, deferred_closes) = self.inline_stack.pop().unwrap();
                 // Emit the SequenceEnd for the array
                 self.pending_events
-                    .push_back(ParseEvent::from_kind(ParseEventKind::SequenceEnd));
+                    .push_back(self.event(ParseEventKind::SequenceEnd));
                 // Then emit any deferred StructEnd events from dotted keys
                 for _ in 0..deferred_closes {
                     self.pending_events
-                        .push_back(ParseEvent::from_kind(ParseEventKind::StructEnd));
+                        .push_back(self.event(ParseEventKind::StructEnd));
                 }
                 Ok(self.pending_events.pop_front())
             }
@@ -837,22 +826,22 @@ impl<'de> TomlParser<'de> {
                 // Handle dotted keys
                 if key_parts.len() > 1 {
                     for name in &key_parts[..key_parts.len() - 1] {
-                        self.pending_events.push_back(ParseEvent::from_kind(
-                            ParseEventKind::FieldKey(FieldKey::new(
+                        self.pending_events
+                            .push_back(self.event(ParseEventKind::FieldKey(FieldKey::new(
                                 name.clone(),
                                 FieldLocationHint::KeyValue,
-                            )),
-                        ));
-                        self.pending_events.push_back(ParseEvent::from_kind(
-                            ParseEventKind::StructStart(ContainerKind::Object),
-                        ));
+                            ))));
+                        self.pending_events.push_back(
+                            self.event(ParseEventKind::StructStart(ContainerKind::Object)),
+                        );
                     }
 
                     let final_key = key_parts.last().unwrap();
                     self.pending_events
-                        .push_back(ParseEvent::from_kind(ParseEventKind::FieldKey(
-                            FieldKey::new(final_key.clone(), FieldLocationHint::KeyValue),
-                        )));
+                        .push_back(self.event(ParseEventKind::FieldKey(FieldKey::new(
+                            final_key.clone(),
+                            FieldLocationHint::KeyValue,
+                        ))));
 
                     // Track inline stack depth before parsing value
                     let inline_depth_before = self.inline_stack.len();
@@ -872,7 +861,7 @@ impl<'de> TomlParser<'de> {
                         // Navigate back out of nested structs immediately (for scalar values)
                         for _ in 0..key_parts.len() - 1 {
                             self.pending_events
-                                .push_back(ParseEvent::from_kind(ParseEventKind::StructEnd));
+                                .push_back(self.event(ParseEventKind::StructEnd));
                         }
                     }
 
@@ -880,9 +869,10 @@ impl<'de> TomlParser<'de> {
                 } else {
                     let key = key_parts.into_iter().next().unwrap();
                     self.pending_events
-                        .push_back(ParseEvent::from_kind(ParseEventKind::FieldKey(
-                            FieldKey::new(key, FieldLocationHint::KeyValue),
-                        )));
+                        .push_back(self.event(ParseEventKind::FieldKey(FieldKey::new(
+                            key,
+                            FieldLocationHint::KeyValue,
+                        ))));
                     self.parse_value_into_pending()?;
                     Ok(self.pending_events.pop_front())
                 }
@@ -892,29 +882,25 @@ impl<'de> TomlParser<'de> {
                 // Value in array
                 let scalar = self.decode_scalar(event)?;
                 // Track span for error reporting
-                let span = event.span();
-                self.last_scalar_span = Some(facet_reflect::Span::new(
-                    span.start(),
-                    span.end() - span.start(),
-                ));
+                self.update_span(event.span());
                 self.next_raw();
-                Ok(Some(ParseEvent::from_kind(ParseEventKind::Scalar(scalar))))
+                Ok(Some(self.event(ParseEventKind::Scalar(scalar))))
             }
 
             EventKind::InlineTableOpen if !is_inline_table => {
                 // Inline table inside array
                 self.next_raw();
                 self.inline_stack.push((true, 0));
-                Ok(Some(ParseEvent::from_kind(ParseEventKind::StructStart(
-                    ContainerKind::Object,
-                ))))
+                Ok(Some(
+                    self.event(ParseEventKind::StructStart(ContainerKind::Object)),
+                ))
             }
 
             EventKind::ArrayOpen if !is_inline_table => {
                 // Nested array
                 self.next_raw();
                 self.inline_stack.push((false, 0));
-                Ok(Some(ParseEvent::from_kind(ParseEventKind::SequenceStart(
+                Ok(Some(self.event(ParseEventKind::SequenceStart(
                     ContainerKind::Array,
                 ))))
             }
@@ -1059,7 +1045,21 @@ impl<'de> FormatParser<'de> for TomlParser<'de> {
     }
 
     fn current_span(&self) -> Option<facet_reflect::Span> {
-        self.last_scalar_span
+        Some(self.last_span)
+    }
+}
+
+impl<'de> TomlParser<'de> {
+    /// Create an event with the current span.
+    #[inline]
+    fn event(&self, kind: ParseEventKind<'de>) -> ParseEvent<'de> {
+        ParseEvent::new(kind, self.last_span)
+    }
+
+    /// Update span from a toml_parser event span.
+    #[inline]
+    fn update_span(&mut self, span: toml_parser::Span) {
+        self.last_span = facet_reflect::Span::new(span.start(), span.end() - span.start());
     }
 }
 
