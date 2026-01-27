@@ -1,15 +1,15 @@
 ---
-source: tests/integration/layered.rs
+source: crates/figue/tests/integration/layered.rs
 expression: "$crate :: common :: strip_ansi(& err.to_string())"
 ---
 Error: Missing required fields:
 
 Sources:
-  file:
-      (picked) app.json  (via --config)
-  env $MYAPP__*
-  cli --settings.*
-  defaults
+├─ file:
+│  └─ (picked) app.json  (via --config)
+├─ env $MYAPP__*
+├─ cli --settings.*
+└─ defaults
 
 debug......... true..... --debug
 name.......... ......... ⨯ MISSING
@@ -19,14 +19,14 @@ max_retries... 5........ app.json:4
 timeout_ms.... 10000.... $MYAPP__TIMEOUT_MS
 experimental.. true..... --settings.experimental
 logging
-  level... debug......... app.json:6
-  format.. Json.......... app.json:7
-  file.... /var/log/app.. $MYAPP__LOGGING__FILE
+├─ level... debug......... app.json:6
+├─ format.. Json.......... app.json:7
+└─ file.... /var/log/app.. $MYAPP__LOGGING__FILE
 storage
-  s3
-    bucket.... ........... ⨯ MISSING
-    region.... eu-west-1.. app.json:11
-    endpoint.. <default>.. DEFAULT
+└─ s3
+···├─ bucket.... ........... ⨯ MISSING
+···├─ region.... eu-west-1.. app.json:11
+···└─ endpoint.. <default>.. DEFAULT
 
 Missing:
   name <String> (--settings.name or $MYAPP__NAME)

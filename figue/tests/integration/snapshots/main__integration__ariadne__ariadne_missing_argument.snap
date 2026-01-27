@@ -1,12 +1,12 @@
 ---
-source: tests/integration/ariadne.rs
+source: crates/figue/tests/integration/ariadne.rs
 expression: ariadne_output
 ---
 Error: Missing required fields:
 
 Sources:
-  cli --settings.*
-  defaults
+├─ cli --settings.*
+└─ defaults
 
 required_field.. .. ⨯ MISSING
 

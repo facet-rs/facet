@@ -1,23 +1,23 @@
 ---
-source: tests/integration/layered.rs
+source: crates/figue/tests/integration/layered.rs
 expression: "$crate :: common :: strip_ansi(& err.to_string())"
 ---
 Error: Missing required fields:
 
 Sources:
-  file:
-      (picked) config.json  (via --config)
-  env $APP__*
-  cli --config.*
-  defaults
+├─ file:
+│  └─ (picked) config.json  (via --config)
+├─ env $APP__*
+├─ cli --config.*
+└─ defaults
 
 verbose.. true....... -v
 host..... 127.0.0.1.. config.json:2
 port..... 5000....... config.json:3
 database
-  url.............. .... ⨯ MISSING
-  max_connections.. 5... config.json:5
-  timeout_secs..... 15.. $APP__DATABASE__TIMEOUT_SECS
+├─ url.............. .... ⨯ MISSING
+├─ max_connections.. 5... config.json:5
+└─ timeout_secs..... 15.. $APP__DATABASE__TIMEOUT_SECS
 tls...... <default>.. DEFAULT
 
 Missing:

@@ -5,11 +5,11 @@ expression: "$crate :: common :: strip_ansi(& err.to_string())"
 Error: Missing required fields:
 
 Sources:
-  file:
-      (picked) config.json  (via --config)
-  env $MULTI__*
-  cli --config.*
-  defaults
+├─ file:
+│  └─ (picked) config.json  (via --config)
+├─ env $MULTI__*
+├─ cli --config.*
+└─ defaults
 
 required_string..... ............... ⨯ MISSING
 default_string...... default_value.. DEFAULT
