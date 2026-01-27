@@ -10,16 +10,11 @@ use facet_core::{Characteristic, Def};
 use facet_reflect::{FieldCategory, FieldInfo, Partial};
 use facet_solver::PathSegment;
 
-use crate::{
-    DeserializeError, DeserializeErrorKind, FormatDeserializer, FormatParser, ParseEvent,
-    ScalarValue,
-};
+use crate::{DeserializeError, DeserializeErrorKind, FormatDeserializer, ParseEvent, ScalarValue};
 
-/// Inner implementation of `deserialize_struct_with_flatten` using dyn dispatch.
-///
-/// This function is non-generic over the parser type, reducing monomorphization.
+/// Inner implementation of `deserialize_struct_with_flatten`.
 fn deserialize_struct_with_flatten_inner<'input, const BORROW: bool>(
-    deser: &mut FormatDeserializer<'input, BORROW, &mut dyn FormatParser<'input>>,
+    deser: &mut FormatDeserializer<'input, BORROW>,
     mut wip: Partial<'input, BORROW>,
 ) -> Result<Partial<'input, BORROW>, DeserializeError> {
     use super::dyn_helpers::*;
@@ -520,10 +515,7 @@ fn initialize_empty_catch_all_inner<'input, const BORROW: bool>(
     Ok(wip)
 }
 
-impl<'input, const BORROW: bool, P> FormatDeserializer<'input, BORROW, P>
-where
-    P: FormatParser<'input>,
-{
+impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
     /// Deserialize a struct with flattened fields using facet-solver.
     ///
     /// This uses the solver's Schema/Resolution to handle arbitrarily nested
@@ -534,16 +526,6 @@ where
         &mut self,
         wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
-        use crate::FormatParser;
-        let dyn_parser: &mut dyn FormatParser<'input> = &mut self.parser;
-        let mut dyn_deser = crate::FormatDeserializer {
-            parser: dyn_parser,
-            last_span: Some(self.last_span),
-            current_path: self.current_path.clone(),
-            _marker: core::marker::PhantomData,
-        };
-        let result = deserialize_struct_with_flatten_inner(&mut dyn_deser, wip);
-        self.last_span = dyn_deser.last_span;
-        result
+        deserialize_struct_with_flatten_inner(self, wip)
     }
 }

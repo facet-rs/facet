@@ -276,10 +276,7 @@ pub(crate) fn deserialize_map_key_terminal_inner<'input, const BORROW: bool>(
     Err(MapKeyTerminalResult::NeedsSetString { wip, s: key })
 }
 
-impl<'input, const BORROW: bool, P> FormatDeserializer<'input, BORROW, P>
-where
-    P: FormatParser<'input>,
-{
+impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
     /// Set a scalar value into a `Partial`, handling type coercion.
     ///
     /// This is a thin wrapper around `set_scalar_inner` that handles the

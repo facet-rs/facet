@@ -1,14 +1,11 @@
 #[cfg(feature = "validate")]
 use facet_reflect::Partial;
 
+use crate::FormatDeserializer;
 #[cfg(feature = "validate")]
 use crate::{DeserializeError, DeserializeErrorKind};
-use crate::{FormatDeserializer, FormatParser};
 
-impl<'input, const BORROW: bool, P> FormatDeserializer<'input, BORROW, P>
-where
-    P: FormatParser<'input>,
-{
+impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
     /// Run validation on a field value.
     ///
     /// This checks for `validate::*` attributes on the field and runs

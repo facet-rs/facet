@@ -51,6 +51,7 @@ pub struct FormatDeserializer<'input, const BORROW: bool> {
     last_span: facet_reflect::Span,
 
     /// Current path through the type structure (for error reporting).
+    #[deprecated(note = "this is (poorly) manually kept when we have a Partial the whole time")]
     current_path: Path,
 
     _marker: core::marker::PhantomData<&'input ()>,
