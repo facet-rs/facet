@@ -5,7 +5,7 @@
 use std::process::ExitCode;
 
 use facet::Facet;
-use facet_args as args;
+use figue as args;
 use xshell::{Shell, cmd};
 
 /// Development tasks for roam
@@ -57,7 +57,7 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let cli: Cli = args::from_std_args()?;
+    let cli: Cli = args::from_std_args().unwrap();
     let sh = Shell::new()?;
 
     // Find workspace root (where Cargo.toml with [workspace] lives)

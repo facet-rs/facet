@@ -626,7 +626,7 @@ unsafe fn deserialize_into_ptr(
         unsafe { Partial::from_raw(ptr_uninit, shape) }.map_err(|e| e.to_string())?;
 
     let parser = PostcardParser::new(payload);
-    let mut deserializer: FormatDeserializer<'_, false, _> = FormatDeserializer::new_owned(parser);
+    let mut deserializer: FormatDeserializer<'_, '_, false> = FormatDeserializer::new_owned(parser);
     let partial = deserializer
         .deserialize_into(partial)
         .map_err(|e| e.to_string())?;

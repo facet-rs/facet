@@ -570,7 +570,7 @@ impl<T: 'static> Rx<T> {
 #[derive(Debug)]
 pub enum RxError {
     /// Failed to deserialize the value.
-    Deserialize(facet_postcard::DeserializeError<facet_postcard::PostcardError>),
+    Deserialize(facet_postcard::DeserializeError),
     /// The receiver was already taken (e.g., by ConnectionHandle::call).
     Taken,
 }

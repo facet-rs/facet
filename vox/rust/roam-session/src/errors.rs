@@ -7,7 +7,7 @@ use roam_frame::OwnedMessage;
 pub enum ClientError<TransportError> {
     Transport(TransportError),
     Encode(facet_postcard::SerializeError),
-    Decode(facet_postcard::DeserializeError<facet_postcard::PostcardError>),
+    Decode(facet_postcard::DeserializeError),
 }
 
 impl<TransportError> From<TransportError> for ClientError<TransportError> {
@@ -85,7 +85,7 @@ pub enum CallError<E = Infallible> {
     /// Failed to encode request payload.
     Encode(facet_postcard::SerializeError),
     /// Failed to decode response payload.
-    Decode(facet_postcard::DeserializeError<facet_postcard::PostcardError>),
+    Decode(facet_postcard::DeserializeError),
     /// Protocol-level decode error (malformed response structure).
     Protocol(DecodeError),
     /// Connection was closed before response.
@@ -174,7 +174,7 @@ pub enum DecodeError {
     /// Invalid Result discriminant.
     InvalidResultDiscriminant(u8),
     /// Postcard deserialization error.
-    Postcard(facet_postcard::DeserializeError<facet_postcard::PostcardError>),
+    Postcard(facet_postcard::DeserializeError),
     /// Deserialization failed with a message.
     DeserializeFailed(String),
 }
