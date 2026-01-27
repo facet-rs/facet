@@ -353,7 +353,9 @@ impl<'de, T: Facet<'de>, P: FormatJitParser<'de>> CompiledFormatDeserializer<T, 
                 });
             }
 
-            Err(parser.jit_error(input, scratch.error_pos, scratch.error_code))
+            Err(parser
+                .jit_error(input, scratch.error_pos, scratch.error_code)
+                .into())
         }
     }
 }

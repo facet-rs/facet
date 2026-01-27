@@ -33,7 +33,7 @@ fn adapter_error_to_deserialize_error(err: AdapterError) -> DeserializeError {
             expected: "more data",
         },
     };
-    DeserializeError::with_span(kind, err.span)
+    kind.with_span(err.span)
 }
 
 /// Mutable parser state that can be saved and restored.
@@ -208,10 +208,9 @@ impl<'de> JsonParser<'de> {
                 Err(self.unexpected(&token, "value"))
             }
             AdapterToken::Comma | AdapterToken::Colon => Err(self.unexpected(&token, "value")),
-            AdapterToken::Eof => Err(DeserializeError::with_span(
-                DeserializeErrorKind::UnexpectedEof { expected: "value" },
-                token.span,
-            )),
+            AdapterToken::Eof => {
+                Err(DeserializeErrorKind::UnexpectedEof { expected: "value" }.with_span(token.span))
+            }
         }
     }
 
@@ -231,13 +230,11 @@ impl<'de> JsonParser<'de> {
         token: &SpannedAdapterToken<'de>,
         expected: &'static str,
     ) -> DeserializeError {
-        DeserializeError::with_span(
-            DeserializeErrorKind::UnexpectedToken {
-                got: format!("{:?}", token.token).into(),
-                expected,
-            },
-            token.span,
-        )
+        DeserializeErrorKind::UnexpectedToken {
+            got: format!("{:?}", token.token).into(),
+            expected,
+        }
+        .with_span(token.span)
     }
 
     fn consume_value_tokens(&mut self) -> Result<(), DeserializeError> {
@@ -275,10 +272,8 @@ impl<'de> JsonParser<'de> {
                     }
                 }
                 AdapterToken::Eof => {
-                    return Err(DeserializeError::with_span(
-                        DeserializeErrorKind::UnexpectedEof { expected: "value" },
-                        token.span,
-                    ));
+                    return Err(DeserializeErrorKind::UnexpectedEof { expected: "value" }
+                        .with_span(token.span));
                 }
                 _ => {}
             }
@@ -328,12 +323,10 @@ impl<'de> JsonParser<'de> {
                             ))));
                         }
                         AdapterToken::Eof => {
-                            return Err(DeserializeError::with_span(
-                                DeserializeErrorKind::UnexpectedEof {
-                                    expected: "field name or '}'",
-                                },
-                                token.span,
-                            ));
+                            return Err(DeserializeErrorKind::UnexpectedEof {
+                                expected: "field name or '}'",
+                            }
+                            .with_span(token.span));
                         }
                         _ => return Err(self.unexpected(&token, "field name or '}'")),
                     }
@@ -356,12 +349,10 @@ impl<'de> JsonParser<'de> {
                             return Ok(Some(ParseEvent::StructEnd));
                         }
                         AdapterToken::Eof => {
-                            return Err(DeserializeError::with_span(
-                                DeserializeErrorKind::UnexpectedEof {
-                                    expected: "',' or '}'",
-                                },
-                                token.span,
-                            ));
+                            return Err(DeserializeErrorKind::UnexpectedEof {
+                                expected: "',' or '}'",
+                            }
+                            .with_span(token.span));
                         }
                         _ => return Err(self.unexpected(&token, "',' or '}'")),
                     }
@@ -375,12 +366,10 @@ impl<'de> JsonParser<'de> {
                             return Ok(Some(ParseEvent::SequenceEnd));
                         }
                         AdapterToken::Eof => {
-                            return Err(DeserializeError::with_span(
-                                DeserializeErrorKind::UnexpectedEof {
-                                    expected: "value or ']'",
-                                },
-                                token.span,
-                            ));
+                            return Err(DeserializeErrorKind::UnexpectedEof {
+                                expected: "value or ']'",
+                            }
+                            .with_span(token.span));
                         }
                         AdapterToken::Comma | AdapterToken::Colon => {
                             return Err(self.unexpected(&token, "value or ']'"));
@@ -405,12 +394,10 @@ impl<'de> JsonParser<'de> {
                             return Ok(Some(ParseEvent::SequenceEnd));
                         }
                         AdapterToken::Eof => {
-                            return Err(DeserializeError::with_span(
-                                DeserializeErrorKind::UnexpectedEof {
-                                    expected: "',' or ']'",
-                                },
-                                token.span,
-                            ));
+                            return Err(DeserializeErrorKind::UnexpectedEof {
+                                expected: "',' or ']'",
+                            }
+                            .with_span(token.span));
                         }
                         _ => return Err(self.unexpected(&token, "',' or ']'")),
                     }
@@ -541,9 +528,13 @@ impl<'de> FormatParser<'de> for JsonParser<'de> {
                 }
                 ParseEvent::StructEnd | ParseEvent::SequenceEnd => {
                     // This shouldn't happen in valid usage, but handle gracefully
-                    return Err(DeserializeError::invalid_value(
-                        "unexpected end event in capture_raw",
-                    ));
+                    return Err(DeserializeError {
+                        span: None,
+                        path: None,
+                        kind: DeserializeErrorKind::InvalidValue {
+                            message: "unexpected end event in capture_raw".into(),
+                        },
+                    });
                 }
                 _ => {
                     // Scalar value - already fully consumed during peek
@@ -565,10 +556,8 @@ impl<'de> FormatParser<'de> for JsonParser<'de> {
                 | AdapterToken::Comma
                 | AdapterToken::Colon => return Err(self.unexpected(&first, "value")),
                 AdapterToken::Eof => {
-                    return Err(DeserializeError::with_span(
-                        DeserializeErrorKind::UnexpectedEof { expected: "value" },
-                        first.span,
-                    ));
+                    return Err(DeserializeErrorKind::UnexpectedEof { expected: "value" }
+                        .with_span(first.span));
                 }
                 _ => {
                     // Simple value - already consumed
@@ -583,10 +572,12 @@ impl<'de> FormatParser<'de> for JsonParser<'de> {
 
         // Extract the raw slice and convert to str
         let raw_bytes = &self.input[start_offset..end_offset];
-        let raw_str = core::str::from_utf8(raw_bytes).map_err(|e| {
-            JsonError::without_span(JsonErrorKind::InvalidValue {
-                message: alloc::format!("invalid UTF-8 in raw JSON: {}", e),
-            })
+        let raw_str = core::str::from_utf8(raw_bytes).map_err(|e| DeserializeError {
+            span: None,
+            path: None,
+            kind: DeserializeErrorKind::InvalidValue {
+                message: alloc::format!("invalid UTF-8 in raw JSON: {}", e).into(),
+            },
         })?;
 
         self.finish_value_in_parent();

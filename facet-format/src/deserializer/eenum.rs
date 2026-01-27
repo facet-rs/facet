@@ -1530,7 +1530,10 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                 // For struct input, use solve_variant for proper field-based matching
                 let solve_result =
                     crate::solve_variant(shape, &mut *self.parser).map_err(|e| match e {
-                        crate::SolveVariantError::Parser(e) => e,
+                        crate::SolveVariantError::Parser(e) => {
+                            // Convert ParseError to DeserializeError, adding path
+                            DeserializeError::from(e).set_path(wip.path())
+                        }
                         crate::SolveVariantError::NoMatch => self.mk_err(
                             &wip,
                             DeserializeErrorKind::NoMatchingVariant {

@@ -54,7 +54,9 @@ mod visitor;
 #[cfg(feature = "jit")]
 pub mod jit;
 
-pub use deserializer::{DeserializeError, DeserializeErrorKind, FormatDeserializer, SpanGuard};
+pub use deserializer::{
+    DeserializeError, DeserializeErrorKind, FormatDeserializer, ParseError, SpanGuard,
+};
 pub use event::{
     ContainerKind, FieldKey, FieldLocationHint, ParseEvent, ScalarValue, ValueTypeHint,
 };

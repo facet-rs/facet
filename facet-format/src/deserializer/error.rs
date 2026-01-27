@@ -46,6 +46,48 @@ fn current_span() -> Span {
     })
 }
 
+/// Error produced by a format parser (JSON, TOML, etc.).
+///
+/// Parse errors always have a span (location in the input) but never have a path
+/// (location in the type structure) because parsers don't know about the target type.
+///
+/// When propagated through the deserializer, this is converted to a `DeserializeError`
+/// which can add path information.
+#[derive(Debug)]
+pub struct ParseError {
+    /// Source span where the error occurred.
+    pub span: Span,
+
+    /// The specific kind of error.
+    pub kind: DeserializeErrorKind,
+}
+
+impl ParseError {
+    /// Create a new parse error with the given span and kind.
+    #[inline]
+    pub const fn new(span: Span, kind: DeserializeErrorKind) -> Self {
+        Self { span, kind }
+    }
+}
+
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} at {:?}", self.kind, self.span)
+    }
+}
+
+impl std::error::Error for ParseError {}
+
+impl From<ParseError> for DeserializeError {
+    fn from(e: ParseError) -> Self {
+        DeserializeError {
+            span: Some(e.span),
+            path: None,
+            kind: e.kind,
+        }
+    }
+}
+
 /// Error produced by the format deserializer.
 ///
 /// This struct contains span and path information at the top level,

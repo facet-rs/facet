@@ -7,7 +7,7 @@ use facet_core::Shape;
 
 use facet_solver::{KeyResult, Resolution, ResolutionHandle, Schema, Solver};
 
-use crate::{DeserializeError, FormatParser, ParseEvent};
+use crate::{FormatParser, ParseError, ParseEvent};
 
 /// High-level outcome from solving an untagged enum.
 pub struct SolveOutcome {
@@ -23,14 +23,14 @@ pub enum SolveVariantError {
     /// No variant matched the evidence.
     NoMatch,
     /// Parser error while reading events.
-    Parser(DeserializeError),
+    Parser(ParseError),
     /// Schema construction error.
     SchemaError(facet_solver::SchemaError),
 }
 
 impl SolveVariantError {
-    /// Wrap a parser error into [`SolveVariantError::Parser`].
-    pub const fn from_parser(e: DeserializeError) -> Self {
+    /// Wrap a parse error into [`SolveVariantError::Parser`].
+    pub const fn from_parser(e: ParseError) -> Self {
         Self::Parser(e)
     }
 }

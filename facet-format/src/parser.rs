@@ -1,4 +1,4 @@
-use crate::DeserializeError;
+use crate::ParseError;
 use facet_reflect::Span;
 
 /// Opaque token returned by [`FormatParser::save`].
@@ -26,13 +26,13 @@ pub trait FormatParser<'de> {
     ///
     /// If [`restore`](Self::restore) was called, events are first replayed
     /// from the internal buffer before reading new events from the input.
-    fn next_event(&mut self) -> Result<Option<crate::ParseEvent<'de>>, DeserializeError>;
+    fn next_event(&mut self) -> Result<Option<crate::ParseEvent<'de>>, ParseError>;
 
     /// Peek at the next event without consuming it, or `None` if at EOF.
-    fn peek_event(&mut self) -> Result<Option<crate::ParseEvent<'de>>, DeserializeError>;
+    fn peek_event(&mut self) -> Result<Option<crate::ParseEvent<'de>>, ParseError>;
 
     /// Skip the current value (for unknown fields, etc.).
-    fn skip_value(&mut self) -> Result<(), DeserializeError>;
+    fn skip_value(&mut self) -> Result<(), ParseError>;
 
     /// Save the current parser position and start recording events.
     ///
@@ -61,7 +61,7 @@ pub trait FormatParser<'de> {
     ///
     /// Returns `Ok(None)` if raw capture is not supported (e.g., streaming mode
     /// or formats where raw capture doesn't make sense).
-    fn capture_raw(&mut self) -> Result<Option<&'de str>, DeserializeError> {
+    fn capture_raw(&mut self) -> Result<Option<&'de str>, ParseError> {
         // Default: not supported
         self.skip_value()?;
         Ok(None)
@@ -253,16 +253,17 @@ pub trait FormatParser<'de> {
 
 // Implement FormatParser for &mut dyn FormatParser trait objects.
 // This allows using `&mut dyn FormatParser<'de>` wherever `P: FormatParser<'de>` is expected.
+// FIXME: I'm not sure this impl is needed.
 impl<'de> FormatParser<'de> for &mut dyn FormatParser<'de> {
-    fn next_event(&mut self) -> Result<Option<crate::ParseEvent<'de>>, DeserializeError> {
+    fn next_event(&mut self) -> Result<Option<crate::ParseEvent<'de>>, ParseError> {
         (**self).next_event()
     }
 
-    fn peek_event(&mut self) -> Result<Option<crate::ParseEvent<'de>>, DeserializeError> {
+    fn peek_event(&mut self) -> Result<Option<crate::ParseEvent<'de>>, ParseError> {
         (**self).peek_event()
     }
 
-    fn skip_value(&mut self) -> Result<(), DeserializeError> {
+    fn skip_value(&mut self) -> Result<(), ParseError> {
         (**self).skip_value()
     }
 
@@ -274,7 +275,7 @@ impl<'de> FormatParser<'de> for &mut dyn FormatParser<'de> {
         (**self).restore(save_point)
     }
 
-    fn capture_raw(&mut self) -> Result<Option<&'de str>, DeserializeError> {
+    fn capture_raw(&mut self) -> Result<Option<&'de str>, ParseError> {
         (**self).capture_raw()
     }
 
@@ -431,6 +432,6 @@ pub trait FormatJitParser<'de>: FormatParser<'de> {
     /// Return a format JIT emitter instance (usually a ZST).
     fn jit_format(&self) -> Self::FormatJit;
 
-    /// Convert a Tier 2 error (code + position) into `DeserializeError`.
-    fn jit_error(&self, input: &'de [u8], error_pos: usize, error_code: i32) -> DeserializeError;
+    /// Convert a Tier 2 error (code + position) into `ParseError`.
+    fn jit_error(&self, input: &'de [u8], error_pos: usize, error_code: i32) -> ParseError;
 }
