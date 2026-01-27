@@ -2,6 +2,8 @@
 //!
 //! Provides generic CRUD operations for any registered table.
 
+use std::sync::Arc;
+
 use crate::query::{Db, Expr, SortDir, Value as QueryValue};
 use crate::schema::Schema;
 use dibs_proto::{
@@ -11,18 +13,17 @@ use dibs_proto::{
 };
 
 /// Default implementation of SquelService.
+///
+/// Takes a database client at construction time and uses it for all requests.
 #[derive(Clone)]
-pub struct SquelServiceImpl;
-
-impl SquelServiceImpl {
-    pub fn new() -> Self {
-        Self
-    }
+pub struct SquelServiceImpl {
+    client: Arc<tokio_postgres::Client>,
 }
 
-impl Default for SquelServiceImpl {
-    fn default() -> Self {
-        Self::new()
+impl SquelServiceImpl {
+    /// Create a new SquelServiceImpl with the given database client.
+    pub fn new(client: Arc<tokio_postgres::Client>) -> Self {
+        Self { client }
     }
 }
 
@@ -223,19 +224,7 @@ impl SquelService for SquelServiceImpl {
         _cx: &roam::Context,
         request: ListRequest,
     ) -> Result<ListResponse, DibsError> {
-        // Connect to database
-        let (client, connection) =
-            tokio_postgres::connect(&request.database_url, tokio_postgres::NoTls)
-                .await
-                .map_err(|e| DibsError::ConnectionFailed(e.to_string()))?;
-
-        tokio::spawn(async move {
-            if let Err(e) = connection.await {
-                eprintln!("Database connection error: {}", e);
-            }
-        });
-
-        let db = Db::new(&client);
+        let db = Db::new(&self.client);
 
         // Build the count query (same filters, no pagination)
         let mut count_builder = db
@@ -291,19 +280,7 @@ impl SquelService for SquelServiceImpl {
         _cx: &roam::Context,
         request: GetRequest,
     ) -> Result<Option<Row>, DibsError> {
-        // Connect to database
-        let (client, connection) =
-            tokio_postgres::connect(&request.database_url, tokio_postgres::NoTls)
-                .await
-                .map_err(|e| DibsError::ConnectionFailed(e.to_string()))?;
-
-        tokio::spawn(async move {
-            if let Err(e) = connection.await {
-                eprintln!("Database connection error: {}", e);
-            }
-        });
-
-        let db = Db::new(&client);
+        let db = Db::new(&self.client);
 
         // Find the primary key column
         let table = db
@@ -334,19 +311,7 @@ impl SquelService for SquelServiceImpl {
     }
 
     async fn create(&self, _cx: &roam::Context, request: CreateRequest) -> Result<Row, DibsError> {
-        // Connect to database
-        let (client, connection) =
-            tokio_postgres::connect(&request.database_url, tokio_postgres::NoTls)
-                .await
-                .map_err(|e| DibsError::ConnectionFailed(e.to_string()))?;
-
-        tokio::spawn(async move {
-            if let Err(e) = connection.await {
-                eprintln!("Database connection error: {}", e);
-            }
-        });
-
-        let db = Db::new(&client);
+        let db = Db::new(&self.client);
 
         let data = proto_row_to_query(&request.data);
 
@@ -363,19 +328,7 @@ impl SquelService for SquelServiceImpl {
     }
 
     async fn update(&self, _cx: &roam::Context, request: UpdateRequest) -> Result<Row, DibsError> {
-        // Connect to database
-        let (client, connection) =
-            tokio_postgres::connect(&request.database_url, tokio_postgres::NoTls)
-                .await
-                .map_err(|e| DibsError::ConnectionFailed(e.to_string()))?;
-
-        tokio::spawn(async move {
-            if let Err(e) = connection.await {
-                eprintln!("Database connection error: {}", e);
-            }
-        });
-
-        let db = Db::new(&client);
+        let db = Db::new(&self.client);
 
         // Find the primary key column
         let table = db
@@ -409,19 +362,7 @@ impl SquelService for SquelServiceImpl {
     }
 
     async fn delete(&self, _cx: &roam::Context, request: DeleteRequest) -> Result<u64, DibsError> {
-        // Connect to database
-        let (client, connection) =
-            tokio_postgres::connect(&request.database_url, tokio_postgres::NoTls)
-                .await
-                .map_err(|e| DibsError::ConnectionFailed(e.to_string()))?;
-
-        tokio::spawn(async move {
-            if let Err(e) = connection.await {
-                eprintln!("Database connection error: {}", e);
-            }
-        });
-
-        let db = Db::new(&client);
+        let db = Db::new(&self.client);
 
         // Find the primary key column
         let table = db

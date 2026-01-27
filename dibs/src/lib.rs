@@ -48,7 +48,7 @@
 use std::future::Future;
 use std::pin::Pin;
 
-mod backoffice;
+pub mod backoffice;
 mod diff;
 mod error;
 mod introspect;

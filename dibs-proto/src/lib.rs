@@ -370,8 +370,6 @@ pub struct Sort {
 /// Request to list rows from a table.
 #[derive(Debug, Clone, Facet)]
 pub struct ListRequest {
-    /// Database connection URL
-    pub database_url: String,
     /// Table name
     pub table: String,
     /// Filter conditions (ANDed together)
@@ -398,8 +396,6 @@ pub struct ListResponse {
 /// Request to get a single row by primary key.
 #[derive(Debug, Clone, Facet)]
 pub struct GetRequest {
-    /// Database connection URL
-    pub database_url: String,
     /// Table name
     pub table: String,
     /// Primary key value
@@ -409,8 +405,6 @@ pub struct GetRequest {
 /// Request to create a new row.
 #[derive(Debug, Clone, Facet)]
 pub struct CreateRequest {
-    /// Database connection URL
-    pub database_url: String,
     /// Table name
     pub table: String,
     /// Row data
@@ -420,8 +414,6 @@ pub struct CreateRequest {
 /// Request to update a row.
 #[derive(Debug, Clone, Facet)]
 pub struct UpdateRequest {
-    /// Database connection URL
-    pub database_url: String,
     /// Table name
     pub table: String,
     /// Primary key value
@@ -433,8 +425,6 @@ pub struct UpdateRequest {
 /// Request to delete a row.
 #[derive(Debug, Clone, Facet)]
 pub struct DeleteRequest {
-    /// Database connection URL
-    pub database_url: String,
     /// Table name
     pub table: String,
     /// Primary key value
