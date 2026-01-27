@@ -108,7 +108,7 @@ pub use facet_format::DeserializeError;
 /// assert_eq!(person.name, "Alice");
 /// assert_eq!(person.age, 30);
 /// ```
-pub fn from_str<T>(input: &str) -> Result<T, DeserializeError<JsonError>>
+pub fn from_str<T>(input: &str) -> Result<T, DeserializeError>
 where
     T: facet_core::Facet<'static>,
 {
@@ -142,7 +142,7 @@ where
 /// assert_eq!(point.x, 10);
 /// assert_eq!(point.y, 20);
 /// ```
-pub fn from_slice<T>(input: &[u8]) -> Result<T, DeserializeError<JsonError>>
+pub fn from_slice<T>(input: &[u8]) -> Result<T, DeserializeError>
 where
     T: facet_core::Facet<'static>,
 {
@@ -178,9 +178,7 @@ where
 /// assert_eq!(person.name, "Alice");
 /// assert_eq!(person.age, 30);
 /// ```
-pub fn from_str_borrowed<'input, 'facet, T>(
-    input: &'input str,
-) -> Result<T, DeserializeError<JsonError>>
+pub fn from_str_borrowed<'input, 'facet, T>(input: &'input str) -> Result<T, DeserializeError>
 where
     T: facet_core::Facet<'facet>,
     'input: 'facet,
@@ -214,9 +212,7 @@ where
 /// let point: Point = from_slice_borrowed(json).unwrap();
 /// assert_eq!(point.label, "origin");
 /// ```
-pub fn from_slice_borrowed<'input, 'facet, T>(
-    input: &'input [u8],
-) -> Result<T, DeserializeError<JsonError>>
+pub fn from_slice_borrowed<'input, 'facet, T>(input: &'input [u8]) -> Result<T, DeserializeError>
 where
     T: facet_core::Facet<'facet>,
     'input: 'facet,
@@ -259,7 +255,7 @@ where
 pub fn from_str_into<'facet>(
     input: &str,
     partial: facet_reflect::Partial<'facet, false>,
-) -> Result<facet_reflect::Partial<'facet, false>, DeserializeError<JsonError>> {
+) -> Result<facet_reflect::Partial<'facet, false>, DeserializeError> {
     from_slice_into(input.as_bytes(), partial)
 }
 
@@ -295,7 +291,7 @@ pub fn from_str_into<'facet>(
 pub fn from_slice_into<'facet>(
     input: &[u8],
     partial: facet_reflect::Partial<'facet, false>,
-) -> Result<facet_reflect::Partial<'facet, false>, DeserializeError<JsonError>> {
+) -> Result<facet_reflect::Partial<'facet, false>, DeserializeError> {
     use facet_format::FormatDeserializer;
     let parser = JsonParser::new(input);
     let mut de = FormatDeserializer::new_owned(parser);
@@ -358,7 +354,7 @@ pub fn from_slice_into<'facet>(
 pub fn from_str_into_borrowed<'input, 'facet>(
     input: &'input str,
     partial: facet_reflect::Partial<'facet, true>,
-) -> Result<facet_reflect::Partial<'facet, true>, DeserializeError<JsonError>>
+) -> Result<facet_reflect::Partial<'facet, true>, DeserializeError>
 where
     'input: 'facet,
 {
@@ -397,7 +393,7 @@ where
 pub fn from_slice_into_borrowed<'input, 'facet>(
     input: &'input [u8],
     partial: facet_reflect::Partial<'facet, true>,
-) -> Result<facet_reflect::Partial<'facet, true>, DeserializeError<JsonError>>
+) -> Result<facet_reflect::Partial<'facet, true>, DeserializeError>
 where
     'input: 'facet,
 {

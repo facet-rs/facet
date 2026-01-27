@@ -264,7 +264,7 @@ impl<'de, T: Facet<'de>, P: FormatJitParser<'de>> CompiledFormatDeserializer<T, 
     /// Execute the compiled deserializer.
     ///
     /// Returns the deserialized value and updates the parser's cursor position.
-    pub fn deserialize(&self, parser: &mut P) -> Result<T, DeserializeError<P::Error>> {
+    pub fn deserialize(&self, parser: &mut P) -> Result<T, DeserializeError> {
         // Get input slice and position from parser
         let input = parser.jit_input();
         let Some(pos) = parser.jit_pos() else {
@@ -346,7 +346,7 @@ impl<'de, T: Facet<'de>, P: FormatJitParser<'de>> CompiledFormatDeserializer<T, 
             }
 
             let err = parser.jit_error(input, scratch.error_pos, scratch.error_code);
-            Err(DeserializeError::Parser(err))
+            Err(DeserializeError::parser(err))
         }
     }
 }

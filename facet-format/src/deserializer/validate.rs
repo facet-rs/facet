@@ -19,7 +19,7 @@ where
         &self,
         field: &facet_core::Field,
         wip: &Partial<'input, BORROW>,
-    ) -> Result<(), DeserializeError<P::Error>> {
+    ) -> Result<(), DeserializeError> {
         use facet_core::ValidatorFn;
 
         // Get the data pointer from the current frame

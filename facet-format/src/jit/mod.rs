@@ -575,7 +575,7 @@ pub use cranelift_module::{Linkage, Module};
 /// Returns `Some(result)` if JIT compilation succeeded and deserialization was attempted.
 /// Returns `None` if the type is not JIT-compatible (has flatten, untagged enums, etc.),
 /// in which case the caller should fall back to reflection-based deserialization.
-pub fn try_deserialize<'de, T, P>(parser: &mut P) -> Option<Result<T, DeserializeError<P::Error>>>
+pub fn try_deserialize<'de, T, P>(parser: &mut P) -> Option<Result<T, DeserializeError>>
 where
     T: Facet<'de>,
     P: FormatParser<'de>,
@@ -607,7 +607,7 @@ pub fn is_jit_compatible<'a, T: Facet<'a>>() -> bool {
 /// falls back to the standard `FormatDeserializer`.
 ///
 /// This is the recommended entry point for production use.
-pub fn deserialize_with_fallback<'de, T, P>(mut parser: P) -> Result<T, DeserializeError<P::Error>>
+pub fn deserialize_with_fallback<'de, T, P>(mut parser: P) -> Result<T, DeserializeError>
 where
     T: Facet<'de>,
     P: FormatParser<'de>,
@@ -641,9 +641,7 @@ where
 ///
 /// Note: `Err(Unsupported(...))` from the compiled deserializer is converted
 /// to `None` to allow fallback. Only actual parse errors are returned as `Some(Err(...))`.
-pub fn try_deserialize_format<'de, T, P>(
-    parser: &mut P,
-) -> Option<Result<T, DeserializeError<P::Error>>>
+pub fn try_deserialize_format<'de, T, P>(parser: &mut P) -> Option<Result<T, DeserializeError>>
 where
     T: Facet<'de>,
     P: FormatJitParser<'de>,
@@ -691,16 +689,16 @@ where
 
 /// Error type for Tier-2 format JIT deserialization without fallback.
 #[derive(Debug)]
-pub enum Tier2DeserializeError<E> {
+pub enum Tier2DeserializeError {
     /// Parser has buffered state (no JIT position available)
     ParserHasBufferedState,
     /// Type is not Tier-2 compatible (with detailed reason)
     Incompatible(Tier2Incompatibility),
     /// Runtime deserialization error (parse error)
-    Deserialize(DeserializeError<E>),
+    Deserialize(DeserializeError),
 }
 
-impl<E: std::fmt::Display> std::fmt::Display for Tier2DeserializeError<E> {
+impl std::fmt::Display for Tier2DeserializeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::ParserHasBufferedState => {
@@ -714,7 +712,7 @@ impl<E: std::fmt::Display> std::fmt::Display for Tier2DeserializeError<E> {
     }
 }
 
-impl<E: std::fmt::Debug + std::fmt::Display> std::error::Error for Tier2DeserializeError<E> {}
+impl std::error::Error for Tier2DeserializeError {}
 
 /// Deserialize using Tier-2 format JIT, returning the reason on failure.
 ///
@@ -730,7 +728,7 @@ impl<E: std::fmt::Debug + std::fmt::Display> std::error::Error for Tier2Deserial
 /// - `Err(Deserialize(e))` if parsing failed
 pub fn try_deserialize_format_with_reason<'de, T, P>(
     parser: &mut P,
-) -> Result<T, Tier2DeserializeError<P::Error>>
+) -> Result<T, Tier2DeserializeError>
 where
     T: Facet<'de>,
     P: FormatJitParser<'de>,
@@ -822,7 +820,7 @@ pub fn ensure_format_jit_compatible_for<'a, T: Facet<'a>, F: JitFormat>()
 /// Returns `None` if neither JIT tier applies (caller should use reflection).
 pub fn try_deserialize_with_format_jit<'de, T, P>(
     parser: &mut P,
-) -> Option<Result<T, DeserializeError<P::Error>>>
+) -> Option<Result<T, DeserializeError>>
 where
     T: Facet<'de>,
     P: FormatJitParser<'de>,
@@ -862,9 +860,7 @@ where
 /// that implement [`FormatJitParser`].
 ///
 /// Note: This function tracks tier usage statistics if used during benchmarks.
-pub fn deserialize_with_format_jit_fallback<'de, T, P>(
-    mut parser: P,
-) -> Result<T, DeserializeError<P::Error>>
+pub fn deserialize_with_format_jit_fallback<'de, T, P>(mut parser: P) -> Result<T, DeserializeError>
 where
     T: Facet<'de>,
     P: FormatJitParser<'de>,

@@ -10,7 +10,7 @@ use libtest_mimic::{Arguments, Failed, Trial};
 struct JsonSlice;
 
 impl FormatSuite for JsonSlice {
-    type Error = DeserializeError<JsonError>;
+    type Error = DeserializeError;
 
     fn format_name() -> &'static str {
         "facet-json/slice"

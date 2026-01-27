@@ -92,7 +92,7 @@ enum JsonRejectionKind {
     /// Failed to read the request body.
     Body(axum_core::Error),
     /// Failed to deserialize the JSON data.
-    Deserialize(DeserializeError<JsonError>),
+    Deserialize(DeserializeError),
     /// Missing `Content-Type: application/json` header.
     MissingContentType,
     /// Invalid `Content-Type` header (not application/json).

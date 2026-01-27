@@ -776,7 +776,7 @@ pub const unsafe extern "C" fn jit_memcpy(dest: *mut u8, src: *const u8, len: us
 /// Writes the error as a TypeMismatch variant with the message.
 ///
 /// # Safety
-/// - `scratch` must be a valid pointer to a `DeserializeError<E>` buffer
+/// - `scratch` must be a valid pointer to a `DeserializeError` buffer
 /// - `msg_ptr` must be valid for `msg_len` bytes
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn jit_write_error_string(
@@ -791,15 +791,12 @@ pub unsafe extern "C" fn jit_write_error_string(
     let msg_str = std::str::from_utf8(msg_slice).unwrap_or("invalid utf8 in error message");
 
     // Create a reflection error with the message
-    // This works for any `DeserializeError<E>` since Reflect variant doesn't depend on E
     // Using InvariantViolation since duplicate variant keys are an invariant violation
-    let error: DeserializeError<()> =
+    let error: DeserializeError =
         DeserializeError::reflect(ReflectError::InvariantViolation { invariant: msg_str });
 
     unsafe {
-        // Transmute to write as `DeserializeError<E>` where E is the actual parser error type
-        // This is safe because we're using the Reflect variant which doesn't reference E
-        let scratch_typed = scratch as *mut DeserializeError<()>;
+        let scratch_typed = scratch as *mut DeserializeError;
         std::ptr::write(scratch_typed, error);
     }
 }

@@ -95,7 +95,7 @@ impl<T, P> CompiledDeserializer<T, P> {
 
 impl<'de, T: Facet<'de>, P: FormatParser<'de>> CompiledDeserializer<T, P> {
     /// Execute the compiled deserializer.
-    pub fn deserialize(&self, parser: &mut P) -> Result<T, DeserializeError<P::Error>> {
+    pub fn deserialize(&self, parser: &mut P) -> Result<T, DeserializeError> {
         // Create output storage
         let mut output: MaybeUninit<T> = MaybeUninit::uninit();
 

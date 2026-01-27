@@ -11,7 +11,7 @@ use std::sync::Arc;
 struct TomlSlice;
 
 impl FormatSuite for TomlSlice {
-    type Error = DeserializeError<TomlError>;
+    type Error = DeserializeError;
 
     fn format_name() -> &'static str {
         "facet-toml/slice"
@@ -26,7 +26,7 @@ impl FormatSuite for TomlSlice {
         T: Facet<'static> + core::fmt::Debug,
     {
         let input_str = std::str::from_utf8(input).expect("input should be valid UTF-8");
-        let parser = TomlParser::new(input_str).map_err(DeserializeError::Parser)?;
+        let parser = TomlParser::new(input_str).map_err(DeserializeError::parser)?;
         let mut de = FormatDeserializer::new_owned(parser);
         de.deserialize_deferred::<T>()
     }

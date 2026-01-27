@@ -45,7 +45,7 @@ use crate::streaming_adapter::StreamingAdapter;
 /// let person: Person = from_reader(reader).unwrap();
 /// ```
 #[cfg(feature = "std")]
-pub fn from_reader<R, T>(mut reader: R) -> Result<T, DeserializeError<JsonError>>
+pub fn from_reader<R, T>(mut reader: R) -> Result<T, DeserializeError>
 where
     R: std::io::Read,
     T: Facet<'static>,
@@ -70,7 +70,7 @@ where
     }
 
     // Create coroutine that runs the deserializer
-    let mut coroutine: Coroutine<(), (), Result<T, DeserializeError<JsonError>>> =
+    let mut coroutine: Coroutine<(), (), Result<T, DeserializeError>> =
         Coroutine::new(move |yielder, ()| {
             let adapter = StreamingAdapter::new(buffer_for_coroutine, yielder);
             let parser = StreamingJsonParser::new(adapter);
@@ -108,7 +108,7 @@ where
 /// This function streams the JSON input asynchronously, reading chunks as needed.
 #[cfg(feature = "tokio")]
 #[allow(clippy::await_holding_refcell_ref)]
-pub async fn from_async_reader_tokio<R, T>(mut reader: R) -> Result<T, DeserializeError<JsonError>>
+pub async fn from_async_reader_tokio<R, T>(mut reader: R) -> Result<T, DeserializeError>
 where
     R: tokio::io::AsyncRead + Unpin,
     T: Facet<'static>,
@@ -131,7 +131,7 @@ where
         }
     }
 
-    let mut coroutine: Coroutine<(), (), Result<T, DeserializeError<JsonError>>> =
+    let mut coroutine: Coroutine<(), (), Result<T, DeserializeError>> =
         Coroutine::new(move |yielder, ()| {
             let adapter = StreamingAdapter::new(buffer_for_coroutine, yielder);
             let parser = StreamingJsonParser::new(adapter);
@@ -164,9 +164,7 @@ where
 /// This function streams the JSON input asynchronously, reading chunks as needed.
 #[cfg(feature = "futures-io")]
 #[allow(clippy::await_holding_refcell_ref)]
-pub async fn from_async_reader_futures<R, T>(
-    mut reader: R,
-) -> Result<T, DeserializeError<JsonError>>
+pub async fn from_async_reader_futures<R, T>(mut reader: R) -> Result<T, DeserializeError>
 where
     R: futures_io::AsyncRead + Unpin,
     T: Facet<'static>,
@@ -189,7 +187,7 @@ where
         }
     }
 
-    let mut coroutine: Coroutine<(), (), Result<T, DeserializeError<JsonError>>> =
+    let mut coroutine: Coroutine<(), (), Result<T, DeserializeError>> =
         Coroutine::new(move |yielder, ()| {
             let adapter = StreamingAdapter::new(buffer_for_coroutine, yielder);
             let parser = StreamingJsonParser::new(adapter);
@@ -740,7 +738,7 @@ mod tests {
         //               ^ offset 14 (the '}')
 
         let reader = Cursor::new(&json[..]);
-        let res: Result<Simple, DeserializeError<JsonError>> = from_reader(reader);
+        let res: Result<Simple, DeserializeError> = from_reader(reader);
 
         let err = res.unwrap_err();
         if let DeserializeError::Parser(e) = err {
