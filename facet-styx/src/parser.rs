@@ -2,14 +2,14 @@
 
 use std::borrow::Cow;
 
+use crate::trace;
 use facet_core::Facet;
 use facet_format::{
-    ContainerKind, FieldKey, FieldLocationHint, FormatParser, ParseEvent, SavePoint, ScalarValue,
+    ContainerKind, DeserializeErrorKind, FieldKey, FieldLocationHint, FormatParser, ParseError,
+    ParseEvent, SavePoint, ScalarValue,
 };
+use facet_reflect::Span as ReflectSpan;
 use styx_parse::{Lexer, ScalarKind, Span, Token, TokenKind};
-
-use crate::error::{StyxError, StyxErrorKind};
-use crate::trace;
 
 /// Streaming Styx parser implementing FormatParser.
 #[derive(Clone)]
@@ -256,8 +256,25 @@ impl<'de> StyxParser<'de> {
         }
     }
 
-    fn error(&self, kind: StyxErrorKind) -> StyxError {
-        StyxError::new(kind, self.current_span)
+    fn parse_error(
+        &self,
+        got: impl Into<std::borrow::Cow<'static, str>>,
+        expected: &'static str,
+    ) -> ParseError {
+        let span = self
+            .current_span
+            .map(|s| ReflectSpan {
+                offset: s.start as usize,
+                len: (s.end - s.start) as usize,
+            })
+            .unwrap_or(ReflectSpan { offset: 0, len: 1 });
+        ParseError::new(
+            span,
+            DeserializeErrorKind::UnexpectedToken {
+                got: got.into(),
+                expected,
+            },
+        )
     }
 
     /// Parse a tag and emit appropriate events.
@@ -311,9 +328,7 @@ impl<'de> StyxParser<'de> {
 }
 
 impl<'de> FormatParser<'de> for StyxParser<'de> {
-    type Error = StyxError;
-
-    fn next_event(&mut self) -> Result<Option<ParseEvent<'de>>, Self::Error> {
+    fn next_event(&mut self) -> Result<Option<ParseEvent<'de>>, ParseError> {
         // Return queued event if any (FIFO - take from front)
         if !self.peeked_events.is_empty() {
             let event = self.peeked_events.remove(0);
@@ -451,10 +466,7 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
                         }
                         _ => {
                             // Mismatched brace - error
-                            return Err(self.error(StyxErrorKind::UnexpectedToken {
-                                got: "}".to_string(),
-                                expected: "key or value",
-                            }));
+                            return Err(self.parse_error("}", "key or value"));
                         }
                     }
                 }
@@ -466,10 +478,7 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
                             return Ok(Some(ParseEvent::SequenceEnd));
                         }
                         _ => {
-                            return Err(self.error(StyxErrorKind::UnexpectedToken {
-                                got: ")".to_string(),
-                                expected: "value",
-                            }));
+                            return Err(self.parse_error(")", "value"));
                         }
                     }
                 }
@@ -556,19 +565,19 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
                                     TokenKind::LBrace | TokenKind::LParen | TokenKind::At => {
                                         // @foo{...} or @foo(...) or @foo@ as a key
                                         // This is complex - for now, error
-                                        return Err(self.error(StyxErrorKind::UnexpectedToken {
-                                                    expected: "simple key",
-                                                    got: format!(
-                                                        "complex tagged value @{}{} cannot be used as object key",
-                                                        tag_name,
-                                                        match after_kind {
-                                                            TokenKind::LBrace => "{...}",
-                                                            TokenKind::LParen => "(...)",
-                                                            TokenKind::At => "@",
-                                                            _ => "",
-                                                        }
-                                                    ),
-                                                }));
+                                        return Err(self.parse_error(
+                                            format!(
+                                                "complex tagged value @{}{} cannot be used as object key",
+                                                tag_name,
+                                                match after_kind {
+                                                    TokenKind::LBrace => "{...}",
+                                                    TokenKind::LParen => "(...)",
+                                                    TokenKind::At => "@",
+                                                    _ => "",
+                                                }
+                                            ),
+                                            "simple key",
+                                        ));
                                     }
                                     _ => {}
                                 }
@@ -641,7 +650,7 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
         Ok(None)
     }
 
-    fn peek_event(&mut self) -> Result<Option<ParseEvent<'de>>, Self::Error> {
+    fn peek_event(&mut self) -> Result<Option<ParseEvent<'de>>, ParseError> {
         if self.peeked_events.is_empty() {
             // Record the lexer position before consuming any tokens
             self.peek_start_offset = Some(self.lexer.position() as usize);
@@ -653,7 +662,7 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
         Ok(self.peeked_events.first().cloned())
     }
 
-    fn skip_value(&mut self) -> Result<(), Self::Error> {
+    fn skip_value(&mut self) -> Result<(), ParseError> {
         // Consume the next value, handling nested structures
         let mut depth = 0i32;
         loop {
@@ -716,7 +725,7 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
         Some(crate::RawStyx::SHAPE)
     }
 
-    fn capture_raw(&mut self) -> Result<Option<&'de str>, Self::Error> {
+    fn capture_raw(&mut self) -> Result<Option<&'de str>, ParseError> {
         // Get the start offset - either from peek_event or current position
         let start_offset = self
             .peek_start_offset

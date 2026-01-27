@@ -3,7 +3,7 @@
 use std::fmt;
 
 use ariadne::{Color, Config, Label, Report, ReportKind, Source};
-use facet_format::DeserializeError;
+use facet_format::{DeserializeError, DeserializeErrorKind};
 use styx_parse::Span;
 
 /// Get ariadne config, respecting NO_COLOR env var.
@@ -203,11 +203,11 @@ pub trait RenderError {
     fn write_report<W: std::io::Write>(&self, filename: &str, source: &str, writer: W);
 }
 
-/// Rendering support for `DeserializeError<StyxError>`.
+/// Rendering support for `DeserializeError`.
 ///
 /// This allows rendering the full deserialize error (which may come from the parser
 /// or from facet-format's deserializer) with ariadne diagnostics.
-impl RenderError for DeserializeError<StyxError> {
+impl RenderError for DeserializeError {
     fn render(&self, filename: &str, source: &str) -> String {
         let mut output = Vec::new();
         self.write_report(filename, source, &mut output);
@@ -226,61 +226,51 @@ impl RenderError for DeserializeError<StyxError> {
 
 #[allow(dead_code)]
 fn build_deserialize_error_report<'a>(
-    err: &DeserializeError<StyxError>,
+    err: &DeserializeError,
     filename: &'a str,
     source: &str,
     config: Config,
 ) -> ariadne::ReportBuilder<'static, (&'a str, std::ops::Range<usize>)> {
-    match err {
-        // Parser errors - delegate to StyxError's rendering
-        // Note: StyxError::build_report doesn't take config, so we need to add it after
-        DeserializeError::Parser(styx_err) => {
-            styx_err.build_report(filename, source).with_config(config)
-        }
+    // Get the range from err.span, with fallback
+    let range = err
+        .span
+        .as_ref()
+        .map(reflect_span_to_range)
+        .unwrap_or(0..source.len().max(1));
 
+    match &err.kind {
         // Missing field from facet-format
-        DeserializeError::MissingField {
+        DeserializeErrorKind::MissingField {
             field,
-            type_name,
-            span,
-            ..
-        } => {
-            let range = span
-                .as_ref()
-                .map(reflect_span_to_range)
-                .unwrap_or(0..source.len().max(1));
-            Report::build(ReportKind::Error, (filename, range.clone()))
-                .with_config(config)
-                .with_message(format!("missing required field '{}'", field))
-                .with_label(
-                    Label::new((filename, range))
-                        .with_message(format!("in {}", type_name))
-                        .with_color(Color::Red),
-                )
-                .with_help(format!("add the required field: {} <value>", field))
-        }
+            container_shape,
+        } => Report::build(ReportKind::Error, (filename, range.clone()))
+            .with_config(config)
+            .with_message(format!("missing required field '{}'", field))
+            .with_label(
+                Label::new((filename, range))
+                    .with_message(format!("in {}", container_shape))
+                    .with_color(Color::Red),
+            )
+            .with_help(format!("add the required field: {} <value>", field)),
 
         // Unknown field from facet-format
-        DeserializeError::UnknownField { field, span, .. } => {
-            let range = span.as_ref().map(reflect_span_to_range).unwrap_or(0..1);
-            Report::build(ReportKind::Error, (filename, range.clone()))
+        DeserializeErrorKind::UnknownField { field, suggestion } => {
+            let mut report = Report::build(ReportKind::Error, (filename, range.clone()))
                 .with_config(config)
                 .with_message(format!("unknown field '{}'", field))
                 .with_label(
                     Label::new((filename, range))
                         .with_message("unknown field")
                         .with_color(Color::Red),
-                )
+                );
+            if let Some(s) = suggestion {
+                report = report.with_help(format!("did you mean '{}'?", s));
+            }
+            report
         }
 
         // Type mismatch from facet-format
-        DeserializeError::TypeMismatch {
-            expected,
-            got,
-            span,
-            ..
-        } => {
-            let range = span.as_ref().map(reflect_span_to_range).unwrap_or(0..1);
+        DeserializeErrorKind::TypeMismatch { expected, got } => {
             Report::build(ReportKind::Error, (filename, range.clone()))
                 .with_config(config)
                 .with_message(format!("type mismatch: expected {}", expected))
@@ -292,24 +282,53 @@ fn build_deserialize_error_report<'a>(
         }
 
         // Reflect errors from facet-format
-        DeserializeError::Reflect { error, span, .. } => {
-            let range = span.as_ref().map(reflect_span_to_range).unwrap_or(0..1);
-            Report::build(ReportKind::Error, (filename, range.clone()))
+        DeserializeErrorKind::Reflect { kind, context } => {
+            let mut report = Report::build(ReportKind::Error, (filename, range.clone()))
                 .with_config(config)
-                .with_message(format!("{}", error))
+                .with_message(format!("{}", kind))
                 .with_label(
                     Label::new((filename, range))
                         .with_message("error here")
                         .with_color(Color::Red),
-                )
+                );
+            if !context.is_empty() {
+                report = report.with_note(format!("while {}", context));
+            }
+            report
         }
 
         // Unexpected EOF
-        DeserializeError::UnexpectedEof { expected } => {
-            let range = source.len().saturating_sub(1)..source.len().max(1);
-            Report::build(ReportKind::Error, (filename, range.clone()))
+        DeserializeErrorKind::UnexpectedEof { expected } => {
+            let eof_range = source.len().saturating_sub(1)..source.len().max(1);
+            Report::build(ReportKind::Error, (filename, eof_range.clone()))
                 .with_config(config)
                 .with_message("unexpected end of input")
+                .with_label(
+                    Label::new((filename, eof_range))
+                        .with_message(format!("expected {}", expected))
+                        .with_color(Color::Red),
+                )
+        }
+
+        // Unsupported operation
+        DeserializeErrorKind::Unsupported { message } => {
+            Report::build(ReportKind::Error, (filename, 0..1))
+                .with_config(config)
+                .with_message(format!("unsupported: {}", message))
+        }
+
+        // Cannot borrow
+        DeserializeErrorKind::CannotBorrow { reason } => {
+            Report::build(ReportKind::Error, (filename, 0..1))
+                .with_config(config)
+                .with_message(*reason)
+        }
+
+        // Unexpected token (from parser)
+        DeserializeErrorKind::UnexpectedToken { got, expected } => {
+            Report::build(ReportKind::Error, (filename, range.clone()))
+                .with_config(config)
+                .with_message(format!("unexpected token '{}'", got))
                 .with_label(
                     Label::new((filename, range))
                         .with_message(format!("expected {}", expected))
@@ -317,17 +336,27 @@ fn build_deserialize_error_report<'a>(
                 )
         }
 
-        // Unsupported operation
-        DeserializeError::Unsupported(msg) => Report::build(ReportKind::Error, (filename, 0..1))
-            .with_config(config)
-            .with_message(format!("unsupported: {}", msg)),
-
-        // Cannot borrow
-        DeserializeError::CannotBorrow { message } => {
-            Report::build(ReportKind::Error, (filename, 0..1))
+        // Invalid value
+        DeserializeErrorKind::InvalidValue { message } => {
+            Report::build(ReportKind::Error, (filename, range.clone()))
                 .with_config(config)
-                .with_message(message.clone())
+                .with_message(format!("invalid value: {}", message))
+                .with_label(
+                    Label::new((filename, range))
+                        .with_message("here")
+                        .with_color(Color::Red),
+                )
         }
+
+        // Catch-all for other error kinds
+        _ => Report::build(ReportKind::Error, (filename, range.clone()))
+            .with_config(config)
+            .with_message(format!("{}", err.kind))
+            .with_label(
+                Label::new((filename, range))
+                    .with_message("error here")
+                    .with_color(Color::Red),
+            ),
     }
 }
 

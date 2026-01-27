@@ -93,7 +93,7 @@ pub use serializer::{
 /// assert_eq!(person.name, "Alice");
 /// assert_eq!(person.age, 30);
 /// ```
-pub fn from_str<T>(input: &str) -> Result<T, DeserializeError<StyxError>>
+pub fn from_str<T>(input: &str) -> Result<T, DeserializeError>
 where
     T: facet_core::Facet<'static>,
 {
@@ -125,9 +125,7 @@ where
 /// assert_eq!(person.name, "Alice");
 /// assert_eq!(person.age, 30);
 /// ```
-pub fn from_str_borrowed<'input, 'facet, T>(
-    input: &'input str,
-) -> Result<T, DeserializeError<StyxError>>
+pub fn from_str_borrowed<'input, 'facet, T>(input: &'input str) -> Result<T, DeserializeError>
 where
     T: facet_core::Facet<'facet>,
     'input: 'facet,
@@ -161,7 +159,7 @@ where
 /// let num: i32 = from_str_expr("42").unwrap();
 /// assert_eq!(num, 42);
 /// ```
-pub fn from_str_expr<T>(input: &str) -> Result<T, DeserializeError<StyxError>>
+pub fn from_str_expr<T>(input: &str) -> Result<T, DeserializeError>
 where
     T: facet_core::Facet<'static>,
 {
