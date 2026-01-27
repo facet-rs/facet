@@ -7,7 +7,7 @@ use facet_reflect::Partial;
 
 use crate::{
     DeserializeError, DeserializeErrorKind, EnumVariantHint, FormatDeserializer, ParseEvent,
-    ScalarTypeHint, ScalarValue,
+    ScalarTypeHint, ScalarValue, SpanGuard,
 };
 
 /// Helper to get variant display name (used by deserialize_enum_dynamic_inner)
@@ -24,6 +24,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        let _guard = SpanGuard::new(self.last_span);
         self.parser.hint_dynamic_value();
         let event = self.expect_peek("value for dynamic value")?;
 
@@ -48,9 +49,10 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                         break;
                     }
 
-                    wip = wip.begin_list_item()?;
-                    wip = self.deserialize_dynamic_value(wip)?;
-                    wip = wip.end()?;
+                    wip = wip
+                        .begin_list_item()?
+                        .with(|w| self.deserialize_dynamic_value(w))?
+                        .end()?;
                 }
             }
             ParseEvent::StructStart(_) => {
@@ -78,7 +80,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                         _ => {
                             return Err(DeserializeError {
                                 span: Some(self.last_span),
-                                path: None,
+                                path: Some(wip.path()),
                                 kind: DeserializeErrorKind::UnexpectedToken {
                                     expected: "field key",
                                     got: key_event.kind_name().into(),
@@ -88,15 +90,16 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                     };
 
                     // Begin the object entry and deserialize the value
-                    wip = wip.begin_object_entry(&key)?;
-                    wip = self.deserialize_dynamic_value(wip)?;
-                    wip = wip.end()?;
+                    wip = wip
+                        .begin_object_entry(&key)?
+                        .with(|w| self.deserialize_dynamic_value(w))?
+                        .end()?;
                 }
             }
             _ => {
                 return Err(DeserializeError {
                     span: Some(self.last_span),
-                    path: None,
+                    path: Some(wip.path()),
                     kind: DeserializeErrorKind::UnexpectedToken {
                         expected: "scalar, sequence, or struct",
                         got: event.kind_name().into(),
@@ -113,18 +116,18 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         mut wip: Partial<'input, BORROW>,
         fields: &'static [facet_core::Field],
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        let _guard = SpanGuard::new(self.last_span);
         self.parser.hint_struct_fields(fields.len());
 
         let event = self.expect_event("struct start")?;
         if !matches!(event, ParseEvent::StructStart(_)) {
-            return Err(DeserializeError {
-                span: Some(self.last_span),
-                path: Some(self.path_clone()),
-                kind: DeserializeErrorKind::UnexpectedToken {
+            return Err(self.mk_err(
+                &wip,
+                DeserializeErrorKind::UnexpectedToken {
                     expected: "struct",
                     got: event.kind_name().into(),
                 },
-            });
+            ));
         }
 
         wip = wip.init_map()?;
@@ -135,20 +138,20 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
             match event {
                 ParseEvent::OrderedField | ParseEvent::FieldKey(_) => {
                     let key = field.rename.unwrap_or(field.name);
-                    wip = wip.begin_object_entry(key)?;
-                    wip = self.deserialize_value_recursive(wip, field_shape)?;
-                    wip = wip.end()?;
+                    wip = wip
+                        .begin_object_entry(key)?
+                        .with(|w| self.deserialize_value_recursive(w, field_shape))?
+                        .end()?;
                 }
                 ParseEvent::StructEnd => break,
                 _ => {
-                    return Err(DeserializeError {
-                        span: Some(self.last_span),
-                        path: Some(self.path_clone()),
-                        kind: DeserializeErrorKind::UnexpectedToken {
+                    return Err(self.mk_err(
+                        &wip,
+                        DeserializeErrorKind::UnexpectedToken {
                             expected: "field or struct end",
                             got: event.kind_name().into(),
                         },
-                    });
+                    ));
                 }
             }
         }
@@ -168,6 +171,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         mut wip: Partial<'input, BORROW>,
         fields: &'static [facet_core::Field],
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        let _guard = SpanGuard::new(self.last_span);
         self.parser.hint_struct_fields(fields.len());
 
         let event = self.expect_event("tuple start")?;
@@ -175,14 +179,13 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
             event,
             ParseEvent::StructStart(_) | ParseEvent::SequenceStart(_)
         ) {
-            return Err(DeserializeError {
-                span: Some(self.last_span),
-                path: Some(self.path_clone()),
-                kind: DeserializeErrorKind::UnexpectedToken {
+            return Err(self.mk_err(
+                &wip,
+                DeserializeErrorKind::UnexpectedToken {
                     expected: "tuple",
                     got: event.kind_name().into(),
                 },
-            });
+            ));
         }
 
         wip = wip.init_list()?;
@@ -192,20 +195,20 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
             let event = self.expect_event("tuple element")?;
             match event {
                 ParseEvent::OrderedField | ParseEvent::FieldKey(_) => {
-                    wip = wip.begin_list_item()?;
-                    wip = self.deserialize_value_recursive(wip, field_shape)?;
-                    wip = wip.end()?;
+                    wip = wip
+                        .begin_list_item()?
+                        .with(|w| self.deserialize_value_recursive(w, field_shape))?
+                        .end()?;
                 }
                 ParseEvent::StructEnd | ParseEvent::SequenceEnd => break,
                 _ => {
-                    return Err(DeserializeError {
-                        span: Some(self.last_span),
-                        path: Some(self.path_clone()),
-                        kind: DeserializeErrorKind::UnexpectedToken {
+                    return Err(self.mk_err(
+                        &wip,
+                        DeserializeErrorKind::UnexpectedToken {
                             expected: "tuple element or end",
                             got: event.kind_name().into(),
                         },
-                    });
+                    ));
                 }
             }
         }
@@ -221,9 +224,11 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
 
     pub(crate) fn deserialize_enum_dynamic(
         &mut self,
-        wip: Partial<'input, BORROW>,
+        mut wip: Partial<'input, BORROW>,
         enum_def: &'static facet_core::EnumType,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        let _guard = SpanGuard::new(self.last_span);
+
         // Build and send the hint
         let variants: alloc::vec::Vec<EnumVariantHint> = enum_def
             .variants
@@ -234,14 +239,14 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                 field_count: v.data.fields.len(),
             })
             .collect();
-        hint_enum(deser, &variants);
+        self.parser.hint_enum(&variants);
 
-        let event = expect_event(deser, "enum")?;
+        let event = self.expect_event("enum")?;
 
         match event {
             ParseEvent::Scalar(ScalarValue::Str(s)) => {
                 // Unit variant as string (self-describing formats)
-                wip = set_string_value(deser, wip, s)?;
+                wip = self.set_string_value(wip, s)?;
             }
             ParseEvent::Scalar(ScalarValue::I64(i)) => {
                 wip = wip.set(i)?;
@@ -257,36 +262,47 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                 // These differ when using #[facet(other)] to catch unknown variants.
 
                 // Find variant by display name (respecting rename) or fall back to #[facet(other)]
-                let (variant, is_using_other_fallback) =
-                    match input_tag {
-                        Some(tag) => {
-                            let is_fallback = !enum_def
-                                .variants
-                                .iter()
-                                .any(|v| get_variant_display_name(v) == tag);
-                            let variant = enum_def
-                                .variants
-                                .iter()
-                                .find(|v| get_variant_display_name(v) == tag)
-                                .or_else(|| enum_def.variants.iter().find(|v| v.is_other()))
-                                .ok_or_else(|| {
-                                    DeserializeError::unsupported(format!("unknown variant: {tag}"))
-                                })?;
-                            (variant, is_fallback)
-                        }
-                        None => {
-                            // Unit tag - must use #[facet(other)] fallback
-                            let variant =
-                                enum_def.variants.iter().find(|v| v.is_other()).ok_or_else(
-                                    || {
-                                        DeserializeError::unsupported(
-                                            "unit tag requires #[facet(other)] fallback",
-                                        )
+                let (variant, is_using_other_fallback) = match input_tag {
+                    Some(tag) => {
+                        let is_fallback = !enum_def
+                            .variants
+                            .iter()
+                            .any(|v| get_variant_display_name(v) == tag);
+                        let variant = enum_def
+                            .variants
+                            .iter()
+                            .find(|v| get_variant_display_name(v) == tag)
+                            .or_else(|| enum_def.variants.iter().find(|v| v.is_other()))
+                            .ok_or_else(|| {
+                                self.mk_err(
+                                    &wip,
+                                    DeserializeErrorKind::UnknownVariant {
+                                        variant: Cow::Owned(tag.to_owned()),
+                                        enum_shape: wip.shape(),
                                     },
-                                )?;
-                            (variant, true)
-                        }
-                    };
+                                )
+                            })?;
+                        (variant, is_fallback)
+                    }
+                    None => {
+                        // Unit tag - must use #[facet(other)] fallback
+                        let variant =
+                            enum_def
+                                .variants
+                                .iter()
+                                .find(|v| v.is_other())
+                                .ok_or_else(|| {
+                                    self.mk_err(
+                                        &wip,
+                                        DeserializeErrorKind::Unsupported {
+                                            message: "unit tag requires #[facet(other)] fallback"
+                                                .into(),
+                                        },
+                                    )
+                                })?;
+                        (variant, true)
+                    }
+                };
 
                 match variant.data.kind {
                     StructKind::Unit => {
@@ -294,42 +310,43 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                             // #[facet(other)] fallback: preserve the original input tag
                             // so that "SomethingUnknown" round-trips correctly
                             if let Some(tag) = input_tag {
-                                wip = set_string_value(deser, wip, Cow::Borrowed(tag))?;
+                                wip = self.set_string_value(wip, Cow::Borrowed(tag))?;
                             } else {
                                 // Unit tag - set to default (None for Option<String>)
                                 wip = wip.set_default()?;
                             }
                         } else {
                             // Direct match: use effective_name (wire format name)
-                            wip = set_string_value(
-                                deser,
-                                wip,
-                                Cow::Borrowed(variant.effective_name()),
-                            )?;
+                            wip = self
+                                .set_string_value(wip, Cow::Borrowed(variant.effective_name()))?;
                         }
                     }
                     StructKind::TupleStruct | StructKind::Tuple => {
                         if variant.data.fields.len() == 1 {
                             wip = wip.init_map()?;
-                            wip = wip.begin_object_entry(variant.effective_name())?;
-                            wip = deserialize_value_recursive(
-                                deser,
-                                wip,
-                                variant.data.fields[0].shape.get(),
-                            )?;
-                            wip = wip.end()?;
+                            wip = wip
+                                .begin_object_entry(variant.effective_name())?
+                                .with(|w| {
+                                    self.deserialize_value_recursive(
+                                        w,
+                                        variant.data.fields[0].shape.get(),
+                                    )
+                                })?
+                                .end()?;
                         } else {
                             wip = wip.init_map()?;
-                            wip = wip.begin_object_entry(variant.effective_name())?;
-                            wip = deserialize_tuple_dynamic(deser, wip, variant.data.fields)?;
-                            wip = wip.end()?;
+                            wip = wip
+                                .begin_object_entry(variant.effective_name())?
+                                .with(|w| self.deserialize_tuple_dynamic(w, variant.data.fields))?
+                                .end()?;
                         }
                     }
                     StructKind::Struct => {
                         wip = wip.init_map()?;
-                        wip = wip.begin_object_entry(variant.effective_name())?;
-                        wip = deserialize_struct_dynamic(deser, wip, variant.data.fields)?;
-                        wip = wip.end()?;
+                        wip = wip
+                            .begin_object_entry(variant.effective_name())?
+                            .with(|w| self.deserialize_struct_dynamic(w, variant.data.fields))?
+                            .end()?;
                     }
                 }
             }
@@ -337,19 +354,20 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                 // Non-self-describing formats emit enum as {variant_name: value}
                 // The parser has already parsed the discriminant and will emit
                 // FieldKey events for the variant name
-                wip = deserialize_enum_as_struct(deser, wip, enum_def)?;
+                wip = self.deserialize_enum_as_struct(wip, enum_def)?;
             }
             _ => {
-                return Err(DeserializeError {
-                    span: Some(deser.last_span),
-                    path: None,
-                    kind: DeserializeErrorKind::UnexpectedToken {
+                return Err(self.mk_err(
+                    &wip,
+                    DeserializeErrorKind::UnexpectedToken {
                         expected: "enum variant",
-                        got: format!("{event:?}").into(),
+                        got: event.kind_name().into(),
                     },
-                });
+                ));
             }
         }
+
+        Ok(wip)
     }
 
     pub(crate) fn deserialize_scalar_dynamic(
@@ -357,6 +375,8 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         mut wip: Partial<'input, BORROW>,
         hint_shape: &'static Shape,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        let _guard = SpanGuard::new(self.last_span);
+
         let hint = match hint_shape.scalar_type() {
             Some(ScalarType::Bool) => Some(ScalarTypeHint::Bool),
             Some(ScalarType::U8) => Some(ScalarTypeHint::U8),
@@ -423,14 +443,13 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                 }
             },
             _ => {
-                return Err(DeserializeError {
-                    span: Some(self.last_span),
-                    path: Some(self.path_clone()),
-                    kind: DeserializeErrorKind::UnexpectedToken {
+                return Err(self.mk_err(
+                    &wip,
+                    DeserializeErrorKind::UnexpectedToken {
                         expected: "scalar",
                         got: event.kind_name().into(),
                     },
-                });
+                ));
             }
         }
 
@@ -442,18 +461,18 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         mut wip: Partial<'input, BORROW>,
         element_shape: &'static Shape,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        let _guard = SpanGuard::new(self.last_span);
         self.parser.hint_sequence();
 
         let event = self.expect_event("sequence start")?;
         if !matches!(event, ParseEvent::SequenceStart(_)) {
-            return Err(DeserializeError {
-                span: Some(self.last_span),
-                path: Some(self.path_clone()),
-                kind: DeserializeErrorKind::UnexpectedToken {
+            return Err(self.mk_err(
+                &wip,
+                DeserializeErrorKind::UnexpectedToken {
                     expected: "sequence",
                     got: event.kind_name().into(),
                 },
-            });
+            ));
         }
 
         wip = wip.init_list()?;
@@ -465,9 +484,10 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                 break;
             }
 
-            wip = wip.begin_list_item()?;
-            wip = self.deserialize_value_recursive(wip, element_shape)?;
-            wip = wip.end()?;
+            wip = wip
+                .begin_list_item()?
+                .with(|w| self.deserialize_value_recursive(w, element_shape))?
+                .end()?;
         }
 
         Ok(wip)
@@ -479,38 +499,38 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         element_shape: &'static Shape,
         len: usize,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        let _guard = SpanGuard::new(self.last_span);
         self.parser.hint_array(len);
 
         let event = self.expect_event("array start")?;
         if !matches!(event, ParseEvent::SequenceStart(_)) {
-            return Err(DeserializeError {
-                span: Some(self.last_span),
-                path: Some(self.path_clone()),
-                kind: DeserializeErrorKind::UnexpectedToken {
+            return Err(self.mk_err(
+                &wip,
+                DeserializeErrorKind::UnexpectedToken {
                     expected: "array",
                     got: event.kind_name().into(),
                 },
-            });
+            ));
         }
 
         wip = wip.init_list()?;
 
         for _ in 0..len {
-            wip = wip.begin_list_item()?;
-            wip = self.deserialize_value_recursive(wip, element_shape)?;
-            wip = wip.end()?;
+            wip = wip
+                .begin_list_item()?
+                .with(|w| self.deserialize_value_recursive(w, element_shape))?
+                .end()?;
         }
 
         let event = self.expect_event("array end")?;
         if !matches!(event, ParseEvent::SequenceEnd) {
-            return Err(DeserializeError {
-                span: Some(self.last_span),
-                path: Some(self.path_clone()),
-                kind: DeserializeErrorKind::UnexpectedToken {
+            return Err(self.mk_err(
+                &wip,
+                DeserializeErrorKind::UnexpectedToken {
                     expected: "array end",
                     got: event.kind_name().into(),
                 },
-            });
+            ));
         }
 
         Ok(wip)
@@ -522,6 +542,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         key_shape: &'static Shape,
         value_shape: &'static Shape,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        let _guard = SpanGuard::new(self.last_span);
         self.parser.hint_map();
 
         let event = self.expect_event("map start")?;
@@ -529,14 +550,13 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
             event,
             ParseEvent::SequenceStart(_) | ParseEvent::StructStart(_)
         ) {
-            return Err(DeserializeError {
-                span: Some(self.last_span),
-                path: Some(self.path_clone()),
-                kind: DeserializeErrorKind::UnexpectedToken {
+            return Err(self.mk_err(
+                &wip,
+                DeserializeErrorKind::UnexpectedToken {
                     expected: "map",
                     got: event.kind_name().into(),
                 },
-            });
+            ));
         }
 
         wip = wip.init_map()?;
@@ -578,20 +598,20 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                 ParseEvent::Scalar(ScalarValue::U64(u)) => Cow::Owned(u.to_string()),
                 ParseEvent::FieldKey(k) => k.name.unwrap_or(Cow::Borrowed("@")),
                 _ => {
-                    return Err(DeserializeError {
-                        span: Some(self.last_span),
-                        path: Some(self.path_clone()),
-                        kind: DeserializeErrorKind::UnexpectedToken {
+                    return Err(self.mk_err(
+                        &wip,
+                        DeserializeErrorKind::UnexpectedToken {
                             expected: "map key",
                             got: key_event.kind_name().into(),
                         },
-                    });
+                    ));
                 }
             };
 
-            wip = wip.begin_object_entry(&key_str)?;
-            wip = self.deserialize_value_recursive(wip, value_shape)?;
-            wip = wip.end()?;
+            wip = wip
+                .begin_object_entry(&key_str)?
+                .with(|w| self.deserialize_value_recursive(w, value_shape))?
+                .end()?;
         }
 
         Ok(wip)

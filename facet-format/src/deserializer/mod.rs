@@ -133,11 +133,16 @@ use crate::{FormatParser, ParseEvent};
 mod error;
 pub use error::*;
 
+/// Convenience setters for string etc.
 mod setters;
 
-mod dynamic;
-mod eenum;
+/// Entry point for deserialization
 mod entry;
+
+/// Deserialization of dynamic values
+mod dynamic;
+
+mod eenum;
 // mod pointer;
 // mod scalar_matches;
 // mod struct_simple;
