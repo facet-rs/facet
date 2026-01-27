@@ -1,11 +1,11 @@
 ---
-source: tests/integration/err.rs
+source: crates/figue/tests/integration/err.rs
 expression: "$crate :: common :: strip_ansi(& err.to_string())"
 ---
-Error: failed to parse "abc" as char
+Error: failed to parse "abc" as char at letter
    ╭─[ <cli>:1:10 ]
    │
  1 │ --letter abc
    │          ─┬─  
-   │           ╰─── failed to parse "abc" as char
+   │           ╰─── failed to parse "abc" as char at letter
 ───╯

@@ -24,7 +24,6 @@ facet.workspace = true
 facet-core.workspace = true
 facet-format.workspace = true
 facet-json.workspace = true
-facet-styx = { workspace = true, optional = true }
 facet-reflect.workspace = true
 facet-pretty.workspace = true
 facet-error.workspace = true
@@ -53,7 +52,6 @@ default = ["rich-diagnostics"]
 rich-diagnostics = []
 doc = ["facet/doc"]
 tracing = ["facet-reflect/tracing", "facet-json/tracing", "facet-format/tracing"]
-styx = ["dep:facet-styx"]
 
 [[example]]
 name = "args_showcase"

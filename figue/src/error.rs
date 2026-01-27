@@ -528,8 +528,8 @@ const fn unwrap_option_type(shape: &'static Shape) -> &'static str {
 
 /// Format a ReflectError into a user-friendly message
 fn format_reflect_error(err: &ReflectError) -> String {
-    use facet_reflect::ReflectError::*;
-    match err {
+    use facet_reflect::ReflectErrorKind::*;
+    match &err.kind {
         ParseFailed { shape, .. } => {
             // Use the same nice message format as OperationFailed with "Failed to parse"
             let inner_type = unwrap_option_type(shape);
@@ -567,7 +567,14 @@ fn format_reflect_error(err: &ReflectError) -> String {
                 expected.type_identifier, actual.type_identifier
             )
         }
-        _ => format!("{err}"),
+        // Format the error kind with a nicely formatted path (if non-empty)
+        _ => {
+            if err.path.is_empty() {
+                format!("{}", err.kind)
+            } else {
+                format!("{} at {}", err.kind, err.path)
+            }
+        }
     }
 }
 

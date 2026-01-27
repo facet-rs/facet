@@ -8,8 +8,8 @@ use std::vec::Vec;
 use facet_core::{Facet, Shape, Type, UserType};
 // Note: Shape is still used by fill_defaults_from_shape and coerce_types_from_shape
 use facet_format::{
-    ContainerKind, FieldKey, FieldLocationHint, FormatDeserializer, FormatParser, ParseEvent,
-    SavePoint, ScalarValue,
+    ContainerKind, FieldKey, FieldLocationHint, FormatDeserializer, FormatParser, ParseError,
+    ParseEvent, SavePoint, ScalarValue,
 };
 use facet_reflect::Span;
 use indexmap::IndexMap;
@@ -1079,13 +1079,22 @@ pub(crate) fn serialize_default_to_config_value(
 #[derive(Debug)]
 pub enum ConfigValueDeserializeError {
     /// Error during deserialization.
-    Deserialize(facet_format::DeserializeError<ConfigValueParseError>),
+    Deserialize(facet_format::DeserializeError),
 }
 
 impl core::fmt::Display for ConfigValueDeserializeError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            ConfigValueDeserializeError::Deserialize(e) => write!(f, "{}", e),
+            ConfigValueDeserializeError::Deserialize(e) => {
+                // Format kind, and add nicely-formatted path if present
+                write!(f, "{}", e.kind)?;
+                if let Some(ref path) = e.path
+                    && !path.is_empty()
+                {
+                    write!(f, " at {}", path)?;
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -1102,13 +1111,7 @@ impl ConfigValueDeserializeError {
     /// Get the span associated with this error, if any.
     pub fn span(&self) -> Option<facet_reflect::Span> {
         match self {
-            ConfigValueDeserializeError::Deserialize(e) => match e {
-                facet_format::DeserializeError::Reflect { span, .. } => *span,
-                facet_format::DeserializeError::TypeMismatch { span, .. } => *span,
-                facet_format::DeserializeError::UnknownField { span, .. } => *span,
-                facet_format::DeserializeError::MissingField { span, .. } => *span,
-                _ => None,
-            },
+            ConfigValueDeserializeError::Deserialize(e) => e.span,
         }
     }
 }
@@ -1177,9 +1180,7 @@ impl<'input> ConfigValueParser<'input> {
 }
 
 impl<'input> FormatParser<'input> for ConfigValueParser<'input> {
-    type Error = ConfigValueParseError;
-
-    fn next_event(&mut self) -> Result<Option<ParseEvent<'input>>, Self::Error> {
+    fn next_event(&mut self) -> Result<Option<ParseEvent<'input>>, ParseError> {
         // If we have a peeked event, return it
         if let Some(event) = self.peeked.take() {
             return Ok(Some(event));
@@ -1193,7 +1194,7 @@ impl<'input> FormatParser<'input> for ConfigValueParser<'input> {
 
             match frame {
                 StackFrame::Value(value) => {
-                    return Ok(Some(self.emit_value(value)?));
+                    return Ok(Some(self.emit_value(value)));
                 }
                 StackFrame::Object { entries, index } => {
                     if index < entries.len() {
@@ -1289,14 +1290,14 @@ impl<'input> FormatParser<'input> for ConfigValueParser<'input> {
         }
     }
 
-    fn peek_event(&mut self) -> Result<Option<ParseEvent<'input>>, Self::Error> {
+    fn peek_event(&mut self) -> Result<Option<ParseEvent<'input>>, ParseError> {
         if self.peeked.is_none() {
             self.peeked = self.next_event()?;
         }
         Ok(self.peeked.clone())
     }
 
-    fn skip_value(&mut self) -> Result<(), Self::Error> {
+    fn skip_value(&mut self) -> Result<(), ParseError> {
         // Pop and discard the next value
         self.next_event()?;
         Ok(())
@@ -1326,32 +1327,27 @@ impl<'input> FormatParser<'input> for ConfigValueParser<'input> {
 /// Helper methods for emitting values.
 impl<'input> ConfigValueParser<'input> {
     /// Emit an event for a single value.
-    fn emit_value(
-        &mut self,
-        value: &'input ConfigValue,
-    ) -> Result<ParseEvent<'input>, ConfigValueParseError> {
+    fn emit_value(&mut self, value: &'input ConfigValue) -> ParseEvent<'input> {
         match value {
             ConfigValue::Null(sourced) => {
                 self.update_span(sourced);
-                Ok(ParseEvent::Scalar(ScalarValue::Null))
+                ParseEvent::Scalar(ScalarValue::Null)
             }
             ConfigValue::Bool(sourced) => {
                 self.update_span(sourced);
-                Ok(ParseEvent::Scalar(ScalarValue::Bool(sourced.value)))
+                ParseEvent::Scalar(ScalarValue::Bool(sourced.value))
             }
             ConfigValue::Integer(sourced) => {
                 self.update_span(sourced);
-                Ok(ParseEvent::Scalar(ScalarValue::I64(sourced.value)))
+                ParseEvent::Scalar(ScalarValue::I64(sourced.value))
             }
             ConfigValue::Float(sourced) => {
                 self.update_span(sourced);
-                Ok(ParseEvent::Scalar(ScalarValue::F64(sourced.value)))
+                ParseEvent::Scalar(ScalarValue::F64(sourced.value))
             }
             ConfigValue::String(sourced) => {
                 self.update_span(sourced);
-                Ok(ParseEvent::Scalar(ScalarValue::Str(
-                    std::borrow::Cow::Borrowed(&sourced.value),
-                )))
+                ParseEvent::Scalar(ScalarValue::Str(std::borrow::Cow::Borrowed(&sourced.value)))
             }
             ConfigValue::Array(sourced) => {
                 self.update_span(sourced);
@@ -1362,7 +1358,7 @@ impl<'input> ConfigValueParser<'input> {
                     index: 0,
                 });
 
-                Ok(ParseEvent::SequenceStart(ContainerKind::Array))
+                ParseEvent::SequenceStart(ContainerKind::Array)
             }
             ConfigValue::Object(sourced) => {
                 self.update_span(sourced);
@@ -1374,7 +1370,7 @@ impl<'input> ConfigValueParser<'input> {
                 // Push object processing
                 self.stack.push(StackFrame::Object { entries, index: 0 });
 
-                Ok(ParseEvent::StructStart(ContainerKind::Object))
+                ParseEvent::StructStart(ContainerKind::Object)
             }
             ConfigValue::Enum(sourced) => {
                 self.update_span(sourced);
@@ -1403,14 +1399,11 @@ impl<'input> ConfigValueParser<'input> {
                 });
 
                 // Emit the outer struct start (the enum wrapper)
-                Ok(ParseEvent::StructStart(ContainerKind::Object))
+                ParseEvent::StructStart(ContainerKind::Object)
             }
         }
     }
 }
-
-/// Error type for ConfigValue parsing (infallible - parsing always succeeds).
-pub type ConfigValueParseError = std::convert::Infallible;
 
 /// Serializer that builds a ConfigValue tree.
 pub struct ConfigValueSerializer {

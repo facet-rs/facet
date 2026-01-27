@@ -195,8 +195,6 @@ use facet_core::Facet;
 
 pub use builder::builder;
 pub use completions::{Shell, generate_completions, generate_completions_for_shape};
-#[cfg(feature = "styx")]
-pub use config_format::StyxFormat;
 pub use config_format::{ConfigFormat, ConfigFormatError, JsonFormat};
 pub use config_value::ConfigValue;
 pub use driver::{Driver, DriverError, DriverOutcome, DriverOutput, DriverReport};
