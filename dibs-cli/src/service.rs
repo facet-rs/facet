@@ -11,13 +11,14 @@
 //!
 //! Roam supports bidirectional RPC, so both sides can call each other.
 
-use crate::config::Config;
+use crate::DbConfig;
 use dibs_proto::DibsServiceClient;
 use roam_stream::{ConnectionHandle, HandshakeConfig, NoDispatcher, accept};
 use std::process::{Child, Command, Stdio};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::TcpListener;
 use tokio::process::Command as TokioCommand;
+use tracing::info;
 
 /// A connection to the dibs service.
 pub struct ServiceConnection {
@@ -73,7 +74,7 @@ impl ServiceConnection {
 /// 2. Spawns the db crate with `DIBS_CLI_ADDR` pointing to our listener
 /// 3. Accepts the incoming connection from the child
 /// 4. Returns a handle for making RPC calls
-pub async fn connect_to_service(config: &Config) -> Result<ServiceConnection, ServiceError> {
+pub async fn connect_to_service(db_config: &DbConfig) -> Result<ServiceConnection, ServiceError> {
     // Bind to a random available port
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
@@ -83,15 +84,17 @@ pub async fn connect_to_service(config: &Config) -> Result<ServiceConnection, Se
         .map_err(|e| ServiceError::Spawn(format!("Failed to get local address: {}", e)))?;
 
     // Build the command to spawn the service
-    let mut cmd = if let Some(binary) = &config.db.binary {
+    let mut cmd = if let Some(binary) = &db_config.binary {
+        info!(binary = %binary, "Launching db service binary");
         Command::new(binary)
-    } else if let Some(crate_name) = &config.db.crate_name {
+    } else if let Some(crate_name) = &db_config.crate_name {
+        info!(crate_name = %crate_name, "Launching db service via cargo");
         let mut cmd = Command::new("cargo");
         cmd.args(["run", "-p", crate_name, "--"]);
         cmd
     } else {
         return Err(ServiceError::Config(
-            "No db.crate_name or db.binary specified in dibs.toml".to_string(),
+            "No db.crate or db.binary specified in config".to_string(),
         ));
     };
 
@@ -250,7 +253,7 @@ impl BuildProcess {
 }
 
 /// Start building/running the service, returning a BuildProcess that can be polled.
-pub async fn start_service(config: &Config) -> Result<BuildProcess, ServiceError> {
+pub async fn start_service(db_config: &DbConfig) -> Result<BuildProcess, ServiceError> {
     // Bind to a random available port
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
@@ -260,15 +263,17 @@ pub async fn start_service(config: &Config) -> Result<BuildProcess, ServiceError
         .map_err(|e| ServiceError::Spawn(format!("Failed to get local address: {}", e)))?;
 
     // Build the command
-    let mut cmd = if let Some(binary) = &config.db.binary {
+    let mut cmd = if let Some(binary) = &db_config.binary {
+        info!(binary = %binary, "Launching db service binary");
         TokioCommand::new(binary)
-    } else if let Some(crate_name) = &config.db.crate_name {
+    } else if let Some(crate_name) = &db_config.crate_name {
+        info!(crate_name = %crate_name, "Launching db service via cargo");
         let mut cmd = TokioCommand::new("cargo");
         cmd.args(["run", "-p", crate_name, "--"]);
         cmd
     } else {
         return Err(ServiceError::Config(
-            "No db.crate_name or db.binary specified in dibs.toml".to_string(),
+            "No db.crate or db.binary specified in config".to_string(),
         ));
     };
 
@@ -338,7 +343,7 @@ pub async fn start_service(config: &Config) -> Result<BuildProcess, ServiceError
     let child_handle = tokio::spawn(async move { child.wait().await.ok() });
 
     // Determine binary path for mtime checks
-    let binary_path = if let Some(crate_name) = &config.db.crate_name {
+    let binary_path = if let Some(crate_name) = &db_config.crate_name {
         // For cargo run, the binary is in target/debug/<crate_name>
         let target_dir = std::env::var("CARGO_TARGET_DIR").unwrap_or_else(|_| "target".to_string());
         Some(std::path::PathBuf::from(format!(
@@ -346,12 +351,13 @@ pub async fn start_service(config: &Config) -> Result<BuildProcess, ServiceError
             target_dir, crate_name
         )))
     } else {
-        config.db.binary.as_ref().map(std::path::PathBuf::from)
+        db_config.binary.as_ref().map(std::path::PathBuf::from)
     };
 
     // Find migrations directory from config
-    let project_root = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-    let migrations_dir = Some(crate::config::find_migrations_dir(config, &project_root));
+    let migrations_dir = db_config.crate_name.as_ref().and_then(|crate_name| {
+        crate::config::find_crate_path_for_watch(crate_name).map(|p| p.join("src/migrations"))
+    });
 
     Ok(BuildProcess {
         output_rx,

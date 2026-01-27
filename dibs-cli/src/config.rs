@@ -7,12 +7,6 @@ pub use dibs_config::Config;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Load configuration from `.config/dibs.styx`, searching up the directory tree.
-pub fn load() -> Result<(Config, PathBuf), ConfigError> {
-    let cwd = std::env::current_dir().map_err(|e| ConfigError::Io(e.to_string()))?;
-    load_from(&cwd)
-}
-
 /// Load configuration starting from a specific directory.
 pub fn load_from(start: &Path) -> Result<(Config, PathBuf), ConfigError> {
     let config_path = find_config_file(start)?;
@@ -68,20 +62,6 @@ impl std::fmt::Display for ConfigError {
 }
 
 impl std::error::Error for ConfigError {}
-
-/// Find the migrations directory for the configured crate.
-///
-/// Uses `cargo metadata` to find the crate path, then returns `{crate_path}/src/migrations`.
-/// Falls back to `./src/migrations` if no crate is configured or if the crate can't be found.
-pub fn find_migrations_dir(config: &Config, project_root: &Path) -> PathBuf {
-    if let Some(crate_name) = &config.db.crate_name
-        && let Some(crate_path) = find_crate_path(crate_name, project_root)
-    {
-        return crate_path.join("src/migrations");
-    }
-    // Fallback to current directory
-    PathBuf::from("src/migrations")
-}
 
 /// Cargo metadata output (subset we care about)
 #[derive(Debug, facet::Facet)]

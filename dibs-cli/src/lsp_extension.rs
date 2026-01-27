@@ -1680,7 +1680,7 @@ async fn connect_and_fetch_schema(document_uri: &str) -> Result<ExtensionState, 
     info!(cwd = %config_dir.display(), "Changed working directory");
 
     // Connect to the service
-    let connection = service::connect_to_service(&cfg)
+    let connection = service::connect_to_service(&cfg.db)
         .await
         .map_err(|e| format!("Failed to connect to service: {}", e))?;
 

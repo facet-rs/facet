@@ -36,11 +36,10 @@ tokio = { workspace = true, features = [
   "io-util",
   "io-std",
 ] }
-tokio-postgres.workspace = true
 facet.workspace = true
 figue.workspace = true
 facet-json.workspace = true
-facet-styx.workspace = true
+facet-styx = { workspace = true, features = ["figue"] }
 roam.workspace = true
 roam-session.workspace = true
 roam-stream.workspace = true
@@ -50,7 +49,6 @@ jiff.workspace = true
 owo-colors.workspace = true
 ratatui.workspace = true
 crossterm.workspace = true
-dotenvy.workspace = true
 arborium.workspace = true
 arborium-highlight.workspace = true
 arborium-theme.workspace = true

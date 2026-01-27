@@ -24,7 +24,7 @@ use ratatui::{
 };
 use roam::session::{CallError, RoamError};
 
-use crate::config::Config;
+use crate::DbConfig;
 use crate::highlight::highlight_to_lines;
 use crate::service::{self, BuildOutput, ServiceConnection};
 
@@ -578,12 +578,12 @@ impl App {
 
     /// Set up file watcher for auto-rebuild on source changes.
     /// Watches the crate's src/ directory for .rs file changes.
-    fn setup_file_watcher(&mut self, config: &Config) -> Option<RecommendedWatcher> {
+    fn setup_file_watcher(&mut self, config: &DbConfig) -> Option<RecommendedWatcher> {
         let (tx, rx) = mpsc::channel::<()>();
         self.file_watcher_rx = Some(rx);
 
         // Find the crate path to watch
-        let watch_path = if let Some(crate_name) = &config.db.crate_name {
+        let watch_path = if let Some(crate_name) = &config.crate_name {
             // Find the crate using cargo metadata
             if let Some(path) = crate::config::find_crate_path_for_watch(crate_name) {
                 path.join("src")
@@ -657,7 +657,7 @@ impl App {
     }
 
     /// Run the TUI
-    pub fn run(mut self, config: Option<&Config>) -> io::Result<()> {
+    pub fn run(mut self, config: Option<&DbConfig>) -> io::Result<()> {
         // Set up terminal
         enable_raw_mode()?;
         stdout().execute(EnterAlternateScreen)?;
@@ -687,7 +687,7 @@ impl App {
         &mut self,
         terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
         rt: &tokio::runtime::Runtime,
-        config: &Config,
+        config: &DbConfig,
     ) -> io::Result<()> {
         // Set up file watcher for auto-rebuild (keep watcher alive in scope)
         let _watcher = self.setup_file_watcher(config);
@@ -1710,18 +1710,13 @@ impl App {
         // Convert name to snake_case for the module name
         let module_name = name.replace('-', "_").to_lowercase();
 
-        // Find migrations directory from config
-        let (cfg, config_path) = crate::config::load().unwrap_or_else(|_| {
-            (
-                crate::config::Config::default(),
-                std::path::PathBuf::from("."),
-            )
-        });
-        let project_root = config_path
-            .parent()
-            .and_then(|p| p.parent())
-            .unwrap_or(std::path::Path::new("."));
-        let migrations_dir = crate::config::find_migrations_dir(&cfg, project_root);
+        // Get migrations directory from service connection
+        let migrations_dir = self
+            .conn
+            .as_ref()
+            .and_then(|c| c.migrations_dir.clone())
+            .unwrap_or_else(|| std::path::PathBuf::from("src/migrations"));
+
         if !migrations_dir.exists() {
             fs::create_dir_all(&migrations_dir)?;
         }
