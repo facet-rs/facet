@@ -13,14 +13,113 @@ use core::cell::RefCell;
 use corosensei::{Coroutine, CoroutineResult};
 use facet_core::Facet;
 use facet_format::{
-    ContainerKind, DeserializeError, FieldKey, FieldLocationHint, FormatDeserializer, FormatParser,
-    ParseEvent, SavePoint, ScalarValue,
+    ContainerKind, DeserializeError, DeserializeErrorKind, FieldKey, FieldLocationHint,
+    FormatDeserializer, FormatParser, ParseError, ParseEvent, SavePoint, ScalarValue,
 };
+use facet_reflect::Span;
 
 use crate::adapter::{SpannedAdapterToken, Token as AdapterToken, TokenSource};
-use crate::error::{JsonError, JsonErrorKind};
+use crate::error::JsonError;
 use crate::scan_buffer::ScanBuffer;
 use crate::streaming_adapter::StreamingAdapter;
+
+/// Convert an I/O error to a ParseError.
+/// Uses span (0, 0) since I/O errors occur during buffer operations, not parsing.
+fn io_error_to_parse_error(e: std::io::Error) -> ParseError {
+    ParseError::new(
+        Span::new(0, 0),
+        DeserializeErrorKind::Io {
+            message: e.to_string().into(),
+        },
+    )
+}
+
+/// Convert a JsonError to a ParseError.
+fn json_error_to_parse_error(e: JsonError) -> ParseError {
+    use crate::error::JsonErrorKind;
+
+    let span = e.span.unwrap_or(Span::new(0, 0));
+    let kind = match e.kind {
+        JsonErrorKind::UnexpectedEof { expected } => {
+            DeserializeErrorKind::UnexpectedEof { expected }
+        }
+        JsonErrorKind::UnexpectedToken { got, expected } => DeserializeErrorKind::UnexpectedToken {
+            got: got.into(),
+            expected,
+        },
+        JsonErrorKind::Scan(scan_err) => match scan_err {
+            crate::scanner::ScanErrorKind::UnexpectedChar(ch) => {
+                DeserializeErrorKind::UnexpectedChar {
+                    ch,
+                    expected: "valid JSON token",
+                }
+            }
+            crate::scanner::ScanErrorKind::UnexpectedEof(expected) => {
+                DeserializeErrorKind::UnexpectedEof { expected }
+            }
+            crate::scanner::ScanErrorKind::InvalidUtf8 => DeserializeErrorKind::InvalidUtf8 {
+                context: [0u8; 16],
+                context_len: 0,
+            },
+        },
+        JsonErrorKind::ScanWithContext { error, .. } => match error {
+            crate::scanner::ScanErrorKind::UnexpectedChar(ch) => {
+                DeserializeErrorKind::UnexpectedChar {
+                    ch,
+                    expected: "valid JSON token",
+                }
+            }
+            crate::scanner::ScanErrorKind::UnexpectedEof(expected) => {
+                DeserializeErrorKind::UnexpectedEof { expected }
+            }
+            crate::scanner::ScanErrorKind::InvalidUtf8 => DeserializeErrorKind::InvalidUtf8 {
+                context: [0u8; 16],
+                context_len: 0,
+            },
+        },
+        JsonErrorKind::TypeMismatch { expected, got } => DeserializeErrorKind::UnexpectedToken {
+            got: got.into(),
+            expected,
+        },
+        JsonErrorKind::InvalidValue { message } => DeserializeErrorKind::InvalidValue {
+            message: message.into(),
+        },
+        JsonErrorKind::InvalidUtf8 => DeserializeErrorKind::InvalidUtf8 {
+            context: [0u8; 16],
+            context_len: 0,
+        },
+        JsonErrorKind::Io(msg) => DeserializeErrorKind::Io {
+            message: msg.into(),
+        },
+        // These shouldn't occur in parser context, but handle them anyway
+        JsonErrorKind::UnknownField { field, .. } => DeserializeErrorKind::UnknownField {
+            field: field.into(),
+            suggestion: None,
+        },
+        JsonErrorKind::MissingField { field, .. } => DeserializeErrorKind::Bug {
+            error: alloc::format!("missing field '{}' in streaming parser", field).into(),
+            context: "streaming JSON parser",
+        },
+        JsonErrorKind::Reflect(e) => DeserializeErrorKind::Reflect {
+            kind: e.kind,
+            context: "streaming JSON parser",
+        },
+        JsonErrorKind::NumberOutOfRange { value, target_type } => {
+            DeserializeErrorKind::NumberOutOfRange {
+                value: value.into(),
+                target_type,
+            }
+        }
+        JsonErrorKind::DuplicateKey { key } => DeserializeErrorKind::DuplicateField {
+            field: key.into(),
+            first_span: None,
+        },
+        JsonErrorKind::Solver(msg) => DeserializeErrorKind::Solver {
+            message: msg.into(),
+        },
+    };
+    ParseError::new(span, kind)
+}
 
 /// Deserialize JSON from a synchronous reader.
 ///
@@ -57,15 +156,15 @@ where
     // Initial fill
     {
         let mut buf = buffer.borrow_mut();
-        let n = buf.refill(&mut reader).map_err(|e| {
-            DeserializeError::parser(JsonError::without_span(JsonErrorKind::Io(e.to_string())))
-        })?;
+        let n = buf.refill(&mut reader).map_err(io_error_to_parse_error)?;
         if n == 0 {
-            return Err(DeserializeError::parser(JsonError::without_span(
-                JsonErrorKind::UnexpectedEof {
+            return Err(ParseError::new(
+                Span::new(0, 0),
+                DeserializeErrorKind::UnexpectedEof {
                     expected: "JSON value",
                 },
-            )));
+            )
+            .into());
         }
     }
 
@@ -90,11 +189,7 @@ where
                     buf.grow();
                 }
 
-                let _n = buf.refill(&mut reader).map_err(|e| {
-                    DeserializeError::parser(JsonError::without_span(JsonErrorKind::Io(
-                        e.to_string(),
-                    )))
-                })?;
+                let _n = buf.refill(&mut reader).map_err(io_error_to_parse_error)?;
             }
             CoroutineResult::Return(result) => {
                 return result;
@@ -119,15 +214,18 @@ where
     // Initial fill
     {
         let mut buf = buffer.borrow_mut();
-        let n = buf.refill_tokio(&mut reader).await.map_err(|e| {
-            DeserializeError::parser(JsonError::without_span(JsonErrorKind::Io(e.to_string())))
-        })?;
+        let n = buf
+            .refill_tokio(&mut reader)
+            .await
+            .map_err(io_error_to_parse_error)?;
         if n == 0 {
-            return Err(DeserializeError::parser(JsonError::without_span(
-                JsonErrorKind::UnexpectedEof {
+            return Err(ParseError::new(
+                Span::new(0, 0),
+                DeserializeErrorKind::UnexpectedEof {
                     expected: "JSON value",
                 },
-            )));
+            )
+            .into());
         }
     }
 
@@ -146,11 +244,10 @@ where
                 if buf.filled() == buf.capacity() {
                     buf.grow();
                 }
-                let _n = buf.refill_tokio(&mut reader).await.map_err(|e| {
-                    DeserializeError::parser(JsonError::without_span(JsonErrorKind::Io(
-                        e.to_string(),
-                    )))
-                })?;
+                let _n = buf
+                    .refill_tokio(&mut reader)
+                    .await
+                    .map_err(io_error_to_parse_error)?;
             }
             CoroutineResult::Return(result) => {
                 return result;
@@ -175,15 +272,18 @@ where
     // Initial fill
     {
         let mut buf = buffer.borrow_mut();
-        let n = buf.refill_futures(&mut reader).await.map_err(|e| {
-            DeserializeError::parser(JsonError::without_span(JsonErrorKind::Io(e.to_string())))
-        })?;
+        let n = buf
+            .refill_futures(&mut reader)
+            .await
+            .map_err(io_error_to_parse_error)?;
         if n == 0 {
-            return Err(DeserializeError::parser(JsonError::without_span(
-                JsonErrorKind::UnexpectedEof {
+            return Err(ParseError::new(
+                Span::new(0, 0),
+                DeserializeErrorKind::UnexpectedEof {
                     expected: "JSON value",
                 },
-            )));
+            )
+            .into());
         }
     }
 
@@ -202,11 +302,10 @@ where
                 if buf.filled() == buf.capacity() {
                     buf.grow();
                 }
-                let _n = buf.refill_futures(&mut reader).await.map_err(|e| {
-                    DeserializeError::parser(JsonError::without_span(JsonErrorKind::Io(
-                        e.to_string(),
-                    )))
-                })?;
+                let _n = buf
+                    .refill_futures(&mut reader)
+                    .await
+                    .map_err(io_error_to_parse_error)?;
             }
             CoroutineResult::Return(result) => {
                 return result;
@@ -273,25 +372,25 @@ impl<A: TokenSource<'static>> StreamingJsonParser<A> {
         }
     }
 
-    fn next_token(&mut self) -> Result<SpannedAdapterToken<'static>, JsonError> {
-        self.adapter.next_token()
+    fn next_token(&mut self) -> Result<SpannedAdapterToken<'static>, ParseError> {
+        self.adapter.next_token().map_err(json_error_to_parse_error)
     }
 
     fn unexpected(
         &self,
         token: &SpannedAdapterToken<'static>,
         expected: &'static str,
-    ) -> JsonError {
-        JsonError::new(
-            JsonErrorKind::UnexpectedToken {
-                got: alloc::format!("{:?}", token.token),
+    ) -> ParseError {
+        ParseError::new(
+            token.span,
+            DeserializeErrorKind::UnexpectedToken {
+                got: alloc::format!("{:?}", token.token).into(),
                 expected,
             },
-            token.span,
         )
     }
 
-    fn expect_colon(&mut self) -> Result<(), JsonError> {
+    fn expect_colon(&mut self) -> Result<(), ParseError> {
         let token = self.next_token()?;
         if !matches!(token.token, AdapterToken::Colon) {
             return Err(self.unexpected(&token, "':'"));
@@ -313,7 +412,7 @@ impl<A: TokenSource<'static>> StreamingJsonParser<A> {
     fn parse_value_start_with_token(
         &mut self,
         first: Option<SpannedAdapterToken<'static>>,
-    ) -> Result<ParseEvent<'static>, JsonError> {
+    ) -> Result<ParseEvent<'static>, ParseError> {
         let token = match first {
             Some(tok) => tok,
             None => self.next_token()?,
@@ -382,7 +481,7 @@ impl<A: TokenSource<'static>> StreamingJsonParser<A> {
         }
     }
 
-    fn produce_event(&mut self) -> Result<Option<ParseEvent<'static>>, JsonError> {
+    fn produce_event(&mut self) -> Result<Option<ParseEvent<'static>>, ParseError> {
         loop {
             match self.determine_action() {
                 NextAction::ObjectKey => {
@@ -522,12 +621,15 @@ impl<A: TokenSource<'static>> StreamingJsonParser<A> {
         }
     }
 
-    fn skip_value_internal(&mut self) -> Result<(), JsonError> {
-        self.adapter.skip().map(|_| ())
+    fn skip_value_internal(&mut self) -> Result<(), ParseError> {
+        self.adapter
+            .skip()
+            .map(|_| ())
+            .map_err(json_error_to_parse_error)
     }
 
     /// Skip a value while replaying from buffer.
-    fn skip_value_buffered(&mut self) -> Result<(), JsonError> {
+    fn skip_value_buffered(&mut self) -> Result<(), ParseError> {
         if self.buffer_idx >= self.event_buffer.len() {
             return Ok(());
         }
@@ -569,9 +671,7 @@ enum NextAction {
 }
 
 impl<A: TokenSource<'static>> FormatParser<'static> for StreamingJsonParser<A> {
-    type Error = JsonError;
-
-    fn next_event(&mut self) -> Result<Option<ParseEvent<'static>>, Self::Error> {
+    fn next_event(&mut self) -> Result<Option<ParseEvent<'static>>, ParseError> {
         // First check replay buffer (from restore)
         if let Some(event) = self.replay_buffer.pop() {
             return Ok(Some(event));
@@ -607,7 +707,7 @@ impl<A: TokenSource<'static>> FormatParser<'static> for StreamingJsonParser<A> {
         Ok(event)
     }
 
-    fn peek_event(&mut self) -> Result<Option<ParseEvent<'static>>, Self::Error> {
+    fn peek_event(&mut self) -> Result<Option<ParseEvent<'static>>, ParseError> {
         // First check replay buffer (peek at last element without removing)
         if let Some(event) = self.replay_buffer.last().cloned() {
             return Ok(Some(event));
@@ -624,7 +724,7 @@ impl<A: TokenSource<'static>> FormatParser<'static> for StreamingJsonParser<A> {
         Ok(event)
     }
 
-    fn skip_value(&mut self) -> Result<(), Self::Error> {
+    fn skip_value(&mut self) -> Result<(), ParseError> {
         debug_assert!(
             self.event_peek.is_none(),
             "skip_value called while an event is buffered"

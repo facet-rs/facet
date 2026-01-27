@@ -4,8 +4,8 @@ use alloc::{borrow::Cow, vec::Vec};
 
 use facet_core::Facet as _;
 use facet_format::{
-    ContainerKind, DeserializeError, DeserializeErrorKind, FieldKey, FieldLocationHint,
-    FormatParser, ParseEvent, SavePoint, ScalarValue,
+    ContainerKind, DeserializeErrorKind, FieldKey, FieldLocationHint, FormatParser, ParseError,
+    ParseEvent, SavePoint, ScalarValue,
 };
 
 use crate::adapter::{
@@ -13,8 +13,8 @@ use crate::adapter::{
 };
 use crate::scanner::ScanErrorKind;
 
-/// Convert an AdapterError to a DeserializeError.
-fn adapter_error_to_deserialize_error(err: AdapterError) -> DeserializeError {
+/// Convert an AdapterError to a ParseError.
+fn adapter_error_to_parse_error(err: AdapterError) -> ParseError {
     let kind = match err.kind {
         AdapterErrorKind::Scan(scan_err) => match scan_err {
             ScanErrorKind::UnexpectedChar(ch) => DeserializeErrorKind::UnexpectedChar {
@@ -33,7 +33,7 @@ fn adapter_error_to_deserialize_error(err: AdapterError) -> DeserializeError {
             expected: "more data",
         },
     };
-    kind.with_span(err.span)
+    ParseError::new(err.span, kind)
 }
 
 /// Mutable parser state that can be saved and restored.
@@ -121,17 +121,17 @@ impl<'de> JsonParser<'de> {
         }
     }
 
-    fn consume_token(&mut self) -> Result<SpannedAdapterToken<'de>, DeserializeError> {
+    fn consume_token(&mut self) -> Result<SpannedAdapterToken<'de>, ParseError> {
         let token = self
             .adapter
             .next_token()
-            .map_err(adapter_error_to_deserialize_error)?;
+            .map_err(adapter_error_to_parse_error)?;
         self.state.last_token_start = token.span.offset;
         self.state.current_offset = token.span.offset + token.span.len;
         Ok(token)
     }
 
-    fn expect_colon(&mut self) -> Result<(), DeserializeError> {
+    fn expect_colon(&mut self) -> Result<(), ParseError> {
         let token = self.consume_token()?;
         if !matches!(token.token, AdapterToken::Colon) {
             return Err(self.unexpected(&token, "':'"));
@@ -142,7 +142,7 @@ impl<'de> JsonParser<'de> {
     fn parse_value_start_with_token(
         &mut self,
         first: Option<SpannedAdapterToken<'de>>,
-    ) -> Result<ParseEvent<'de>, DeserializeError> {
+    ) -> Result<ParseEvent<'de>, ParseError> {
         let token = match first {
             Some(tok) => tok,
             None => self.consume_token()?,
@@ -208,9 +208,10 @@ impl<'de> JsonParser<'de> {
                 Err(self.unexpected(&token, "value"))
             }
             AdapterToken::Comma | AdapterToken::Colon => Err(self.unexpected(&token, "value")),
-            AdapterToken::Eof => {
-                Err(DeserializeErrorKind::UnexpectedEof { expected: "value" }.with_span(token.span))
-            }
+            AdapterToken::Eof => Err(ParseError::new(
+                token.span,
+                DeserializeErrorKind::UnexpectedEof { expected: "value" },
+            )),
         }
     }
 
@@ -225,28 +226,23 @@ impl<'de> JsonParser<'de> {
         }
     }
 
-    fn unexpected(
-        &self,
-        token: &SpannedAdapterToken<'de>,
-        expected: &'static str,
-    ) -> DeserializeError {
-        DeserializeErrorKind::UnexpectedToken {
-            got: format!("{:?}", token.token).into(),
-            expected,
-        }
-        .with_span(token.span)
+    fn unexpected(&self, token: &SpannedAdapterToken<'de>, expected: &'static str) -> ParseError {
+        ParseError::new(
+            token.span,
+            DeserializeErrorKind::UnexpectedToken {
+                got: format!("{:?}", token.token).into(),
+                expected,
+            },
+        )
     }
 
-    fn consume_value_tokens(&mut self) -> Result<(), DeserializeError> {
-        let span = self
-            .adapter
-            .skip()
-            .map_err(adapter_error_to_deserialize_error)?;
+    fn consume_value_tokens(&mut self) -> Result<(), ParseError> {
+        let span = self.adapter.skip().map_err(adapter_error_to_parse_error)?;
         self.state.current_offset = span.offset + span.len;
         Ok(())
     }
 
-    fn skip_container(&mut self, start_kind: DelimKind) -> Result<(), DeserializeError> {
+    fn skip_container(&mut self, start_kind: DelimKind) -> Result<(), ParseError> {
         let mut stack = vec![start_kind];
         while let Some(current) = stack.last().copied() {
             let token = self.consume_token()?;
@@ -272,8 +268,10 @@ impl<'de> JsonParser<'de> {
                     }
                 }
                 AdapterToken::Eof => {
-                    return Err(DeserializeErrorKind::UnexpectedEof { expected: "value" }
-                        .with_span(token.span));
+                    return Err(ParseError::new(
+                        token.span,
+                        DeserializeErrorKind::UnexpectedEof { expected: "value" },
+                    ));
                 }
                 _ => {}
             }
@@ -301,7 +299,7 @@ impl<'de> JsonParser<'de> {
         }
     }
 
-    fn produce_event(&mut self) -> Result<Option<ParseEvent<'de>>, DeserializeError> {
+    fn produce_event(&mut self) -> Result<Option<ParseEvent<'de>>, ParseError> {
         loop {
             match self.determine_action() {
                 NextAction::ObjectKey => {
@@ -323,10 +321,12 @@ impl<'de> JsonParser<'de> {
                             ))));
                         }
                         AdapterToken::Eof => {
-                            return Err(DeserializeErrorKind::UnexpectedEof {
-                                expected: "field name or '}'",
-                            }
-                            .with_span(token.span));
+                            return Err(ParseError::new(
+                                token.span,
+                                DeserializeErrorKind::UnexpectedEof {
+                                    expected: "field name or '}'",
+                                },
+                            ));
                         }
                         _ => return Err(self.unexpected(&token, "field name or '}'")),
                     }
@@ -349,10 +349,12 @@ impl<'de> JsonParser<'de> {
                             return Ok(Some(ParseEvent::StructEnd));
                         }
                         AdapterToken::Eof => {
-                            return Err(DeserializeErrorKind::UnexpectedEof {
-                                expected: "',' or '}'",
-                            }
-                            .with_span(token.span));
+                            return Err(ParseError::new(
+                                token.span,
+                                DeserializeErrorKind::UnexpectedEof {
+                                    expected: "',' or '}'",
+                                },
+                            ));
                         }
                         _ => return Err(self.unexpected(&token, "',' or '}'")),
                     }
@@ -366,10 +368,12 @@ impl<'de> JsonParser<'de> {
                             return Ok(Some(ParseEvent::SequenceEnd));
                         }
                         AdapterToken::Eof => {
-                            return Err(DeserializeErrorKind::UnexpectedEof {
-                                expected: "value or ']'",
-                            }
-                            .with_span(token.span));
+                            return Err(ParseError::new(
+                                token.span,
+                                DeserializeErrorKind::UnexpectedEof {
+                                    expected: "value or ']'",
+                                },
+                            ));
                         }
                         AdapterToken::Comma | AdapterToken::Colon => {
                             return Err(self.unexpected(&token, "value or ']'"));
@@ -394,10 +398,12 @@ impl<'de> JsonParser<'de> {
                             return Ok(Some(ParseEvent::SequenceEnd));
                         }
                         AdapterToken::Eof => {
-                            return Err(DeserializeErrorKind::UnexpectedEof {
-                                expected: "',' or ']'",
-                            }
-                            .with_span(token.span));
+                            return Err(ParseError::new(
+                                token.span,
+                                DeserializeErrorKind::UnexpectedEof {
+                                    expected: "',' or ']'",
+                                },
+                            ));
                         }
                         _ => return Err(self.unexpected(&token, "',' or ']'")),
                     }
@@ -418,7 +424,7 @@ impl<'de> FormatParser<'de> for JsonParser<'de> {
         Some(crate::RawJson::SHAPE)
     }
 
-    fn next_event(&mut self) -> Result<Option<ParseEvent<'de>>, DeserializeError> {
+    fn next_event(&mut self) -> Result<Option<ParseEvent<'de>>, ParseError> {
         if let Some(event) = self.state.event_peek.take() {
             self.state.peek_start_offset = None;
             return Ok(Some(event));
@@ -447,7 +453,7 @@ impl<'de> FormatParser<'de> for JsonParser<'de> {
         }
     }
 
-    fn peek_event(&mut self) -> Result<Option<ParseEvent<'de>>, DeserializeError> {
+    fn peek_event(&mut self) -> Result<Option<ParseEvent<'de>>, ParseError> {
         if let Some(event) = self.state.event_peek.clone() {
             return Ok(Some(event));
         }
@@ -462,7 +468,7 @@ impl<'de> FormatParser<'de> for JsonParser<'de> {
         Ok(event)
     }
 
-    fn skip_value(&mut self) -> Result<(), DeserializeError> {
+    fn skip_value(&mut self) -> Result<(), ParseError> {
         // Handle the case where peek_event was called before skip_value
         if let Some(event) = self.state.event_peek.take() {
             self.state.peek_start_offset = None;
@@ -500,7 +506,7 @@ impl<'de> FormatParser<'de> for JsonParser<'de> {
         Ok(())
     }
 
-    fn capture_raw(&mut self) -> Result<Option<&'de str>, DeserializeError> {
+    fn capture_raw(&mut self) -> Result<Option<&'de str>, ParseError> {
         // Handle the case where peek_event was called before capture_raw.
         // This happens when deserialize_option peeks to check for null.
         let start_offset = if let Some(event) = self.state.event_peek.take() {
@@ -528,13 +534,12 @@ impl<'de> FormatParser<'de> for JsonParser<'de> {
                 }
                 ParseEvent::StructEnd | ParseEvent::SequenceEnd => {
                     // This shouldn't happen in valid usage, but handle gracefully
-                    return Err(DeserializeError {
-                        span: None,
-                        path: None,
-                        kind: DeserializeErrorKind::InvalidValue {
+                    return Err(ParseError::new(
+                        facet_reflect::Span::new(start, 0),
+                        DeserializeErrorKind::InvalidValue {
                             message: "unexpected end event in capture_raw".into(),
                         },
-                    });
+                    ));
                 }
                 _ => {
                     // Scalar value - already fully consumed during peek
@@ -556,8 +561,10 @@ impl<'de> FormatParser<'de> for JsonParser<'de> {
                 | AdapterToken::Comma
                 | AdapterToken::Colon => return Err(self.unexpected(&first, "value")),
                 AdapterToken::Eof => {
-                    return Err(DeserializeErrorKind::UnexpectedEof { expected: "value" }
-                        .with_span(first.span));
+                    return Err(ParseError::new(
+                        first.span,
+                        DeserializeErrorKind::UnexpectedEof { expected: "value" },
+                    ));
                 }
                 _ => {
                     // Simple value - already consumed
@@ -572,12 +579,13 @@ impl<'de> FormatParser<'de> for JsonParser<'de> {
 
         // Extract the raw slice and convert to str
         let raw_bytes = &self.input[start_offset..end_offset];
-        let raw_str = core::str::from_utf8(raw_bytes).map_err(|e| DeserializeError {
-            span: None,
-            path: None,
-            kind: DeserializeErrorKind::InvalidValue {
-                message: alloc::format!("invalid UTF-8 in raw JSON: {}", e).into(),
-            },
+        let raw_str = core::str::from_utf8(raw_bytes).map_err(|e| {
+            ParseError::new(
+                facet_reflect::Span::new(start_offset, end_offset - start_offset),
+                DeserializeErrorKind::InvalidValue {
+                    message: alloc::format!("invalid UTF-8 in raw JSON: {}", e).into(),
+                },
+            )
         })?;
 
         self.finish_value_in_parent();
@@ -657,35 +665,28 @@ impl<'de> facet_format::FormatJitParser<'de> for JsonParser<'de> {
         crate::jit::JsonJitFormat
     }
 
-    fn jit_error(&self, _input: &'de [u8], error_pos: usize, error_code: i32) -> Self::Error {
-        use crate::error::JsonErrorKind;
+    fn jit_error(&self, _input: &'de [u8], error_pos: usize, error_code: i32) -> ParseError {
         use facet_reflect::Span;
 
         let kind = match error_code {
-            -100 => JsonErrorKind::UnexpectedEof { expected: "value" },
-            -101 => JsonErrorKind::UnexpectedToken {
+            -100 => DeserializeErrorKind::UnexpectedEof { expected: "value" },
+            -101 => DeserializeErrorKind::UnexpectedToken {
                 got: "non-'['".into(),
                 expected: "'['",
             },
-            -102 => JsonErrorKind::UnexpectedToken {
+            -102 => DeserializeErrorKind::UnexpectedToken {
                 got: "non-boolean".into(),
                 expected: "'true' or 'false'",
             },
-            -103 => JsonErrorKind::UnexpectedToken {
+            -103 => DeserializeErrorKind::UnexpectedToken {
                 got: "unexpected token".into(),
                 expected: "',' or ']'",
             },
-            _ => JsonErrorKind::InvalidValue {
-                message: alloc::format!("Tier-2 JIT error code: {}", error_code),
+            _ => DeserializeErrorKind::InvalidValue {
+                message: alloc::format!("Tier-2 JIT error code: {}", error_code).into(),
             },
         };
 
-        JsonError::new(
-            kind,
-            Span {
-                offset: error_pos,
-                len: 1,
-            },
-        )
+        ParseError::new(Span::new(error_pos, 1), kind)
     }
 }
