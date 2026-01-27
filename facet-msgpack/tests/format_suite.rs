@@ -3,7 +3,7 @@
 use facet::Facet;
 use facet_format::DeserializeError;
 use facet_format_suite::{CaseOutcome, CaseSpec, FormatSuite, all_cases, msgpack};
-use facet_msgpack::{MsgPackError, MsgPackParser, to_vec};
+use facet_msgpack::{MsgPackParser, to_vec};
 use libtest_mimic::{Arguments, Failed, Trial};
 
 struct MsgPackSlice;

@@ -33,7 +33,7 @@ use facet_core::Facet;
 use http::{HeaderValue, StatusCode, header};
 use http_body_util::BodyExt;
 
-use crate::{DeserializeError, YamlError};
+use crate::DeserializeError;
 
 /// A wrapper type for YAML-encoded request/response bodies.
 ///

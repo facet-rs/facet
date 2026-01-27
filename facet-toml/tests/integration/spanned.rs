@@ -8,7 +8,7 @@
 
 use facet::Facet;
 use facet_reflect::Span;
-use facet_toml::{self as toml, DeserializeError, TomlError};
+use facet_toml::{self as toml, DeserializeError};
 use std::ops::Deref;
 
 // ============================================================================

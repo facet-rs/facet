@@ -3,7 +3,7 @@
 use facet::Facet;
 use facet_format::{DeserializeError, FormatDeserializer};
 use facet_format_suite::{CaseOutcome, CaseSpec, FormatSuite, all_cases};
-use facet_yaml::{YamlError, YamlParser, to_string};
+use facet_yaml::{YamlParser, to_string};
 use indoc::indoc;
 use libtest_mimic::{Arguments, Failed, Trial};
 use std::sync::Arc;

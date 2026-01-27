@@ -33,7 +33,7 @@ use facet_core::Facet;
 use http::{HeaderValue, StatusCode, header};
 use http_body_util::BodyExt;
 
-use crate::{DeserializeError, MsgPackError, MsgPackSerializeError};
+use crate::{DeserializeError, MsgPackSerializeError};
 
 /// A wrapper type for MsgPack-encoded request/response bodies.
 ///

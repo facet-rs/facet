@@ -609,7 +609,7 @@ fn deserialize_enum_internally_tagged_inner<'input, const BORROW: bool>(
     let evidence = collect_evidence(deser)?;
 
     let variant_name = find_tag_value(&evidence, tag_key)
-        .ok_or_else(|| DeserializeError {
+        .ok_or(DeserializeError {
             span: deser.last_span,
             path: None,
             kind: DeserializeErrorKind::MissingField {
@@ -808,7 +808,7 @@ fn deserialize_enum_adjacently_tagged_inner<'input, const BORROW: bool>(
     let evidence = collect_evidence(deser)?;
 
     let variant_name = find_tag_value(&evidence, tag_key)
-        .ok_or_else(|| DeserializeError {
+        .ok_or(DeserializeError {
             span: deser.last_span,
             path: None,
             kind: DeserializeErrorKind::MissingField {

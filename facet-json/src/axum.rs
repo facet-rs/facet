@@ -45,7 +45,7 @@ use facet_core::Facet;
 use http::{HeaderValue, StatusCode, header};
 use http_body_util::BodyExt;
 
-use crate::{DeserializeError, JsonError};
+use crate::DeserializeError;
 
 /// A wrapper type for JSON-encoded request/response bodies.
 ///

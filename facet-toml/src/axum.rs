@@ -42,7 +42,7 @@ use facet_core::Facet;
 use http::{HeaderValue, StatusCode, header};
 use http_body_util::BodyExt;
 
-use crate::{DeserializeError, TomlError};
+use crate::DeserializeError;
 
 /// A wrapper type for TOML-encoded request/response bodies.
 ///

@@ -7,7 +7,6 @@ use facet_core::Shape;
 use facet_format::{DeserializeError, FormatDeserializer};
 use facet_value::Value;
 
-use crate::error::PostcardError;
 use crate::parser::PostcardParser;
 
 /// Deserialize postcard bytes into a `Value` using shape information.
