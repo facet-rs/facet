@@ -1,3 +1,128 @@
+//! # Format Deserializer
+//!
+//! This module provides a generic deserializer that drives format-specific parsers
+//! (JSON, TOML, etc.) directly into facet's `Partial` builder.
+//!
+//! ## Error Handling Philosophy
+//!
+//! Good error messages are critical for developer experience. When deserialization
+//! fails, users need to know **where** the error occurred (both in the input and
+//! in the type structure) and **what** went wrong. This module enforces several
+//! invariants to ensure high-quality error messages.
+//!
+//! ### Always Include a Span
+//!
+//! Every error should include a `Span` pointing to the location in the input where
+//! the error occurred. This allows tools to highlight the exact position:
+//!
+//! ```text
+//! error: expected integer, got string
+//!   --> config.toml:15:12
+//!    |
+//! 15 |     count = "not a number"
+//!    |             ^^^^^^^^^^^^^^
+//! ```
+//!
+//! The deserializer tracks `last_span` which is updated after consuming each event.
+//! When constructing errors manually, always use `self.last_span`. The `SpanGuard`
+//! RAII type sets a thread-local span that the `From<ReflectError>` impl uses
+//! automatically.
+//!
+//! ### Always Include a Path
+//!
+//! Every error should include a `Path` showing the location in the type structure.
+//! This is especially important for nested types where the span alone doesn't tell
+//! you which field failed:
+//!
+//! ```text
+//! error: missing required field `email`
+//!   --> config.toml:10:5
+//!    |
+//! 10 |     [users.alice]
+//!    |     ^^^^^^^^^^^^^
+//!    |
+//!    = path: config.users["alice"].contact
+//! ```
+//!
+//! When constructing errors, use `wip.path()` to get the current path through the
+//! type structure. The `Partial` tracks this automatically as you descend into
+//! fields, list items, map keys, etc.
+//!
+//! ### Error Construction Patterns
+//!
+//! **For errors during deserialization (when `wip` is available):**
+//!
+//! ```ignore
+//! return Err(DeserializeError {
+//!     span: Some(self.last_span),
+//!     path: Some(wip.path()),
+//!     kind: DeserializeErrorKind::UnexpectedToken { ... },
+//! });
+//! ```
+//!
+//! **For errors from `Partial` methods (via `?` operator):**
+//!
+//! The `From<ReflectError>` impl automatically captures the span from the
+//! thread-local `SpanGuard` and the path from the `ReflectError`. Just use `?`:
+//!
+//! ```ignore
+//! let _guard = SpanGuard::new(self.last_span);
+//! wip = wip.begin_field("name")?;  // Error automatically has span + path
+//! ```
+//!
+//! **For errors with `DeserializeErrorKind::with_span()`:**
+//!
+//! When you only have an error kind and span (no `wip` for path):
+//!
+//! ```ignore
+//! return Err(DeserializeErrorKind::UnexpectedEof { expected: "value" }
+//!     .with_span(self.last_span));
+//! ```
+//!
+//! Note: `with_span()` sets `path: None`. Prefer the full struct when you have a path.
+//!
+//! ### ReflectError Conversion
+//!
+//! Errors from `facet-reflect` (the `Partial` API) are converted via `From<ReflectError>`.
+//! This impl:
+//!
+//! 1. Captures the span from the thread-local `CURRENT_SPAN` (set by `SpanGuard`)
+//! 2. Preserves the path from `ReflectError::path`
+//! 3. Wraps the error kind in `DeserializeErrorKind::Reflect`
+//!
+//! This means you must have an active `SpanGuard` when calling `Partial` methods
+//! that might fail. The guard is typically created at the start of each
+//! deserialization method:
+//!
+//! ```ignore
+//! pub fn deserialize_struct(&mut self, wip: Partial) -> Result<...> {
+//!     let _guard = SpanGuard::new(self.last_span);
+//!     // ... Partial methods can now use ? and errors will have spans
+//! }
+//! ```
+//!
+//! ## Method Chaining with `.with()`
+//!
+//! The `Partial` API provides a `.with()` method for cleaner chaining when you
+//! need to call deserializer methods (which take `&mut self`) in the middle of
+//! a chain:
+//!
+//! ```ignore
+//! // Instead of:
+//! wip = wip.begin_field("name")?;
+//! wip = self.deserialize_into(wip)?;
+//! wip = wip.end()?;
+//!
+//! // Use:
+//! wip = wip
+//!     .begin_field("name")?
+//!     .with(|w| self.deserialize_into(w))?
+//!     .end()?;
+//! ```
+//!
+//! This keeps the "begin/deserialize/end" pattern visually grouped and makes
+//! the nesting structure clearer.
+
 use std::marker::PhantomData;
 
 use facet_core::{Facet, Shape};
@@ -7,31 +132,6 @@ use crate::{FormatParser, ParseEvent};
 
 mod error;
 pub use error::*;
-
-/// Convert a ReflectError to a DeserializeError with span and path.
-///
-/// The path is extracted from the ReflectError (which now always contains one),
-/// and the span comes from the deserializer's last_span.
-///
-/// # Usage
-/// ```ignore
-/// wip = reflect!(self, wip, begin_nth_field(0), "begin Raw's inner field");
-/// wip = reflect!(self, wip, end(), "end Raw wrapper");
-/// ```
-macro_rules! reflect {
-    ($self:expr, $wip:expr, $method:ident($($args:expr),*), $context:literal) => {{
-        $wip.$method($($args),*).map_err(|e| {
-            crate::DeserializeError {
-                span: Some($self.last_span),
-                path: Some(e.path),
-                kind: crate::DeserializeErrorKind::Reflect {
-                    kind: e.kind,
-                    context: $context,
-                },
-            }
-        })?
-    }};
-}
 
 mod setters;
 
