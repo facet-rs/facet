@@ -189,6 +189,9 @@ struct ParseContext<'a> {
     /// ValueBuilder for config overrides (--config.foo.bar style).
     /// Only present if the schema has a config field.
     config_builder: Option<ValueBuilder<'a>>,
+    /// Config file path captured from `--<config-field-name> <path>`.
+    /// E.g., if the config field is named "config", this captures `--config /path/to/file.json`.
+    config_file_path: Option<camino::Utf8PathBuf>,
 }
 
 impl<'a> ParseContext<'a> {
@@ -219,6 +222,7 @@ impl<'a> ParseContext<'a> {
             arg_offsets,
             parent_stack: Vec::new(),
             config_builder,
+            config_file_path: None,
         }
     }
 
@@ -311,6 +315,16 @@ impl<'a> ParseContext<'a> {
             && flag_name.as_bytes()[config_field_name.len()] == b'.'
         {
             self.parse_config_override(arg, flag_name, inline_value, config_field_name);
+            return;
+        }
+
+        // Check if this is the config file path flag (e.g., --config /path/to/file.json)
+        // The flag name must match the config field's effective name (in kebab-case)
+        if let Some(config_schema) = self.schema.config()
+            && let Some(config_field_name) = config_schema.field_name()
+            && flag_name == config_field_name.to_kebab_case()
+        {
+            self.parse_config_file_path(arg, inline_value);
             return;
         }
 
@@ -624,6 +638,35 @@ impl<'a> ParseContext<'a> {
             .as_mut()
             .expect("config_builder must exist when parsing config overrides")
             .set(&path, leaf_value, Some(value_span), provenance);
+    }
+
+    /// Parse the config file path flag (e.g., `--config /path/to/file.json`).
+    ///
+    /// The flag name is derived from the effective name of the config field:
+    /// - Field `config: ServerConfig` -> `--config <path>`
+    /// - Field `settings: ServerConfig` -> `--settings <path>`
+    /// - Field `#[facet(rename = "cfg")] config: ServerConfig` -> `--cfg <path>`
+    fn parse_config_file_path(&mut self, arg: &str, inline_value: Option<&str>) {
+        let flag_span = self.current_span();
+
+        let path_str = if let Some(v) = inline_value {
+            // --config=/path/to/file.json
+            self.index += 1;
+            v.to_string()
+        } else {
+            // --config /path/to/file.json
+            self.index += 1;
+            if self.index < self.args.len() {
+                let v = self.args[self.index];
+                self.index += 1;
+                v.to_string()
+            } else {
+                self.emit_error_at(format!("flag {} requires a file path", arg), flag_span);
+                return;
+            }
+        };
+
+        self.config_file_path = Some(camino::Utf8PathBuf::from(path_str));
     }
 
     fn try_parse_subcommand(&mut self, level: &'a ArgLevelSchema) -> bool {
@@ -953,6 +996,7 @@ impl<'a> ParseContext<'a> {
             unused_keys,
             diagnostics,
             source_text: None,
+            config_file_path: self.config_file_path,
         }
     }
 }

@@ -53,6 +53,9 @@ pub struct LayerOutput {
     /// For file layers, this is the file contents.
     /// For CLI, this is the concatenated args.
     pub source_text: Option<String>,
+    /// Config file path captured from CLI (e.g., `--config path/to/file.json`).
+    /// Only set by the CLI layer when the user specifies a config file path.
+    pub config_file_path: Option<camino::Utf8PathBuf>,
 }
 
 /// A key that was unused by the schema, with provenance.
@@ -139,7 +142,7 @@ impl<T: Facet<'static>> Driver<T> {
     /// The returned `DriverOutcome` must be handled explicitly:
     /// - Use `.unwrap()` for automatic exit handling (recommended)
     /// - Use `.into_result()` if you need manual control
-    pub fn run(self) -> DriverOutcome<T> {
+    pub fn run(mut self) -> DriverOutcome<T> {
         let _ = self.core;
 
         let mut layers = ConfigLayers::default();
@@ -163,12 +166,30 @@ impl<T: Facet<'static>> Driver<T> {
 
         // Phase 1: Parse each layer
         // Priority order (lowest to highest): defaults < file < env < cli
+        //
+        // Note: CLI is parsed first to capture the config file path (--config <path>),
+        // which is then used by the file layer. The priority ordering is enforced
+        // during the merge phase, not the parse phase.
 
         // 1a. Defaults layer (TODO: extract defaults from schema)
         // For now, defaults is empty - this will be filled in when we implement
         // default value extraction from the schema
 
-        // 1b. File layer
+        // 1b. CLI layer (parsed first to get config file path)
+        if let Some(ref cli_config) = self.config.cli_config {
+            layers.cli = parse_cli(&self.config.schema, cli_config);
+            tracing::debug!(cli_value = ?layers.cli.value, "driver: parsed CLI layer");
+            all_diagnostics.extend(layers.cli.diagnostics.iter().cloned());
+        }
+
+        // 1c. File layer (uses config file path from CLI if provided)
+        // If CLI provided a config file path, update the file config to use it
+        if let Some(ref cli_path) = layers.cli.config_file_path {
+            // Get mutable access to file_config, creating a default if none exists
+            let file_config = self.config.file_config.get_or_insert_with(Default::default);
+            file_config.explicit_path = Some(cli_path.clone());
+        }
+
         if let Some(ref file_config) = self.config.file_config {
             let result = parse_file(&self.config.schema, file_config);
             layers.file = result.output;
@@ -176,17 +197,10 @@ impl<T: Facet<'static>> Driver<T> {
             all_diagnostics.extend(layers.file.diagnostics.iter().cloned());
         }
 
-        // 1c. Environment layer
+        // 1d. Environment layer
         if let Some(ref env_config) = self.config.env_config {
             layers.env = parse_env(&self.config.schema, env_config, env_config.source());
             all_diagnostics.extend(layers.env.diagnostics.iter().cloned());
-        }
-
-        // 1d. CLI layer
-        if let Some(ref cli_config) = self.config.cli_config {
-            layers.cli = parse_cli(&self.config.schema, cli_config);
-            tracing::debug!(cli_value = ?layers.cli.value, "driver: parsed CLI layer");
-            all_diagnostics.extend(layers.cli.diagnostics.iter().cloned());
         }
 
         // Phase 1.5: Check special fields (help/version/completions)

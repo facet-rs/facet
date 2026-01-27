@@ -540,15 +540,6 @@ impl FileConfigBuilder {
         }
     }
 
-    /// Set an explicit config file path.
-    ///
-    /// This path takes priority over default paths. Use when the user
-    /// specifies a config file via CLI (e.g., `--config path/to/config.json`).
-    pub fn path(mut self, path: impl Into<Utf8PathBuf>) -> Self {
-        self.config.explicit_path = Some(path.into());
-        self
-    }
-
     /// Set default paths to check for config files.
     ///
     /// These are checked in order; the first existing file is used.
@@ -792,12 +783,12 @@ mod tests {
     #[test]
     fn test_file_config_builder() {
         let config = FileConfigBuilder::new()
-            .path("config.json")
             .default_paths(["./config.json", "~/.config/app.json"])
             .strict()
             .build();
 
-        assert_eq!(config.explicit_path, Some(Utf8PathBuf::from("config.json")));
+        // explicit_path is set by the driver when CLI provides --config <path>
+        assert_eq!(config.explicit_path, None);
         assert_eq!(config.default_paths.len(), 2);
         assert!(config.strict);
     }
