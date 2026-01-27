@@ -25,12 +25,17 @@ serde_json.workspace = true
 # Tracing (optional - compiles to nothing when disabled)
 tracing = { workspace = true, optional = true }
 
+# Figue integration (optional)
+figue = { workspace = true, optional = true }
+
 [dev-dependencies]
 tracing.workspace = true
 facet-testhelpers.workspace = true
 insta.workspace = true
 facet-format = { workspace = true, features = ["tracing"] }
 facet-reflect = { workspace = true, features = ["tracing"] }
+figue.workspace = true
 
 [features]
 tracing = ["dep:tracing", "facet-format/tracing", "facet-reflect/tracing"]
+figue = ["dep:figue"]

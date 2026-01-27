@@ -41,6 +41,8 @@
 //! ```
 
 mod error;
+#[cfg(feature = "figue")]
+mod figue_format;
 #[cfg(test)]
 mod idempotency_test;
 #[cfg(test)]
@@ -61,6 +63,8 @@ mod value_expr_test;
 pub use error::{RenderError, StyxError, StyxErrorKind};
 pub use facet_format::DeserializeError;
 pub use facet_format::SerializeError;
+#[cfg(feature = "figue")]
+pub use figue_format::StyxFormat;
 pub use parser::StyxParser;
 pub use schema_error::{ValidationError, ValidationErrorKind, ValidationResult, ValidationWarning};
 pub use schema_gen::{GenerateSchema, schema_file_from_type, schema_from_type};
