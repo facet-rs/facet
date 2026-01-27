@@ -360,10 +360,10 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         // Plain tuple structs without the transparent attribute use array syntax.
         if field_count == 1 && wip.shape().is_transparent() {
             // Unwrap into field 0 and deserialize directly
-            wip = wip.begin_nth_field(0)?;
-            wip = self.deserialize_into(wip)?;
-            wip = wip.end()?;
-            return Ok(wip);
+            return Ok(wip
+                .begin_nth_field(0)?
+                .with(|w| self.deserialize_into(w))?
+                .end()?);
         }
 
         // Special case: unit type () can accept Scalar(Unit) or Scalar(Null) directly
@@ -394,7 +394,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
             ParseEvent::StructStart(kind) => {
                 return Err(DeserializeError {
                     span: Some(self.last_span),
-                    path: None,
+                    path: Some(wip.path()),
                     kind: DeserializeErrorKind::UnexpectedToken {
                         expected: "array",
                         got: kind.name().into(),
@@ -404,7 +404,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
             _ => {
                 return Err(DeserializeError {
                     span: Some(self.last_span),
-                    path: None,
+                    path: Some(wip.path()),
                     kind: DeserializeErrorKind::UnexpectedToken {
                         expected: "sequence start for tuple",
                         got: event.kind_name().into(),
@@ -430,9 +430,10 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
             }
 
             // Select field by index
-            wip = wip.begin_nth_field(index)?;
-            wip = self.deserialize_into(wip)?;
-            wip = wip.end()?;
+            wip = wip
+                .begin_nth_field(index)?
+                .with(|w| self.deserialize_into(w))?
+                .end()?;
             index += 1;
         }
 
@@ -561,7 +562,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                 ParseEvent::Scalar(ScalarValue::Bytes(bytes)) => self.set_bytes_value(wip, bytes),
                 _ => Err(DeserializeError {
                     span: Some(self.last_span),
-                    path: None,
+                    path: Some(wip.path()),
                     kind: DeserializeErrorKind::UnexpectedToken {
                         expected: "bytes",
                         got: event.kind_name().into(),
@@ -585,7 +586,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
             ParseEvent::StructStart(kind) => {
                 return Err(DeserializeError {
                     span: Some(self.last_span),
-                    path: None,
+                    path: Some(wip.path()),
                     kind: DeserializeErrorKind::UnexpectedToken {
                         expected: "array",
                         got: kind.name().into(),
@@ -595,7 +596,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
             _ => {
                 return Err(DeserializeError {
                     span: Some(self.last_span),
-                    path: None,
+                    path: Some(wip.path()),
                     kind: DeserializeErrorKind::UnexpectedToken {
                         expected: "sequence start",
                         got: event.kind_name().into(),
@@ -620,9 +621,10 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
             }
 
             trace!("deserialize_list: deserializing list item");
-            wip = wip.begin_list_item()?;
-            wip = self.deserialize_into(wip)?;
-            wip = wip.end()?;
+            wip = wip
+                .begin_list_item()?
+                .with(|w| self.deserialize_into(w))?
+                .end()?;
         }
 
         trace!("deserialize_list: completed");
@@ -658,7 +660,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
             ParseEvent::StructStart(kind) => {
                 return Err(DeserializeError {
                     span: Some(self.last_span),
-                    path: None,
+                    path: Some(wip.path()),
                     kind: DeserializeErrorKind::UnexpectedToken {
                         expected: "array",
                         got: kind.name().into(),
@@ -668,7 +670,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
             _ => {
                 return Err(DeserializeError {
                     span: Some(self.last_span),
-                    path: None,
+                    path: Some(wip.path()),
                     kind: DeserializeErrorKind::UnexpectedToken {
                         expected: "sequence start for array",
                         got: event.kind_name().into(),
@@ -692,9 +694,10 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                 break;
             }
 
-            wip = wip.begin_nth_field(index)?;
-            wip = self.deserialize_into(wip)?;
-            wip = wip.end()?;
+            wip = wip
+                .begin_nth_field(index)?
+                .with(|w| self.deserialize_into(w))?
+                .end()?;
             index += 1;
         }
 
@@ -718,7 +721,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
             ParseEvent::StructStart(kind) => {
                 return Err(DeserializeError {
                     span: Some(self.last_span),
-                    path: None,
+                    path: Some(wip.path()),
                     kind: DeserializeErrorKind::UnexpectedToken {
                         expected: "set",
                         got: kind.name().into(),
@@ -728,7 +731,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
             _ => {
                 return Err(DeserializeError {
                     span: Some(self.last_span),
-                    path: None,
+                    path: Some(wip.path()),
                     kind: DeserializeErrorKind::UnexpectedToken {
                         expected: "sequence start for set",
                         got: event.kind_name().into(),
@@ -749,9 +752,10 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                 break;
             }
 
-            wip = wip.begin_set_item()?;
-            wip = self.deserialize_into(wip)?;
-            wip = wip.end()?;
+            wip = wip
+                .begin_set_item()?
+                .with(|w| self.deserialize_into(w))?
+                .end()?;
         }
 
         Ok(wip)
@@ -781,19 +785,21 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                         ParseEvent::StructEnd => break,
                         ParseEvent::FieldKey(key) => {
                             // Begin key
-                            wip = wip.begin_key()?;
-                            wip = self.deserialize_map_key(wip, key.name, key.doc, key.tag)?;
-                            wip = wip.end()?;
+                            wip = wip
+                                .begin_key()?
+                                .with(|w| self.deserialize_map_key(w, key.name, key.doc, key.tag))?
+                                .end()?;
 
                             // Begin value
-                            wip = wip.begin_value()?;
-                            wip = self.deserialize_into(wip)?;
-                            wip = wip.end()?;
+                            wip = wip
+                                .begin_value()?
+                                .with(|w| self.deserialize_into(w))?
+                                .end()?;
                         }
                         other => {
                             return Err(DeserializeError {
                                 span: Some(self.last_span),
-                                path: None,
+                                path: Some(wip.path()),
                                 kind: DeserializeErrorKind::UnexpectedToken {
                                     expected: "field key or struct end for map",
                                     got: other.kind_name().into(),
@@ -816,19 +822,18 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                             self.expect_event("value")?;
 
                             // Deserialize key
-                            wip = wip.begin_key()?;
-                            wip = self.deserialize_into(wip)?;
-                            wip = wip.end()?;
+                            wip = wip.begin_key()?.with(|w| self.deserialize_into(w))?.end()?;
 
                             // Deserialize value
-                            wip = wip.begin_value()?;
-                            wip = self.deserialize_into(wip)?;
-                            wip = wip.end()?;
+                            wip = wip
+                                .begin_value()?
+                                .with(|w| self.deserialize_into(w))?
+                                .end()?;
                         }
                         other => {
                             return Err(DeserializeError {
                                 span: Some(self.last_span),
-                                path: None,
+                                path: Some(wip.path()),
                                 kind: DeserializeErrorKind::UnexpectedToken {
                                     expected: "ordered field or sequence end for map",
                                     got: other.kind_name().into(),
@@ -841,7 +846,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
             other => {
                 return Err(DeserializeError {
                     span: Some(self.last_span),
-                    path: None,
+                    path: Some(wip.path()),
                     kind: DeserializeErrorKind::UnexpectedToken {
                         expected: "struct start or sequence start for map",
                         got: other.kind_name().into(),
@@ -942,7 +947,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                 } else {
                     Err(DeserializeError {
                         span: Some(self.last_span),
-                        path: None,
+                        path: Some(wip.path()),
                         kind: DeserializeErrorKind::UnexpectedToken {
                             expected: "scalar value or node with argument",
                             got: "node without argument".into(),
@@ -952,7 +957,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
             }
             other => Err(DeserializeError {
                 span: Some(self.last_span),
-                path: None,
+                path: Some(wip.path()),
                 kind: DeserializeErrorKind::UnexpectedToken {
                     expected: "scalar value",
                     got: other.kind_name().into(),
@@ -1000,9 +1005,10 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                             // Set as Some(Vec<String>)
                             wip = wip.begin_some()?.init_list()?;
                             for line in doc_lines {
-                                wip = wip.begin_list_item()?;
-                                wip = self.set_string_value(wip, line.clone())?;
-                                wip = wip.end()?;
+                                wip = wip
+                                    .begin_list_item()?
+                                    .with(|w| self.set_string_value(w, line.clone()))?
+                                    .end()?;
                             }
                             wip = wip.end()?;
                         } else {
@@ -1015,9 +1021,10 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                         wip = wip.begin_field(field.effective_name())?;
                         if let Some(ref tag_name) = tag {
                             // Set as Some(String)
-                            wip = wip.begin_some()?;
-                            wip = self.set_string_value(wip, tag_name.clone())?;
-                            wip = wip.end()?;
+                            wip = wip
+                                .begin_some()?
+                                .with(|w| self.set_string_value(w, tag_name.clone()))?
+                                .end()?;
                         } else {
                             // Set as None (not a tagged key)
                             wip = wip.set_default()?;
@@ -1027,9 +1034,10 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                         // This is the value field - recurse with the key and tag.
                         // Doc is already consumed by this container, but tag may be needed
                         // by a nested metadata container (e.g., Documented<ObjectKey>).
-                        wip = wip.begin_field(field.effective_name())?;
-                        wip = self.deserialize_map_key(wip, key.clone(), None, tag.clone())?;
-                        wip = wip.end()?;
+                        wip = wip
+                            .begin_field(field.effective_name())?
+                            .with(|w| self.deserialize_map_key(w, key.clone(), None, tag.clone()))?
+                            .end()?;
                     }
                 }
             }
@@ -1047,10 +1055,10 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                 }
                 Some(inner_key) => {
                     // Named key -> Some(inner)
-                    wip = wip.begin_some()?;
-                    wip = self.deserialize_map_key(wip, Some(inner_key), None, None)?;
-                    wip = wip.end()?;
-                    return Ok(wip);
+                    return Ok(wip
+                        .begin_some()?
+                        .with(|w| self.deserialize_map_key(w, Some(inner_key), None, None))?
+                        .end()?);
                 }
             }
         }
@@ -1058,7 +1066,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         // From here on, we need an actual key name
         let key = key.ok_or_else(|| DeserializeError {
             span: Some(self.last_span),
-            path: None,
+            path: Some(wip.path()),
             kind: DeserializeErrorKind::UnexpectedToken {
                 expected: "named key",
                 got: "unit key".into(),
@@ -1070,10 +1078,10 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         // which are handled directly.
         let is_pointer = matches!(shape.def, Def::Pointer(_));
         if shape.inner.is_some() && !is_pointer {
-            wip = wip.begin_inner()?;
-            wip = self.deserialize_map_key(wip, Some(key), None, None)?;
-            wip = wip.end()?;
-            return Ok(wip);
+            return Ok(wip
+                .begin_inner()?
+                .with(|w| self.deserialize_map_key(w, Some(key), None, None))?
+                .end()?);
         }
 
         // Handle terminal cases (enum, numeric, string) via non-generic inner function
