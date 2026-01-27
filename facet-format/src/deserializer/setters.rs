@@ -219,7 +219,7 @@ impl<'input, const BORROW: bool> From<facet_reflect::ReflectError>
 pub(crate) fn deserialize_map_key_terminal_inner<'input, const BORROW: bool>(
     mut wip: Partial<'input, BORROW>,
     key: Cow<'input, str>,
-    span: Option<Span>,
+    span: Span,
 ) -> Result<Partial<'input, BORROW>, MapKeyTerminalResult<'input, BORROW>> {
     let shape = wip.shape();
 

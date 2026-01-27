@@ -1,4 +1,9 @@
-use crate::FormatDeserializer;
+use std::borrow::Cow;
+
+use facet_core::Def;
+use facet_reflect::Partial;
+
+use crate::{DeserializeError, DeserializeErrorKind, FormatDeserializer};
 
 impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
     /// Main deserialization entry point - deserialize into a Partial.
@@ -15,25 +20,27 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         // Check for raw capture type (e.g., RawJson)
         // Raw capture types are tuple structs with a single Cow<str> field
         if self.parser.raw_capture_shape() == Some(shape) {
-            match self.parser.capture_raw()? {
-                Some(raw) => {
-                    // The raw type is a tuple struct like RawJson(Cow<str>)
-                    // Access field 0 (the Cow<str>) and set it
-                    wip = wip
-                        .begin_nth_field(0)
-                        .map_err(|e| DeserializeError::bug_from_reflect(e, "beginning field"))?;
-                    wip = self.set_string_value(wip, Cow::Borrowed(raw))?;
-                    wip = wip.end()?;
-                    return Ok(wip);
-                }
-                None => {
-                    // Parser doesn't support raw capture (e.g., streaming mode)
-                    return Err(DeserializeErrorKind::RawCaptureNotSupported {
-                        type_name: shape.type_identifier,
-                    }
+            // Parser doesn't support raw capture (e.g., streaming mode)
+            let Some(raw) = self.parser.capture_raw()? else {
+                return Err(DeserializeErrorKind::RawCaptureNotSupported { shape }
                     .with_span(self.last_span));
-                }
-            }
+            };
+
+            // The raw type is a tuple struct like RawJson(Cow<str>)
+            // Access field 0 (the Cow<str>) and set it
+            wip = reflect!(
+                self,
+                wip.begin_nth_field(0),
+                "raw capture types must be Raw(Cow<'a, str>)"
+            )?;
+            wip = self.set_string_value(wip, Cow::Borrowed(raw))?;
+            wip = reflect!(
+                self,
+                wip.end(),
+                "raw capture types must be Raw(Cow<'a, str>)"
+            )?;
+
+            return Ok(wip);
         }
 
         // Check for container-level proxy (format-specific proxies take precedence)
@@ -112,19 +119,16 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                         Some("span") => {
                             // Populate span from parser's current position
                             wip = wip.begin_field(field.effective_name())?;
-                            if let Some(span) = self.last_span {
-                                wip = wip.begin_some()?;
-                                // Set the span struct fields
-                                wip = wip.begin_field("offset")?;
-                                wip = wip.set(span.offset)?;
-                                wip = wip.end()?;
-                                wip = wip.begin_field("len")?;
-                                wip = wip.set(span.len)?;
-                                wip = wip.end()?;
-                                wip = wip.end()?;
-                            } else {
-                                wip = wip.set_default()?;
-                            }
+                            let span = self.last_span;
+                            wip = wip.begin_some()?;
+                            // Set the span struct fields
+                            wip = wip.begin_field("offset")?;
+                            wip = wip.set(span.offset)?;
+                            wip = wip.end()?;
+                            wip = wip.begin_field("len")?;
+                            wip = wip.set(span.len)?;
+                            wip = wip.end()?;
+                            wip = wip.end()?;
                             wip = wip.end()?;
                         }
                         Some(_other) => {
@@ -208,7 +212,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
     }
 
     /// Internal recursive deserialization using hint_shape for dispatch.
-    fn deserialize_value_recursive(
+    pub(crate) fn deserialize_value_recursive(
         &mut self,
         mut wip: Partial<'input, BORROW>,
         hint_shape: &'static Shape,
@@ -278,7 +282,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         }
     }
 
-    fn deserialize_option(
+    pub(crate) fn deserialize_option(
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
@@ -306,7 +310,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         Ok(wip)
     }
 
-    fn deserialize_struct(
+    pub(crate) fn deserialize_struct(
         &mut self,
         wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
@@ -332,7 +336,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         }
     }
 
-    fn deserialize_tuple(
+    pub(crate) fn deserialize_tuple(
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
@@ -439,7 +443,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
     ///
     /// This saves the parser position, reads through the current struct to
     /// collect field names and their scalar values, then restores the position.
-    fn collect_evidence(
+    pub(crate) fn collect_evidence(
         &mut self,
     ) -> Result<alloc::vec::Vec<crate::FieldEvidence<'input>>, DeserializeError> {
         use crate::{FieldEvidence, FieldLocationHint};
@@ -535,7 +539,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         Ok(evidence)
     }
 
-    fn deserialize_list(
+    pub(crate) fn deserialize_list(
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
@@ -627,7 +631,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         Ok(wip)
     }
 
-    fn deserialize_array(
+    pub(crate) fn deserialize_array(
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
@@ -698,7 +702,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         Ok(wip)
     }
 
-    fn deserialize_set(
+    pub(crate) fn deserialize_set(
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
@@ -752,7 +756,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         Ok(wip)
     }
 
-    fn deserialize_map(
+    pub(crate) fn deserialize_map(
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
@@ -846,7 +850,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         Ok(wip)
     }
 
-    fn deserialize_scalar(
+    pub(crate) fn deserialize_scalar(
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
@@ -967,7 +971,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
     ///
     /// The `tag` parameter is for formats like Styx where keys can be type patterns (e.g., `@string`).
     /// When present, it indicates the key was a tag rather than a bare identifier.
-    fn deserialize_map_key(
+    pub(crate) fn deserialize_map_key(
         &mut self,
         mut wip: Partial<'input, BORROW>,
         key: Option<Cow<'input, str>>,

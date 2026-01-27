@@ -326,7 +326,13 @@ pub enum DeserializeErrorKind {
     ///
     /// These errors come from `Partial` operations like field access,
     /// variant selection, or type building.
-    Reflect(ReflectError),
+    Reflect {
+        /// The error we got
+        inner: ReflectError,
+
+        /// What we were trying to do
+        context: &'static str,
+    },
 
     // ============================================================
     // Infrastructure errors
@@ -413,7 +419,7 @@ pub enum DeserializeErrorKind {
     /// ```
     RawCaptureNotSupported {
         /// The type that requires raw capture.
-        type_name: &'static str,
+        shape: &'static Shape,
     },
 }
 
@@ -498,7 +504,7 @@ impl fmt::Display for DeserializeErrorKind {
             DeserializeErrorKind::Bug { error, context } => {
                 write!(f, "internal error: {error} while {context}")
             }
-            DeserializeErrorKind::RawCaptureNotSupported { type_name } => {
+            DeserializeErrorKind::RawCaptureNotSupported { shape: type_name } => {
                 write!(
                     f,
                     "raw capture not supported: type `{type_name}` requires raw capture, \

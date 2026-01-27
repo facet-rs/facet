@@ -12,31 +12,39 @@ pub use error::*;
 
 /// Convert a ReflectError to a DeserializeError with the current span.
 ///
-/// This macro captures `self.last_span` from the enclosing scope, ensuring
+/// This macro takes a reference to self to access `last_span`, ensuring
 /// reflection errors always have span information attached.
 ///
 /// # Usage
 /// ```ignore
-/// reflect!(wip.set(value))?;
-/// reflect!(wip.begin_field("name"))?;
+/// reflect!(self, wip.set(value), "setting value")?;
+/// reflect!(self, wip.begin_field("name"), "beginning field")?;
+/// reflect!(self, wip.end(), "ending field")?;
 /// ```
 macro_rules! reflect {
-    ($expr:expr) => {
-        $expr.map_err(|e| crate::DeserializeErrorKind::Reflect(e).with_span(self.last_span))
+    ($self:expr, $expr:expr, $context:literal) => {
+        $expr.map_err(|e| {
+            crate::DeserializeErrorKind::Reflect {
+                inner: e,
+                context: $context,
+            }
+            .with_span($self.last_span)
+        })
     };
 }
 
-pub(crate) use reflect;
-
-mod dynamic;
-mod eenum;
-mod entry;
-mod pointer;
-mod scalar_matches;
 mod setters;
-mod struct_simple;
-mod struct_with_flatten;
-mod validate;
+
+// TODO: uncomment all the below:
+
+// mod dynamic;
+// mod eenum;
+mod entry;
+// mod pointer;
+// mod scalar_matches;
+// mod struct_simple;
+// mod struct_with_flatten;
+// mod validate;
 
 /// Generic deserializer that drives a format-specific parser directly into `Partial`.
 ///
