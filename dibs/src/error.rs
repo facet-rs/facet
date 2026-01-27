@@ -100,6 +100,24 @@ pub enum Error {
 
     #[error("unknown column: {table}.{column}")]
     UnknownColumn { table: String, column: String },
+
+    #[error(
+        "type mismatch reading {table}.{column}: database column is '{actual}', but dibs schema expects '{expected}'\nhint: you may need to run migrations to update the database schema"
+    )]
+    TypeMismatch {
+        table: String,
+        column: String,
+        expected: String,
+        actual: String,
+    },
+
+    #[error("failed to read {table}.{column} (expected {expected}): {message}")]
+    ColumnReadError {
+        table: String,
+        column: String,
+        expected: String,
+        message: String,
+    },
 }
 
 impl Error {

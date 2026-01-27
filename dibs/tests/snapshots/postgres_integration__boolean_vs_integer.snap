@@ -1,0 +1,6 @@
+---
+source: crates/dibs/tests/postgres_integration.rs
+expression: error.to_string()
+---
+type mismatch reading error_test_5.is_active: database column is 'bool', but dibs schema expects 'integer'
+hint: you may need to run migrations to update the database schema

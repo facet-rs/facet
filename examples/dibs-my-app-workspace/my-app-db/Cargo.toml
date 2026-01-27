@@ -19,6 +19,7 @@ path = "src/lib.rs"
 dibs.workspace = true
 dotenvy.workspace = true
 facet = { workspace = true, features = ["jiff02", "rust_decimal"] }
+facet-value = { workspace = true }
 jiff.workspace = true
 rust_decimal.workspace = true
 tokio.workspace = true

@@ -1,8 +1,8 @@
 //! Query execution against Postgres.
 
 use super::{
-    BuiltQuery, DeleteQuery, InsertQuery, Row, SelectQuery, SqlParam, UpdateQuery, Value,
-    pg_row_to_row,
+    BuiltQuery, DeleteQuery, InsertQuery, Row, RowContext, SelectQuery, SqlParam, UpdateQuery,
+    Value, pg_row_to_row,
 };
 use crate::Error;
 use crate::schema::{Schema, Table};
@@ -123,8 +123,11 @@ impl<'a> Db<'a> {
                 .collect()
         };
 
+        let ctx = RowContext {
+            table_name: &table.name,
+        };
         rows.iter()
-            .map(|row| pg_row_to_row(row, &columns))
+            .map(|row| pg_row_to_row(row, &columns, &ctx))
             .collect()
     }
 
@@ -174,7 +177,10 @@ impl<'a> Db<'a> {
             })
             .collect();
 
-        Ok(Some(pg_row_to_row(&rows[0], &columns)?))
+        let ctx = RowContext {
+            table_name: &table.name,
+        };
+        Ok(Some(pg_row_to_row(&rows[0], &columns, &ctx)?))
     }
 }
 

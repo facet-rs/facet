@@ -48,5 +48,5 @@ pub use ast::*;
 pub use build::BuiltQuery;
 pub use exec::{Db, DeleteBuilder, InsertBuilder, SelectBuilder, UpdateBuilder};
 pub use expr::*;
-pub use row::{Row, SqlParam, pg_row_to_row};
+pub use row::{Row, RowContext, SqlParam, pg_row_to_row};
 pub use value::*;

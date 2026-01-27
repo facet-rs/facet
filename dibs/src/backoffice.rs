@@ -57,6 +57,7 @@ fn query_value_to_proto(v: &QueryValue) -> ProtoValue {
         QueryValue::Decimal(d) => ProtoValue::String(d.to_string()),
         QueryValue::String(s) => ProtoValue::String(s.clone()),
         QueryValue::Bytes(b) => ProtoValue::Bytes(b.clone()),
+        QueryValue::Json(s) => ProtoValue::String(s.clone()),
     }
 }
 

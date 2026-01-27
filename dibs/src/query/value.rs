@@ -36,10 +36,12 @@ pub enum Value {
 
     /// Binary data (BYTEA)
     Bytes(Vec<u8>),
+
+    /// JSON/JSONB data (stored as JSON string for dynamic use)
+    Json(String),
     // TODO: Add as needed:
     // Timestamp(jiff::Timestamp),
     // Uuid(uuid::Uuid),
-    // Json(serde_json::Value),
     // Array(Vec<Value>),
 }
 

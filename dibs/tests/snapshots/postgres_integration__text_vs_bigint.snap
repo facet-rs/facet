@@ -1,0 +1,6 @@
+---
+source: crates/dibs/tests/postgres_integration.rs
+expression: error.to_string()
+---
+type mismatch reading error_test_1.value: database column is 'text', but dibs schema expects 'bigint'
+hint: you may need to run migrations to update the database schema

@@ -38,6 +38,8 @@ mod migrations;
 use facet::Facet;
 use rust_decimal::Decimal;
 
+use dibs::Jsonb;
+
 /// A product in the catalog.
 ///
 /// Products are abstract containers - they don't have prices directly.
@@ -104,7 +106,7 @@ pub struct ProductVariant {
     pub title: String,
 
     /// Variant attributes as JSON (e.g., {"size": "M", "color": "Blue"})
-    pub attributes: Option<String>, // JSONB when we add support
+    pub attributes: Option<Jsonb<facet_value::Value>>,
 
     /// Track inventory for this variant?
     #[facet(dibs::default = "true")]

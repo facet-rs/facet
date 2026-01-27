@@ -1,0 +1,6 @@
+---
+source: crates/dibs/tests/postgres_integration.rs
+expression: error.to_string()
+---
+type mismatch reading error_test_3.data: database column is 'jsonb', but dibs schema expects 'text'
+hint: you may need to run migrations to update the database schema

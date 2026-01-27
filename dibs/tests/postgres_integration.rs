@@ -1,6 +1,6 @@
 //! Integration tests using dockside with Postgres 18.
 
-use dibs::{Schema, Table};
+use dibs::{PgType, Schema, Table};
 use dockside::{Container, containers};
 use facet::Facet;
 use std::time::Duration;
@@ -1022,4 +1022,208 @@ async fn test_meta_tables() {
     let time_ms: Option<i32> = rows[0].get(2);
     assert_eq!(checksum, Some("abc123"));
     assert_eq!(time_ms, Some(42));
+}
+
+// ============================================================================
+// Error message tests
+// ============================================================================
+
+/// Test error message when database has TEXT but schema expects BIGINT
+#[tokio::test]
+async fn test_error_message_text_vs_bigint() {
+    let (_container, client) = create_postgres_container().await;
+
+    // Create table with TEXT column
+    client
+        .batch_execute(
+            r#"
+            CREATE TABLE error_test_1 (
+                id BIGINT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            INSERT INTO error_test_1 (id, value) VALUES (1, 'hello');
+            "#,
+        )
+        .await
+        .expect("Failed to create table");
+
+    // Try to read with BIGINT schema
+    let columns = vec![
+        ("id".to_string(), PgType::BigInt),
+        ("value".to_string(), PgType::BigInt), // Wrong! DB has TEXT
+    ];
+
+    let row = client
+        .query_one("SELECT id, value FROM error_test_1 WHERE id = 1", &[])
+        .await
+        .expect("Query failed");
+
+    let ctx = dibs::query::RowContext {
+        table_name: "error_test_1",
+    };
+    let result = dibs::query::pg_row_to_row(&row, &columns, &ctx);
+
+    assert!(result.is_err());
+    let error = result.unwrap_err();
+    insta::assert_snapshot!("text_vs_bigint", error.to_string());
+}
+
+/// Test error message when database has INTEGER but schema expects TEXT
+#[tokio::test]
+async fn test_error_message_integer_vs_text() {
+    let (_container, client) = create_postgres_container().await;
+
+    // Create table with INTEGER column
+    client
+        .batch_execute(
+            r#"
+            CREATE TABLE error_test_2 (
+                id BIGINT PRIMARY KEY,
+                count INTEGER NOT NULL
+            );
+            INSERT INTO error_test_2 (id, count) VALUES (1, 42);
+            "#,
+        )
+        .await
+        .expect("Failed to create table");
+
+    // Try to read with TEXT schema
+    let columns = vec![
+        ("id".to_string(), PgType::BigInt),
+        ("count".to_string(), PgType::Text), // Wrong! DB has INTEGER
+    ];
+
+    let row = client
+        .query_one("SELECT id, count FROM error_test_2 WHERE id = 1", &[])
+        .await
+        .expect("Query failed");
+
+    let ctx = dibs::query::RowContext {
+        table_name: "error_test_2",
+    };
+    let result = dibs::query::pg_row_to_row(&row, &columns, &ctx);
+
+    assert!(result.is_err());
+    let error = result.unwrap_err();
+    insta::assert_snapshot!("integer_vs_text", error.to_string());
+}
+
+/// Test error message when database has JSONB but schema expects TEXT
+#[tokio::test]
+async fn test_error_message_jsonb_vs_text() {
+    let (_container, client) = create_postgres_container().await;
+
+    // Create table with JSONB column
+    client
+        .batch_execute(
+            r#"
+            CREATE TABLE error_test_3 (
+                id BIGINT PRIMARY KEY,
+                data JSONB NOT NULL
+            );
+            INSERT INTO error_test_3 (id, data) VALUES (1, '{"key": "value"}');
+            "#,
+        )
+        .await
+        .expect("Failed to create table");
+
+    // Try to read with TEXT schema
+    let columns = vec![
+        ("id".to_string(), PgType::BigInt),
+        ("data".to_string(), PgType::Text), // Wrong! DB has JSONB
+    ];
+
+    let row = client
+        .query_one("SELECT id, data FROM error_test_3 WHERE id = 1", &[])
+        .await
+        .expect("Query failed");
+
+    let ctx = dibs::query::RowContext {
+        table_name: "error_test_3",
+    };
+    let result = dibs::query::pg_row_to_row(&row, &columns, &ctx);
+
+    assert!(result.is_err());
+    let error = result.unwrap_err();
+    insta::assert_snapshot!("jsonb_vs_text", error.to_string());
+}
+
+/// Test error message when database has TEXT but schema expects JSONB
+#[tokio::test]
+async fn test_error_message_text_vs_jsonb() {
+    let (_container, client) = create_postgres_container().await;
+
+    // Create table with TEXT column
+    client
+        .batch_execute(
+            r#"
+            CREATE TABLE error_test_4 (
+                id BIGINT PRIMARY KEY,
+                attributes TEXT
+            );
+            INSERT INTO error_test_4 (id, attributes) VALUES (1, 'not json');
+            "#,
+        )
+        .await
+        .expect("Failed to create table");
+
+    // Try to read with JSONB schema
+    let columns = vec![
+        ("id".to_string(), PgType::BigInt),
+        ("attributes".to_string(), PgType::Jsonb), // Wrong! DB has TEXT
+    ];
+
+    let row = client
+        .query_one("SELECT id, attributes FROM error_test_4 WHERE id = 1", &[])
+        .await
+        .expect("Query failed");
+
+    let ctx = dibs::query::RowContext {
+        table_name: "error_test_4",
+    };
+    let result = dibs::query::pg_row_to_row(&row, &columns, &ctx);
+
+    assert!(result.is_err());
+    let error = result.unwrap_err();
+    insta::assert_snapshot!("text_vs_jsonb", error.to_string());
+}
+
+/// Test error message when database has BOOLEAN but schema expects INTEGER
+#[tokio::test]
+async fn test_error_message_boolean_vs_integer() {
+    let (_container, client) = create_postgres_container().await;
+
+    // Create table with BOOLEAN column
+    client
+        .batch_execute(
+            r#"
+            CREATE TABLE error_test_5 (
+                id BIGINT PRIMARY KEY,
+                is_active BOOLEAN NOT NULL
+            );
+            INSERT INTO error_test_5 (id, is_active) VALUES (1, true);
+            "#,
+        )
+        .await
+        .expect("Failed to create table");
+
+    // Try to read with INTEGER schema
+    let columns = vec![
+        ("id".to_string(), PgType::BigInt),
+        ("is_active".to_string(), PgType::Integer), // Wrong! DB has BOOLEAN
+    ];
+
+    let row = client
+        .query_one("SELECT id, is_active FROM error_test_5 WHERE id = 1", &[])
+        .await
+        .expect("Query failed");
+
+    let ctx = dibs::query::RowContext {
+        table_name: "error_test_5",
+    };
+    let result = dibs::query::pg_row_to_row(&row, &columns, &ctx);
+
+    assert!(result.is_err());
+    let error = result.unwrap_err();
+    insta::assert_snapshot!("boolean_vs_integer", error.to_string());
 }
