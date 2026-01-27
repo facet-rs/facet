@@ -154,7 +154,9 @@ mod scalar_matches;
 /// Simple struct deserialization (no flatten)
 mod struct_simple;
 
-// mod struct_with_flatten;
+/// Not-so-simple struct deserialization (flatten)
+mod struct_with_flatten;
+
 // mod validate;
 
 /// Generic deserializer that drives a format-specific parser directly into `Partial`.
