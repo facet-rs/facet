@@ -4,7 +4,8 @@ use facet_core::Def;
 use facet_reflect::Partial;
 
 use crate::{
-    DeserializeError, FormatDeserializer, FormatParser, ParseEvent, ScalarTypeHint, ScalarValue,
+    DeserializeError, DeserializeErrorKind, FormatDeserializer, FormatParser, ParseEvent,
+    ScalarTypeHint, ScalarValue,
 };
 
 impl<'input, const BORROW: bool, P> FormatDeserializer<'input, BORROW, P>
@@ -40,11 +41,13 @@ where
                         return Ok(wip);
                     }
                     _ => {
-                        return Err(DeserializeError::TypeMismatch {
-                            expected: "string for Cow<str>",
-                            got: format!("{event:?}"),
+                        return Err(DeserializeError {
                             span: self.last_span,
                             path: None,
+                            kind: DeserializeErrorKind::TypeMismatchStr {
+                                expected: "string for Cow<str>",
+                                got: event.kind_name().into(),
+                            },
                         });
                     }
                 }
@@ -63,11 +66,13 @@ where
                     wip = wip.set(b)?;
                     return Ok(wip);
                 } else {
-                    return Err(DeserializeError::TypeMismatch {
-                        expected: "bytes for Cow<[u8]>",
-                        got: format!("{event:?}"),
+                    return Err(DeserializeError {
                         span: self.last_span,
                         path: None,
+                        kind: DeserializeErrorKind::TypeMismatchStr {
+                            expected: "bytes for Cow<[u8]>",
+                            got: event.kind_name().into(),
+                        },
                     });
                 }
             }
@@ -93,11 +98,13 @@ where
                     return self.set_string_value(wip, s);
                 }
                 _ => {
-                    return Err(DeserializeError::TypeMismatch {
-                        expected: "string for &str",
-                        got: format!("{event:?}"),
+                    return Err(DeserializeError {
                         span: self.last_span,
                         path: None,
+                        kind: DeserializeErrorKind::TypeMismatchStr {
+                            expected: "string for &str",
+                            got: event.kind_name().into(),
+                        },
                     });
                 }
             }
@@ -116,11 +123,13 @@ where
             if let ParseEvent::Scalar(ScalarValue::Bytes(b)) = event {
                 return self.set_bytes_value(wip, b);
             } else {
-                return Err(DeserializeError::TypeMismatch {
-                    expected: "bytes for &[u8]",
-                    got: format!("{event:?}"),
+                return Err(DeserializeError {
                     span: self.last_span,
                     path: None,
+                    kind: DeserializeErrorKind::TypeMismatchStr {
+                        expected: "bytes for &[u8]",
+                        got: event.kind_name().into(),
+                    },
                 });
             }
         }
@@ -142,19 +151,23 @@ where
             match event {
                 ParseEvent::SequenceStart(_) => {}
                 ParseEvent::StructStart(kind) => {
-                    return Err(DeserializeError::TypeMismatch {
-                        expected: "array",
-                        got: kind.name().into(),
+                    return Err(DeserializeError {
                         span: self.last_span,
                         path: None,
+                        kind: DeserializeErrorKind::TypeMismatchStr {
+                            expected: "array",
+                            got: kind.name().into(),
+                        },
                     });
                 }
                 _ => {
-                    return Err(DeserializeError::TypeMismatch {
-                        expected: "sequence start for Arc<[T]>/Rc<[T]>/Box<[T]>",
-                        got: format!("{event:?}"),
+                    return Err(DeserializeError {
                         span: self.last_span,
                         path: None,
+                        kind: DeserializeErrorKind::TypeMismatchStr {
+                            expected: "sequence start for Arc<[T]>/Rc<[T]>/Box<[T]>",
+                            got: event.kind_name().into(),
+                        },
                     });
                 }
             };

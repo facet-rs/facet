@@ -131,7 +131,7 @@ pub fn solve_variant<'input, const BORROW: bool>(
             Ok(variant_name)
         }
         Ok(None) => Ok(None),
-        Err(e) => Err(DeserializeError::Unsupported(format!(
+        Err(e) => Err(DeserializeError::unsupported(format!(
             "solve_variant failed: {e:?}"
         ))),
     }

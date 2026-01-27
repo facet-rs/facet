@@ -268,8 +268,8 @@ impl<'de, T: Facet<'de>, P: FormatJitParser<'de>> CompiledFormatDeserializer<T, 
         // Get input slice and position from parser
         let input = parser.jit_input();
         let Some(pos) = parser.jit_pos() else {
-            return Err(DeserializeError::Unsupported(
-                "Tier-2 JIT: parser has buffered state".into(),
+            return Err(DeserializeError::unsupported(
+                "Tier-2 JIT: parser has buffered state",
             ));
         };
 
@@ -340,8 +340,8 @@ impl<'de, T: Facet<'de>, P: FormatJitParser<'de>> CompiledFormatDeserializer<T, 
             // T2_ERR_UNSUPPORTED means the format doesn't implement this operation
             // Return Unsupported so try_deserialize_format can convert to None and fallback
             if scratch.error_code == T2_ERR_UNSUPPORTED {
-                return Err(DeserializeError::Unsupported(
-                    "Tier-2 format operation not implemented".into(),
+                return Err(DeserializeError::unsupported(
+                    "Tier-2 format operation not implemented",
                 ));
             }
 

@@ -6,8 +6,9 @@ use facet_core::{Def, StructKind, Type, UserType};
 use facet_reflect::Partial;
 
 use crate::{
-    ContainerKind, DeserializeError, DynParser, EnumVariantHint, FieldEvidence, FormatDeserializer,
-    FormatParser, ParseEvent, ScalarValue, deserializer::scalar_matches::scalar_matches_shape,
+    ContainerKind, DeserializeError, DeserializeErrorKind, DynParser, EnumVariantHint,
+    FieldEvidence, FormatDeserializer, FormatParser, ParseEvent, ScalarValue,
+    deserializer::scalar_matches::scalar_matches_shape,
 };
 
 /// Inner implementation of `deserialize_enum_variant_content` using dyn dispatch.
@@ -17,19 +18,18 @@ fn deserialize_enum_variant_content_inner<'input, const BORROW: bool>(
     deser: &mut FormatDeserializer<'input, BORROW, &mut dyn DynParser<'input>>,
     mut wip: Partial<'input, BORROW>,
 ) -> Result<Partial<'input, BORROW>, DeserializeError> {
-    use alloc::format;
     use alloc::vec;
     use facet_core::Characteristic;
 
     // Get the selected variant's info
-    let variant = wip
-        .selected_variant()
-        .ok_or_else(|| DeserializeError::TypeMismatch {
+    let variant = wip.selected_variant().ok_or_else(|| DeserializeError {
+        span: deser.last_span,
+        path: None,
+        kind: DeserializeErrorKind::TypeMismatchStr {
             expected: "selected variant",
             got: "no variant selected".into(),
-            span: deser.last_span,
-            path: None,
-        })?;
+        },
+    })?;
 
     let variant_kind = variant.data.kind;
     let variant_fields = variant.data.fields;
@@ -46,11 +46,13 @@ fn deserialize_enum_variant_content_inner<'input, const BORROW: bool>(
                 // Expect immediate StructEnd for empty struct
                 let end_event = deser.expect_event("value")?;
                 if !matches!(end_event, ParseEvent::StructEnd) {
-                    return Err(DeserializeError::TypeMismatch {
-                        expected: "empty struct for unit variant",
-                        got: format!("{end_event:?}"),
+                    return Err(DeserializeError {
                         span: deser.last_span,
                         path: None,
+                        kind: DeserializeErrorKind::TypeMismatchStr {
+                            expected: "empty struct for unit variant",
+                            got: end_event.kind_name().into(),
+                        },
                     });
                 }
             }
@@ -70,19 +72,23 @@ fn deserialize_enum_variant_content_inner<'input, const BORROW: bool>(
                     ParseEvent::SequenceStart(_) => false,
                     ParseEvent::StructStart(ContainerKind::Object) => true,
                     ParseEvent::StructStart(kind) => {
-                        return Err(DeserializeError::TypeMismatch {
-                            expected: "array",
-                            got: kind.name().into(),
+                        return Err(DeserializeError {
                             span: deser.last_span,
                             path: None,
+                            kind: DeserializeErrorKind::TypeMismatchStr {
+                                expected: "array",
+                                got: kind.name().into(),
+                            },
                         });
                     }
                     _ => {
-                        return Err(DeserializeError::TypeMismatch {
-                            expected: "sequence for tuple variant",
-                            got: format!("{event:?}"),
+                        return Err(DeserializeError {
                             span: deser.last_span,
                             path: None,
+                            kind: DeserializeErrorKind::TypeMismatchStr {
+                                expected: "sequence for tuple variant",
+                                got: event.kind_name().into(),
+                            },
                         });
                     }
                 };
@@ -106,11 +112,13 @@ fn deserialize_enum_variant_content_inner<'input, const BORROW: bool>(
 
                 let event = deser.expect_event("value")?;
                 if !matches!(event, ParseEvent::SequenceEnd | ParseEvent::StructEnd) {
-                    return Err(DeserializeError::TypeMismatch {
-                        expected: "sequence end for tuple variant",
-                        got: format!("{event:?}"),
+                    return Err(DeserializeError {
                         span: deser.last_span,
                         path: None,
+                        kind: DeserializeErrorKind::TypeMismatchStr {
+                            expected: "sequence end for tuple variant",
+                            got: event.kind_name().into(),
+                        },
                     });
                 }
             }
@@ -120,11 +128,13 @@ fn deserialize_enum_variant_content_inner<'input, const BORROW: bool>(
             // Struct variant - expect object with fields
             let event = deser.expect_event("value")?;
             if !matches!(event, ParseEvent::StructStart(_)) {
-                return Err(DeserializeError::TypeMismatch {
-                    expected: "struct for struct variant",
-                    got: format!("{event:?}"),
+                return Err(DeserializeError {
                     span: deser.last_span,
                     path: None,
+                    kind: DeserializeErrorKind::TypeMismatchStr {
+                        expected: "struct for struct variant",
+                        got: event.kind_name().into(),
+                    },
                 });
             }
 
@@ -169,7 +179,7 @@ fn deserialize_enum_variant_content_inner<'input, const BORROW: bool>(
                                 deser
                                     .parser
                                     .skip_value()
-                                    .map_err(|e| DeserializeError::Parser(format!("{e:?}")))?;
+                                    .map_err(DeserializeError::parser)?;
                                 continue;
                             }
                         };
@@ -215,7 +225,7 @@ fn deserialize_enum_variant_content_inner<'input, const BORROW: bool>(
                                 deser
                                     .parser
                                     .skip_value()
-                                    .map_err(|e| DeserializeError::Parser(format!("{e:?}")))?;
+                                    .map_err(DeserializeError::parser)?;
                             }
                         } else {
                             let field_info = variant_fields
@@ -232,16 +242,18 @@ fn deserialize_enum_variant_content_inner<'input, const BORROW: bool>(
                                 deser
                                     .parser
                                     .skip_value()
-                                    .map_err(|e| DeserializeError::Parser(format!("{e:?}")))?;
+                                    .map_err(DeserializeError::parser)?;
                             }
                         }
                     }
                     other => {
-                        return Err(DeserializeError::TypeMismatch {
-                            expected: "field key, ordered field, or struct end",
-                            got: format!("{other:?}"),
+                        return Err(DeserializeError {
                             span: deser.last_span,
                             path: None,
+                            kind: DeserializeErrorKind::TypeMismatchStr {
+                                expected: "field key, ordered field, or struct end",
+                                got: other.kind_name().into(),
+                            },
                         });
                     }
                 }
@@ -290,11 +302,13 @@ fn deserialize_enum_variant_content_inner<'input, const BORROW: bool>(
                     } else if field.should_skip_deserializing() {
                         wip = wip.set_nth_field_to_default(idx)?;
                     } else {
-                        return Err(DeserializeError::TypeMismatch {
-                            expected: "field to be present or have default",
-                            got: format!("missing field '{}'", field.name),
+                        return Err(DeserializeError {
                             span: deser.last_span,
                             path: None,
+                            kind: DeserializeErrorKind::MissingField {
+                                field: field.name,
+                                type_name: "variant struct",
+                            },
                         });
                     }
                 }
@@ -344,7 +358,6 @@ fn deserialize_enum_externally_tagged_inner<'input, const BORROW: bool>(
 ) -> Result<Partial<'input, BORROW>, DeserializeError> {
     use super::dyn_helpers::*;
     use alloc::format;
-    use alloc::string::ToString;
 
     trace!("deserialize_enum_externally_tagged called");
     let event = expect_peek(deser, "value")?;
@@ -354,7 +367,7 @@ fn deserialize_enum_externally_tagged_inner<'input, const BORROW: bool>(
     if let ParseEvent::Scalar(scalar) = &event {
         let enum_def = match &wip.shape().ty {
             Type::User(UserType::Enum(e)) => e,
-            _ => return Err(DeserializeError::Unsupported("expected enum".into())),
+            _ => return Err(DeserializeError::unsupported("expected enum")),
         };
 
         // For string scalars, first try to match as a unit variant name
@@ -387,14 +400,14 @@ fn deserialize_enum_externally_tagged_inner<'input, const BORROW: bool>(
                 wip = wip.select_variant_named(other_variant.effective_name())?;
 
                 let scalar_as_string =
-                    scalar
-                        .to_string_value()
-                        .ok_or_else(|| DeserializeError::TypeMismatch {
+                    scalar.to_string_value().ok_or_else(|| DeserializeError {
+                        span: deser.last_span,
+                        path: None,
+                        kind: DeserializeErrorKind::TypeMismatchStr {
                             expected: "string or struct for enum",
-                            got: "bytes".to_string(),
-                            span: deser.last_span,
-                            path: None,
-                        })?;
+                            got: "bytes".into(),
+                        },
+                    })?;
 
                 wip = wip.begin_nth_field(0)?;
                 wip = set_string_value(deser, wip, Cow::Owned(scalar_as_string))?;
@@ -404,11 +417,13 @@ fn deserialize_enum_externally_tagged_inner<'input, const BORROW: bool>(
         }
 
         // No fallback available - error
-        return Err(DeserializeError::TypeMismatch {
-            expected: "known enum variant",
-            got: scalar.to_display_string(),
+        return Err(DeserializeError {
             span: deser.last_span,
             path: None,
+            kind: DeserializeErrorKind::TypeMismatchStr {
+                expected: "known enum variant",
+                got: scalar.to_display_string().into(),
+            },
         });
     }
 
@@ -419,7 +434,7 @@ fn deserialize_enum_externally_tagged_inner<'input, const BORROW: bool>(
 
         let enum_def = match &wip.shape().ty {
             Type::User(UserType::Enum(e)) => e,
-            _ => return Err(DeserializeError::Unsupported("expected enum".into())),
+            _ => return Err(DeserializeError::unsupported("expected enum")),
         };
 
         let (variant_name, is_using_other_fallback) = match tag_name {
@@ -434,11 +449,13 @@ fn deserialize_enum_externally_tagged_inner<'input, const BORROW: bool>(
                             .find(|v| v.is_other())
                             .map(|v| v.effective_name())
                     })
-                    .ok_or_else(|| DeserializeError::TypeMismatch {
-                        expected: "known enum variant",
-                        got: format!("@{}", name),
+                    .ok_or_else(|| DeserializeError {
                         span: deser.last_span,
                         path: None,
+                        kind: DeserializeErrorKind::TypeMismatchStr {
+                            expected: "known enum variant",
+                            got: format!("@{}", name).into(),
+                        },
                     })?;
                 (variant, is_fallback)
             }
@@ -448,11 +465,13 @@ fn deserialize_enum_externally_tagged_inner<'input, const BORROW: bool>(
                     .iter()
                     .find(|v| v.is_other())
                     .map(|v| v.effective_name())
-                    .ok_or_else(|| DeserializeError::TypeMismatch {
-                        expected: "#[facet(other)] fallback variant for unit tag",
-                        got: "@".to_string(),
+                    .ok_or_else(|| DeserializeError {
                         span: deser.last_span,
                         path: None,
+                        kind: DeserializeErrorKind::TypeMismatchStr {
+                            expected: "#[facet(other)] fallback variant for unit tag",
+                            got: "@".into(),
+                        },
                     })?;
                 (variant, true)
             }
@@ -471,11 +490,13 @@ fn deserialize_enum_externally_tagged_inner<'input, const BORROW: bool>(
 
     // Otherwise expect a struct { VariantName: ... }
     if !matches!(event, ParseEvent::StructStart(_)) {
-        return Err(DeserializeError::TypeMismatch {
-            expected: "string or struct for enum",
-            got: format!("{event:?}"),
+        return Err(DeserializeError {
             span: deser.last_span,
             path: None,
+            kind: DeserializeErrorKind::TypeMismatchStr {
+                expected: "string or struct for enum",
+                got: event.kind_name().into(),
+            },
         });
     }
 
@@ -484,25 +505,29 @@ fn deserialize_enum_externally_tagged_inner<'input, const BORROW: bool>(
     // Get the variant name from the field key
     let event = expect_event(deser, "value")?;
     let field_key_name = match event {
-        ParseEvent::FieldKey(key) => key.name.ok_or_else(|| DeserializeError::TypeMismatch {
-            expected: "variant name",
-            got: "unit key".to_string(),
+        ParseEvent::FieldKey(key) => key.name.ok_or_else(|| DeserializeError {
             span: deser.last_span,
             path: None,
+            kind: DeserializeErrorKind::TypeMismatchStr {
+                expected: "variant name",
+                got: "unit key".into(),
+            },
         })?,
         other => {
-            return Err(DeserializeError::TypeMismatch {
-                expected: "variant name",
-                got: format!("{other:?}"),
+            return Err(DeserializeError {
                 span: deser.last_span,
                 path: None,
+                kind: DeserializeErrorKind::TypeMismatchStr {
+                    expected: "variant name",
+                    got: other.kind_name().into(),
+                },
             });
         }
     };
 
     let enum_def = match &wip.shape().ty {
         Type::User(UserType::Enum(e)) => e,
-        _ => return Err(DeserializeError::Unsupported("expected enum".into())),
+        _ => return Err(DeserializeError::unsupported("expected enum")),
     };
     let is_using_other_fallback = find_variant_by_display_name(enum_def, &field_key_name).is_none();
     let variant_name = find_variant_by_display_name(enum_def, &field_key_name)
@@ -513,11 +538,13 @@ fn deserialize_enum_externally_tagged_inner<'input, const BORROW: bool>(
                 .find(|v| v.is_other())
                 .map(|v| v.effective_name())
         })
-        .ok_or_else(|| DeserializeError::TypeMismatch {
-            expected: "known enum variant",
-            got: format!("{}", field_key_name),
+        .ok_or_else(|| DeserializeError {
             span: deser.last_span,
             path: None,
+            kind: DeserializeErrorKind::TypeMismatchStr {
+                expected: "known enum variant",
+                got: field_key_name.to_string().into(),
+            },
         })?;
 
     let actual_variant = cow_redirect_variant_name::<BORROW>(enum_def, variant_name);
@@ -541,11 +568,13 @@ fn deserialize_enum_externally_tagged_inner<'input, const BORROW: bool>(
     // Consume StructEnd
     let event = expect_event(deser, "value")?;
     if !matches!(event, ParseEvent::StructEnd) {
-        return Err(DeserializeError::TypeMismatch {
-            expected: "struct end after enum variant",
-            got: format!("{event:?}"),
+        return Err(DeserializeError {
             span: deser.last_span,
             path: None,
+            kind: DeserializeErrorKind::TypeMismatchStr {
+                expected: "struct end after enum variant",
+                got: event.kind_name().into(),
+            },
         });
     }
 
@@ -573,7 +602,6 @@ fn deserialize_enum_internally_tagged_inner<'input, const BORROW: bool>(
     tag_key: &'static str,
 ) -> Result<Partial<'input, BORROW>, DeserializeError> {
     use super::dyn_helpers::*;
-    use alloc::format;
     use alloc::string::ToString;
     use alloc::vec::Vec;
 
@@ -581,22 +609,26 @@ fn deserialize_enum_internally_tagged_inner<'input, const BORROW: bool>(
     let evidence = collect_evidence(deser)?;
 
     let variant_name = find_tag_value(&evidence, tag_key)
-        .ok_or_else(|| DeserializeError::TypeMismatch {
-            expected: "tag field in internally tagged enum",
-            got: format!("missing '{tag_key}' field"),
+        .ok_or_else(|| DeserializeError {
             span: deser.last_span,
             path: None,
+            kind: DeserializeErrorKind::MissingField {
+                field: tag_key,
+                type_name: "internally tagged enum",
+            },
         })?
         .to_string();
 
     // Step 2: Consume StructStart
     let event = expect_event(deser, "value")?;
     if !matches!(event, ParseEvent::StructStart(_)) {
-        return Err(DeserializeError::TypeMismatch {
-            expected: "struct for internally tagged enum",
-            got: format!("{event:?}"),
+        return Err(DeserializeError {
             span: deser.last_span,
             path: None,
+            kind: DeserializeErrorKind::TypeMismatchStr {
+                expected: "struct for internally tagged enum",
+                got: event.kind_name().into(),
+            },
         });
     }
 
@@ -604,20 +636,20 @@ fn deserialize_enum_internally_tagged_inner<'input, const BORROW: bool>(
     // For cow-like enums, redirect Borrowed -> Owned when borrowing is disabled
     let enum_def = match &wip.shape().ty {
         Type::User(UserType::Enum(e)) => e,
-        _ => return Err(DeserializeError::Unsupported("expected enum".into())),
+        _ => return Err(DeserializeError::unsupported("expected enum")),
     };
     let actual_variant = cow_redirect_variant_name::<BORROW>(enum_def, &variant_name);
     wip = wip.select_variant_named(actual_variant)?;
 
     // Get the selected variant info
-    let variant = wip
-        .selected_variant()
-        .ok_or_else(|| DeserializeError::TypeMismatch {
+    let variant = wip.selected_variant().ok_or_else(|| DeserializeError {
+        span: deser.last_span,
+        path: None,
+        kind: DeserializeErrorKind::TypeMismatchStr {
             expected: "selected variant",
             got: "no variant selected".into(),
-            span: deser.last_span,
-            path: None,
-        })?;
+        },
+    })?;
 
     let variant_fields = variant.data.fields;
 
@@ -632,11 +664,13 @@ fn deserialize_enum_internally_tagged_inner<'input, const BORROW: bool>(
                     skip(deser)?;
                 }
                 other => {
-                    return Err(DeserializeError::TypeMismatch {
-                        expected: "field key or struct end",
-                        got: format!("{other:?}"),
+                    return Err(DeserializeError {
                         span: deser.last_span,
                         path: None,
+                        kind: DeserializeErrorKind::TypeMismatchStr {
+                            expected: "field key or struct end",
+                            got: other.kind_name().into(),
+                        },
                     });
                 }
             }
@@ -734,11 +768,13 @@ fn deserialize_enum_internally_tagged_inner<'input, const BORROW: bool>(
                 }
             }
             other => {
-                return Err(DeserializeError::TypeMismatch {
-                    expected: "field key or struct end",
-                    got: format!("{other:?}"),
+                return Err(DeserializeError {
                     span: deser.last_span,
                     path: None,
+                    kind: DeserializeErrorKind::TypeMismatchStr {
+                        expected: "field key or struct end",
+                        got: other.kind_name().into(),
+                    },
                 });
             }
         }
@@ -766,29 +802,32 @@ fn deserialize_enum_adjacently_tagged_inner<'input, const BORROW: bool>(
     content_key: &'static str,
 ) -> Result<Partial<'input, BORROW>, DeserializeError> {
     use super::dyn_helpers::*;
-    use alloc::format;
     use alloc::string::ToString;
 
     // Step 1: Probe to find the tag value (handles out-of-order fields)
     let evidence = collect_evidence(deser)?;
 
     let variant_name = find_tag_value(&evidence, tag_key)
-        .ok_or_else(|| DeserializeError::TypeMismatch {
-            expected: "tag field in adjacently tagged enum",
-            got: format!("missing '{tag_key}' field"),
+        .ok_or_else(|| DeserializeError {
             span: deser.last_span,
             path: None,
+            kind: DeserializeErrorKind::MissingField {
+                field: tag_key,
+                type_name: "adjacently tagged enum",
+            },
         })?
         .to_string();
 
     // Step 2: Consume StructStart
     let event = expect_event(deser, "value")?;
     if !matches!(event, ParseEvent::StructStart(_)) {
-        return Err(DeserializeError::TypeMismatch {
-            expected: "struct for adjacently tagged enum",
-            got: format!("{event:?}"),
+        return Err(DeserializeError {
             span: deser.last_span,
             path: None,
+            kind: DeserializeErrorKind::TypeMismatchStr {
+                expected: "struct for adjacently tagged enum",
+                got: event.kind_name().into(),
+            },
         });
     }
 
@@ -796,7 +835,7 @@ fn deserialize_enum_adjacently_tagged_inner<'input, const BORROW: bool>(
     // For cow-like enums, redirect Borrowed -> Owned when borrowing is disabled
     let enum_def = match &wip.shape().ty {
         Type::User(UserType::Enum(e)) => e,
-        _ => return Err(DeserializeError::Unsupported("expected enum".into())),
+        _ => return Err(DeserializeError::unsupported("expected enum")),
     };
     let actual_variant = cow_redirect_variant_name::<BORROW>(enum_def, &variant_name);
     wip = wip.select_variant_named(actual_variant)?;
@@ -831,11 +870,13 @@ fn deserialize_enum_adjacently_tagged_inner<'input, const BORROW: bool>(
                 }
             }
             other => {
-                return Err(DeserializeError::TypeMismatch {
-                    expected: "field key or struct end",
-                    got: format!("{other:?}"),
+                return Err(DeserializeError {
                     span: deser.last_span,
                     path: None,
+                    kind: DeserializeErrorKind::TypeMismatchStr {
+                        expected: "field key or struct end",
+                        got: other.kind_name().into(),
+                    },
                 });
             }
         }
@@ -849,11 +890,13 @@ fn deserialize_enum_adjacently_tagged_inner<'input, const BORROW: bool>(
             && v.data.kind != StructKind::Unit
             && !v.data.fields.is_empty()
         {
-            return Err(DeserializeError::TypeMismatch {
-                expected: "content field for non-unit variant",
-                got: format!("missing '{content_key}' field"),
+            return Err(DeserializeError {
                 span: deser.last_span,
                 path: None,
+                kind: DeserializeErrorKind::MissingField {
+                    field: content_key,
+                    type_name: "non-unit variant",
+                },
             });
         }
     }
@@ -867,18 +910,17 @@ fn deserialize_variant_struct_fields_inner<'input, const BORROW: bool>(
     mut wip: Partial<'input, BORROW>,
 ) -> Result<Partial<'input, BORROW>, DeserializeError> {
     use super::dyn_helpers::*;
-    use alloc::format;
     use alloc::vec;
     use facet_core::Characteristic;
 
-    let variant = wip
-        .selected_variant()
-        .ok_or_else(|| DeserializeError::TypeMismatch {
+    let variant = wip.selected_variant().ok_or_else(|| DeserializeError {
+        span: deser.last_span,
+        path: None,
+        kind: DeserializeErrorKind::TypeMismatchStr {
             expected: "selected variant",
             got: "no variant selected".into(),
-            span: deser.last_span,
-            path: None,
-        })?;
+        },
+    })?;
 
     let variant_fields = variant.data.fields;
     let kind = variant.data.kind;
@@ -894,8 +936,8 @@ fn deserialize_variant_struct_fields_inner<'input, const BORROW: bool>(
         }
         StructKind::TupleStruct | StructKind::Tuple => {
             // Multi-element tuple variant - not yet supported in this context
-            return Err(DeserializeError::Unsupported(
-                "multi-element tuple variants in flatten not yet supported".into(),
+            return Err(DeserializeError::unsupported(
+                "multi-element tuple variants in flatten not yet supported",
             ));
         }
         StructKind::Unit => {
@@ -911,11 +953,13 @@ fn deserialize_variant_struct_fields_inner<'input, const BORROW: bool>(
     // Expect StructStart for the variant content
     let event = expect_event(deser, "value")?;
     if !matches!(event, ParseEvent::StructStart(_)) {
-        return Err(DeserializeError::TypeMismatch {
-            expected: "struct start for variant content",
-            got: format!("{event:?}"),
+        return Err(DeserializeError {
             span: deser.last_span,
             path: None,
+            kind: DeserializeErrorKind::TypeMismatchStr {
+                expected: "struct start for variant content",
+                got: event.kind_name().into(),
+            },
         });
     }
 
@@ -956,11 +1000,13 @@ fn deserialize_variant_struct_fields_inner<'input, const BORROW: bool>(
                 }
             }
             other => {
-                return Err(DeserializeError::TypeMismatch {
-                    expected: "field key or struct end",
-                    got: format!("{other:?}"),
+                return Err(DeserializeError {
                     span: deser.last_span,
                     path: None,
+                    kind: DeserializeErrorKind::TypeMismatchStr {
+                        expected: "field key or struct end",
+                        got: other.kind_name().into(),
+                    },
                 });
             }
         }
@@ -985,11 +1031,13 @@ fn deserialize_variant_struct_fields_inner<'input, const BORROW: bool>(
         } else if field.should_skip_deserializing() {
             wip = wip.set_nth_field_to_default(idx)?;
         } else {
-            return Err(DeserializeError::TypeMismatch {
-                expected: "field to be present or have default",
-                got: format!("missing field '{}'", field.name),
+            return Err(DeserializeError {
                 span: deser.last_span,
                 path: None,
+                kind: DeserializeErrorKind::MissingField {
+                    field: field.name,
+                    type_name: "variant struct",
+                },
             });
         }
     }
@@ -1009,24 +1057,28 @@ fn deserialize_enum_as_struct_inner<'input, const BORROW: bool>(
     // Get the variant name from FieldKey
     let field_event = expect_event(deser, "enum field key")?;
     let variant_name = match field_event {
-        ParseEvent::FieldKey(key) => key.name.ok_or_else(|| DeserializeError::TypeMismatch {
-            expected: "variant name",
-            got: "unit key".to_string(),
+        ParseEvent::FieldKey(key) => key.name.ok_or_else(|| DeserializeError {
             span: deser.last_span,
             path: None,
+            kind: DeserializeErrorKind::TypeMismatchStr {
+                expected: "variant name",
+                got: "unit key".into(),
+            },
         })?,
         ParseEvent::StructEnd => {
             // Empty struct - this shouldn't happen for valid enums
-            return Err(DeserializeError::Unsupported(
-                "unexpected empty struct for enum".into(),
+            return Err(DeserializeError::unsupported(
+                "unexpected empty struct for enum",
             ));
         }
         _ => {
-            return Err(DeserializeError::TypeMismatch {
-                expected: "field key for enum variant",
-                got: format!("{field_event:?}"),
+            return Err(DeserializeError {
                 span: deser.last_span,
                 path: None,
+                kind: DeserializeErrorKind::TypeMismatchStr {
+                    expected: "field key for enum variant",
+                    got: field_event.kind_name().into(),
+                },
             });
         }
     };
@@ -1036,7 +1088,7 @@ fn deserialize_enum_as_struct_inner<'input, const BORROW: bool>(
         .variants
         .iter()
         .find(|v| v.name == variant_name.as_ref())
-        .ok_or_else(|| DeserializeError::Unsupported(format!("unknown variant: {variant_name}")))?;
+        .ok_or_else(|| DeserializeError::unsupported(format!("unknown variant: {variant_name}")))?;
 
     match variant.data.kind {
         StructKind::Unit => {
@@ -1053,11 +1105,13 @@ fn deserialize_enum_as_struct_inner<'input, const BORROW: bool>(
                 // Multi-field tuple variant - parser emits SequenceStart
                 let seq_event = expect_event(deser, "tuple variant start")?;
                 if !matches!(seq_event, ParseEvent::SequenceStart(_)) {
-                    return Err(DeserializeError::TypeMismatch {
-                        expected: "SequenceStart for tuple variant",
-                        got: format!("{seq_event:?}"),
+                    return Err(DeserializeError {
                         span: deser.last_span,
                         path: None,
+                        kind: DeserializeErrorKind::TypeMismatchStr {
+                            expected: "SequenceStart for tuple variant",
+                            got: seq_event.kind_name().into(),
+                        },
                     });
                 }
 
@@ -1072,11 +1126,13 @@ fn deserialize_enum_as_struct_inner<'input, const BORROW: bool>(
 
                 let seq_end = expect_event(deser, "tuple variant end")?;
                 if !matches!(seq_end, ParseEvent::SequenceEnd) {
-                    return Err(DeserializeError::TypeMismatch {
-                        expected: "SequenceEnd for tuple variant",
-                        got: format!("{seq_end:?}"),
+                    return Err(DeserializeError {
                         span: deser.last_span,
                         path: None,
+                        kind: DeserializeErrorKind::TypeMismatchStr {
+                            expected: "SequenceEnd for tuple variant",
+                            got: seq_end.kind_name().into(),
+                        },
                     });
                 }
                 wip = wip.end()?;
@@ -1087,11 +1143,13 @@ fn deserialize_enum_as_struct_inner<'input, const BORROW: bool>(
             // The parser auto-emits StructStart and pushes InStruct state
             let struct_event = expect_event(deser, "struct variant start")?;
             if !matches!(struct_event, ParseEvent::StructStart(_)) {
-                return Err(DeserializeError::TypeMismatch {
-                    expected: "StructStart for struct variant",
-                    got: format!("{struct_event:?}"),
+                return Err(DeserializeError {
                     span: deser.last_span,
                     path: None,
+                    kind: DeserializeErrorKind::TypeMismatchStr {
+                        expected: "StructStart for struct variant",
+                        got: struct_event.kind_name().into(),
+                    },
                 });
             }
 
@@ -1111,19 +1169,23 @@ fn deserialize_enum_as_struct_inner<'input, const BORROW: bool>(
                         wip = wip.end()?;
                     }
                     ParseEvent::StructEnd => {
-                        return Err(DeserializeError::TypeMismatch {
-                            expected: "field",
-                            got: "StructEnd (struct ended too early)".into(),
+                        return Err(DeserializeError {
                             span: deser.last_span,
                             path: None,
+                            kind: DeserializeErrorKind::TypeMismatchStr {
+                                expected: "field",
+                                got: "StructEnd (struct ended too early)".into(),
+                            },
                         });
                     }
                     _ => {
-                        return Err(DeserializeError::TypeMismatch {
-                            expected: "field",
-                            got: format!("{field_event:?}"),
+                        return Err(DeserializeError {
                             span: deser.last_span,
                             path: None,
+                            kind: DeserializeErrorKind::TypeMismatchStr {
+                                expected: "field",
+                                got: field_event.kind_name().into(),
+                            },
                         });
                     }
                 }
@@ -1132,11 +1194,13 @@ fn deserialize_enum_as_struct_inner<'input, const BORROW: bool>(
             // Consume inner StructEnd
             let inner_end = expect_event(deser, "struct variant inner end")?;
             if !matches!(inner_end, ParseEvent::StructEnd) {
-                return Err(DeserializeError::TypeMismatch {
-                    expected: "StructEnd for struct variant inner",
-                    got: format!("{inner_end:?}"),
+                return Err(DeserializeError {
                     span: deser.last_span,
                     path: None,
+                    kind: DeserializeErrorKind::TypeMismatchStr {
+                        expected: "StructEnd for struct variant inner",
+                        got: inner_end.kind_name().into(),
+                    },
                 });
             }
             // Only end the object entry (begin_map doesn't push a frame)
@@ -1147,11 +1211,13 @@ fn deserialize_enum_as_struct_inner<'input, const BORROW: bool>(
     // Consume the outer StructEnd
     let end_event = expect_event(deser, "enum struct end")?;
     if !matches!(end_event, ParseEvent::StructEnd) {
-        return Err(DeserializeError::TypeMismatch {
-            expected: "StructEnd for enum wrapper",
-            got: format!("{end_event:?}"),
+        return Err(DeserializeError {
             span: deser.last_span,
             path: None,
+            kind: DeserializeErrorKind::TypeMismatchStr {
+                expected: "StructEnd for enum wrapper",
+                got: end_event.kind_name().into(),
+            },
         });
     }
 
@@ -1165,16 +1231,15 @@ fn deserialize_other_variant_with_captured_tag_inner<'input, const BORROW: bool>
     captured_tag: Option<&'input str>,
 ) -> Result<Partial<'input, BORROW>, DeserializeError> {
     use super::dyn_helpers::*;
-    use alloc::format;
 
-    let variant = wip
-        .selected_variant()
-        .ok_or_else(|| DeserializeError::TypeMismatch {
+    let variant = wip.selected_variant().ok_or_else(|| DeserializeError {
+        span: deser.last_span,
+        path: None,
+        kind: DeserializeErrorKind::TypeMismatchStr {
             expected: "selected variant",
             got: "no variant selected".into(),
-            span: deser.last_span,
-            path: None,
-        })?;
+        },
+    })?;
 
     let variant_fields = variant.data.fields;
 
@@ -1213,11 +1278,13 @@ fn deserialize_other_variant_with_captured_tag_inner<'input, const BORROW: bool>
         if matches!(event, ParseEvent::Scalar(ScalarValue::Unit)) {
             expect_event(deser, "value")?; // consume Unit
         } else {
-            return Err(DeserializeError::TypeMismatch {
-                expected: "unit payload for #[facet(other)] variant without #[facet(content)]",
-                got: format!("{event:?}"),
+            return Err(DeserializeError {
                 span: deser.last_span,
                 path: None,
+                kind: DeserializeErrorKind::TypeMismatchStr {
+                    expected: "unit payload for #[facet(other)] variant without #[facet(content)]",
+                    got: event.kind_name().into(),
+                },
             });
         }
     }
@@ -1253,29 +1320,35 @@ fn deserialize_result_as_enum_inner<'input, const BORROW: bool>(
     // Read the StructStart emitted by the parser after hint_enum
     let event = expect_event(deser, "struct start for Result")?;
     if !matches!(event, ParseEvent::StructStart(_)) {
-        return Err(DeserializeError::TypeMismatch {
-            expected: "struct start for Result variant",
-            got: format!("{event:?}"),
+        return Err(DeserializeError {
             span: deser.last_span,
             path: None,
+            kind: DeserializeErrorKind::TypeMismatchStr {
+                expected: "struct start for Result variant",
+                got: event.kind_name().into(),
+            },
         });
     }
 
     // Read the FieldKey with the variant name ("Ok" or "Err")
     let key_event = expect_event(deser, "variant key for Result")?;
     let variant_name = match key_event {
-        ParseEvent::FieldKey(key) => key.name.ok_or_else(|| DeserializeError::TypeMismatch {
-            expected: "variant name",
-            got: "unit key".to_string(),
+        ParseEvent::FieldKey(key) => key.name.ok_or_else(|| DeserializeError {
             span: deser.last_span,
             path: None,
+            kind: DeserializeErrorKind::TypeMismatchStr {
+                expected: "variant name",
+                got: "unit key".into(),
+            },
         })?,
         other => {
-            return Err(DeserializeError::TypeMismatch {
-                expected: "field key with variant name",
-                got: format!("{other:?}"),
+            return Err(DeserializeError {
                 span: deser.last_span,
                 path: None,
+                kind: DeserializeErrorKind::TypeMismatchStr {
+                    expected: "field key with variant name",
+                    got: other.kind_name().into(),
+                },
             });
         }
     };
@@ -1286,11 +1359,13 @@ fn deserialize_result_as_enum_inner<'input, const BORROW: bool>(
     } else if variant_name.as_ref() == "Err" {
         wip = wip.begin_err()?;
     } else {
-        return Err(DeserializeError::TypeMismatch {
-            expected: "Ok or Err variant",
-            got: format!("variant '{}'", variant_name),
+        return Err(DeserializeError {
             span: deser.last_span,
             path: None,
+            kind: DeserializeErrorKind::TypeMismatchStr {
+                expected: "Ok or Err variant",
+                got: format!("variant '{}'", variant_name).into(),
+            },
         });
     }
 
@@ -1301,11 +1376,13 @@ fn deserialize_result_as_enum_inner<'input, const BORROW: bool>(
     // Consume StructEnd
     let end_event = expect_event(deser, "struct end for Result")?;
     if !matches!(end_event, ParseEvent::StructEnd) {
-        return Err(DeserializeError::TypeMismatch {
-            expected: "struct end for Result variant",
-            got: format!("{end_event:?}"),
+        return Err(DeserializeError {
             span: deser.last_span,
             path: None,
+            kind: DeserializeErrorKind::TypeMismatchStr {
+                expected: "struct end for Result variant",
+                got: end_event.kind_name().into(),
+            },
         });
     }
 
@@ -1318,12 +1395,11 @@ fn deserialize_enum_untagged_inner<'input, const BORROW: bool>(
     mut wip: Partial<'input, BORROW>,
 ) -> Result<Partial<'input, BORROW>, DeserializeError> {
     use super::dyn_helpers::*;
-    use alloc::format;
     use facet_solver::VariantsByFormat;
 
     let shape = wip.shape();
     let variants_by_format = VariantsByFormat::from_shape(shape)
-        .ok_or_else(|| DeserializeError::Unsupported("expected enum type for untagged".into()))?;
+        .ok_or_else(|| DeserializeError::unsupported("expected enum type for untagged"))?;
 
     let event = expect_peek(deser, "value")?;
 
@@ -1385,11 +1461,13 @@ fn deserialize_enum_untagged_inner<'input, const BORROW: bool>(
                 }
             }
 
-            Err(DeserializeError::TypeMismatch {
-                expected: "matching untagged variant for scalar",
-                got: format!("{:?}", scalar),
+            Err(DeserializeError {
                 span: deser.last_span,
                 path: None,
+                kind: DeserializeErrorKind::TypeMismatchStr {
+                    expected: "matching untagged variant for scalar",
+                    got: scalar.kind_name().into(),
+                },
             })
         }
         ParseEvent::StructStart(_) => {
@@ -1409,8 +1487,8 @@ fn deserialize_enum_untagged_inner<'input, const BORROW: bool>(
                         wip = deserialize_enum_variant_content(deser, wip)?;
                         Ok(wip)
                     } else {
-                        Err(DeserializeError::Unsupported(
-                            "no struct variant found for untagged enum with struct input".into(),
+                        Err(DeserializeError::unsupported(
+                            "no struct variant found for untagged enum with struct input",
                         ))
                     }
                 }
@@ -1424,15 +1502,17 @@ fn deserialize_enum_untagged_inner<'input, const BORROW: bool>(
                 return Ok(wip);
             }
 
-            Err(DeserializeError::Unsupported(
-                "no tuple variant found for untagged enum with sequence input".into(),
+            Err(DeserializeError::unsupported(
+                "no tuple variant found for untagged enum with sequence input",
             ))
         }
-        _ => Err(DeserializeError::TypeMismatch {
-            expected: "scalar, struct, or sequence for untagged enum",
-            got: format!("{:?}", event),
+        _ => Err(DeserializeError {
             span: deser.last_span,
             path: None,
+            kind: DeserializeErrorKind::TypeMismatchStr {
+                expected: "scalar, struct, or sequence for untagged enum",
+                got: event.kind_name().into(),
+            },
         }),
     }
 }
@@ -1665,40 +1745,38 @@ where
             wip = match scalar {
                 ScalarValue::I64(discriminant) => {
                     wip.select_variant(discriminant)
-                        .map_err(|error| DeserializeError::Reflect {
-                            error,
+                        .map_err(|error| DeserializeError {
                             span,
                             path: None,
+                            kind: DeserializeErrorKind::Reflect(error),
                         })?
                 }
                 ScalarValue::U64(discriminant) => {
-                    wip.select_variant(discriminant as i64).map_err(|error| {
-                        DeserializeError::Reflect {
-                            error,
+                    wip.select_variant(discriminant as i64)
+                        .map_err(|error| DeserializeError {
                             span,
                             path: None,
-                        }
-                    })?
+                            kind: DeserializeErrorKind::Reflect(error),
+                        })?
                 }
                 ScalarValue::Str(str_discriminant) => {
-                    let discriminant =
-                        str_discriminant
-                            .parse()
-                            .map_err(|_| DeserializeError::TypeMismatch {
-                                expected: "String representing an integer (i64)",
-                                got: str_discriminant.to_string(),
-                                span: self.last_span,
-                                path: None,
-                            })?;
+                    let discriminant = str_discriminant.parse().map_err(|_| DeserializeError {
+                        span: self.last_span,
+                        path: None,
+                        kind: DeserializeErrorKind::TypeMismatchStr {
+                            expected: "string representing an integer (i64)",
+                            got: str_discriminant.to_string().into(),
+                        },
+                    })?;
                     wip.select_variant(discriminant)
-                        .map_err(|error| DeserializeError::Reflect {
-                            error,
+                        .map_err(|error| DeserializeError {
                             span,
                             path: None,
+                            kind: DeserializeErrorKind::Reflect(error),
                         })?
                 }
                 _ => {
-                    return Err(DeserializeError::Unsupported(
+                    return Err(DeserializeError::unsupported(
                         "Unexpected ScalarValue".to_string(),
                     ));
                 }
@@ -1706,7 +1784,7 @@ where
             self.parser.next_event().map_err(DeserializeError::parser)?;
             Ok(wip)
         } else {
-            Err(DeserializeError::Unsupported(
+            Err(DeserializeError::unsupported(
                 "Expected integer value".to_string(),
             ))
         }

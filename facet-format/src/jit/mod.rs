@@ -542,7 +542,7 @@ pub mod helpers;
 
 use facet_core::{ConstTypeId, Facet};
 
-use crate::{DeserializeError, FormatDeserializer, FormatParser};
+use crate::{DeserializeError, DeserializeErrorKind, FormatDeserializer, FormatParser};
 
 pub use compiler::CompiledDeserializer;
 pub use format::{JitCursor, JitFormat, JitScratch, JitStringValue, NoFormatJit, StructEncoding};
@@ -669,7 +669,10 @@ where
     // Convert Unsupported errors to None (allows fallback to Tier-1)
     match compiled.deserialize(parser) {
         Ok(value) => Some(Ok(value)),
-        Err(DeserializeError::Unsupported(_)) => {
+        Err(DeserializeError {
+            kind: DeserializeErrorKind::Unsupported { .. },
+            ..
+        }) => {
             // Runtime unsupported (JIT returned T2_ERR_UNSUPPORTED)
             TIER2_RUNTIME_UNSUPPORTED.fetch_add(1, Ordering::Relaxed);
             jit_debug!(

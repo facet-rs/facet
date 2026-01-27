@@ -53,12 +53,6 @@ pub type DynDeserializer<'input, 'p> =
 pub type DynDeserializerOwned<'input, 'p> =
     FormatDeserializer<'input, false, &'p mut dyn DynParser<'input>>;
 
-/// Type alias for deserialization errors when using dynamic dispatch.
-///
-/// This is now just an alias for `DeserializeError` since the error type is concrete.
-#[deprecated(note = "Use DeserializeError directly")]
-pub type DynDeserializeError = DeserializeError;
-
 /// Generic deserializer that drives a format-specific parser directly into `Partial`.
 ///
 /// The const generic `BORROW` controls whether string data can be borrowed:
@@ -350,7 +344,7 @@ where
             .parser
             .next_event()
             .map_err(DeserializeError::parser)?
-            .ok_or(DeserializeError::UnexpectedEof { expected })?;
+            .ok_or(DeserializeError::unexpected_eof(expected))?;
         trace!(?event, expected, "expect_event: got event");
         // Capture the span of the consumed event for error reporting
         self.last_span = self.parser.current_span();
@@ -367,7 +361,7 @@ where
             .parser
             .peek_event()
             .map_err(DeserializeError::parser)?
-            .ok_or(DeserializeError::UnexpectedEof { expected })?;
+            .ok_or(DeserializeError::unexpected_eof(expected))?;
         trace!(?event, expected, "expect_peek: peeked event");
         Ok(event)
     }
@@ -571,7 +565,7 @@ where
                 trace!("deserialize_into: dispatching to deserialize_dynamic_value");
                 self.deserialize_dynamic_value(wip)
             }
-            _ => Err(DeserializeError::Unsupported(format!(
+            _ => Err(DeserializeError::unsupported(format!(
                 "unsupported shape def: {:?}",
                 shape.def
             ))),
@@ -649,7 +643,7 @@ where
                 }
                 Def::Map(map_def) => self.deserialize_map_dynamic(wip, map_def.k, map_def.v),
                 Def::Set(set_def) => self.deserialize_list_dynamic(wip, set_def.t),
-                _ => Err(DeserializeError::Unsupported(format!(
+                _ => Err(DeserializeError::unsupported(format!(
                     "unsupported hint shape for dynamic deserialization: {:?}",
                     hint_shape.def
                 ))),
@@ -698,7 +692,7 @@ where
         let struct_def = match &wip.shape().ty {
             Type::User(UserType::Struct(def)) => def,
             _ => {
-                return Err(DeserializeError::Unsupported(format!(
+                return Err(DeserializeError::unsupported(format!(
                     "expected struct type but got {:?}",
                     wip.shape().ty
                 )));
@@ -770,19 +764,23 @@ where
             // (e.g., { "0" = true, "1" = 1 }) are valid tuple representations
             ParseEvent::StructStart(ContainerKind::Object) => true,
             ParseEvent::StructStart(kind) => {
-                return Err(DeserializeError::TypeMismatch {
-                    expected: "array",
-                    got: kind.name().into(),
+                return Err(DeserializeError {
                     span: self.last_span,
                     path: None,
+                    kind: DeserializeErrorKind::TypeMismatchStr {
+                        expected: "array",
+                        got: kind.name().into(),
+                    },
                 });
             }
             _ => {
-                return Err(DeserializeError::TypeMismatch {
-                    expected: "sequence start for tuple",
-                    got: format!("{event:?}"),
+                return Err(DeserializeError {
                     span: self.last_span,
                     path: None,
+                    kind: DeserializeErrorKind::TypeMismatchStr {
+                        expected: "sequence start for tuple",
+                        got: event.kind_name().into(),
+                    },
                 });
             }
         };
@@ -936,11 +934,13 @@ where
 
             return match event {
                 ParseEvent::Scalar(ScalarValue::Bytes(bytes)) => self.set_bytes_value(wip, bytes),
-                _ => Err(DeserializeError::TypeMismatch {
-                    expected: "bytes",
-                    got: format!("{event:?}"),
+                _ => Err(DeserializeError {
                     span: self.last_span,
                     path: None,
+                    kind: DeserializeErrorKind::TypeMismatchStr {
+                        expected: "bytes",
+                        got: event.kind_name().into(),
+                    },
                 }),
             };
         }
@@ -958,19 +958,23 @@ where
                 trace!("deserialize_list: got sequence start");
             }
             ParseEvent::StructStart(kind) => {
-                return Err(DeserializeError::TypeMismatch {
-                    expected: "array",
-                    got: kind.name().into(),
+                return Err(DeserializeError {
                     span: self.last_span,
                     path: None,
+                    kind: DeserializeErrorKind::TypeMismatchStr {
+                        expected: "array",
+                        got: kind.name().into(),
+                    },
                 });
             }
             _ => {
-                return Err(DeserializeError::TypeMismatch {
-                    expected: "sequence start",
-                    got: format!("{event:?}"),
+                return Err(DeserializeError {
                     span: self.last_span,
                     path: None,
+                    kind: DeserializeErrorKind::TypeMismatchStr {
+                        expected: "sequence start",
+                        got: event.kind_name().into(),
+                    },
                 });
             }
         };
@@ -1008,8 +1012,8 @@ where
         let array_len = match &wip.shape().def {
             Def::Array(array_def) => array_def.n,
             _ => {
-                return Err(DeserializeError::Unsupported(
-                    "deserialize_array called on non-array type".into(),
+                return Err(DeserializeError::unsupported(
+                    "deserialize_array called on non-array type",
                 ));
             }
         };
@@ -1024,19 +1028,23 @@ where
         match event {
             ParseEvent::SequenceStart(_) => {}
             ParseEvent::StructStart(kind) => {
-                return Err(DeserializeError::TypeMismatch {
-                    expected: "array",
-                    got: kind.name().into(),
+                return Err(DeserializeError {
                     span: self.last_span,
                     path: None,
+                    kind: DeserializeErrorKind::TypeMismatchStr {
+                        expected: "array",
+                        got: kind.name().into(),
+                    },
                 });
             }
             _ => {
-                return Err(DeserializeError::TypeMismatch {
-                    expected: "sequence start for array",
-                    got: format!("{event:?}"),
+                return Err(DeserializeError {
                     span: self.last_span,
                     path: None,
+                    kind: DeserializeErrorKind::TypeMismatchStr {
+                        expected: "sequence start for array",
+                        got: event.kind_name().into(),
+                    },
                 });
             }
         };
@@ -1078,19 +1086,23 @@ where
         match event {
             ParseEvent::SequenceStart(_) => {}
             ParseEvent::StructStart(kind) => {
-                return Err(DeserializeError::TypeMismatch {
-                    expected: "set",
-                    got: kind.name().into(),
+                return Err(DeserializeError {
                     span: self.last_span,
                     path: None,
+                    kind: DeserializeErrorKind::TypeMismatchStr {
+                        expected: "set",
+                        got: kind.name().into(),
+                    },
                 });
             }
             _ => {
-                return Err(DeserializeError::TypeMismatch {
-                    expected: "sequence start for set",
-                    got: format!("{event:?}"),
+                return Err(DeserializeError {
                     span: self.last_span,
                     path: None,
+                    kind: DeserializeErrorKind::TypeMismatchStr {
+                        expected: "sequence start for set",
+                        got: event.kind_name().into(),
+                    },
                 });
             }
         };
@@ -1147,11 +1159,13 @@ where
                             wip = wip.end()?;
                         }
                         other => {
-                            return Err(DeserializeError::TypeMismatch {
-                                expected: "field key or struct end for map",
-                                got: format!("{other:?}"),
+                            return Err(DeserializeError {
                                 span: self.last_span,
                                 path: None,
+                                kind: DeserializeErrorKind::TypeMismatchStr {
+                                    expected: "field key or struct end for map",
+                                    got: other.kind_name().into(),
+                                },
                             });
                         }
                     }
@@ -1180,22 +1194,26 @@ where
                             wip = wip.end()?;
                         }
                         other => {
-                            return Err(DeserializeError::TypeMismatch {
-                                expected: "ordered field or sequence end for map",
-                                got: format!("{other:?}"),
+                            return Err(DeserializeError {
                                 span: self.last_span,
                                 path: None,
+                                kind: DeserializeErrorKind::TypeMismatchStr {
+                                    expected: "ordered field or sequence end for map",
+                                    got: other.kind_name().into(),
+                                },
                             });
                         }
                     }
                 }
             }
             other => {
-                return Err(DeserializeError::TypeMismatch {
-                    expected: "struct start or sequence start for map",
-                    got: format!("{other:?}"),
+                return Err(DeserializeError {
                     span: self.last_span,
                     path: None,
+                    kind: DeserializeErrorKind::TypeMismatchStr {
+                        expected: "struct start or sequence start for map",
+                        got: other.kind_name().into(),
+                    },
                 });
             }
         }
@@ -1290,19 +1308,23 @@ where
                     wip = self.set_scalar(wip, scalar)?;
                     Ok(wip)
                 } else {
-                    Err(DeserializeError::TypeMismatch {
-                        expected: "scalar value or node with argument",
-                        got: "node without argument".to_string(),
+                    Err(DeserializeError {
                         span: self.last_span,
                         path: None,
+                        kind: DeserializeErrorKind::TypeMismatchStr {
+                            expected: "scalar value or node with argument",
+                            got: "node without argument".into(),
+                        },
                     })
                 }
             }
-            other => Err(DeserializeError::TypeMismatch {
-                expected: "scalar value",
-                got: format!("{other:?}"),
+            other => Err(DeserializeError {
                 span: self.last_span,
                 path: None,
+                kind: DeserializeErrorKind::TypeMismatchStr {
+                    expected: "scalar value",
+                    got: other.kind_name().into(),
+                },
             }),
         }
     }
@@ -1402,11 +1424,13 @@ where
         }
 
         // From here on, we need an actual key name
-        let key = key.ok_or_else(|| DeserializeError::TypeMismatch {
-            expected: "named key",
-            got: "unit key".to_string(),
+        let key = key.ok_or_else(|| DeserializeError {
             span: self.last_span,
             path: None,
+            kind: DeserializeErrorKind::TypeMismatchStr {
+                expected: "named key",
+                got: "unit key".into(),
+            },
         })?;
 
         // For transparent types (like UserId(String)), we need to use begin_inner

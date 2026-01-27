@@ -11,7 +11,8 @@ use facet_reflect::{FieldCategory, FieldInfo, Partial};
 use facet_solver::PathSegment;
 
 use crate::{
-    DeserializeError, DynParser, FormatDeserializer, FormatParser, ParseEvent, ScalarValue,
+    DeserializeError, DeserializeErrorKind, DynParser, FormatDeserializer, FormatParser,
+    ParseEvent, ScalarValue,
 };
 
 /// Inner implementation of `deserialize_struct_with_flatten` using dyn dispatch.
@@ -41,7 +42,7 @@ fn deserialize_struct_with_flatten_inner<'input, const BORROW: bool>(
             wip = wip.set_default()?;
             return Ok(wip);
         }
-        return Err(DeserializeError::UnexpectedEof { expected: "value" });
+        return Err(DeserializeError::unexpected_eof("value"));
     }
 
     // Handle Scalar(Null): use Default if available
@@ -55,14 +56,12 @@ fn deserialize_struct_with_flatten_inner<'input, const BORROW: bool>(
 
     // Build the schema for this type - this recursively expands all flatten fields
     let schema = Schema::build_auto(wip.shape())
-        .map_err(|e| DeserializeError::Unsupported(format!("failed to build schema: {e}")))?;
+        .map_err(|e| DeserializeError::unsupported(format!("failed to build schema: {e}")))?;
 
     // Check if we have multiple resolutions (i.e., flattened enums)
     let resolutions = schema.resolutions();
     if resolutions.is_empty() {
-        return Err(DeserializeError::Unsupported(
-            "schema has no resolutions".into(),
-        ));
+        return Err(DeserializeError::unsupported("schema has no resolutions"));
     }
 
     // ========== PASS 1: Probe to collect all field keys ==========
@@ -86,18 +85,20 @@ fn deserialize_struct_with_flatten_inner<'input, const BORROW: bool>(
     // Get the resolved configuration
     let config_handle = solver
         .finish()
-        .map_err(|e| DeserializeError::Unsupported(format!("solver failed: {e}")))?;
+        .map_err(|e| DeserializeError::unsupported(format!("solver failed: {e}")))?;
     let resolution = config_handle.resolution();
 
     // ========== PASS 2: Parse the struct with resolved paths ==========
     // Expect StructStart
     let event = expect_event(deser, "value")?;
     if !matches!(event, ParseEvent::StructStart(_)) {
-        return Err(DeserializeError::TypeMismatch {
-            expected: "struct start",
-            got: format!("{event:?}"),
+        return Err(DeserializeError {
             span: deser.last_span,
             path: None,
+            kind: DeserializeErrorKind::TypeMismatchStr {
+                expected: "struct start",
+                got: event.kind_name().into(),
+            },
         });
     }
 
@@ -266,25 +267,29 @@ fn deserialize_struct_with_flatten_inner<'input, const BORROW: bool>(
                                 let actual_tag = match &tag_event {
                                     ParseEvent::Scalar(ScalarValue::Str(s)) => s.as_ref(),
                                     _ => {
-                                        return Err(DeserializeError::TypeMismatch {
-                                            expected: "string tag value",
-                                            got: format!("{tag_event:?}"),
+                                        return Err(DeserializeError {
                                             span: deser.last_span,
                                             path: None,
+                                            kind: DeserializeErrorKind::TypeMismatchStr {
+                                                expected: "string tag value",
+                                                got: tag_event.kind_name().into(),
+                                            },
                                         });
                                     }
                                 };
 
                                 if actual_tag != *variant_name {
-                                    return Err(DeserializeError::TypeMismatch {
-                                        expected: format!(
-                                            "tag value matching variant '{}'",
-                                            variant_name
-                                        )
-                                        .leak(),
-                                        got: actual_tag.to_string(),
+                                    return Err(DeserializeError {
                                         span: deser.last_span,
                                         path: None,
+                                        kind: DeserializeErrorKind::TypeMismatchStr {
+                                            expected: format!(
+                                                "tag value matching variant '{}'",
+                                                variant_name
+                                            )
+                                            .leak(),
+                                            got: actual_tag.to_string().into(),
+                                        },
                                     });
                                 }
 
@@ -336,21 +341,26 @@ fn deserialize_struct_with_flatten_inner<'input, const BORROW: bool>(
                 }
 
                 if deny_unknown_fields {
-                    return Err(DeserializeError::UnknownField {
-                        field: key_name.to_owned(),
+                    return Err(DeserializeError {
                         span: deser.last_span,
                         path: None,
+                        kind: DeserializeErrorKind::UnknownField {
+                            field: key_name.to_owned().into(),
+                            suggestion: None,
+                        },
                     });
                 } else {
                     skip(deser)?;
                 }
             }
             other => {
-                return Err(DeserializeError::TypeMismatch {
-                    expected: "field key or struct end",
-                    got: format!("{other:?}"),
+                return Err(DeserializeError {
                     span: deser.last_span,
                     path: None,
+                    kind: DeserializeErrorKind::TypeMismatchStr {
+                        expected: "field key or struct end",
+                        got: other.kind_name().into(),
+                    },
                 });
             }
         }

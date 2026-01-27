@@ -4,7 +4,7 @@
 //! to reduce monomorphization.
 
 use facet::Facet;
-use facet_format::{DynDeserializeError, DynParser, FormatDeserializer};
+use facet_format::{DeserializeError, DynParser, FormatDeserializer};
 use facet_json::JsonParser;
 
 #[derive(Debug, PartialEq, Facet)]
@@ -26,7 +26,7 @@ fn dyn_dispatch_basic() {
     // Use the dyn parser with FormatDeserializer
     let mut de = FormatDeserializer::new(dyn_parser);
 
-    let person: Result<Person, DynDeserializeError> = de.deserialize();
+    let person: Result<Person, DeserializeError> = de.deserialize();
     let person = person.expect("deserialization should succeed");
 
     assert_eq!(person.name, "Alice");
@@ -47,7 +47,7 @@ fn dyn_dispatch_nested() {
     let dyn_parser: &mut dyn DynParser = &mut parser;
     let mut de = FormatDeserializer::new(dyn_parser);
 
-    let nested: Result<Nested, DynDeserializeError> = de.deserialize();
+    let nested: Result<Nested, DeserializeError> = de.deserialize();
     let nested = nested.expect("deserialization should succeed");
 
     assert_eq!(nested.inner.name, "Bob");
@@ -68,7 +68,7 @@ fn dyn_dispatch_vec() {
     let dyn_parser: &mut dyn DynParser = &mut parser;
     let mut de = FormatDeserializer::new(dyn_parser);
 
-    let result: Result<WithVec, DynDeserializeError> = de.deserialize();
+    let result: Result<WithVec, DeserializeError> = de.deserialize();
     let result = result.expect("deserialization should succeed");
 
     assert_eq!(result.items, vec![1, 2, 3, 4, 5]);
@@ -90,7 +90,7 @@ fn dyn_dispatch_enum() {
     let dyn_parser: &mut dyn DynParser = &mut parser;
     let mut de = FormatDeserializer::new(dyn_parser);
 
-    let msg: Result<Message, DynDeserializeError> = de.deserialize();
+    let msg: Result<Message, DeserializeError> = de.deserialize();
     let msg = msg.expect("deserialization should succeed");
 
     assert_eq!(
@@ -107,7 +107,7 @@ fn dyn_dispatch_enum() {
 /// parser types call it.
 fn deserialize_with_dyn<'de, T: facet_core::Facet<'de>>(
     parser: &mut dyn DynParser<'de>,
-) -> Result<T, DynDeserializeError> {
+) -> Result<T, DeserializeError> {
     let mut de = FormatDeserializer::new(parser);
     de.deserialize()
 }

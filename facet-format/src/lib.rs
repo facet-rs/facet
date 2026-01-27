@@ -56,7 +56,7 @@ mod visitor;
 pub mod jit;
 
 pub use deserializer::{
-    DeserializeError, DynDeserializeError, DynDeserializer, DynDeserializerOwned,
+    DeserializeError, DeserializeErrorKind, DynDeserializer, DynDeserializerOwned,
     FormatDeserializer,
 };
 pub use dyn_parser::{DynParser, DynParserError, DynParserWrapper, DynResult};

@@ -229,6 +229,24 @@ impl<'de> ScalarValue<'de> {
             ScalarValue::Unit => "unit".to_string(),
         }
     }
+
+    /// Returns a static string describing the kind of scalar for error messages.
+    #[inline]
+    pub const fn kind_name(&self) -> &'static str {
+        match self {
+            ScalarValue::Unit => "unit",
+            ScalarValue::Null => "null",
+            ScalarValue::Bool(_) => "bool",
+            ScalarValue::Char(_) => "char",
+            ScalarValue::I64(_) => "i64",
+            ScalarValue::U64(_) => "u64",
+            ScalarValue::I128(_) => "i128",
+            ScalarValue::U128(_) => "u128",
+            ScalarValue::F64(_) => "f64",
+            ScalarValue::Str(_) => "string",
+            ScalarValue::Bytes(_) => "bytes",
+        }
+    }
 }
 
 /// Event emitted by a format parser while streaming through input.
@@ -273,6 +291,23 @@ impl<'de> fmt::Debug for ParseEvent<'de> {
             ParseEvent::SequenceEnd => f.write_str("SequenceEnd"),
             ParseEvent::Scalar(value) => f.debug_tuple("Scalar").field(value).finish(),
             ParseEvent::VariantTag(tag) => f.debug_tuple("VariantTag").field(tag).finish(),
+        }
+    }
+}
+
+impl ParseEvent<'_> {
+    /// Returns a static string describing the kind of event for error messages.
+    #[inline]
+    pub const fn kind_name(&self) -> &'static str {
+        match self {
+            ParseEvent::StructStart(_) => "struct start",
+            ParseEvent::StructEnd => "struct end",
+            ParseEvent::FieldKey(_) => "field key",
+            ParseEvent::OrderedField => "ordered field",
+            ParseEvent::SequenceStart(_) => "sequence start",
+            ParseEvent::SequenceEnd => "sequence end",
+            ParseEvent::Scalar(_) => "scalar",
+            ParseEvent::VariantTag(_) => "variant tag",
         }
     }
 }

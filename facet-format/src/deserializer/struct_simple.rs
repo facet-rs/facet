@@ -4,7 +4,10 @@ use facet_core::{Type, UserType};
 use facet_path::PathStep;
 use facet_reflect::Partial;
 
-use crate::{DeserializeError, FormatDeserializer, FormatParser, ParseEvent, ScalarValue};
+use crate::{
+    DeserializeError, DeserializeErrorKind, FormatDeserializer, FormatParser, ParseEvent,
+    ScalarValue,
+};
 
 impl<'input, const BORROW: bool, P> FormatDeserializer<'input, BORROW, P>
 where
@@ -21,7 +24,7 @@ where
         let struct_def = match &wip.shape().ty {
             Type::User(UserType::Struct(def)) => def,
             _ => {
-                return Err(DeserializeError::Unsupported(format!(
+                return Err(DeserializeError::unsupported(format!(
                     "expected struct type but got {:?}",
                     wip.shape().ty
                 )));
@@ -42,7 +45,7 @@ where
                 wip = wip.set_default()?;
                 return Ok(wip);
             }
-            return Err(DeserializeError::UnexpectedEof { expected: "value" });
+            return Err(DeserializeError::unexpected_eof("value"));
         }
 
         // Handle Scalar(Null): use Default if available
@@ -57,11 +60,13 @@ where
         let event = self.expect_event("value")?;
 
         if !matches!(event, ParseEvent::StructStart(_)) {
-            return Err(DeserializeError::TypeMismatch {
-                expected: "struct start",
-                got: format!("{event:?}"),
+            return Err(DeserializeError {
                 span: self.last_span,
                 path: None,
+                kind: DeserializeErrorKind::TypeMismatchStr {
+                    expected: "struct start",
+                    got: event.kind_name().into(),
+                },
             });
         }
         let deny_unknown_fields = wip.shape().has_deny_unknown_fields_attr();
@@ -176,10 +181,13 @@ where
                     }
 
                     if deny_unknown_fields {
-                        return Err(DeserializeError::UnknownField {
-                            field: key_name.to_owned(),
+                        return Err(DeserializeError {
                             span: self.last_span,
                             path: None,
+                            kind: DeserializeErrorKind::UnknownField {
+                                field: key_name.to_owned().into(),
+                                suggestion: None,
+                            },
                         });
                     } else {
                         // Unknown field - skip it
@@ -188,11 +196,13 @@ where
                     }
                 }
                 other => {
-                    return Err(DeserializeError::TypeMismatch {
-                        expected: "field key or struct end",
-                        got: format!("{other:?}"),
+                    return Err(DeserializeError {
                         span: self.last_span,
                         path: None,
+                        kind: DeserializeErrorKind::TypeMismatchStr {
+                            expected: "field key or struct end",
+                            got: other.kind_name().into(),
+                        },
                     });
                 }
             }

@@ -145,14 +145,12 @@ impl<'de, T: Facet<'de>, P: FormatParser<'de>> CompiledDeserializer<T, P> {
             }
 
             if result == helpers::ERR_MISSING_REQUIRED_FIELD {
-                Err(DeserializeError::MissingField {
-                    field: "unknown", // TODO: Track which field is missing
-                    type_name: T::SHAPE.type_identifier,
-                    span: None, // JIT doesn't have span info
-                    path: None, // JIT doesn't have path info
-                })
+                Err(DeserializeError::missing_field(
+                    "unknown", // TODO: Track which field is missing
+                    T::SHAPE.type_identifier,
+                ))
             } else {
-                Err(DeserializeError::Unsupported(format!(
+                Err(DeserializeError::unsupported(format!(
                     "JIT deserialization failed with code {}",
                     result
                 )))

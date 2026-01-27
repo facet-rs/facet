@@ -2,7 +2,7 @@
 use facet_reflect::Partial;
 
 #[cfg(feature = "validate")]
-use crate::DeserializeError;
+use crate::{DeserializeError, DeserializeErrorKind};
 use crate::{FormatDeserializer, FormatParser};
 
 impl<'input, const BORROW: bool, P> FormatDeserializer<'input, BORROW, P>
@@ -69,11 +69,13 @@ where
             };
 
             if let Err(message) = validation_result {
-                return Err(DeserializeError::Validation {
-                    field: field.name,
-                    message,
+                return Err(DeserializeError {
                     span: self.last_span,
                     path: Some(self.current_path.clone()),
+                    kind: DeserializeErrorKind::Validation {
+                        field: field.name,
+                        message: message.into(),
+                    },
                 });
             }
         }

@@ -6,8 +6,8 @@ use facet_core::{ScalarType, Shape, StructKind};
 use facet_reflect::Partial;
 
 use crate::{
-    DeserializeError, DynParser, EnumVariantHint, FormatDeserializer, FormatParser, ParseEvent,
-    ScalarTypeHint, ScalarValue,
+    DeserializeError, DeserializeErrorKind, DynParser, EnumVariantHint, FormatDeserializer,
+    FormatParser, ParseEvent, ScalarTypeHint, ScalarValue,
 };
 
 /// Inner implementation of `deserialize_enum_dynamic` using dyn dispatch.
@@ -64,7 +64,7 @@ fn deserialize_enum_dynamic_inner<'input, const BORROW: bool>(
                         .find(|v| get_variant_display_name(v) == tag)
                         .or_else(|| enum_def.variants.iter().find(|v| v.is_other()))
                         .ok_or_else(|| {
-                            DeserializeError::Unsupported(format!("unknown variant: {tag}"))
+                            DeserializeError::unsupported(format!("unknown variant: {tag}"))
                         })?;
                     (variant, is_fallback)
                 }
@@ -76,8 +76,8 @@ fn deserialize_enum_dynamic_inner<'input, const BORROW: bool>(
                             .iter()
                             .find(|v| v.is_other())
                             .ok_or_else(|| {
-                                DeserializeError::Unsupported(
-                                    "unit tag requires #[facet(other)] fallback".into(),
+                                DeserializeError::unsupported(
+                                    "unit tag requires #[facet(other)] fallback",
                                 )
                             })?;
                     (variant, true)
@@ -133,11 +133,13 @@ fn deserialize_enum_dynamic_inner<'input, const BORROW: bool>(
             wip = deserialize_enum_as_struct(deser, wip, enum_def)?;
         }
         _ => {
-            return Err(DeserializeError::TypeMismatch {
-                expected: "enum variant",
-                got: format!("{event:?}"),
+            return Err(DeserializeError {
                 span: deser.last_span,
                 path: None,
+                kind: DeserializeErrorKind::TypeMismatchStr {
+                    expected: "enum variant",
+                    got: format!("{event:?}").into(),
+                },
             });
         }
     }
@@ -214,11 +216,13 @@ where
                                 .unwrap_or_else(|| "@".to_owned())
                         }
                         _ => {
-                            return Err(DeserializeError::TypeMismatch {
-                                expected: "field key",
-                                got: format!("{:?}", key_event),
+                            return Err(DeserializeError {
                                 span: self.last_span,
                                 path: None,
+                                kind: DeserializeErrorKind::TypeMismatchStr {
+                                    expected: "field key",
+                                    got: key_event.kind_name().into(),
+                                },
                             });
                         }
                     };
@@ -230,11 +234,13 @@ where
                 }
             }
             _ => {
-                return Err(DeserializeError::TypeMismatch {
-                    expected: "scalar, sequence, or struct",
-                    got: format!("{:?}", event),
+                return Err(DeserializeError {
                     span: self.last_span,
                     path: None,
+                    kind: DeserializeErrorKind::TypeMismatchStr {
+                        expected: "scalar, sequence, or struct",
+                        got: event.kind_name().into(),
+                    },
                 });
             }
         }
@@ -251,11 +257,13 @@ where
 
         let event = self.expect_event("struct start")?;
         if !matches!(event, ParseEvent::StructStart(_)) {
-            return Err(DeserializeError::TypeMismatch {
-                expected: "struct",
-                got: format!("{event:?}"),
+            return Err(DeserializeError {
                 span: self.last_span,
                 path: Some(self.path_clone()),
+                kind: DeserializeErrorKind::TypeMismatchStr {
+                    expected: "struct",
+                    got: event.kind_name().into(),
+                },
             });
         }
 
@@ -273,11 +281,13 @@ where
                 }
                 ParseEvent::StructEnd => break,
                 _ => {
-                    return Err(DeserializeError::TypeMismatch {
-                        expected: "field or struct end",
-                        got: format!("{event:?}"),
+                    return Err(DeserializeError {
                         span: self.last_span,
                         path: Some(self.path_clone()),
+                        kind: DeserializeErrorKind::TypeMismatchStr {
+                            expected: "field or struct end",
+                            got: event.kind_name().into(),
+                        },
                     });
                 }
             }
@@ -305,11 +315,13 @@ where
             event,
             ParseEvent::StructStart(_) | ParseEvent::SequenceStart(_)
         ) {
-            return Err(DeserializeError::TypeMismatch {
-                expected: "tuple",
-                got: format!("{event:?}"),
+            return Err(DeserializeError {
                 span: self.last_span,
                 path: Some(self.path_clone()),
+                kind: DeserializeErrorKind::TypeMismatchStr {
+                    expected: "tuple",
+                    got: event.kind_name().into(),
+                },
             });
         }
 
@@ -326,11 +338,13 @@ where
                 }
                 ParseEvent::StructEnd | ParseEvent::SequenceEnd => break,
                 _ => {
-                    return Err(DeserializeError::TypeMismatch {
-                        expected: "tuple element or end",
-                        got: format!("{event:?}"),
+                    return Err(DeserializeError {
                         span: self.last_span,
                         path: Some(self.path_clone()),
+                        kind: DeserializeErrorKind::TypeMismatchStr {
+                            expected: "tuple element or end",
+                            got: event.kind_name().into(),
+                        },
                     });
                 }
             }
@@ -434,11 +448,13 @@ where
                 }
             },
             _ => {
-                return Err(DeserializeError::TypeMismatch {
-                    expected: "scalar",
-                    got: format!("{event:?}"),
+                return Err(DeserializeError {
                     span: self.last_span,
                     path: Some(self.path_clone()),
+                    kind: DeserializeErrorKind::TypeMismatchStr {
+                        expected: "scalar",
+                        got: event.kind_name().into(),
+                    },
                 });
             }
         }
@@ -455,11 +471,13 @@ where
 
         let event = self.expect_event("sequence start")?;
         if !matches!(event, ParseEvent::SequenceStart(_)) {
-            return Err(DeserializeError::TypeMismatch {
-                expected: "sequence",
-                got: format!("{event:?}"),
+            return Err(DeserializeError {
                 span: self.last_span,
                 path: Some(self.path_clone()),
+                kind: DeserializeErrorKind::TypeMismatchStr {
+                    expected: "sequence",
+                    got: event.kind_name().into(),
+                },
             });
         }
 
@@ -490,11 +508,13 @@ where
 
         let event = self.expect_event("array start")?;
         if !matches!(event, ParseEvent::SequenceStart(_)) {
-            return Err(DeserializeError::TypeMismatch {
-                expected: "array",
-                got: format!("{event:?}"),
+            return Err(DeserializeError {
                 span: self.last_span,
                 path: Some(self.path_clone()),
+                kind: DeserializeErrorKind::TypeMismatchStr {
+                    expected: "array",
+                    got: event.kind_name().into(),
+                },
             });
         }
 
@@ -508,11 +528,13 @@ where
 
         let event = self.expect_event("array end")?;
         if !matches!(event, ParseEvent::SequenceEnd) {
-            return Err(DeserializeError::TypeMismatch {
-                expected: "array end",
-                got: format!("{event:?}"),
+            return Err(DeserializeError {
                 span: self.last_span,
                 path: Some(self.path_clone()),
+                kind: DeserializeErrorKind::TypeMismatchStr {
+                    expected: "array end",
+                    got: event.kind_name().into(),
+                },
             });
         }
 
@@ -532,11 +554,13 @@ where
             event,
             ParseEvent::SequenceStart(_) | ParseEvent::StructStart(_)
         ) {
-            return Err(DeserializeError::TypeMismatch {
-                expected: "map",
-                got: format!("{event:?}"),
+            return Err(DeserializeError {
                 span: self.last_span,
                 path: Some(self.path_clone()),
+                kind: DeserializeErrorKind::TypeMismatchStr {
+                    expected: "map",
+                    got: event.kind_name().into(),
+                },
             });
         }
 
@@ -579,11 +603,13 @@ where
                 ParseEvent::Scalar(ScalarValue::U64(u)) => Cow::Owned(u.to_string()),
                 ParseEvent::FieldKey(k) => k.name.unwrap_or(Cow::Borrowed("@")),
                 _ => {
-                    return Err(DeserializeError::TypeMismatch {
-                        expected: "map key",
-                        got: format!("{key_event:?}"),
+                    return Err(DeserializeError {
                         span: self.last_span,
                         path: Some(self.path_clone()),
+                        kind: DeserializeErrorKind::TypeMismatchStr {
+                            expected: "map key",
+                            got: key_event.kind_name().into(),
+                        },
                     });
                 }
             };

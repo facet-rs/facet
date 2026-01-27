@@ -5,7 +5,9 @@ use std::borrow::Cow;
 use facet_core::{NumericType, PrimitiveType, ScalarType, Type, UserType};
 use facet_reflect::{Partial, Span};
 
-use crate::{DeserializeError, FormatDeserializer, FormatParser, ScalarValue};
+use crate::{
+    DeserializeError, DeserializeErrorKind, FormatDeserializer, FormatParser, ScalarValue,
+};
 
 /// Set a scalar value into a `Partial`, handling type coercion.
 ///
@@ -234,31 +236,37 @@ pub(crate) fn deserialize_map_key_terminal_inner<'input, const BORROW: bool>(
         match num_ty {
             NumericType::Integer { signed } => {
                 if *signed {
-                    let n: i64 = key.parse().map_err(|_| DeserializeError::TypeMismatch {
-                        expected: "valid integer for map key",
-                        got: alloc::format!("string '{}'", key),
+                    let n: i64 = key.parse().map_err(|_| DeserializeError {
                         span,
                         path: None,
+                        kind: DeserializeErrorKind::TypeMismatchStr {
+                            expected: "valid integer for map key",
+                            got: alloc::format!("string '{}'", key).into(),
+                        },
                     })?;
                     // Use set for each size - the Partial handles type conversion
                     wip = wip.set(n)?;
                 } else {
-                    let n: u64 = key.parse().map_err(|_| DeserializeError::TypeMismatch {
-                        expected: "valid unsigned integer for map key",
-                        got: alloc::format!("string '{}'", key),
+                    let n: u64 = key.parse().map_err(|_| DeserializeError {
                         span,
                         path: None,
+                        kind: DeserializeErrorKind::TypeMismatchStr {
+                            expected: "valid unsigned integer for map key",
+                            got: alloc::format!("string '{}'", key).into(),
+                        },
                     })?;
                     wip = wip.set(n)?;
                 }
                 return Ok(wip);
             }
             NumericType::Float => {
-                let n: f64 = key.parse().map_err(|_| DeserializeError::TypeMismatch {
-                    expected: "valid float for map key",
-                    got: alloc::format!("string '{}'", key),
+                let n: f64 = key.parse().map_err(|_| DeserializeError {
                     span,
                     path: None,
+                    kind: DeserializeErrorKind::TypeMismatchStr {
+                        expected: "valid float for map key",
+                        got: alloc::format!("string '{}'", key).into(),
+                    },
                 })?;
                 wip = wip.set(n)?;
                 return Ok(wip);
@@ -298,16 +306,18 @@ where
         s: Cow<'input, str>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         facet_dessert::set_string_value(wip, s, self.last_span).map_err(|e| match e {
-            facet_dessert::DessertError::Reflect { error, span } => DeserializeError::Reflect {
-                error,
+            facet_dessert::DessertError::Reflect { error, span } => DeserializeError {
                 span,
                 path: None,
+                kind: DeserializeErrorKind::Reflect(error),
             },
-            facet_dessert::DessertError::CannotBorrow { message } => {
-                DeserializeError::CannotBorrow {
-                    message: message.into_owned(),
-                }
-            }
+            facet_dessert::DessertError::CannotBorrow { message } => DeserializeError {
+                span: None,
+                path: None,
+                kind: DeserializeErrorKind::CannotBorrow {
+                    reason: message.into_owned().leak(),
+                },
+            },
         })
     }
 
@@ -321,16 +331,18 @@ where
         b: Cow<'input, [u8]>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         facet_dessert::set_bytes_value(wip, b, self.last_span).map_err(|e| match e {
-            facet_dessert::DessertError::Reflect { error, span } => DeserializeError::Reflect {
-                error,
+            facet_dessert::DessertError::Reflect { error, span } => DeserializeError {
                 span,
                 path: None,
+                kind: DeserializeErrorKind::Reflect(error),
             },
-            facet_dessert::DessertError::CannotBorrow { message } => {
-                DeserializeError::CannotBorrow {
-                    message: message.into_owned(),
-                }
-            }
+            facet_dessert::DessertError::CannotBorrow { message } => DeserializeError {
+                span: None,
+                path: None,
+                kind: DeserializeErrorKind::CannotBorrow {
+                    reason: message.into_owned().leak(),
+                },
+            },
         })
     }
 }
