@@ -1,3 +1,4 @@
+#![allow(clippy::result_large_err)]
 //! Token adapter that bridges Scanner to the deserializer.
 //!
 //! The adapter provides two methods:
@@ -101,7 +102,11 @@ pub const DEFAULT_CHUNK_SIZE: usize = 4;
 /// The const generic `BORROW` controls string handling:
 /// - `BORROW=true`: strings without escapes are borrowed (`Cow::Borrowed`)
 /// - `BORROW=false`: all strings are owned (`Cow::Owned`)
-pub struct SliceAdapter<'input, const BORROW: bool> {
+///
+/// The const generic `TRUSTED_UTF8` controls UTF-8 validation:
+/// - `TRUSTED_UTF8=true`: skip UTF-8 validation (input came from `&str`)
+/// - `TRUSTED_UTF8=false`: validate UTF-8 (input came from `&[u8]`)
+pub struct SliceAdapter<'input, const BORROW: bool, const TRUSTED_UTF8: bool = false> {
     /// Full original input (for borrowing strings)
     input: &'input [u8],
     /// Start of current window in input
@@ -114,7 +119,9 @@ pub struct SliceAdapter<'input, const BORROW: bool> {
     scanner: Scanner,
 }
 
-impl<'input, const BORROW: bool> SliceAdapter<'input, BORROW> {
+impl<'input, const BORROW: bool, const TRUSTED_UTF8: bool>
+    SliceAdapter<'input, BORROW, TRUSTED_UTF8>
+{
     /// Create a new adapter with the default chunk size (4 bytes).
     pub fn new(input: &'input [u8]) -> Self {
         Self::with_chunk_size(input, DEFAULT_CHUNK_SIZE)
@@ -292,7 +299,14 @@ impl<'input, const BORROW: bool> SliceAdapter<'input, BORROW> {
 
                 let s = if BORROW && !*has_escapes {
                     // Borrow directly from original input (zero-copy)
-                    scanner::decode_string(self.input, abs_start, abs_end, false)?
+                    if TRUSTED_UTF8 {
+                        // SAFETY: Caller guarantees input is valid UTF-8 (came from &str)
+                        unsafe {
+                            scanner::decode_string_unchecked(self.input, abs_start, abs_end, false)?
+                        }
+                    } else {
+                        scanner::decode_string(self.input, abs_start, abs_end, false)?
+                    }
                 } else {
                     // Must produce owned string (has escapes or BORROW=false)
                     Cow::Owned(scanner::decode_string_owned(

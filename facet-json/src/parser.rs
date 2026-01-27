@@ -56,9 +56,13 @@ struct ParserState<'de> {
 }
 
 /// Streaming JSON parser backed by `facet-json`'s `SliceAdapter`.
-pub struct JsonParser<'de> {
+///
+/// The const generic `TRUSTED_UTF8` controls UTF-8 validation:
+/// - `TRUSTED_UTF8=true`: skip UTF-8 validation (input came from `&str`)
+/// - `TRUSTED_UTF8=false`: validate UTF-8 (input came from `&[u8]`)
+pub struct JsonParser<'de, const TRUSTED_UTF8: bool = false> {
     input: &'de [u8],
-    adapter: SliceAdapter<'de, true>,
+    adapter: SliceAdapter<'de, true, TRUSTED_UTF8>,
     state: ParserState<'de>,
     /// Counter for save points.
     save_counter: u64,
@@ -102,7 +106,7 @@ enum NextAction {
     RootFinished,
 }
 
-impl<'de> JsonParser<'de> {
+impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
     pub fn new(input: &'de [u8]) -> Self {
         Self {
             input,
@@ -419,7 +423,7 @@ impl<'de> JsonParser<'de> {
     }
 }
 
-impl<'de> FormatParser<'de> for JsonParser<'de> {
+impl<'de, const TRUSTED_UTF8: bool> FormatParser<'de> for JsonParser<'de, TRUSTED_UTF8> {
     fn raw_capture_shape(&self) -> Option<&'static facet_core::Shape> {
         Some(crate::RawJson::SHAPE)
     }

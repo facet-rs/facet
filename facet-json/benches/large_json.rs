@@ -106,6 +106,9 @@ static JSON_DATA: LazyLock<Vec<u8>> = LazyLock::new(|| {
     })
 });
 
+static JSON_STR: LazyLock<String> =
+    LazyLock::new(|| String::from_utf8(JSON_DATA.clone()).expect("JSON should be valid UTF-8"));
+
 // =============================================================================
 // Benchmarks
 // =============================================================================
@@ -119,12 +122,22 @@ fn serde_json(bencher: Bencher) {
     });
 }
 
-/// facet-json using reflection-based deserialization
+/// facet-json using reflection-based deserialization (from_slice - validates UTF-8)
 #[divan::bench]
 fn facet_json(bencher: Bencher) {
     let data = &*JSON_DATA;
     bencher.bench(|| {
         let result: CitmCatalog = black_box(facet_json::from_slice(black_box(data)).unwrap());
+        black_box(result)
+    });
+}
+
+/// facet-json using from_str (skips UTF-8 validation)
+#[divan::bench]
+fn facet_json_str(bencher: Bencher) {
+    let data = &*JSON_STR;
+    bencher.bench(|| {
+        let result: CitmCatalog = black_box(facet_json::from_str(black_box(data)).unwrap());
         black_box(result)
     });
 }

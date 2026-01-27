@@ -24,7 +24,7 @@ impl FormatSuite for JsonSlice {
     where
         T: Facet<'static> + core::fmt::Debug,
     {
-        let parser = JsonParser::new(input);
+        let parser = JsonParser::<false>::new(input);
         let mut de = FormatDeserializer::new_owned(parser);
         de.deserialize_root::<T>()
     }

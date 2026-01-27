@@ -21,7 +21,7 @@ fn test_jit_simple_struct() {
 
     // Parse with JIT
     let json = br#"{"name": "Alice", "age": 30, "active": true}"#;
-    let mut parser = JsonParser::new(json);
+    let mut parser = JsonParser::<false>::new(json);
 
     let result = jit::try_deserialize::<SimpleStruct, JsonParser<'_>>(&mut parser);
 
@@ -51,7 +51,7 @@ fn test_jit_mixed_types() {
     assert!(jit::is_jit_compatible::<MixedTypes>());
 
     let json = br#"{"count": 42, "ratio": 2.5, "flag": false}"#;
-    let mut parser = JsonParser::new(json);
+    let mut parser = JsonParser::<false>::new(json);
 
     let result = jit::try_deserialize::<MixedTypes, JsonParser<'_>>(&mut parser);
 
@@ -80,7 +80,7 @@ struct OutOfOrder {
 fn test_jit_out_of_order_fields() {
     // JSON fields in different order than struct definition
     let json = br#"{"c": 3, "a": 1, "b": 2}"#;
-    let mut parser = JsonParser::new(json);
+    let mut parser = JsonParser::<false>::new(json);
 
     let result = jit::try_deserialize::<OutOfOrder, JsonParser<'_>>(&mut parser);
 
@@ -102,7 +102,7 @@ fn test_jit_out_of_order_fields() {
 fn test_jit_unknown_fields_skipped() {
     // Extra fields should be skipped
     let json = br#"{"name": "Bob", "extra": "ignored", "age": 25, "active": false}"#;
-    let mut parser = JsonParser::new(json);
+    let mut parser = JsonParser::<false>::new(json);
 
     let result = jit::try_deserialize::<SimpleStruct, JsonParser<'_>>(&mut parser);
 
@@ -141,7 +141,7 @@ fn test_jit_nested_struct() {
 
     // Parse with JIT
     let json = br#"{"id": 42, "inner": {"x": 10, "y": 20}, "name": "test"}"#;
-    let mut parser = JsonParser::new(json);
+    let mut parser = JsonParser::<false>::new(json);
 
     let result = jit::try_deserialize::<Outer, JsonParser<'_>>(&mut parser);
 
@@ -171,7 +171,7 @@ struct WithOption {
 fn test_jit_option_none() {
     // Test with null values
     let json = br#"{"id": 42, "maybe_count": null, "maybe_flag": null}"#;
-    let mut parser = JsonParser::new(json);
+    let mut parser = JsonParser::<false>::new(json);
 
     let result = jit::try_deserialize::<WithOption, JsonParser<'_>>(&mut parser);
 
@@ -193,7 +193,7 @@ fn test_jit_option_none() {
 fn test_jit_option_some() {
     // Test with Some values
     let json = br#"{"id": 42, "maybe_count": 123, "maybe_flag": true}"#;
-    let mut parser = JsonParser::new(json);
+    let mut parser = JsonParser::<false>::new(json);
 
     let result = jit::try_deserialize::<WithOption, JsonParser<'_>>(&mut parser);
 
@@ -221,7 +221,7 @@ fn test_jit_vec_bool() {
 
     // Parse with JIT
     let json = br#"[true, false, true, true, false]"#;
-    let mut parser = JsonParser::new(json);
+    let mut parser = JsonParser::<false>::new(json);
 
     let result = jit::try_deserialize::<Vec<bool>, JsonParser<'_>>(&mut parser);
 
@@ -242,7 +242,7 @@ fn test_jit_vec_i64() {
     assert!(jit::is_jit_compatible::<Vec<i64>>());
 
     let json = br#"[1, 2, 3, -4, 5]"#;
-    let mut parser = JsonParser::new(json);
+    let mut parser = JsonParser::<false>::new(json);
 
     let result = jit::try_deserialize::<Vec<i64>, JsonParser<'_>>(&mut parser);
 
@@ -264,7 +264,7 @@ fn test_jit_vec_f64() {
     assert!(jit::is_jit_compatible::<Vec<f64>>());
 
     let json = br#"[1.5, 2.0, 3.14]"#;
-    let mut parser = JsonParser::new(json);
+    let mut parser = JsonParser::<false>::new(json);
 
     let result = jit::try_deserialize::<Vec<f64>, JsonParser<'_>>(&mut parser);
 
@@ -288,7 +288,7 @@ fn test_jit_vec_string() {
     assert!(jit::is_jit_compatible::<Vec<String>>());
 
     let json = br#"["hello", "world", "test"]"#;
-    let mut parser = JsonParser::new(json);
+    let mut parser = JsonParser::<false>::new(json);
 
     let result = jit::try_deserialize::<Vec<String>, JsonParser<'_>>(&mut parser);
 
@@ -317,7 +317,7 @@ fn test_cursor_coherency_after_tier1_struct() {
     // Parse JSON array where each element should use JIT
     // Then verify cursor is at correct position after each element
     let json = br#"[{"name": "Alice", "age": 30, "active": true}, {"name": "Bob", "age": 25, "active": false}]"#;
-    let parser = JsonParser::new(json);
+    let parser = JsonParser::<false>::new(json);
 
     // Parse the entire Vec<SimpleStruct> using the standard deserializer
     // This exercises cursor coherency internally as it parses each struct
@@ -339,7 +339,7 @@ fn test_cursor_coherency_struct_then_more() {
 
     // Parse nested array of structs - verifies cursor is correct after each struct
     let json = br#"[[1, 2], [3, 4, 5], [6]]"#;
-    let parser = JsonParser::new(json);
+    let parser = JsonParser::<false>::new(json);
 
     let result: Vec<Vec<i64>> = FormatDeserializer::new(parser).deserialize().unwrap();
 
@@ -361,7 +361,7 @@ fn test_cursor_coherency_tier2_vec() {
     // The "numbers" field may use Tier-2, "name" uses standard parsing
     // This tests that cursor is correct after Tier-2 Vec parsing
     let json = br#"{"numbers": [1, 2, 3], "name": "test"}"#;
-    let parser = JsonParser::new(json);
+    let parser = JsonParser::<false>::new(json);
 
     let result: WithVec = FormatDeserializer::new(parser).deserialize().unwrap();
 
@@ -382,7 +382,7 @@ fn test_cursor_coherency_tier2_vec_bool_in_struct() {
     }
 
     let json = br#"{"flags": [true, false, true], "label": "test", "count": 42}"#;
-    let parser = JsonParser::new(json);
+    let parser = JsonParser::<false>::new(json);
 
     let result: FlagsAndName = FormatDeserializer::new(parser).deserialize().unwrap();
 
@@ -404,7 +404,7 @@ fn test_cursor_coherency_multiple_vecs() {
     }
 
     let json = br#"{"bools": [true, false], "nums": [1, 2, 3], "strs": ["a", "b"]}"#;
-    let parser = JsonParser::new(json);
+    let parser = JsonParser::<false>::new(json);
 
     let result: MultiVec = FormatDeserializer::new(parser).deserialize().unwrap();
 
@@ -426,7 +426,7 @@ fn test_cursor_coherency_empty_arrays() {
     }
 
     let json = br#"{"empty": [], "name": "test", "more": [true]}"#;
-    let parser = JsonParser::new(json);
+    let parser = JsonParser::<false>::new(json);
 
     let result: WithEmpty = FormatDeserializer::new(parser).deserialize().unwrap();
 
@@ -448,7 +448,7 @@ fn test_cursor_coherency_nested_mixed() {
     }
 
     let json = br#"[{"id": 1, "tags": ["a", "b"]}, {"id": 2, "tags": ["c"]}]"#;
-    let parser = JsonParser::new(json);
+    let parser = JsonParser::<false>::new(json);
 
     let result: Vec<Item> = FormatDeserializer::new(parser).deserialize().unwrap();
 
@@ -469,7 +469,7 @@ fn test_required_field_missing_returns_error() {
     // SimpleStruct requires name, age, and active (all non-Option)
     // Omit "age" to trigger required-field validation
     let json = br#"{"name": "Alice", "active": true}"#;
-    let mut parser = JsonParser::new(json);
+    let mut parser = JsonParser::<false>::new(json);
 
     let result = jit::try_deserialize::<SimpleStruct, JsonParser<'_>>(&mut parser);
 
@@ -486,7 +486,7 @@ fn test_required_field_missing_returns_error() {
 fn test_multiple_required_fields_missing() {
     // Omit both "age" and "active"
     let json = br#"{"name": "Alice"}"#;
-    let mut parser = JsonParser::new(json);
+    let mut parser = JsonParser::<false>::new(json);
 
     let result = jit::try_deserialize::<SimpleStruct, JsonParser<'_>>(&mut parser);
 
@@ -502,7 +502,7 @@ fn test_multiple_required_fields_missing() {
 #[test]
 fn test_all_required_fields_missing() {
     let json = br#"{}"#;
-    let mut parser = JsonParser::new(json);
+    let mut parser = JsonParser::<false>::new(json);
 
     let result = jit::try_deserialize::<SimpleStruct, JsonParser<'_>>(&mut parser);
 
@@ -520,7 +520,7 @@ fn test_optional_fields_can_be_missing() {
     // WithOption has: id (required), maybe_count (optional), maybe_flag (optional)
     // Only provide "id", omit the optional fields entirely
     let json = br#"{"id": 42}"#;
-    let mut parser = JsonParser::new(json);
+    let mut parser = JsonParser::<false>::new(json);
 
     let result = jit::try_deserialize::<WithOption, JsonParser<'_>>(&mut parser);
 
@@ -556,7 +556,7 @@ fn test_optional_fields_can_be_missing() {
 fn test_escaped_keys_handled_correctly() {
     // "na\u006de" unescapes to "name", "\u0061ge" to "age", "\u0061ctive" to "active"
     let json = br#"{"na\u006de": "Alice", "\u0061ge": 30, "\u0061ctive": true}"#;
-    let mut parser = JsonParser::new(json);
+    let mut parser = JsonParser::<false>::new(json);
 
     let result = jit::try_deserialize::<SimpleStruct, JsonParser<'_>>(&mut parser);
 
@@ -579,7 +579,7 @@ fn test_escaped_keys_handled_correctly() {
 fn test_escaped_unknown_keys_skipped() {
     // Mix of known and unknown escaped keys
     let json = br#"{"na\u006de": "Bob", "\u0065xtra": "ignored", "\u0061ge": 25, "active": false}"#;
-    let mut parser = JsonParser::new(json);
+    let mut parser = JsonParser::<false>::new(json);
 
     let result = jit::try_deserialize::<SimpleStruct, JsonParser<'_>>(&mut parser);
 
@@ -602,7 +602,7 @@ fn test_escaped_unknown_keys_skipped() {
 fn test_escaped_string_values() {
     // Escaped string value: "Al\u0069ce" -> "Alice"
     let json = br#"{"name": "Al\u0069ce", "age": 30, "active": true}"#;
-    let mut parser = JsonParser::new(json);
+    let mut parser = JsonParser::<false>::new(json);
 
     let result = jit::try_deserialize::<SimpleStruct, JsonParser<'_>>(&mut parser);
 
@@ -637,7 +637,7 @@ fn test_tier2_simple_struct() {
 
     // Parse with Tier-2
     let json = br#"{"name": "Alice", "age": 30, "active": true}"#;
-    let mut parser = JsonParser::new(json);
+    let mut parser = JsonParser::<false>::new(json);
 
     let result = jit::try_deserialize_with_format_jit::<SimpleStruct, _>(&mut parser);
 
@@ -680,7 +680,7 @@ fn test_tier2_mixed_types() {
     assert!(jit::is_format_jit_compatible::<MixedTypes>());
 
     let json = br#"{"count": 42, "ratio": 2.5, "flag": false}"#;
-    let mut parser = JsonParser::new(json);
+    let mut parser = JsonParser::<false>::new(json);
 
     let result = jit::try_deserialize_with_format_jit::<MixedTypes, _>(&mut parser);
 
@@ -734,7 +734,7 @@ fn test_tier2_negative_cache() {
 
     // First attempt: should try to compile and fail
     {
-        let mut parser = JsonParser::new(json);
+        let mut parser = JsonParser::<false>::new(json);
         let result = jit::try_deserialize_format::<TupleStruct, _>(&mut parser);
         assert!(
             result.is_none(),
@@ -751,7 +751,7 @@ fn test_tier2_negative_cache() {
 
     // Second attempt: should hit negative cache (no recompilation)
     {
-        let mut parser = JsonParser::new(json);
+        let mut parser = JsonParser::<false>::new(json);
         let result = jit::try_deserialize_format::<TupleStruct, _>(&mut parser);
         assert!(result.is_none(), "Still unsupported");
     }
@@ -765,7 +765,7 @@ fn test_tier2_negative_cache() {
 
     // Third attempt: should also hit negative cache (TLS cache this time)
     {
-        let mut parser = JsonParser::new(json);
+        let mut parser = JsonParser::<false>::new(json);
         let result = jit::try_deserialize_format::<TupleStruct, _>(&mut parser);
         assert!(result.is_none(), "Still unsupported");
     }
@@ -811,7 +811,7 @@ fn test_tier2_cache_eviction() {
 
     // Attempt 1: Type1 (cache miss, compile, cache at capacity 1/3)
     {
-        let mut parser = JsonParser::new(json);
+        let mut parser = JsonParser::<false>::new(json);
         let _ = jit::try_deserialize_format::<Type1, _>(&mut parser);
     }
     let (_, _, _, evict1) = cache::get_cache_stats();
@@ -819,7 +819,7 @@ fn test_tier2_cache_eviction() {
 
     // Attempt 2: Type2 (cache miss, compile, cache at capacity 2/3)
     {
-        let mut parser = JsonParser::new(json);
+        let mut parser = JsonParser::<false>::new(json);
         let _ = jit::try_deserialize_format::<Type2, _>(&mut parser);
     }
     let (_, _, _, evict2) = cache::get_cache_stats();
@@ -827,7 +827,7 @@ fn test_tier2_cache_eviction() {
 
     // Attempt 3: Type3 (cache miss, compile, cache at capacity 3/3)
     {
-        let mut parser = JsonParser::new(json);
+        let mut parser = JsonParser::<false>::new(json);
         let _ = jit::try_deserialize_format::<Type3, _>(&mut parser);
     }
     let (_, _, _, evict3) = cache::get_cache_stats();
@@ -835,7 +835,7 @@ fn test_tier2_cache_eviction() {
 
     // Attempt 4: Type4 (cache miss, compile, triggers eviction of Type1)
     {
-        let mut parser = JsonParser::new(json);
+        let mut parser = JsonParser::<false>::new(json);
         let _ = jit::try_deserialize_format::<Type4, _>(&mut parser);
     }
     let (_, _, _, evict4) = cache::get_cache_stats();
@@ -844,7 +844,7 @@ fn test_tier2_cache_eviction() {
     // Attempt 5: Type1 again (should need to compile again, Type1 was evicted)
     cache::reset_cache_stats(); // Reset to measure this attempt cleanly
     {
-        let mut parser = JsonParser::new(json);
+        let mut parser = JsonParser::<false>::new(json);
         let _ = jit::try_deserialize_format::<Type1, _>(&mut parser);
     }
     let (_, neg, compile, evict5) = cache::get_cache_stats();
@@ -893,7 +893,7 @@ fn test_tier2_budget_guards() {
 
     // Attempt to compile - should be refused due to budget
     {
-        let mut parser = JsonParser::new(json);
+        let mut parser = JsonParser::<false>::new(json);
         let result = jit::try_deserialize_format::<LargeStruct, _>(&mut parser);
         assert!(result.is_none(), "Large struct should exceed budget");
     }
@@ -905,7 +905,7 @@ fn test_tier2_budget_guards() {
 
     // Second attempt should hit negative cache
     {
-        let mut parser = JsonParser::new(json);
+        let mut parser = JsonParser::<false>::new(json);
         let result = jit::try_deserialize_format::<LargeStruct, _>(&mut parser);
         assert!(result.is_none(), "Still refused");
     }
@@ -943,7 +943,7 @@ fn test_flatten_map_basic_capture() {
     assert!(jit::is_format_jit_compatible::<BasicCapture>());
 
     let json = br#"{"known_field": "test", "unknown1": 42, "unknown2": 99}"#;
-    let mut parser = JsonParser::new(json);
+    let mut parser = JsonParser::<false>::new(json);
 
     // Use format-specific JIT compilation (Tier-2)
     let result = jit::try_deserialize_format::<BasicCapture, _>(&mut parser);
@@ -976,7 +976,7 @@ fn test_flatten_map_no_unknown_keys() {
     assert!(jit::is_format_jit_compatible::<EmptyMapCase>());
 
     let json = br#"{"known_field": "test"}"#;
-    let mut parser = JsonParser::new(json);
+    let mut parser = JsonParser::<false>::new(json);
 
     let result = jit::try_deserialize_format::<EmptyMapCase, _>(&mut parser);
     assert!(result.is_some());
@@ -1009,7 +1009,7 @@ fn test_flatten_map_precedence() {
     assert!(jit::is_format_jit_compatible::<PrecedenceCase>());
 
     let json = br#"{"known_field": "test", "another_known": 42, "unknown1": "captured"}"#;
-    let mut parser = JsonParser::new(json);
+    let mut parser = JsonParser::<false>::new(json);
 
     let result = jit::try_deserialize_format::<PrecedenceCase, _>(&mut parser);
     assert!(result.is_some());
@@ -1060,7 +1060,7 @@ fn test_flatten_map_mix_with_flatten_struct() {
     assert!(jit::is_format_jit_compatible::<MixWithFlattenStruct>());
 
     let json = br#"{"normal_field": "test", "inner_field": "flattened", "unknown1": true, "unknown2": false}"#;
-    let mut parser = JsonParser::new(json);
+    let mut parser = JsonParser::<false>::new(json);
 
     let result = jit::try_deserialize_format::<MixWithFlattenStruct, _>(&mut parser);
     assert!(result.is_some());
@@ -1101,7 +1101,7 @@ fn test_flatten_map_with_vec_values() {
     assert!(jit::is_format_jit_compatible::<FlattenMapWithVec>());
 
     let json = br#"{"known": "test", "nums1": [1, 2, 3], "nums2": [4, 5]}"#;
-    let mut parser = JsonParser::new(json);
+    let mut parser = JsonParser::<false>::new(json);
 
     let result = jit::try_deserialize_format::<FlattenMapWithVec, _>(&mut parser);
     assert!(result.is_some(), "JIT should attempt deserialization");
@@ -1127,7 +1127,7 @@ fn test_flatten_map_with_vec_duplicate_keys() {
     assert!(jit::is_format_jit_compatible::<FlattenMapWithVec>());
 
     let json = br#"{"known": "test", "nums": [1, 2], "nums": [3, 4, 5]}"#;
-    let mut parser = JsonParser::new(json);
+    let mut parser = JsonParser::<false>::new(json);
 
     let result = jit::try_deserialize_format::<FlattenMapWithVec, _>(&mut parser);
     assert!(result.is_some());
@@ -1168,7 +1168,7 @@ fn test_flatten_map_with_struct_values() {
     assert!(jit::is_format_jit_compatible::<FlattenMapWithStruct>());
 
     let json = br#"{"id": 42, "data1": {"value": 10}, "data2": {"value": 20}}"#;
-    let mut parser = JsonParser::new(json);
+    let mut parser = JsonParser::<false>::new(json);
 
     let result = jit::try_deserialize_format::<FlattenMapWithStruct, _>(&mut parser);
     assert!(result.is_some());
@@ -1221,7 +1221,7 @@ fn test_flatten_map_with_flatten_enum() {
     }
 
     let json = br#"{"id": 42, "active": null, "custom1": "value1", "custom2": "value2"}"#;
-    let mut parser = JsonParser::new(json);
+    let mut parser = JsonParser::<false>::new(json);
 
     let result = jit::try_deserialize_format::<MixFlattenMapEnum, _>(&mut parser);
     assert!(result.is_some());
@@ -1277,7 +1277,7 @@ fn test_flatten_option_struct_present() {
     }
 
     let json = br#"{"name":"myapp","db_host":"localhost","db_port":5432}"#;
-    let mut parser = JsonParser::new(json);
+    let mut parser = JsonParser::<false>::new(json);
 
     let result = jit::try_deserialize_format::<AppConfigOptDb, _>(&mut parser);
     assert!(result.is_some());
@@ -1311,7 +1311,7 @@ fn test_flatten_option_struct_absent() {
     }
 
     let json = br#"{"name":"myapp"}"#;
-    let mut parser = JsonParser::new(json);
+    let mut parser = JsonParser::<false>::new(json);
 
     let result = jit::try_deserialize_format::<AppConfigOptDb, _>(&mut parser);
     assert!(result.is_some());
@@ -1350,7 +1350,7 @@ fn test_duplicate_key_string_field() {
     assert!(jit::is_format_jit_compatible::<DupString>());
 
     let json = br#"{"name": "first", "name": "second"}"#;
-    let mut parser = JsonParser::new(json);
+    let mut parser = JsonParser::<false>::new(json);
 
     let result = jit::try_deserialize_format::<DupString, _>(&mut parser);
     assert!(result.is_some(), "JIT should attempt deserialization");
@@ -1377,7 +1377,7 @@ fn test_duplicate_key_option_string_some_some() {
     assert!(jit::is_format_jit_compatible::<DupOptionString>());
 
     let json = br#"{"opt": "x", "opt": "y"}"#;
-    let mut parser = JsonParser::new(json);
+    let mut parser = JsonParser::<false>::new(json);
 
     let result = jit::try_deserialize_format::<DupOptionString, _>(&mut parser);
     assert!(result.is_some());
@@ -1399,7 +1399,7 @@ fn test_duplicate_key_option_string_some_null() {
     assert!(jit::is_format_jit_compatible::<DupOptionString>());
 
     let json = br#"{"opt": "x", "opt": null}"#;
-    let mut parser = JsonParser::new(json);
+    let mut parser = JsonParser::<false>::new(json);
 
     let result = jit::try_deserialize_format::<DupOptionString, _>(&mut parser);
     assert!(result.is_some());
@@ -1426,7 +1426,7 @@ fn test_duplicate_key_option_i32_some_null() {
     assert!(jit::is_format_jit_compatible::<DupOptionI32>());
 
     let json = br#"{"opt": 42, "opt": null}"#;
-    let mut parser = JsonParser::new(json);
+    let mut parser = JsonParser::<false>::new(json);
 
     let result = jit::try_deserialize_format::<DupOptionI32, _>(&mut parser);
     assert!(result.is_some());
@@ -1453,7 +1453,7 @@ fn test_duplicate_key_vec_field() {
     assert!(jit::is_format_jit_compatible::<DupVec>());
 
     let json = br#"{"ids": [1, 2, 3], "ids": [4, 5]}"#;
-    let mut parser = JsonParser::new(json);
+    let mut parser = JsonParser::<false>::new(json);
 
     let result = jit::try_deserialize_format::<DupVec, _>(&mut parser);
     assert!(result.is_some());
@@ -1482,7 +1482,7 @@ fn test_duplicate_key_multiple_fields() {
     assert!(jit::is_format_jit_compatible::<DupMultipleFields>());
 
     let json = br#"{"name":"a","opt":"x","ids":[1,2],"name":"b","opt":"y","ids":[3]}"#;
-    let mut parser = JsonParser::new(json);
+    let mut parser = JsonParser::<false>::new(json);
 
     let result = jit::try_deserialize_format::<DupMultipleFields, _>(&mut parser);
     assert!(result.is_some());
@@ -1569,7 +1569,7 @@ fn issue_1642_scalar_type_mismatch_rejected() {
 
     // String where u64 is expected - JIT should reject this
     let json = br#"{"id": "hello"}"#;
-    let mut parser = JsonParser::new(json);
+    let mut parser = JsonParser::<false>::new(json);
 
     // Try JIT deserialization - it should fail and return an error
     let result = jit::try_deserialize::<IdStruct, JsonParser<'_>>(&mut parser);
@@ -1593,7 +1593,7 @@ fn issue_1642_scalar_type_mismatch_rejected() {
 fn issue_1642_vec_element_type_mismatch_rejected() {
     // Array of strings where array of u64 is expected
     let json = br#"["hello", "world"]"#;
-    let mut parser = JsonParser::new(json);
+    let mut parser = JsonParser::<false>::new(json);
 
     let result = jit::try_deserialize::<Vec<u64>, JsonParser<'_>>(&mut parser);
 
@@ -1618,7 +1618,7 @@ fn issue_1642_correct_types_still_work() {
 
     // Correct: number where u64 is expected
     let json = br#"{"id": 12345}"#;
-    let mut parser = JsonParser::new(json);
+    let mut parser = JsonParser::<false>::new(json);
 
     let result = jit::try_deserialize::<IdStruct, JsonParser<'_>>(&mut parser);
 

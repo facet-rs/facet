@@ -861,6 +861,31 @@ pub fn decode_string_borrowed(buf: &[u8], start: usize, end: usize) -> Option<&s
     str::from_utf8(slice).ok()
 }
 
+/// Try to borrow a string directly from the buffer (zero-copy), without UTF-8 validation.
+///
+/// # Safety
+/// The caller must ensure the buffer contains valid UTF-8.
+///
+/// # Arguments
+/// * `buf` - The buffer containing valid UTF-8
+/// * `start` - Start index (after opening quote)
+/// * `end` - End index (before closing quote)
+pub unsafe fn decode_string_borrowed_unchecked(
+    buf: &[u8],
+    start: usize,
+    end: usize,
+) -> Option<&str> {
+    let slice = &buf[start..end];
+
+    // Quick check for backslashes
+    if slice.contains(&b'\\') {
+        return None;
+    }
+
+    // SAFETY: Caller guarantees the buffer is valid UTF-8
+    Some(unsafe { str::from_utf8_unchecked(slice) })
+}
+
 /// Decode a JSON string, returning either a borrowed or owned string.
 ///
 /// Uses `Cow<str>` to avoid allocation when possible.
@@ -876,6 +901,31 @@ pub fn decode_string<'a>(
         decode_string_owned(buf, start, end).map(Cow::Owned)
     } else {
         decode_string_borrowed(buf, start, end)
+            .map(Cow::Borrowed)
+            .ok_or_else(|| ScanError {
+                kind: ScanErrorKind::InvalidUtf8,
+                span: Span::new(start, end - start),
+            })
+    }
+}
+
+/// Decode a JSON string without UTF-8 validation, returning either a borrowed or owned string.
+///
+/// # Safety
+/// The caller must ensure the buffer contains valid UTF-8.
+pub unsafe fn decode_string_unchecked<'a>(
+    buf: &'a [u8],
+    start: usize,
+    end: usize,
+    has_escapes: bool,
+) -> Result<alloc::borrow::Cow<'a, str>, ScanError> {
+    use alloc::borrow::Cow;
+
+    if has_escapes {
+        decode_string_owned(buf, start, end).map(Cow::Owned)
+    } else {
+        // SAFETY: Caller guarantees buffer is valid UTF-8
+        unsafe { decode_string_borrowed_unchecked(buf, start, end) }
             .map(Cow::Borrowed)
             .ok_or_else(|| ScanError {
                 kind: ScanErrorKind::InvalidUtf8,

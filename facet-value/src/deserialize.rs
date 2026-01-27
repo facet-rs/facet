@@ -1,3 +1,4 @@
+#![allow(clippy::result_large_err)]
 //! Deserialize from a `Value` into any type implementing `Facet`.
 //!
 //! This module provides the inverse of serialization: given a `Value`, you can
