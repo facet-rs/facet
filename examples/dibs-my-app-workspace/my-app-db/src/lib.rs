@@ -59,7 +59,7 @@ pub struct Product {
     #[facet(dibs::default = "'draft'")]
     pub status: String, // 'draft', 'published', 'archived'
 
-    /// Whether this product is active for sale
+    /// Active for sale
     #[facet(dibs::default = "true", dibs::icon = "toggle-right")]
     pub active: bool,
 
@@ -106,7 +106,7 @@ pub struct ProductVariant {
     /// Variant attributes as JSON (e.g., {"size": "M", "color": "Blue"})
     pub attributes: Option<String>, // JSONB when we add support
 
-    /// Whether to track inventory for this variant
+    /// Track inventory for this variant?
     #[facet(dibs::default = "true")]
     pub manage_inventory: bool,
 
