@@ -148,8 +148,12 @@ mod eenum;
 /// Smart pointers (Box, Arc, etc.)
 mod pointer;
 
-// mod scalar_matches;
-// mod struct_simple;
+/// Check if a scalar matches a target shape
+mod scalar_matches;
+
+/// Simple struct deserialization (no flatten)
+mod struct_simple;
+
 // mod struct_with_flatten;
 // mod validate;
 

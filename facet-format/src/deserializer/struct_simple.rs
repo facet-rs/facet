@@ -1,10 +1,9 @@
-extern crate alloc;
-
 use facet_core::{Type, UserType};
-use facet_path::PathStep;
 use facet_reflect::Partial;
 
-use crate::{DeserializeError, DeserializeErrorKind, FormatDeserializer, ParseEvent, ScalarValue};
+use crate::{
+    DeserializeError, DeserializeErrorKind, FormatDeserializer, ParseEvent, ScalarValue, SpanGuard,
+};
 
 impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
     /// Deserialize a struct without flattened fields (simple case).
@@ -18,10 +17,13 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         let struct_def = match &wip.shape().ty {
             Type::User(UserType::Struct(def)) => def,
             _ => {
-                return Err(DeserializeError::unsupported(format!(
-                    "expected struct type but got {:?}",
-                    wip.shape().ty
-                )));
+                return Err(self.mk_err(
+                    &wip,
+                    DeserializeErrorKind::Unsupported {
+                        message: format!("expected struct type but got {:?}", wip.shape().ty)
+                            .into(),
+                    },
+                ));
             }
         };
 
@@ -36,10 +38,14 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         // Handle EOF (empty input / comment-only files): use Default if available
         if maybe_event.is_none() {
             if struct_type_has_default {
+                let _guard = SpanGuard::new(self.last_span);
                 wip = wip.set_default()?;
                 return Ok(wip);
             }
-            return Err(DeserializeError::unexpected_eof("value"));
+            return Err(self.mk_err(
+                &wip,
+                DeserializeErrorKind::UnexpectedEof { expected: "value" },
+            ));
         }
 
         // Handle Scalar(Null): use Default if available
@@ -47,6 +53,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
             && struct_type_has_default
         {
             let _ = self.expect_event("null")?;
+            let _guard = SpanGuard::new(self.last_span);
             wip = wip.set_default()?;
             return Ok(wip);
         }
@@ -54,24 +61,24 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         let event = self.expect_event("value")?;
 
         if !matches!(event, ParseEvent::StructStart(_)) {
-            return Err(DeserializeError {
-                span: Some(self.last_span),
-                path: None,
-                kind: DeserializeErrorKind::UnexpectedToken {
+            return Err(self.mk_err(
+                &wip,
+                DeserializeErrorKind::UnexpectedToken {
                     expected: "struct start",
                     got: event.kind_name().into(),
                 },
-            });
+            ));
         }
         let deny_unknown_fields = wip.shape().has_deny_unknown_fields_attr();
 
         // Track which fields have been set
         let num_fields = struct_def.fields.len();
-        let mut fields_set = alloc::vec![false; num_fields];
+        let mut fields_set = vec![false; num_fields];
         let mut ordered_field_index = 0usize;
 
         loop {
             let event = self.expect_event("value")?;
+            let _guard = SpanGuard::new(self.last_span);
             trace!(
                 ?event,
                 "deserialize_struct_simple: loop iteration, got event"
@@ -85,28 +92,10 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                     let idx = ordered_field_index;
                     ordered_field_index += 1;
                     if idx < num_fields {
-                        // Track path for error reporting
-                        self.push_path(PathStep::Field(idx as u32));
-
-                        wip = wip.begin_nth_field(idx)?;
-                        wip = match self.deserialize_into(wip) {
-                            Ok(wip) => wip,
-                            Err(e) => {
-                                // Only add path if error doesn't already have one
-                                // (inner errors already have more specific paths)
-                                let result = if e.path().is_some() {
-                                    e
-                                } else {
-                                    let path = self.path_clone();
-                                    e.with_path(path)
-                                };
-                                self.pop_path();
-                                return Err(result);
-                            }
-                        };
-                        wip = wip.end()?;
-
-                        self.pop_path();
+                        wip = wip
+                            .begin_nth_field(idx)?
+                            .with(|w| self.deserialize_into(w))?
+                            .end()?;
 
                         fields_set[idx] = true;
                     }
@@ -138,26 +127,8 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                             "deserialize_struct_simple: matched field"
                         );
 
-                        // Track path for error reporting
-                        self.push_path(PathStep::Field(idx as u32));
-
                         wip = wip.begin_nth_field(idx)?;
-
-                        wip = match self.deserialize_into(wip) {
-                            Ok(wip) => wip,
-                            Err(e) => {
-                                // Only add path if error doesn't already have one
-                                // (inner errors already have more specific paths)
-                                let result = if e.path().is_some() {
-                                    e
-                                } else {
-                                    let path = self.path_clone();
-                                    e.with_path(path)
-                                };
-                                self.pop_path();
-                                return Err(result);
-                            }
-                        };
+                        wip = self.deserialize_into(wip)?;
 
                         // Run validation on the field value before finalizing
                         #[cfg(feature = "validate")]
@@ -166,23 +137,21 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                         #[cfg(not(feature = "validate"))]
                         let _ = field;
 
+                        let _guard = SpanGuard::new(self.last_span);
                         wip = wip.end()?;
-
-                        self.pop_path();
 
                         fields_set[idx] = true;
                         continue;
                     }
 
                     if deny_unknown_fields {
-                        return Err(DeserializeError {
-                            span: Some(self.last_span),
-                            path: None,
-                            kind: DeserializeErrorKind::UnknownField {
+                        return Err(self.mk_err(
+                            &wip,
+                            DeserializeErrorKind::UnknownField {
                                 field: key_name.to_owned().into(),
                                 suggestion: None,
                             },
-                        });
+                        ));
                     } else {
                         // Unknown field - skip it
                         trace!(field_name = ?key_name, "deserialize_struct_simple: skipping unknown field");
@@ -190,14 +159,13 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                     }
                 }
                 other => {
-                    return Err(DeserializeError {
-                        span: Some(self.last_span),
-                        path: None,
-                        kind: DeserializeErrorKind::UnexpectedToken {
+                    return Err(self.mk_err(
+                        &wip,
+                        DeserializeErrorKind::UnexpectedToken {
                             expected: "field key or struct end",
                             got: other.kind_name().into(),
                         },
-                    });
+                    ));
                 }
             }
         }
