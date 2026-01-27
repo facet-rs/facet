@@ -216,15 +216,10 @@ impl<'input> FormatDeserializer<'input, true> {
     where
         T: Facet<'input>,
     {
-        let wip: Partial<'input, true> = Partial::alloc::<T>()
-            .map_err(|e| DeserializeError::bug_from_reflect(e, "allocating partial"))?;
+        let wip: Partial<'input, true> = Partial::alloc::<T>()?;
         let partial = self.deserialize_into(wip)?;
-        let heap_value: HeapValue<'input, true> = partial
-            .build()
-            .map_err(|e| DeserializeError::bug_from_reflect(e, "building heap value"))?;
-        heap_value
-            .materialize::<T>()
-            .map_err(|e| DeserializeError::bug_from_reflect(e, "materializing"))
+        let heap_value: HeapValue<'input, true> = partial.build()?;
+        Ok(heap_value.materialize::<T>()?)
     }
 
     /// Deserialize the next value in the stream into `T` (for backward compatibility).
@@ -244,23 +239,12 @@ impl<'input> FormatDeserializer<'input, true> {
     where
         T: Facet<'input>,
     {
-        let wip: Partial<'input, true> = Partial::alloc::<T>()
-            .map_err(|e| DeserializeError::bug_from_reflect(e, "allocating partial"))?;
-        let wip = wip
-            .begin_deferred()
-            .map_err(|e| DeserializeError::bug_from_reflect(e, "beginning deferred"))?;
-
+        let wip: Partial<'input, true> = Partial::alloc::<T>()?;
+        let wip = wip.begin_deferred()?;
         let partial = self.deserialize_into(wip)?;
-        let partial = partial
-            .finish_deferred()
-            .map_err(|e| DeserializeError::bug_from_reflect(e, "finishing deferred"))?;
-
-        let heap_value: HeapValue<'input, true> = partial
-            .build()
-            .map_err(|e| DeserializeError::bug_from_reflect(e, "building heap value"))?;
-        heap_value
-            .materialize::<T>()
-            .map_err(|e| DeserializeError::bug_from_reflect(e, "materializing"))
+        let partial = partial.finish_deferred()?;
+        let heap_value: HeapValue<'input, true> = partial.build()?;
+        Ok(heap_value.materialize::<T>()?)
     }
 }
 
@@ -276,15 +260,12 @@ impl<'input> FormatDeserializer<'input, false> {
         #[allow(unsafe_code)]
         let wip: Partial<'input, false> = unsafe {
             core::mem::transmute::<Partial<'static, false>, Partial<'input, false>>(
-                Partial::alloc_owned::<T>()
-                    .map_err(|e| DeserializeError::bug_from_reflect(e, "allocating owned"))?,
+                Partial::alloc_owned::<T>()?,
             )
         };
 
         let partial = self.deserialize_into(wip)?;
-        let heap_value: HeapValue<'input, false> = partial
-            .build()
-            .map_err(|e| DeserializeError::bug_from_reflect(e, "building"))?;
+        let heap_value: HeapValue<'input, false> = partial.build()?;
 
         // SAFETY: HeapValue<'input, false> contains no borrowed data because BORROW=false.
         // The transmute only changes the phantom lifetime marker.
@@ -293,9 +274,7 @@ impl<'input> FormatDeserializer<'input, false> {
             core::mem::transmute::<HeapValue<'input, false>, HeapValue<'static, false>>(heap_value)
         };
 
-        heap_value
-            .materialize::<T>()
-            .map_err(|e| DeserializeError::bug_from_reflect(e, "materializing"))
+        Ok(heap_value.materialize::<T>()?)
     }
 
     /// Deserialize the next value in the stream into `T` (for backward compatibility).
@@ -321,21 +300,13 @@ impl<'input> FormatDeserializer<'input, false> {
         #[allow(unsafe_code)]
         let wip: Partial<'input, false> = unsafe {
             core::mem::transmute::<Partial<'static, false>, Partial<'input, false>>(
-                Partial::alloc_owned::<T>()
-                    .map_err(|e| DeserializeError::bug_from_reflect(e, "allocating owned"))?,
+                Partial::alloc_owned::<T>()?,
             )
         };
-        let wip = wip
-            .begin_deferred()
-            .map_err(|e| DeserializeError::bug_from_reflect(e, "beginning deferred"))?;
-
+        let wip = wip.begin_deferred()?;
         let partial = self.deserialize_into(wip)?;
-        let partial = partial
-            .finish_deferred()
-            .map_err(|e| DeserializeError::bug_from_reflect(e, "finishing deferred"))?;
-        let heap_value: HeapValue<'input, false> = partial
-            .build()
-            .map_err(|e| DeserializeError::bug_from_reflect(e, "building"))?;
+        let partial = partial.finish_deferred()?;
+        let heap_value: HeapValue<'input, false> = partial.build()?;
 
         // SAFETY: HeapValue<'input, false> contains no borrowed data because BORROW=false.
         // The transmute only changes the phantom lifetime marker.
@@ -344,9 +315,7 @@ impl<'input> FormatDeserializer<'input, false> {
             core::mem::transmute::<HeapValue<'input, false>, HeapValue<'static, false>>(heap_value)
         };
 
-        heap_value
-            .materialize::<T>()
-            .map_err(|e| DeserializeError::bug_from_reflect(e, "materializing"))
+        Ok(heap_value.materialize::<T>()?)
     }
 
     /// Deserialize using an explicit source shape for parser hints.
@@ -366,26 +335,19 @@ impl<'input> FormatDeserializer<'input, false> {
         #[allow(unsafe_code)]
         let wip: Partial<'input, false> = unsafe {
             core::mem::transmute::<Partial<'static, false>, Partial<'input, false>>(
-                Partial::alloc_owned::<T>().map_err(|e| {
-                    DeserializeError::bug_from_reflect(e, "allocating partial value")
-                })?,
+                Partial::alloc_owned::<T>()?,
             )
         };
 
         let partial = self.deserialize_into_with_shape(wip, source_shape)?;
-
-        let heap_value: HeapValue<'input, false> = partial
-            .build()
-            .map_err(|e| DeserializeError::bug_from_reflect(e, "building heap value"))?;
+        let heap_value: HeapValue<'input, false> = partial.build()?;
 
         #[allow(unsafe_code)]
         let heap_value: HeapValue<'static, false> = unsafe {
             core::mem::transmute::<HeapValue<'input, false>, HeapValue<'static, false>>(heap_value)
         };
 
-        heap_value
-            .materialize::<T>()
-            .map_err(|e| DeserializeError::bug_from_reflect(e, "materializing deserialized value"))
+        Ok(heap_value.materialize::<T>()?)
     }
 }
 

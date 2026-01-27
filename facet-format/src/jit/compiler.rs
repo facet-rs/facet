@@ -16,7 +16,7 @@ use facet_core::{Def, Facet, Field, Shape, Type as FacetType, UserType};
 use super::format::make_c_sig;
 use super::helpers::{self, JitContext, ParserVTable};
 use super::jit_debug;
-use crate::{DeserializeError, FormatParser};
+use crate::{DeserializeError, DeserializeErrorKind, FormatParser};
 
 /// Cached JIT module(s) that own the compiled code memory.
 ///
@@ -145,15 +145,23 @@ impl<'de, T: Facet<'de>, P: FormatParser<'de>> CompiledDeserializer<T, P> {
             }
 
             if result == helpers::ERR_MISSING_REQUIRED_FIELD {
-                Err(DeserializeError::missing_field(
-                    "unknown", // TODO: Track which field is missing
-                    T::SHAPE.type_identifier,
-                ))
+                Err(DeserializeError {
+                    span: None, // JIT doesn't track span yet
+                    path: None, // JIT doesn't track path yet
+                    kind: DeserializeErrorKind::MissingField {
+                        field: "unknown".into(), // TODO: Track which field is missing
+                        container_shape: T::SHAPE,
+                    },
+                })
             } else {
-                Err(DeserializeError::unsupported(format!(
-                    "JIT deserialization failed with code {}",
-                    result
-                )))
+                Err(DeserializeError {
+                    span: None,
+                    path: None,
+                    kind: DeserializeErrorKind::Bug {
+                        error: format!("JIT deserialization failed with code {}", result).into(),
+                        context: "tier-1 JIT execution",
+                    },
+                })
             }
         }
     }

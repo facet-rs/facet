@@ -56,8 +56,8 @@ use super::Tier2Incompatibility;
 use super::format::{JitFormat, JitScratch, StructEncoding, make_c_sig};
 use super::helpers;
 use super::jit_debug;
-use crate::DeserializeError;
 use crate::jit::FormatJitParser;
+use crate::{DeserializeError, DeserializeErrorKind};
 
 mod support;
 pub use support::*;
@@ -268,9 +268,13 @@ impl<'de, T: Facet<'de>, P: FormatJitParser<'de>> CompiledFormatDeserializer<T, 
         // Get input slice and position from parser
         let input = parser.jit_input();
         let Some(pos) = parser.jit_pos() else {
-            return Err(DeserializeError::unsupported(
-                "Tier-2 JIT: parser has buffered state",
-            ));
+            return Err(DeserializeError {
+                span: None,
+                path: None,
+                kind: DeserializeErrorKind::Unsupported {
+                    message: "Tier-2 JIT: parser has buffered state".into(),
+                },
+            });
         };
 
         jit_debug!("[Tier-2] Executing: input_len={}, pos={}", input.len(), pos);
@@ -340,9 +344,13 @@ impl<'de, T: Facet<'de>, P: FormatJitParser<'de>> CompiledFormatDeserializer<T, 
             // T2_ERR_UNSUPPORTED means the format doesn't implement this operation
             // Return Unsupported so try_deserialize_format can convert to None and fallback
             if scratch.error_code == T2_ERR_UNSUPPORTED {
-                return Err(DeserializeError::unsupported(
-                    "Tier-2 format operation not implemented",
-                ));
+                return Err(DeserializeError {
+                    span: None,
+                    path: None,
+                    kind: DeserializeErrorKind::Unsupported {
+                        message: "Tier-2 format operation not implemented".into(),
+                    },
+                });
             }
 
             Err(parser.jit_error(input, scratch.error_pos, scratch.error_code))

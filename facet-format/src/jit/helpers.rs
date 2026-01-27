@@ -784,16 +784,20 @@ pub unsafe extern "C" fn jit_write_error_string(
     msg_ptr: *const u8,
     msg_len: usize,
 ) {
-    use crate::DeserializeError;
-    use facet_reflect::ReflectError;
+    use crate::{DeserializeError, DeserializeErrorKind};
 
     let msg_slice = unsafe { std::slice::from_raw_parts(msg_ptr, msg_len) };
     let msg_str = std::str::from_utf8(msg_slice).unwrap_or("invalid utf8 in error message");
 
-    // Create a reflection error with the message
-    // Using InvariantViolation since duplicate variant keys are an invariant violation
-    let error: DeserializeError =
-        DeserializeError::reflect(ReflectError::InvariantViolation { invariant: msg_str });
+    // Create a bug error with the message - this is an internal JIT error
+    let error = DeserializeError {
+        span: None,
+        path: None,
+        kind: DeserializeErrorKind::Bug {
+            error: msg_str.to_owned().into(),
+            context: "JIT deserialization",
+        },
+    };
 
     unsafe {
         let scratch_typed = scratch as *mut DeserializeError;

@@ -18,7 +18,6 @@ use crate::{DeserializeError, DeserializeErrorKind, FormatDeserializer, ScalarVa
 pub(crate) fn set_scalar_inner<'input, const BORROW: bool>(
     mut wip: Partial<'input, BORROW>,
     scalar: ScalarValue<'input>,
-    span: Option<Span>,
 ) -> Result<Partial<'input, BORROW>, SetScalarResult<'input, BORROW>> {
     let shape = wip.shape();
     let scalar_type = shape.scalar_type();
@@ -286,7 +285,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         wip: Partial<'input, BORROW>,
         scalar: ScalarValue<'input>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
-        match set_scalar_inner(wip, scalar, Some(self.last_span)) {
+        match set_scalar_inner(wip, scalar) {
             Ok(wip) => Ok(wip),
             Err(SetScalarResult::NeedsStringValue { wip, s }) => self.set_string_value(wip, s),
             Err(SetScalarResult::NeedsBytesValue { wip, b }) => self.set_bytes_value(wip, b),

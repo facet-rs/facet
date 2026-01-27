@@ -610,7 +610,7 @@ pub fn is_jit_compatible<'a, T: Facet<'a>>() -> bool {
 pub fn deserialize_with_fallback<'de, T, P>(mut parser: P) -> Result<T, DeserializeError>
 where
     T: Facet<'de>,
-    P: FormatParser<'de>,
+    P: FormatParser<'de> + 'static,
 {
     // Try JIT first
     if let Some(result) = try_deserialize::<T, P>(&mut parser) {
@@ -866,7 +866,7 @@ where
 pub fn deserialize_with_format_jit_fallback<'de, T, P>(mut parser: P) -> Result<T, DeserializeError>
 where
     T: Facet<'de>,
-    P: FormatJitParser<'de>,
+    P: FormatJitParser<'de> + 'static,
 {
     // Use the tier-tracking version to ensure stats are collected
     if let Some(result) = try_deserialize_with_format_jit::<T, P>(&mut parser) {

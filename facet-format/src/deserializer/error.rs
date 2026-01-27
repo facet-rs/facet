@@ -1,6 +1,6 @@
 use facet_core::Shape;
 use facet_path::Path;
-use facet_reflect::{ReflectError, ReflectErrorKind, Span};
+use facet_reflect::{AllocError, ReflectError, ReflectErrorKind, ShapeMismatchError, Span};
 use std::borrow::Cow;
 use std::cell::Cell;
 use std::fmt;
@@ -449,6 +449,34 @@ pub enum DeserializeErrorKind {
         context: &'static str,
     },
 
+    /// Memory allocation failed.
+    ///
+    /// **Level:** Deserializer (internal)
+    ///
+    /// Failed to allocate memory for the partial value being built.
+    /// This is rare but can happen with very large types or low memory.
+    Alloc {
+        /// The shape we tried to allocate.
+        shape: &'static Shape,
+
+        /// What operation was being attempted.
+        operation: &'static str,
+    },
+
+    /// Shape mismatch when materializing a value.
+    ///
+    /// **Level:** Deserializer (internal)
+    ///
+    /// The shape of the built value doesn't match the target type.
+    /// This indicates a bug in the deserializer logic.
+    Materialize {
+        /// The shape that was expected (the target type).
+        expected: &'static Shape,
+
+        /// The shape that was actually found.
+        actual: &'static Shape,
+    },
+
     /// Raw capture is not supported by the current parser.
     ///
     /// **Level:** Deserializer (`FormatDeserializer`)
@@ -561,6 +589,15 @@ impl fmt::Display for DeserializeErrorKind {
             DeserializeErrorKind::Bug { error, context } => {
                 write!(f, "internal error: {error} while {context}")
             }
+            DeserializeErrorKind::Alloc { shape, operation } => {
+                write!(f, "allocation failed for {shape}: {operation}")
+            }
+            DeserializeErrorKind::Materialize { expected, actual } => {
+                write!(
+                    f,
+                    "shape mismatch when materializing: expected {expected}, got {actual}"
+                )
+            }
             DeserializeErrorKind::RawCaptureNotSupported { shape: type_name } => {
                 write!(
                     f,
@@ -587,6 +624,32 @@ impl From<ReflectError> for DeserializeError {
     }
 }
 
+impl From<AllocError> for DeserializeError {
+    fn from(e: AllocError) -> Self {
+        DeserializeError {
+            span: None,
+            path: None,
+            kind: DeserializeErrorKind::Alloc {
+                shape: e.shape,
+                operation: e.operation,
+            },
+        }
+    }
+}
+
+impl From<ShapeMismatchError> for DeserializeError {
+    fn from(e: ShapeMismatchError) -> Self {
+        DeserializeError {
+            span: None,
+            path: None,
+            kind: DeserializeErrorKind::Materialize {
+                expected: e.expected,
+                actual: e.actual,
+            },
+        }
+    }
+}
+
 impl DeserializeErrorKind {
     /// Attach a span to this error kind, producing a full DeserializeError.
     #[inline]
@@ -603,19 +666,6 @@ impl DeserializeErrorKind {
 }
 
 impl DeserializeError {
-    /// Create a new bug error from a reflect error
-    #[inline]
-    pub fn bug_from_reflect(re: ReflectError, context: &'static str) -> Self {
-        DeserializeError {
-            span: None,
-            path: None,
-            kind: DeserializeErrorKind::Bug {
-                error: re.to_string().into(),
-                context,
-            },
-        }
-    }
-
     /// Add span information to this error.
     #[inline]
     pub fn set_span(mut self, span: Span) -> Self {
