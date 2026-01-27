@@ -80,7 +80,7 @@ enum MsgPackRejectionKind {
     /// Failed to read the request body.
     Body(axum_core::Error),
     /// Failed to deserialize the MsgPack data.
-    Deserialize(DeserializeError<MsgPackError>),
+    Deserialize(DeserializeError),
 }
 
 impl MsgPackRejection {

@@ -92,7 +92,7 @@ enum PostcardRejectionKind {
     /// Failed to read the request body.
     Body(axum_core::Error),
     /// Failed to deserialize the postcard data.
-    Deserialize(DeserializeError<PostcardError>),
+    Deserialize(DeserializeError),
 }
 
 impl PostcardRejection {

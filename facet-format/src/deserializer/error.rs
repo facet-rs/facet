@@ -9,6 +9,7 @@ use facet_reflect::{ReflectError, Span};
 #[derive(Debug)]
 pub enum DeserializeError {
     /// Error emitted by the format-specific parser.
+    // FIXME: change to be structured again
     Parser(String),
     /// Reflection error from Partial operations.
     Reflect {

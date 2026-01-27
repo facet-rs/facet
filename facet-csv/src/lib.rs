@@ -54,7 +54,7 @@ pub use facet_format::DeserializeError;
 /// assert_eq!(person.name, "Alice");
 /// assert_eq!(person.age, 30);
 /// ```
-pub fn from_str<T>(input: &str) -> Result<T, DeserializeError<CsvError>>
+pub fn from_str<T>(input: &str) -> Result<T, DeserializeError>
 where
     T: facet_core::Facet<'static>,
 {
@@ -83,9 +83,7 @@ where
 /// assert_eq!(person.name, "Alice");
 /// assert_eq!(person.age, 30);
 /// ```
-pub fn from_str_borrowed<'input, 'facet, T>(
-    input: &'input str,
-) -> Result<T, DeserializeError<CsvError>>
+pub fn from_str_borrowed<'input, 'facet, T>(input: &'input str) -> Result<T, DeserializeError>
 where
     T: facet_core::Facet<'facet>,
     'input: 'facet,
@@ -119,12 +117,12 @@ where
 /// assert_eq!(person.name, "Alice");
 /// assert_eq!(person.age, 30);
 /// ```
-pub fn from_slice<T>(input: &[u8]) -> Result<T, DeserializeError<CsvError>>
+pub fn from_slice<T>(input: &[u8]) -> Result<T, DeserializeError>
 where
     T: facet_core::Facet<'static>,
 {
     let s = core::str::from_utf8(input).map_err(|e| {
-        DeserializeError::Parser(CsvError::new(CsvErrorKind::InvalidUtf8 {
+        DeserializeError::parser(CsvError::new(CsvErrorKind::InvalidUtf8 {
             message: e.to_string(),
         }))
     })?;
@@ -154,15 +152,13 @@ where
 /// assert_eq!(person.name, "Alice");
 /// assert_eq!(person.age, 30);
 /// ```
-pub fn from_slice_borrowed<'input, 'facet, T>(
-    input: &'input [u8],
-) -> Result<T, DeserializeError<CsvError>>
+pub fn from_slice_borrowed<'input, 'facet, T>(input: &'input [u8]) -> Result<T, DeserializeError>
 where
     T: facet_core::Facet<'facet>,
     'input: 'facet,
 {
     let s = core::str::from_utf8(input).map_err(|e| {
-        DeserializeError::Parser(CsvError::new(CsvErrorKind::InvalidUtf8 {
+        DeserializeError::parser(CsvError::new(CsvErrorKind::InvalidUtf8 {
             message: e.to_string(),
         }))
     })?;

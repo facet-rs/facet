@@ -9,7 +9,7 @@ use libtest_mimic::{Arguments, Failed, Trial};
 struct Asn1Slice;
 
 impl FormatSuite for Asn1Slice {
-    type Error = DeserializeError<Asn1Error>;
+    type Error = DeserializeError;
 
     fn format_name() -> &'static str {
         "facet-asn1/slice"

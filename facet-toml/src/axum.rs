@@ -89,7 +89,7 @@ enum TomlRejectionKind {
     /// Failed to read the request body.
     Body(axum_core::Error),
     /// Failed to deserialize the TOML data.
-    Deserialize(DeserializeError<TomlError>),
+    Deserialize(DeserializeError),
 }
 
 impl TomlRejection {

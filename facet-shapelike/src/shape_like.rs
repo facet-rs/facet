@@ -92,9 +92,7 @@ impl From<&Attr> for AttrLike {
 }
 
 impl AttrLike {
-    pub fn parse_data<T: Facet<'static>>(
-        &self,
-    ) -> Result<T, facet_postcard::DeserializeError<facet_postcard::PostcardError>> {
+    pub fn parse_data<T: Facet<'static>>(&self) -> Result<T, facet_postcard::DeserializeError> {
         facet_postcard::from_slice(&self.data)
     }
 }

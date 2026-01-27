@@ -73,12 +73,12 @@ pub use facet_format::DeserializeError;
 /// assert_eq!(config.name, "myapp");
 /// assert_eq!(config.port, 8080);
 /// ```
-pub fn from_str<T>(input: &str) -> Result<T, DeserializeError<YamlError>>
+pub fn from_str<T>(input: &str) -> Result<T, DeserializeError>
 where
     T: facet_core::Facet<'static>,
 {
     use facet_format::FormatDeserializer;
-    let parser = YamlParser::new(input).map_err(DeserializeError::Parser)?;
+    let parser = YamlParser::new(input).map_err(DeserializeError::parser)?;
     let mut de = FormatDeserializer::new_owned(parser);
     de.deserialize_root()
 }
@@ -112,15 +112,13 @@ where
 /// assert_eq!(config.name, "myapp");
 /// assert_eq!(config.port, 8080);
 /// ```
-pub fn from_str_borrowed<'input, 'facet, T>(
-    input: &'input str,
-) -> Result<T, DeserializeError<YamlError>>
+pub fn from_str_borrowed<'input, 'facet, T>(input: &'input str) -> Result<T, DeserializeError>
 where
     T: facet_core::Facet<'facet>,
     'input: 'facet,
 {
     use facet_format::FormatDeserializer;
-    let parser = YamlParser::new(input).map_err(DeserializeError::Parser)?;
+    let parser = YamlParser::new(input).map_err(DeserializeError::parser)?;
     let mut de = FormatDeserializer::new(parser);
     de.deserialize_root()
 }
@@ -152,12 +150,12 @@ where
 /// assert_eq!(config.name, "myapp");
 /// assert_eq!(config.port, 8080);
 /// ```
-pub fn from_slice<T>(input: &[u8]) -> Result<T, DeserializeError<YamlError>>
+pub fn from_slice<T>(input: &[u8]) -> Result<T, DeserializeError>
 where
     T: facet_core::Facet<'static>,
 {
     let s = core::str::from_utf8(input).map_err(|e| {
-        DeserializeError::Parser(YamlError::without_span(YamlErrorKind::InvalidUtf8(e)))
+        DeserializeError::parser(YamlError::without_span(YamlErrorKind::InvalidUtf8(e)))
     })?;
     from_str(s)
 }
@@ -192,15 +190,13 @@ where
 /// assert_eq!(config.name, "myapp");
 /// assert_eq!(config.port, 8080);
 /// ```
-pub fn from_slice_borrowed<'input, 'facet, T>(
-    input: &'input [u8],
-) -> Result<T, DeserializeError<YamlError>>
+pub fn from_slice_borrowed<'input, 'facet, T>(input: &'input [u8]) -> Result<T, DeserializeError>
 where
     T: facet_core::Facet<'facet>,
     'input: 'facet,
 {
     let s = core::str::from_utf8(input).map_err(|e| {
-        DeserializeError::Parser(YamlError::without_span(YamlErrorKind::InvalidUtf8(e)))
+        DeserializeError::parser(YamlError::without_span(YamlErrorKind::InvalidUtf8(e)))
     })?;
     from_str_borrowed(s)
 }

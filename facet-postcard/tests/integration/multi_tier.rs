@@ -21,7 +21,7 @@ mod tier_helpers {
     use facet_format::{DeserializeError, FormatDeserializer};
 
     /// Deserialize using Tier-0 (pure reflection, no JIT)
-    pub fn deserialize_tier0<'de, T>(input: &'de [u8]) -> Result<T, DeserializeError<PostcardError>>
+    pub fn deserialize_tier0<'de, T>(input: &'de [u8]) -> Result<T, DeserializeError>
     where
         T: Facet<'de>,
     {
@@ -32,7 +32,7 @@ mod tier_helpers {
 
     /// Deserialize using Tier-1 (shape JIT with event stream)
     #[allow(dead_code)]
-    pub fn deserialize_tier1<'de, T>(input: &'de [u8]) -> Result<T, DeserializeError<PostcardError>>
+    pub fn deserialize_tier1<'de, T>(input: &'de [u8]) -> Result<T, DeserializeError>
     where
         T: Facet<'de> + core::fmt::Debug,
     {
@@ -46,7 +46,7 @@ mod tier_helpers {
     }
 
     /// Deserialize using Tier-2 (format JIT - direct byte parsing) into owned types.
-    pub fn deserialize_tier2<T>(input: &[u8]) -> Result<T, DeserializeError<PostcardError>>
+    pub fn deserialize_tier2<T>(input: &[u8]) -> Result<T, DeserializeError>
     where
         T: Facet<'static>,
     {

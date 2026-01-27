@@ -36,7 +36,7 @@ use crate::parser::PostcardParser;
 pub fn from_slice_with_shape(
     input: &[u8],
     source_shape: &'static Shape,
-) -> Result<Value, DeserializeError<PostcardError>> {
+) -> Result<Value, DeserializeError> {
     let parser = PostcardParser::new(input);
     let mut de = FormatDeserializer::new_owned(parser);
     de.deserialize_with_shape(source_shape)
@@ -78,8 +78,14 @@ mod tests {
         let value = from_slice_with_shape(&bytes, Point::SHAPE).unwrap();
 
         let obj = value.as_object().unwrap();
-        assert_eq!(obj.get("x").unwrap().as_number().unwrap().to_i64(), Some(10));
-        assert_eq!(obj.get("y").unwrap().as_number().unwrap().to_i64(), Some(20));
+        assert_eq!(
+            obj.get("x").unwrap().as_number().unwrap().to_i64(),
+            Some(10)
+        );
+        assert_eq!(
+            obj.get("y").unwrap().as_number().unwrap().to_i64(),
+            Some(20)
+        );
     }
 
     #[test]
@@ -131,7 +137,10 @@ mod tests {
         let bytes = crate::to_vec(&msg).unwrap();
         let value = from_slice_with_shape(&bytes, Message::SHAPE).unwrap();
         let obj = value.as_object().unwrap();
-        assert_eq!(obj.get("Text").unwrap().as_string().unwrap().as_str(), "hello");
+        assert_eq!(
+            obj.get("Text").unwrap().as_string().unwrap().as_str(),
+            "hello"
+        );
 
         // Struct variant
         let msg = Message::Point { x: 10, y: 20 };
@@ -139,7 +148,13 @@ mod tests {
         let value = from_slice_with_shape(&bytes, Message::SHAPE).unwrap();
         let obj = value.as_object().unwrap();
         let inner = obj.get("Point").unwrap().as_object().unwrap();
-        assert_eq!(inner.get("x").unwrap().as_number().unwrap().to_i64(), Some(10));
-        assert_eq!(inner.get("y").unwrap().as_number().unwrap().to_i64(), Some(20));
+        assert_eq!(
+            inner.get("x").unwrap().as_number().unwrap().to_i64(),
+            Some(10)
+        );
+        assert_eq!(
+            inner.get("y").unwrap().as_number().unwrap().to_i64(),
+            Some(20)
+        );
     }
 }

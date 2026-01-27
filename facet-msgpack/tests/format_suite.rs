@@ -9,7 +9,7 @@ use libtest_mimic::{Arguments, Failed, Trial};
 struct MsgPackSlice;
 
 impl FormatSuite for MsgPackSlice {
-    type Error = DeserializeError<MsgPackError>;
+    type Error = DeserializeError;
 
     fn format_name() -> &'static str {
         "facet-msgpack/slice"

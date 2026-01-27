@@ -90,7 +90,7 @@ pub use facet_format::DeserializeError;
 /// assert_eq!(point.x, 10);
 /// assert_eq!(point.y, 20);
 /// ```
-pub fn from_slice<T>(input: &[u8]) -> Result<T, DeserializeError<Asn1Error>>
+pub fn from_slice<T>(input: &[u8]) -> Result<T, DeserializeError>
 where
     T: facet_core::Facet<'static>,
 {
@@ -107,9 +107,7 @@ where
 ///
 /// Use this when you need maximum performance and can guarantee the input
 /// buffer outlives the deserialized value.
-pub fn from_slice_borrowed<'input, 'facet, T>(
-    input: &'input [u8],
-) -> Result<T, DeserializeError<Asn1Error>>
+pub fn from_slice_borrowed<'input, 'facet, T>(input: &'input [u8]) -> Result<T, DeserializeError>
 where
     T: facet_core::Facet<'facet>,
     'input: 'facet,

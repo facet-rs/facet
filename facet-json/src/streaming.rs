@@ -58,10 +58,10 @@ where
     {
         let mut buf = buffer.borrow_mut();
         let n = buf.refill(&mut reader).map_err(|e| {
-            DeserializeError::Parser(JsonError::without_span(JsonErrorKind::Io(e.to_string())))
+            DeserializeError::parser(JsonError::without_span(JsonErrorKind::Io(e.to_string())))
         })?;
         if n == 0 {
-            return Err(DeserializeError::Parser(JsonError::without_span(
+            return Err(DeserializeError::parser(JsonError::without_span(
                 JsonErrorKind::UnexpectedEof {
                     expected: "JSON value",
                 },
@@ -91,7 +91,7 @@ where
                 }
 
                 let _n = buf.refill(&mut reader).map_err(|e| {
-                    DeserializeError::Parser(JsonError::without_span(JsonErrorKind::Io(
+                    DeserializeError::parser(JsonError::without_span(JsonErrorKind::Io(
                         e.to_string(),
                     )))
                 })?;
@@ -120,10 +120,10 @@ where
     {
         let mut buf = buffer.borrow_mut();
         let n = buf.refill_tokio(&mut reader).await.map_err(|e| {
-            DeserializeError::Parser(JsonError::without_span(JsonErrorKind::Io(e.to_string())))
+            DeserializeError::parser(JsonError::without_span(JsonErrorKind::Io(e.to_string())))
         })?;
         if n == 0 {
-            return Err(DeserializeError::Parser(JsonError::without_span(
+            return Err(DeserializeError::parser(JsonError::without_span(
                 JsonErrorKind::UnexpectedEof {
                     expected: "JSON value",
                 },
@@ -147,7 +147,7 @@ where
                     buf.grow();
                 }
                 let _n = buf.refill_tokio(&mut reader).await.map_err(|e| {
-                    DeserializeError::Parser(JsonError::without_span(JsonErrorKind::Io(
+                    DeserializeError::parser(JsonError::without_span(JsonErrorKind::Io(
                         e.to_string(),
                     )))
                 })?;
@@ -176,10 +176,10 @@ where
     {
         let mut buf = buffer.borrow_mut();
         let n = buf.refill_futures(&mut reader).await.map_err(|e| {
-            DeserializeError::Parser(JsonError::without_span(JsonErrorKind::Io(e.to_string())))
+            DeserializeError::parser(JsonError::without_span(JsonErrorKind::Io(e.to_string())))
         })?;
         if n == 0 {
-            return Err(DeserializeError::Parser(JsonError::without_span(
+            return Err(DeserializeError::parser(JsonError::without_span(
                 JsonErrorKind::UnexpectedEof {
                     expected: "JSON value",
                 },
@@ -203,7 +203,7 @@ where
                     buf.grow();
                 }
                 let _n = buf.refill_futures(&mut reader).await.map_err(|e| {
-                    DeserializeError::Parser(JsonError::without_span(JsonErrorKind::Io(
+                    DeserializeError::parser(JsonError::without_span(JsonErrorKind::Io(
                         e.to_string(),
                     )))
                 })?;

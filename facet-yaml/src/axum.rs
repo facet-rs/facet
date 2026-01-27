@@ -80,7 +80,7 @@ enum YamlRejectionKind {
     /// Failed to read the request body.
     Body(axum_core::Error),
     /// Failed to deserialize the YAML data.
-    Deserialize(DeserializeError<YamlError>),
+    Deserialize(DeserializeError),
 }
 
 impl YamlRejection {
