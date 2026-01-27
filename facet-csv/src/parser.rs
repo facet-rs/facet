@@ -6,10 +6,10 @@ use alloc::borrow::Cow;
 use alloc::vec::Vec;
 
 use facet_format::{
-    ContainerKind, FormatParser, ParseEvent, SavePoint, ScalarTypeHint, ScalarValue,
+    ContainerKind, DeserializeErrorKind, FormatParser, ParseError, ParseEvent, SavePoint,
+    ScalarTypeHint, ScalarValue,
 };
-
-use crate::error::{CsvError, CsvErrorKind};
+use facet_reflect::Span;
 
 /// Parser state for CSV.
 #[derive(Debug, Clone)]
@@ -18,6 +18,14 @@ enum ParserState {
     Ready,
     /// Inside a struct, tracking remaining fields.
     InStruct { remaining_fields: usize },
+}
+
+/// A parsed field with its byte offset and length.
+#[derive(Debug, Clone, Copy)]
+struct FieldSpan<'de> {
+    value: &'de str,
+    offset: usize,
+    len: usize,
 }
 
 /// CSV parser that emits FormatParser events.
@@ -31,7 +39,8 @@ enum ParserState {
 /// - The parser uses `hint_struct_fields` to know how many fields to expect
 /// - Each field emits an `OrderedField` event followed by a `Scalar` value
 pub struct CsvParser<'de> {
-    fields: Vec<&'de str>,
+    input: &'de str,
+    fields: Vec<FieldSpan<'de>>,
     field_index: usize,
     state_stack: Vec<ParserState>,
     peeked: Option<ParseEvent<'de>>,
@@ -44,14 +53,17 @@ pub struct CsvParser<'de> {
 impl<'de> CsvParser<'de> {
     /// Create a new CSV parser for a single row.
     pub fn new(input: &'de str) -> Self {
-        let input = input.trim();
-        let fields: Vec<&str> = if input.is_empty() {
+        let trimmed = input.trim();
+        // Calculate the offset of the trimmed content within the original input
+        let trim_offset = input.len() - input.trim_start().len();
+        let fields = if trimmed.is_empty() {
             Vec::new()
         } else {
-            parse_csv_row(input)
+            parse_csv_row_with_spans(trimmed, trim_offset)
         };
 
         Self {
+            input,
             fields,
             field_index: 0,
             state_stack: Vec::new(),
@@ -66,20 +78,31 @@ impl<'de> CsvParser<'de> {
         self.state_stack.last().unwrap_or(&ParserState::Ready)
     }
 
+    /// Get the span for the current field, or EOF span if past the end.
+    fn current_field_span(&self) -> Span {
+        if self.field_index > 0 && self.field_index <= self.fields.len() {
+            let field = &self.fields[self.field_index - 1];
+            Span::new(field.offset, field.len)
+        } else {
+            // EOF span
+            Span::new(self.input.len(), 0)
+        }
+    }
+
     /// Generate the next event based on current state.
-    fn generate_next_event(&mut self) -> Result<ParseEvent<'de>, CsvError> {
+    fn generate_next_event(&mut self) -> Result<ParseEvent<'de>, ParseError> {
         // Check if we have a pending scalar type hint
         if let Some(hint) = self.pending_scalar_type.take() {
             if self.field_index > 0 && self.field_index <= self.fields.len() {
-                let field_value = self.fields[self.field_index - 1];
-                return Ok(ParseEvent::Scalar(parse_scalar_with_hint(
-                    field_value,
-                    hint,
-                )));
+                let field = &self.fields[self.field_index - 1];
+                return Ok(ParseEvent::Scalar(parse_scalar_with_hint(field.value, hint)));
             } else {
-                return Err(CsvError::new(CsvErrorKind::UnexpectedEof {
-                    expected: "field for scalar hint",
-                }));
+                return Err(ParseError::new(
+                    Span::new(self.input.len(), 0),
+                    DeserializeErrorKind::UnexpectedEof {
+                        expected: "field for scalar hint",
+                    },
+                ));
             }
         }
 
@@ -96,9 +119,13 @@ impl<'de> CsvParser<'de> {
             ParserState::Ready => {
                 // Without a hint, we can't know how many fields to expect
                 // Return an error - the driver should call hint_struct_fields first
-                Err(CsvError::new(CsvErrorKind::UnsupportedType {
-                    type_name: "CSV parser requires hint_struct_fields to know field count",
-                }))
+                Err(ParseError::new(
+                    Span::new(0, self.input.len()),
+                    DeserializeErrorKind::InvalidValue {
+                        message: "CSV parser requires hint_struct_fields to know field count"
+                            .into(),
+                    },
+                ))
             }
             ParserState::InStruct { remaining_fields } => {
                 if remaining_fields == 0 {
@@ -121,8 +148,8 @@ impl<'de> CsvParser<'de> {
     }
 }
 
-/// Parse a CSV row into fields, handling quoted fields.
-fn parse_csv_row(input: &str) -> Vec<&str> {
+/// Parse a CSV row into fields with spans, handling quoted fields.
+fn parse_csv_row_with_spans(input: &str, base_offset: usize) -> Vec<FieldSpan<'_>> {
     let mut fields = Vec::new();
     let mut in_quotes = false;
     let mut field_start = 0;
@@ -135,7 +162,12 @@ fn parse_csv_row(input: &str) -> Vec<&str> {
             }
             b',' if !in_quotes => {
                 let field = &input[field_start..i];
-                fields.push(unquote_field(field));
+                let (value, value_offset) = unquote_field_with_offset(field, field_start);
+                fields.push(FieldSpan {
+                    value,
+                    offset: base_offset + value_offset,
+                    len: value.len(),
+                });
                 field_start = i + 1;
             }
             _ => {}
@@ -144,18 +176,25 @@ fn parse_csv_row(input: &str) -> Vec<&str> {
 
     // Add the last field
     let field = &input[field_start..];
-    fields.push(unquote_field(field));
+    let (value, value_offset) = unquote_field_with_offset(field, field_start);
+    fields.push(FieldSpan {
+        value,
+        offset: base_offset + value_offset,
+        len: value.len(),
+    });
 
     fields
 }
 
-/// Remove surrounding quotes from a field if present.
-fn unquote_field(field: &str) -> &str {
+/// Remove surrounding quotes from a field if present, returning value and offset.
+fn unquote_field_with_offset(field: &str, field_start: usize) -> (&str, usize) {
+    let trim_start = field.len() - field.trim_start().len();
     let trimmed = field.trim();
     if trimmed.starts_with('"') && trimmed.ends_with('"') && trimmed.len() >= 2 {
-        &trimmed[1..trimmed.len() - 1]
+        // +1 for the opening quote
+        (&trimmed[1..trimmed.len() - 1], field_start + trim_start + 1)
     } else {
-        trimmed
+        (trimmed, field_start + trim_start)
     }
 }
 
@@ -220,9 +259,7 @@ fn parse_scalar_with_hint(value: &str, hint: ScalarTypeHint) -> ScalarValue<'_> 
 }
 
 impl<'de> FormatParser<'de> for CsvParser<'de> {
-    type Error = CsvError;
-
-    fn next_event(&mut self) -> Result<Option<ParseEvent<'de>>, Self::Error> {
+    fn next_event(&mut self) -> Result<Option<ParseEvent<'de>>, ParseError> {
         // Return peeked event if available
         if let Some(event) = self.peeked.take() {
             return Ok(Some(event));
@@ -230,14 +267,14 @@ impl<'de> FormatParser<'de> for CsvParser<'de> {
         Ok(Some(self.generate_next_event()?))
     }
 
-    fn peek_event(&mut self) -> Result<Option<ParseEvent<'de>>, Self::Error> {
+    fn peek_event(&mut self) -> Result<Option<ParseEvent<'de>>, ParseError> {
         if self.peeked.is_none() {
             self.peeked = Some(self.generate_next_event()?);
         }
         Ok(self.peeked.clone())
     }
 
-    fn skip_value(&mut self) -> Result<(), Self::Error> {
+    fn skip_value(&mut self) -> Result<(), ParseError> {
         // Skip the current field by advancing index
         if self.field_index < self.fields.len() {
             self.field_index += 1;
@@ -276,5 +313,9 @@ impl<'de> FormatParser<'de> for CsvParser<'de> {
         if matches!(self.peeked, Some(ParseEvent::OrderedField)) {
             self.peeked = None;
         }
+    }
+
+    fn current_span(&self) -> Option<Span> {
+        Some(self.current_field_span())
     }
 }

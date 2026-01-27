@@ -19,8 +19,6 @@
 
 extern crate alloc;
 
-use alloc::string::ToString;
-
 mod error;
 mod parser;
 mod serializer;
@@ -122,9 +120,14 @@ where
     T: facet_core::Facet<'static>,
 {
     let s = core::str::from_utf8(input).map_err(|e| {
-        DeserializeError::parser(CsvError::new(CsvErrorKind::InvalidUtf8 {
-            message: e.to_string(),
-        }))
+        let mut context = [0u8; 16];
+        let context_len = e.valid_up_to().min(16);
+        context[..context_len].copy_from_slice(&input[..context_len]);
+        facet_format::DeserializeErrorKind::InvalidUtf8 {
+            context,
+            context_len: context_len as u8,
+        }
+        .with_span(facet_reflect::Span::new(e.valid_up_to(), 1))
     })?;
     from_str(s)
 }
@@ -158,9 +161,14 @@ where
     'input: 'facet,
 {
     let s = core::str::from_utf8(input).map_err(|e| {
-        DeserializeError::parser(CsvError::new(CsvErrorKind::InvalidUtf8 {
-            message: e.to_string(),
-        }))
+        let mut context = [0u8; 16];
+        let context_len = e.valid_up_to().min(16);
+        context[..context_len].copy_from_slice(&input[..context_len]);
+        facet_format::DeserializeErrorKind::InvalidUtf8 {
+            context,
+            context_len: context_len as u8,
+        }
+        .with_span(facet_reflect::Span::new(e.valid_up_to(), 1))
     })?;
     from_str_borrowed(s)
 }
