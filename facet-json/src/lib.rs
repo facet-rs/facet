@@ -44,17 +44,11 @@ pub(crate) use debug;
 #[allow(unused_imports)]
 pub(crate) use trace;
 
-mod adapter;
 mod error;
 mod parser;
 mod raw_json;
-#[cfg(feature = "streaming")]
-mod scan_buffer;
 mod scanner;
 mod serializer;
-
-#[cfg(feature = "streaming")]
-mod streaming_adapter;
 
 #[cfg(feature = "jit")]
 pub mod jit;
@@ -443,12 +437,3 @@ where
     let mut de = FormatDeserializer::new(parser);
     de.deserialize_into(partial)
 }
-
-#[cfg(feature = "streaming")]
-mod streaming;
-#[cfg(feature = "futures-io")]
-pub use streaming::from_async_reader_futures;
-#[cfg(feature = "tokio")]
-pub use streaming::from_async_reader_tokio;
-#[cfg(feature = "streaming")]
-pub use streaming::from_reader;

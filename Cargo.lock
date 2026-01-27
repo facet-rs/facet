@@ -648,19 +648,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
-name = "corosensei"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b2b4c7e3e97730e6b0b8c5ff5ca82c663d1a645e4f630f4fa4c24e80626787e"
-dependencies = [
- "autocfg",
- "cfg-if",
- "libc",
- "scopeguard",
- "windows-sys 0.59.0",
-]
-
-[[package]]
 name = "cranelift"
 version = "0.128.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1132,7 +1119,6 @@ version = "0.43.2"
 dependencies = [
  "axum-core",
  "compact_str",
- "corosensei",
  "divan",
  "facet",
  "facet-core",
@@ -1140,7 +1126,6 @@ dependencies = [
  "facet-format-suite",
  "facet-reflect",
  "facet-testhelpers",
- "futures-io",
  "http",
  "http-body-util",
  "indoc",
@@ -1542,12 +1527,6 @@ name = "futures-core"
 version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "05f29059c0c2090612e8d742178b0580d2dc940c837851ad723096f87af6663e"
-
-[[package]]
-name = "futures-io"
-version = "0.3.31"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e5c1b78ca4aae1ac06c48a526a655760685149f0d465d21f37abfe57ce075c6"
 
 [[package]]
 name = "getrandom"
@@ -3036,7 +3015,6 @@ version = "1.49.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72a2903cd7736441aac9df9d7688bd0ce48edccaadf181c3b90be801e81d3d86"
 dependencies = [
- "bytes",
  "pin-project-lite",
  "tokio-macros",
 ]

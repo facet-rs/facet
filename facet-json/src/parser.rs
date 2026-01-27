@@ -1,39 +1,57 @@
 extern crate alloc;
 
-use alloc::{borrow::Cow, vec::Vec};
+use alloc::{borrow::Cow, format, vec::Vec};
 
 use facet_core::Facet as _;
 use facet_format::{
     ContainerKind, DeserializeErrorKind, FieldKey, FieldLocationHint, FormatParser, ParseError,
     ParseEvent, ParseEventKind, SavePoint, ScalarValue,
 };
+use facet_reflect::Span;
 
-use crate::adapter::{
-    AdapterError, AdapterErrorKind, SliceAdapter, SpannedAdapterToken, Token as AdapterToken,
-};
-use crate::scanner::ScanErrorKind;
+use crate::scanner::{self, ParsedNumber, ScanError, ScanErrorKind, Scanner, Token as ScanToken};
 
-/// Convert an AdapterError to a ParseError.
-fn adapter_error_to_parse_error(err: AdapterError) -> ParseError {
+/// Convert a ScanError to a ParseError.
+fn scan_error_to_parse_error(err: ScanError) -> ParseError {
     let kind = match err.kind {
-        AdapterErrorKind::Scan(scan_err) => match scan_err {
-            ScanErrorKind::UnexpectedChar(ch) => DeserializeErrorKind::UnexpectedChar {
-                ch,
-                expected: "valid JSON token",
-            },
-            ScanErrorKind::UnexpectedEof(expected) => {
-                DeserializeErrorKind::UnexpectedEof { expected }
-            }
-            ScanErrorKind::InvalidUtf8 => DeserializeErrorKind::InvalidUtf8 {
-                context: [0u8; 16],
-                context_len: 0,
-            },
+        ScanErrorKind::UnexpectedChar(ch) => DeserializeErrorKind::UnexpectedChar {
+            ch,
+            expected: "valid JSON token",
         },
-        AdapterErrorKind::NeedMore => DeserializeErrorKind::UnexpectedEof {
-            expected: "more data",
+        ScanErrorKind::UnexpectedEof(expected) => DeserializeErrorKind::UnexpectedEof { expected },
+        ScanErrorKind::InvalidUtf8 => DeserializeErrorKind::InvalidUtf8 {
+            context: [0u8; 16],
+            context_len: 0,
         },
     };
     ParseError::new(err.span, kind)
+}
+
+/// Materialized token ready for the parser.
+#[derive(Debug, Clone)]
+pub struct MaterializedToken<'de> {
+    pub kind: TokenKind<'de>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub enum TokenKind<'de> {
+    ObjectStart,
+    ObjectEnd,
+    ArrayStart,
+    ArrayEnd,
+    Colon,
+    Comma,
+    Null,
+    True,
+    False,
+    String(Cow<'de, str>),
+    U64(u64),
+    I64(i64),
+    U128(u128),
+    I128(i128),
+    F64(f64),
+    Eof,
 }
 
 /// Mutable parser state that can be saved and restored.
@@ -49,20 +67,20 @@ struct ParserState<'de> {
     root_started: bool,
     /// Whether the root value has fully completed.
     root_complete: bool,
-    /// Absolute offset (in bytes) of the next unread token.
-    current_offset: usize,
     /// Offset of the last token's start (span.offset).
     last_token_start: usize,
+    /// Scanner position (for save/restore).
+    scanner_pos: usize,
 }
 
-/// Streaming JSON parser backed by `facet-json`'s `SliceAdapter`.
+/// JSON parser using Scanner directly (no adapter layer).
 ///
 /// The const generic `TRUSTED_UTF8` controls UTF-8 validation:
 /// - `TRUSTED_UTF8=true`: skip UTF-8 validation (input came from `&str`)
 /// - `TRUSTED_UTF8=false`: validate UTF-8 (input came from `&[u8]`)
 pub struct JsonParser<'de, const TRUSTED_UTF8: bool = false> {
     input: &'de [u8],
-    adapter: SliceAdapter<'de, true, TRUSTED_UTF8>,
+    scanner: Scanner,
     state: ParserState<'de>,
     /// Counter for save points.
     save_counter: u64,
@@ -110,34 +128,114 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
     pub fn new(input: &'de [u8]) -> Self {
         Self {
             input,
-            adapter: SliceAdapter::new(input),
+            scanner: Scanner::new(),
             state: ParserState {
                 stack: Vec::new(),
                 event_peek: None,
                 peek_start_offset: None,
                 root_started: false,
                 root_complete: false,
-                current_offset: 0,
                 last_token_start: 0,
+                scanner_pos: 0,
             },
             save_counter: 0,
             saved_states: Vec::new(),
         }
     }
 
-    fn consume_token(&mut self) -> Result<SpannedAdapterToken<'de>, ParseError> {
-        let token = self
-            .adapter
-            .next_token()
-            .map_err(adapter_error_to_parse_error)?;
-        self.state.last_token_start = token.span.offset;
-        self.state.current_offset = token.span.offset + token.span.len;
-        Ok(token)
+    /// Scan and materialize the next token directly.
+    #[inline]
+    fn consume_token(&mut self) -> Result<MaterializedToken<'de>, ParseError> {
+        let mut spanned = self
+            .scanner
+            .next_token(self.input)
+            .map_err(scan_error_to_parse_error)?;
+
+        // Handle NeedMore by finalizing - we have full input so this is true EOF
+        if matches!(spanned.token, ScanToken::NeedMore { .. }) {
+            spanned = self
+                .scanner
+                .finalize_at_eof(self.input)
+                .map_err(scan_error_to_parse_error)?;
+        }
+
+        self.state.last_token_start = spanned.span.offset;
+        self.state.scanner_pos = self.scanner.pos();
+
+        let kind = match spanned.token {
+            ScanToken::ObjectStart => TokenKind::ObjectStart,
+            ScanToken::ObjectEnd => TokenKind::ObjectEnd,
+            ScanToken::ArrayStart => TokenKind::ArrayStart,
+            ScanToken::ArrayEnd => TokenKind::ArrayEnd,
+            ScanToken::Colon => TokenKind::Colon,
+            ScanToken::Comma => TokenKind::Comma,
+            ScanToken::Null => TokenKind::Null,
+            ScanToken::True => TokenKind::True,
+            ScanToken::False => TokenKind::False,
+            ScanToken::String {
+                start,
+                end,
+                has_escapes,
+            } => {
+                let s = if !has_escapes {
+                    if TRUSTED_UTF8 {
+                        // SAFETY: Caller guarantees input is valid UTF-8
+                        unsafe { scanner::decode_string_borrowed_unchecked(self.input, start, end) }
+                            .map(Cow::Borrowed)
+                            .ok_or_else(|| {
+                                ParseError::new(
+                                    spanned.span,
+                                    DeserializeErrorKind::InvalidUtf8 {
+                                        context: [0u8; 16],
+                                        context_len: 0,
+                                    },
+                                )
+                            })?
+                    } else {
+                        scanner::decode_string_borrowed(self.input, start, end)
+                            .map(Cow::Borrowed)
+                            .ok_or_else(|| {
+                                ParseError::new(
+                                    spanned.span,
+                                    DeserializeErrorKind::InvalidUtf8 {
+                                        context: [0u8; 16],
+                                        context_len: 0,
+                                    },
+                                )
+                            })?
+                    }
+                } else {
+                    Cow::Owned(
+                        scanner::decode_string_owned(self.input, start, end)
+                            .map_err(scan_error_to_parse_error)?,
+                    )
+                };
+                TokenKind::String(s)
+            }
+            ScanToken::Number { start, end, hint } => {
+                let parsed = scanner::parse_number(self.input, start, end, hint)
+                    .map_err(scan_error_to_parse_error)?;
+                match parsed {
+                    ParsedNumber::U64(n) => TokenKind::U64(n),
+                    ParsedNumber::I64(n) => TokenKind::I64(n),
+                    ParsedNumber::U128(n) => TokenKind::U128(n),
+                    ParsedNumber::I128(n) => TokenKind::I128(n),
+                    ParsedNumber::F64(n) => TokenKind::F64(n),
+                }
+            }
+            ScanToken::Eof => TokenKind::Eof,
+            ScanToken::NeedMore { .. } => unreachable!("handled above"),
+        };
+
+        Ok(MaterializedToken {
+            kind,
+            span: spanned.span,
+        })
     }
 
     fn expect_colon(&mut self) -> Result<(), ParseError> {
         let token = self.consume_token()?;
-        if !matches!(token.token, AdapterToken::Colon) {
+        if !matches!(token.kind, TokenKind::Colon) {
             return Err(self.unexpected(&token, "':'"));
         }
         Ok(())
@@ -145,7 +243,7 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
 
     fn parse_value_start_with_token(
         &mut self,
-        first: Option<SpannedAdapterToken<'de>>,
+        first: Option<MaterializedToken<'de>>,
     ) -> Result<ParseEvent<'de>, ParseError> {
         let token = match first {
             Some(tok) => tok,
@@ -155,8 +253,8 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
         self.state.root_started = true;
 
         let span = token.span;
-        match token.token {
-            AdapterToken::ObjectStart => {
+        match token.kind {
+            TokenKind::ObjectStart => {
                 self.state
                     .stack
                     .push(ContextState::Object(ObjectState::KeyOrEnd));
@@ -165,7 +263,7 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
                     span,
                 ))
             }
-            AdapterToken::ArrayStart => {
+            TokenKind::ArrayStart => {
                 self.state
                     .stack
                     .push(ContextState::Array(ArrayState::ValueOrEnd));
@@ -174,72 +272,70 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
                     span,
                 ))
             }
-            AdapterToken::String(s) => {
+            TokenKind::String(s) => {
                 let event = ParseEvent::new(ParseEventKind::Scalar(ScalarValue::Str(s)), span);
                 self.finish_value_in_parent();
                 Ok(event)
             }
-            AdapterToken::True => {
+            TokenKind::True => {
                 self.finish_value_in_parent();
                 Ok(ParseEvent::new(
                     ParseEventKind::Scalar(ScalarValue::Bool(true)),
                     span,
                 ))
             }
-            AdapterToken::False => {
+            TokenKind::False => {
                 self.finish_value_in_parent();
                 Ok(ParseEvent::new(
                     ParseEventKind::Scalar(ScalarValue::Bool(false)),
                     span,
                 ))
             }
-            AdapterToken::Null => {
+            TokenKind::Null => {
                 self.finish_value_in_parent();
                 Ok(ParseEvent::new(
                     ParseEventKind::Scalar(ScalarValue::Null),
                     span,
                 ))
             }
-            AdapterToken::U64(n) => {
+            TokenKind::U64(n) => {
                 self.finish_value_in_parent();
                 Ok(ParseEvent::new(
                     ParseEventKind::Scalar(ScalarValue::U64(n)),
                     span,
                 ))
             }
-            AdapterToken::I64(n) => {
+            TokenKind::I64(n) => {
                 self.finish_value_in_parent();
                 Ok(ParseEvent::new(
                     ParseEventKind::Scalar(ScalarValue::I64(n)),
                     span,
                 ))
             }
-            AdapterToken::U128(n) => {
+            TokenKind::U128(n) => {
                 self.finish_value_in_parent();
                 Ok(ParseEvent::new(
                     ParseEventKind::Scalar(ScalarValue::Str(Cow::Owned(n.to_string()))),
                     span,
                 ))
             }
-            AdapterToken::I128(n) => {
+            TokenKind::I128(n) => {
                 self.finish_value_in_parent();
                 Ok(ParseEvent::new(
                     ParseEventKind::Scalar(ScalarValue::Str(Cow::Owned(n.to_string()))),
                     span,
                 ))
             }
-            AdapterToken::F64(n) => {
+            TokenKind::F64(n) => {
                 self.finish_value_in_parent();
                 Ok(ParseEvent::new(
                     ParseEventKind::Scalar(ScalarValue::F64(n)),
                     span,
                 ))
             }
-            AdapterToken::ObjectEnd | AdapterToken::ArrayEnd => {
-                Err(self.unexpected(&token, "value"))
-            }
-            AdapterToken::Comma | AdapterToken::Colon => Err(self.unexpected(&token, "value")),
-            AdapterToken::Eof => Err(ParseError::new(
+            TokenKind::ObjectEnd | TokenKind::ArrayEnd => Err(self.unexpected(&token, "value")),
+            TokenKind::Comma | TokenKind::Colon => Err(self.unexpected(&token, "value")),
+            TokenKind::Eof => Err(ParseError::new(
                 span,
                 DeserializeErrorKind::UnexpectedEof { expected: "value" },
             )),
@@ -257,51 +353,110 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
         }
     }
 
-    fn unexpected(&self, token: &SpannedAdapterToken<'de>, expected: &'static str) -> ParseError {
+    fn unexpected(&self, token: &MaterializedToken<'de>, expected: &'static str) -> ParseError {
         ParseError::new(
             token.span,
             DeserializeErrorKind::UnexpectedToken {
-                got: format!("{:?}", token.token).into(),
+                got: format!("{:?}", token.kind).into(),
                 expected,
             },
         )
     }
 
-    fn consume_value_tokens(&mut self) -> Result<(), ParseError> {
-        let span = self.adapter.skip().map_err(adapter_error_to_parse_error)?;
-        self.state.current_offset = span.offset + span.len;
-        Ok(())
+    /// Skip a JSON value by scanning tokens without full materialization.
+    fn skip_value_tokens(&mut self) -> Result<Span, ParseError> {
+        let first = self
+            .scanner
+            .next_token(self.input)
+            .map_err(scan_error_to_parse_error)?;
+        let start = first.span.offset;
+        self.state.scanner_pos = self.scanner.pos();
+
+        match first.token {
+            ScanToken::ObjectStart => self.skip_container(DelimKind::Object)?,
+            ScanToken::ArrayStart => self.skip_container(DelimKind::Array)?,
+            ScanToken::String { .. }
+            | ScanToken::Number { .. }
+            | ScanToken::True
+            | ScanToken::False
+            | ScanToken::Null => {}
+            ScanToken::ObjectEnd | ScanToken::ArrayEnd | ScanToken::Comma | ScanToken::Colon => {
+                return Err(ParseError::new(
+                    first.span,
+                    DeserializeErrorKind::UnexpectedToken {
+                        got: format!("{:?}", first.token).into(),
+                        expected: "value",
+                    },
+                ));
+            }
+            ScanToken::Eof => {
+                return Err(ParseError::new(
+                    first.span,
+                    DeserializeErrorKind::UnexpectedEof { expected: "value" },
+                ));
+            }
+            ScanToken::NeedMore { .. } => {
+                return Err(ParseError::new(
+                    first.span,
+                    DeserializeErrorKind::UnexpectedEof {
+                        expected: "more data",
+                    },
+                ));
+            }
+        }
+
+        let end = self.scanner.pos();
+        Ok(Span::new(start, end - start))
     }
 
     fn skip_container(&mut self, start_kind: DelimKind) -> Result<(), ParseError> {
-        let mut stack = vec![start_kind];
+        let mut stack = alloc::vec![start_kind];
         while let Some(current) = stack.last().copied() {
-            let token = self.consume_token()?;
-            match token.token {
-                AdapterToken::ObjectStart => stack.push(DelimKind::Object),
-                AdapterToken::ArrayStart => stack.push(DelimKind::Array),
-                AdapterToken::ObjectEnd => {
+            let spanned = self
+                .scanner
+                .next_token(self.input)
+                .map_err(scan_error_to_parse_error)?;
+            self.state.scanner_pos = self.scanner.pos();
+
+            match spanned.token {
+                ScanToken::ObjectStart => stack.push(DelimKind::Object),
+                ScanToken::ArrayStart => stack.push(DelimKind::Array),
+                ScanToken::ObjectEnd => {
                     if current != DelimKind::Object {
-                        return Err(self.unexpected(&token, "'}'"));
+                        return Err(ParseError::new(
+                            spanned.span,
+                            DeserializeErrorKind::UnexpectedToken {
+                                got: "'}'".into(),
+                                expected: "']'",
+                            },
+                        ));
                     }
                     stack.pop();
-                    if stack.is_empty() {
-                        break;
-                    }
                 }
-                AdapterToken::ArrayEnd => {
+                ScanToken::ArrayEnd => {
                     if current != DelimKind::Array {
-                        return Err(self.unexpected(&token, "']'"));
+                        return Err(ParseError::new(
+                            spanned.span,
+                            DeserializeErrorKind::UnexpectedToken {
+                                got: "']'".into(),
+                                expected: "'}'",
+                            },
+                        ));
                     }
                     stack.pop();
-                    if stack.is_empty() {
-                        break;
-                    }
                 }
-                AdapterToken::Eof => {
+                ScanToken::Eof => {
                     return Err(ParseError::new(
-                        token.span,
+                        spanned.span,
                         DeserializeErrorKind::UnexpectedEof { expected: "value" },
+                    ));
+                }
+                ScanToken::NeedMore { .. } => {
+                    return Err(ParseError::new(
+                        spanned.span,
+                        DeserializeErrorKind::UnexpectedEof {
+                            expected: "more data",
+                        },
                     ));
                 }
                 _ => {}
@@ -336,13 +491,13 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
                 NextAction::ObjectKey => {
                     let token = self.consume_token()?;
                     let span = token.span;
-                    match token.token {
-                        AdapterToken::ObjectEnd => {
+                    match token.kind {
+                        TokenKind::ObjectEnd => {
                             self.state.stack.pop();
                             self.finish_value_in_parent();
                             return Ok(Some(ParseEvent::new(ParseEventKind::StructEnd, span)));
                         }
-                        AdapterToken::String(name) => {
+                        TokenKind::String(name) => {
                             self.expect_colon()?;
                             if let Some(ContextState::Object(state)) = self.state.stack.last_mut() {
                                 *state = ObjectState::Value;
@@ -355,7 +510,7 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
                                 span,
                             )));
                         }
-                        AdapterToken::Eof => {
+                        TokenKind::Eof => {
                             return Err(ParseError::new(
                                 span,
                                 DeserializeErrorKind::UnexpectedEof {
@@ -372,19 +527,19 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
                 NextAction::ObjectComma => {
                     let token = self.consume_token()?;
                     let span = token.span;
-                    match token.token {
-                        AdapterToken::Comma => {
+                    match token.kind {
+                        TokenKind::Comma => {
                             if let Some(ContextState::Object(state)) = self.state.stack.last_mut() {
                                 *state = ObjectState::KeyOrEnd;
                             }
                             continue;
                         }
-                        AdapterToken::ObjectEnd => {
+                        TokenKind::ObjectEnd => {
                             self.state.stack.pop();
                             self.finish_value_in_parent();
                             return Ok(Some(ParseEvent::new(ParseEventKind::StructEnd, span)));
                         }
-                        AdapterToken::Eof => {
+                        TokenKind::Eof => {
                             return Err(ParseError::new(
                                 span,
                                 DeserializeErrorKind::UnexpectedEof {
@@ -398,13 +553,13 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
                 NextAction::ArrayValue => {
                     let token = self.consume_token()?;
                     let span = token.span;
-                    match token.token {
-                        AdapterToken::ArrayEnd => {
+                    match token.kind {
+                        TokenKind::ArrayEnd => {
                             self.state.stack.pop();
                             self.finish_value_in_parent();
                             return Ok(Some(ParseEvent::new(ParseEventKind::SequenceEnd, span)));
                         }
-                        AdapterToken::Eof => {
+                        TokenKind::Eof => {
                             return Err(ParseError::new(
                                 span,
                                 DeserializeErrorKind::UnexpectedEof {
@@ -412,7 +567,7 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
                                 },
                             ));
                         }
-                        AdapterToken::Comma | AdapterToken::Colon => {
+                        TokenKind::Comma | TokenKind::Colon => {
                             return Err(self.unexpected(&token, "value or ']'"));
                         }
                         _ => {
@@ -423,19 +578,19 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
                 NextAction::ArrayComma => {
                     let token = self.consume_token()?;
                     let span = token.span;
-                    match token.token {
-                        AdapterToken::Comma => {
+                    match token.kind {
+                        TokenKind::Comma => {
                             if let Some(ContextState::Array(state)) = self.state.stack.last_mut() {
                                 *state = ArrayState::ValueOrEnd;
                             }
                             continue;
                         }
-                        AdapterToken::ArrayEnd => {
+                        TokenKind::ArrayEnd => {
                             self.state.stack.pop();
                             self.finish_value_in_parent();
                             return Ok(Some(ParseEvent::new(ParseEventKind::SequenceEnd, span)));
                         }
-                        AdapterToken::Eof => {
+                        TokenKind::Eof => {
                             return Err(ParseError::new(
                                 span,
                                 DeserializeErrorKind::UnexpectedEof {
@@ -454,6 +609,11 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
                 }
             }
         }
+    }
+
+    /// Get current position in input.
+    fn current_offset(&self) -> usize {
+        self.state.scanner_pos
     }
 }
 
@@ -518,8 +678,8 @@ impl<'de, const TRUSTED_UTF8: bool> FormatParser<'de> for JsonParser<'de, TRUSTE
         {
             let (_, saved) = self.saved_states.remove(pos);
             self.state = saved;
-            // Reset the adapter to the saved position
-            self.adapter = SliceAdapter::new_with_offset(self.input, self.state.current_offset);
+            // Reset the scanner to the saved position
+            self.scanner = Scanner::at_position(self.state.scanner_pos);
         }
     }
 
@@ -570,7 +730,7 @@ impl<'de, const TRUSTED_UTF8: bool> FormatParser<'de> for JsonParser<'de, TRUSTE
                 }
             }
         } else {
-            self.consume_value_tokens()?;
+            self.skip_value_tokens()?;
             self.finish_value_in_parent();
         }
         Ok(())
@@ -605,7 +765,7 @@ impl<'de, const TRUSTED_UTF8: bool> FormatParser<'de> for JsonParser<'de, TRUSTE
                 ParseEventKind::StructEnd | ParseEventKind::SequenceEnd => {
                     // This shouldn't happen in valid usage, but handle gracefully
                     return Err(ParseError::new(
-                        facet_reflect::Span::new(start, 0),
+                        Span::new(start, 0),
                         DeserializeErrorKind::InvalidValue {
                             message: "unexpected end event in capture_raw".into(),
                         },
@@ -619,21 +779,41 @@ impl<'de, const TRUSTED_UTF8: bool> FormatParser<'de> for JsonParser<'de, TRUSTE
             start
         } else {
             // Normal path: no peek, consume the first token
-            let first = self.consume_token()?;
+            let first = self
+                .scanner
+                .next_token(self.input)
+                .map_err(scan_error_to_parse_error)?;
             let start = first.span.offset;
+            self.state.scanner_pos = self.scanner.pos();
 
             // Skip the rest of the value if it's a container
             match first.token {
-                AdapterToken::ObjectStart => self.skip_container(DelimKind::Object)?,
-                AdapterToken::ArrayStart => self.skip_container(DelimKind::Array)?,
-                AdapterToken::ObjectEnd
-                | AdapterToken::ArrayEnd
-                | AdapterToken::Comma
-                | AdapterToken::Colon => return Err(self.unexpected(&first, "value")),
-                AdapterToken::Eof => {
+                ScanToken::ObjectStart => self.skip_container(DelimKind::Object)?,
+                ScanToken::ArrayStart => self.skip_container(DelimKind::Array)?,
+                ScanToken::ObjectEnd
+                | ScanToken::ArrayEnd
+                | ScanToken::Comma
+                | ScanToken::Colon => {
+                    return Err(ParseError::new(
+                        first.span,
+                        DeserializeErrorKind::UnexpectedToken {
+                            got: format!("{:?}", first.token).into(),
+                            expected: "value",
+                        },
+                    ));
+                }
+                ScanToken::Eof => {
                     return Err(ParseError::new(
                         first.span,
                         DeserializeErrorKind::UnexpectedEof { expected: "value" },
+                    ));
+                }
+                ScanToken::NeedMore { .. } => {
+                    return Err(ParseError::new(
+                        first.span,
+                        DeserializeErrorKind::UnexpectedEof {
+                            expected: "more data",
+                        },
                     ));
                 }
                 _ => {
@@ -645,15 +825,15 @@ impl<'de, const TRUSTED_UTF8: bool> FormatParser<'de> for JsonParser<'de, TRUSTE
         };
 
         // Get end position
-        let end_offset = self.state.current_offset;
+        let end_offset = self.current_offset();
 
         // Extract the raw slice and convert to str
         let raw_bytes = &self.input[start_offset..end_offset];
         let raw_str = core::str::from_utf8(raw_bytes).map_err(|e| {
             ParseError::new(
-                facet_reflect::Span::new(start_offset, end_offset - start_offset),
+                Span::new(start_offset, end_offset - start_offset),
                 DeserializeErrorKind::InvalidValue {
-                    message: alloc::format!("invalid UTF-8 in raw JSON: {}", e).into(),
+                    message: format!("invalid UTF-8 in raw JSON: {}", e).into(),
                 },
             )
         })?;
@@ -666,12 +846,12 @@ impl<'de, const TRUSTED_UTF8: bool> FormatParser<'de> for JsonParser<'de, TRUSTE
         Some("json")
     }
 
-    fn current_span(&self) -> Option<facet_reflect::Span> {
+    fn current_span(&self) -> Option<Span> {
         // Return the span of the most recently consumed token
         // This is used by metadata containers to track source locations
         let offset = self.state.last_token_start;
-        let len = self.state.current_offset.saturating_sub(offset);
-        Some(facet_reflect::Span::new(offset, len))
+        let len = self.current_offset().saturating_sub(offset);
+        Some(Span::new(offset, len))
     }
 }
 
@@ -704,17 +884,13 @@ impl<'de> facet_format::FormatJitParser<'de> for JsonParser<'de> {
             // We've started parsing root but haven't finished - not safe
             return None;
         }
-        Some(self.state.current_offset)
+        Some(self.current_offset())
     }
 
     fn jit_set_pos(&mut self, pos: usize) {
-        // Update the offset
-        self.state.current_offset = pos;
-
-        // Reset the adapter to start from the new position
-        // We need to create a new adapter pointing to the remaining input
-        // but preserving absolute offset semantics
-        self.adapter = SliceAdapter::new_with_offset(self.input, pos);
+        // Update the scanner position
+        self.state.scanner_pos = pos;
+        self.scanner = Scanner::at_position(pos);
 
         // Clear any peeked event and its offset
         self.state.event_peek = None;
@@ -736,8 +912,6 @@ impl<'de> facet_format::FormatJitParser<'de> for JsonParser<'de> {
     }
 
     fn jit_error(&self, _input: &'de [u8], error_pos: usize, error_code: i32) -> ParseError {
-        use facet_reflect::Span;
-
         let kind = match error_code {
             -100 => DeserializeErrorKind::UnexpectedEof { expected: "value" },
             -101 => DeserializeErrorKind::UnexpectedToken {
@@ -753,7 +927,7 @@ impl<'de> facet_format::FormatJitParser<'de> for JsonParser<'de> {
                 expected: "',' or ']'",
             },
             _ => DeserializeErrorKind::InvalidValue {
-                message: alloc::format!("Tier-2 JIT error code: {}", error_code).into(),
+                message: format!("Tier-2 JIT error code: {}", error_code).into(),
             },
         };
 

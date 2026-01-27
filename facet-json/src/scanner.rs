@@ -160,6 +160,7 @@ impl Scanner {
     }
 
     /// Set position (used after buffer operations)
+    #[allow(dead_code)]
     pub const fn set_pos(&mut self, pos: usize) {
         self.pos = pos;
     }
@@ -889,6 +890,7 @@ pub unsafe fn decode_string_borrowed_unchecked(
 /// Decode a JSON string, returning either a borrowed or owned string.
 ///
 /// Uses `Cow<str>` to avoid allocation when possible.
+#[allow(dead_code)]
 pub fn decode_string<'a>(
     buf: &'a [u8],
     start: usize,
@@ -913,6 +915,7 @@ pub fn decode_string<'a>(
 ///
 /// # Safety
 /// The caller must ensure the buffer contains valid UTF-8.
+#[allow(dead_code)]
 pub unsafe fn decode_string_unchecked<'a>(
     buf: &'a [u8],
     start: usize,
