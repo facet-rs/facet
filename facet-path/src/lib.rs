@@ -232,6 +232,12 @@ impl Path {
     }
 }
 
+impl core::fmt::Display for Path {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(&self.format())
+    }
+}
+
 /// Get the field at the given index, handling both structs and enum variants.
 fn get_field_with_variant(
     shape: &Shape,
