@@ -196,8 +196,9 @@ pub enum DeserializeErrorKind {
     UnknownVariant {
         /// The unknown variant name from the input.
         variant: Cow<'static, str>,
-        /// The enum type name.
-        enum_name: &'static str,
+
+        /// The enum type.
+        enum_shape: &'static Shape,
     },
 
     /// No variant matched for untagged enum.
@@ -214,8 +215,8 @@ pub enum DeserializeErrorKind {
     /// no matching variant for enum `Value` with array input
     /// ```
     NoMatchingVariant {
-        /// The enum type name.
-        enum_name: &'static str,
+        /// The enum type.
+        enum_shape: &'static Shape,
         /// What kind of input was provided (e.g., "array", "object", "string").
         input_kind: &'static str,
     },
@@ -236,7 +237,7 @@ pub enum DeserializeErrorKind {
         /// The field that is missing.
         field: &'static str,
         /// The type that contains the field.
-        type_name: &'static str,
+        container_shape: &'static Shape,
     },
 
     /// Duplicate field in input.
@@ -467,20 +468,26 @@ impl fmt::Display for DeserializeErrorKind {
                 }
                 Ok(())
             }
-            DeserializeErrorKind::UnknownVariant { variant, enum_name } => {
-                write!(f, "unknown variant `{variant}` for enum `{enum_name}`")
+            DeserializeErrorKind::UnknownVariant {
+                variant,
+                enum_shape,
+            } => {
+                write!(f, "unknown variant `{variant}` for enum `{enum_shape}`")
             }
             DeserializeErrorKind::NoMatchingVariant {
-                enum_name,
+                enum_shape,
                 input_kind,
             } => {
                 write!(
                     f,
-                    "no matching variant found for enum `{enum_name}` with {input_kind} input"
+                    "no matching variant found for enum `{enum_shape}` with {input_kind} input"
                 )
             }
-            DeserializeErrorKind::MissingField { field, type_name } => {
-                write!(f, "missing field `{field}` in type `{type_name}`")
+            DeserializeErrorKind::MissingField {
+                field,
+                container_shape,
+            } => {
+                write!(f, "missing field `{field}` in type `{container_shape}`")
             }
             DeserializeErrorKind::DuplicateField { field, .. } => {
                 write!(f, "duplicate field `{field}`")

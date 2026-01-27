@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use facet_core::{Characteristic, Def, EnumType, Field, StructKind, Type, UserType};
+use facet_core::{Characteristic, Def, Field, StructKind, Type, UserType};
 use facet_reflect::Partial;
 use facet_solver::VariantsByFormat;
 
@@ -402,13 +402,14 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         let evidence = self.collect_evidence()?;
 
         let variant_name = find_tag_value(&evidence, tag_key)
-            .ok_or(DeserializeError {
-                span: Some(self.last_span),
-                path: None,
-                kind: DeserializeErrorKind::MissingField {
-                    field: tag_key,
-                    type_name: "internally tagged enum",
-                },
+            .ok_or_else(|| {
+                self.mk_err(
+                    &wip,
+                    DeserializeErrorKind::MissingField {
+                        field: tag_key,
+                        container_shape: wip.shape(),
+                    },
+                )
             })?
             .to_string();
 
@@ -645,8 +646,8 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                 self.mk_err(
                     &wip,
                     DeserializeErrorKind::UnknownVariant {
-                        variant: variant_name.clone(),
-                        enum_name: wip.shape().type_identifier,
+                        variant: variant_name.to_owned(),
+                        enum_shape: wip.shape(),
                     },
                 )
             })?;
@@ -1005,14 +1006,13 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
             } else if field.should_skip_deserializing() {
                 wip = wip.set_nth_field_to_default(idx)?;
             } else {
-                return Err(DeserializeError {
-                    span: Some(self.last_span),
-                    path: None,
-                    kind: DeserializeErrorKind::MissingField {
+                return Err(self.mk_err(
+                    &wip,
+                    DeserializeErrorKind::MissingField {
                         field: field.name,
-                        type_name: "variant struct",
+                        container_shape: wip.shape(),
                     },
-                });
+                ));
             }
         }
 
@@ -1029,13 +1029,14 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         let evidence = self.collect_evidence()?;
 
         let variant_name = find_tag_value(&evidence, tag_key)
-            .ok_or(DeserializeError {
-                span: Some(self.last_span),
-                path: None,
-                kind: DeserializeErrorKind::MissingField {
-                    field: tag_key,
-                    type_name: "adjacently tagged enum",
-                },
+            .ok_or_else(|| {
+                self.mk_err(
+                    &wip,
+                    DeserializeErrorKind::MissingField {
+                        field: tag_key,
+                        container_shape: wip.shape(),
+                    },
+                )
             })?
             .to_string();
 
@@ -1117,14 +1118,13 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                 && v.data.kind != StructKind::Unit
                 && !v.data.fields.is_empty()
             {
-                return Err(DeserializeError {
-                    span: Some(self.last_span),
-                    path: None,
-                    kind: DeserializeErrorKind::MissingField {
+                return Err(self.mk_err(
+                    &wip,
+                    DeserializeErrorKind::MissingField {
                         field: content_key,
-                        type_name: "non-unit variant",
+                        container_shape: wip.shape(),
                     },
-                });
+                ));
             }
         }
 
@@ -1408,14 +1408,13 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                         } else if field.should_skip_deserializing() {
                             wip = wip.set_nth_field_to_default(idx)?;
                         } else {
-                            return Err(DeserializeError {
-                                span: Some(self.last_span),
-                                path: None,
-                                kind: DeserializeErrorKind::MissingField {
+                            return Err(self.mk_err(
+                                &wip,
+                                DeserializeErrorKind::MissingField {
                                     field: field.name,
-                                    type_name: "variant struct",
+                                    container_shape: wip.shape(),
                                 },
-                            });
+                            ));
                         }
                     }
                 }
@@ -1538,7 +1537,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                         crate::SolveVariantError::NoMatch => self.mk_err(
                             &wip,
                             DeserializeErrorKind::NoMatchingVariant {
-                                enum_name: shape.type_identifier,
+                                enum_shape: shape,
                                 input_kind: "struct",
                             },
                         ),
