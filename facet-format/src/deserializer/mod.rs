@@ -10,6 +10,9 @@ pub use error::*;
 
 /// Convert a ReflectError to a DeserializeError with span and path.
 ///
+/// The path is extracted from the ReflectError (which now always contains one),
+/// and the span comes from the deserializer's last_span.
+///
 /// # Usage
 /// ```ignore
 /// wip = reflect!(self, wip, begin_nth_field(0), "begin Raw's inner field");
@@ -17,13 +20,12 @@ pub use error::*;
 /// ```
 macro_rules! reflect {
     ($self:expr, $wip:expr, $method:ident($($args:expr),*), $context:literal) => {{
-        let path = $wip.path();
         $wip.$method($($args),*).map_err(|e| {
             crate::DeserializeError {
                 span: Some($self.last_span),
-                path: Some(path),
+                path: Some(e.path),
                 kind: crate::DeserializeErrorKind::Reflect {
-                    inner: e,
+                    kind: e.kind,
                     context: $context,
                 },
             }

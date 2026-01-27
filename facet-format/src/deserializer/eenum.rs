@@ -80,9 +80,9 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                     wip.select_variant(discriminant)
                         .map_err(|error| DeserializeError {
                             span: Some(span),
-                            path: None,
+                            path: Some(error.path),
                             kind: DeserializeErrorKind::Reflect {
-                                inner: error,
+                                kind: error.kind,
                                 context: "selecting numeric enum variant",
                             },
                         })?
@@ -91,9 +91,9 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                     wip.select_variant(discriminant as i64)
                         .map_err(|error| DeserializeError {
                             span: Some(span),
-                            path: None,
+                            path: Some(error.path),
                             kind: DeserializeErrorKind::Reflect {
-                                inner: error,
+                                kind: error.kind,
                                 context: "selecting numeric enum variant",
                             },
                         })?
@@ -110,9 +110,9 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                     wip.select_variant(discriminant)
                         .map_err(|error| DeserializeError {
                             span: Some(span),
-                            path: None,
+                            path: Some(error.path),
                             kind: DeserializeErrorKind::Reflect {
-                                inner: error,
+                                kind: error.kind,
                                 context: "selecting numeric enum variant from string",
                             },
                         })?

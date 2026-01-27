@@ -303,9 +303,9 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         facet_dessert::set_string_value(wip, s, Some(self.last_span)).map_err(|e| match e {
             facet_dessert::DessertError::Reflect { error, span } => DeserializeError {
                 span,
-                path: None,
+                path: Some(error.path),
                 kind: DeserializeErrorKind::Reflect {
-                    inner: error,
+                    kind: error.kind,
                     context: "",
                 },
             },
@@ -331,9 +331,9 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         facet_dessert::set_bytes_value(wip, b, Some(self.last_span)).map_err(|e| match e {
             facet_dessert::DessertError::Reflect { error, span } => DeserializeError {
                 span,
-                path: None,
+                path: Some(error.path),
                 kind: DeserializeErrorKind::Reflect {
-                    inner: error,
+                    kind: error.kind,
                     context: "",
                 },
             },

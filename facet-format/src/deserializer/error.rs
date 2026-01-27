@@ -1,8 +1,50 @@
 use facet_core::Shape;
 use facet_path::Path;
-use facet_reflect::{ReflectError, Span};
+use facet_reflect::{ReflectError, ReflectErrorKind, Span};
 use std::borrow::Cow;
+use std::cell::Cell;
 use std::fmt;
+
+thread_local! {
+    /// Thread-local storage for the current span during deserialization.
+    /// This is set by SpanGuard before calling Partial methods,
+    /// allowing the From<ReflectError> impl to capture the span automatically.
+    static CURRENT_SPAN: Cell<Option<Span>> = const { Cell::new(None) };
+}
+
+/// RAII guard that sets the current span for error reporting.
+///
+/// When dropped, restores the previous span value.
+/// The `From<ReflectError>` impl will panic if no span is set.
+pub struct SpanGuard {
+    prev: Option<Span>,
+}
+
+impl SpanGuard {
+    /// Create a new span guard, setting the current span.
+    #[inline]
+    pub fn new(span: Span) -> Self {
+        let prev = CURRENT_SPAN.with(|cell| cell.replace(Some(span)));
+        Self { prev }
+    }
+}
+
+impl Drop for SpanGuard {
+    fn drop(&mut self) {
+        CURRENT_SPAN.with(|cell| cell.set(self.prev));
+    }
+}
+
+/// Get the current span for error reporting.
+/// Panics if no span is set (i.e., no SpanGuard is active).
+#[inline]
+fn current_span() -> Span {
+    CURRENT_SPAN.with(|cell| {
+        cell.get().expect(
+            "current_span called without an active SpanGuard - this is a bug in the deserializer",
+        )
+    })
+}
 
 /// Error produced by the format deserializer.
 ///
@@ -325,9 +367,13 @@ pub enum DeserializeErrorKind {
     ///
     /// These errors come from `Partial` operations like field access,
     /// variant selection, or type building.
+    ///
+    /// Note: The path is stored at the `DeserializeError` level, not here.
+    /// When converting from `ReflectError`, the path is extracted and stored
+    /// in `DeserializeError.path`.
     Reflect {
-        /// The error we got
-        inner: ReflectError,
+        /// The specific kind of reflection error
+        kind: ReflectErrorKind,
 
         /// What we were trying to do
         context: &'static str,
@@ -499,11 +545,11 @@ impl fmt::Display for DeserializeErrorKind {
                 write!(f, "invalid value: {message}")
             }
             DeserializeErrorKind::CannotBorrow { reason } => write!(f, "{reason}"),
-            DeserializeErrorKind::Reflect { inner, context } => {
+            DeserializeErrorKind::Reflect { kind, context } => {
                 if context.is_empty() {
-                    write!(f, "{inner}")
+                    write!(f, "{kind}")
                 } else {
-                    write!(f, "{inner} (while {context})")
+                    write!(f, "{kind} (while {context})")
                 }
             }
             DeserializeErrorKind::Unsupported { message } => write!(f, "unsupported: {message}"),
@@ -531,10 +577,10 @@ impl std::error::Error for DeserializeError {}
 impl From<ReflectError> for DeserializeError {
     fn from(e: ReflectError) -> Self {
         DeserializeError {
-            span: None,
-            path: None,
+            span: Some(current_span()),
+            path: Some(e.path),
             kind: DeserializeErrorKind::Reflect {
-                inner: e,
+                kind: e.kind,
                 context: "",
             },
         }
