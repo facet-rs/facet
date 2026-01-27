@@ -34,7 +34,7 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use facet_core::{Facet, Shape, StructKind, Type, UserType};
-use facet_reflect::{Partial, ReflectError};
+use facet_reflect::{AllocError, Partial, ReflectError, ShapeMismatchError};
 use tokio_postgres::Row;
 
 /// Error type for Row deserialization.
@@ -56,6 +56,10 @@ pub enum Error {
     },
     /// Error from facet reflection
     Reflect(ReflectError),
+    /// Error allocating memory for reflection
+    Alloc(AllocError),
+    /// Shape mismatch error during materialization
+    ShapeMismatch(ShapeMismatchError),
     /// The target type is not a struct
     NotAStruct {
         /// The shape we tried to deserialize into
@@ -91,6 +95,8 @@ impl core::fmt::Display for Error {
                 )
             }
             Error::Reflect(e) => write!(f, "reflection error: {e}"),
+            Error::Alloc(e) => write!(f, "allocation error: {e}"),
+            Error::ShapeMismatch(e) => write!(f, "shape mismatch: {e}"),
             Error::NotAStruct { shape } => {
                 write!(f, "cannot deserialize row into non-struct type: {shape}")
             }
@@ -110,6 +116,8 @@ impl std::error::Error for Error {
         match self {
             Error::TypeMismatch { source, .. } => Some(source),
             Error::Reflect(e) => Some(e),
+            Error::Alloc(e) => Some(e),
+            Error::ShapeMismatch(e) => Some(e),
             _ => None,
         }
     }
@@ -118,6 +126,18 @@ impl std::error::Error for Error {
 impl From<ReflectError> for Error {
     fn from(e: ReflectError) -> Self {
         Error::Reflect(e)
+    }
+}
+
+impl From<AllocError> for Error {
+    fn from(e: AllocError) -> Self {
+        Error::Alloc(e)
+    }
+}
+
+impl From<ShapeMismatchError> for Error {
+    fn from(e: ShapeMismatchError) -> Self {
+        Error::ShapeMismatch(e)
     }
 }
 
