@@ -7,7 +7,7 @@ use roam_schema::{
     EnumInfo, ShapeKind, StructInfo, VariantKind, classify_shape, classify_variant, is_bytes,
 };
 
-use super::types::ts_field_access;
+use super::types::{ts_field_access, ts_type};
 
 /// Generate a TypeScript expression that encodes a value of the given type.
 /// `expr` is the JavaScript expression to encode.
@@ -20,33 +20,40 @@ pub fn generate_encode_expr(shape: &'static Shape, expr: &str) -> String {
     match classify_shape(shape) {
         ShapeKind::Scalar(scalar) => encode_scalar_expr(scalar, expr),
         ShapeKind::List { element } => {
+            let item_type = ts_type(element);
             let item_encode = generate_encode_expr(element, "item");
-            format!("pc.encodeVec({expr}, (item) => {item_encode})")
+            format!("pc.encodeVec({expr}, (item: {item_type}) => {item_encode})")
         }
         ShapeKind::Option { inner } => {
+            let inner_type = ts_type(inner);
             let inner_encode = generate_encode_expr(inner, "v");
-            format!("pc.encodeOption({expr}, (v) => {inner_encode})")
+            format!("pc.encodeOption({expr}, (v: {inner_type}) => {inner_encode})")
         }
         ShapeKind::Array { element, .. } => {
             // Encode as vec for now
+            let item_type = ts_type(element);
             let item_encode = generate_encode_expr(element, "item");
-            format!("pc.encodeVec({expr}, (item) => {item_encode})")
+            format!("pc.encodeVec({expr}, (item: {item_type}) => {item_encode})")
         }
         ShapeKind::Slice { element } => {
+            let item_type = ts_type(element);
             let item_encode = generate_encode_expr(element, "item");
-            format!("pc.encodeVec({expr}, (item) => {item_encode})")
+            format!("pc.encodeVec({expr}, (item: {item_type}) => {item_encode})")
         }
         ShapeKind::Map { key, value } => {
             // Encode as vec of tuples
+            let key_type = ts_type(key);
+            let value_type = ts_type(value);
             let k_enc = generate_encode_expr(key, "k");
             let v_enc = generate_encode_expr(value, "v");
             format!(
-                "pc.encodeVec(Array.from({expr}.entries()), ([k, v]) => pc.concat({k_enc}, {v_enc}))"
+                "pc.encodeVec(Array.from({expr}.entries()), ([k, v]: [{key_type}, {value_type}]) => pc.concat({k_enc}, {v_enc}))"
             )
         }
         ShapeKind::Set { element } => {
+            let item_type = ts_type(element);
             let item_encode = generate_encode_expr(element, "item");
-            format!("pc.encodeVec(Array.from({expr}), (item) => {item_encode})")
+            format!("pc.encodeVec(Array.from({expr}), (item: {item_type}) => {item_encode})")
         }
         ShapeKind::Tuple { elements } => {
             if elements.len() == 2 {

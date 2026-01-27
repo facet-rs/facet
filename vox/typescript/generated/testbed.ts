@@ -602,7 +602,7 @@ export const testbed_methodHandlers = new Map<bigint, MethodHandler<TestbedHandl
     // Call handler - errors propagate for infallible methods
     const result = await handler.lookup(args.id);
     if (result.ok) {
-      return pc.concat(pc.encodeU8(0), pc.concat(pc.encodeString(result.value.name), pc.encodeU8(result.value.age), pc.encodeOption(result.value.email, (v) => pc.encodeString(v))));
+      return pc.concat(pc.encodeU8(0), pc.concat(pc.encodeString(result.value.name), pc.encodeU8(result.value.age), pc.encodeOption(result.value.email, (v: string) => pc.encodeString(v))));
     } else {
       return pc.concat(pc.encodeU8(1), pc.encodeU8(0), (() => { switch (result.error.tag) {
       case 'NotFound': return pc.encodeEnumVariant(0);
@@ -658,7 +658,7 @@ const point = { x: point_f0, y: point_f1 };
 
     // Call handler - errors propagate for infallible methods
     const result = await handler.createPerson(args.name, args.age, args.email);
-    return encodeResultOk(pc.concat(pc.encodeString(result.name), pc.encodeU8(result.age), pc.encodeOption(result.email, (v) => pc.encodeString(v))));
+    return encodeResultOk(pc.concat(pc.encodeString(result.name), pc.encodeU8(result.age), pc.encodeOption(result.email, (v: string) => pc.encodeString(v))));
   }],
   [0x04ef653fdf0653c4n, async (handler, payload) => {
     // Decode arguments - errors here are InvalidPayload
@@ -699,7 +699,7 @@ const rect = { top_left: rect_f0, bottom_right: rect_f1, label: rect_f2 };
 
     // Call handler - errors propagate for infallible methods
     const result = await handler.parseColor(args.name);
-    return encodeResultOk(pc.encodeOption(result, (v) => (() => { switch (v.tag) {
+    return encodeResultOk(pc.encodeOption(result, (v: Color) => (() => { switch (v.tag) {
       case 'Red': return pc.encodeEnumVariant(0);
       case 'Green': return pc.encodeEnumVariant(1);
       case 'Blue': return pc.encodeEnumVariant(2);
@@ -789,7 +789,7 @@ switch (_background_disc.value) {
 
     // Call handler - errors propagate for infallible methods
     const result = await handler.createCanvas(args.name, args.shapes, args.background);
-    return encodeResultOk(pc.concat(pc.encodeString(result.name), pc.encodeVec(result.shapes, (item) => (() => { switch (item.tag) {
+    return encodeResultOk(pc.concat(pc.encodeString(result.name), pc.encodeVec(result.shapes, (item: Shape) => (() => { switch (item.tag) {
       case 'Circle': return pc.concat(pc.encodeEnumVariant(0), pc.encodeF64(item.radius));
       case 'Rectangle': return pc.concat(pc.encodeEnumVariant(1), pc.encodeF64(item.width), pc.encodeF64(item.height));
       case 'Point': return pc.encodeEnumVariant(2);
@@ -854,7 +854,7 @@ switch (_msg_disc.value) {
 
     // Call handler - errors propagate for infallible methods
     const result = await handler.getPoints(args.count);
-    return encodeResultOk(pc.encodeVec(result, (item) => pc.concat(pc.encodeI32(item.x), pc.encodeI32(item.y))));
+    return encodeResultOk(pc.encodeVec(result, (item: Point) => pc.concat(pc.encodeI32(item.x), pc.encodeI32(item.y))));
   }],
   [0xacd19a29fe0d470cn, async (handler, payload) => {
     // Decode arguments - errors here are InvalidPayload
@@ -940,7 +940,7 @@ export const testbed_streamingHandlers = new Map<bigint, ChannelingMethodHandler
       if (offset !== buf.length) throw new Error("args: trailing bytes");
       const result = await handler.lookup(id);
       if (result.ok) {
-        taskSender({ kind: 'response', requestId, payload: pc.concat(pc.encodeU8(0), pc.concat(pc.encodeString(result.value.name), pc.encodeU8(result.value.age), pc.encodeOption(result.value.email, (v) => pc.encodeString(v)))) });
+        taskSender({ kind: 'response', requestId, payload: pc.concat(pc.encodeU8(0), pc.concat(pc.encodeString(result.value.name), pc.encodeU8(result.value.age), pc.encodeOption(result.value.email, (v: string) => pc.encodeString(v)))) });
       } else {
         taskSender({ kind: 'response', requestId, payload: pc.concat(pc.encodeU8(1), pc.encodeU8(0), (() => { switch (result.error.tag) {
       case 'NotFound': return pc.encodeEnumVariant(0);
@@ -1014,7 +1014,7 @@ const point = { x: point_f0, y: point_f1 };
       const _email_r = pc.decodeOption(buf, offset, (buf, off) => pc.decodeString(buf, off)); const email = _email_r.value; offset = _email_r.next;
       if (offset !== buf.length) throw new Error("args: trailing bytes");
       const result = await handler.createPerson(name, age, email);
-      taskSender({ kind: 'response', requestId, payload: encodeResultOk(pc.concat(pc.encodeString(result.name), pc.encodeU8(result.age), pc.encodeOption(result.email, (v) => pc.encodeString(v)))) });
+      taskSender({ kind: 'response', requestId, payload: encodeResultOk(pc.concat(pc.encodeString(result.name), pc.encodeU8(result.age), pc.encodeOption(result.email, (v: string) => pc.encodeString(v)))) });
     } catch (e) {
       taskSender({ kind: 'response', requestId, payload: encodeResultErr(encodeInvalidPayload()) });
     }
@@ -1045,7 +1045,7 @@ const rect = { top_left: rect_f0, bottom_right: rect_f1, label: rect_f2 };
       const _name_r = pc.decodeString(buf, offset); const name = _name_r.value; offset = _name_r.next;
       if (offset !== buf.length) throw new Error("args: trailing bytes");
       const result = await handler.parseColor(name);
-      taskSender({ kind: 'response', requestId, payload: encodeResultOk(pc.encodeOption(result, (v) => (() => { switch (v.tag) {
+      taskSender({ kind: 'response', requestId, payload: encodeResultOk(pc.encodeOption(result, (v: Color) => (() => { switch (v.tag) {
       case 'Red': return pc.encodeEnumVariant(0);
       case 'Green': return pc.encodeEnumVariant(1);
       case 'Blue': return pc.encodeEnumVariant(2);
@@ -1125,7 +1125,7 @@ switch (_background_disc.value) {
 }
       if (offset !== buf.length) throw new Error("args: trailing bytes");
       const result = await handler.createCanvas(name, shapes, background);
-      taskSender({ kind: 'response', requestId, payload: encodeResultOk(pc.concat(pc.encodeString(result.name), pc.encodeVec(result.shapes, (item) => (() => { switch (item.tag) {
+      taskSender({ kind: 'response', requestId, payload: encodeResultOk(pc.concat(pc.encodeString(result.name), pc.encodeVec(result.shapes, (item: Shape) => (() => { switch (item.tag) {
       case 'Circle': return pc.concat(pc.encodeEnumVariant(0), pc.encodeF64(item.radius));
       case 'Rectangle': return pc.concat(pc.encodeEnumVariant(1), pc.encodeF64(item.width), pc.encodeF64(item.height));
       case 'Point': return pc.encodeEnumVariant(2);
@@ -1180,7 +1180,7 @@ switch (_msg_disc.value) {
       const _count_r = pc.decodeU32(buf, offset); const count = _count_r.value; offset = _count_r.next;
       if (offset !== buf.length) throw new Error("args: trailing bytes");
       const result = await handler.getPoints(count);
-      taskSender({ kind: 'response', requestId, payload: encodeResultOk(pc.encodeVec(result, (item) => pc.concat(pc.encodeI32(item.x), pc.encodeI32(item.y)))) });
+      taskSender({ kind: 'response', requestId, payload: encodeResultOk(pc.encodeVec(result, (item: Point) => pc.concat(pc.encodeI32(item.x), pc.encodeI32(item.y)))) });
     } catch (e) {
       taskSender({ kind: 'response', requestId, payload: encodeResultErr(encodeInvalidPayload()) });
     }
