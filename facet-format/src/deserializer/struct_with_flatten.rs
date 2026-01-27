@@ -9,6 +9,17 @@ use crate::{
     DeserializeError, DeserializeErrorKind, FormatDeserializer, ParseEvent, ScalarValue, SpanGuard,
 };
 
+/// Tracks an open path segment during flatten deserialization.
+#[derive(Debug, Clone)]
+struct OpenSegment<'a> {
+    /// The field name of this segment.
+    name: &'a str,
+    /// Whether this segment is wrapped in an Option (and we entered Some).
+    is_option: bool,
+    /// Whether a variant was selected at this segment.
+    has_variant: bool,
+}
+
 impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
     /// Deserialize a struct with flattened fields using facet-solver.
     ///
@@ -129,8 +140,8 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         // Track which fields have been set (by serialized name - uses 'static str from resolution)
         let mut fields_set: BTreeSet<&'static str> = BTreeSet::new();
 
-        // Track currently open path segments: (field_name, is_option, is_variant)
-        let mut open_segments: Vec<(&str, bool, bool)> = Vec::new();
+        // Track currently open path segments
+        let mut open_segments: Vec<OpenSegment<'_>> = Vec::new();
 
         // Build a lookup for variant selections by path depth
         let variant_selections = resolution.variant_selections();
@@ -173,13 +184,13 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                         let common_len = open_segments
                             .iter()
                             .zip(field_segments.iter())
-                            .take_while(|((name, _, _), b)| *name == **b)
+                            .take_while(|(seg, field_name)| seg.name == **field_name)
                             .count();
 
                         // Close segments that are no longer needed (in reverse order)
                         while open_segments.len() > common_len {
-                            let (_, is_option, _) = open_segments.pop().unwrap();
-                            if is_option {
+                            let seg = open_segments.pop().unwrap();
+                            if seg.is_option {
                                 wip = wip.end()?;
                             }
                             wip = wip.end()?;
@@ -205,12 +216,12 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                             }
 
                             // Check if we need to select a variant at this point
-                            let mut selected_variant = false;
+                            let mut has_variant = false;
 
                             // Build current path from open_segments plus the segment we just opened
                             let current_path: Vec<&str> = open_segments
                                 .iter()
-                                .map(|(name, _, _)| *name)
+                                .map(|seg| seg.name)
                                 .chain(core::iter::once(segment))
                                 .collect();
 
@@ -228,12 +239,16 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                                 // Check if current path matches the variant selection path
                                 if current_path == vs_fields {
                                     wip = wip.select_variant_named(vs.variant_name)?;
-                                    selected_variant = true;
+                                    has_variant = true;
                                     break;
                                 }
                             }
 
-                            open_segments.push((segment, is_option, selected_variant));
+                            open_segments.push(OpenSegment {
+                                name: segment,
+                                is_option,
+                                has_variant,
+                            });
                         }
 
                         // Open the last segment (the actual field being deserialized)
@@ -254,11 +269,15 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                                     let _guard = SpanGuard::new(self.last_span);
                                     // Set default (None) for the Option field
                                     wip = wip.set_default()?;
-                                    open_segments.push((segment, false, false));
+                                    open_segments.push(OpenSegment {
+                                        name: segment,
+                                        is_option: false,
+                                        has_variant: false,
+                                    });
                                     // Close segments we just opened
                                     while open_segments.len() > common_len {
-                                        let (_, is_opt, _) = open_segments.pop().unwrap();
-                                        if is_opt {
+                                        let seg = open_segments.pop().unwrap();
+                                        if seg.is_option {
                                             wip = wip.end()?;
                                         }
                                         wip = wip.end()?;
@@ -269,7 +288,11 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                                 // Value is not null - enter Some and deserialize
                                 wip = wip.begin_some()?;
                             }
-                            open_segments.push((segment, is_option, false));
+                            open_segments.push(OpenSegment {
+                                name: segment,
+                                is_option,
+                                has_variant: false,
+                            });
                         }
 
                         if ends_with_variant {
@@ -315,7 +338,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
 
                                     // Mark this segment as having a variant selected
                                     if let Some(last) = open_segments.last_mut() {
-                                        last.2 = true;
+                                        last.has_variant = true;
                                     }
 
                                     fields_set.insert(field_info.serialized_name);
@@ -335,8 +358,8 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                         // Close segments we just opened (we're done with this field)
                         let _guard = SpanGuard::new(self.last_span);
                         while open_segments.len() > common_len {
-                            let (_, is_option, _) = open_segments.pop().unwrap();
-                            if is_option {
+                            let seg = open_segments.pop().unwrap();
+                            if seg.is_option {
                                 wip = wip.end()?;
                             }
                             wip = wip.end()?;
@@ -385,8 +408,8 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
 
         // Close any remaining open segments
         let _guard = SpanGuard::new(self.last_span);
-        while let Some((_, is_option, _)) = open_segments.pop() {
-            if is_option {
+        while let Some(seg) = open_segments.pop() {
+            if seg.is_option {
                 wip = wip.end()?;
             }
             wip = wip.end()?;
@@ -414,7 +437,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         catch_all_info: &FieldInfo,
         key: Cow<'_, str>,
         fields_set: &mut BTreeSet<&'static str>,
-        open_segments: &mut Vec<(&'a str, bool, bool)>,
+        open_segments: &mut Vec<OpenSegment<'a>>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError>
     where
         'input: 'a,
@@ -435,13 +458,13 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         let common_len = open_segments
             .iter()
             .zip(field_segments.iter())
-            .take_while(|((name, _, _), b)| *name == **b)
+            .take_while(|(seg, field_name)| seg.name == **field_name)
             .count();
 
         // Close segments that are no longer needed (in reverse order)
         while open_segments.len() > common_len {
-            let (_, is_option, _) = open_segments.pop().unwrap();
-            if is_option {
+            let seg = open_segments.pop().unwrap();
+            if seg.is_option {
                 wip = wip.end()?;
             }
             wip = wip.end()?;
@@ -454,7 +477,11 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
             if is_option {
                 wip = wip.begin_some()?;
             }
-            open_segments.push((segment, is_option, false));
+            open_segments.push(OpenSegment {
+                name: segment,
+                is_option,
+                has_variant: false,
+            });
         }
 
         // Initialize the map if this is our first time
