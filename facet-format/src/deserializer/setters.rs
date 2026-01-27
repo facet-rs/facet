@@ -235,7 +235,7 @@ pub(crate) fn deserialize_map_key_terminal_inner<'input, const BORROW: bool>(
             NumericType::Integer { signed } => {
                 if *signed {
                     let n: i64 = key.parse().map_err(|_| DeserializeError {
-                        span,
+                        span: Some(span),
                         path: None,
                         kind: DeserializeErrorKind::UnexpectedToken {
                             expected: "valid integer for map key",
@@ -246,7 +246,7 @@ pub(crate) fn deserialize_map_key_terminal_inner<'input, const BORROW: bool>(
                     wip = wip.set(n)?;
                 } else {
                     let n: u64 = key.parse().map_err(|_| DeserializeError {
-                        span,
+                        span: Some(span),
                         path: None,
                         kind: DeserializeErrorKind::UnexpectedToken {
                             expected: "valid unsigned integer for map key",
@@ -259,7 +259,7 @@ pub(crate) fn deserialize_map_key_terminal_inner<'input, const BORROW: bool>(
             }
             NumericType::Float => {
                 let n: f64 = key.parse().map_err(|_| DeserializeError {
-                    span,
+                    span: Some(span),
                     path: None,
                     kind: DeserializeErrorKind::UnexpectedToken {
                         expected: "valid float for map key",
@@ -286,7 +286,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         wip: Partial<'input, BORROW>,
         scalar: ScalarValue<'input>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
-        match set_scalar_inner(wip, scalar, self.last_span) {
+        match set_scalar_inner(wip, scalar, Some(self.last_span)) {
             Ok(wip) => Ok(wip),
             Err(SetScalarResult::NeedsStringValue { wip, s }) => self.set_string_value(wip, s),
             Err(SetScalarResult::NeedsBytesValue { wip, b }) => self.set_bytes_value(wip, b),
@@ -300,11 +300,14 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         wip: Partial<'input, BORROW>,
         s: Cow<'input, str>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
-        facet_dessert::set_string_value(wip, s, self.last_span).map_err(|e| match e {
+        facet_dessert::set_string_value(wip, s, Some(self.last_span)).map_err(|e| match e {
             facet_dessert::DessertError::Reflect { error, span } => DeserializeError {
                 span,
                 path: None,
-                kind: DeserializeErrorKind::Reflect(error),
+                kind: DeserializeErrorKind::Reflect {
+                    inner: error,
+                    context: "",
+                },
             },
             facet_dessert::DessertError::CannotBorrow { message } => DeserializeError {
                 span: None,
@@ -325,11 +328,14 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         wip: Partial<'input, BORROW>,
         b: Cow<'input, [u8]>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
-        facet_dessert::set_bytes_value(wip, b, self.last_span).map_err(|e| match e {
+        facet_dessert::set_bytes_value(wip, b, Some(self.last_span)).map_err(|e| match e {
             facet_dessert::DessertError::Reflect { error, span } => DeserializeError {
                 span,
                 path: None,
-                kind: DeserializeErrorKind::Reflect(error),
+                kind: DeserializeErrorKind::Reflect {
+                    inner: error,
+                    context: "",
+                },
             },
             facet_dessert::DessertError::CannotBorrow { message } => DeserializeError {
                 span: None,

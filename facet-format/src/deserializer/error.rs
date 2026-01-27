@@ -494,7 +494,13 @@ impl fmt::Display for DeserializeErrorKind {
                 write!(f, "invalid value: {message}")
             }
             DeserializeErrorKind::CannotBorrow { reason } => write!(f, "{reason}"),
-            DeserializeErrorKind::Reflect(e) => write!(f, "{e}"),
+            DeserializeErrorKind::Reflect { inner, context } => {
+                if context.is_empty() {
+                    write!(f, "{inner}")
+                } else {
+                    write!(f, "{inner} (while {context})")
+                }
+            }
             DeserializeErrorKind::Unsupported { message } => write!(f, "unsupported: {message}"),
             DeserializeErrorKind::Io { message } => write!(f, "I/O error: {message}"),
             DeserializeErrorKind::Solver { message } => write!(f, "solver error: {message}"),
@@ -516,6 +522,19 @@ impl fmt::Display for DeserializeErrorKind {
 }
 
 impl std::error::Error for DeserializeError {}
+
+impl From<ReflectError> for DeserializeError {
+    fn from(e: ReflectError) -> Self {
+        DeserializeError {
+            span: None,
+            path: None,
+            kind: DeserializeErrorKind::Reflect {
+                inner: e,
+                context: "",
+            },
+        }
+    }
+}
 
 impl DeserializeErrorKind {
     /// Attach a span to this error kind, producing a full DeserializeError.

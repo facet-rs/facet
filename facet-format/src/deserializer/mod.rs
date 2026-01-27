@@ -2,10 +2,10 @@ extern crate alloc;
 
 use core::marker::PhantomData;
 
-use facet_core::{Def, Facet, Shape, StructKind, Type, UserType};
+use facet_core::{Facet, Shape};
 use facet_reflect::{HeapValue, Partial, Span};
 
-use crate::{ContainerKind, FormatParser, ParseEvent, ScalarTypeHint, ScalarValue};
+use crate::{FormatParser, ParseEvent};
 
 mod error;
 pub use error::*;
@@ -17,9 +17,8 @@ pub use error::*;
 ///
 /// # Usage
 /// ```ignore
-/// reflect!(self, wip.set(value), "setting value")?;
-/// reflect!(self, wip.begin_field("name"), "beginning field")?;
-/// reflect!(self, wip.end(), "ending field")?;
+/// reflect!(self, wip.begin_nth_field(0), "raw capture types must be Raw(Cow<'a, str>)")?;
+/// reflect!(self, wip.end(), "raw capture types must be Raw(Cow<'a, str>)")?;
 /// ```
 macro_rules! reflect {
     ($self:expr, $expr:expr, $context:literal) => {
