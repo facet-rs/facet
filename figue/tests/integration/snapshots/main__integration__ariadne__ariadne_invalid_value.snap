@@ -1,11 +1,11 @@
 ---
-source: tests/integration/ariadne.rs
+source: crates/figue/tests/integration/ariadne.rs
 expression: ariadne_output
 ---
-Error: failed to parse "not-a-number" as usize
+Error: failed to parse "not-a-number" as usize at count
    ╭─[ <cli>:1:9 ]
    │
  1 │ --count not-a-number
    │         ──────┬─────  
-   │               ╰─────── failed to parse "not-a-number" as usize
+   │               ╰─────── failed to parse "not-a-number" as usize at count
 ───╯

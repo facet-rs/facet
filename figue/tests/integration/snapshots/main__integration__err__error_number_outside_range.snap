@@ -1,11 +1,11 @@
 ---
-source: tests/integration/err.rs
+source: crates/figue/tests/integration/err.rs
 expression: "$crate :: common :: strip_ansi(& err.to_string())"
 ---
-Error: failed to parse "1000" as u8
+Error: failed to parse "1000" as u8 at small
    ╭─[ <cli>:1:9 ]
    │
  1 │ --small 1000
    │         ──┬─  
-   │           ╰─── failed to parse "1000" as u8
+   │           ╰─── failed to parse "1000" as u8 at small
 ───╯

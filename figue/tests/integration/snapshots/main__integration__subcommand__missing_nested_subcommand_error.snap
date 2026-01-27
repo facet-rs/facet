@@ -1,5 +1,5 @@
 ---
-source: tests/integration/subcommand.rs
+source: crates/figue/tests/integration/subcommand.rs
 expression: "$crate :: common :: strip_ansi(& err.to_string())"
 ---
-Error: type mismatch: expected field to be present or have default, got missing field 'action'
+Error: missing field `action` in type `Command` at command::Ci

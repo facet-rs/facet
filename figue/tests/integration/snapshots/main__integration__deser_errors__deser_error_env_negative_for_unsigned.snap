@@ -2,10 +2,10 @@
 source: crates/figue/tests/integration/deser_errors.rs
 expression: "$crate :: common :: strip_ansi(& report.to_string())"
 ---
-Error: failed to parse "-1" as u16
+Error: failed to parse "-1" as u16 at config.port
    ╭─[ <env>:1:12 ]
    │
  1 │ APP__PORT="-1"
    │            ─┬  
-   │             ╰── failed to parse "-1" as u16
+   │             ╰── failed to parse "-1" as u16 at config.port
 ───╯

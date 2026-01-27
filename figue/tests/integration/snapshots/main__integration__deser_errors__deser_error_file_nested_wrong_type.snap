@@ -2,10 +2,10 @@
 source: crates/figue/tests/integration/deser_errors.rs
 expression: "$crate :: common :: strip_ansi(& report.to_string())"
 ---
-Error: failed to parse "lots" as u32
-   ╭─[ config.json:4:32 ]
+Error: failed to parse "lots" as u32 at config.database.max_connections
+   ╭─[ config.json:3:20 ]
    │
- 4 │             "max_connections": "lots"
-   │                                ───┬──  
-   │                                   ╰──── failed to parse "lots" as u32
+ 3 │             "url": "postgres://localhost/db",
+   │                    ────────────┬────────────  
+   │                                ╰────────────── failed to parse "lots" as u32 at config.database.max_connections
 ───╯

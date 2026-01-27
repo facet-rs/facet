@@ -1,11 +1,11 @@
 ---
-source: tests/integration/err.rs
+source: crates/figue/tests/integration/err.rs
 expression: "$crate :: common :: strip_ansi(& err.to_string())"
 ---
-Error: failed to parse "-10" as usize
+Error: failed to parse "-10" as usize at count
    ╭─[ <cli>:1:9 ]
    │
  1 │ --count -10
    │         ─┬─  
-   │          ╰─── failed to parse "-10" as usize
+   │          ╰─── failed to parse "-10" as usize at count
 ───╯

@@ -124,27 +124,6 @@ impl ConfigFormat for JsonFormat {
     }
 }
 
-/// Styx config file format.
-///
-/// Parses `.styx` files using `facet-styx`, preserving span information
-/// for error reporting.
-///
-/// This format is only available when the `styx` feature is enabled.
-#[cfg(feature = "styx")]
-#[derive(Debug, Clone, Copy, Default)]
-pub struct StyxFormat;
-
-#[cfg(feature = "styx")]
-impl ConfigFormat for StyxFormat {
-    fn extensions(&self) -> &[&str] {
-        &["styx"]
-    }
-
-    fn parse(&self, contents: &str) -> Result<ConfigValue, ConfigFormatError> {
-        facet_styx::from_str(contents).map_err(|e| ConfigFormatError::new(e.to_string()))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -196,54 +175,5 @@ mod tests {
 
         let err = ConfigFormatError::with_offset("unexpected token", 42);
         assert_eq!(err.to_string(), "at byte 42: unexpected token");
-    }
-
-    #[cfg(feature = "styx")]
-    mod styx_tests {
-        use super::*;
-
-        #[test]
-        fn test_styx_format_extensions() {
-            let format = StyxFormat;
-            assert_eq!(format.extensions(), &["styx"]);
-        }
-
-        #[test]
-        fn test_styx_format_parse_object() {
-            let format = StyxFormat;
-            let result = format.parse("port 8080\nhost localhost");
-            assert!(result.is_ok(), "parse failed: {:?}", result.err());
-            let value = result.unwrap();
-            assert!(matches!(value, ConfigValue::Object(_)));
-        }
-
-        #[test]
-        fn test_styx_format_parse_nested() {
-            let format = StyxFormat;
-            let result = format.parse("smtp {\n  host mail.example.com\n  port 587\n}");
-            assert!(result.is_ok(), "parse failed: {:?}", result.err());
-        }
-
-        #[test]
-        fn test_styx_format_parse_array() {
-            let format = StyxFormat;
-            let result = format.parse("items (one two three)");
-            assert!(result.is_ok(), "parse failed: {:?}", result.err());
-        }
-
-        #[test]
-        fn test_styx_format_parse_error() {
-            // Styx parsing into ConfigValue is lenient since ConfigValue is a dynamic value type.
-            // Syntax errors in styx are recovered by the parser and produce a valid tree.
-            // Errors occur during deserialization when types don't match.
-            // For this test, we verify the format can at least parse valid input.
-            let format = StyxFormat;
-            let result = format.parse("port 8080");
-            assert!(
-                result.is_ok(),
-                "valid styx should parse: {:?}",
-                result.err()
-            );
-        }
     }
 }
