@@ -50,7 +50,6 @@ facet-format-suite = { path = "../facet-format-suite", features = ["third-party"
 indoc = { workspace = true }
 libtest-mimic = "0.8.1"
 smol_str = { workspace = true }
-tokio = { version = "1", features = ["rt", "macros"] }
 tracing = { workspace = true }
 
 [[test]]
