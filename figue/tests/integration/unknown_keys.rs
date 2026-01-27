@@ -157,7 +157,7 @@ fn test_unknown_key_in_env_strict_mode_shows_valid_fields() {
 
     let config = builder::<Args>()
         .unwrap()
-        .cli(|cli| cli.strict())
+        .cli(|cli| cli.args::<[&str; 0], _>([]).strict())
         .env(|e| e.source(env).strict())
         .build();
 
@@ -201,7 +201,7 @@ fn test_unknown_key_in_file_strict_mode_shows_valid_fields() {
 
     let config = builder::<Args>()
         .unwrap()
-        .cli(|cli| cli.strict())
+        .cli(|cli| cli.args::<[&str; 0], _>([]).strict())
         .file(|f| f.content(config_json, "config.json").strict())
         .build();
 
