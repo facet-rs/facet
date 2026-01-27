@@ -6,7 +6,7 @@ use crate::trace;
 use facet_core::Facet;
 use facet_format::{
     ContainerKind, DeserializeErrorKind, FieldKey, FieldLocationHint, FormatParser, ParseError,
-    ParseEvent, SavePoint, ScalarValue,
+    ParseEvent, ParseEventKind, SavePoint, ScalarValue,
 };
 use facet_reflect::Span as ReflectSpan;
 use styx_parse::{Lexer, ScalarKind, Span, Token, TokenKind};
@@ -34,8 +34,6 @@ pub struct StyxParser<'de> {
     expecting_value: bool,
     /// Expression mode: parse a single value, not an implicit root object.
     expr_mode: bool,
-    /// Start offset of the value being peeked (for capture_raw).
-    peek_start_offset: Option<usize>,
     /// Buffered doc comments for the next field key.
     pending_doc: Vec<Cow<'de, str>>,
     /// Saved parser state for save/restore.
@@ -65,7 +63,6 @@ impl<'de> StyxParser<'de> {
             pending_key: None,
             expecting_value: false,
             expr_mode: false,
-            peek_start_offset: None,
             pending_doc: Vec::new(),
             saved_state: None,
         }
@@ -88,7 +85,6 @@ impl<'de> StyxParser<'de> {
             pending_key: None,
             expecting_value: true, // Start expecting a value immediately
             expr_mode: true,
-            peek_start_offset: None,
             pending_doc: Vec::new(),
             saved_state: None,
         }
@@ -277,6 +273,26 @@ impl<'de> StyxParser<'de> {
         )
     }
 
+    /// Convert a Styx span to a facet_reflect span.
+    fn to_reflect_span(&self, span: Span) -> ReflectSpan {
+        ReflectSpan {
+            offset: span.start as usize,
+            len: (span.end - span.start) as usize,
+        }
+    }
+
+    /// Get the current span for event creation.
+    fn event_span(&self) -> ReflectSpan {
+        self.current_span
+            .map(|s| self.to_reflect_span(s))
+            .unwrap_or(ReflectSpan { offset: 0, len: 0 })
+    }
+
+    /// Create a parse event with the current span.
+    fn event(&self, kind: ParseEventKind<'de>) -> ParseEvent<'de> {
+        ParseEvent::new(kind, self.event_span())
+    }
+
     /// Parse a tag and emit appropriate events.
     /// Called after consuming the @ token.
     /// Returns the first event to emit (others are queued in peeked_events).
@@ -295,35 +311,35 @@ impl<'de> StyxParser<'de> {
                     // @foo@ - tag with explicit unit payload
                     self.next_token(); // consume the @
                     self.peeked_events
-                        .push(ParseEvent::Scalar(ScalarValue::Unit));
-                    return ParseEvent::VariantTag(Some(tag_name));
+                        .push(self.event(ParseEventKind::Scalar(ScalarValue::Unit)));
+                    return self.event(ParseEventKind::VariantTag(Some(tag_name)));
                 } else if next.kind == TokenKind::LBrace && next.span.start == name_token.span.end {
                     // @foo{...} - tag with object payload
                     self.next_token(); // consume {
                     self.stack.push(ContextState::Object { implicit: false });
                     self.peeked_events
-                        .push(ParseEvent::StructStart(ContainerKind::Object));
-                    return ParseEvent::VariantTag(Some(tag_name));
+                        .push(self.event(ParseEventKind::StructStart(ContainerKind::Object)));
+                    return self.event(ParseEventKind::VariantTag(Some(tag_name)));
                 } else if next.kind == TokenKind::LParen && next.span.start == name_token.span.end {
                     // @foo(...) - tag with sequence payload
                     self.next_token(); // consume (
                     self.stack.push(ContextState::Sequence);
                     self.peeked_events
-                        .push(ParseEvent::SequenceStart(ContainerKind::Array));
-                    return ParseEvent::VariantTag(Some(tag_name));
+                        .push(self.event(ParseEventKind::SequenceStart(ContainerKind::Array)));
+                    return self.event(ParseEventKind::VariantTag(Some(tag_name)));
                 }
             }
 
             // @foo - named tag with implicit unit payload
             self.peeked_events
-                .push(ParseEvent::Scalar(ScalarValue::Unit));
-            return ParseEvent::VariantTag(Some(tag_name));
+                .push(self.event(ParseEventKind::Scalar(ScalarValue::Unit)));
+            return self.event(ParseEventKind::VariantTag(Some(tag_name)));
         }
 
         // Just @ alone - unit tag (no name) with unit payload
         self.peeked_events
-            .push(ParseEvent::Scalar(ScalarValue::Unit));
-        ParseEvent::VariantTag(None)
+            .push(self.event(ParseEventKind::Scalar(ScalarValue::Unit)));
+        self.event(ParseEventKind::VariantTag(None))
     }
 }
 
@@ -332,10 +348,6 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
         // Return queued event if any (FIFO - take from front)
         if !self.peeked_events.is_empty() {
             let event = self.peeked_events.remove(0);
-            // Clear peek_start_offset when consuming peeked events
-            if self.peeked_events.is_empty() {
-                self.peek_start_offset = None;
-            }
             trace!(?event, "next_event: returning queued event");
             return Ok(Some(event));
         }
@@ -356,7 +368,9 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
             self.root_started = true;
             self.stack.push(ContextState::Object { implicit: true });
             trace!("next_event: emitting root StructStart");
-            return Ok(Some(ParseEvent::StructStart(ContainerKind::Object)));
+            return Ok(Some(
+                self.event(ParseEventKind::StructStart(ContainerKind::Object)),
+            ));
         }
         self.root_started = true;
 
@@ -371,21 +385,25 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
                     TokenKind::Newline | TokenKind::Eof | TokenKind::RBrace | TokenKind::Comma => {
                         // No value - emit unit
                         trace!("next_event: no value found, emitting Unit");
-                        return Ok(Some(ParseEvent::Scalar(ScalarValue::Unit)));
+                        return Ok(Some(self.event(ParseEventKind::Scalar(ScalarValue::Unit))));
                     }
                     TokenKind::LBrace => {
                         // Nested object
                         self.next_token();
                         self.stack.push(ContextState::Object { implicit: false });
                         trace!("next_event: nested object StructStart");
-                        return Ok(Some(ParseEvent::StructStart(ContainerKind::Object)));
+                        return Ok(Some(
+                            self.event(ParseEventKind::StructStart(ContainerKind::Object)),
+                        ));
                     }
                     TokenKind::LParen => {
                         // Sequence
                         self.next_token();
                         self.stack.push(ContextState::Sequence);
                         trace!("next_event: SequenceStart");
-                        return Ok(Some(ParseEvent::SequenceStart(ContainerKind::Array)));
+                        return Ok(Some(
+                            self.event(ParseEventKind::SequenceStart(ContainerKind::Array)),
+                        ));
                     }
                     TokenKind::At => {
                         // Tag - could be @, @foo, @foo@, @foo(...), @foo{...}
@@ -416,8 +434,8 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
                                 }
                             }
                             trace!(?content, "next_event: heredoc scalar");
-                            return Ok(Some(ParseEvent::Scalar(ScalarValue::Str(Cow::Owned(
-                                content,
+                            return Ok(Some(self.event(ParseEventKind::Scalar(ScalarValue::Str(
+                                Cow::Owned(content),
                             )))));
                         } else {
                             token.text
@@ -425,7 +443,7 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
 
                         let scalar = self.parse_scalar(text, kind);
                         trace!(?scalar, "next_event: scalar value");
-                        return Ok(Some(ParseEvent::Scalar(scalar)));
+                        return Ok(Some(self.event(ParseEventKind::Scalar(scalar))));
                     }
                     _ => {}
                 }
@@ -445,11 +463,11 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
                                     self.complete = true;
                                 }
                                 trace!("next_event: EOF StructEnd");
-                                return Ok(Some(ParseEvent::StructEnd));
+                                return Ok(Some(self.event(ParseEventKind::StructEnd)));
                             }
                             ContextState::Sequence => {
                                 trace!("next_event: EOF SequenceEnd");
-                                return Ok(Some(ParseEvent::SequenceEnd));
+                                return Ok(Some(self.event(ParseEventKind::SequenceEnd)));
                             }
                         }
                     }
@@ -462,7 +480,7 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
                     match self.stack.pop() {
                         Some(ContextState::Object { implicit: false }) => {
                             trace!("next_event: RBrace StructEnd");
-                            return Ok(Some(ParseEvent::StructEnd));
+                            return Ok(Some(self.event(ParseEventKind::StructEnd)));
                         }
                         _ => {
                             // Mismatched brace - error
@@ -475,7 +493,7 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
                     match self.stack.pop() {
                         Some(ContextState::Sequence) => {
                             trace!("next_event: RParen SequenceEnd");
-                            return Ok(Some(ParseEvent::SequenceEnd));
+                            return Ok(Some(self.event(ParseEventKind::SequenceEnd)));
                         }
                         _ => {
                             return Err(self.parse_error(")", "value"));
@@ -525,10 +543,8 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
                         let doc = std::mem::take(&mut self.pending_doc);
 
                         trace!(?key, ?doc, "next_event: FieldKey");
-                        return Ok(Some(ParseEvent::FieldKey(FieldKey::with_doc(
-                            key,
-                            FieldLocationHint::KeyValue,
-                            doc,
+                        return Ok(Some(self.event(ParseEventKind::FieldKey(
+                            FieldKey::with_doc(key, FieldLocationHint::KeyValue, doc),
                         ))));
                     }
                     TokenKind::At => {
@@ -590,10 +606,12 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
                             self.expecting_value = true;
                             let doc = std::mem::take(&mut self.pending_doc);
                             trace!(tag = tag_name_str, ?doc, "next_event: FieldKey (tagged)");
-                            return Ok(Some(ParseEvent::FieldKey(FieldKey::tagged_with_doc(
-                                tag_name_str,
-                                FieldLocationHint::KeyValue,
-                                doc,
+                            return Ok(Some(self.event(ParseEventKind::FieldKey(
+                                FieldKey::tagged_with_doc(
+                                    tag_name_str,
+                                    FieldLocationHint::KeyValue,
+                                    doc,
+                                ),
                             ))));
                         }
 
@@ -602,9 +620,8 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
                         self.expecting_value = true;
                         let doc = std::mem::take(&mut self.pending_doc);
                         trace!(?doc, "next_event: FieldKey (unit)");
-                        return Ok(Some(ParseEvent::FieldKey(FieldKey::unit_with_doc(
-                            FieldLocationHint::KeyValue,
-                            doc,
+                        return Ok(Some(self.event(ParseEventKind::FieldKey(
+                            FieldKey::unit_with_doc(FieldLocationHint::KeyValue, doc),
                         ))));
                     }
                     _ => {}
@@ -624,17 +641,21 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
                         let token = self.next_token();
                         let kind = self.token_to_scalar_kind(token.kind);
                         let scalar = self.parse_scalar(token.text, kind);
-                        return Ok(Some(ParseEvent::Scalar(scalar)));
+                        return Ok(Some(self.event(ParseEventKind::Scalar(scalar))));
                     }
                     TokenKind::LBrace => {
                         self.next_token();
                         self.stack.push(ContextState::Object { implicit: false });
-                        return Ok(Some(ParseEvent::StructStart(ContainerKind::Object)));
+                        return Ok(Some(
+                            self.event(ParseEventKind::StructStart(ContainerKind::Object)),
+                        ));
                     }
                     TokenKind::LParen => {
                         self.next_token();
                         self.stack.push(ContextState::Sequence);
-                        return Ok(Some(ParseEvent::SequenceStart(ContainerKind::Array)));
+                        return Ok(Some(
+                            self.event(ParseEventKind::SequenceStart(ContainerKind::Array)),
+                        ));
                     }
                     TokenKind::At => {
                         // Tag in sequence context
@@ -652,8 +673,6 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
 
     fn peek_event(&mut self) -> Result<Option<ParseEvent<'de>>, ParseError> {
         if self.peeked_events.is_empty() {
-            // Record the lexer position before consuming any tokens
-            self.peek_start_offset = Some(self.lexer.position() as usize);
             if let Some(event) = self.next_event()? {
                 // Insert at front since next_event may have pushed follow-up events
                 self.peeked_events.insert(0, event);
@@ -668,11 +687,11 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
         loop {
             let event = self.next_event()?;
             trace!(?event, depth, "skip_value");
-            match event {
-                Some(ParseEvent::StructStart(_)) | Some(ParseEvent::SequenceStart(_)) => {
+            match event.as_ref().map(|e| &e.kind) {
+                Some(ParseEventKind::StructStart(_)) | Some(ParseEventKind::SequenceStart(_)) => {
                     depth += 1;
                 }
-                Some(ParseEvent::StructEnd) | Some(ParseEvent::SequenceEnd) => {
+                Some(ParseEventKind::StructEnd) | Some(ParseEventKind::SequenceEnd) => {
                     if depth == 0 {
                         // Safety: unexpected End at depth 0 (malformed input or bug)
                         break;
@@ -683,15 +702,15 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
                         break;
                     }
                 }
-                Some(ParseEvent::Scalar(_)) => {
+                Some(ParseEventKind::Scalar(_)) => {
                     if depth == 0 {
                         break;
                     }
                 }
-                Some(ParseEvent::VariantTag(_)) => {
+                Some(ParseEventKind::VariantTag(_)) => {
                     // VariantTag followed by payload - continue to consume the payload
                 }
-                Some(ParseEvent::FieldKey(_)) | Some(ParseEvent::OrderedField) => {
+                Some(ParseEventKind::FieldKey(_)) | Some(ParseEventKind::OrderedField) => {
                     // Continue
                 }
                 None => break,
@@ -725,24 +744,7 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
         Some(crate::RawStyx::SHAPE)
     }
 
-    fn capture_raw(&mut self) -> Result<Option<&'de str>, ParseError> {
-        // Get the start offset - either from peek_event or current position
-        let start_offset = self
-            .peek_start_offset
-            .take()
-            .unwrap_or_else(|| self.lexer.position() as usize);
-
-        // Skip the entire value (including nested structures)
-        self.skip_value()?;
-
-        let end_offset = self.lexer.position() as usize;
-
-        // Extract the raw slice
-        let raw_str = &self.input[start_offset..end_offset];
-
-        // Trim surrounding whitespace/newlines
-        let raw_str = raw_str.trim();
-
-        Ok(Some(raw_str))
+    fn input(&self) -> Option<&'de [u8]> {
+        Some(self.input.as_bytes())
     }
 }

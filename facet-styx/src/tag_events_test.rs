@@ -1,6 +1,6 @@
 //! Tests for tag event sequences as defined in docs/007-tag-events.md
 
-use facet_format::{ContainerKind, FormatParser, ParseEvent, ScalarValue};
+use facet_format::{ContainerKind, FormatParser, ParseEvent, ParseEventKind, ScalarValue};
 use facet_testhelpers::test;
 
 use crate::StyxParser;
@@ -17,7 +17,10 @@ fn collect_events(input: &str) -> String {
         match parser.next_event() {
             Ok(Some(event)) => {
                 // Decrease indent before End events
-                if matches!(event, ParseEvent::StructEnd | ParseEvent::SequenceEnd) {
+                if matches!(
+                    event.kind,
+                    ParseEventKind::StructEnd | ParseEventKind::SequenceEnd
+                ) {
                     indent = indent.saturating_sub(1);
                 }
 
@@ -26,8 +29,8 @@ fn collect_events(input: &str) -> String {
 
                 // Increase indent after Start events
                 if matches!(
-                    event,
-                    ParseEvent::StructStart(_) | ParseEvent::SequenceStart(_)
+                    event.kind,
+                    ParseEventKind::StructStart(_) | ParseEventKind::SequenceStart(_)
                 ) {
                     indent += 1;
                 }
@@ -49,20 +52,20 @@ fn collect_events(input: &str) -> String {
 }
 
 fn format_event(event: &ParseEvent) -> String {
-    match event {
-        ParseEvent::Scalar(ScalarValue::Unit) => "Scalar(Unit)".to_string(),
-        ParseEvent::Scalar(ScalarValue::Null) => "Scalar(Unit)".to_string(),
-        ParseEvent::Scalar(ScalarValue::I64(n)) => format!("Scalar({})", n),
-        ParseEvent::Scalar(ScalarValue::Str(s)) => format!("Scalar({:?})", s.as_ref()),
-        ParseEvent::Scalar(s) => format!("Scalar({:?})", s),
-        ParseEvent::VariantTag(Some(name)) => format!("VariantTag({:?})", name),
-        ParseEvent::VariantTag(None) => "VariantTag(None)".to_string(),
-        ParseEvent::StructStart(ContainerKind::Object) => "StructStart".to_string(),
-        ParseEvent::StructStart(k) => format!("StructStart({:?})", k),
-        ParseEvent::StructEnd => "StructEnd".to_string(),
-        ParseEvent::SequenceStart(_) => "SequenceStart".to_string(),
-        ParseEvent::SequenceEnd => "SequenceEnd".to_string(),
-        ParseEvent::FieldKey(k) => format!("FieldKey({:?})", k.name.as_ref()),
+    match &event.kind {
+        ParseEventKind::Scalar(ScalarValue::Unit) => "Scalar(Unit)".to_string(),
+        ParseEventKind::Scalar(ScalarValue::Null) => "Scalar(Unit)".to_string(),
+        ParseEventKind::Scalar(ScalarValue::I64(n)) => format!("Scalar({})", n),
+        ParseEventKind::Scalar(ScalarValue::Str(s)) => format!("Scalar({:?})", s.as_ref()),
+        ParseEventKind::Scalar(s) => format!("Scalar({:?})", s),
+        ParseEventKind::VariantTag(Some(name)) => format!("VariantTag({:?})", name),
+        ParseEventKind::VariantTag(None) => "VariantTag(None)".to_string(),
+        ParseEventKind::StructStart(ContainerKind::Object) => "StructStart".to_string(),
+        ParseEventKind::StructStart(k) => format!("StructStart({:?})", k),
+        ParseEventKind::StructEnd => "StructEnd".to_string(),
+        ParseEventKind::SequenceStart(_) => "SequenceStart".to_string(),
+        ParseEventKind::SequenceEnd => "SequenceEnd".to_string(),
+        ParseEventKind::FieldKey(k) => format!("FieldKey({:?})", k.name.as_ref()),
         other => format!("{:?}", other),
     }
 }
