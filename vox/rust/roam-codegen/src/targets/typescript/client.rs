@@ -159,54 +159,28 @@ pub fn generate_client_impl(service: &ServiceDetail) -> String {
         // Start CallBuilder with executor function
         out.push_str("    return new CallBuilder(async (metadata) => {\n");
 
-        // Build encode function based on number of args
-        let encode_fn = if method.args.is_empty() {
-            "(_a: Record<string, unknown>) => new Uint8Array(0)".to_string()
-        } else if method.args.len() == 1 {
-            let arg_name = method.args[0].name.to_lower_camel_case();
-            format!(
-                "(a: Record<string, unknown>) => encodeWithSchema(a.{arg_name}, schema.args[0])"
-            )
-        } else {
-            // Multiple args - encode as tuple
-            let arg_names: Vec<_> = method
-                .args
-                .iter()
-                .map(|a| format!("a.{}", a.name.to_lower_camel_case()))
-                .collect();
-            format!(
-                "(a: Record<string, unknown>) => encodeWithSchema([{}], {{ kind: 'tuple', elements: schema.args }})",
-                arg_names.join(", ")
-            )
-        };
-
-        // Build CallerRequest
-        out.push_str("      const response = await this.caller.call({\n");
-        out.push_str(&format!("        methodId: {}n,\n", hex_u64(id)));
-        out.push_str(&format!(
-            "        method: \"{}.{}\",\n",
-            service_name, method_name
-        ));
-        out.push_str(&format!("        args: {},\n", args_record));
-        out.push_str(&format!("        encode: {},\n", encode_fn));
-        if has_streaming_args {
-            out.push_str("        channels,\n");
-        }
-        out.push_str("        metadata,\n");
-        out.push_str("      });\n");
-
         // Check if this method returns Result<T, E>
         let is_fallible = matches!(classify_shape(method.return_type), ShapeKind::Result { .. });
 
         if is_fallible {
-            // Fallible method: handle both success and user error
+            // Fallible method: caller.call() throws RpcError on user errors
+            // We need to catch and decode the error payload
             out.push_str("      try {\n");
-            out.push_str("        const offset = decodeRpcResult(response, 0);\n");
-            out.push_str(
-                "        const value = decodeWithSchema(response, offset, schema.returns).value;\n",
-            );
+            out.push_str("        const response = await this.caller.call({\n");
+            out.push_str(&format!("          methodId: {}n,\n", hex_u64(id)));
             out.push_str(&format!(
-                "        return {{ ok: true, value }} as {ret_ty};\n"
+                "          method: \"{}.{}\",\n",
+                service_name, method_name
+            ));
+            out.push_str(&format!("          args: {},\n", args_record));
+            out.push_str("          schema,\n");
+            if has_streaming_args {
+                out.push_str("          channels,\n");
+            }
+            out.push_str("          metadata,\n");
+            out.push_str("        });\n");
+            out.push_str(&format!(
+                "        return {{ ok: true, value: response }} as {ret_ty};\n"
             ));
             out.push_str("      } catch (e) {\n");
             out.push_str("        if (e instanceof RpcError && e.isUserError() && e.payload && schema.error) {\n");
@@ -219,16 +193,26 @@ pub fn generate_client_impl(service: &ServiceDetail) -> String {
             out.push_str("        }\n");
             out.push_str("        throw e;\n");
             out.push_str("      }\n");
+            out.push_str("    });\n");
         } else {
-            // Infallible method: just decode success
-            out.push_str("      const offset = decodeRpcResult(response, 0);\n");
-            out.push_str(
-                "      const result = decodeWithSchema(response, offset, schema.returns).value;\n",
-            );
-            out.push_str(&format!("      return result as {ret_ty};\n"));
+            // Infallible method: no error handling needed
+            out.push_str("      const response = await this.caller.call({\n");
+            out.push_str(&format!("        methodId: {}n,\n", hex_u64(id)));
+            out.push_str(&format!(
+                "        method: \"{}.{}\",\n",
+                service_name, method_name
+            ));
+            out.push_str(&format!("        args: {},\n", args_record));
+            out.push_str("        schema,\n");
+            if has_streaming_args {
+                out.push_str("        channels,\n");
+            }
+            out.push_str("        metadata,\n");
+            out.push_str("      });\n");
+            out.push_str(&format!("      return response as {ret_ty};\n"));
+            out.push_str("    });\n");
         }
 
-        out.push_str("    });\n");
         out.push_str("  }\n\n");
     }
 

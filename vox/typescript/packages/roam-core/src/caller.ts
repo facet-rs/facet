@@ -3,7 +3,7 @@
 // Provides a clean interface for making RPC calls that supports
 // middleware composition via the with() method.
 
-import type { ChannelIdAllocator, ChannelRegistry } from "./channeling/index.ts";
+import type { ChannelIdAllocator, ChannelRegistry, MethodSchema } from "./channeling/index.ts";
 import type {
   ClientMiddleware,
   ClientContext,
@@ -12,7 +12,6 @@ import type {
   ClientMetadataValue,
 } from "./middleware.ts";
 import { Extensions, RejectionError } from "./middleware.ts";
-import { tryDecodeRpcResult } from "@bearcove/roam-wire";
 
 /**
  * Internal request representation used by Caller implementations.
@@ -37,10 +36,9 @@ export interface CallerRequest {
   args: Record<string, unknown>;
 
   /**
-   * Deferred encoding function.
-   * Called after middleware has a chance to modify args.
+   * Method schema for encoding args and decoding response.
    */
-  encode: (args: Record<string, unknown>) => Uint8Array;
+  schema: MethodSchema;
 
   /**
    * Channel IDs for streaming arguments.
@@ -70,9 +68,9 @@ export interface Caller {
    * Make an RPC call.
    *
    * @param request - The request to send
-   * @returns Response payload bytes
+   * @returns Decoded response value
    */
-  call(request: CallerRequest): Promise<Uint8Array>;
+  call(request: CallerRequest): Promise<unknown>;
 
   /**
    * Get the channel ID allocator for streaming.
@@ -117,7 +115,7 @@ export class MiddlewareCaller implements Caller {
     this.middlewares = middlewares;
   }
 
-  async call(request: CallerRequest): Promise<Uint8Array> {
+  async call(request: CallerRequest): Promise<unknown> {
     // Create context for this call
     const ctx: ClientContext = {
       extensions: new Extensions(),
@@ -151,19 +149,10 @@ export class MiddlewareCaller implements Caller {
     };
 
     let outcome: CallOutcome;
-    let responsePayload: Uint8Array;
 
     try {
-      responsePayload = await this.inner.call(finalRequest);
-
-      // Peek at the response to determine actual outcome (Ok vs user/protocol error)
-      const rpcResult = tryDecodeRpcResult(responsePayload);
-      if (rpcResult.ok) {
-        outcome = { ok: true, value: responsePayload };
-      } else {
-        // RPC returned an error (user error or protocol error)
-        outcome = { ok: false, error: rpcResult.error };
-      }
+      const value = await this.inner.call(finalRequest);
+      outcome = { ok: true, value };
     } catch (e) {
       const error = e instanceof Error ? e : new Error(String(e));
       outcome = { ok: false, error };
@@ -175,13 +164,13 @@ export class MiddlewareCaller implements Caller {
     // Run post hooks with actual outcome
     await this.runPostHooks(ctx, callRequest, outcome);
 
-    return responsePayload;
+    return outcome.value;
   }
 
   private async runPostHooks(
     ctx: ClientContext,
     request: CallRequest,
-    outcome: CallOutcome
+    outcome: CallOutcome,
   ): Promise<void> {
     // Run post hooks in reverse order (onion model)
     for (let i = this.middlewares.length - 1; i >= 0; i--) {

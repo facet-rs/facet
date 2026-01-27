@@ -35,6 +35,8 @@ import type { Caller, CallerRequest } from "./caller.ts";
 import { MiddlewareCaller } from "./caller.ts";
 import type { ClientMiddleware } from "./middleware.ts";
 import { metadataMapToEntries } from "./metadata.ts";
+import { encodeWithSchema, decodeWithSchema } from "@bearcove/roam-postcard";
+import { tryDecodeRpcResult } from "@bearcove/roam-wire";
 
 // Note: Role is exported from streaming/index.ts in roam-core's main export
 
@@ -389,7 +391,9 @@ export class Connection<T extends MessageTransport = MessageTransport> {
     // Send request
     // r[impl call.request.channels] - Include channel IDs in Request.
     const metadata = this.metadataInterceptor?.() ?? [];
-    await this.io.send(encodeMessage(messageRequest(requestId, methodId, payload, metadata, channels)));
+    await this.io.send(
+      encodeMessage(messageRequest(requestId, methodId, payload, metadata, channels)),
+    );
 
     // Flush any pending outgoing stream data (for client-to-server streaming)
     // r[impl channeling.data] - Send queued Data/Close messages after Request.
@@ -1017,14 +1021,22 @@ export class ConnectionCaller<T extends MessageTransport = MessageTransport> imp
     this.conn = conn;
   }
 
-  async call(request: CallerRequest): Promise<Uint8Array> {
-    // Encode the payload using the deferred encoding function
-    const payload = request.encode(request.args);
+  async call(request: CallerRequest): Promise<unknown> {
+    // Encode the payload using the schema
+    const argNames = Object.keys(request.args);
+    let payload: Uint8Array;
+    if (argNames.length === 0) {
+      payload = new Uint8Array(0);
+    } else if (argNames.length === 1) {
+      payload = encodeWithSchema(request.args[argNames[0]], request.schema.args[0]);
+    } else {
+      // Multiple args: encode as tuple
+      const values = argNames.map((name) => request.args[name]);
+      payload = encodeWithSchema(values, { kind: "tuple", elements: request.schema.args });
+    }
 
     // Convert metadata map to wire format entries
-    const metadataEntries = request.metadata
-      ? metadataMapToEntries(request.metadata)
-      : [];
+    const metadataEntries = request.metadata ? metadataMapToEntries(request.metadata) : [];
 
     // Build the wire message
     const requestId = this.conn["nextRequestId"]++;
@@ -1047,14 +1059,22 @@ export class ConnectionCaller<T extends MessageTransport = MessageTransport> imp
     // Send request with metadata
     await this.conn["io"].send(
       encodeMessage(
-        messageRequest(requestId, request.methodId, payload, metadataEntries, channels)
-      )
+        messageRequest(requestId, request.methodId, payload, metadataEntries, channels),
+      ),
     );
 
     // Flush outgoing streams
     await this.conn.flushOutgoing();
 
-    return responsePromise;
+    // Wait for response and decode
+    const responsePayload = await responsePromise;
+    const rpcResult = tryDecodeRpcResult(responsePayload);
+    if (rpcResult.ok) {
+      const decoded = decodeWithSchema(responsePayload, rpcResult.offset, request.schema.returns);
+      return decoded.value;
+    } else {
+      throw rpcResult.error;
+    }
   }
 
   getChannelAllocator(): ChannelIdAllocator {

@@ -3,7 +3,7 @@
 
 import type { MethodHandler, MethodSchema, Caller } from "@bearcove/roam-core";
 import * as pc from "@bearcove/roam-postcard";
-import { encodeResultOk, encodeResultErr, encodeInvalidPayload, decodeRpcResult, encodeWithSchema, decodeWithSchema, helloExchangeInitiator, defaultHello, CallBuilder } from "@bearcove/roam-core";
+import { encodeResultOk, encodeResultErr, encodeInvalidPayload, encodeWithSchema, decodeWithSchema, helloExchangeInitiator, defaultHello, CallBuilder } from "@bearcove/roam-core";
 import { connectWs } from "@bearcove/roam-ws";
 import { RpcError } from "@bearcove/roam-core";
 import { Tx, Rx, createServerTx, createServerRx, bindChannels } from "@bearcove/roam-core";
@@ -205,12 +205,10 @@ export class TestbedClient implements TestbedCaller {
         methodId: 0x9aabc4ba61fd5df3n,
         method: "Testbed.echo",
         args: { message },
-        encode: (a: Record<string, unknown>) => encodeWithSchema(a.message, schema.args[0]),
+        schema,
         metadata,
       });
-      const offset = decodeRpcResult(response, 0);
-      const result = decodeWithSchema(response, offset, schema.returns).value;
-      return result as string;
+      return response as string;
     });
   }
 
@@ -222,12 +220,10 @@ export class TestbedClient implements TestbedCaller {
         methodId: 0xcba154600f640175n,
         method: "Testbed.reverse",
         args: { message },
-        encode: (a: Record<string, unknown>) => encodeWithSchema(a.message, schema.args[0]),
+        schema,
         metadata,
       });
-      const offset = decodeRpcResult(response, 0);
-      const result = decodeWithSchema(response, offset, schema.returns).value;
-      return result as string;
+      return response as string;
     });
   }
 
@@ -235,17 +231,15 @@ export class TestbedClient implements TestbedCaller {
   divide(dividend: bigint, divisor: bigint): CallBuilder<{ ok: true; value: bigint } | { ok: false; error: MathError }> {
     const schema = testbed_schemas.divide;
     return new CallBuilder(async (metadata) => {
-      const response = await this.caller.call({
-        methodId: 0xc3964cbee4b1d590n,
-        method: "Testbed.divide",
-        args: { dividend, divisor },
-        encode: (a: Record<string, unknown>) => encodeWithSchema([a.dividend, a.divisor], { kind: 'tuple', elements: schema.args }),
-        metadata,
-      });
       try {
-        const offset = decodeRpcResult(response, 0);
-        const value = decodeWithSchema(response, offset, schema.returns).value;
-        return { ok: true, value } as { ok: true; value: bigint } | { ok: false; error: MathError };
+        const response = await this.caller.call({
+          methodId: 0xc3964cbee4b1d590n,
+          method: "Testbed.divide",
+          args: { dividend, divisor },
+          schema,
+          metadata,
+        });
+        return { ok: true, value: response } as { ok: true; value: bigint } | { ok: false; error: MathError };
       } catch (e) {
         if (e instanceof RpcError && e.isUserError() && e.payload && schema.error) {
           const error = decodeWithSchema(e.payload, 0, schema.error).value;
@@ -260,17 +254,15 @@ export class TestbedClient implements TestbedCaller {
   lookup(id: number): CallBuilder<{ ok: true; value: Person } | { ok: false; error: LookupError }> {
     const schema = testbed_schemas.lookup;
     return new CallBuilder(async (metadata) => {
-      const response = await this.caller.call({
-        methodId: 0xe71a0faedd014e59n,
-        method: "Testbed.lookup",
-        args: { id },
-        encode: (a: Record<string, unknown>) => encodeWithSchema(a.id, schema.args[0]),
-        metadata,
-      });
       try {
-        const offset = decodeRpcResult(response, 0);
-        const value = decodeWithSchema(response, offset, schema.returns).value;
-        return { ok: true, value } as { ok: true; value: Person } | { ok: false; error: LookupError };
+        const response = await this.caller.call({
+          methodId: 0xe71a0faedd014e59n,
+          method: "Testbed.lookup",
+          args: { id },
+          schema,
+          metadata,
+        });
+        return { ok: true, value: response } as { ok: true; value: Person } | { ok: false; error: LookupError };
       } catch (e) {
         if (e instanceof RpcError && e.isUserError() && e.payload && schema.error) {
           const error = decodeWithSchema(e.payload, 0, schema.error).value;
@@ -301,13 +293,11 @@ export class TestbedClient implements TestbedCaller {
         methodId: 0x855b3a25d97bfefdn,
         method: "Testbed.sum",
         args: { numbers },
-        encode: (a: Record<string, unknown>) => encodeWithSchema(a.numbers, schema.args[0]),
+        schema,
         channels,
         metadata,
       });
-      const offset = decodeRpcResult(response, 0);
-      const result = decodeWithSchema(response, offset, schema.returns).value;
-      return result as bigint;
+      return response as bigint;
     });
   }
 
@@ -331,13 +321,11 @@ export class TestbedClient implements TestbedCaller {
         methodId: 0x54d2273d8cdb9c38n,
         method: "Testbed.generate",
         args: { count, output },
-        encode: (a: Record<string, unknown>) => encodeWithSchema([a.count, a.output], { kind: 'tuple', elements: schema.args }),
+        schema,
         channels,
         metadata,
       });
-      const offset = decodeRpcResult(response, 0);
-      const result = decodeWithSchema(response, offset, schema.returns).value;
-      return result as void;
+      return response as void;
     });
   }
 
@@ -361,13 +349,11 @@ export class TestbedClient implements TestbedCaller {
         methodId: 0x5d9895604eb18b19n,
         method: "Testbed.transform",
         args: { input, output },
-        encode: (a: Record<string, unknown>) => encodeWithSchema([a.input, a.output], { kind: 'tuple', elements: schema.args }),
+        schema,
         channels,
         metadata,
       });
-      const offset = decodeRpcResult(response, 0);
-      const result = decodeWithSchema(response, offset, schema.returns).value;
-      return result as void;
+      return response as void;
     });
   }
 
@@ -379,12 +365,10 @@ export class TestbedClient implements TestbedCaller {
         methodId: 0x453fa9bf6932528cn,
         method: "Testbed.echoPoint",
         args: { point },
-        encode: (a: Record<string, unknown>) => encodeWithSchema(a.point, schema.args[0]),
+        schema,
         metadata,
       });
-      const offset = decodeRpcResult(response, 0);
-      const result = decodeWithSchema(response, offset, schema.returns).value;
-      return result as Point;
+      return response as Point;
     });
   }
 
@@ -396,12 +380,10 @@ export class TestbedClient implements TestbedCaller {
         methodId: 0x3dd231f57b1bca21n,
         method: "Testbed.createPerson",
         args: { name, age, email },
-        encode: (a: Record<string, unknown>) => encodeWithSchema([a.name, a.age, a.email], { kind: 'tuple', elements: schema.args }),
+        schema,
         metadata,
       });
-      const offset = decodeRpcResult(response, 0);
-      const result = decodeWithSchema(response, offset, schema.returns).value;
-      return result as Person;
+      return response as Person;
     });
   }
 
@@ -413,12 +395,10 @@ export class TestbedClient implements TestbedCaller {
         methodId: 0x04ef653fdf0653c4n,
         method: "Testbed.rectangleArea",
         args: { rect },
-        encode: (a: Record<string, unknown>) => encodeWithSchema(a.rect, schema.args[0]),
+        schema,
         metadata,
       });
-      const offset = decodeRpcResult(response, 0);
-      const result = decodeWithSchema(response, offset, schema.returns).value;
-      return result as number;
+      return response as number;
     });
   }
 
@@ -430,12 +410,10 @@ export class TestbedClient implements TestbedCaller {
         methodId: 0xe285f31c6dfffbfcn,
         method: "Testbed.parseColor",
         args: { name },
-        encode: (a: Record<string, unknown>) => encodeWithSchema(a.name, schema.args[0]),
+        schema,
         metadata,
       });
-      const offset = decodeRpcResult(response, 0);
-      const result = decodeWithSchema(response, offset, schema.returns).value;
-      return result as Color | null;
+      return response as Color | null;
     });
   }
 
@@ -447,12 +425,10 @@ export class TestbedClient implements TestbedCaller {
         methodId: 0x6e706354167c00c2n,
         method: "Testbed.shapeArea",
         args: { shape },
-        encode: (a: Record<string, unknown>) => encodeWithSchema(a.shape, schema.args[0]),
+        schema,
         metadata,
       });
-      const offset = decodeRpcResult(response, 0);
-      const result = decodeWithSchema(response, offset, schema.returns).value;
-      return result as number;
+      return response as number;
     });
   }
 
@@ -464,12 +440,10 @@ export class TestbedClient implements TestbedCaller {
         methodId: 0xa914982e7d3c7b55n,
         method: "Testbed.createCanvas",
         args: { name, shapes, background },
-        encode: (a: Record<string, unknown>) => encodeWithSchema([a.name, a.shapes, a.background], { kind: 'tuple', elements: schema.args }),
+        schema,
         metadata,
       });
-      const offset = decodeRpcResult(response, 0);
-      const result = decodeWithSchema(response, offset, schema.returns).value;
-      return result as Canvas;
+      return response as Canvas;
     });
   }
 
@@ -481,12 +455,10 @@ export class TestbedClient implements TestbedCaller {
         methodId: 0xed1dc0c625889d30n,
         method: "Testbed.processMessage",
         args: { msg },
-        encode: (a: Record<string, unknown>) => encodeWithSchema(a.msg, schema.args[0]),
+        schema,
         metadata,
       });
-      const offset = decodeRpcResult(response, 0);
-      const result = decodeWithSchema(response, offset, schema.returns).value;
-      return result as Message;
+      return response as Message;
     });
   }
 
@@ -498,12 +470,10 @@ export class TestbedClient implements TestbedCaller {
         methodId: 0x5c8707f5ae4ccbccn,
         method: "Testbed.getPoints",
         args: { count },
-        encode: (a: Record<string, unknown>) => encodeWithSchema(a.count, schema.args[0]),
+        schema,
         metadata,
       });
-      const offset = decodeRpcResult(response, 0);
-      const result = decodeWithSchema(response, offset, schema.returns).value;
-      return result as Point[];
+      return response as Point[];
     });
   }
 
@@ -515,12 +485,10 @@ export class TestbedClient implements TestbedCaller {
         methodId: 0xacd19a29fe0d470cn,
         method: "Testbed.swapPair",
         args: { pair },
-        encode: (a: Record<string, unknown>) => encodeWithSchema(a.pair, schema.args[0]),
+        schema,
         metadata,
       });
-      const offset = decodeRpcResult(response, 0);
-      const result = decodeWithSchema(response, offset, schema.returns).value;
-      return result as [string, number];
+      return response as [string, number];
     });
   }
 
