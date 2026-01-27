@@ -18,7 +18,6 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 tracing = { version = "0.1", default-features = false, optional = true }
-corosensei = { version = "0.3", features = ["default-stack", "unwind"] }
 facet-core = { path = "../facet-core", version = "0.43.2" }
 facet-dessert = { path = "../facet-dessert", version = "0.43.2" }
 facet-path = { path = "../facet-path", version = "0.43.2", default-features = false }
