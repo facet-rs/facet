@@ -256,7 +256,9 @@ impl<'input> FormatDeserializer<'input, false> {
 
         let partial = self.deserialize_into_with_shape(wip, source_shape)?;
 
-        let heap_value: HeapValue<'input, false> = partial.build()?;
+        let heap_value: HeapValue<'input, false> = partial
+            .build()
+            .map_err(|e| DeserializeError::bug_from_reflect(e, "building heap value"))?;
 
         #[allow(unsafe_code)]
         let heap_value: HeapValue<'static, false> = unsafe {

@@ -4,15 +4,9 @@ use facet_core::{Type, UserType};
 use facet_path::PathStep;
 use facet_reflect::Partial;
 
-use crate::{
-    DeserializeError, DeserializeErrorKind, FormatDeserializer, FormatParser, ParseEvent,
-    ScalarValue,
-};
+use crate::{DeserializeError, DeserializeErrorKind, FormatDeserializer, ParseEvent, ScalarValue};
 
-impl<'input, const BORROW: bool, P> FormatDeserializer<'input, BORROW, P>
-where
-    P: FormatParser<'input>,
-{
+impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
     /// Deserialize a struct without flattened fields (simple case).
     pub(crate) fn deserialize_struct_simple(
         &mut self,

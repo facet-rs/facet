@@ -5,9 +5,7 @@ use std::borrow::Cow;
 use facet_core::{NumericType, PrimitiveType, ScalarType, Type, UserType};
 use facet_reflect::{Partial, Span};
 
-use crate::{
-    DeserializeError, DeserializeErrorKind, FormatDeserializer, FormatParser, ScalarValue,
-};
+use crate::{DeserializeError, DeserializeErrorKind, FormatDeserializer, ScalarValue};
 
 /// Set a scalar value into a `Partial`, handling type coercion.
 ///

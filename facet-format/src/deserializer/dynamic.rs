@@ -6,8 +6,8 @@ use facet_core::{ScalarType, Shape, StructKind};
 use facet_reflect::Partial;
 
 use crate::{
-    DeserializeError, DeserializeErrorKind, EnumVariantHint, FormatDeserializer, FormatParser,
-    ParseEvent, ScalarTypeHint, ScalarValue, deserializer::reflect,
+    DeserializeError, DeserializeErrorKind, EnumVariantHint, FormatDeserializer, ParseEvent,
+    ScalarTypeHint, ScalarValue, deserializer::reflect,
 };
 
 /// Helper to get variant display name (used by deserialize_enum_dynamic_inner)
@@ -15,10 +15,7 @@ fn get_variant_display_name(variant: &'static facet_core::Variant) -> &'static s
     variant.effective_name()
 }
 
-impl<'input, const BORROW: bool, P> FormatDeserializer<'input, BORROW, P>
-where
-    P: FormatParser<'input>,
-{
+impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
     /// Deserialize any value into a DynamicValue type (e.g., facet_value::Value).
     ///
     /// This handles all value types by inspecting the parse events and calling

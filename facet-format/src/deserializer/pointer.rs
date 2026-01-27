@@ -4,14 +4,11 @@ use facet_core::Def;
 use facet_reflect::Partial;
 
 use crate::{
-    DeserializeError, DeserializeErrorKind, FormatDeserializer, FormatParser, ParseEvent,
-    ScalarTypeHint, ScalarValue,
+    DeserializeError, DeserializeErrorKind, FormatDeserializer, ParseEvent, ScalarTypeHint,
+    ScalarValue,
 };
 
-impl<'input, const BORROW: bool, P> FormatDeserializer<'input, BORROW, P>
-where
-    P: FormatParser<'input>,
-{
+impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
     pub(crate) fn deserialize_pointer(
         &mut self,
         mut wip: Partial<'input, BORROW>,

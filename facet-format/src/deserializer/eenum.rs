@@ -7,15 +7,13 @@ use facet_reflect::Partial;
 
 use crate::{
     ContainerKind, DeserializeError, DeserializeErrorKind, EnumVariantHint, FieldEvidence,
-    FormatDeserializer, FormatParser, ParseEvent, ScalarValue,
+    FormatDeserializer, ParseEvent, ScalarValue,
     deserializer::scalar_matches::scalar_matches_shape,
 };
 
-/// Inner implementation of `deserialize_enum_variant_content` using dyn dispatch.
-///
-/// This function is non-generic over the parser type, reducing monomorphization.
+/// Inner implementation of `deserialize_enum_variant_content`.
 fn deserialize_enum_variant_content_inner<'input, const BORROW: bool>(
-    deser: &mut FormatDeserializer<'input, BORROW, &mut dyn FormatParser<'input>>,
+    deser: &mut FormatDeserializer<'input, BORROW>,
     mut wip: Partial<'input, BORROW>,
 ) -> Result<Partial<'input, BORROW>, DeserializeError> {
     use alloc::vec;
@@ -344,7 +342,7 @@ fn cow_redirect_variant_name<'a, const BORROW: bool>(
 
 /// Inner implementation of `deserialize_enum_externally_tagged` using dyn dispatch.
 fn deserialize_enum_externally_tagged_inner<'input, const BORROW: bool>(
-    deser: &mut FormatDeserializer<'input, BORROW, &mut dyn FormatParser<'input>>,
+    deser: &mut FormatDeserializer<'input, BORROW>,
     mut wip: Partial<'input, BORROW>,
 ) -> Result<Partial<'input, BORROW>, DeserializeError> {
     use super::dyn_helpers::*;
@@ -609,7 +607,7 @@ fn find_tag_value<'a, 'input>(
 
 /// Inner implementation of `deserialize_enum_internally_tagged` using dyn dispatch.
 fn deserialize_enum_internally_tagged_inner<'input, const BORROW: bool>(
-    deser: &mut FormatDeserializer<'input, BORROW, &mut dyn FormatParser<'input>>,
+    deser: &mut FormatDeserializer<'input, BORROW>,
     mut wip: Partial<'input, BORROW>,
     tag_key: &'static str,
 ) -> Result<Partial<'input, BORROW>, DeserializeError> {
@@ -808,7 +806,7 @@ fn deserialize_enum_internally_tagged_inner<'input, const BORROW: bool>(
 
 /// Inner implementation of `deserialize_enum_adjacently_tagged` using dyn dispatch.
 fn deserialize_enum_adjacently_tagged_inner<'input, const BORROW: bool>(
-    deser: &mut FormatDeserializer<'input, BORROW, &mut dyn FormatParser<'input>>,
+    deser: &mut FormatDeserializer<'input, BORROW>,
     mut wip: Partial<'input, BORROW>,
     tag_key: &'static str,
     content_key: &'static str,
@@ -918,7 +916,7 @@ fn deserialize_enum_adjacently_tagged_inner<'input, const BORROW: bool>(
 
 /// Inner implementation of `deserialize_variant_struct_fields` using dyn dispatch.
 fn deserialize_variant_struct_fields_inner<'input, const BORROW: bool>(
-    deser: &mut FormatDeserializer<'input, BORROW, &mut dyn FormatParser<'input>>,
+    deser: &mut FormatDeserializer<'input, BORROW>,
     mut wip: Partial<'input, BORROW>,
 ) -> Result<Partial<'input, BORROW>, DeserializeError> {
     use super::dyn_helpers::*;
@@ -1059,7 +1057,7 @@ fn deserialize_variant_struct_fields_inner<'input, const BORROW: bool>(
 
 /// Inner implementation of `deserialize_enum_as_struct` using dyn dispatch.
 fn deserialize_enum_as_struct_inner<'input, const BORROW: bool>(
-    deser: &mut FormatDeserializer<'input, BORROW, &mut dyn FormatParser<'input>>,
+    deser: &mut FormatDeserializer<'input, BORROW>,
     mut wip: Partial<'input, BORROW>,
     enum_def: &'static facet_core::EnumType,
 ) -> Result<Partial<'input, BORROW>, DeserializeError> {
@@ -1238,7 +1236,7 @@ fn deserialize_enum_as_struct_inner<'input, const BORROW: bool>(
 
 /// Inner implementation of `deserialize_other_variant_with_captured_tag` using dyn dispatch.
 fn deserialize_other_variant_with_captured_tag_inner<'input, const BORROW: bool>(
-    deser: &mut FormatDeserializer<'input, BORROW, &mut dyn FormatParser<'input>>,
+    deser: &mut FormatDeserializer<'input, BORROW>,
     mut wip: Partial<'input, BORROW>,
     captured_tag: Option<&'input str>,
 ) -> Result<Partial<'input, BORROW>, DeserializeError> {
@@ -1306,7 +1304,7 @@ fn deserialize_other_variant_with_captured_tag_inner<'input, const BORROW: bool>
 
 /// Inner implementation of `deserialize_result_as_enum` using dyn dispatch.
 fn deserialize_result_as_enum_inner<'input, const BORROW: bool>(
-    deser: &mut FormatDeserializer<'input, BORROW, &mut dyn FormatParser<'input>>,
+    deser: &mut FormatDeserializer<'input, BORROW>,
     mut wip: Partial<'input, BORROW>,
 ) -> Result<Partial<'input, BORROW>, DeserializeError> {
     use super::dyn_helpers::*;
@@ -1403,7 +1401,7 @@ fn deserialize_result_as_enum_inner<'input, const BORROW: bool>(
 
 /// Inner implementation of `deserialize_enum_untagged` using dyn dispatch.
 fn deserialize_enum_untagged_inner<'input, const BORROW: bool>(
-    deser: &mut FormatDeserializer<'input, BORROW, &mut dyn FormatParser<'input>>,
+    deser: &mut FormatDeserializer<'input, BORROW>,
     mut wip: Partial<'input, BORROW>,
 ) -> Result<Partial<'input, BORROW>, DeserializeError> {
     use super::dyn_helpers::*;
@@ -1529,10 +1527,7 @@ fn deserialize_enum_untagged_inner<'input, const BORROW: bool>(
     }
 }
 
-impl<'input, const BORROW: bool, P> FormatDeserializer<'input, BORROW, P>
-where
-    P: FormatParser<'input>,
-{
+impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
     pub(crate) fn deserialize_enum(
         &mut self,
         wip: Partial<'input, BORROW>,
