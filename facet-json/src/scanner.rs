@@ -319,12 +319,14 @@ impl Scanner {
     }
 
     fn skip_whitespace(&mut self, buf: &[u8]) {
-        while let Some(&b) = buf.get(self.pos) {
+        let mut pos = self.pos;
+        while let Some(&b) = buf.get(pos) {
             match b {
-                b' ' | b'\t' | b'\n' | b'\r' => self.pos += 1,
+                b' ' | b'\t' | b'\n' | b'\r' => pos += 1,
                 _ => break,
             }
         }
+        self.pos = pos;
     }
 
     /// Scan a string, finding its boundaries and noting if it has escapes.
@@ -507,24 +509,26 @@ impl Scanner {
         start: usize,
         mut hint: NumberHint,
     ) -> ScanResult {
+        let mut pos = self.pos;
+
         // Integer part
-        while let Some(&b) = buf.get(self.pos) {
+        while let Some(&b) = buf.get(pos) {
             if b.is_ascii_digit() {
-                self.pos += 1;
+                pos += 1;
             } else {
                 break;
             }
         }
 
         // Check for decimal part
-        if buf.get(self.pos) == Some(&b'.') {
+        if buf.get(pos) == Some(&b'.') {
             hint = NumberHint::Float;
-            self.pos += 1;
+            pos += 1;
 
             // Fractional digits
-            while let Some(&b) = buf.get(self.pos) {
+            while let Some(&b) = buf.get(pos) {
                 if b.is_ascii_digit() {
-                    self.pos += 1;
+                    pos += 1;
                 } else {
                     break;
                 }
@@ -532,43 +536,45 @@ impl Scanner {
         }
 
         // Check for exponent
-        if matches!(buf.get(self.pos), Some(b'e') | Some(b'E')) {
+        if matches!(buf.get(pos), Some(b'e') | Some(b'E')) {
             hint = NumberHint::Float;
-            self.pos += 1;
+            pos += 1;
 
             // Optional sign
-            if matches!(buf.get(self.pos), Some(b'+') | Some(b'-')) {
-                self.pos += 1;
+            if matches!(buf.get(pos), Some(b'+') | Some(b'-')) {
+                pos += 1;
             }
 
             // Exponent digits
-            while let Some(&b) = buf.get(self.pos) {
+            while let Some(&b) = buf.get(pos) {
                 if b.is_ascii_digit() {
-                    self.pos += 1;
+                    pos += 1;
                 } else {
                     break;
                 }
             }
         }
 
+        self.pos = pos;
+
         // Check if we're at end of buffer - might need more data
         // Numbers end at whitespace, punctuation, or true EOF
-        if self.pos == buf.len() {
+        if pos == buf.len() {
             // At end of buffer - need more data to see terminator
             self.state = ScanState::InNumber { start, hint };
             return Ok(SpannedToken {
                 token: Token::NeedMore { consumed: start },
-                span: Span::new(start, self.pos - start),
+                span: Span::new(start, pos - start),
             });
         }
 
-        let end = self.pos;
+        let end = pos;
 
         // Validate we actually parsed something
         if end == start || (end == start + 1 && buf.get(start) == Some(&b'-')) {
             return Err(ScanError {
                 kind: ScanErrorKind::UnexpectedChar(
-                    buf.get(self.pos).map(|&b| b as char).unwrap_or('?'),
+                    buf.get(pos).map(|&b| b as char).unwrap_or('?'),
                 ),
                 span: Span::new(start, 1),
             });
