@@ -17,12 +17,12 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [features]
-default = []
-std = []
-alloc = []
+default = ["std"]
+std = ["alloc", "facet-core/std"]
+alloc = ["facet-core/alloc"]
 
 [dependencies]
-facet-core = { path = "../facet-core", version = "0.43.2" }
+facet-core = { path = "../facet-core", version = "0.43.2", default-features = false }
 
 [dev-dependencies]
 facet = { path = "../facet" }
