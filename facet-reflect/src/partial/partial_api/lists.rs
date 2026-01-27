@@ -27,7 +27,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     Def::List(_) => {
                         // Regular list type - just update the tracker
                         frame.tracker = Tracker::List {
-                            current_child: false,
+                            current_child: None,
                         };
                         return Ok(self);
                     }
@@ -99,7 +99,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
 
                 // Update tracker to List state and mark as initialized
                 frame.tracker = Tracker::List {
-                    current_child: false,
+                    current_child: None,
                 };
                 frame.is_init = true;
             }
@@ -350,13 +350,16 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         // Verify the tracker is in List state and initialized
         match &mut frame.tracker {
             Tracker::List { current_child } if frame.is_init => {
-                if *current_child {
+                if current_child.is_some() {
                     return Err(ReflectError::OperationFailed {
                         shape: frame.allocated.shape(),
                         operation: "already pushing an element, call pop() first",
                     });
                 }
-                *current_child = true;
+                // Get the current length to use as the index for path tracking
+                let current_len =
+                    unsafe { (list_def.vtable.len)(frame.data.assume_init().as_const()) };
+                *current_child = Some(current_len);
             }
             _ => {
                 return Err(ReflectError::OperationFailed {

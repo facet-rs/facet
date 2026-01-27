@@ -414,8 +414,8 @@ pub(crate) enum Tracker {
     /// Partially initialized list (Vec, etc.)
     /// Whether it's initialized is tracked by `Frame::is_init`.
     List {
-        /// If we're pushing another frame for an element
-        current_child: bool,
+        /// If we're pushing another frame for an element, this is the element index
+        current_child: Option<usize>,
     },
 
     /// Partially initialized map (HashMap, BTreeMap, etc.)
@@ -1178,7 +1178,7 @@ impl Frame {
                 }
             }
             Tracker::List { current_child } => {
-                if self.is_init && !current_child {
+                if self.is_init && current_child.is_none() {
                     Ok(())
                 } else {
                     Err(ReflectError::UninitializedValue {

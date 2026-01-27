@@ -1,3 +1,5 @@
+use facet_path::Path;
+
 use super::*;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -958,7 +960,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 }
             }
             Tracker::List { current_child } if parent_frame.is_init => {
-                if *current_child {
+                if current_child.is_some() {
                     // We just popped an element frame, now push it to the list
                     if let Def::List(list_def) = parent_frame.allocated.shape().def {
                         let Some(push_fn) = list_def.push() else {
@@ -984,7 +986,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         popped_frame.is_init = false;
                         popped_frame.dealloc();
 
-                        *current_child = false;
+                        *current_child = None;
                     }
                 }
             }
@@ -1411,97 +1413,102 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         Ok(self)
     }
 
-    /// Returns a human-readable path representing the current traversal in the builder,
-    /// e.g., `RootStruct.fieldName[index].subfield`.
-    pub fn path(&self) -> String {
-        let mut out = String::new();
+    /// Returns a path representing the current traversal in the builder.
+    ///
+    /// The returned [`facet_path::Path`] can be formatted as a human-readable string
+    /// using [`Path::format_with_shape()`](facet_path::Path::format_with_shape),
+    /// e.g., `fieldName[index].subfield`.
+    pub fn path(&self) -> Path {
+        use facet_path::PathStep;
 
-        let mut path_components = Vec::new();
-        // The stack of enum/struct/sequence names currently in context.
-        // Start from root and build upwards.
-        for (i, frame) in self.frames().iter().enumerate() {
+        let mut path = Path::new();
+
+        for frame in self.frames().iter() {
             match frame.allocated.shape().ty {
                 Type::User(user_type) => match user_type {
-                    UserType::Struct(struct_type) => {
-                        // Try to get currently active field index
-                        let mut field_str = None;
+                    UserType::Struct(_struct_type) => {
+                        // Add field step if we're currently in a field
                         if let Tracker::Struct {
                             current_child: Some(idx),
                             ..
                         } = &frame.tracker
-                            && let Some(field) = struct_type.fields.get(*idx)
                         {
-                            field_str = Some(field.name);
-                        }
-                        if i == 0 {
-                            // Use Display for the root struct shape
-                            path_components.push(format!("{}", frame.allocated.shape()));
-                        }
-                        if let Some(field_name) = field_str {
-                            path_components.push(format!(".{field_name}"));
+                            path.push(PathStep::Field(*idx as u32));
                         }
                     }
-                    UserType::Enum(_enum_type) => {
-                        // Try to get currently active variant and field
+                    UserType::Enum(enum_type) => {
+                        // Add variant and optional field step
                         if let Tracker::Enum {
                             variant,
                             current_child,
                             ..
                         } = &frame.tracker
                         {
-                            if i == 0 {
-                                // Use Display for the root enum shape
-                                path_components.push(format!("{}", frame.allocated.shape()));
-                            }
-                            path_components.push(format!("::{}", variant.name));
-                            if let Some(idx) = *current_child
-                                && let Some(field) = variant.data.fields.get(idx)
+                            // Find the variant index by comparing pointers
+                            if let Some(variant_idx) = enum_type
+                                .variants
+                                .iter()
+                                .position(|v| core::ptr::eq(v, *variant))
                             {
-                                path_components.push(format!(".{}", field.name));
+                                path.push(PathStep::Variant(variant_idx as u32));
                             }
-                        } else if i == 0 {
-                            // just the enum display
-                            path_components.push(format!("{}", frame.allocated.shape()));
+                            if let Some(idx) = *current_child {
+                                path.push(PathStep::Field(idx as u32));
+                            }
                         }
                     }
-                    UserType::Union(_union_type) => {
-                        path_components.push(format!("{}", frame.allocated.shape()));
+                    UserType::Union(_) => {
+                        // No structural path steps for unions
                     }
                     UserType::Opaque => {
-                        path_components.push("<opaque>".to_string());
+                        // Opaque types might be lists (e.g., Vec<T>)
+                        if let Tracker::List {
+                            current_child: Some(idx),
+                        } = &frame.tracker
+                        {
+                            path.push(PathStep::Index(*idx as u32));
+                        }
                     }
                 },
                 Type::Sequence(seq_type) => match seq_type {
                     facet_core::SequenceType::Array(_array_def) => {
-                        // Try to show current element index
+                        // Add index step if we're currently in an element
                         if let Tracker::Array {
                             current_child: Some(idx),
                             ..
                         } = &frame.tracker
                         {
-                            path_components.push(format!("[{idx}]"));
+                            path.push(PathStep::Index(*idx as u32));
                         }
                     }
-                    // You can add more for Slice, Vec, etc., if applicable
                     _ => {
-                        // just indicate "[]" for sequence
-                        path_components.push("[]".to_string());
+                        // Other sequence types (Slice, etc.) - no index tracking
                     }
                 },
                 Type::Pointer(_) => {
-                    // Indicate deref
-                    path_components.push("*".to_string());
+                    path.push(PathStep::Deref);
                 }
                 _ => {
-                    // No structural path
+                    // No structural path for scalars, etc.
                 }
             }
         }
-        // Merge the path_components into a single string
-        for component in path_components {
-            out.push_str(&component);
-        }
-        out
+
+        path
+    }
+
+    /// Returns the root shape for path formatting.
+    ///
+    /// Use this together with [`path()`](Self::path) to format the path:
+    /// ```ignore
+    /// let path_str = partial.path().format_with_shape(partial.root_shape());
+    /// ```
+    pub fn root_shape(&self) -> &'static Shape {
+        self.frames()
+            .first()
+            .expect("Partial should always have at least one frame")
+            .allocated
+            .shape()
     }
 
     /// Get the field for the parent frame
