@@ -21,3 +21,4 @@ tokio-tungstenite.workspace = true
 roam-stream.workspace = true
 roam-websocket.workspace = true
 dotenvy.workspace = true
+tokio-postgres.workspace = true
