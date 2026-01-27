@@ -155,7 +155,7 @@ impl<T: Facet<'static>> Driver<T> {
             .cli_config
             .as_ref()
             .map(|c| {
-                let args = c.args().join(" ");
+                let args = c.resolve_args().join(" ");
                 if args.is_empty() {
                     "<no arguments>".to_string()
                 } else {

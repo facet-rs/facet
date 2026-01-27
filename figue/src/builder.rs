@@ -768,7 +768,7 @@ mod tests {
             .strict()
             .build();
 
-        assert_eq!(config.args(), &["--port", "8080"]);
+        assert_eq!(config.resolve_args(), vec!["--port", "8080"]);
         assert!(config.strict());
     }
 

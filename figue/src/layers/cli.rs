@@ -45,24 +45,40 @@ use crate::value_builder::{LeafValue, ValueBuilder};
 // CliConfig
 // ============================================================================
 
+/// Source of CLI arguments.
+#[derive(Debug, Clone, Default)]
+pub enum CliArgsSource {
+    /// Use `std::env::args().skip(1)` at parse time.
+    #[default]
+    FromStdEnv,
+    /// Use explicitly provided arguments.
+    Explicit(Vec<String>),
+}
+
 /// Configuration for CLI argument parsing.
 #[derive(Debug, Clone, Default)]
 pub struct CliConfig {
-    /// Raw CLI arguments.
-    args: Vec<String>,
+    /// Source of CLI arguments.
+    args: CliArgsSource,
     /// Whether to error on unknown arguments.
     strict: bool,
 }
 
 impl CliConfig {
-    /// Get the CLI arguments.
-    pub fn args(&self) -> &[String] {
-        &self.args
-    }
-
     /// Check if strict mode is enabled.
     pub fn strict(&self) -> bool {
         self.strict
+    }
+
+    /// Resolve and return the CLI arguments.
+    ///
+    /// If args were explicitly set, returns those.
+    /// Otherwise, returns `std::env::args().skip(1)`.
+    pub fn resolve_args(&self) -> Vec<String> {
+        match &self.args {
+            CliArgsSource::FromStdEnv => std::env::args().skip(1).collect(),
+            CliArgsSource::Explicit(args) => args.clone(),
+        }
     }
 }
 
@@ -84,7 +100,7 @@ impl CliConfigBuilder {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.config.args = args.into_iter().map(|s| s.into()).collect();
+        self.config.args = CliArgsSource::Explicit(args.into_iter().map(|s| s.into()).collect());
         self
     }
 
@@ -94,10 +110,11 @@ impl CliConfigBuilder {
         I: IntoIterator<Item = S>,
         S: AsRef<std::ffi::OsStr>,
     {
-        self.config.args = args
-            .into_iter()
-            .filter_map(|s| s.as_ref().to_str().map(|s| s.to_string()))
-            .collect();
+        self.config.args = CliArgsSource::Explicit(
+            args.into_iter()
+                .filter_map(|s| s.as_ref().to_str().map(|s| s.to_string()))
+                .collect(),
+        );
         self
     }
 
@@ -119,7 +136,8 @@ impl CliConfigBuilder {
 /// - `schema.args`: top-level flags, positionals, subcommands
 /// - `schema.config` overrides: `--config.port 8080` style dotted paths
 pub fn parse_cli(schema: &Schema, cli_config: &CliConfig) -> LayerOutput {
-    let args: Vec<&str> = cli_config.args().iter().map(|s| s.as_str()).collect();
+    let args = cli_config.resolve_args();
+    let args: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
     let mut ctx = ParseContext::new(&args, schema);
     ctx.parse();
     ctx.into_output()
