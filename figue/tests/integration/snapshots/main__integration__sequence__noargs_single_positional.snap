@@ -1,12 +1,12 @@
 ---
-source: tests/integration/sequence.rs
+source: crates/figue/tests/integration/sequence.rs
 expression: "$crate :: common :: strip_ansi(& err.to_string())"
 ---
 Error: Missing required fields:
 
 Sources:
-  cli --settings.*
-  defaults
+├─ cli --settings.*
+└─ defaults
 
 input.. .. ⨯ MISSING
 

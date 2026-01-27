@@ -135,8 +135,25 @@ fn write_sources_header(w: &mut impl Write, file_resolution: &FileResolution, sc
 
     writeln!(w, "Sources:").ok();
 
+    // Count how many sources we have to determine which is last
+    let has_files = !file_resolution.paths.is_empty() || file_resolution.had_explicit;
+    let has_env = env_prefix.is_some();
+    let has_cli = true;
+    let has_defaults = true;
+
+    let sources_count = [has_files, has_env, has_cli, has_defaults]
+        .iter()
+        .filter(|&&x| x)
+        .count();
+    let mut current_source = 0;
+
     if !file_resolution.paths.is_empty() {
-        writeln!(w, "  file:").ok();
+        current_source += 1;
+        let is_last_source = current_source == sources_count;
+        let branch = if is_last_source { "└─ " } else { "├─ " };
+        let cont = if is_last_source { "···" } else { "│  " };
+
+        writeln!(w, "{}file:", branch).ok();
 
         let max_path_len = file_resolution
             .paths
@@ -145,11 +162,14 @@ fn write_sources_header(w: &mut impl Write, file_resolution: &FileResolution, sc
             .max()
             .unwrap_or(0);
 
-        for path_info in &file_resolution.paths {
+        for (i, path_info) in file_resolution.paths.iter().enumerate() {
+            let is_last_file = i == file_resolution.paths.len() - 1;
+            let file_branch = if is_last_file { "└─ " } else { "├─ " };
+
             let status_label = match path_info.status {
-                FilePathStatus::Picked => "  (picked)",
+                FilePathStatus::Picked => "(picked)",
                 FilePathStatus::NotTried => "(not tried)",
-                FilePathStatus::Absent => "  (absent)",
+                FilePathStatus::Absent => "(absent)",
             };
 
             let path_str = path_info.path.as_str();
@@ -171,21 +191,45 @@ fn write_sources_header(w: &mut impl Write, file_resolution: &FileResolution, sc
 
             writeln!(
                 w,
-                "    {} {}{} {}",
-                colored_status, colored_path, dots, suffix
+                "{}{}{} {}{} {}",
+                cont, file_branch, colored_status, colored_path, dots, suffix
             )
             .ok();
         }
     } else if file_resolution.had_explicit {
-        writeln!(w, "  file: (none - explicit --config not provided)").ok();
+        current_source += 1;
+        let is_last_source = current_source == sources_count;
+        let branch = if is_last_source { "└─ " } else { "├─ " };
+        writeln!(w, "{}file: (none - explicit --config not provided)", branch).ok();
     }
 
     if let Some(prefix) = env_prefix {
-        writeln!(w, "  env {}", format!("${}__*", prefix).yellow()).ok();
+        current_source += 1;
+        let is_last_source = current_source == sources_count;
+        let branch = if is_last_source { "└─ " } else { "├─ " };
+        writeln!(w, "{}env {}", branch, format!("${}__*", prefix).yellow()).ok();
     }
 
-    writeln!(w, "  cli {}", format!("--{}.*", config_field_name).cyan()).ok();
-    writeln!(w, "  defaults").ok();
+    {
+        current_source += 1;
+        let is_last_source = current_source == sources_count;
+        let branch = if is_last_source { "└─ " } else { "├─ " };
+        writeln!(
+            w,
+            "{}cli {}",
+            branch,
+            format!("--{}.*", config_field_name).cyan()
+        )
+        .ok();
+    }
+
+    {
+        current_source += 1;
+        let is_last_source = current_source == sources_count;
+        let branch = if is_last_source { "└─ " } else { "├─ " };
+        writeln!(w, "{}defaults", branch).ok();
+    }
+
     writeln!(w).ok();
 }
 
@@ -568,14 +612,46 @@ fn render_entries(
     widths: &HashMap<usize, ColumnWidths>,
     opts: &FormatOptions,
 ) -> bool {
+    render_entries_with_prefix(w, entries, depth, widths, opts, "")
+}
+
+fn render_entries_with_prefix(
+    w: &mut dyn Write,
+    entries: &[DumpEntry],
+    depth: usize,
+    widths: &HashMap<usize, ColumnWidths>,
+    opts: &FormatOptions,
+    prefix: &str,
+) -> bool {
     let col = widths.get(&depth).cloned().unwrap_or_default();
-    let indent = "  ".repeat(depth);
     let mut had_truncation = false;
 
-    for entry in entries {
+    for (i, entry) in entries.iter().enumerate() {
+        let is_last = i == entries.len() - 1;
+
+        // Tree branch characters
+        let branch = if depth == 0 {
+            "" // No branch for root level
+        } else if is_last {
+            "└─ "
+        } else {
+            "├─ "
+        };
+
+        // Prefix for children: continue vertical line if not last, dots if last
+        // Using dots instead of spaces when is_last so they don't get stripped by log viewers
+        // (the │ character already protects the line from stripping)
+        let child_prefix = if depth == 0 {
+            String::new()
+        } else {
+            format!("{}{}", prefix, if is_last { "···" } else { "│  " })
+        };
+
+        let full_prefix = format!("{}{}", prefix, branch);
+
         if entry.is_group() && entry.value.is_empty() {
             // Pure group header (struct/array)
-            writeln!(w, "{}{}", indent, entry.key).ok();
+            writeln!(w, "{}{}", full_prefix, entry.key).ok();
         } else {
             // Leaf or enum with value
             let key_pad = ".".repeat(col.key.saturating_sub(visual_width(&entry.key)));
@@ -584,14 +660,14 @@ fn render_entries(
             if val_width > opts.max_value_width {
                 had_truncation = true;
                 let wrapped = wrap_value(&entry.value, opts.max_value_width);
-                for (i, line) in wrapped.iter().enumerate() {
-                    if i == 0 {
+                for (j, line) in wrapped.iter().enumerate() {
+                    if j == 0 {
                         let val_pad =
                             ".".repeat(opts.max_value_width.saturating_sub(visual_width(line)));
                         writeln!(
                             w,
                             "{}{}{} {}{} {}",
-                            indent,
+                            full_prefix,
                             entry.key,
                             key_pad.bright_black(),
                             line,
@@ -600,8 +676,15 @@ fn render_entries(
                         )
                         .ok();
                     } else {
-                        let continuation = " ".repeat(indent.len() + col.key + 1);
-                        writeln!(w, "{}{}", continuation, line).ok();
+                        // Continuation line for wrapped values
+                        let cont_prefix = if depth == 0 {
+                            String::new()
+                        } else {
+                            format!("{}{}", prefix, if is_last { "···" } else { "│  " })
+                        };
+                        let continuation = "."
+                            .repeat(visual_width(&full_prefix) + col.key + 1 - cont_prefix.len());
+                        writeln!(w, "{}{}{}", cont_prefix, continuation, line).ok();
                     }
                 }
             } else {
@@ -609,7 +692,7 @@ fn render_entries(
                 writeln!(
                     w,
                     "{}{}{} {}{} {}",
-                    indent,
+                    full_prefix,
                     entry.key,
                     key_pad.bright_black(),
                     entry.value,
@@ -620,8 +703,8 @@ fn render_entries(
             }
         }
 
-        // Render children
-        if render_entries(w, &entry.children, depth + 1, widths, opts) {
+        // Render children with updated prefix
+        if render_entries_with_prefix(w, &entry.children, depth + 1, widths, opts, &child_prefix) {
             had_truncation = true;
         }
     }
