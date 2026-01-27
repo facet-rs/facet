@@ -139,7 +139,7 @@ impl<'input, const BORROW: bool> PathNavigator<'input, BORROW> {
         };
 
         Ok(NavigateResult {
-            common_len,
+            _common_len: common_len,
             final_segment,
             final_is_option,
             trailing_variant,
@@ -240,7 +240,7 @@ impl<'input, const BORROW: bool> PathNavigator<'input, BORROW> {
 /// Result of navigating to a path.
 pub(crate) struct NavigateResult {
     /// How many segments were already open (common prefix length).
-    pub common_len: usize,
+    pub _common_len: usize,
     /// The final segment name, if any.
     pub final_segment: Option<&'static str>,
     /// Whether the final segment was an Option (and we entered Some).

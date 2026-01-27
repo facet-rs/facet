@@ -149,7 +149,7 @@ impl<'de, T: Facet<'de>, P: FormatParser<'de>> CompiledDeserializer<T, P> {
                     span: None, // JIT doesn't track span yet
                     path: None, // JIT doesn't track path yet
                     kind: DeserializeErrorKind::MissingField {
-                        field: "unknown".into(), // TODO: Track which field is missing
+                        field: "unknown", // TODO: Track which field is missing
                         container_shape: T::SHAPE,
                     },
                 })

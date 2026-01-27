@@ -1518,21 +1518,19 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         }
                     }
                 },
-                Type::Sequence(seq_type) => match seq_type {
-                    facet_core::SequenceType::Array(_array_def) => {
-                        // Add index step if we're currently in an element
-                        if let Tracker::Array {
-                            current_child: Some(idx),
-                            ..
-                        } = &frame.tracker
-                        {
-                            path.push(PathStep::Index(*idx as u32));
-                        }
+                Type::Sequence(facet_core::SequenceType::Array(_array_def)) => {
+                    // Add index step if we're currently in an element
+                    if let Tracker::Array {
+                        current_child: Some(idx),
+                        ..
+                    } = &frame.tracker
+                    {
+                        path.push(PathStep::Index(*idx as u32));
                     }
-                    _ => {
-                        // Other sequence types (Slice, etc.) - no index tracking
-                    }
-                },
+                }
+                Type::Sequence(_) => {
+                    // Other sequence types (Slice, etc.) - no index tracking
+                }
                 Type::Pointer(_) => {
                     path.push(PathStep::Deref);
                 }
