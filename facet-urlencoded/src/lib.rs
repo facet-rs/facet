@@ -2,7 +2,7 @@
 #![doc = include_str!("../README.md")]
 
 use facet_core::{Def, Facet, Type, UserType};
-use facet_reflect::{Partial, ReflectError};
+use facet_reflect::{Partial, ReflectError, ShapeMismatchError};
 use log::*;
 
 #[cfg(test)]
@@ -357,6 +357,15 @@ pub enum UrlEncodedError {
 impl From<ReflectError> for UrlEncodedError {
     fn from(err: ReflectError) -> Self {
         UrlEncodedError::ReflectError(err)
+    }
+}
+
+impl From<ShapeMismatchError> for UrlEncodedError {
+    fn from(err: ShapeMismatchError) -> Self {
+        UrlEncodedError::UnsupportedShape(format!(
+            "shape mismatch: expected {}, got {}",
+            err.expected, err.actual
+        ))
     }
 }
 

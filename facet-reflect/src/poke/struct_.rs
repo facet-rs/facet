@@ -1,4 +1,5 @@
 use facet_core::{Facet, FieldError, StructType};
+use facet_path::Path;
 
 use crate::{ReflectError, ReflectErrorKind};
 
@@ -20,6 +21,10 @@ impl core::fmt::Debug for PokeStruct<'_, '_> {
 }
 
 impl<'mem, 'facet> PokeStruct<'mem, 'facet> {
+    fn err(&self, kind: ReflectErrorKind) -> ReflectError {
+        ReflectError::new(kind, Path::new(self.value.shape))
+    }
+
     /// Returns the struct definition.
     #[inline(always)]
     pub const fn ty(&self) -> &StructType {
@@ -38,17 +43,15 @@ impl<'mem, 'facet> PokeStruct<'mem, 'facet> {
     /// you try to mutate via [`Poke::set`] on the returned field poke, or
     /// when calling [`PokeStruct::set_field`] which checks the parent struct.
     pub fn field(&mut self, index: usize) -> Result<Poke<'_, 'facet>, ReflectError> {
-        let field = self
-            .ty
-            .fields
-            .get(index)
-            .ok_or(ReflectErrorKind::FieldError {
+        let field = self.ty.fields.get(index).ok_or_else(|| {
+            self.err(ReflectErrorKind::FieldError {
                 shape: self.value.shape,
                 field_error: FieldError::IndexOutOfBounds {
                     index,
                     bound: self.ty.fields.len(),
                 },
-            })?;
+            })
+        })?;
 
         let field_data = unsafe { self.value.data.field(field.offset) };
         let field_shape = field.shape();
@@ -65,10 +68,10 @@ impl<'mem, 'facet> PokeStruct<'mem, 'facet> {
                 return self.field(i);
             }
         }
-        Err(ReflectErrorKind::FieldError {
+        Err(self.err(ReflectErrorKind::FieldError {
             shape: self.value.shape,
             field_error: FieldError::NoSuchField,
-        })
+        }))
     }
 
     /// Sets the value of a field by index.
@@ -85,29 +88,27 @@ impl<'mem, 'facet> PokeStruct<'mem, 'facet> {
     ) -> Result<(), ReflectError> {
         // Check that the parent struct is POD before allowing field mutation
         if !self.value.shape.is_pod() {
-            return Err(ReflectErrorKind::NotPod {
+            return Err(self.err(ReflectErrorKind::NotPod {
                 shape: self.value.shape,
-            });
+            }));
         }
 
-        let field = self
-            .ty
-            .fields
-            .get(index)
-            .ok_or(ReflectErrorKind::FieldError {
+        let field = self.ty.fields.get(index).ok_or_else(|| {
+            self.err(ReflectErrorKind::FieldError {
                 shape: self.value.shape,
                 field_error: FieldError::IndexOutOfBounds {
                     index,
                     bound: self.ty.fields.len(),
                 },
-            })?;
+            })
+        })?;
 
         let field_shape = field.shape();
         if field_shape != T::SHAPE {
-            return Err(ReflectErrorKind::WrongShape {
+            return Err(self.err(ReflectErrorKind::WrongShape {
                 expected: field_shape,
                 actual: T::SHAPE,
-            });
+            }));
         }
 
         unsafe {
@@ -133,10 +134,10 @@ impl<'mem, 'facet> PokeStruct<'mem, 'facet> {
                 return self.set_field(i, value);
             }
         }
-        Err(ReflectErrorKind::FieldError {
+        Err(self.err(ReflectErrorKind::FieldError {
             shape: self.value.shape,
             field_error: FieldError::NoSuchField,
-        })
+        }))
     }
 
     /// Gets a read-only view of a field by index.

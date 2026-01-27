@@ -1,4 +1,5 @@
 use facet_core::{Def, EnumRepr, EnumType, Facet, FieldError};
+use facet_path::Path;
 
 use crate::{ReflectError, ReflectErrorKind, peek::VariantError};
 
@@ -23,6 +24,10 @@ impl core::fmt::Debug for PokeEnum<'_, '_> {
 }
 
 impl<'mem, 'facet> PokeEnum<'mem, 'facet> {
+    fn err(&self, kind: ReflectErrorKind) -> ReflectError {
+        ReflectError::new(kind, Path::new(self.value.shape))
+    }
+
     /// Returns the enum definition
     #[inline(always)]
     pub const fn ty(&self) -> EnumType {
@@ -216,33 +221,35 @@ impl<'mem, 'facet> PokeEnum<'mem, 'facet> {
     ) -> Result<(), ReflectError> {
         // Check that the parent enum is POD before allowing field mutation
         if !self.value.shape.is_pod() {
-            return Err(ReflectErrorKind::NotPod {
+            return Err(self.err(ReflectErrorKind::NotPod {
                 shape: self.value.shape,
-            });
+            }));
         }
 
-        let variant = self
-            .active_variant()
-            .map_err(|_| ReflectErrorKind::OperationFailed {
+        let variant = self.active_variant().map_err(|_| {
+            self.err(ReflectErrorKind::OperationFailed {
                 shape: self.value.shape,
                 operation: "get active variant",
-            })?;
+            })
+        })?;
         let fields = &variant.data.fields;
 
-        let field = fields.get(index).ok_or(ReflectErrorKind::FieldError {
-            shape: self.value.shape,
-            field_error: FieldError::IndexOutOfBounds {
-                index,
-                bound: fields.len(),
-            },
+        let field = fields.get(index).ok_or_else(|| {
+            self.err(ReflectErrorKind::FieldError {
+                shape: self.value.shape,
+                field_error: FieldError::IndexOutOfBounds {
+                    index,
+                    bound: fields.len(),
+                },
+            })
         })?;
 
         let field_shape = field.shape();
         if field_shape != T::SHAPE {
-            return Err(ReflectErrorKind::WrongShape {
+            return Err(self.err(ReflectErrorKind::WrongShape {
                 expected: field_shape,
                 actual: T::SHAPE,
-            });
+            }));
         }
 
         unsafe {
@@ -266,16 +273,18 @@ impl<'mem, 'facet> PokeEnum<'mem, 'facet> {
         name: &str,
         value: T,
     ) -> Result<(), ReflectError> {
-        let index = self
-            .field_index(name)
-            .map_err(|_| ReflectErrorKind::OperationFailed {
+        let index = self.field_index(name).map_err(|_| {
+            self.err(ReflectErrorKind::OperationFailed {
                 shape: self.value.shape,
                 operation: "get active variant",
-            })?;
+            })
+        })?;
 
-        let index = index.ok_or(ReflectErrorKind::FieldError {
-            shape: self.value.shape,
-            field_error: FieldError::NoSuchField,
+        let index = index.ok_or_else(|| {
+            self.err(ReflectErrorKind::FieldError {
+                shape: self.value.shape,
+                field_error: FieldError::NoSuchField,
+            })
         })?;
 
         self.set_field(index, value)

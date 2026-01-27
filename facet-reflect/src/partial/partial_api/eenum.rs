@@ -48,7 +48,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// This does _not_ push a frame on the stack.
     pub fn select_nth_variant(mut self, index: usize) -> Result<Self, ReflectError> {
         let frame = self.frames().last().unwrap();
-        let enum_type = frame.get_enum_type()?;
+        let enum_type = frame.get_enum_type().map_err(|e| self.err(e))?;
 
         if index >= enum_type.variants.len() {
             return Err(self.err(ReflectErrorKind::OperationFailed {
@@ -68,15 +68,16 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     ///
     /// See [Self::select_nth_variant] for more notes.
     pub fn select_variant_named(mut self, variant_name: &str) -> Result<Self, ReflectError> {
-        let frame = self.frames_mut().last_mut().unwrap();
-        let enum_type = frame.get_enum_type()?;
+        let frame = self.frames().last().unwrap();
+        let enum_type = frame.get_enum_type().map_err(|e| self.err(e))?;
+        let shape = frame.allocated.shape();
         let Some(variant) = enum_type
             .variants
             .iter()
             .find(|v| v.effective_name() == variant_name)
         else {
             return Err(self.err(ReflectErrorKind::OperationFailed {
-                shape: frame.allocated.shape(),
+                shape,
                 operation: "No variant found with the given name",
             }));
         };

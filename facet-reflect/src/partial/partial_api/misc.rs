@@ -190,7 +190,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     remaining_frame.deinit();
                     remaining_frame.dealloc();
                 }
-                return Err(e);
+                return Err(self.err(e));
             }
 
             // Validate the frame is fully initialized
@@ -201,7 +201,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     remaining_frame.deinit();
                     remaining_frame.dealloc();
                 }
-                return Err(e);
+                return Err(self.err(e));
             }
 
             // Update parent's ISet to mark this field as initialized.
@@ -273,11 +273,13 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         // Fill defaults and validate the root frame is fully initialized
         if let Some(frame) = self.frames_mut().last_mut() {
             // Fill defaults - this can fail if a field has #[facet(default)] but no default impl
-            frame.fill_defaults()?;
+            frame.fill_defaults().map_err(|e| self.err(e))?;
             // Root validation failed. At this point, all stored frames have been
             // processed and their parent isets updated.
             // No need to poison - returning Err consumes self, Drop will handle cleanup
-            frame.require_full_initialization()?;
+            frame
+                .require_full_initialization()
+                .map_err(|e| self.err(e))?;
         }
 
         Ok(self)
@@ -570,7 +572,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     frame.allocated.shape(),
                     frame.tracker.kind()
                 );
-                frame.fill_defaults()?;
+                frame.fill_defaults().map_err(|e| self.err(e))?;
             }
 
             let frame = self.frames().last().unwrap();
@@ -585,7 +587,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 "end(): require_full_initialization result: {:?}",
                 result.is_ok()
             );
-            result?
+            result.map_err(|e| self.err(e))?
         }
 
         // Pop the frame and save its data pointer for SmartPointer handling
@@ -747,7 +749,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         ::alloc::alloc::dealloc(popped_frame.data.as_mut_byte_ptr(), layout);
                     }
                 }
-                return Err(e);
+                return Err(self.err(e));
             }
 
             // Perform the conversion
@@ -886,7 +888,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             // In deferred mode, fill defaults on the child frame before checking initialization.
             // Fill defaults for child frame before checking if it's fully initialized.
             // This handles structs/enums with optional fields that should auto-fill.
-            popped_frame.fill_defaults()?;
+            popped_frame.fill_defaults().map_err(|e| self.err(e))?;
             let child_is_initialized = popped_frame.require_full_initialization().is_ok();
             match &mut parent_frame.tracker {
                 Tracker::Struct {
@@ -931,7 +933,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         // Inner value wasn't initialized, deallocate and return error
                         popped_frame.deinit();
                         popped_frame.dealloc();
-                        return Err(e);
+                        return Err(self.err(e));
                     }
 
                     let Some(new_into_fn) = smart_ptr_def.vtable.new_into_fn else {
@@ -1231,7 +1233,9 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                             }));
                         }
 
-                        popped_frame.require_full_initialization()?;
+                        popped_frame
+                            .require_full_initialization()
+                            .map_err(|e| self.err(e))?;
 
                         // if the just-popped frame was a SmartPointerStr, we have some conversion to do:
                         // Special-case: SmartPointer<str> (Box<str>, Arc<str>, Rc<str>) via SmartPointerStr tracker
@@ -1422,7 +1426,13 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     pub fn path(&self) -> Path {
         use facet_path::PathStep;
 
-        let mut path = Path::new();
+        let root_shape = self
+            .frames()
+            .first()
+            .expect("Partial must have at least one frame")
+            .allocated
+            .shape();
+        let mut path = Path::new(root_shape);
 
         for frame in self.frames().iter() {
             match frame.allocated.shape().ty {

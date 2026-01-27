@@ -159,14 +159,12 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         frame: &mut Frame,
         struct_type: StructType,
         idx: usize,
-    ) -> Result<Frame, ReflectError> {
+    ) -> Result<Frame, ReflectErrorKind> {
         if idx >= struct_type.fields.len() {
-            return Err(ReflectError::without_path(
-                ReflectErrorKind::OperationFailed {
-                    shape: frame.allocated.shape(),
-                    operation: "field index out of bounds",
-                },
-            ));
+            return Err(ReflectErrorKind::OperationFailed {
+                shape: frame.allocated.shape(),
+                operation: "field index out of bounds",
+            });
         }
         let field = &struct_type.fields[idx];
 
@@ -227,23 +225,19 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         frame: &mut Frame,
         array_type: ArrayType,
         idx: usize,
-    ) -> Result<Frame, ReflectError> {
+    ) -> Result<Frame, ReflectErrorKind> {
         if idx >= array_type.n {
-            return Err(ReflectError::without_path(
-                ReflectErrorKind::OperationFailed {
-                    shape: frame.allocated.shape(),
-                    operation: "array index out of bounds",
-                },
-            ));
+            return Err(ReflectErrorKind::OperationFailed {
+                shape: frame.allocated.shape(),
+                operation: "array index out of bounds",
+            });
         }
 
         if array_type.n > 63 {
-            return Err(ReflectError::without_path(
-                ReflectErrorKind::OperationFailed {
-                    shape: frame.allocated.shape(),
-                    operation: "arrays larger than 63 elements are not yet supported",
-                },
-            ));
+            return Err(ReflectErrorKind::OperationFailed {
+                shape: frame.allocated.shape(),
+                operation: "arrays larger than 63 elements are not yet supported",
+            });
         }
 
         // Ensure frame is in Array state
@@ -259,12 +253,10 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 // fine too
             }
             _other => {
-                return Err(ReflectError::without_path(
-                    ReflectErrorKind::OperationFailed {
-                        shape: frame.allocated.shape(),
-                        operation: "unexpected tracker state: expected uninitialized Scalar or Array",
-                    },
-                ));
+                return Err(ReflectErrorKind::OperationFailed {
+                    shape: frame.allocated.shape(),
+                    operation: "unexpected tracker state: expected uninitialized Scalar or Array",
+                });
             }
         }
 
@@ -279,10 +271,10 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
                 // Calculate the offset for this array element
                 let Ok(element_layout) = array_type.t.layout.sized_layout() else {
-                    return Err(ReflectError::without_path(ReflectErrorKind::Unsized {
+                    return Err(ReflectErrorKind::Unsized {
                         shape: array_type.t,
                         operation: "begin_nth_element, calculating array element offset",
-                    }));
+                    });
                 };
                 let offset = element_layout.size() * idx;
                 let element_data = unsafe { frame.data.field_uninit(offset) };
@@ -306,17 +298,16 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
     /// Selects the nth field of an enum variant by index
     pub(crate) fn begin_nth_enum_field(
+        &self,
         frame: &mut Frame,
         variant: &'static Variant,
         idx: usize,
     ) -> Result<Frame, ReflectError> {
         if idx >= variant.data.fields.len() {
-            return Err(ReflectError::without_path(
-                ReflectErrorKind::OperationFailed {
-                    shape: frame.allocated.shape(),
-                    operation: "enum field index out of bounds",
-                },
-            ));
+            return Err(self.err(ReflectErrorKind::OperationFailed {
+                shape: frame.allocated.shape(),
+                operation: "enum field index out of bounds",
+            }));
         }
 
         let field = &variant.data.fields[idx];
@@ -334,12 +325,10 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 was_init
             }
             _ => {
-                return Err(ReflectError::without_path(
-                    ReflectErrorKind::OperationFailed {
-                        shape: frame.allocated.shape(),
-                        operation: "selecting a field on an enum requires selecting a variant first",
-                    },
-                ));
+                return Err(self.err(ReflectErrorKind::OperationFailed {
+                    shape: frame.allocated.shape(),
+                    operation: "selecting a field on an enum requires selecting a variant first",
+                }));
             }
         };
 

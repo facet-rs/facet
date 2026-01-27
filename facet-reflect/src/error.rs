@@ -25,6 +25,26 @@ impl core::fmt::Display for ShapeMismatchError {
 
 impl core::error::Error for ShapeMismatchError {}
 
+/// Error returned when allocating memory for a shape fails.
+///
+/// This is separate from `ReflectError` because allocation happens
+/// before reflection begins - we don't have a path yet.
+#[derive(Debug, Clone)]
+pub struct AllocError {
+    /// The shape we tried to allocate.
+    pub shape: &'static Shape,
+    /// What operation was being attempted.
+    pub operation: &'static str,
+}
+
+impl core::fmt::Display for AllocError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "failed to allocate {}: {}", self.shape, self.operation)
+    }
+}
+
+impl core::error::Error for AllocError {}
+
 /// A kind-only version of Tracker
 #[allow(missing_docs)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -59,18 +79,6 @@ impl ReflectError {
     #[inline]
     pub fn new(kind: ReflectErrorKind, path: Path) -> Self {
         Self { path, kind }
-    }
-
-    /// Create a new ReflectError without path context (empty path).
-    ///
-    /// Use this when constructing errors outside of a `Partial` context,
-    /// such as in static helper functions.
-    #[inline]
-    pub fn without_path(kind: ReflectErrorKind) -> Self {
-        Self {
-            path: Path::new(),
-            kind,
-        }
     }
 }
 

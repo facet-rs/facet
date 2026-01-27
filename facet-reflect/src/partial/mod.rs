@@ -115,7 +115,7 @@ mod iset;
 
 mod partial_api;
 
-use crate::{KeyPath, ReflectError, ReflectErrorKind, TrackerKind, trace};
+use crate::{AllocError, KeyPath, ReflectError, ReflectErrorKind, TrackerKind, trace};
 
 use core::marker::PhantomData;
 
@@ -1235,7 +1235,7 @@ impl Frame {
     }
 
     /// Get the [EnumType] of the frame's shape, if it is an enum type
-    pub(crate) const fn get_enum_type(&self) -> Result<EnumType, ReflectError> {
+    pub(crate) const fn get_enum_type(&self) -> Result<EnumType, ReflectErrorKind> {
         match self.allocated.shape().ty {
             Type::User(UserType::Enum(e)) => Ok(e),
             _ => Err(ReflectErrorKind::WasNotA {

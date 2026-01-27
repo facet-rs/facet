@@ -21,7 +21,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             frame.tracker.kind(),
             frame.is_init
         );
-        frame.fill_defaults()?;
+        frame.fill_defaults().map_err(|e| self.err(e))?;
         crate::trace!(
             "build(): after fill_defaults, tracker={:?}, is_init={}",
             frame.tracker.kind(),
@@ -43,7 +43,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         if let Err(e) = init_result {
             // Put the frame back so Drop can handle cleanup properly
             self.frames_mut().push(frame);
-            return Err(e);
+            return Err(self.err(e));
         }
 
         // Check invariants if present
@@ -148,7 +148,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             frame.tracker.kind(),
             frame.is_init
         );
-        frame.fill_defaults()?;
+        frame.fill_defaults().map_err(|e| self.err(e))?;
         crate::trace!(
             "finish_in_place(): after fill_defaults, tracker={:?}, is_init={}",
             frame.tracker.kind(),
@@ -170,7 +170,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         if let Err(e) = init_result {
             // Put the frame back so Drop can handle cleanup properly
             self.frames_mut().push(frame);
-            return Err(e);
+            return Err(self.err(e));
         }
 
         // Check invariants if present

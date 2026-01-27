@@ -68,6 +68,10 @@ impl<'mem, 'facet> PeekSet<'mem, 'facet> {
         Self { value, def }
     }
 
+    fn err(&self, kind: ReflectErrorKind) -> ReflectError {
+        self.value.err(kind)
+    }
+
     /// Returns true if the set is empty
     #[inline]
     pub fn is_empty(&self) -> bool {
@@ -87,10 +91,10 @@ impl<'mem, 'facet> PeekSet<'mem, 'facet> {
             return Ok(unsafe { (self.def.vtable.contains)(self.value.data(), value.data()) });
         }
 
-        Err(ReflectErrorKind::WrongShape {
+        Err(self.err(ReflectErrorKind::WrongShape {
             expected: self.def.t(),
             actual: value.shape,
-        })
+        }))
     }
 
     /// Returns an iterator over the values in the set

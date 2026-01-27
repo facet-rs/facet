@@ -145,22 +145,25 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             }
         }
 
-        let frame = self.frames_mut().last_mut().unwrap();
+        // Get the shape first to avoid borrow conflicts
+        let shape = self.frames().last().unwrap().allocated.shape();
 
-        let next_frame = match frame.allocated.shape().ty {
+        let next_frame = match shape.ty {
             Type::User(user_type) => match user_type {
                 UserType::Struct(struct_type) => {
-                    Self::begin_nth_struct_field(frame, struct_type, idx)?
+                    let frame = self.frames_mut().last_mut().unwrap();
+                    self.begin_nth_struct_field(frame, struct_type, idx)?
                 }
                 UserType::Enum(_) => {
                     // Check if we have a variant selected
+                    let frame = self.frames_mut().last_mut().unwrap();
                     match &frame.tracker {
                         Tracker::Enum { variant, .. } => {
-                            Self::begin_nth_enum_field(frame, variant, idx)?
+                            self.begin_nth_enum_field(frame, variant, idx)?
                         }
                         _ => {
                             return Err(self.err(ReflectErrorKind::OperationFailed {
-                                shape: frame.allocated.shape(),
+                                shape,
                                 operation: "must call select_variant before selecting enum fields",
                             }));
                         }
@@ -168,31 +171,32 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 }
                 UserType::Union(_) => {
                     return Err(self.err(ReflectErrorKind::OperationFailed {
-                        shape: frame.allocated.shape(),
+                        shape,
                         operation: "cannot select a field from a union",
                     }));
                 }
                 UserType::Opaque => {
                     return Err(self.err(ReflectErrorKind::OperationFailed {
-                        shape: frame.allocated.shape(),
+                        shape,
                         operation: "cannot select a field from an opaque type",
                     }));
                 }
             },
             Type::Sequence(sequence_type) => match sequence_type {
                 SequenceType::Array(array_type) => {
-                    Self::begin_nth_array_element(frame, array_type, idx)?
+                    let frame = self.frames_mut().last_mut().unwrap();
+                    self.begin_nth_array_element(frame, array_type, idx)?
                 }
                 SequenceType::Slice(_) => {
                     return Err(self.err(ReflectErrorKind::OperationFailed {
-                        shape: frame.allocated.shape(),
+                        shape,
                         operation: "cannot select a field from slices yet",
                     }));
                 }
             },
             _ => {
                 return Err(self.err(ReflectErrorKind::OperationFailed {
-                    shape: frame.allocated.shape(),
+                    shape,
                     operation: "cannot select a field from this type",
                 }));
             }

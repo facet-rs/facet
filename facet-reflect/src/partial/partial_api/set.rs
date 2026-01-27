@@ -337,6 +337,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     pub fn set_default(self) -> Result<Self, ReflectError> {
         let frame = self.frames().last().unwrap();
         let shape = frame.allocated.shape();
+        let path = self.path();
 
         // SAFETY: `call_default_in_place` fully initializes the passed pointer.
         unsafe {
@@ -344,10 +345,13 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 shape
                     .call_default_in_place(ptr.assume_init())
                     .ok_or_else(|| {
-                        ReflectError::without_path(ReflectErrorKind::OperationFailed {
-                            shape,
-                            operation: "type does not implement Default",
-                        })
+                        ReflectError::new(
+                            ReflectErrorKind::OperationFailed {
+                                shape,
+                                operation: "type does not implement Default",
+                            },
+                            path.clone(),
+                        )
                     })?;
                 Ok(())
             })

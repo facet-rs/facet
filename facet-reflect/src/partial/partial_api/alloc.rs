@@ -1,5 +1,5 @@
 use super::*;
-use crate::AllocatedShape;
+use crate::{AllocError, AllocatedShape};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Allocation, constructors etc.
@@ -11,7 +11,7 @@ impl<'facet> Partial<'facet, true> {
     /// Allocates a new [Partial] instance on the heap, with the given shape and type.
     ///
     /// This creates a borrowing Partial that can hold references with lifetime 'facet.
-    pub fn alloc<T>() -> Result<Self, ReflectError>
+    pub fn alloc<T>() -> Result<Self, AllocError>
     where
         T: Facet<'facet> + ?Sized,
     {
@@ -40,7 +40,7 @@ impl<'facet> Partial<'facet, true> {
     ///
     /// **Safe alternative**: Use [`Partial::alloc::<T>()`](Self::alloc) which gets the shape
     /// from `T::SHAPE` (guaranteed safe by `unsafe impl Facet for T`).
-    pub unsafe fn alloc_shape(shape: &'static Shape) -> Result<Self, ReflectError> {
+    pub unsafe fn alloc_shape(shape: &'static Shape) -> Result<Self, AllocError> {
         alloc_shape_inner(shape)
     }
 }
@@ -52,7 +52,7 @@ impl Partial<'static, false> {
     ///
     /// This creates an owned Partial that cannot hold borrowed references.
     /// Use this when the input buffer is temporary and won't outlive the result.
-    pub fn alloc_owned<T>() -> Result<Self, ReflectError>
+    pub fn alloc_owned<T>() -> Result<Self, AllocError>
     where
         T: Facet<'static> + ?Sized,
     {
@@ -81,7 +81,7 @@ impl Partial<'static, false> {
     ///
     /// **Safe alternative**: Use [`Partial::alloc_owned::<T>()`](Self::alloc_owned) which gets the shape
     /// from `T::SHAPE` (guaranteed safe by `unsafe impl Facet for T`).
-    pub unsafe fn alloc_shape_owned(shape: &'static Shape) -> Result<Self, ReflectError> {
+    pub unsafe fn alloc_shape_owned(shape: &'static Shape) -> Result<Self, AllocError> {
         alloc_shape_inner(shape)
     }
 }
@@ -127,7 +127,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// // Now safe to assume initialized
     /// let value = unsafe { slot.assume_init() };
     /// ```
-    pub unsafe fn from_raw(ptr: PtrUninit, shape: &'static Shape) -> Result<Self, ReflectError> {
+    pub unsafe fn from_raw(ptr: PtrUninit, shape: &'static Shape) -> Result<Self, AllocError> {
         crate::trace!(
             "from_raw({:p}, {:?}), with layout {:?}",
             ptr.as_mut_byte_ptr(),
@@ -139,11 +139,9 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         let allocated_size = shape
             .layout
             .sized_layout()
-            .map_err(|_| {
-                ReflectError::without_path(ReflectErrorKind::Unsized {
-                    shape,
-                    operation: "from_raw",
-                })
+            .map_err(|_| AllocError {
+                shape,
+                operation: "from_raw: shape is unsized",
             })?
             .size();
 
@@ -165,18 +163,16 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
 fn alloc_shape_inner<'facet, const BORROW: bool>(
     shape: &'static Shape,
-) -> Result<Partial<'facet, BORROW>, ReflectError> {
+) -> Result<Partial<'facet, BORROW>, AllocError> {
     crate::trace!(
         "alloc_shape({:?}), with layout {:?}",
         shape,
         shape.layout.sized_layout()
     );
 
-    let data = shape.allocate().map_err(|_| {
-        ReflectError::without_path(ReflectErrorKind::Unsized {
-            shape,
-            operation: "alloc_shape",
-        })
+    let data = shape.allocate().map_err(|_| AllocError {
+        shape,
+        operation: "alloc_shape: allocation failed",
     })?;
 
     // Get the actual allocated size
