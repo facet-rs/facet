@@ -1300,6 +1300,7 @@ dependencies = [
  "eyre",
  "facet",
  "facet-core",
+ "facet-path",
  "facet-testhelpers",
  "facet-value",
  "insta",

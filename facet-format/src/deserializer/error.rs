@@ -506,7 +506,7 @@ impl DeserializeError {
             span: None,
             path: None,
             kind: DeserializeErrorKind::Bug {
-                error: re.to_string(),
+                error: re.to_string().into(),
                 context,
             },
         }

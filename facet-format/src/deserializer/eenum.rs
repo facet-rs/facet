@@ -27,10 +27,10 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
 
         // Hint to non-self-describing parsers what variant metadata to expect
         if let Type::User(UserType::Enum(enum_def)) = &shape.ty {
-            let variant_hints: Vec<crate::EnumVariantHint> = enum_def
+            let variant_hints: Vec<EnumVariantHint> = enum_def
                 .variants
                 .iter()
-                .map(|v| crate::EnumVariantHint {
+                .map(|v| EnumVariantHint {
                     name: v.effective_name(),
                     kind: v.data.kind,
                     field_count: v.data.fields.len(),
@@ -67,12 +67,66 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         self.deserialize_enum_externally_tagged(wip)
     }
 
+    fn deserialize_numeric_enum(
+        &mut self,
+        mut wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        let event = self.parser.peek_event()?;
+
+        if let Some(ParseEvent::Scalar(scalar)) = event {
+            let span = self.last_span;
+            wip = match scalar {
+                ScalarValue::I64(discriminant) => {
+                    wip.select_variant(discriminant)
+                        .map_err(|error| DeserializeError {
+                            span,
+                            path: None,
+                            kind: DeserializeErrorKind::Reflect(error),
+                        })?
+                }
+                ScalarValue::U64(discriminant) => {
+                    wip.select_variant(discriminant as i64)
+                        .map_err(|error| DeserializeError {
+                            span,
+                            path: None,
+                            kind: DeserializeErrorKind::Reflect(error),
+                        })?
+                }
+                ScalarValue::Str(str_discriminant) => {
+                    let discriminant = str_discriminant.parse().map_err(|_| DeserializeError {
+                        span: Some(self.last_span),
+                        path: None,
+                        kind: DeserializeErrorKind::UnexpectedToken {
+                            expected: "string representing an integer (i64)",
+                            got: str_discriminant.to_string().into(),
+                        },
+                    })?;
+                    wip.select_variant(discriminant)
+                        .map_err(|error| DeserializeError {
+                            span,
+                            path: None,
+                            kind: DeserializeErrorKind::Reflect(error),
+                        })?
+                }
+                _ => {
+                    return Err(DeserializeError::unsupported(
+                        "Unexpected ScalarValue".to_string(),
+                    ));
+                }
+            };
+            self.parser.next_event()?;
+            Ok(wip)
+        } else {
+            Err(DeserializeError::unsupported(
+                "Expected integer value".to_string(),
+            ))
+        }
+    }
+
     fn deserialize_enum_externally_tagged(
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
-        use alloc::format;
-
         trace!("deserialize_enum_externally_tagged called");
         let event = self.expect_peek("value")?;
         trace!(?event, "peeked event");
@@ -1358,62 +1412,6 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
         wip = wip.end()?;
 
         Ok(wip)
-    }
-
-    fn deserialize_numeric_enum(
-        &mut self,
-        mut wip: Partial<'input, BORROW>,
-    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
-        let event = self.parser.peek_event()?;
-
-        if let Some(ParseEvent::Scalar(scalar)) = event {
-            let span = self.last_span;
-            wip = match scalar {
-                ScalarValue::I64(discriminant) => {
-                    wip.select_variant(discriminant)
-                        .map_err(|error| DeserializeError {
-                            span,
-                            path: None,
-                            kind: DeserializeErrorKind::Reflect(error),
-                        })?
-                }
-                ScalarValue::U64(discriminant) => {
-                    wip.select_variant(discriminant as i64)
-                        .map_err(|error| DeserializeError {
-                            span,
-                            path: None,
-                            kind: DeserializeErrorKind::Reflect(error),
-                        })?
-                }
-                ScalarValue::Str(str_discriminant) => {
-                    let discriminant = str_discriminant.parse().map_err(|_| DeserializeError {
-                        span: Some(self.last_span),
-                        path: None,
-                        kind: DeserializeErrorKind::UnexpectedToken {
-                            expected: "string representing an integer (i64)",
-                            got: str_discriminant.to_string().into(),
-                        },
-                    })?;
-                    wip.select_variant(discriminant)
-                        .map_err(|error| DeserializeError {
-                            span,
-                            path: None,
-                            kind: DeserializeErrorKind::Reflect(error),
-                        })?
-                }
-                _ => {
-                    return Err(DeserializeError::unsupported(
-                        "Unexpected ScalarValue".to_string(),
-                    ));
-                }
-            };
-            self.parser.next_event()?;
-            Ok(wip)
-        } else {
-            Err(DeserializeError::unsupported(
-                "Expected integer value".to_string(),
-            ))
-        }
     }
 
     fn deserialize_enum_untagged(
