@@ -142,7 +142,9 @@ mod entry;
 /// Deserialization of dynamic values
 mod dynamic;
 
+/// Enum handling
 mod eenum;
+
 // mod pointer;
 // mod scalar_matches;
 // mod struct_simple;
