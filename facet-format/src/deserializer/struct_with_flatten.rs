@@ -199,7 +199,10 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                                 let wip = nav.take_wip();
                                 nav.return_wip(wip.select_variant_named(variant_name)?);
 
-                                nav.close_final(nav_result.final_is_option)?;
+                                // Only close final if we opened one (may be None if field was already open)
+                                if nav_result.final_segment.is_some() {
+                                    nav.close_final(nav_result.final_is_option)?;
+                                }
                                 fields_set.insert(field_info.serialized_name);
                                 continue;
                             }

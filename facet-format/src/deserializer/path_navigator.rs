@@ -125,13 +125,13 @@ impl<'input, const BORROW: bool> PathNavigator<'input, BORROW> {
 
         // Open the final segment but don't add it to open_segments
         // (caller will close it after deserializing)
+        // NOTE: We do NOT call begin_some() here for Options - that's handled by
+        // deserialize_into -> deserialize_option which properly peeks at the value
+        // to distinguish null (None) from a real value (Some).
         let final_is_option = if let Some(segment) = final_segment {
             let mut wip = self.take_wip();
             wip = wip.begin_field(segment)?;
             let is_option = matches!(wip.shape().def, Def::Option(_));
-            if is_option {
-                wip = wip.begin_some()?;
-            }
             self.return_wip(wip);
             is_option
         } else {
@@ -195,12 +195,11 @@ impl<'input, const BORROW: bool> PathNavigator<'input, BORROW> {
     ///
     /// Call this after deserializing a value to close the segment that was
     /// opened by `navigate_to` but not added to `open_segments`.
-    pub fn close_final(&mut self, is_option: bool) -> Result<(), DeserializeError> {
+    /// Note: `_is_option` is kept for API compatibility but no longer used
+    /// since we don't open Some in navigate_to anymore.
+    pub fn close_final(&mut self, _is_option: bool) -> Result<(), DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
         let mut wip = self.take_wip();
-        if is_option {
-            wip = wip.end()?;
-        }
         wip = wip.end()?;
         self.return_wip(wip);
         Ok(())
