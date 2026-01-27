@@ -1,0 +1,1 @@
+Cross-compatibility tests between [facet-styx](../facet-styx) and [serde_styx](../serde_styx). Verifies that both libraries produce identical output and can parse each other's output correctly.
