@@ -1,6 +1,3 @@
-// r[trace.crate]
-// r[trace.no-subscriber]
-// r[trace.levels]
 #![warn(missing_docs)]
 #![doc = include_str!("../../../README.md")]
 
