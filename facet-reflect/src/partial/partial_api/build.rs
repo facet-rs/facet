@@ -12,21 +12,25 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             }));
         }
 
-        let frame = self.frames_mut().last_mut().unwrap();
+        {
+            let frame = self.frames_mut().last_mut().unwrap();
 
-        // Fill in defaults for any unset fields before checking initialization
-        crate::trace!(
-            "build(): calling fill_defaults for {}, tracker={:?}, is_init={}",
-            frame.allocated.shape(),
-            frame.tracker.kind(),
-            frame.is_init
-        );
-        frame.fill_defaults().map_err(|e| self.err(e))?;
-        crate::trace!(
-            "build(): after fill_defaults, tracker={:?}, is_init={}",
-            frame.tracker.kind(),
-            frame.is_init
-        );
+            // Fill in defaults for any unset fields before checking initialization
+            crate::trace!(
+                "build(): calling fill_defaults for {}, tracker={:?}, is_init={}",
+                frame.allocated.shape(),
+                frame.tracker.kind(),
+                frame.is_init
+            );
+            if let Err(e) = frame.fill_defaults() {
+                return Err(self.err(e));
+            }
+            crate::trace!(
+                "build(): after fill_defaults, tracker={:?}, is_init={}",
+                frame.tracker.kind(),
+                frame.is_init
+            );
+        }
 
         let frame = self.frames_mut().pop().unwrap();
 
@@ -139,21 +143,25 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             }));
         }
 
-        let frame = self.frames_mut().last_mut().unwrap();
+        {
+            let frame = self.frames_mut().last_mut().unwrap();
 
-        // Fill in defaults for any unset fields before checking initialization
-        crate::trace!(
-            "finish_in_place(): calling fill_defaults for {}, tracker={:?}, is_init={}",
-            frame.allocated.shape(),
-            frame.tracker.kind(),
-            frame.is_init
-        );
-        frame.fill_defaults().map_err(|e| self.err(e))?;
-        crate::trace!(
-            "finish_in_place(): after fill_defaults, tracker={:?}, is_init={}",
-            frame.tracker.kind(),
-            frame.is_init
-        );
+            // Fill in defaults for any unset fields before checking initialization
+            crate::trace!(
+                "finish_in_place(): calling fill_defaults for {}, tracker={:?}, is_init={}",
+                frame.allocated.shape(),
+                frame.tracker.kind(),
+                frame.is_init
+            );
+            if let Err(e) = frame.fill_defaults() {
+                return Err(self.err(e));
+            }
+            crate::trace!(
+                "finish_in_place(): after fill_defaults, tracker={:?}, is_init={}",
+                frame.tracker.kind(),
+                frame.is_init
+            );
+        }
 
         let frame = self.frames_mut().pop().unwrap();
 

@@ -32,11 +32,10 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
 
             // The raw type is a tuple struct like RawJson(Cow<str>)
             // Access field 0 (the Cow<str>) and set it
-            wip = wip.begin_nth_field(0)?;
-            wip = self.set_string_value(wip, Cow::Borrowed(raw))?;
-            wip = wip.end()?;
-
-            return Ok(wip);
+            return Ok(wip
+                .begin_nth_field(0)?
+                .with(|w| self.set_string_value(w, Cow::Borrowed(raw)))?
+                .end()?);
         }
 
         // Check for container-level proxy (format-specific proxies take precedence)
@@ -45,9 +44,7 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
             wip.begin_custom_deserialization_from_shape_with_format(format_ns)?;
         wip = wip_returned;
         if has_proxy {
-            wip = self.deserialize_into(wip)?;
-            wip = wip.end()?;
-            return Ok(wip);
+            return Ok(wip.with(|w| self.deserialize_into(w))?.end()?);
         }
 
         // Check for field-level proxy (opaque types with proxy attribute)
@@ -57,10 +54,10 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
             .and_then(|field| field.effective_proxy(format_ns))
             .is_some()
         {
-            wip = wip.begin_custom_deserialization_with_format(format_ns)?;
-            wip = self.deserialize_into(wip)?;
-            wip = wip.end()?;
-            return Ok(wip);
+            return Ok(wip
+                .begin_custom_deserialization_with_format(format_ns)?
+                .with(|w| self.deserialize_into(w))?
+                .end()?);
         }
 
         // Check Def first for Option
@@ -75,10 +72,10 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
 
         // Priority 1: Check for builder_shape (immutable collections like Bytes -> BytesMut)
         if shape.builder_shape.is_some() {
-            wip = wip.begin_inner()?;
-            wip = self.deserialize_into(wip)?;
-            wip = wip.end()?;
-            return Ok(wip);
+            return Ok(wip
+                .begin_inner()?
+                .with(|w| self.deserialize_into(w))?
+                .end()?);
         }
 
         // Priority 2: Check for smart pointers (Box, Arc, Rc)
@@ -99,10 +96,10 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                 Def::List(_) | Def::Map(_) | Def::Set(_) | Def::Array(_)
             )
         {
-            wip = wip.begin_inner()?;
-            wip = self.deserialize_into(wip)?;
-            wip = wip.end()?;
-            return Ok(wip);
+            return Ok(wip
+                .begin_inner()?
+                .with(|w| self.deserialize_into(w))?
+                .end()?);
         }
 
         // Priority 4: Check for metadata containers (like Spanned<T>, Documented<T>)
@@ -137,9 +134,10 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
                         }
                         None => {
                             // This is the value field - recurse into it
-                            wip = wip.begin_field(field.effective_name())?;
-                            wip = self.deserialize_into(wip)?;
-                            wip = wip.end()?;
+                            wip = wip
+                                .begin_field(field.effective_name())?
+                                .with(|w| self.deserialize_into(w))?
+                                .end()?;
                         }
                     }
                 }
@@ -303,9 +301,10 @@ impl<'input, const BORROW: bool> FormatDeserializer<'input, BORROW> {
             wip = wip.set_default()?;
         } else {
             // Some(value)
-            wip = wip.begin_some()?;
-            wip = self.deserialize_into(wip)?;
-            wip = wip.end()?;
+            wip = wip
+                .begin_some()?
+                .with(|w| self.deserialize_into(w))?
+                .end()?;
         }
         Ok(wip)
     }
