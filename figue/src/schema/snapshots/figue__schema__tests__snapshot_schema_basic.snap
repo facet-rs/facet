@@ -1,5 +1,5 @@
 ---
-source: src/schema/tests.rs
+source: crates/figue/src/schema/tests.rs
 expression: "facet_json :: to_string_pretty(& value).unwrap()"
 ---
 {
@@ -83,7 +83,7 @@ expression: "facet_json :: to_string_pretty(& value).unwrap()"
       }
     },
     "subcommands": {
-      "build": {
+      "Build": {
         "name": "build",
         "effective_name": "Build",
         "docs": {

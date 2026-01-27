@@ -2321,4 +2321,51 @@ mod tests {
             Err(e) => panic!("expected conflict error, got {:?}", e),
         }
     }
+
+    /// Test tuple variant WITHOUT explicit #[facet(flatten)]
+    /// This matches the dodeca pattern where Serve(ServeArgs) doesn't have flatten
+    #[derive(Facet, Debug, PartialEq, Default)]
+    struct SimpleOptions {
+        /// Do the thing
+        #[facet(figue::named)]
+        do_thing: bool,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(u8)]
+    enum SimpleCommand {
+        /// Do something (tuple variant WITHOUT explicit flatten)
+        DoSomething(SimpleOptions),
+    }
+
+    #[derive(Facet, Debug)]
+    struct ArgsWithSimpleTupleVariant {
+        #[facet(figue::subcommand)]
+        command: SimpleCommand,
+
+        #[facet(flatten)]
+        builtins: FigueBuiltins,
+    }
+
+    /// Regression test: tuple variants without explicit #[facet(flatten)] should
+    /// still get boolean defaults filled (previously the subcommand lookup was
+    /// keyed by cli_name but ConfigValue uses effective_name)
+    #[test]
+    fn test_builder_tuple_variant_no_explicit_flatten() {
+        let config = builder::<ArgsWithSimpleTupleVariant>()
+            .expect("failed to build schema")
+            .cli(|cli| cli.args(["do-something"]))
+            .help(|h| h.program_name("test-app"))
+            .build();
+
+        let result = Driver::new(config).run().into_result();
+        match result {
+            Ok(output) => match &output.value.command {
+                SimpleCommand::DoSomething(opts) => {
+                    assert!(!opts.do_thing, "do_thing should default to false");
+                }
+            },
+            Err(e) => panic!("expected success: {:?}", e),
+        }
+    }
 }
