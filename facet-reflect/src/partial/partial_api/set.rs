@@ -56,17 +56,19 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         src_value: PtrConst,
         src_shape: &'static Shape,
     ) -> Result<Self, ReflectError> {
+        // Get shape upfront to avoid borrow conflicts
+        let shape = self.frames().last().unwrap().allocated.shape();
         let fr = self.frames_mut().last_mut().unwrap();
         crate::trace!("set_shape({src_shape:?})");
 
         // Check if target is a DynamicValue - if so, convert the source value
-        if let Def::DynamicValue(dyn_def) = &fr.allocated.shape().def {
+        if let Def::DynamicValue(dyn_def) = &shape.def {
             return unsafe { self.set_into_dynamic_value(src_value, src_shape, dyn_def) };
         }
 
-        if !fr.allocated.shape().is_shape(src_shape) {
+        if !shape.is_shape(src_shape) {
             return Err(self.err(ReflectErrorKind::WrongShape {
-                expected: fr.allocated.shape(),
+                expected: shape,
                 actual: src_shape,
             }));
         }
@@ -261,14 +263,16 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         nanos: u32,
         kind: DynDateTimeKind,
     ) -> Result<Self, ReflectError> {
+        // Get shape upfront to avoid borrow conflicts
+        let shape = self.frames().last().unwrap().allocated.shape();
         let fr = self.frames_mut().last_mut().unwrap();
 
         // Must be a DynamicValue type
-        let dyn_def = match &fr.allocated.shape().def {
+        let dyn_def = match &shape.def {
             Def::DynamicValue(dv) => dv,
             _ => {
                 return Err(self.err(ReflectErrorKind::OperationFailed {
-                    shape: fr.allocated.shape(),
+                    shape,
                     operation: "set_datetime requires a DynamicValue target",
                 }));
             }
@@ -279,7 +283,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         // Check if the vtable supports datetime
         let Some(set_datetime_fn) = vtable.set_datetime else {
             return Err(self.err(ReflectErrorKind::OperationFailed {
-                shape: fr.allocated.shape(),
+                shape,
                 operation: "dynamic value type does not support datetime",
             }));
         };

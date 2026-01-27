@@ -13,6 +13,8 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
     /// require `end` to be called afterwards.
     pub fn init_set(mut self) -> Result<Self, ReflectError> {
         crate::trace!("init_set()");
+        // Get shape upfront to avoid borrow conflicts
+        let shape = self.frames().last().unwrap().allocated.shape();
         let frame = self.frames_mut().last_mut().unwrap();
 
         match &frame.tracker {
@@ -33,19 +35,20 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 }
             }
             _ => {
+                let tracker_kind = frame.tracker.kind();
                 return Err(self.err(ReflectErrorKind::UnexpectedTracker {
                     message: "init_set called but tracker isn't something set-like",
-                    current_tracker: frame.tracker.kind(),
+                    current_tracker: tracker_kind,
                 }));
             }
         };
 
         // Check that we have a Set
-        let set_def = match &frame.allocated.shape().def {
+        let set_def = match &shape.def {
             Def::Set(set_def) => set_def,
             _ => {
                 return Err(self.err(ReflectErrorKind::OperationFailed {
-                    shape: frame.allocated.shape(),
+                    shape,
                     operation: "init_set can only be called on Set types",
                 }));
             }
@@ -71,14 +74,16 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
     /// The element should be set using `set()` or similar methods, then `end()` to complete.
     pub fn begin_set_item(mut self) -> Result<Self, ReflectError> {
         crate::trace!("begin_set_item()");
+        // Get shape upfront to avoid borrow conflicts
+        let shape = self.frames().last().unwrap().allocated.shape();
         let frame = self.frames_mut().last_mut().unwrap();
 
         // Check that we have a Set that's been initialized
-        let set_def = match &frame.allocated.shape().def {
+        let set_def = match &shape.def {
             Def::Set(set_def) => set_def,
             _ => {
                 return Err(self.err(ReflectErrorKind::OperationFailed {
-                    shape: frame.allocated.shape(),
+                    shape,
                     operation: "init_set_item can only be called on Set types",
                 }));
             }
@@ -89,7 +94,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             Tracker::Set { current_child } if frame.is_init => {
                 if *current_child {
                     return Err(self.err(ReflectErrorKind::OperationFailed {
-                        shape: frame.allocated.shape(),
+                        shape,
                         operation: "already pushing an element, call end() first",
                     }));
                 }
@@ -97,7 +102,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             }
             _ => {
                 return Err(self.err(ReflectErrorKind::OperationFailed {
-                    shape: frame.allocated.shape(),
+                    shape,
                     operation: "must call init_set() before begin_set_item()",
                 }));
             }
@@ -120,7 +125,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
 
         let Some(element_ptr) = NonNull::new(element_ptr) else {
             return Err(self.err(ReflectErrorKind::OperationFailed {
-                shape: frame.allocated.shape(),
+                shape,
                 operation: "failed to allocate memory for set element",
             }));
         };

@@ -298,16 +298,15 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
     /// Selects the nth field of an enum variant by index
     pub(crate) fn begin_nth_enum_field(
-        &self,
         frame: &mut Frame,
         variant: &'static Variant,
         idx: usize,
-    ) -> Result<Frame, ReflectError> {
+    ) -> Result<Frame, ReflectErrorKind> {
         if idx >= variant.data.fields.len() {
-            return Err(self.err(ReflectErrorKind::OperationFailed {
+            return Err(ReflectErrorKind::OperationFailed {
                 shape: frame.allocated.shape(),
                 operation: "enum field index out of bounds",
-            }));
+            });
         }
 
         let field = &variant.data.fields[idx];
@@ -325,10 +324,10 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 was_init
             }
             _ => {
-                return Err(self.err(ReflectErrorKind::OperationFailed {
+                return Err(ReflectErrorKind::OperationFailed {
                     shape: frame.allocated.shape(),
                     operation: "selecting a field on an enum requires selecting a variant first",
-                }));
+                });
             }
         };
 

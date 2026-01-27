@@ -152,14 +152,16 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             Type::User(user_type) => match user_type {
                 UserType::Struct(struct_type) => {
                     let frame = self.frames_mut().last_mut().unwrap();
-                    self.begin_nth_struct_field(frame, struct_type, idx)?
+                    Self::begin_nth_struct_field(frame, struct_type, idx)
+                        .map_err(|e| self.err(e))?
                 }
                 UserType::Enum(_) => {
                     // Check if we have a variant selected
                     let frame = self.frames_mut().last_mut().unwrap();
                     match &frame.tracker {
                         Tracker::Enum { variant, .. } => {
-                            self.begin_nth_enum_field(frame, variant, idx)?
+                            Self::begin_nth_enum_field(frame, variant, idx)
+                                .map_err(|e| self.err(e))?
                         }
                         _ => {
                             return Err(self.err(ReflectErrorKind::OperationFailed {
@@ -185,7 +187,8 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             Type::Sequence(sequence_type) => match sequence_type {
                 SequenceType::Array(array_type) => {
                     let frame = self.frames_mut().last_mut().unwrap();
-                    self.begin_nth_array_element(frame, array_type, idx)?
+                    Self::begin_nth_array_element(frame, array_type, idx)
+                        .map_err(|e| self.err(e))?
                 }
                 SequenceType::Slice(_) => {
                     return Err(self.err(ReflectErrorKind::OperationFailed {

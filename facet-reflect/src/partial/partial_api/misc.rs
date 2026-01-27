@@ -273,13 +273,15 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         // Fill defaults and validate the root frame is fully initialized
         if let Some(frame) = self.frames_mut().last_mut() {
             // Fill defaults - this can fail if a field has #[facet(default)] but no default impl
-            frame.fill_defaults().map_err(|e| self.err(e))?;
+            if let Err(e) = frame.fill_defaults() {
+                return Err(self.err(e));
+            }
             // Root validation failed. At this point, all stored frames have been
             // processed and their parent isets updated.
             // No need to poison - returning Err consumes self, Drop will handle cleanup
-            frame
-                .require_full_initialization()
-                .map_err(|e| self.err(e))?;
+            if let Err(e) = frame.require_full_initialization() {
+                return Err(self.err(e));
+            }
         }
 
         Ok(self)
@@ -406,6 +408,9 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         crate::trace!("end(): needs_slice_conversion={}", needs_slice_conversion);
 
         if needs_slice_conversion {
+            // Get shape info upfront to avoid borrow conflicts
+            let current_shape = self.frames().last().unwrap().allocated.shape();
+
             let frames = self.frames_mut();
             let top_idx = frames.len() - 1;
 
@@ -424,7 +429,6 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         // Get parent frame and field info
                         let parent_idx = top_idx - 1;
                         let parent_frame = &frames[parent_idx];
-                        let current_shape = frames[top_idx].allocated.shape();
 
                         // Get the field to find its offset
                         let field = if let Type::User(UserType::Struct(struct_type)) =
@@ -442,12 +446,15 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                             unsafe { parent_frame.data.field_uninit(field.offset) };
 
                         // Write the Arc to the parent struct's field location
-                        let arc_layout = current_shape.layout.sized_layout().map_err(|_| {
-                            self.err(ReflectErrorKind::Unsized {
-                                shape: current_shape,
-                                operation: "SmartPointerSlice conversion requires sized Arc",
-                            })
-                        })?;
+                        let arc_layout = match current_shape.layout.sized_layout() {
+                            Ok(layout) => layout,
+                            Err(_) => {
+                                return Err(self.err(ReflectErrorKind::Unsized {
+                                    shape: current_shape,
+                                    operation: "SmartPointerSlice conversion requires sized Arc",
+                                }));
+                            }
+                        };
                         let arc_size = arc_layout.size();
                         unsafe {
                             core::ptr::copy_nonoverlapping(
@@ -654,12 +661,14 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             });
 
             if let Some(deserialize_with) = deserialize_with {
+                // Get parent shape upfront to avoid borrow conflicts
+                let parent_shape = self.frames().last().unwrap().allocated.shape();
                 let parent_frame = self.frames_mut().last_mut().unwrap();
 
                 trace!(
                     "Detected custom conversion needed from {} to {}",
                     popped_frame.allocated.shape(),
-                    parent_frame.allocated.shape()
+                    parent_shape
                 );
 
                 unsafe {
@@ -675,20 +684,31 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     // dealloc()'s assertion, then deallocate the memory.
                     popped_frame.is_init = false;
                     popped_frame.dealloc();
-                    let rptr = res.map_err(|message| {
-                        self.err(ReflectErrorKind::CustomDeserializationError {
-                            message,
-                            src_shape: popped_frame_shape,
-                            dst_shape: parent_frame.allocated.shape(),
-                        })
-                    })?;
-                    if rptr.as_uninit() != parent_frame.data {
-                        return Err(self.err(ReflectErrorKind::CustomDeserializationError {
-                            message: "deserialize_with did not return the expected pointer".into(),
-                            src_shape: popped_frame_shape,
-                            dst_shape: parent_frame.allocated.shape(),
-                        }));
+                    let parent_data = parent_frame.data;
+                    match res {
+                        Ok(rptr) => {
+                            if rptr.as_uninit() != parent_data {
+                                return Err(self.err(
+                                    ReflectErrorKind::CustomDeserializationError {
+                                        message:
+                                            "deserialize_with did not return the expected pointer"
+                                                .into(),
+                                        src_shape: popped_frame_shape,
+                                        dst_shape: parent_shape,
+                                    },
+                                ));
+                            }
+                        }
+                        Err(message) => {
+                            return Err(self.err(ReflectErrorKind::CustomDeserializationError {
+                                message,
+                                src_shape: popped_frame_shape,
+                                dst_shape: parent_shape,
+                            }));
+                        }
                     }
+                    // Re-borrow parent_frame after potential early returns
+                    let parent_frame = self.frames_mut().last_mut().unwrap();
                     parent_frame.mark_as_init();
                 }
                 return Ok(self);
@@ -696,13 +716,15 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         }
 
         // Update parent frame's tracking when popping from a child
+        // Get parent shape upfront to avoid borrow conflicts
+        let parent_shape = self.frames().last().unwrap().allocated.shape();
         let parent_frame = self.frames_mut().last_mut().unwrap();
 
         crate::trace!(
             "end(): Popped {} (tracker {:?}), Parent {} (tracker {:?})",
             popped_frame.allocated.shape(),
             popped_frame.tracker.kind(),
-            parent_frame.allocated.shape(),
+            parent_shape,
             parent_frame.tracker.kind()
         );
 
@@ -714,13 +736,11 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         //    This ensures we only do conversion when begin_inner was used, not begin_some
         let needs_conversion = !parent_frame.is_init
             && matches!(parent_frame.tracker, Tracker::Scalar)
-            && ((parent_frame.allocated.shape().builder_shape.is_some()
-                && parent_frame.allocated.shape().builder_shape.unwrap()
-                    == popped_frame.allocated.shape())
-                || (parent_frame.allocated.shape().inner.is_some()
-                    && parent_frame.allocated.shape().inner.unwrap()
-                        == popped_frame.allocated.shape()))
-            && match parent_frame.allocated.shape().vtable {
+            && ((parent_shape.builder_shape.is_some()
+                && parent_shape.builder_shape.unwrap() == popped_frame.allocated.shape())
+                || (parent_shape.inner.is_some()
+                    && parent_shape.inner.unwrap() == popped_frame.allocated.shape()))
+            && match parent_shape.vtable {
                 facet_core::VTableErased::Direct(vt) => vt.try_from.is_some(),
                 facet_core::VTableErased::Indirect(vt) => vt.try_from.is_some(),
             };
@@ -729,7 +749,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             trace!(
                 "Detected implicit conversion needed from {} to {}",
                 popped_frame.allocated.shape(),
-                parent_frame.allocated.shape()
+                parent_shape
             );
 
             // The conversion requires the source frame to be fully initialized
@@ -756,14 +776,10 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             let inner_ptr = unsafe { popped_frame.data.assume_init().as_const() };
             let inner_shape = popped_frame.allocated.shape();
 
-            trace!(
-                "Converting from {} to {}",
-                inner_shape,
-                parent_frame.allocated.shape()
-            );
+            trace!("Converting from {} to {}", inner_shape, parent_shape);
 
             // Handle Direct and Indirect vtables - both return TryFromOutcome
-            let outcome = match parent_frame.allocated.shape().vtable {
+            let outcome = match parent_shape.vtable {
                 facet_core::VTableErased::Direct(vt) => {
                     if let Some(try_from_fn) = vt.try_from {
                         unsafe {
@@ -775,7 +791,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         }
                     } else {
                         return Err(self.err(ReflectErrorKind::OperationFailed {
-                            shape: parent_frame.allocated.shape(),
+                            shape: parent_shape,
                             operation: "try_from not available for this type",
                         }));
                     }
@@ -784,14 +800,12 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     if let Some(try_from_fn) = vt.try_from {
                         // parent_frame.data is uninitialized - we're writing the converted
                         // value into it
-                        let ox_uninit = facet_core::OxPtrUninit::new(
-                            parent_frame.data,
-                            parent_frame.allocated.shape(),
-                        );
+                        let ox_uninit =
+                            facet_core::OxPtrUninit::new(parent_frame.data, parent_shape);
                         unsafe { try_from_fn(ox_uninit, inner_shape, inner_ptr) }
                     } else {
                         return Err(self.err(ReflectErrorKind::OperationFailed {
-                            shape: parent_frame.allocated.shape(),
+                            shape: parent_shape,
                             operation: "try_from not available for this type",
                         }));
                     }
@@ -827,7 +841,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
                     return Err(self.err(ReflectErrorKind::TryFromError {
                         src_shape: inner_shape,
-                        dst_shape: parent_frame.allocated.shape(),
+                        dst_shape: parent_shape,
                         inner: facet_core::TryFromError::UnsupportedSourceType,
                     }));
                 }
@@ -851,7 +865,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
                     return Err(self.err(ReflectErrorKind::TryFromError {
                         src_shape: inner_shape,
-                        dst_shape: parent_frame.allocated.shape(),
+                        dst_shape: parent_shape,
                         inner: facet_core::TryFromError::Generic(e.into_owned()),
                     }));
                 }
@@ -888,7 +902,9 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             // In deferred mode, fill defaults on the child frame before checking initialization.
             // Fill defaults for child frame before checking if it's fully initialized.
             // This handles structs/enums with optional fields that should auto-fill.
-            popped_frame.fill_defaults().map_err(|e| self.err(e))?;
+            if let Err(e) = popped_frame.fill_defaults() {
+                return Err(self.err(e));
+            }
             let child_is_initialized = popped_frame.require_full_initialization().is_ok();
             match &mut parent_frame.tracker {
                 Tracker::Struct {
@@ -940,7 +956,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         popped_frame.deinit();
                         popped_frame.dealloc();
                         return Err(self.err(ReflectErrorKind::OperationFailed {
-                            shape: parent_frame.allocated.shape(),
+                            shape: parent_shape,
                             operation: "SmartPointer missing new_into_fn",
                         }));
                     };
@@ -966,10 +982,10 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             Tracker::List { current_child } if parent_frame.is_init => {
                 if current_child.is_some() {
                     // We just popped an element frame, now push it to the list
-                    if let Def::List(list_def) = parent_frame.allocated.shape().def {
+                    if let Def::List(list_def) = parent_shape.def {
                         let Some(push_fn) = list_def.push() else {
                             return Err(self.err(ReflectErrorKind::OperationFailed {
-                                shape: parent_frame.allocated.shape(),
+                                shape: parent_shape,
                                 operation: "List missing push function",
                             }));
                         };
@@ -1123,7 +1139,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         crate::trace!("end(): set parent_frame.is_init to true");
                     } else {
                         return Err(self.err(ReflectErrorKind::OperationFailed {
-                            shape: parent_frame.allocated.shape(),
+                            shape: parent_shape,
                             operation: "Option frame without Option definition",
                         }));
                     }
@@ -1191,7 +1207,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         crate::trace!("end(): set parent_frame.is_init to true");
                     } else {
                         return Err(self.err(ReflectErrorKind::OperationFailed {
-                            shape: parent_frame.allocated.shape(),
+                            shape: parent_shape,
                             operation: "Result frame without Result definition",
                         }));
                     }
@@ -1213,13 +1229,16 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             Tracker::Scalar => {
                 // the main case here is: the popped frame was a `String` and the
                 // parent frame is an `Arc<str>`, `Box<str>` etc.
-                match &parent_frame.allocated.shape().def {
+                match &parent_shape.def {
                     Def::Pointer(smart_ptr_def) => {
-                        let pointee = smart_ptr_def.pointee().ok_or_else(|| {
-                            self.err(ReflectErrorKind::InvariantViolation {
-                                invariant: "pointer type doesn't have a pointee",
-                            })
-                        })?;
+                        let pointee = match smart_ptr_def.pointee() {
+                            Some(p) => p,
+                            None => {
+                                return Err(self.err(ReflectErrorKind::InvariantViolation {
+                                    invariant: "pointer type doesn't have a pointee",
+                                }));
+                            }
+                        };
 
                         if !pointee.is_shape(str::SHAPE) {
                             return Err(self.err(ReflectErrorKind::InvariantViolation {
@@ -1233,16 +1252,15 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                             }));
                         }
 
-                        popped_frame
-                            .require_full_initialization()
-                            .map_err(|e| self.err(e))?;
+                        if let Err(e) = popped_frame.require_full_initialization() {
+                            return Err(self.err(e));
+                        }
 
                         // if the just-popped frame was a SmartPointerStr, we have some conversion to do:
                         // Special-case: SmartPointer<str> (Box<str>, Arc<str>, Rc<str>) via SmartPointerStr tracker
                         // Here, popped_frame actually contains a value for String that should be moved into the smart pointer.
                         // We convert the String into Box<str>, Arc<str>, or Rc<str> as appropriate and write it to the parent frame.
                         use ::alloc::{rc::Rc, string::String, sync::Arc};
-                        let parent_shape = parent_frame.allocated.shape();
 
                         let Some(known) = smart_ptr_def.known else {
                             return Err(self.err(ReflectErrorKind::OperationFailed {
@@ -1304,7 +1322,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         // has shape.inner but isn't a SmartPointer (e.g., Option).
                         // In this case, we can't complete the conversion, so return error.
                         return Err(self.err(ReflectErrorKind::OperationFailed {
-                            shape: parent_frame.allocated.shape(),
+                            shape: parent_shape,
                             operation: "end() called but parent has Uninit/Init tracker and isn't a SmartPointer",
                         }));
                     }

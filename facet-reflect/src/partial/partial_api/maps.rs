@@ -12,6 +12,8 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
     ///
     /// For `Def::DynamicValue` types, this initializes as an object instead of a map.
     pub fn init_map(mut self) -> Result<Self, ReflectError> {
+        // Get shape upfront to avoid borrow conflicts
+        let shape = self.frames().last().unwrap().allocated.shape();
         let frame = self.frames_mut().last_mut().unwrap();
 
         // Check tracker state before initializing
@@ -24,7 +26,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 // 1. Not yet initialized (is_init = false)
                 // 2. Already initialized from a previous operation (is_init = true)
                 // For case 2, we need to be careful not to overwrite existing values
-                match frame.allocated.shape().def {
+                match shape.def {
                     Def::Map(_) => {
                         // For Map, just update tracker - the map is already initialized
                         frame.tracker = Tracker::Map {
@@ -58,7 +60,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     }
                     _ => {
                         return Err(self.err(ReflectErrorKind::OperationFailed {
-                            shape: frame.allocated.shape(),
+                            shape,
                             operation: "init_map can only be called on Map or DynamicValue types",
                         }));
                     }
@@ -82,19 +84,22 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 frame.deinit_for_replace();
             }
             _ => {
+                let tracker_kind = frame.tracker.kind();
                 return Err(self.err(ReflectErrorKind::UnexpectedTracker {
                     message: "init_map called but tracker isn't Scalar, Map, or DynamicValue",
-                    current_tracker: frame.tracker.kind(),
+                    current_tracker: tracker_kind,
                 }));
             }
         }
 
         // Check that we have a Map or DynamicValue
-        match &frame.allocated.shape().def {
+        match &shape.def {
             Def::Map(map_def) => {
                 let init_fn = map_def.vtable.init_in_place_with_capacity;
 
                 // Initialize the map with default capacity (0)
+                // Need to re-borrow frame after the early returns above
+                let frame = self.frames_mut().last_mut().unwrap();
                 unsafe {
                     init_fn(frame.data, 0);
                 }
@@ -107,6 +112,8 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             }
             Def::DynamicValue(dyn_def) => {
                 // Initialize as a dynamic object
+                // Need to re-borrow frame after the early returns above
+                let frame = self.frames_mut().last_mut().unwrap();
                 unsafe {
                     (dyn_def.vtable.begin_object)(frame.data);
                 }
@@ -121,7 +128,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             }
             _ => {
                 return Err(self.err(ReflectErrorKind::OperationFailed {
-                    shape: frame.allocated.shape(),
+                    shape,
                     operation: "init_map can only be called on Map or DynamicValue types",
                 }));
             }
@@ -134,10 +141,12 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
     /// (or the key should be initialized somehow) and `end()` should be called
     /// to pop the frame.
     pub fn begin_key(mut self) -> Result<Self, ReflectError> {
+        // Get shape upfront to avoid borrow conflicts
+        let shape = self.frames().last().unwrap().allocated.shape();
         let frame = self.frames_mut().last_mut().unwrap();
 
         // Check that we have a Map in Idle state
-        let map_def = match (&frame.allocated.shape().def, &frame.tracker) {
+        let map_def = match (&shape.def, &frame.tracker) {
             (
                 Def::Map(map_def),
                 Tracker::Map {
@@ -151,7 +160,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 },
             ) => {
                 return Err(self.err(ReflectErrorKind::OperationFailed {
-                    shape: frame.allocated.shape(),
+                    shape,
                     operation: "already pushing a key, call end() first",
                 }));
             }
@@ -162,13 +171,13 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 },
             ) => {
                 return Err(self.err(ReflectErrorKind::OperationFailed {
-                    shape: frame.allocated.shape(),
+                    shape,
                     operation: "must complete current operation before begin_key()",
                 }));
             }
             _ => {
                 return Err(self.err(ReflectErrorKind::OperationFailed {
-                    shape: frame.allocated.shape(),
+                    shape,
                     operation: "must call init_map() before begin_key()",
                 }));
             }
@@ -191,7 +200,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
 
         let Some(key_ptr_raw) = NonNull::new(key_ptr_raw) else {
             return Err(self.err(ReflectErrorKind::OperationFailed {
-                shape: frame.allocated.shape(),
+                shape,
                 operation: "failed to allocate memory for map key",
             }));
         };
@@ -223,10 +232,12 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
     /// Pushes a frame for the map value
     /// Must be called after the key has been set and popped
     pub fn begin_value(mut self) -> Result<Self, ReflectError> {
+        // Get shape upfront to avoid borrow conflicts
+        let shape = self.frames().last().unwrap().allocated.shape();
         let frame = self.frames_mut().last_mut().unwrap();
 
         // Check that we have a Map in PushingValue state with no value_ptr yet
-        let (map_def, key_ptr) = match (&frame.allocated.shape().def, &frame.tracker) {
+        let (map_def, key_ptr) = match (&shape.def, &frame.tracker) {
             (
                 Def::Map(map_def),
                 Tracker::Map {
@@ -250,13 +261,13 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 },
             ) => {
                 return Err(self.err(ReflectErrorKind::OperationFailed {
-                    shape: frame.allocated.shape(),
+                    shape,
                     operation: "already pushing a value, call end() first",
                 }));
             }
             _ => {
                 return Err(self.err(ReflectErrorKind::OperationFailed {
-                    shape: frame.allocated.shape(),
+                    shape,
                     operation: "must complete key before begin_value()",
                 }));
             }
@@ -279,7 +290,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
 
         let Some(value_ptr_raw) = NonNull::new(value_ptr_raw) else {
             return Err(self.err(ReflectErrorKind::OperationFailed {
-                shape: frame.allocated.shape(),
+                shape,
                 operation: "failed to allocate memory for map value",
             }));
         };
@@ -319,10 +330,13 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
     /// For `Def::Map` types, use `begin_key()` / `begin_value()` instead.
     pub fn begin_object_entry(mut self, key: &str) -> Result<Self, ReflectError> {
         crate::trace!("begin_object_entry({key:?})");
+
+        // Get shape upfront to avoid borrow conflicts
+        let shape = self.frames().last().unwrap().allocated.shape();
         let frame = self.frames_mut().last_mut().unwrap();
 
         // Check that we have a DynamicValue in Object state with Idle insert_state
-        let dyn_def = match (&frame.allocated.shape().def, &frame.tracker) {
+        let dyn_def = match (&shape.def, &frame.tracker) {
             (
                 Def::DynamicValue(dyn_def),
                 Tracker::DynamicValue {
@@ -345,26 +359,26 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 },
             ) => {
                 return Err(self.err(ReflectErrorKind::OperationFailed {
-                    shape: frame.allocated.shape(),
+                    shape,
                     operation: "already building a value, call end() first",
                 }));
             }
             (Def::DynamicValue(_), _) => {
                 return Err(self.err(ReflectErrorKind::OperationFailed {
-                    shape: frame.allocated.shape(),
+                    shape,
                     operation: "must call init_map() before begin_object_entry()",
                 }));
             }
             _ => {
                 return Err(self.err(ReflectErrorKind::OperationFailed {
-                    shape: frame.allocated.shape(),
+                    shape,
                     operation: "begin_object_entry can only be called on DynamicValue types",
                 }));
             }
         };
 
         // For DynamicValue objects, the value shape is the same DynamicValue shape
-        let value_shape = frame.allocated.shape();
+        let value_shape = shape;
 
         // Check if key already exists using object_get_mut (for "get or create" semantics)
         // This is needed for formats like TOML with implicit tables: [a] followed by [a.b.c]
@@ -410,7 +424,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         let value_ptr: *mut u8 = unsafe { ::alloc::alloc::alloc(value_layout) };
         let Some(value_ptr) = NonNull::new(value_ptr) else {
             return Err(self.err(ReflectErrorKind::OperationFailed {
-                shape: frame.allocated.shape(),
+                shape,
                 operation: "failed to allocate memory for object value",
             }));
         };
