@@ -1,11 +1,13 @@
 ---
 source: crates/facet-styx/src/error.rs
-expression: rendered
+expression: stripped
 ---
-Error: Field 'Person::age' was not initialized. If you need to leave fields partially initialized and come back later, use deferred mode (begin_deferred/finish_deferred)
+Error: missing required field 'age'
    ╭─[ test.styx:1:6 ]
    │
  1 │ name Alice
    │      ──┬──  
-   │        ╰──── error here
+   │        ╰──── in Person
+   │ 
+   │ Help: add the required field: age <value>
 ───╯
