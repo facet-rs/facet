@@ -1032,8 +1032,7 @@ fn mask_password(url: &str) -> String {
 }
 
 fn run_migrate(config: &Config) {
-    use dibs_proto::{LogLevel, MigrateRequest};
-    use owo_colors::OwoColorize as _;
+    use dibs_proto::MigrateRequest;
     use tracing::info;
 
     let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
@@ -1053,24 +1052,16 @@ fn run_migrate(config: &Config) {
 
         let client = conn.client();
 
-        // Create a channel for receiving log messages
+        // Create a channel for receiving log messages (we'll handle display ourselves)
         let (log_tx, mut log_rx) = roam::channel::<dibs_proto::MigrationLog>();
 
-        // Spawn a task to print log messages as they arrive
-        let log_printer = tokio::spawn(async move {
+        // Spawn a task to collect log messages (we display summary at the end)
+        let log_collector = tokio::spawn(async move {
+            let mut logs = Vec::new();
             while let Ok(Some(log)) = log_rx.recv().await {
-                let prefix = match log.level {
-                    LogLevel::Debug => "DEBUG".dimmed().to_string(),
-                    LogLevel::Info => "INFO".blue().to_string(),
-                    LogLevel::Warn => "WARN".yellow().to_string(),
-                    LogLevel::Error => "ERROR".red().to_string(),
-                };
-                if let Some(migration) = &log.migration {
-                    println!("[{}] [{}] {}", prefix, migration.cyan(), log.message);
-                } else {
-                    println!("[{}] {}", prefix, log.message);
-                }
+                logs.push(log);
             }
+            logs
         });
 
         // Call the migrate method
@@ -1084,31 +1075,99 @@ fn run_migrate(config: &Config) {
             )
             .await;
 
-        // Wait for log printer to finish
-        let _ = log_printer.await;
+        // Wait for log collector
+        let _logs = log_collector.await.unwrap_or_default();
 
         match result {
             Ok(res) => {
-                if res.applied.is_empty() {
-                    println!("{}", "No pending migrations.".green());
-                } else {
-                    println!(
-                        "{}",
-                        format!(
-                            "Applied {} migration(s) in {}ms",
-                            res.applied.len(),
-                            res.total_time_ms
-                        )
-                        .green()
-                    );
-                }
+                print_migration_summary(&res);
             }
             Err(e) => {
-                eprintln!("Migration failed: {:?}", e);
+                eprintln!("{} Migration failed: {:?}", "✗".red(), e);
                 std::process::exit(1);
             }
         }
     });
+}
+
+fn print_migration_summary(res: &dibs_proto::MigrateResult) {
+    use owo_colors::OwoColorize as _;
+
+    let total = res.total_defined;
+    let already = res.already_applied.len();
+    let pending = res.applied.len();
+
+    // Header
+    println!();
+    println!(
+        "{}",
+        format!("━━━ Migrations ({} defined) ━━━", total).bold()
+    );
+    println!();
+
+    // Already applied section
+    if already > 0 {
+        println!(
+            "{}  {} already applied",
+            "✓".green(),
+            already.to_string().green()
+        );
+
+        if already == 1 {
+            // Just show the one
+            let m = &res.already_applied[0];
+            println!("   {} {}", "│".dimmed(), m.version.as_str().dimmed());
+        } else if already == 2 {
+            // Show both
+            for m in &res.already_applied {
+                println!("   {} {}", "│".dimmed(), m.version.as_str().dimmed());
+            }
+        } else {
+            // Show first, ellipsis, last
+            let first = &res.already_applied[0];
+            let last = &res.already_applied[already - 1];
+            println!("   {} {}", "│".dimmed(), first.version.as_str().dimmed());
+            println!(
+                "   {} {}",
+                "│".dimmed(),
+                format!("... {} more ...", already - 2).dimmed()
+            );
+            println!("   {} {}", "│".dimmed(), last.version.as_str().dimmed());
+        }
+        println!();
+    }
+
+    // Pending/applied section
+    if pending > 0 {
+        println!("{}  {} applied now", "▶".cyan(), pending.to_string().cyan());
+
+        for m in &res.applied {
+            println!(
+                "   {} {} {}",
+                "│".dimmed(),
+                m.version.as_str().cyan(),
+                format!("({}ms)", m.duration_ms).dimmed()
+            );
+        }
+        println!();
+    } else if already > 0 {
+        println!("{}  {}", "○".dimmed(), "No pending migrations".dimmed());
+        println!();
+    } else {
+        println!(
+            "{}  {}",
+            "○".dimmed(),
+            "No migrations defined or applied".dimmed()
+        );
+        println!();
+    }
+
+    // Timing summary
+    println!(
+        "{}",
+        format!("Setup: {}ms │ Total: {}ms", res.setup_ms, res.total_time_ms).dimmed()
+    );
+    println!();
 }
 
 fn run_status(config: &Config) {

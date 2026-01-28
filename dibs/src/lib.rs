@@ -68,7 +68,9 @@ pub use diff::{Change, SchemaDiff, TableDiff};
 pub use error::{Error, MigrationError, SqlErrorContext};
 pub use jsonb::Jsonb;
 pub use meta::{create_meta_tables_sql, record_migration_sql, sync_tables_sql};
-pub use migrate::{Migration, MigrationContext, MigrationRunner, MigrationStatus};
+pub use migrate::{
+    AppliedMigration, Migration, MigrationContext, MigrationRunner, MigrationStatus, RanMigration,
+};
 pub use pool::ConnectionProvider;
 pub use service::{DibsServiceImpl, run_service};
 pub use traced::{Connection, ConnectionExt, TracedConn, TracedObject, TracedPool};

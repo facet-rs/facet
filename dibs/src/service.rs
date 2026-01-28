@@ -296,6 +296,10 @@ impl DibsService for DibsServiceImpl {
         request: MigrateRequest,
         logs: roam::Tx<MigrationLog>,
     ) -> Result<MigrateResult, DibsError> {
+        use dibs_proto::{AppliedMigration as ProtoApplied, RanMigration as ProtoRan};
+
+        let total_start = std::time::Instant::now();
+
         // Connect to database
         let (mut client, connection) =
             tokio_postgres::connect(&request.database_url, tokio_postgres::NoTls)
@@ -309,57 +313,59 @@ impl DibsService for DibsServiceImpl {
             }
         });
 
-        let start = std::time::Instant::now();
+        // Get total defined migrations
+        let total_defined = crate::MigrationRunner::total_defined() as u32;
 
         // Run migrations
         let mut runner = crate::MigrationRunner::new(&mut client);
 
-        // Log start
-        let _ = logs
-            .send(&MigrationLog {
-                level: LogLevel::Info,
-                message: "Starting migrations...".to_string(),
-                migration: None,
-            })
-            .await;
+        // Initialize and get already-applied migrations
+        let setup_start = std::time::Instant::now();
+        runner.init().await.map_err(error_to_dibs_error)?;
+        let already_applied = runner.applied().await.map_err(error_to_dibs_error)?;
+        let setup_ms = setup_start.elapsed().as_millis() as u64;
 
-        let applied = if let Some(migration) = request.migration {
-            // Run specific migration - not yet implemented
+        // Check for specific migration request
+        if let Some(migration) = request.migration {
             return Err(DibsError::InvalidRequest(format!(
                 "Running specific migration '{}' not yet implemented",
                 migration
             )));
-        } else {
-            // Run all pending
-            runner.migrate().await.map_err(to_migration_error)?
-        };
+        }
 
-        for version in &applied {
+        // Run all pending
+        let ran = runner.migrate().await.map_err(to_migration_error)?;
+
+        // Log each applied migration
+        for m in &ran {
             let _ = logs
                 .send(&MigrationLog {
                     level: LogLevel::Info,
-                    message: format!("Applied {}", version),
-                    migration: Some(version.to_string()),
+                    message: format!("Applied {} ({}ms)", m.version, m.duration.as_millis()),
+                    migration: Some(m.version.to_string()),
                 })
                 .await;
         }
 
-        let total_time_ms = start.elapsed().as_millis() as u64;
-
-        let _ = logs
-            .send(&MigrationLog {
-                level: LogLevel::Info,
-                message: format!(
-                    "Done. Applied {} migration(s) in {}ms",
-                    applied.len(),
-                    total_time_ms
-                ),
-                migration: None,
-            })
-            .await;
+        let total_time_ms = total_start.elapsed().as_millis() as u64;
 
         Ok(MigrateResult {
-            applied: applied.into_iter().map(|s| s.to_string()).collect(),
+            total_defined,
+            already_applied: already_applied
+                .into_iter()
+                .map(|m| ProtoApplied {
+                    version: m.version,
+                    applied_at: m.applied_at.to_string(),
+                })
+                .collect(),
+            applied: ran
+                .into_iter()
+                .map(|m| ProtoRan {
+                    version: m.version.to_string(),
+                    duration_ms: m.duration.as_millis() as u64,
+                })
+                .collect(),
+            setup_ms,
             total_time_ms,
         })
     }

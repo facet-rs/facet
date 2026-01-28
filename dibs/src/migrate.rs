@@ -154,6 +154,11 @@ impl<'a> MigrationRunner<'a> {
         Self { client }
     }
 
+    /// Get the total number of registered migrations.
+    pub fn total_defined() -> usize {
+        inventory::iter::<Migration>.into_iter().count()
+    }
+
     /// Ensure the migrations tracking table exists.
     pub async fn init(&self) -> Result<()> {
         self.client
@@ -168,20 +173,31 @@ impl<'a> MigrationRunner<'a> {
         Ok(())
     }
 
-    /// Get all applied migration versions.
-    pub async fn applied(&self) -> Result<Vec<String>> {
+    /// Get all applied migrations with their timestamps.
+    pub async fn applied(&self) -> Result<Vec<AppliedMigration>> {
         let rows = self
             .client
-            .query("SELECT version FROM _dibs_migrations ORDER BY version", &[])
+            .query(
+                "SELECT version, applied_at FROM _dibs_migrations ORDER BY version",
+                &[],
+            )
             .await?;
-        Ok(rows.iter().map(|r| r.get(0)).collect())
+        Ok(rows
+            .iter()
+            .map(|r| AppliedMigration {
+                version: r.get(0),
+                applied_at: r.get(1),
+            })
+            .collect())
     }
 
     /// Get all pending migrations (registered but not applied).
-    pub fn pending(&self, applied: &[String]) -> Vec<&'static Migration> {
+    pub fn pending(&self, applied: &[AppliedMigration]) -> Vec<&'static Migration> {
+        let applied_versions: std::collections::HashSet<&str> =
+            applied.iter().map(|m| m.version.as_str()).collect();
         let mut migrations: Vec<_> = inventory::iter::<Migration>
             .into_iter()
-            .filter(|m| !applied.contains(&m.version.to_string()))
+            .filter(|m| !applied_versions.contains(m.version))
             .collect();
         migrations.sort_by_key(|m| m.version);
         migrations
@@ -194,13 +210,15 @@ impl<'a> MigrationRunner<'a> {
     ///
     /// Returns `MigrationError` on failure, which includes the exact source
     /// location where the error occurred (captured via `#[track_caller]`).
-    pub async fn migrate(&mut self) -> std::result::Result<Vec<&'static str>, MigrationError> {
+    pub async fn migrate(&mut self) -> std::result::Result<Vec<RanMigration>, MigrationError> {
         self.init().await?;
         let applied = self.applied().await?;
         let pending = self.pending(&applied);
 
         let mut ran = Vec::new();
         for migration in pending {
+            let start = std::time::Instant::now();
+
             // Each migration runs in its own transaction
             let tx = self.client.transaction().await?;
 
@@ -217,7 +235,10 @@ impl<'a> MigrationRunner<'a> {
             // Commit the transaction
             tx.commit().await?;
 
-            ran.push(migration.version);
+            ran.push(RanMigration {
+                version: migration.version,
+                duration: start.elapsed(),
+            });
         }
 
         Ok(ran)
@@ -227,13 +248,15 @@ impl<'a> MigrationRunner<'a> {
     pub async fn status(&self) -> Result<Vec<MigrationStatus>> {
         self.init().await?;
         let applied = self.applied().await?;
+        let applied_versions: std::collections::HashSet<&str> =
+            applied.iter().map(|m| m.version.as_str()).collect();
 
         let mut all: Vec<_> = inventory::iter::<Migration>
             .into_iter()
             .map(|m| MigrationStatus {
                 version: m.version,
                 name: m.name,
-                applied: applied.contains(&m.version.to_string()),
+                applied: applied_versions.contains(m.version),
                 source_path: m.source_path(),
             })
             .collect();
@@ -248,4 +271,16 @@ pub struct MigrationStatus {
     pub name: &'static str,
     pub applied: bool,
     pub source_path: std::path::PathBuf,
+}
+
+/// A migration that was already applied.
+pub struct AppliedMigration {
+    pub version: String,
+    pub applied_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// A migration that was just run.
+pub struct RanMigration {
+    pub version: &'static str,
+    pub duration: std::time::Duration,
 }

@@ -184,12 +184,36 @@ pub struct MigrateRequest {
     pub migration: Option<String>,
 }
 
+/// A migration that was already applied before this run.
+#[derive(Debug, Clone, Facet)]
+pub struct AppliedMigration {
+    /// Migration version
+    pub version: String,
+    /// When it was applied
+    pub applied_at: String,
+}
+
+/// A migration that was just run.
+#[derive(Debug, Clone, Facet)]
+pub struct RanMigration {
+    /// Migration version
+    pub version: String,
+    /// How long it took to run in milliseconds
+    pub duration_ms: u64,
+}
+
 /// Result of running migrations.
 #[derive(Debug, Clone, Facet)]
 pub struct MigrateResult {
-    /// Migrations that were applied
-    pub applied: Vec<String>,
-    /// Total execution time in milliseconds
+    /// Total number of migrations defined
+    pub total_defined: u32,
+    /// Migrations that were already applied before this run
+    pub already_applied: Vec<AppliedMigration>,
+    /// Migrations that were applied in this run
+    pub applied: Vec<RanMigration>,
+    /// Time spent establishing which migrations to run (init + query) in milliseconds
+    pub setup_ms: u64,
+    /// Total execution time in milliseconds (setup + all migrations)
     pub total_time_ms: u64,
 }
 
