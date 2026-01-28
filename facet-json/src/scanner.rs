@@ -232,25 +232,28 @@ impl Scanner {
     /// Returns `Token::NeedMore` if the buffer is exhausted mid-token,
     /// allowing the caller to refill and retry.
     pub fn next_token(&mut self, buf: &[u8]) -> ScanResult {
-        // If we have pending state from a previous NeedMore, resume
-        match core::mem::take(&mut self.state) {
-            ScanState::Ready => {}
-            ScanState::InString {
-                start,
-                has_escapes,
-                escape_next,
-            } => {
-                return self.resume_string(buf, start, has_escapes, escape_next);
-            }
-            ScanState::InNumber { start, hint } => {
-                return self.resume_number(buf, start, hint);
-            }
-            ScanState::InLiteral {
-                start,
-                expected,
-                matched,
-            } => {
-                return self.resume_literal(buf, start, expected, matched);
+        // Fast path: if state is Ready, skip the mem::take overhead
+        if !matches!(self.state, ScanState::Ready) {
+            // If we have pending state from a previous NeedMore, resume
+            match core::mem::take(&mut self.state) {
+                ScanState::Ready => unreachable!(),
+                ScanState::InString {
+                    start,
+                    has_escapes,
+                    escape_next,
+                } => {
+                    return self.resume_string(buf, start, has_escapes, escape_next);
+                }
+                ScanState::InNumber { start, hint } => {
+                    return self.resume_number(buf, start, hint);
+                }
+                ScanState::InLiteral {
+                    start,
+                    expected,
+                    matched,
+                } => {
+                    return self.resume_literal(buf, start, expected, matched);
+                }
             }
         }
 
