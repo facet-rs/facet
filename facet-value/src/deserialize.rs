@@ -373,7 +373,7 @@ fn deserialize_scalar<'p>(value: &Value, partial: Partial<'p>) -> Result<Partial
             // If target expects a string, stringify the number
             // This is needed for formats like XML where type inference may produce
             // numbers even when strings are expected
-            if shape.type_identifier == "String" {
+            if *shape == *String::SHAPE {
                 let s = if let Some(i) = num.to_i64() {
                     format!("{i}")
                 } else if let Some(u) = num.to_u64() {
@@ -435,8 +435,8 @@ fn set_number<'p>(num: &VNumber, partial: Partial<'p>, shape: &Shape) -> Result<
                     message: "value cannot be represented as i64".into(),
                 })
             })?;
-            // Check type_identifier to distinguish i64 from isize (both 8 bytes on 64-bit)
-            if shape.type_identifier == "isize" {
+            // Check shape to distinguish i64 from isize (both 8 bytes on 64-bit)
+            if *shape == *isize::SHAPE {
                 let v = isize::try_from(val).map_err(|_| {
                     ValueError::new(ValueErrorKind::NumberOutOfRange {
                         message: format!("{val} out of range for isize"),
@@ -489,8 +489,8 @@ fn set_number<'p>(num: &VNumber, partial: Partial<'p>, shape: &Shape) -> Result<
                     message: "value cannot be represented as u64".into(),
                 })
             })?;
-            // Check type_identifier to distinguish u64 from usize (both 8 bytes on 64-bit)
-            if shape.type_identifier == "usize" {
+            // Check shape to distinguish u64 from usize (both 8 bytes on 64-bit)
+            if *shape == *usize::SHAPE {
                 let v = usize::try_from(val).map_err(|_| {
                     ValueError::new(ValueErrorKind::NumberOutOfRange {
                         message: format!("{val} out of range for usize"),
