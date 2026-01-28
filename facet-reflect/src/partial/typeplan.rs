@@ -95,11 +95,18 @@ pub enum DeserStrategy {
         /// Precomputed scalar type for fast hint dispatch.
         /// None for opaque scalars that need parser-specific handling.
         scalar_type: Option<ScalarType>,
+        /// Whether this scalar type implements FromStr (for string parsing fallback)
+        is_from_str: bool,
     },
     /// Named struct
     Struct,
     /// Tuple or tuple struct
-    Tuple,
+    Tuple {
+        /// Number of fields in the tuple
+        field_count: usize,
+        /// Whether this is a single-field transparent wrapper that can accept values directly
+        is_single_field_transparent: bool,
+    },
     /// Enum
     Enum,
     /// `Option<T>`
@@ -118,6 +125,8 @@ pub enum DeserStrategy {
     List {
         /// NodeId of the item type's plan
         item_node: NodeId,
+        /// Whether this is specifically `Vec<u8>` (for optimized byte sequence handling)
+        is_byte_vec: bool,
     },
     /// Map (HashMap, BTreeMap, etc.)
     Map {
@@ -140,6 +149,9 @@ pub enum DeserStrategy {
     },
     /// DynamicValue (like `facet_value::Value`)
     DynamicValue,
+    /// Metadata container (like `Spanned<T>`, `Documented<T>`)
+    /// These require special field-by-field handling for metadata population
+    MetadataContainer,
     /// BackRef to recursive type - deser_strategy() resolves this
     BackRef {
         /// NodeId of the target node this backref points to
@@ -1023,9 +1035,12 @@ impl TypePlanBuilder {
         // Create placeholder node first so children can reference it.
         // We use Scalar as a dummy strategy - it will be overwritten before we return.
         let placeholder = TypePlanNode {
-            shape,                                                 // Original shape (conversion target)
-            kind: TypePlanNodeKind::Scalar,                        // Placeholder, will be replaced
-            strategy: DeserStrategy::Scalar { scalar_type: None }, // Placeholder, will be replaced
+            shape,                          // Original shape (conversion target)
+            kind: TypePlanNodeKind::Scalar, // Placeholder, will be replaced
+            strategy: DeserStrategy::Scalar {
+                scalar_type: None,
+                is_from_str: false,
+            }, // Placeholder, will be replaced
             has_default: shape.is(Characteristic::Default),
             proxy: effective_proxy,
             field_init_plans: Vec::new(), // Placeholder, will be replaced for structs
@@ -1123,7 +1138,13 @@ impl TypePlanBuilder {
             });
         }
 
-        // Priority 4: Types with .inner and try_from (like NonZero<T>)
+        // Priority 4: Metadata containers (like Spanned<T>, Documented<T>)
+        // These require field-by-field handling for metadata population
+        if shape.is_metadata_container() {
+            return Ok(DeserStrategy::MetadataContainer);
+        }
+
+        // Priority 5: Types with .inner and try_from (like NonZero<T>)
         if shape.inner.is_some()
             && shape.vtable.has_try_from()
             && !matches!(
@@ -1136,38 +1157,50 @@ impl TypePlanBuilder {
             });
         }
 
-        // Priority 5: Transparent wrappers with try_from
+        // Priority 6: Transparent wrappers with try_from
         if matches!(kind, TypePlanNodeKind::Transparent) && shape.vtable.has_try_from() {
             return Ok(DeserStrategy::TransparentConvert {
                 inner_node: first_child(),
             });
         }
 
-        // Priority 6: Scalars with FromStr
+        // Priority 7: Scalars with FromStr
         if matches!(&shape.def, Def::Scalar) && shape.vtable.has_parse() {
             return Ok(DeserStrategy::Scalar {
                 scalar_type: shape.scalar_type(),
+                is_from_str: shape.vtable.has_parse(),
             });
         }
 
-        // Priority 7: Match on the kind
+        // Priority 8: Match on the kind
         Ok(match kind {
             TypePlanNodeKind::Scalar => {
                 // Empty tuple has def: Scalar but ty: Struct(Tuple)
                 if let Type::User(UserType::Struct(struct_def)) = &shape.ty {
                     use facet_core::StructKind;
                     if matches!(struct_def.kind, StructKind::Tuple | StructKind::TupleStruct) {
-                        return Ok(DeserStrategy::Tuple);
+                        let field_count = struct_def.fields.len();
+                        return Ok(DeserStrategy::Tuple {
+                            field_count,
+                            is_single_field_transparent: field_count == 1 && shape.is_transparent(),
+                        });
                     }
                 }
                 DeserStrategy::Scalar {
                     scalar_type: shape.scalar_type(),
+                    is_from_str: shape.vtable.has_parse(),
                 }
             }
             TypePlanNodeKind::Struct(struct_plan) => {
                 use facet_core::StructKind;
                 match struct_plan.struct_def.kind {
-                    StructKind::Tuple | StructKind::TupleStruct => DeserStrategy::Tuple,
+                    StructKind::Tuple | StructKind::TupleStruct => {
+                        let field_count = struct_plan.struct_def.fields.len();
+                        DeserStrategy::Tuple {
+                            field_count,
+                            is_single_field_transparent: field_count == 1 && shape.is_transparent(),
+                        }
+                    }
                     StructKind::Struct | StructKind::Unit => DeserStrategy::Struct,
                 }
             }
@@ -1179,9 +1212,14 @@ impl TypePlanBuilder {
                 ok_node: nth_child(0),
                 err_node: nth_child(1),
             },
-            TypePlanNodeKind::List | TypePlanNodeKind::Slice => DeserStrategy::List {
-                item_node: first_child(),
-            },
+            TypePlanNodeKind::List | TypePlanNodeKind::Slice => {
+                // Check if this is Vec<u8> for optimized byte sequence handling
+                let is_byte_vec = *shape == *<alloc::vec::Vec<u8> as facet_core::Facet>::SHAPE;
+                DeserStrategy::List {
+                    item_node: first_child(),
+                    is_byte_vec,
+                }
+            }
             TypePlanNodeKind::Map => DeserStrategy::Map {
                 key_node: nth_child(0),
                 value_node: nth_child(1),
@@ -1726,7 +1764,7 @@ impl TypePlan {
     pub fn list_item_node(&self, parent: NodeId) -> Option<NodeId> {
         let node = self.get(parent)?;
         match &node.strategy {
-            DeserStrategy::List { item_node } | DeserStrategy::Array { item_node, .. } => {
+            DeserStrategy::List { item_node, .. } | DeserStrategy::Array { item_node, .. } => {
                 Some(*item_node)
             }
             DeserStrategy::BackRef { target } => self.list_item_node(*target),
