@@ -1,0 +1,20 @@
+---
+source: crates/facet-styx/src/schema_error.rs
+expression: rendered
+---
+Error: type mismatch at 'name'
+   ╭─[ test.styx:1:6 ]
+   │
+ 1 │ name 123
+   │      ─┬─  
+   │       ╰─── expected string, got int
+───╯
+Error: unknown field 'unknown_field'
+   ╭─[ test.styx:2:1 ]
+   │
+ 2 │ unknown_field value
+   │ ──────┬──────  
+   │       ╰──────── not defined in schema
+   │ 
+   │ Note: valid fields: name, age
+───╯

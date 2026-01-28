@@ -1,0 +1,13 @@
+---
+source: crates/facet-styx/src/schema_error.rs
+expression: rendered
+---
+Error: missing required field 'age'
+   ╭─[ test.styx:1:1 ]
+   │
+ 1 │ name Alice
+   │ ─────┬────  
+   │      ╰────── add field 'age' here
+   │ 
+   │ Help: age <value>
+───╯

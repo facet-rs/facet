@@ -465,3 +465,162 @@ pub enum ValidationWarningKind {
     /// Field will be ignored.
     IgnoredField { field: String },
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn strip_ansi(s: &str) -> String {
+        // Simple ANSI escape code stripper for snapshot testing
+        let mut result = String::new();
+        let mut chars = s.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c == '\x1b' {
+                // Skip until 'm' (end of ANSI sequence)
+                while let Some(&next) = chars.peek() {
+                    chars.next();
+                    if next == 'm' {
+                        break;
+                    }
+                }
+            } else {
+                result.push(c);
+            }
+        }
+        result
+    }
+
+    #[test]
+    fn test_missing_field_diagnostic() {
+        let source = "name Alice";
+        let error = ValidationError::new(
+            "",
+            ValidationErrorKind::MissingField {
+                field: "age".into(),
+            },
+            "missing required field 'age'",
+        )
+        .with_span(Some(Span { start: 0, end: 10 }));
+
+        let rendered = strip_ansi(&error.render("test.styx", source));
+        insta::assert_snapshot!(rendered);
+    }
+
+    #[test]
+    fn test_unknown_field_diagnostic() {
+        let source = "name Alice\nunknwon_field value";
+        let error = ValidationError::new(
+            "",
+            ValidationErrorKind::UnknownField {
+                field: "unknwon_field".into(),
+                valid_fields: vec!["name".into(), "age".into(), "email".into()],
+                suggestion: Some("unknown_field".into()),
+            },
+            "unknown field 'unknwon_field'",
+        )
+        .with_span(Some(Span { start: 11, end: 24 }));
+
+        let rendered = strip_ansi(&error.render("test.styx", source));
+        insta::assert_snapshot!(rendered);
+    }
+
+    #[test]
+    fn test_type_mismatch_diagnostic() {
+        let source = "age notanumber";
+        let error = ValidationError::new(
+            "age",
+            ValidationErrorKind::TypeMismatch {
+                expected: "int".into(),
+                got: "string".into(),
+            },
+            "expected int, got string",
+        )
+        .with_span(Some(Span { start: 4, end: 14 }));
+
+        let rendered = strip_ansi(&error.render("test.styx", source));
+        insta::assert_snapshot!(rendered);
+    }
+
+    #[test]
+    fn test_invalid_variant_diagnostic() {
+        let source = "status @unknown";
+        let error = ValidationError::new(
+            "status",
+            ValidationErrorKind::InvalidVariant {
+                expected: vec!["active".into(), "inactive".into(), "pending".into()],
+                got: "unknown".into(),
+            },
+            "invalid enum variant",
+        )
+        .with_span(Some(Span { start: 7, end: 15 }));
+
+        let rendered = strip_ansi(&error.render("test.styx", source));
+        insta::assert_snapshot!(rendered);
+    }
+
+    #[test]
+    fn test_expected_object_diagnostic() {
+        let source = "config simple_value";
+        let error = ValidationError::new(
+            "config",
+            ValidationErrorKind::ExpectedObject,
+            "expected object",
+        )
+        .with_span(Some(Span { start: 7, end: 19 }));
+
+        let rendered = strip_ansi(&error.render("test.styx", source));
+        insta::assert_snapshot!(rendered);
+    }
+
+    #[test]
+    fn test_warning_deprecated_diagnostic() {
+        let source = "old_setting value";
+        let warning = ValidationWarning::new(
+            "old_setting",
+            ValidationWarningKind::Deprecated {
+                reason: "use 'new_setting' instead".into(),
+            },
+            "deprecated field",
+        )
+        .with_span(Some(Span { start: 0, end: 11 }));
+
+        let mut output = Vec::new();
+        warning.write_report("test.styx", source, &mut output);
+        let rendered = strip_ansi(&String::from_utf8(output).unwrap());
+        insta::assert_snapshot!(rendered);
+    }
+
+    #[test]
+    fn test_validation_result_multiple_errors() {
+        let source = "name 123\nunknown_field value";
+        let mut result = ValidationResult::ok();
+
+        result.error(
+            ValidationError::new(
+                "name",
+                ValidationErrorKind::TypeMismatch {
+                    expected: "string".into(),
+                    got: "int".into(),
+                },
+                "expected string, got int",
+            )
+            .with_span(Some(Span { start: 5, end: 8 })),
+        );
+
+        result.error(
+            ValidationError::new(
+                "",
+                ValidationErrorKind::UnknownField {
+                    field: "unknown_field".into(),
+                    valid_fields: vec!["name".into(), "age".into()],
+                    suggestion: None,
+                },
+                "unknown field",
+            )
+            .with_span(Some(Span { start: 9, end: 22 })),
+        );
+
+        let rendered = strip_ansi(&result.render("test.styx", source));
+        insta::assert_snapshot!(rendered);
+    }
+}

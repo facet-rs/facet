@@ -1,0 +1,11 @@
+---
+source: crates/facet-styx/src/schema_error.rs
+expression: rendered
+---
+Warning: deprecated
+   ╭─[ test.styx:1:1 ]
+   │
+ 1 │ old_setting value
+   │ ─────┬─────  
+   │      ╰─────── use 'new_setting' instead
+───╯

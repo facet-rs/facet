@@ -1,0 +1,15 @@
+---
+source: crates/facet-styx/src/schema_error.rs
+expression: rendered
+---
+Error: unknown field 'unknwon_field'
+   ╭─[ test.styx:2:1 ]
+   │
+ 2 │ unknwon_field value
+   │ ──────┬──────  
+   │       ╰──────── not defined in schema
+   │ 
+   │ Help: did you mean 'unknown_field'?
+   │ 
+   │ Note: valid fields: name, age, email
+───╯

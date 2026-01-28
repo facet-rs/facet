@@ -1,0 +1,11 @@
+---
+source: crates/facet-styx/src/schema_error.rs
+expression: rendered
+---
+Error: type mismatch at 'age'
+   ╭─[ test.styx:1:5 ]
+   │
+ 1 │ age notanumber
+   │     ─────┬────  
+   │          ╰────── expected int, got string
+───╯

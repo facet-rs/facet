@@ -1,0 +1,11 @@
+---
+source: crates/facet-styx/src/schema_error.rs
+expression: rendered
+---
+Error: expected object at 'config'
+   ╭─[ test.styx:1:8 ]
+   │
+ 1 │ config simple_value
+   │        ──────┬─────  
+   │              ╰─────── expected { ... }
+───╯
