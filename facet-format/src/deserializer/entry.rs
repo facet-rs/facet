@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use facet_core::{Def, Facet, ScalarType, Shape, StructKind, Type, UserType};
+use facet_core::{Def, ScalarType, Shape, StructKind, Type, UserType};
 use facet_reflect::{Partial, typeplan::DeserStrategy};
 
 use crate::{
@@ -40,7 +40,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         }
 
         // Check for builder_shape (immutable collections like Bytes -> BytesMut)
-        // This is a special case that can't easily be represented in DeserStrategy
+        // This MUST be checked at runtime because begin_inner() transitions to the
+        // builder shape but keeps the same TypePlan node. If we used a precomputed
+        // strategy, we'd get infinite recursion (BytesMut would still have Builder strategy).
         if shape.builder_shape.is_some() {
             return Ok(wip
                 .begin_inner()?
@@ -48,13 +50,8 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 .end()?);
         }
 
-        // Check for metadata containers (like `Spanned<T>`, `Documented<T>`)
-        // These require field-by-field handling that can't be precomputed
-        if shape.is_metadata_container() {
-            return self.deserialize_metadata_container(wip);
-        }
-
         // === STRATEGY-BASED DISPATCH ===
+        // All other cases use precomputed DeserStrategy for O(1) dispatch.
         // Use the precomputed DeserStrategy for O(1) dispatch
 
         let strategy = wip.deser_strategy();
@@ -89,10 +86,14 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                     .end()?)
             }
 
-            Some(DeserStrategy::Scalar { scalar_type }) => {
+            Some(DeserStrategy::Scalar {
+                scalar_type,
+                is_from_str,
+            }) => {
                 let scalar_type = *scalar_type; // Copy before moving wip
+                let is_from_str = *is_from_str;
                 trace!("deserialize_into: dispatching to deserialize_scalar");
-                self.deserialize_scalar(wip, scalar_type)
+                self.deserialize_scalar(wip, scalar_type, is_from_str)
             }
 
             Some(DeserStrategy::Struct) => {
@@ -100,9 +101,14 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 self.deserialize_struct(wip)
             }
 
-            Some(DeserStrategy::Tuple) => {
+            Some(DeserStrategy::Tuple {
+                field_count,
+                is_single_field_transparent,
+            }) => {
+                let field_count = *field_count;
+                let is_single_field_transparent = *is_single_field_transparent;
                 trace!("deserialize_into: dispatching to deserialize_tuple");
-                self.deserialize_tuple(wip)
+                self.deserialize_tuple(wip, field_count, is_single_field_transparent)
             }
 
             Some(DeserStrategy::Enum) => {
@@ -120,9 +126,10 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 self.deserialize_result_as_enum(wip)
             }
 
-            Some(DeserStrategy::List { .. }) => {
+            Some(DeserStrategy::List { is_byte_vec, .. }) => {
+                let is_byte_vec = *is_byte_vec;
                 trace!("deserialize_into: dispatching to deserialize_list");
-                self.deserialize_list(wip)
+                self.deserialize_list(wip, is_byte_vec)
             }
 
             Some(DeserStrategy::Map { .. }) => {
@@ -143,6 +150,11 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             Some(DeserStrategy::DynamicValue) => {
                 trace!("deserialize_into: dispatching to deserialize_dynamic_value");
                 self.deserialize_dynamic_value(wip)
+            }
+
+            Some(DeserStrategy::MetadataContainer) => {
+                trace!("deserialize_into: dispatching to deserialize_metadata_container");
+                self.deserialize_metadata_container(wip)
             }
 
             Some(DeserStrategy::BackRef { .. }) => {
@@ -361,14 +373,10 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     pub(crate) fn deserialize_tuple(
         &mut self,
         mut wip: Partial<'input, BORROW>,
+        field_count: usize,
+        is_single_field_transparent: bool,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
-
-        // Get field count for tuple hints
-        let field_count = match &wip.shape().ty {
-            Type::User(UserType::Struct(def)) => def.fields.len(),
-            _ => 0, // Unit type or unknown - will be handled below
-        };
 
         // Special case: transparent newtypes (marked with #[facet(transparent)] or
         // #[repr(transparent)]) can accept values directly without a sequence wrapper.
@@ -382,7 +390,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         // newtypes don't consume struct events - they deserialize the inner value directly.
         // If we hint struct fields first, non-self-describing parsers will expect to emit
         // StructStart, causing "unexpected token: got struct start" errors.
-        if field_count == 1 && wip.shape().is_transparent() {
+        if is_single_field_transparent {
             // Unwrap into field 0 and deserialize directly
             return Ok(wip
                 .begin_nth_field(0)?
@@ -576,14 +584,12 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     pub(crate) fn deserialize_list(
         &mut self,
         mut wip: Partial<'input, BORROW>,
+        is_byte_vec: bool,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         trace!("deserialize_list: starting");
 
-        // Check if this is a Vec<u8> - if so, try the optimized byte sequence path
-        // We specifically check for Vec (not Bytes, BytesMut, or other list-like types)
-        // because those types may have different builder patterns
-        let is_byte_vec = *wip.shape() == *<Vec<u8>>::SHAPE;
-
+        // Try the optimized byte sequence path for Vec<u8>
+        // (is_byte_vec is precomputed in TypePlan)
         if is_byte_vec && self.parser.hint_byte_sequence() {
             // Parser supports bulk byte reading - expect Scalar(Bytes(...))
             let event = self.expect_event("bytes")?;
@@ -914,6 +920,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         &mut self,
         mut wip: Partial<'input, BORROW>,
         scalar_type: Option<ScalarType>,
+        is_from_str: bool,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         // Only hint for non-self-describing formats (e.g., postcard)
         // Self-describing formats like JSON already know the types
@@ -927,18 +934,17 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 false
             } else {
                 // For all other scalar types, ask the parser if it handles them specially
+                // TODO: Consider using shape.id instead of type_identifier for faster matching
                 self.parser.hint_opaque_scalar(shape.type_identifier, shape)
             };
 
             // If the parser didn't handle the opaque type, fall back to standard hints
             if !opaque_handled {
-                let hint = scalar_type_to_hint(scalar_type).or_else(|| {
-                    // For unknown scalar types, check if they implement FromStr
-                    if shape.is_from_str() {
-                        Some(ScalarTypeHint::String)
-                    } else {
-                        None
-                    }
+                // Use precomputed is_from_str instead of runtime vtable check
+                let hint = scalar_type_to_hint(scalar_type).or(if is_from_str {
+                    Some(ScalarTypeHint::String)
+                } else {
+                    None
                 });
                 if let Some(hint) = hint {
                     self.parser.hint_scalar_type(hint);
