@@ -655,13 +655,22 @@ impl std::error::Error for DeserializeError {}
 
 impl From<ReflectError> for DeserializeError {
     fn from(e: ReflectError) -> Self {
+        let kind = match e.kind {
+            ReflectErrorKind::UninitializedField { shape, field_name } => {
+                DeserializeErrorKind::MissingField {
+                    field: field_name,
+                    container_shape: shape,
+                }
+            }
+            other => DeserializeErrorKind::Reflect {
+                kind: other,
+                context: "",
+            },
+        };
         DeserializeError {
             span: Some(current_span()),
             path: Some(e.path),
-            kind: DeserializeErrorKind::Reflect {
-                kind: e.kind,
-                context: "",
-            },
+            kind,
         }
     }
 }

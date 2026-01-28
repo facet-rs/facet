@@ -244,7 +244,7 @@ impl FormatSuite for TomlSlice {
 
     fn error_missing_required_field() -> CaseSpec {
         // Missing required field "email"
-        CaseSpec::expect_error("name = \"Alice\"\nage = 30", "was not initialized")
+        CaseSpec::expect_error("name = \"Alice\"\nage = 30", "missing field")
     }
 
     // -- Alias cases --
