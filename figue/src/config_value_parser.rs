@@ -61,8 +61,8 @@ where
         "from_config_value: after coerce_types_from_shape"
     );
 
-    let parser = ConfigValueParser::new(&value_coerced);
-    let mut deserializer = FormatDeserializer::new_owned(parser);
+    let mut parser = ConfigValueParser::new(&value_coerced);
+    let mut deserializer = FormatDeserializer::new_owned(&mut parser);
     deserializer
         .deserialize()
         .map_err(ConfigValueDeserializeError::Deserialize)
