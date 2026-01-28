@@ -444,20 +444,7 @@ mod tests {
         let result: Result<Person, _> = crate::from_str(source);
         let err = result.unwrap_err();
 
-        // Use RenderError trait - config is applied internally
-        let rendered = RenderError::render(&err, "test.styx", source);
-
-        // Check no ANSI codes when NO_COLOR is set
-        let no_color = std::env::var("NO_COLOR").is_ok();
-        if no_color {
-            assert!(
-                !rendered.contains("\x1b["),
-                "Output should not contain ANSI escape codes:\n{:?}",
-                rendered
-            );
-        }
-
-        insta::assert_snapshot!(rendered);
+        crate::assert_snapshot_stripped!(RenderError::render(&err, "test.styx", source));
     }
 
     #[test]
@@ -466,8 +453,7 @@ mod tests {
         let result: Result<Person, _> = crate::from_str(source);
         let err = result.unwrap_err();
 
-        let rendered = err.render("test.styx", source);
-        insta::assert_snapshot!(rendered);
+        crate::assert_snapshot_stripped!(err.render("test.styx", source));
     }
 
     #[test]
@@ -482,7 +468,6 @@ mod tests {
         let result: Result<Strict, _> = crate::from_str(source);
         let err = result.unwrap_err();
 
-        let rendered = err.render("test.styx", source);
-        insta::assert_snapshot!(rendered);
+        crate::assert_snapshot_stripped!(err.render("test.styx", source));
     }
 }

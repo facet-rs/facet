@@ -469,26 +469,7 @@ pub enum ValidationWarningKind {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn strip_ansi(s: &str) -> String {
-        // Simple ANSI escape code stripper for snapshot testing
-        let mut result = String::new();
-        let mut chars = s.chars().peekable();
-        while let Some(c) = chars.next() {
-            if c == '\x1b' {
-                // Skip until 'm' (end of ANSI sequence)
-                while let Some(&next) = chars.peek() {
-                    chars.next();
-                    if next == 'm' {
-                        break;
-                    }
-                }
-            } else {
-                result.push(c);
-            }
-        }
-        result
-    }
+    use crate::assert_snapshot_stripped;
 
     #[test]
     fn test_missing_field_diagnostic() {
@@ -502,8 +483,7 @@ mod tests {
         )
         .with_span(Some(Span { start: 0, end: 10 }));
 
-        let rendered = strip_ansi(&error.render("test.styx", source));
-        insta::assert_snapshot!(rendered);
+        assert_snapshot_stripped!(error.render("test.styx", source));
     }
 
     #[test]
@@ -520,8 +500,7 @@ mod tests {
         )
         .with_span(Some(Span { start: 11, end: 24 }));
 
-        let rendered = strip_ansi(&error.render("test.styx", source));
-        insta::assert_snapshot!(rendered);
+        assert_snapshot_stripped!(error.render("test.styx", source));
     }
 
     #[test]
@@ -537,8 +516,7 @@ mod tests {
         )
         .with_span(Some(Span { start: 4, end: 14 }));
 
-        let rendered = strip_ansi(&error.render("test.styx", source));
-        insta::assert_snapshot!(rendered);
+        assert_snapshot_stripped!(error.render("test.styx", source));
     }
 
     #[test]
@@ -554,8 +532,7 @@ mod tests {
         )
         .with_span(Some(Span { start: 7, end: 15 }));
 
-        let rendered = strip_ansi(&error.render("test.styx", source));
-        insta::assert_snapshot!(rendered);
+        assert_snapshot_stripped!(error.render("test.styx", source));
     }
 
     #[test]
@@ -568,8 +545,7 @@ mod tests {
         )
         .with_span(Some(Span { start: 7, end: 19 }));
 
-        let rendered = strip_ansi(&error.render("test.styx", source));
-        insta::assert_snapshot!(rendered);
+        assert_snapshot_stripped!(error.render("test.styx", source));
     }
 
     #[test]
@@ -586,8 +562,7 @@ mod tests {
 
         let mut output = Vec::new();
         warning.write_report("test.styx", source, &mut output);
-        let rendered = strip_ansi(&String::from_utf8(output).unwrap());
-        insta::assert_snapshot!(rendered);
+        assert_snapshot_stripped!(String::from_utf8(output).unwrap());
     }
 
     #[test]
@@ -620,7 +595,6 @@ mod tests {
             .with_span(Some(Span { start: 9, end: 22 })),
         );
 
-        let rendered = strip_ansi(&result.render("test.styx", source));
-        insta::assert_snapshot!(rendered);
+        assert_snapshot_stripped!(result.render("test.styx", source));
     }
 }

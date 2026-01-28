@@ -56,6 +56,8 @@ mod schema_validate;
 mod serializer;
 #[cfg(test)]
 mod tag_events_test;
+#[cfg(test)]
+mod test_utils;
 mod tracing_macros;
 #[cfg(test)]
 mod value_expr_test;

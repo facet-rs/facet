@@ -271,14 +271,20 @@ mod tests {
             .collect()
     }
 
+    macro_rules! assert_snapshot_stripped {
+        ($value:expr) => {{
+            let stripped = String::from_utf8(strip_ansi_escapes::strip(&$value)).unwrap();
+            insta::assert_snapshot!(stripped);
+        }};
+    }
+
     #[test]
     fn test_duplicate_key_diagnostic() {
         let source = "a 1\na 2";
         let errors = parse_with_errors(source);
         assert_eq!(errors.len(), 1);
 
-        let rendered = errors[0].render("test.styx", source);
-        insta::assert_snapshot!(rendered);
+        assert_snapshot_stripped!(errors[0].render("test.styx", source));
     }
 
     #[test]
@@ -287,8 +293,7 @@ mod tests {
         let errors = parse_with_errors(source);
         assert!(!errors.is_empty());
 
-        let rendered = errors[0].render("test.styx", source);
-        insta::assert_snapshot!(rendered);
+        assert_snapshot_stripped!(errors[0].render("test.styx", source));
     }
 
     #[test]
@@ -297,8 +302,7 @@ mod tests {
         let errors = parse_with_errors(source);
         assert!(!errors.is_empty(), "expected InvalidEscape error");
 
-        let rendered = errors[0].render("test.styx", source);
-        insta::assert_snapshot!(rendered);
+        assert_snapshot_stripped!(errors[0].render("test.styx", source));
     }
 
     #[test]
@@ -307,7 +311,6 @@ mod tests {
         let errors = parse_with_errors(source);
         assert!(!errors.is_empty(), "expected UnclosedObject error");
 
-        let rendered = errors[0].render("test.styx", source);
-        insta::assert_snapshot!(rendered);
+        assert_snapshot_stripped!(errors[0].render("test.styx", source));
     }
 }
