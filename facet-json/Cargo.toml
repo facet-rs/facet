@@ -60,6 +60,10 @@ harness = false
 name = "large_json"
 harness = false
 
+[[bench]]
+name = "twitter"
+harness = false
+
 [[example]]
 name = "profile_jit_vec"
 required-features = ["jit"]
