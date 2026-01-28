@@ -163,6 +163,11 @@ impl CobsFramed {
                 })?;
 
                 let msg: Message = facet_postcard::from_slice(&decoded).map_err(|e| {
+                    eprintln!(
+                        "Failed to decode {} bytes: {:02x?}",
+                        decoded.len(),
+                        &decoded[..decoded.len().min(64)]
+                    );
                     std::io::Error::new(std::io::ErrorKind::InvalidData, format!("postcard: {e}"))
                 })?;
                 if wire_spy_enabled() {
