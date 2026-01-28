@@ -26,8 +26,8 @@ impl FormatSuite for TomlSlice {
         T: Facet<'static> + core::fmt::Debug,
     {
         let input_str = std::str::from_utf8(input).expect("input should be valid UTF-8");
-        let parser = TomlParser::new(input_str)?;
-        let mut de = FormatDeserializer::new_owned(parser);
+        let mut parser = TomlParser::new(input_str)?;
+        let mut de = FormatDeserializer::new_owned(&mut parser);
         de.deserialize_deferred::<T>()
     }
 

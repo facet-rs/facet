@@ -95,8 +95,8 @@ where
     T: facet_core::Facet<'static>,
 {
     use facet_format::FormatDeserializer;
-    let parser = Asn1Parser::new(input);
-    let mut de = FormatDeserializer::new_owned(parser);
+    let mut parser = Asn1Parser::new(input);
+    let mut de = FormatDeserializer::new_owned(&mut parser);
     de.deserialize()
 }
 
@@ -113,7 +113,7 @@ where
     'input: 'facet,
 {
     use facet_format::FormatDeserializer;
-    let parser = Asn1Parser::new(input);
-    let mut de = FormatDeserializer::new(parser);
+    let mut parser = Asn1Parser::new(input);
+    let mut de = FormatDeserializer::new(&mut parser);
     de.deserialize()
 }
