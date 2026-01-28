@@ -549,8 +549,9 @@ pub unsafe fn deserialize_into(
 
     // Use facet-format's FormatDeserializer with PostcardParser to deserialize.
     // This is non-generic - it uses the Shape for all type information.
-    let parser = PostcardParser::new(payload);
-    let mut deserializer: FormatDeserializer<'_, '_, false> = FormatDeserializer::new_owned(parser);
+    let mut parser = PostcardParser::new(payload);
+    let mut deserializer: FormatDeserializer<'_, '_, false> =
+        FormatDeserializer::new_owned(&mut parser);
     let partial = deserializer
         .deserialize_into(partial)
         .map_err(|e| PrepareError::Deserialize(e.to_string()))?;
