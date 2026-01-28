@@ -1285,10 +1285,14 @@ impl TableDef {
             // Check for enum variants
             let enum_variants = extract_enum_variants(inner_shape);
 
+            // Use pg_type's rust representation for consistency, especially for
+            // generic types like Vec<u8> where type_identifier is just "Vec"
+            let rust_type = pg_type.to_rust_type().to_string();
+
             columns.push(Column {
                 name: col_name.clone(),
                 pg_type,
-                rust_type: Some(inner_shape.type_identifier.to_string()),
+                rust_type: Some(rust_type),
                 nullable,
                 default,
                 primary_key,
