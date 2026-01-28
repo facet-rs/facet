@@ -8,8 +8,8 @@
 
 use alloc::vec::Vec;
 use facet_core::{
-    Characteristic, ConstTypeId, Def, EnumType, Field, ProxyDef, Shape, StructType, Type, UserType,
-    Variant,
+    Characteristic, ConstTypeId, Def, EnumType, Field, ProxyDef, SequenceType, Shape, StructType,
+    Type, UserType, Variant,
 };
 use hashbrown::HashMap;
 use indextree::Arena;
@@ -68,6 +68,10 @@ pub enum TypePlanNodeKind {
     /// `Vec<T>`, `VecDeque<T>`, etc.
     /// Child: item type T
     List,
+
+    /// Slice types `[T]` (unsized, used via smart pointers like `Arc<[T]>`)
+    /// Child: item type T
+    Slice,
 
     /// `HashMap<K, V>`, `BTreeMap<K, V>`, etc.
     /// Children: [key type K, value type V]
@@ -479,13 +483,20 @@ impl TypePlanBuilder {
             }
 
             _ => {
-                // Check Type for struct/enum
+                // Check Type for struct/enum/slice
                 match &shape.ty {
                     Type::User(UserType::Struct(struct_type)) => {
                         TypePlanNodeKind::Struct(self.build_struct_plan(struct_type, parent_id))
                     }
                     Type::User(UserType::Enum(enum_type)) => {
                         TypePlanNodeKind::Enum(self.build_enum_plan(enum_type, parent_id))
+                    }
+                    // Handle slices like lists - they have an element type
+                    Type::Sequence(SequenceType::Slice(slice_type)) => {
+                        let item_id = self.build_node(slice_type.t);
+                        parent_id.append(item_id, &mut self.arena);
+                        // Use Slice kind so we can distinguish from List if needed
+                        TypePlanNodeKind::Slice
                     }
                     _ => {
                         // Check for transparent wrappers (newtypes) as fallback
@@ -722,7 +733,9 @@ impl TypePlan {
     pub fn list_item_node(&self, parent: NodeId) -> Option<NodeId> {
         let node = self.get(parent)?;
         match &node.kind {
-            TypePlanNodeKind::List | TypePlanNodeKind::Array { .. } => self.first_child(parent),
+            TypePlanNodeKind::List | TypePlanNodeKind::Array { .. } | TypePlanNodeKind::Slice => {
+                self.first_child(parent)
+            }
             _ => None,
         }
     }

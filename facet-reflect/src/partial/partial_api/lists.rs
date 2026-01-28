@@ -285,11 +285,16 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 PtrUninit::new(element_ptr.as_ptr())
             };
 
-            // Get child type plan NodeId for list items - root_plan is free to access now
+            // Get child type plan NodeId for slice items
+            // Navigate: Pointer -> Slice -> element
+            let slice_node = self
+                .root_plan
+                .pointer_pointee_node(parent_type_plan)
+                .expect("TypePlan must have slice node for smart pointer");
             let child_plan = self
                 .root_plan
-                .list_item_node(parent_type_plan)
-                .expect("TypePlan must have list item node");
+                .list_item_node(slice_node)
+                .expect("TypePlan must have item node for slice");
 
             // Create and push the element frame
             crate::trace!("Pushing element frame, which we just allocated");
