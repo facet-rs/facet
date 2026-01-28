@@ -1437,10 +1437,7 @@ pub unsafe extern "C" fn jit_deserialize_list_by_shape(
 
     let shape = unsafe { &*list_shape };
 
-    jit_debug!(
-        "jit_deserialize_list_by_shape: type={}",
-        shape.type_identifier
-    );
+    jit_debug!("jit_deserialize_list_by_shape: type={shape}");
 
     let Def::List(list_def) = &shape.def else {
         jit_debug!(
@@ -1458,11 +1455,7 @@ pub unsafe extern "C" fn jit_deserialize_list_by_shape(
         .map(|l| l.size())
         .unwrap_or(0);
 
-    jit_debug!(
-        "list element: type={}, size={}",
-        elem_shape.type_identifier,
-        elem_size
-    );
+    jit_debug!("list element: type={elem_shape}, size={elem_size}");
 
     if elem_size == 0 {
         jit_debug!("ERROR: unsized element type");

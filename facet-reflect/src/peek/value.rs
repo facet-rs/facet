@@ -527,11 +527,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
         f: &mut core::fmt::Formatter<'_>,
         opts: TypeNameOpts,
     ) -> core::fmt::Result {
-        if let Some(type_name_fn) = self.shape.type_name {
-            type_name_fn(self.shape, f, opts)
-        } else {
-            write!(f, "{}", self.shape.type_identifier)
-        }
+        self.shape.write_type_name(f, opts)
     }
 
     /// Returns the shape

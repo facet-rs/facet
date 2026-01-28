@@ -1535,7 +1535,7 @@ impl PrettyPrinter {
         let value_start = out.position();
 
         if let Some(prev_type_depth) = visited.insert(value.id(), type_depth) {
-            write!(out, "{} {{ ", shape.type_identifier)?;
+            write!(out, "{} {{ ", shape)?;
             write!(
                 out,
                 "/* cycle detected at {} (first seen at type_depth {}) */",
@@ -1609,7 +1609,7 @@ impl PrettyPrinter {
                     },
                 )),
             ) => {
-                write!(out, "{}", shape.type_identifier)?;
+                write!(out, "{}", shape)?;
                 if matches!(ty.kind, StructKind::Struct) {
                     let struct_peek = value.into_struct().unwrap();
                     write!(out, " {{")?;
@@ -1684,7 +1684,7 @@ impl PrettyPrinter {
                     },
                 )),
             ) => {
-                write!(out, "{}", shape.type_identifier)?;
+                write!(out, "{}", shape)?;
                 if matches!(ty.kind, StructKind::Tuple) {
                     write!(out, " ")?;
                 }
@@ -1732,14 +1732,10 @@ impl PrettyPrinter {
                 let enum_peek = value.into_enum().unwrap();
                 match enum_peek.active_variant() {
                     Err(_) => {
-                        write!(
-                            out,
-                            "{} {{ /* cannot determine variant */ }}",
-                            shape.type_identifier
-                        )?;
+                        write!(out, "{} {{ /* cannot determine variant */ }}", shape)?;
                     }
                     Ok(variant) => {
-                        write!(out, "{}::{}", shape.type_identifier, variant.name)?;
+                        write!(out, "{}::{}", shape, variant.name)?;
 
                         match variant.data.kind {
                             StructKind::Unit => {}
@@ -1946,7 +1942,7 @@ impl PrettyPrinter {
             }
             _ => {
                 // Fallback: just write the type name
-                write!(out, "{} {{ ... }}", shape.type_identifier)?;
+                write!(out, "{} {{ ... }}", shape)?;
             }
         }
 

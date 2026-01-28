@@ -21,7 +21,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         let _guard = SpanGuard::new(self.last_span);
         let shape = wip.shape();
         trace!(
-            shape_name = shape.type_identifier,
+            shape_name = %shape,
             "deserialize_into: starting"
         );
 

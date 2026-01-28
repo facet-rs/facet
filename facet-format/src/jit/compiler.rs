@@ -793,10 +793,7 @@ fn compile_deserializer(
     #[cfg(debug_assertions)]
     {
         eprintln!("[JIT DEBUG] ========================================");
-        eprintln!(
-            "[JIT DEBUG] Compiling deserializer for: {}",
-            shape.type_identifier
-        );
+        eprintln!("[JIT DEBUG] Compiling deserializer for: {shape}");
         eprintln!("[JIT DEBUG] Shape pointer: {:p}", shape);
         eprintln!("[JIT DEBUG] Shape.id (ConstTypeId): {:?}", shape.id);
         eprintln!("[JIT DEBUG] Shape.layout: {:?}", shape.layout);
@@ -819,8 +816,8 @@ fn compile_deserializer(
                 i, field_ptr, f.name, f.offset
             );
             eprintln!(
-                "[JIT DEBUG]       field_shape_ptr={:p}, field_shape_type='{}'",
-                field_shape as *const _, field_shape.type_identifier
+                "[JIT DEBUG]       field_shape_ptr={:p}, field_shape_type='{field_shape}'",
+                field_shape as *const _
             );
         }
 
@@ -906,10 +903,7 @@ fn compile_deserializer(
     // Helper to compile a shape and cache it
     let mut compile_and_cache = |shape: &'static Shape| -> Option<*const u8> {
         #[cfg(debug_assertions)]
-        eprintln!(
-            "[JIT DEBUG] compile_and_cache called for nested shape: {} at {:p}",
-            shape.type_identifier, shape
-        );
+        eprintln!("[JIT DEBUG] compile_and_cache called for nested shape: {shape} at {shape:p}");
 
         let ptr = shape as *const Shape;
         if let std::collections::hash_map::Entry::Vacant(e) = nested_lookup.entry(ptr) {

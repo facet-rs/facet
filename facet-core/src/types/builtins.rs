@@ -263,21 +263,15 @@ pub struct OxRef<'a> {
 
 impl core::fmt::Debug for OxRef<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        unsafe { self.shape.call_debug(self.ptr, f) }.unwrap_or_else(|| {
-            write!(
-                f,
-                "<{} @ {:p}>",
-                self.shape.type_identifier,
-                self.ptr.as_byte_ptr()
-            )
-        })
+        unsafe { self.shape.call_debug(self.ptr, f) }
+            .unwrap_or_else(|| write!(f, "<{} @ {:p}>", self.shape, self.ptr.as_byte_ptr()))
     }
 }
 
 impl core::fmt::Display for OxRef<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         unsafe { self.shape.call_display(self.ptr, f) }
-            .unwrap_or_else(|| write!(f, "<{}>", self.shape.type_identifier))
+            .unwrap_or_else(|| write!(f, "<{}>", self.shape))
     }
 }
 

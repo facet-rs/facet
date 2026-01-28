@@ -126,14 +126,14 @@ impl core::fmt::Display for TryFromError {
                 src_shape,
                 expected,
             } => {
-                write!(f, "unsupported source shape: {}", src_shape.type_identifier)?;
+                write!(f, "unsupported source shape: {}", src_shape)?;
                 if !expected.is_empty() {
                     write!(f, ", expected one of: ")?;
                     for (i, shape) in expected.iter().enumerate() {
                         if i > 0 {
                             write!(f, ", ")?;
                         }
-                        write!(f, "{}", shape.type_identifier)?;
+                        write!(f, "{}", shape)?;
                     }
                 }
                 Ok(())
