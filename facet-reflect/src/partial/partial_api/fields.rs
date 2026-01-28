@@ -38,52 +38,79 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             .last()
             .ok_or_else(|| self.err(ReflectErrorKind::NoActiveFrame))?;
 
-        match &frame.tracker {
-            Tracker::Scalar => Ok(frame.is_init),
-            Tracker::Struct { iset, .. } => Ok(iset.get(index)),
+        // First check via ISet/tracker
+        let is_set_in_tracker = match &frame.tracker {
+            Tracker::Scalar => frame.is_init,
+            Tracker::Struct { iset, .. } => iset.get(index),
             Tracker::Enum { data, variant, .. } => {
                 // Check if the field is already marked as set
                 if data.get(index) {
-                    return Ok(true);
-                }
-
-                // For enum variant fields that are empty structs, they are always initialized
-                if let Some(field) = variant.data.fields.get(index)
+                    true
+                } else if let Some(field) = variant.data.fields.get(index)
                     && let Type::User(UserType::Struct(field_struct)) = field.shape().ty
                     && field_struct.fields.is_empty()
                 {
-                    return Ok(true);
+                    // For enum variant fields that are empty structs, they are always initialized
+                    true
+                } else {
+                    false
                 }
-
-                Ok(false)
             }
             Tracker::Option { building_inner } => {
-                // For Options, index 0 represents the inner value
                 if index == 0 {
-                    Ok(!building_inner)
+                    !building_inner
                 } else {
-                    Err(self.err(ReflectErrorKind::InvalidOperation {
+                    return Err(self.err(ReflectErrorKind::InvalidOperation {
                         operation: "is_field_set",
                         reason: "Option only has one field (index 0)",
-                    }))
+                    }));
                 }
             }
             Tracker::Result { building_inner, .. } => {
-                // For Results, index 0 represents the inner value (Ok or Err)
                 if index == 0 {
-                    Ok(!building_inner)
+                    !building_inner
                 } else {
-                    Err(self.err(ReflectErrorKind::InvalidOperation {
+                    return Err(self.err(ReflectErrorKind::InvalidOperation {
                         operation: "is_field_set",
                         reason: "Result only has one field (index 0)",
-                    }))
+                    }));
                 }
             }
-            _ => Err(self.err(ReflectErrorKind::InvalidOperation {
-                operation: "is_field_set",
-                reason: "Current frame is not a struct, enum variant, option, or result",
-            })),
+            _ => {
+                return Err(self.err(ReflectErrorKind::InvalidOperation {
+                    operation: "is_field_set",
+                    reason: "Current frame is not a struct, enum variant, option, or result",
+                }));
+            }
+        };
+
+        if is_set_in_tracker {
+            return Ok(true);
         }
+
+        // In deferred mode, also check if there's a stored frame for this field.
+        // The ISet won't be updated when frames are stored, so we need to check
+        // stored_frames directly to know if a value exists.
+        if let FrameMode::Deferred {
+            current_path,
+            stored_frames,
+            ..
+        } = &self.mode
+        {
+            // Get field name from index
+            if let Some(field_name) = self.get_field_name_for_path(index) {
+                // Construct the full path for this field
+                let mut check_path = current_path.clone();
+                check_path.push(field_name);
+
+                // Check if this path exists in stored frames
+                if stored_frames.contains_key(&check_path) {
+                    return Ok(true);
+                }
+            }
+        }
+
+        Ok(false)
     }
 
     /// Selects a field (by name) of a struct or enum data.
@@ -106,41 +133,40 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
     ///
     /// On success, this pushes a new frame which must be ended with a call to [Partial::end]
     pub fn begin_nth_field(mut self, idx: usize) -> Result<Self, ReflectError> {
-        // In deferred mode, get the field name for path tracking and check for stored frames.
-        // Only track the path if we're at a "navigable" level - i.e., the path length matches
-        // the expected depth (frames.len() - 1). If we're inside a collection item, the path
-        // will be shorter than expected, so we shouldn't add to it.
-        let field_name = self.get_field_name_for_path(idx);
+        // Handle deferred mode path tracking (rare path - only for partial deserialization)
+        if self.is_deferred() {
+            // Get field name for path tracking
+            let field_name = self.get_field_name_for_path(idx);
 
-        // Update current_path in deferred mode
-        if let FrameMode::Deferred {
-            stack,
-            start_depth,
-            current_path,
-            stored_frames,
-            ..
-        } = &mut self.mode
-        {
-            // Only track path if we're at the expected navigable depth
-            // Path should have (frames.len() - start_depth) entries before we add this field
-            let relative_depth = stack.len() - *start_depth;
-            let should_track = current_path.len() == relative_depth;
-
-            if let Some(name) = field_name
-                && should_track
+            if let FrameMode::Deferred {
+                stack,
+                start_depth,
+                current_path,
+                stored_frames,
+                ..
+            } = &mut self.mode
             {
-                current_path.push(name);
+                // Only track path if we're at the expected navigable depth
+                // Path should have (frames.len() - start_depth) entries before we add this field
+                let relative_depth = stack.len() - *start_depth;
+                let should_track = current_path.len() == relative_depth;
 
-                // Check if we have a stored frame for this path
-                if let Some(stored_frame) = stored_frames.remove(current_path) {
-                    trace!("begin_nth_field: Restoring stored frame for path {current_path:?}");
+                if let Some(name) = field_name
+                    && should_track
+                {
+                    current_path.push(name);
 
-                    // Update parent's current_child tracking
-                    let frame = stack.last_mut().unwrap();
-                    frame.tracker.set_current_child(idx);
+                    // Check if we have a stored frame for this path
+                    if let Some(stored_frame) = stored_frames.remove(current_path) {
+                        trace!("begin_nth_field: Restoring stored frame for path {current_path:?}");
 
-                    stack.push(stored_frame);
-                    return Ok(self);
+                        // Update parent's current_child tracking
+                        let frame = stack.last_mut().unwrap();
+                        frame.tracker.set_current_child(idx);
+
+                        stack.push(stored_frame);
+                        return Ok(self);
+                    }
                 }
             }
         }

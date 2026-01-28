@@ -123,6 +123,11 @@ libtest-mimic = "^0.8.1"
 [workspace.lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(facet_no_doc)"] }
 
+# Profiling profile - release optimizations with line tables for callgrind/perf
+[profile.profiling]
+inherits = "release"
+debug = "line-tables-only"
+
 # Fuzzing profile for cargo-bolero
 [profile.fuzz]
 inherits = "dev"

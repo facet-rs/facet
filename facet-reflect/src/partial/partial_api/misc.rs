@@ -308,7 +308,14 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
     /// Mark a field as initialized in a frame's tracker
     fn mark_field_initialized(frame: &mut Frame, field_name: &str) {
+        crate::trace!(
+            "mark_field_initialized: field_name={}, frame shape={}, tracker={:?}",
+            field_name,
+            frame.allocated.shape(),
+            frame.tracker.kind()
+        );
         if let Some(idx) = Self::find_field_index(frame, field_name) {
+            crate::trace!("mark_field_initialized: found field at index {}", idx);
             // If the tracker is Scalar but this is a struct type, upgrade to Struct tracker.
             // This can happen if the frame was deinit'd (e.g., by a failed set_default)
             // which resets the tracker to Scalar.
@@ -323,15 +330,30 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
             match &mut frame.tracker {
                 Tracker::Struct { iset, .. } => {
+                    crate::trace!("mark_field_initialized: setting iset for struct");
                     iset.set(idx);
                 }
                 Tracker::Enum { data, .. } => {
+                    crate::trace!(
+                        "mark_field_initialized: setting data for enum, before={:?}",
+                        data
+                    );
                     data.set(idx);
+                    crate::trace!(
+                        "mark_field_initialized: setting data for enum, after={:?}",
+                        data
+                    );
                 }
                 Tracker::Array { iset, .. } => {
+                    crate::trace!("mark_field_initialized: setting iset for array");
                     iset.set(idx);
                 }
-                _ => {}
+                _ => {
+                    crate::trace!(
+                        "mark_field_initialized: no match for tracker {:?}",
+                        frame.tracker.kind()
+                    );
+                }
             }
         }
     }
@@ -983,9 +1005,16 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     current_child,
                     ..
                 } => {
+                    crate::trace!(
+                        "end(): Enum field {} child_is_initialized={}, data before={:?}",
+                        field_idx,
+                        child_is_initialized,
+                        data
+                    );
                     if child_is_initialized {
                         data.set(field_idx); // Parent reclaims responsibility only if child was init
                     }
+                    crate::trace!("end(): Enum field {} data after={:?}", field_idx, data);
                     *current_child = None;
                 }
                 _ => {}
