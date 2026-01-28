@@ -204,6 +204,12 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
                                 )
                             })?
                     }
+                } else if TRUSTED_UTF8 {
+                    // SAFETY: Caller guarantees input is valid UTF-8
+                    Cow::Owned(
+                        unsafe { scanner::decode_string_owned_unchecked(self.input, start, end) }
+                            .map_err(scan_error_to_parse_error)?,
+                    )
                 } else {
                     Cow::Owned(
                         scanner::decode_string_owned(self.input, start, end)
@@ -213,8 +219,13 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
                 TokenKind::String(s)
             }
             ScanToken::Number { start, end, hint } => {
-                let parsed = scanner::parse_number(self.input, start, end, hint)
-                    .map_err(scan_error_to_parse_error)?;
+                let parsed = if TRUSTED_UTF8 {
+                    // SAFETY: Input came from &str, so it's valid UTF-8
+                    unsafe { scanner::parse_number_unchecked(self.input, start, end, hint) }
+                } else {
+                    scanner::parse_number(self.input, start, end, hint)
+                }
+                .map_err(scan_error_to_parse_error)?;
                 match parsed {
                     ParsedNumber::U64(n) => TokenKind::U64(n),
                     ParsedNumber::I64(n) => TokenKind::I64(n),

@@ -887,6 +887,140 @@ pub unsafe fn decode_string_borrowed_unchecked(
     Some(unsafe { str::from_utf8_unchecked(slice) })
 }
 
+/// Decode a JSON string with escape sequences without UTF-8 validation.
+///
+/// # Safety
+/// The caller must ensure the buffer contains valid UTF-8.
+pub unsafe fn decode_string_owned_unchecked(
+    buf: &[u8],
+    start: usize,
+    end: usize,
+) -> Result<alloc::string::String, ScanError> {
+    use alloc::string::String;
+
+    let slice = &buf[start..end];
+    let mut result = String::with_capacity(end - start);
+    let mut i = 0;
+
+    while i < slice.len() {
+        let byte = slice[i];
+        if byte == b'\\' {
+            i += 1;
+            if i >= slice.len() {
+                return Err(ScanError {
+                    kind: ScanErrorKind::UnexpectedEof("in escape sequence"),
+                    span: Span::new(start + i - 1, 1),
+                });
+            }
+
+            match slice[i] {
+                b'"' => result.push('"'),
+                b'\\' => result.push('\\'),
+                b'/' => result.push('/'),
+                b'b' => result.push('\x08'),
+                b'f' => result.push('\x0c'),
+                b'n' => result.push('\n'),
+                b'r' => result.push('\r'),
+                b't' => result.push('\t'),
+                b'u' => {
+                    i += 1;
+                    if i + 4 > slice.len() {
+                        return Err(ScanError {
+                            kind: ScanErrorKind::UnexpectedEof("in unicode escape"),
+                            span: Span::new(start + i - 2, slice.len() - i + 2),
+                        });
+                    }
+
+                    let hex = &slice[i..i + 4];
+                    // SAFETY: Caller guarantees valid UTF-8, hex digits are ASCII
+                    let hex_str = unsafe { str::from_utf8_unchecked(hex) };
+
+                    let code_unit = u16::from_str_radix(hex_str, 16).map_err(|_| ScanError {
+                        kind: ScanErrorKind::UnexpectedChar('?'),
+                        span: Span::new(start + i, 4),
+                    })?;
+
+                    i += 4;
+
+                    // Check for surrogate pairs
+                    let code_point = if (0xD800..=0xDBFF).contains(&code_unit) {
+                        // High surrogate - expect \uXXXX to follow
+                        if i + 6 > slice.len() || slice[i] != b'\\' || slice[i + 1] != b'u' {
+                            return Err(ScanError {
+                                kind: ScanErrorKind::InvalidUtf8,
+                                span: Span::new(start + i - 6, 6),
+                            });
+                        }
+
+                        i += 2; // Skip \u
+                        let low_hex = &slice[i..i + 4];
+                        // SAFETY: Caller guarantees valid UTF-8, hex digits are ASCII
+                        let low_hex_str = unsafe { str::from_utf8_unchecked(low_hex) };
+
+                        let low_unit =
+                            u16::from_str_radix(low_hex_str, 16).map_err(|_| ScanError {
+                                kind: ScanErrorKind::UnexpectedChar('?'),
+                                span: Span::new(start + i, 4),
+                            })?;
+
+                        i += 4;
+
+                        if !(0xDC00..=0xDFFF).contains(&low_unit) {
+                            return Err(ScanError {
+                                kind: ScanErrorKind::InvalidUtf8,
+                                span: Span::new(start + i - 4, 4),
+                            });
+                        }
+
+                        // Combine surrogates
+                        let high = code_unit as u32;
+                        let low = low_unit as u32;
+                        0x10000 + ((high & 0x3FF) << 10) + (low & 0x3FF)
+                    } else if (0xDC00..=0xDFFF).contains(&code_unit) {
+                        // Lone low surrogate
+                        return Err(ScanError {
+                            kind: ScanErrorKind::InvalidUtf8,
+                            span: Span::new(start + i - 4, 4),
+                        });
+                    } else {
+                        code_unit as u32
+                    };
+
+                    let c = char::from_u32(code_point).ok_or_else(|| ScanError {
+                        kind: ScanErrorKind::InvalidUtf8,
+                        span: Span::new(start + i - 4, 4),
+                    })?;
+
+                    result.push(c);
+                    continue; // Don't increment i again
+                }
+                other => {
+                    // Unknown escape - just push the character
+                    result.push(other as char);
+                }
+            }
+            i += 1;
+        } else {
+            // Regular UTF-8 byte
+            // Fast path for ASCII
+            if byte < 0x80 {
+                result.push(byte as char);
+                i += 1;
+            } else {
+                // Multi-byte UTF-8 sequence
+                // SAFETY: Caller guarantees valid UTF-8
+                let remaining = &slice[i..];
+                let s = unsafe { str::from_utf8_unchecked(remaining) };
+                let ch = s.chars().next().expect("non-empty remaining slice");
+                result.push(ch);
+                i += ch.len_utf8();
+            }
+        }
+    }
+
+    Ok(result)
+}
+
 /// Decode a JSON string, returning either a borrowed or owned string.
 ///
 /// Uses `Cow<str>` to avoid allocation when possible.
@@ -925,7 +1059,8 @@ pub unsafe fn decode_string_unchecked<'a>(
     use alloc::borrow::Cow;
 
     if has_escapes {
-        decode_string_owned(buf, start, end).map(Cow::Owned)
+        // SAFETY: Caller guarantees buffer is valid UTF-8
+        unsafe { decode_string_owned_unchecked(buf, start, end) }.map(Cow::Owned)
     } else {
         // SAFETY: Caller guarantees buffer is valid UTF-8
         unsafe { decode_string_borrowed_unchecked(buf, start, end) }
@@ -1001,6 +1136,22 @@ pub fn parse_number(
     }
 }
 
+/// Parse a number from the buffer slice, skipping UTF-8 validation.
+///
+/// # Safety
+/// The caller must ensure that `buf[start..end]` contains valid UTF-8.
+/// For lexical-parse, this is a no-op since it works on bytes directly.
+#[cfg(feature = "lexical-parse")]
+pub unsafe fn parse_number_unchecked(
+    buf: &[u8],
+    start: usize,
+    end: usize,
+    hint: NumberHint,
+) -> Result<ParsedNumber, ScanError> {
+    // lexical-parse works on bytes, no UTF-8 validation needed
+    parse_number(buf, start, end, hint)
+}
+
 /// Parse a number from the buffer slice (std fallback).
 #[cfg(not(feature = "lexical-parse"))]
 pub fn parse_number(
@@ -1015,6 +1166,35 @@ pub fn parse_number(
         span: Span::new(start, end - start),
     })?;
 
+    parse_number_inner(s, start, end, hint)
+}
+
+/// Parse a number from the buffer slice, skipping UTF-8 validation.
+///
+/// # Safety
+/// The caller must ensure that `buf[start..end]` contains valid UTF-8.
+/// This is guaranteed when the input came from `&str` (TRUSTED_UTF8=true).
+#[cfg(not(feature = "lexical-parse"))]
+pub unsafe fn parse_number_unchecked(
+    buf: &[u8],
+    start: usize,
+    end: usize,
+    hint: NumberHint,
+) -> Result<ParsedNumber, ScanError> {
+    let slice = &buf[start..end];
+    // SAFETY: Caller guarantees the buffer is valid UTF-8
+    let s = unsafe { str::from_utf8_unchecked(slice) };
+
+    parse_number_inner(s, start, end, hint)
+}
+
+#[cfg(not(feature = "lexical-parse"))]
+fn parse_number_inner(
+    s: &str,
+    start: usize,
+    end: usize,
+    hint: NumberHint,
+) -> Result<ParsedNumber, ScanError> {
     match hint {
         NumberHint::Float => s
             .parse::<f64>()
