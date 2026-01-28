@@ -296,7 +296,7 @@ impl DibsExtension {
                             start: key_span.start,
                             end: val_span.end,
                         },
-                        value_span: val_span.clone(),
+                        value_span: *val_span,
                     });
                 }
             }
@@ -621,9 +621,8 @@ impl DibsExtension {
                                     .await,
                                 severity: DiagnosticSeverity::Hint,
                                 message: format!(
-                                    "'{}' can be shortened to just '{}' (implicit @param)",
-                                    format!("{} ${}", redundant.name, redundant.name),
-                                    redundant.name
+                                    "'{} ${}' can be shortened to just '{}' (implicit @param)",
+                                    redundant.name, redundant.name, redundant.name
                                 ),
                                 source: Some("dibs".to_string()),
                                 code: Some("redundant-param".to_string()),
@@ -632,29 +631,27 @@ impl DibsExtension {
                         }
                     }
                     // Also check inside on-conflict { update { ... } }
-                    if key == "on-conflict" {
-                        if let Some(styx_tree::Payload::Object(conflict_obj)) = &entry.value.payload
-                        {
-                            for conflict_entry in &conflict_obj.entries {
-                                if conflict_entry.key.as_str() == Some("update") {
-                                    for redundant in
-                                        Self::find_redundant_param_refs(&conflict_entry.value)
-                                    {
-                                        diagnostics.push(Diagnostic {
-                                            range: self
-                                                .span_to_range(document_uri, &redundant.value_span)
-                                                .await,
-                                            severity: DiagnosticSeverity::Hint,
-                                            message: format!(
-                                                "'{}' can be shortened to just '{}' (implicit @param)",
-                                                format!("{} ${}", redundant.name, redundant.name),
-                                                redundant.name
-                                            ),
-                                            source: Some("dibs".to_string()),
-                                            code: Some("redundant-param".to_string()),
-                                            data: Some(styx_tree::Value::scalar(&redundant.name)),
-                                        });
-                                    }
+                    if key == "on-conflict"
+                        && let Some(styx_tree::Payload::Object(conflict_obj)) = &entry.value.payload
+                    {
+                        for conflict_entry in &conflict_obj.entries {
+                            if conflict_entry.key.as_str() == Some("update") {
+                                for redundant in
+                                    Self::find_redundant_param_refs(&conflict_entry.value)
+                                {
+                                    diagnostics.push(Diagnostic {
+                                        range: self
+                                            .span_to_range(document_uri, &redundant.value_span)
+                                            .await,
+                                        severity: DiagnosticSeverity::Hint,
+                                        message: format!(
+                                            "'{} ${}' can be shortened to just '{}' (implicit @param)",
+                                            redundant.name, redundant.name, redundant.name
+                                        ),
+                                        source: Some("dibs".to_string()),
+                                        code: Some("redundant-param".to_string()),
+                                        data: Some(styx_tree::Value::scalar(&redundant.name)),
+                                    });
                                 }
                             }
                         }
@@ -1176,22 +1173,20 @@ impl DibsExtension {
                                     .await;
                             }
                             // Handle on-conflict block (has target and update sub-blocks)
-                            if key == "on-conflict" {
-                                if let Some(styx_tree::Payload::Object(conflict_obj)) =
+                            if key == "on-conflict"
+                                && let Some(styx_tree::Payload::Object(conflict_obj)) =
                                     &entry.value.payload
-                                {
-                                    for conflict_entry in &conflict_obj.entries {
-                                        let conflict_key =
-                                            conflict_entry.key.as_str().unwrap_or("");
-                                        if matches!(conflict_key, "target" | "update") {
-                                            self.add_column_hints(
-                                                document_uri,
-                                                &conflict_entry.value,
-                                                table,
-                                                hints,
-                                            )
-                                            .await;
-                                        }
+                            {
+                                for conflict_entry in &conflict_obj.entries {
+                                    let conflict_key = conflict_entry.key.as_str().unwrap_or("");
+                                    if matches!(conflict_key, "target" | "update") {
+                                        self.add_column_hints(
+                                            document_uri,
+                                            &conflict_entry.value,
+                                            table,
+                                            hints,
+                                        )
+                                        .await;
                                     }
                                 }
                             }
@@ -1686,7 +1681,7 @@ impl StyxLspExtension for DibsExtension {
                             changes: vec![DocumentEdit {
                                 uri: params.document_uri.clone(),
                                 edits: vec![TextEdit {
-                                    range: diag.range.clone(),
+                                    range: diag.range,
                                     new_text: String::new(), // Just delete the $param part
                                 }],
                             }],
