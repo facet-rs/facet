@@ -1,7 +1,7 @@
 //! Benchmark parsing citm_catalog.json from nativejson-benchmark.
 //!
 //! Run with:
-//!   CITM_CATALOG_PATH=/path/to/citm_catalog.json cargo bench -p facet-json --bench large_json
+//!   CITM_CATALOG_PATH=/path/to/citm_catalog.json cargo bench -p facet-json --bench citm
 //!
 //! Download the file from:
 //!   https://github.com/miloyip/nativejson-benchmark/blob/master/data/citm_catalog.json
