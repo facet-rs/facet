@@ -51,7 +51,12 @@ impl<T> Sourced<T> {
     /// Set the provenance from a config file, using the span if available.
     pub fn set_file_provenance(&mut self, file: Arc<ConfigFile>, key_path: impl Into<String>) {
         if let Some(span) = self.span {
-            self.provenance = Some(Provenance::file(file, key_path, span.offset, span.len));
+            self.provenance = Some(Provenance::file(
+                file,
+                key_path,
+                span.offset as usize,
+                span.len as usize,
+            ));
         }
     }
 }

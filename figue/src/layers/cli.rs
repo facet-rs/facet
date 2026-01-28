@@ -968,7 +968,10 @@ impl<'a> ParseContext<'a> {
         self.diagnostics.push(Diagnostic {
             message,
             path: None,
-            span: Some(crate::span::Span::new(span.offset, span.len)),
+            span: Some(crate::span::Span::new(
+                span.offset as usize,
+                span.len as usize,
+            )),
             severity: Severity::Error,
         });
     }

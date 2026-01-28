@@ -499,8 +499,13 @@ impl<T: Facet<'static>> Driver<T> {
             Err(e) => {
                 // Extract virtual span from the error, then look up real location
                 let (span, source_name, source_contents) = if let Some(virtual_span) = e.span() {
-                    if let Some(entry) = span_registry.lookup_by_offset(virtual_span.offset) {
-                        let real_span = Span::new(entry.real_span.offset, entry.real_span.len);
+                    if let Some(entry) =
+                        span_registry.lookup_by_offset(virtual_span.offset as usize)
+                    {
+                        let real_span = Span::new(
+                            entry.real_span.offset as usize,
+                            entry.real_span.len as usize,
+                        );
                         let (name, contents) =
                             get_source_for_provenance(&entry.provenance, &cli_args_source, &layers);
                         (Some(real_span), name, contents)
