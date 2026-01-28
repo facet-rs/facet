@@ -37,7 +37,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                     field_count: v.data.fields.len(),
                 })
                 .collect();
-            self.parser.hint_enum(&variant_hints);
+            if self.is_non_self_describing() {
+                self.parser.hint_enum(&variant_hints);
+            }
         }
 
         // Check for different tagging modes
@@ -791,7 +793,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 field_count: 1,
             },
         ];
-        self.parser.hint_enum(&variant_hints);
+        if self.is_non_self_describing() {
+            self.parser.hint_enum(&variant_hints);
+        }
 
         // Read the StructStart emitted by the parser after hint_enum
         let event = self.expect_event("struct start for Result")?;

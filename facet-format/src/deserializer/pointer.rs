@@ -27,7 +27,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 && *pointee == *str::SHAPE
             {
                 // Hint to non-self-describing parsers that a string is expected
-                self.parser.hint_scalar_type(ScalarTypeHint::String);
+                if self.is_non_self_describing() {
+                    self.parser.hint_scalar_type(ScalarTypeHint::String);
+                }
                 let event = self.expect_event("string for Cow<str>")?;
                 let _guard = SpanGuard::new(self.last_span);
                 match event.kind {
@@ -53,7 +55,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 && *slice_def.t == *u8::SHAPE
             {
                 // Hint to non-self-describing parsers that bytes are expected
-                self.parser.hint_scalar_type(ScalarTypeHint::Bytes);
+                if self.is_non_self_describing() {
+                    self.parser.hint_scalar_type(ScalarTypeHint::Bytes);
+                }
                 let event = self.expect_event("bytes for Cow<[u8]>")?;
                 let _guard = SpanGuard::new(self.last_span);
                 if let ParseEventKind::Scalar(ScalarValue::Bytes(b)) = event.kind {
@@ -84,7 +88,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             && ptr_def.pointee().is_some_and(|p| *p == *str::SHAPE)
         {
             // Hint to non-self-describing parsers that a string is expected
-            self.parser.hint_scalar_type(ScalarTypeHint::String);
+            if self.is_non_self_describing() {
+                self.parser.hint_scalar_type(ScalarTypeHint::String);
+            }
             let event = self.expect_event("string for &str")?;
             match event.kind {
                 ParseEventKind::Scalar(ScalarValue::Str(s)) => {
@@ -110,7 +116,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             && *slice_def.t == *u8::SHAPE
         {
             // Hint to non-self-describing parsers that bytes are expected
-            self.parser.hint_scalar_type(ScalarTypeHint::Bytes);
+            if self.is_non_self_describing() {
+                self.parser.hint_scalar_type(ScalarTypeHint::Bytes);
+            }
             let event = self.expect_event("bytes for &[u8]")?;
             if let ParseEventKind::Scalar(ScalarValue::Bytes(b)) = event.kind {
                 return self.set_bytes_value(wip, b);
@@ -135,7 +143,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             // Deserialize the list elements into the slice builder
             // We can't use deserialize_list() because it calls begin_list() which interferes
             // Hint to non-self-describing parsers that a sequence is expected
-            self.parser.hint_sequence();
+            if self.is_non_self_describing() {
+                self.parser.hint_sequence();
+            }
             let event = self.expect_event("value")?;
             let _guard = SpanGuard::new(self.last_span);
 

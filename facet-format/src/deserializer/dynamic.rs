@@ -20,7 +20,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
-        self.parser.hint_dynamic_value();
+        if self.is_non_self_describing() {
+            self.parser.hint_dynamic_value();
+        }
         let event = self.expect_peek("value for dynamic value")?;
 
         match event.kind {
@@ -113,7 +115,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         fields: &'static [facet_core::Field],
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
-        self.parser.hint_struct_fields(fields.len());
+        if self.is_non_self_describing() {
+            self.parser.hint_struct_fields(fields.len());
+        }
 
         let event = self.expect_event("struct start")?;
         if !matches!(event.kind, ParseEventKind::StructStart(_)) {
@@ -168,7 +172,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         fields: &'static [facet_core::Field],
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
-        self.parser.hint_struct_fields(fields.len());
+        if self.is_non_self_describing() {
+            self.parser.hint_struct_fields(fields.len());
+        }
 
         let event = self.expect_event("tuple start")?;
         if !matches!(
@@ -238,7 +244,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 field_count: v.data.fields.len(),
             })
             .collect();
-        self.parser.hint_enum(&variants);
+        if self.is_non_self_describing() {
+            self.parser.hint_enum(&variants);
+        }
 
         let event = self.expect_event("enum")?;
 
@@ -389,7 +397,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             _ if hint_shape.is_from_str() => Some(ScalarTypeHint::String),
             _ => None,
         };
-        if let Some(h) = hint {
+        if self.is_non_self_describing()
+            && let Some(h) = hint
+        {
             self.parser.hint_scalar_type(h);
         }
 
@@ -452,7 +462,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         element_shape: &'static Shape,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
-        self.parser.hint_sequence();
+        if self.is_non_self_describing() {
+            self.parser.hint_sequence();
+        }
 
         let event = self.expect_event("sequence start")?;
         if !matches!(event.kind, ParseEventKind::SequenceStart(_)) {
@@ -492,7 +504,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         len: usize,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
-        self.parser.hint_array(len);
+        if self.is_non_self_describing() {
+            self.parser.hint_array(len);
+        }
 
         let event = self.expect_event("array start")?;
         if !matches!(event.kind, ParseEventKind::SequenceStart(_)) {
@@ -535,7 +549,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         value_shape: &'static Shape,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
-        self.parser.hint_map();
+        if self.is_non_self_describing() {
+            self.parser.hint_map();
+        }
 
         let event = self.expect_event("map start")?;
         if !matches!(
@@ -583,7 +599,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 break;
             }
 
-            if let Some(h) = key_hint {
+            if self.is_non_self_describing()
+                && let Some(h) = key_hint
+            {
                 self.parser.hint_scalar_type(h);
             }
             let key_event = self.expect_event("map key")?;
