@@ -18,4 +18,4 @@ mod server;
 pub mod testing;
 
 pub use semantic_tokens::{HighlightSpan, TokenType, compute_highlight_spans};
-pub use server::{DocumentMap, DocumentState, run};
+pub use server::{DocumentMap, DocumentState, StyxLanguageServer, run};

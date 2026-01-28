@@ -177,6 +177,20 @@ impl<'src> CstParser<'src> {
             || closing.is_some_and(|c| kind == c)
     }
 
+    /// Check if we're at a token that could start an atom (value).
+    fn at_atom_start(&mut self) -> bool {
+        matches!(
+            self.peek(),
+            TokenKind::LBrace
+                | TokenKind::LParen
+                | TokenKind::At
+                | TokenKind::BareScalar
+                | TokenKind::QuotedScalar
+                | TokenKind::RawScalar
+                | TokenKind::HeredocStart
+        )
+    }
+
     /// Check if the current position starts an attribute (bare_scalar followed by =).
     fn at_attribute(&mut self) -> bool {
         if self.peek() != TokenKind::BareScalar {
@@ -267,17 +281,14 @@ impl<'src> CstParser<'src> {
                     self.builder.finish_node();
                     value_count += 1;
                 } else {
-                    // If we're in an inline object (closing is RBrace) and we already have a value,
-                    // seeing another bare scalar likely means a missing comma
-                    if closing == Some(TokenKind::RBrace)
-                        && value_count > 0
-                        && self.peek() == TokenKind::BareScalar
+                    // Inside objects (closing is RBrace), entries can only have one value.
+                    // At the top level or in sequences, multiple values are allowed.
+                    if closing == Some(TokenKind::RBrace) && value_count > 0 && self.at_atom_start()
                     {
                         let pos = self.current_pos();
                         self.errors.push(ParseError::new(
                             pos,
-                            "unexpected atom after value (missing comma between entries?)"
-                                .to_string(),
+                            "unexpected atom after value (entry has too many atoms)".to_string(),
                         ));
                     }
                     self.builder.start_node(SyntaxKind::VALUE.into());

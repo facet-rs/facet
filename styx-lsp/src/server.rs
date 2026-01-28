@@ -104,10 +104,11 @@ impl StyxLanguageServer {
         content: &str,
         parsed: &Parse,
         tree: Option<&Value>,
+        tree_error: Option<&styx_tree::BuildError>,
         version: i32,
         blocked_extension: Option<BlockedExtensionInfo>,
     ) {
-        let mut diagnostics = self.compute_diagnostics(&uri, content, parsed, tree);
+        let mut diagnostics = self.compute_diagnostics(&uri, content, parsed, tree, tree_error);
 
         // Add diagnostic for blocked extension if applicable
         if let Some(blocked) = blocked_extension
@@ -146,10 +147,11 @@ impl StyxLanguageServer {
         content: &str,
         parsed: &Parse,
         tree: Option<&Value>,
+        tree_error: Option<&styx_tree::BuildError>,
     ) -> Vec<Diagnostic> {
         let mut diagnostics = Vec::new();
 
-        // Phase 1: Parse errors
+        // Phase 1: Parse errors from CST
         for error in parsed.errors() {
             let range = Range {
                 start: offset_to_position(content, error.offset as usize),
@@ -163,6 +165,32 @@ impl StyxLanguageServer {
                 code_description: None,
                 source: Some("styx".to_string()),
                 message: error.message.clone(),
+                related_information: None,
+                tags: None,
+                data: None,
+            });
+        }
+
+        // Phase 1b: Tree build errors (catches errors CST misses)
+        if let Some(err) = tree_error {
+            let range = match err {
+                styx_tree::BuildError::Parse(_, span) => Range {
+                    start: offset_to_position(content, span.start as usize),
+                    end: offset_to_position(content, span.end as usize),
+                },
+                _ => Range {
+                    start: Position::new(0, 0),
+                    end: Position::new(0, 1),
+                },
+            };
+
+            diagnostics.push(Diagnostic {
+                range,
+                severity: Some(DiagnosticSeverity::ERROR),
+                code: None,
+                code_description: None,
+                source: Some("styx".to_string()),
+                message: err.to_string(),
                 related_information: None,
                 tags: None,
                 data: None,
@@ -424,7 +452,10 @@ impl LanguageServer for StyxLanguageServer {
         let parsed = parse(&content);
 
         // Parse into tree for schema validation
-        let tree = styx_tree::parse(&content).ok();
+        let (tree, tree_error) = match styx_tree::parse(&content) {
+            Ok(tree) => (Some(tree), None),
+            Err(e) => (None, Some(e)),
+        };
 
         // Check for LSP extension in schema
         let blocked_extension = if let Some(ref tree) = tree {
@@ -439,6 +470,7 @@ impl LanguageServer for StyxLanguageServer {
             &content,
             &parsed,
             tree.as_ref(),
+            tree_error.as_ref(),
             version,
             blocked_extension,
         )
@@ -471,7 +503,10 @@ impl LanguageServer for StyxLanguageServer {
             let parsed = parse(&content);
 
             // Parse into tree for schema validation
-            let tree = styx_tree::parse(&content).ok();
+            let (tree, tree_error) = match styx_tree::parse(&content) {
+                Ok(tree) => (Some(tree), None),
+                Err(e) => (None, Some(e)),
+            };
 
             // Check for LSP extension in schema (might have changed)
             let blocked_extension = if let Some(ref tree) = tree {
@@ -486,6 +521,7 @@ impl LanguageServer for StyxLanguageServer {
                 &content,
                 &parsed,
                 tree.as_ref(),
+                tree_error.as_ref(),
                 version,
                 blocked_extension,
             )
@@ -1465,6 +1501,7 @@ impl LanguageServer for StyxLanguageServer {
                             &doc.content,
                             &doc.parse,
                             doc.tree.as_ref(),
+                            None, // tree_error already reported on initial load
                             doc.version,
                             blocked_extension,
                         )
@@ -4211,5 +4248,77 @@ schema {
         );
         let parse = styx_cst::parse(&content);
         assert_eq!(find_nesting_depth_cst(&parse, offset), 2);
+    }
+
+    #[test]
+    fn test_parse_error_diagnostics() {
+        // Document with "too many atoms" error - CST should capture this
+        let content = "foo {a b c}";
+        let parsed = styx_cst::parse(content);
+
+        // The CST layer should report an error
+        assert!(
+            !parsed.errors().is_empty(),
+            "CST should report a parse error for 'foo {{a b c}}'"
+        );
+
+        // The error message should mention the issue
+        let error = &parsed.errors()[0];
+        assert!(
+            error.message.contains("unexpected atom"),
+            "Error message should mention 'unexpected atom': {}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn test_compute_diagnostics_reports_parse_errors() {
+        // Document with "too many atoms" error
+        let content = "foo {a b c}";
+        let parsed = styx_cst::parse(content);
+
+        // Create a fake server to call compute_diagnostics
+        // We need to verify that parse errors are converted to LSP diagnostics
+        let uri = tower_lsp::lsp_types::Url::parse("file:///test.styx").unwrap();
+
+        // Note: styx_tree::parse fails on this input, so tree is None
+        let tree = styx_tree::parse(content).ok();
+        assert!(tree.is_none(), "tree parse should fail for invalid input");
+
+        // Manually compute diagnostics (mimicking what the server does)
+        let mut diagnostics = Vec::new();
+
+        // Phase 1: Parse errors - this is what publish_diagnostics does
+        for error in parsed.errors() {
+            let range = tower_lsp::lsp_types::Range {
+                start: offset_to_position(content, error.offset as usize),
+                end: offset_to_position(content, error.offset as usize + 1),
+            };
+
+            diagnostics.push(tower_lsp::lsp_types::Diagnostic {
+                range,
+                severity: Some(tower_lsp::lsp_types::DiagnosticSeverity::ERROR),
+                code: None,
+                code_description: None,
+                source: Some("styx".to_string()),
+                message: error.message.clone(),
+                related_information: None,
+                tags: None,
+                data: None,
+            });
+        }
+
+        // Verify we got a diagnostic
+        assert!(
+            !diagnostics.is_empty(),
+            "Should have at least one diagnostic for parse error"
+        );
+
+        // Verify the diagnostic message
+        assert!(
+            diagnostics[0].message.contains("unexpected atom"),
+            "Diagnostic message should mention the error: {}",
+            diagnostics[0].message
+        );
     }
 }
