@@ -1,5 +1,6 @@
 use crate::{MigrationError, MigrationFn, Result};
 use tokio_postgres::{Client, Transaction};
+use tracing::Instrument;
 
 /// A registered migration.
 pub struct Migration {
@@ -79,10 +80,19 @@ impl<'a> MigrationContext<'a> {
 
     /// Execute a SQL statement.
     pub async fn execute(&self, sql: &str) -> Result<u64> {
-        self.tx
+        let span = tracing::debug_span!(
+            "migration.execute",
+            sql = %sql,
+            affected = tracing::field::Empty,
+        );
+        let affected = self
+            .tx
             .execute(sql, &[])
+            .instrument(span.clone())
             .await
-            .map_err(|e| crate::Error::from_postgres_with_sql(e, sql))
+            .map_err(|e| crate::Error::from_postgres_with_sql(e, sql))?;
+        span.record("affected", affected);
+        Ok(affected)
     }
 
     /// Execute a SQL statement with parameters.
@@ -91,10 +101,20 @@ impl<'a> MigrationContext<'a> {
         sql: &str,
         params: &[&(dyn tokio_postgres::types::ToSql + Sync)],
     ) -> Result<u64> {
-        self.tx
+        let span = tracing::debug_span!(
+            "migration.execute",
+            sql = %sql,
+            params = params.len(),
+            affected = tracing::field::Empty,
+        );
+        let affected = self
+            .tx
             .execute(sql, params)
+            .instrument(span.clone())
             .await
-            .map_err(|e| crate::Error::from_postgres_with_sql(e, sql))
+            .map_err(|e| crate::Error::from_postgres_with_sql(e, sql))?;
+        span.record("affected", affected);
+        Ok(affected)
     }
 
     /// Run a backfill operation in batches until it returns 0 rows affected.

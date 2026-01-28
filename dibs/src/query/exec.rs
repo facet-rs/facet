@@ -7,6 +7,7 @@ use super::{
 use crate::Error;
 use crate::schema::{Schema, Table};
 use tokio_postgres::Client;
+use tracing::Instrument;
 
 /// A database connection that can execute queries.
 ///
@@ -93,7 +94,18 @@ impl<'a> Db<'a> {
             .map(|p| p as &(dyn tokio_postgres::types::ToSql + Sync))
             .collect();
 
-        let rows = self.client.query(&query.sql, &params_ref).await?;
+        let span = tracing::debug_span!(
+            "db.query",
+            sql = %query.sql,
+            params = params.len(),
+            rows = tracing::field::Empty,
+        );
+        let rows = self
+            .client
+            .query(&query.sql, &params_ref)
+            .instrument(span.clone())
+            .await?;
+        span.record("rows", rows.len());
 
         // Get columns in the order they appear in the query result
         // This is important because SELECT * returns columns in database order,
@@ -139,7 +151,18 @@ impl<'a> Db<'a> {
             .map(|p| p as &(dyn tokio_postgres::types::ToSql + Sync))
             .collect();
 
-        let affected = self.client.execute(&query.sql, &params_ref).await?;
+        let span = tracing::debug_span!(
+            "db.execute",
+            sql = %query.sql,
+            params = params.len(),
+            affected = tracing::field::Empty,
+        );
+        let affected = self
+            .client
+            .execute(&query.sql, &params_ref)
+            .instrument(span.clone())
+            .await?;
+        span.record("affected", affected);
         Ok(affected)
     }
 
@@ -155,7 +178,18 @@ impl<'a> Db<'a> {
             .map(|p| p as &(dyn tokio_postgres::types::ToSql + Sync))
             .collect();
 
-        let rows = self.client.query(&query.sql, &params_ref).await?;
+        let span = tracing::debug_span!(
+            "db.query",
+            sql = %query.sql,
+            params = params.len(),
+            rows = tracing::field::Empty,
+        );
+        let rows = self
+            .client
+            .query(&query.sql, &params_ref)
+            .instrument(span.clone())
+            .await?;
+        span.record("rows", rows.len());
 
         if rows.is_empty() {
             return Ok(None);
@@ -246,8 +280,20 @@ impl<'a> SelectBuilder<'a> {
             .map(|p| p as &(dyn tokio_postgres::types::ToSql + Sync))
             .collect();
 
-        let rows = self.db.client.query(&built.sql, &params_ref).await?;
+        let span = tracing::debug_span!(
+            "db.query",
+            sql = %built.sql,
+            params = params.len(),
+            count = tracing::field::Empty,
+        );
+        let rows = self
+            .db
+            .client
+            .query(&built.sql, &params_ref)
+            .instrument(span.clone())
+            .await?;
         let count: i64 = rows[0].get(0);
+        span.record("count", count);
         Ok(count as u64)
     }
 }

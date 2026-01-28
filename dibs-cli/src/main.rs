@@ -29,9 +29,9 @@ styx_embed::embed_outdir_file!("dibs-queries.styx");
 /// Postgres toolkit for Rust, powered by facet reflection.
 #[derive(Facet, Debug)]
 struct Args {
-    /// Show help and exit.
-    #[facet(args::named, args::short = 'h', args::help, default)]
-    help: bool,
+    /// Standard CLI options (--help, --version, --completions)
+    #[facet(flatten)]
+    builtins: args::FigueBuiltins,
 
     /// Command to run
     #[facet(default, args::subcommand)]
