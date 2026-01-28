@@ -512,9 +512,10 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     }
                     FrameOwnership::TrackedBuffer
                     | FrameOwnership::BorrowedInPlace
-                    | FrameOwnership::External => {
+                    | FrameOwnership::External
+                    | FrameOwnership::ListSlot => {
                         return Err(self.err(ReflectErrorKind::InvariantViolation {
-                            invariant: "SmartPointerSlice cannot have TrackedBuffer/BorrowedInPlace/External ownership after conversion",
+                            invariant: "SmartPointerSlice cannot have TrackedBuffer/BorrowedInPlace/External/ListSlot ownership after conversion",
                         }));
                     }
                 }
@@ -1000,30 +1001,50 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             }
             Tracker::List { current_child } if parent_frame.is_init => {
                 if current_child.is_some() {
-                    // We just popped an element frame, now push it to the list
+                    // We just popped an element frame, now add it to the list
                     if let Def::List(list_def) = parent_shape.def {
-                        let Some(push_fn) = list_def.push() else {
-                            return Err(self.err(ReflectErrorKind::OperationFailed {
-                                shape: parent_shape,
-                                operation: "List missing push function",
-                            }));
-                        };
+                        // Check if we used direct-fill (ListSlot) or heap allocation (Owned)
+                        if matches!(popped_frame.ownership, FrameOwnership::ListSlot) {
+                            // Direct-fill: element was written directly into Vec's buffer
+                            // Just increment the length
+                            let Some(set_len_fn) = list_def.set_len() else {
+                                return Err(self.err(ReflectErrorKind::OperationFailed {
+                                    shape: parent_shape,
+                                    operation: "List missing set_len function for direct-fill",
+                                }));
+                            };
+                            let current_len = unsafe {
+                                (list_def.vtable.len)(parent_frame.data.assume_init().as_const())
+                            };
+                            unsafe {
+                                set_len_fn(parent_frame.data.assume_init(), current_len + 1);
+                            }
+                            // No dealloc needed - memory belongs to Vec
+                        } else {
+                            // Fallback: element is in separate heap buffer, use push to copy
+                            let Some(push_fn) = list_def.push() else {
+                                return Err(self.err(ReflectErrorKind::OperationFailed {
+                                    shape: parent_shape,
+                                    operation: "List missing push function",
+                                }));
+                            };
 
-                        // The child frame contained the element value
-                        let element_ptr = PtrMut::new(popped_frame.data.as_mut_byte_ptr());
+                            // The child frame contained the element value
+                            let element_ptr = PtrMut::new(popped_frame.data.as_mut_byte_ptr());
 
-                        // Use push to add element to the list
-                        unsafe {
-                            push_fn(
-                                PtrMut::new(parent_frame.data.as_mut_byte_ptr()),
-                                element_ptr,
-                            );
+                            // Use push to add element to the list
+                            unsafe {
+                                push_fn(
+                                    PtrMut::new(parent_frame.data.as_mut_byte_ptr()),
+                                    element_ptr,
+                                );
+                            }
+
+                            // Push moved out of popped_frame
+                            popped_frame.tracker = Tracker::Scalar;
+                            popped_frame.is_init = false;
+                            popped_frame.dealloc();
                         }
-
-                        // Push moved out of popped_frame
-                        popped_frame.tracker = Tracker::Scalar;
-                        popped_frame.is_init = false;
-                        popped_frame.dealloc();
 
                         *current_child = None;
                     }

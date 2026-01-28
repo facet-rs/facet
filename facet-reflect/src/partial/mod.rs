@@ -290,6 +290,12 @@ pub(crate) enum FrameOwnership {
     /// On drop: deinit if initialized (drop partially constructed values), but do NOT deallocate.
     /// The caller owns the memory and is responsible for its lifetime.
     External,
+
+    /// Points directly into a Vec's reserved buffer space.
+    /// Used by `begin_list_item()` for direct-fill optimization.
+    /// On successful end(): parent calls `set_len(len + 1)` instead of `push`.
+    /// On drop/failure: no dealloc (memory belongs to Vec), no `set_len` (element not complete).
+    ListSlot,
 }
 
 impl FrameOwnership {

@@ -386,7 +386,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         // Get the element shape
         let element_shape = list_def.t();
 
-        // Allocate space for the new element
+        // Calculate element layout
         let element_layout = match element_shape.layout.sized_layout() {
             Ok(layout) => layout,
             Err(_) => {
@@ -396,25 +396,52 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 }));
             }
         };
-        let element_data = if element_layout.size() == 0 {
-            // For ZST, use a non-null but unallocated pointer
-            PtrUninit::new(NonNull::<u8>::dangling().as_ptr())
-        } else {
-            let element_ptr: *mut u8 = unsafe { ::alloc::alloc::alloc(element_layout) };
-            let Some(element_ptr) = NonNull::new(element_ptr) else {
-                return Err(self.err(ReflectErrorKind::OperationFailed {
-                    shape,
-                    operation: "failed to allocate memory for list element",
-                }));
+
+        // Try direct-fill: write directly into Vec's reserved buffer
+        // This avoids a separate heap allocation + copy for each element
+        let (element_data, ownership) =
+            if let (Some(reserve_fn), Some(as_mut_ptr_fn), Some(_set_len_fn)) = (
+                list_def.reserve(),
+                list_def.as_mut_ptr_typed(),
+                list_def.set_len(),
+            ) {
+                // Get current length before reserving (reserve may reallocate)
+                let current_len =
+                    unsafe { (list_def.vtable.len)(frame.data.assume_init().as_const()) };
+
+                // Reserve space for one more element
+                unsafe {
+                    reserve_fn(frame.data.assume_init(), 1);
+                }
+
+                // Get pointer to the buffer and calculate element offset
+                let buffer_ptr = unsafe { as_mut_ptr_fn(frame.data.assume_init()) };
+                let element_ptr = unsafe { buffer_ptr.add(current_len * element_layout.size()) };
+
+                (PtrUninit::new(element_ptr), FrameOwnership::ListSlot)
+            } else if element_layout.size() == 0 {
+                // ZST: use dangling pointer, no allocation needed
+                (
+                    PtrUninit::new(NonNull::<u8>::dangling().as_ptr()),
+                    FrameOwnership::Owned,
+                )
+            } else {
+                // Fallback: allocate separate buffer, will be copied by push()
+                let element_ptr: *mut u8 = unsafe { ::alloc::alloc::alloc(element_layout) };
+                let Some(element_ptr) = NonNull::new(element_ptr) else {
+                    return Err(self.err(ReflectErrorKind::OperationFailed {
+                        shape,
+                        operation: "failed to allocate memory for list element",
+                    }));
+                };
+                (PtrUninit::new(element_ptr.as_ptr()), FrameOwnership::Owned)
             };
-            PtrUninit::new(element_ptr.as_ptr())
-        };
 
         // Push a new frame for the element
         self.frames_mut().push(Frame::new(
             element_data,
             AllocatedShape::new(element_shape, element_layout.size()),
-            FrameOwnership::Owned,
+            ownership,
         ));
 
         Ok(self)
