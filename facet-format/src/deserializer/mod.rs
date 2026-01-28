@@ -192,7 +192,8 @@ pub struct FormatDeserializer<'parser, 'input, const BORROW: bool> {
     /// Whether the parser is non-self-describing (postcard, etc.).
     /// For these formats, we bypass buffering entirely because hints
     /// clear the parser's peeked event and must take effect immediately.
-    is_non_self_describing: Option<bool>,
+    /// Computed once at construction time.
+    is_non_self_describing: bool,
 
     _marker: PhantomData<&'input ()>,
 }
@@ -208,13 +209,14 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, true> {
         parser: &'parser mut dyn FormatParser<'input>,
         buffer_capacity: usize,
     ) -> Self {
+        let is_non_self_describing = !parser.is_self_describing();
         Self {
             parser,
             last_span: Span { offset: 0, len: 0 },
             event_buffer: VecDeque::with_capacity(buffer_capacity),
             buffer_capacity,
             recording: None,
-            is_non_self_describing: None,
+            is_non_self_describing,
             _marker: PhantomData,
         }
     }
@@ -231,13 +233,14 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
         parser: &'parser mut dyn FormatParser<'input>,
         buffer_capacity: usize,
     ) -> Self {
+        let is_non_self_describing = !parser.is_self_describing();
         Self {
             parser,
             last_span: Span { offset: 0, len: 0 },
             event_buffer: VecDeque::with_capacity(buffer_capacity),
             buffer_capacity,
             recording: None,
-            is_non_self_describing: None,
+            is_non_self_describing,
             _marker: PhantomData,
         }
     }
@@ -428,12 +431,10 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         Ok(())
     }
 
-    /// Check if parser is non-self-describing (caches result).
-    #[inline]
-    fn is_non_self_describing(&mut self) -> bool {
-        *self
-            .is_non_self_describing
-            .get_or_insert_with(|| !self.parser.is_self_describing())
+    /// Check if parser is non-self-describing.
+    #[inline(always)]
+    fn is_non_self_describing(&self) -> bool {
+        self.is_non_self_describing
     }
 
     /// Read the next event, returning an error if EOF is reached.

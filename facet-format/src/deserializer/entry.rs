@@ -248,7 +248,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         // Handle Option
         if let Def::Option(opt_def) = &hint_shape.def {
-            self.parser.hint_option();
+            if self.is_non_self_describing() {
+                self.parser.hint_option();
+            }
             let event = self.expect_peek("value for option")?;
             // Treat both Null and Unit as None
             // Unit is used by Styx for tags without payload (e.g., @string vs @string{...})
@@ -318,7 +320,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         let _guard = SpanGuard::new(self.last_span);
 
         // Hint to non-self-describing parsers that an Option is expected
-        self.parser.hint_option();
+        if self.is_non_self_describing() {
+            self.parser.hint_option();
+        }
 
         let event = self.expect_peek("value for option")?;
 
@@ -388,7 +392,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
         // Hint to non-self-describing parsers how many fields to expect
         // Tuples are like positional structs, so we use hint_struct_fields
-        self.parser.hint_struct_fields(field_count);
+        if self.is_non_self_describing() {
+            self.parser.hint_struct_fields(field_count);
+        }
 
         // Special case: unit type () can accept Scalar(Unit) or Scalar(Null) directly
         // This enables patterns like styx bare identifiers: { id, name } -> IndexMap<String, ()>
@@ -600,7 +606,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
         // Fallback: element-by-element deserialization
         // Hint to non-self-describing parsers that a sequence is expected
-        self.parser.hint_sequence();
+        if self.is_non_self_describing() {
+            self.parser.hint_sequence();
+        }
 
         let event = self.expect_event("value")?;
         trace!(?event, "deserialize_list: got container start event");
@@ -681,7 +689,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
         // Hint to non-self-describing parsers that a fixed-size array is expected
         // (unlike hint_sequence, this doesn't read a length prefix)
-        self.parser.hint_array(array_len);
+        if self.is_non_self_describing() {
+            self.parser.hint_array(array_len);
+        }
 
         let event = self.expect_event("value")?;
 
@@ -742,7 +752,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         let _guard = SpanGuard::new(self.last_span);
 
         // Hint to non-self-describing parsers that a sequence is expected
-        self.parser.hint_sequence();
+        if self.is_non_self_describing() {
+            self.parser.hint_sequence();
+        }
 
         let event = self.expect_event("value")?;
 
@@ -799,7 +811,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         let _guard = SpanGuard::new(self.last_span);
 
         // For non-self-describing formats, hint that a map is expected
-        self.parser.hint_map();
+        if self.is_non_self_describing() {
+            self.parser.hint_map();
+        }
 
         let event = self.expect_event("value")?;
 
@@ -901,32 +915,34 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         mut wip: Partial<'input, BORROW>,
         scalar_type: Option<ScalarType>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
-        // Hint to non-self-describing parsers what scalar type is expected
-        let shape = wip.shape();
+        // Only hint for non-self-describing formats (e.g., postcard)
+        // Self-describing formats like JSON already know the types
+        if self.is_non_self_describing() {
+            let shape = wip.shape();
 
-        // First, try hint_opaque_scalar for types that may have format-specific
-        // binary representations (e.g., UUID as 16 raw bytes in postcard)
-        let opaque_handled = if scalar_type.is_some() {
-            // Standard primitives are never opaque
-            false
-        } else {
-            // For all other scalar types, ask the parser if it handles them specially
-            self.parser.hint_opaque_scalar(shape.type_identifier, shape)
-        };
+            // First, try hint_opaque_scalar for types that may have format-specific
+            // binary representations (e.g., UUID as 16 raw bytes in postcard)
+            let opaque_handled = if scalar_type.is_some() {
+                // Standard primitives are never opaque
+                false
+            } else {
+                // For all other scalar types, ask the parser if it handles them specially
+                self.parser.hint_opaque_scalar(shape.type_identifier, shape)
+            };
 
-        // If the parser didn't handle the opaque type, fall back to standard hints
-        if !opaque_handled {
-            let hint = scalar_type_to_hint(scalar_type).or_else(|| {
-                // For unknown scalar types, check if they implement FromStr
-                // (e.g., camino::Utf8PathBuf, types not handled by hint_opaque_scalar)
-                if shape.is_from_str() {
-                    Some(ScalarTypeHint::String)
-                } else {
-                    None
+            // If the parser didn't handle the opaque type, fall back to standard hints
+            if !opaque_handled {
+                let hint = scalar_type_to_hint(scalar_type).or_else(|| {
+                    // For unknown scalar types, check if they implement FromStr
+                    if shape.is_from_str() {
+                        Some(ScalarTypeHint::String)
+                    } else {
+                        None
+                    }
+                });
+                if let Some(hint) = hint {
+                    self.parser.hint_scalar_type(hint);
                 }
-            });
-            if let Some(hint) = hint {
-                self.parser.hint_scalar_type(hint);
             }
         }
 
