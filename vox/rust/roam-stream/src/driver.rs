@@ -429,5 +429,9 @@ fn connection_error_to_io(e: ConnectionError) -> io::Error {
         ConnectionError::Closed => {
             io::Error::new(io::ErrorKind::ConnectionReset, "connection closed")
         }
+        ConnectionError::UnsupportedProtocolVersion => io::Error::new(
+            io::ErrorKind::InvalidData,
+            "unsupported protocol version (expected V3)",
+        ),
     }
 }

@@ -7,29 +7,43 @@ import Foundation
 /// r[impl message.hello.structure] - Hello contains version, maxPayloadSize, initialChannelCredit.
 /// r[impl message.hello.version] - Version field determines protocol version.
 public enum Hello: Sendable {
+    case v1(maxPayloadSize: UInt32, initialChannelCredit: UInt32)
+    case v2(maxPayloadSize: UInt32, initialChannelCredit: UInt32)
     case v3(maxPayloadSize: UInt32, initialChannelCredit: UInt32)
 }
 
 extension Hello {
     public var maxPayloadSize: UInt32 {
         switch self {
-        case .v3(let size, _):
+        case .v1(let size, _), .v2(let size, _), .v3(let size, _):
             return size
         }
     }
 
     public var initialChannelCredit: UInt32 {
         switch self {
-        case .v3(_, let credit):
+        case .v1(_, let credit), .v2(_, let credit), .v3(_, let credit):
             return credit
         }
     }
 
     public func encode() -> [UInt8] {
         switch self {
+        case .v1(let maxPayload, let initialCredit):
+            var out: [UInt8] = []
+            out += encodeVarint(0)  // V1 discriminant
+            out += encodeVarint(UInt64(maxPayload))
+            out += encodeVarint(UInt64(initialCredit))
+            return out
+        case .v2(let maxPayload, let initialCredit):
+            var out: [UInt8] = []
+            out += encodeVarint(1)  // V2 discriminant
+            out += encodeVarint(UInt64(maxPayload))
+            out += encodeVarint(UInt64(initialCredit))
+            return out
         case .v3(let maxPayload, let initialCredit):
             var out: [UInt8] = []
-            out += encodeVarint(0)  // V3 discriminant (now at position 0)
+            out += encodeVarint(2)  // V3 discriminant
             out += encodeVarint(UInt64(maxPayload))
             out += encodeVarint(UInt64(initialCredit))
             return out
@@ -40,6 +54,14 @@ extension Hello {
         let disc = try decodeVarint(from: data, offset: &offset)
         switch disc {
         case 0:
+            let maxPayload = try decodeVarintU32(from: data, offset: &offset)
+            let initialCredit = try decodeVarintU32(from: data, offset: &offset)
+            return .v1(maxPayloadSize: maxPayload, initialChannelCredit: initialCredit)
+        case 1:
+            let maxPayload = try decodeVarintU32(from: data, offset: &offset)
+            let initialCredit = try decodeVarintU32(from: data, offset: &offset)
+            return .v2(maxPayloadSize: maxPayload, initialChannelCredit: initialCredit)
+        case 2:
             let maxPayload = try decodeVarintU32(from: data, offset: &offset)
             let initialCredit = try decodeVarintU32(from: data, offset: &offset)
             return .v3(maxPayloadSize: maxPayload, initialChannelCredit: initialCredit)

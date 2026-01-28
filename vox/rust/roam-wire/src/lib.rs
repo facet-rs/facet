@@ -132,11 +132,23 @@ impl std::fmt::Display for MethodId {
 #[repr(u8)]
 #[derive(Debug, Clone, PartialEq, Eq, Facet)]
 pub enum Hello {
+    /// Spec v1 Hello - deprecated, will be rejected.
+    V1 {
+        max_payload_size: u32,
+        initial_channel_credit: u32,
+    } = 0,
+
+    /// Spec v2 Hello - deprecated, will be rejected.
+    V2 {
+        max_payload_size: u32,
+        initial_channel_credit: u32,
+    } = 1,
+
     /// Spec v3 Hello - metadata includes flags.
     V3 {
         max_payload_size: u32,
         initial_channel_credit: u32,
-    } = 0,
+    } = 2,
 }
 
 /// Metadata value.

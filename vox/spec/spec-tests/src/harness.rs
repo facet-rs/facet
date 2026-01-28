@@ -27,6 +27,18 @@ fn wire_spy_enabled() -> bool {
 fn format_message(msg: &Message, direction: &str) -> String {
     match msg {
         Message::Hello(hello) => match hello {
+            Hello::V1 {
+                max_payload_size,
+                initial_channel_credit,
+            } => format!(
+                "{direction} Hello::V1 {{ max_payload: {max_payload_size}, credit: {initial_channel_credit} }}"
+            ),
+            Hello::V2 {
+                max_payload_size,
+                initial_channel_credit,
+            } => format!(
+                "{direction} Hello::V2 {{ max_payload: {max_payload_size}, credit: {initial_channel_credit} }}"
+            ),
             Hello::V3 {
                 max_payload_size,
                 initial_channel_credit,

@@ -66,6 +66,8 @@ pub enum ConnectionError {
     Dispatch(String),
     /// Connection closed cleanly.
     Closed,
+    /// Unsupported protocol version (peer sent V1 or V2 Hello).
+    UnsupportedProtocolVersion,
 }
 
 impl std::fmt::Display for ConnectionError {
@@ -77,6 +79,9 @@ impl std::fmt::Display for ConnectionError {
             }
             ConnectionError::Dispatch(msg) => write!(f, "dispatch error: {msg}"),
             ConnectionError::Closed => write!(f, "connection closed"),
+            ConnectionError::UnsupportedProtocolVersion => {
+                write!(f, "unsupported protocol version (expected V3)")
+            }
         }
     }
 }
@@ -696,6 +701,10 @@ fn connection_error_to_io(e: ConnectionError) -> io::Error {
         ConnectionError::Closed => {
             io::Error::new(io::ErrorKind::ConnectionReset, "connection closed")
         }
+        ConnectionError::UnsupportedProtocolVersion => io::Error::new(
+            io::ErrorKind::InvalidData,
+            "unsupported protocol version (expected V3)",
+        ),
     }
 }
 
@@ -1597,7 +1606,8 @@ where
         Ok(None) => return Err(ConnectionError::Closed),
         Err(e) => {
             let raw = io.last_decoded();
-            let is_unknown_hello = raw.len() >= 2 && raw[0] == 0x00 && raw[1] > 0x00;
+            // Hello discriminants: V1=0, V2=1, V3=2. Unknown if > 2.
+            let is_unknown_hello = raw.len() >= 2 && raw[0] == 0x00 && raw[1] > 0x02;
             let version = if is_unknown_hello { raw[1] } else { 0 };
 
             if is_unknown_hello {
@@ -1620,11 +1630,17 @@ where
     let Hello::V3 {
         max_payload_size: our_max,
         initial_channel_credit: our_credit,
-    } = &our_hello;
+    } = &our_hello
+    else {
+        return Err(ConnectionError::UnsupportedProtocolVersion);
+    };
     let Hello::V3 {
         max_payload_size: peer_max,
         initial_channel_credit: peer_credit,
-    } = &peer_hello;
+    } = &peer_hello
+    else {
+        return Err(ConnectionError::UnsupportedProtocolVersion);
+    };
 
     let negotiated = Negotiated {
         max_payload_size: *our_max.min(peer_max),

@@ -16,7 +16,9 @@ import type { Schema, SchemaRegistry, EnumSchema, TupleSchema } from "@bearcove/
  * ```rust
  * #[repr(u8)]
  * pub enum Hello {
- *     V3 { max_payload_size: u32, initial_channel_credit: u32 } = 0,
+ *     V1 { max_payload_size: u32, initial_channel_credit: u32 } = 0,
+ *     V2 { max_payload_size: u32, initial_channel_credit: u32 } = 1,
+ *     V3 { max_payload_size: u32, initial_channel_credit: u32 } = 2,
  * }
  * ```
  */
@@ -24,8 +26,24 @@ export const HelloSchema: EnumSchema = {
   kind: "enum",
   variants: [
     {
-      name: "V3",
+      name: "V1",
       discriminant: 0,
+      fields: {
+        maxPayloadSize: { kind: "u32" },
+        initialChannelCredit: { kind: "u32" },
+      },
+    },
+    {
+      name: "V2",
+      discriminant: 1,
+      fields: {
+        maxPayloadSize: { kind: "u32" },
+        initialChannelCredit: { kind: "u32" },
+      },
+    },
+    {
+      name: "V3",
+      discriminant: 2,
       fields: {
         maxPayloadSize: { kind: "u32" },
         initialChannelCredit: { kind: "u32" },

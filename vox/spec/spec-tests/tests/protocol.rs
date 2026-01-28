@@ -93,9 +93,9 @@ fn handshake_unknown_hello_variant_triggers_goodbye() {
         // Send a malformed Hello-in-Message: Message::Hello + unknown Hello variant discriminant.
         //
         // Postcard enum encoding uses a varint discriminant. For `Message`, `Hello` is variant 0,
-        // and for `Hello`, `V1` is variant 0, `V2` is variant 1. We send Hello discriminant=2
-        // to simulate an unknown future version.
-        let malformed = vec![0x00, 0x02]; // Message::Hello (0), Hello::<unknown v3> (2)
+        // and for `Hello`, `V1` is variant 0, `V2` is variant 1, `V3` is variant 2.
+        // We send Hello discriminant=3 to simulate an unknown future version.
+        let malformed = vec![0x00, 0x03]; // Message::Hello (0), Hello::<unknown v4> (3)
         let mut framed = cobs_encode_vec(&malformed);
         framed.push(0x00);
         io.stream

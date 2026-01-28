@@ -18,7 +18,7 @@ fn main() {
     // Send Hello
     let mut hello = Vec::new();
     write_varint(&mut hello, 0); // Message::Hello
-    write_varint(&mut hello, 0); // Hello::V3
+    write_varint(&mut hello, 2); // Hello::V3 (discriminant 2)
     write_varint(&mut hello, 1024 * 1024); // max_payload
     write_varint(&mut hello, 64 * 1024); // initial_channel_credit
     let mut framed = encode_vec(&hello);
