@@ -5,14 +5,14 @@
 //! - Used to generate a styx schema via facet-styx's schema generation
 
 use facet::Facet;
+pub use facet_styx::Documented;
 use indexmap::IndexMap;
 
 /// A query file - top level is a map of declaration names to declarations.
+/// Uses `Documented<String>` as keys to capture doc comments from the styx file.
 #[derive(Debug, Facet)]
-pub struct QueryFile {
-    #[facet(flatten)]
-    pub decls: IndexMap<String, Decl>,
-}
+#[facet(transparent)]
+pub struct QueryFile(pub IndexMap<Documented<String>, Decl>);
 
 /// A declaration in a query file.
 #[derive(Debug, Facet)]
