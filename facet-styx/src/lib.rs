@@ -274,6 +274,37 @@ port 8080"#;
         assert_eq!(result.port, 8080);
     }
 
+    #[test]
+    fn test_schema_directive_in_config_value() {
+        // When parsing into figue's ConfigValue, tagged keys like @schema
+        // should be preserved as "@schema" string keys
+        use figue::ConfigValue;
+
+        let input = r#"@schema {id crate:dibs@1, cli dibs}
+
+db {
+    crate reef-db
+}
+"#;
+        let result: ConfigValue = from_str(input).unwrap();
+
+        // Verify we got an object with the expected keys
+        if let ConfigValue::Object(obj) = result {
+            assert!(
+                obj.value.contains_key("@schema"),
+                "Expected '@schema' key, got: {:?}",
+                obj.value.keys().collect::<Vec<_>>()
+            );
+            assert!(
+                obj.value.contains_key("db"),
+                "Expected 'db' key, got: {:?}",
+                obj.value.keys().collect::<Vec<_>>()
+            );
+        } else {
+            panic!("Expected ConfigValue::Object, got: {:?}", result);
+        }
+    }
+
     // =========================================================================
     // Expression mode tests
     // =========================================================================
