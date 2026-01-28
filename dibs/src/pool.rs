@@ -70,7 +70,7 @@ impl Deref for PooledConnection {
 
     fn deref(&self) -> &Client {
         // Object -> ClientWrapper -> Client
-        &**self.0
+        &self.0
     }
 }
 
