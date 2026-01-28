@@ -135,12 +135,25 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// runtime inspection of Shape/Def/vtable. The strategy is computed once at
     /// TypePlan build time.
     ///
+    /// If the current node is a BackRef (recursive type), this automatically
+    /// follows the reference to return the target node's strategy.
+    ///
     /// Returns `None` if:
     /// - The Partial is not active
     /// - There are no frames
     #[inline]
     pub fn deser_strategy(&self) -> Option<crate::typeplan::DeserStrategy> {
-        self.plan_node().map(|node| node.strategy)
+        use crate::typeplan::TypePlanNodeKind;
+
+        let node = self.plan_node()?;
+
+        // If this is a BackRef, follow the reference to get the actual strategy
+        if let TypePlanNodeKind::BackRef(target_id) = &node.kind {
+            let target_node = self.root_plan.get(*target_id)?;
+            return Some(target_node.strategy);
+        }
+
+        Some(node.strategy)
     }
 
     /// Returns true if the current frame is building a smart pointer slice (Arc<\[T\]>, Rc<\[T\]>, Box<\[T\]>).

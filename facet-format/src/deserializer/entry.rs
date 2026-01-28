@@ -150,13 +150,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             }
 
             DeserStrategy::BackRef => {
-                // BackRef means we're deserializing a recursive type - the actual
-                // deserialization logic is the same, we just need to use the target
-                // node's strategy. Since we're already at the BackRef node, and the
-                // Partial has navigated here, we can just fall through to the
-                // runtime fallback which will inspect the shape.
-                trace!("deserialize_into: BackRef - using runtime fallback");
-                self.deserialize_fallback(wip)
+                // BackRef is automatically resolved by deser_strategy() - this branch
+                // should never be reached. If it is, something is wrong with TypePlan.
+                unreachable!("deser_strategy() should resolve BackRef to target strategy")
             }
 
             DeserStrategy::Unknown => {
