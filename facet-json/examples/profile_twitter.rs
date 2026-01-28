@@ -202,6 +202,8 @@ fn main() {
     let json = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../twitter.json"))
         .expect("twitter.json not found");
 
-    let result: Twitter = from_str(&json).unwrap();
-    black_box(result);
+    for _ in 0..100 {
+        let result: Twitter = from_str(&json).unwrap();
+        black_box(result);
+    }
 }

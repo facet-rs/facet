@@ -80,6 +80,8 @@ fn main() {
     ))
     .expect("citm_catalog.json not found");
 
-    let result: CitmCatalog = from_str(&json).unwrap();
-    black_box(result);
+    for _ in 0..100 {
+        let result: CitmCatalog = from_str(&json).unwrap();
+        black_box(result);
+    }
 }

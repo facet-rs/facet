@@ -706,13 +706,21 @@ pub struct VariantPlanMeta {
 ///
 /// Uses different strategies based on field count:
 /// - Small (≤8 fields): linear scan (cache-friendly, no hashing overhead)
-/// - Large (>8 fields): sorted array with binary search
+/// - Large (>8 fields): prefix-based dispatch (like JIT) - group by first N bytes
 #[derive(Debug, Clone)]
 pub enum FieldLookup {
     /// For small structs: just store (name, index) pairs
     Small(Vec<FieldLookupEntry>),
-    /// For larger structs: sorted by name for binary search
-    Sorted(Vec<FieldLookupEntry>),
+    /// For larger structs: prefix-based buckets
+    /// Entries are grouped by their N-byte prefix, buckets sorted by prefix for binary search
+    PrefixBuckets {
+        /// Prefix length in bytes (4 or 8)
+        prefix_len: usize,
+        /// All entries, grouped by prefix
+        entries: Vec<FieldLookupEntry>,
+        /// (prefix, start_index, count) sorted by prefix
+        buckets: Vec<(u64, u32, u32)>,
+    },
 }
 
 /// An entry in the field lookup table.
@@ -735,8 +743,21 @@ pub enum VariantLookup {
     Sorted(Vec<(&'static str, usize)>),
 }
 
-// Threshold for switching from linear to sorted lookup
+// Threshold for switching from linear to prefix-based lookup
 const LOOKUP_THRESHOLD: usize = 8;
+
+/// Compute prefix from field name (first N bytes as little-endian u64).
+/// Matches JIT's compute_field_prefix.
+#[inline]
+fn compute_prefix(name: &str, prefix_len: usize) -> u64 {
+    let bytes = name.as_bytes();
+    let actual_len = bytes.len().min(prefix_len);
+    let mut prefix: u64 = 0;
+    for (i, &byte) in bytes.iter().take(actual_len).enumerate() {
+        prefix |= (byte as u64) << (i * 8);
+    }
+    prefix
+}
 
 impl FieldLookup {
     /// Create a new field lookup from field metadata.
@@ -761,13 +782,7 @@ impl FieldLookup {
             }
         }
 
-        if entries.len() <= LOOKUP_THRESHOLD {
-            FieldLookup::Small(entries)
-        } else {
-            // Sort by name for binary search
-            entries.sort_by_key(|e| e.name);
-            FieldLookup::Sorted(entries)
-        }
+        Self::from_entries(entries)
     }
 
     /// Create a field lookup directly from a struct type definition.
@@ -796,11 +811,50 @@ impl FieldLookup {
             }
         }
 
+        Self::from_entries(entries)
+    }
+
+    /// Build lookup structure from entries.
+    fn from_entries(entries: Vec<FieldLookupEntry>) -> Self {
         if entries.len() <= LOOKUP_THRESHOLD {
-            FieldLookup::Small(entries)
+            return FieldLookup::Small(entries);
+        }
+
+        // Choose prefix length: 8 bytes if most keys are long, otherwise 4
+        // Short keys get zero-padded, which is fine - they'll have unique prefixes
+        let long_key_count = entries.iter().filter(|e| e.name.len() >= 8).count();
+        let prefix_len = if long_key_count > entries.len() / 2 {
+            8
         } else {
-            entries.sort_by_key(|e| e.name);
-            FieldLookup::Sorted(entries)
+            4
+        };
+
+        // Group entries by prefix
+        let mut prefix_map: hashbrown::HashMap<u64, Vec<FieldLookupEntry>> =
+            hashbrown::HashMap::new();
+        for entry in entries {
+            let prefix = compute_prefix(entry.name, prefix_len);
+            prefix_map.entry(prefix).or_default().push(entry);
+        }
+
+        // Build sorted bucket list and flattened entries
+        let mut bucket_list: Vec<_> = prefix_map.into_iter().collect();
+        bucket_list.sort_by_key(|(prefix, _)| *prefix);
+
+        let mut all_entries = Vec::new();
+        let mut buckets = Vec::with_capacity(bucket_list.len());
+
+        for (prefix, bucket_entries) in bucket_list {
+            let start = all_entries.len() as u32;
+            let count = bucket_entries.len() as u32;
+            buckets.push((prefix, start, count));
+            all_entries.extend(bucket_entries);
+        }
+
+        FieldLookup::PrefixBuckets {
+            prefix_len,
+            entries: all_entries,
+            buckets,
         }
     }
 
@@ -809,10 +863,24 @@ impl FieldLookup {
     pub fn find(&self, name: &str) -> Option<usize> {
         match self {
             FieldLookup::Small(entries) => entries.iter().find(|e| e.name == name).map(|e| e.index),
-            FieldLookup::Sorted(entries) => entries
-                .binary_search_by_key(&name, |e| e.name)
-                .ok()
-                .map(|i| entries[i].index),
+            FieldLookup::PrefixBuckets {
+                prefix_len,
+                entries,
+                buckets,
+            } => {
+                let prefix = compute_prefix(name, *prefix_len);
+
+                // Binary search for bucket
+                let bucket_idx = buckets.binary_search_by_key(&prefix, |(p, _, _)| *p).ok()?;
+                let (_, start, count) = buckets[bucket_idx];
+
+                // Linear scan within bucket
+                let bucket_entries = &entries[start as usize..(start + count) as usize];
+                bucket_entries
+                    .iter()
+                    .find(|e| e.name == name)
+                    .map(|e| e.index)
+            }
         }
     }
 
@@ -820,7 +888,8 @@ impl FieldLookup {
     #[inline]
     pub fn is_empty(&self) -> bool {
         match self {
-            FieldLookup::Small(entries) | FieldLookup::Sorted(entries) => entries.is_empty(),
+            FieldLookup::Small(entries) => entries.is_empty(),
+            FieldLookup::PrefixBuckets { entries, .. } => entries.is_empty(),
         }
     }
 }
@@ -1992,29 +2061,80 @@ mod tests {
     }
 
     #[test]
-    fn test_field_lookup_sorted() {
-        let lookup = FieldLookup::Sorted(vec![
+    fn test_field_lookup_prefix_buckets() {
+        // Create enough entries to trigger PrefixBuckets (>8 entries)
+        // Include short names like "id" to test zero-padding
+        let entries = vec![
             FieldLookupEntry {
-                name: "alpha",
+                name: "id",
                 index: 0,
                 is_alias: false,
             },
             FieldLookupEntry {
-                name: "beta",
+                name: "name",
                 index: 1,
                 is_alias: false,
             },
             FieldLookupEntry {
-                name: "gamma",
+                name: "email",
                 index: 2,
                 is_alias: false,
             },
-        ]);
+            FieldLookupEntry {
+                name: "url",
+                index: 3,
+                is_alias: false,
+            },
+            FieldLookupEntry {
+                name: "description",
+                index: 4,
+                is_alias: false,
+            },
+            FieldLookupEntry {
+                name: "created_at",
+                index: 5,
+                is_alias: false,
+            },
+            FieldLookupEntry {
+                name: "updated_at",
+                index: 6,
+                is_alias: false,
+            },
+            FieldLookupEntry {
+                name: "status",
+                index: 7,
+                is_alias: false,
+            },
+            FieldLookupEntry {
+                name: "type",
+                index: 8,
+                is_alias: false,
+            },
+            FieldLookupEntry {
+                name: "metadata",
+                index: 9,
+                is_alias: false,
+            },
+        ];
+        let lookup = FieldLookup::from_entries(entries);
 
-        assert_eq!(lookup.find("alpha"), Some(0));
-        assert_eq!(lookup.find("beta"), Some(1));
-        assert_eq!(lookup.find("gamma"), Some(2));
-        assert_eq!(lookup.find("delta"), None);
+        // Verify it's using PrefixBuckets
+        assert!(matches!(lookup, FieldLookup::PrefixBuckets { .. }));
+
+        // Test lookups - including short keys
+        assert_eq!(lookup.find("id"), Some(0));
+        assert_eq!(lookup.find("name"), Some(1));
+        assert_eq!(lookup.find("email"), Some(2));
+        assert_eq!(lookup.find("url"), Some(3));
+        assert_eq!(lookup.find("description"), Some(4));
+        assert_eq!(lookup.find("created_at"), Some(5));
+        assert_eq!(lookup.find("updated_at"), Some(6));
+        assert_eq!(lookup.find("status"), Some(7));
+        assert_eq!(lookup.find("type"), Some(8));
+        assert_eq!(lookup.find("metadata"), Some(9));
+        assert_eq!(lookup.find("unknown"), None);
+        assert_eq!(lookup.find("i"), None); // prefix of "id"
+        assert_eq!(lookup.find("ide"), None); // not a field
     }
 
     #[test]
