@@ -30,7 +30,15 @@ impl ConfigFormat for StyxFormat {
     }
 
     fn parse(&self, contents: &str) -> Result<ConfigValue, ConfigFormatError> {
-        crate::from_str(contents).map_err(|e| ConfigFormatError::new(e.to_string()))
+        let mut value: ConfigValue =
+            crate::from_str(contents).map_err(|e| ConfigFormatError::new(e.to_string()))?;
+
+        // Remove @-prefixed keys (like @schema) which are metadata directives, not config values
+        if let ConfigValue::Object(ref mut obj) = value {
+            obj.value.retain(|key, _| !key.starts_with('@'));
+        }
+
+        Ok(value)
     }
 }
 
@@ -84,5 +92,37 @@ mod tests {
 
         let err = ConfigFormatError::with_offset("unexpected token", 42);
         assert_eq!(err.to_string(), "at byte 42: unexpected token");
+    }
+
+    #[test]
+    fn test_styx_format_filters_schema_directive() {
+        // @schema directives should be filtered out when parsing via ConfigFormat
+        // because they are metadata, not configuration values
+        let format = StyxFormat;
+        let result = format.parse(
+            r#"@schema {id crate:dibs@1, cli dibs}
+
+db {
+    crate reef-db
+}
+"#,
+        );
+        assert!(result.is_ok(), "parse failed: {:?}", result.err());
+        let value = result.unwrap();
+
+        if let ConfigValue::Object(obj) = value {
+            assert!(
+                !obj.value.contains_key("@schema"),
+                "@schema should be filtered out, got keys: {:?}",
+                obj.value.keys().collect::<Vec<_>>()
+            );
+            assert!(
+                obj.value.contains_key("db"),
+                "Expected 'db' key, got: {:?}",
+                obj.value.keys().collect::<Vec<_>>()
+            );
+        } else {
+            panic!("Expected ConfigValue::Object, got: {:?}", value);
+        }
     }
 }
