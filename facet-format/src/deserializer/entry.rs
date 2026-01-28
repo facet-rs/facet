@@ -89,9 +89,10 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                     .end()?)
             }
 
-            Some(DeserStrategy::Scalar) => {
+            Some(DeserStrategy::Scalar { scalar_type }) => {
+                let scalar_type = *scalar_type; // Copy before moving wip
                 trace!("deserialize_into: dispatching to deserialize_scalar");
-                self.deserialize_scalar(wip)
+                self.deserialize_scalar(wip, scalar_type)
             }
 
             Some(DeserStrategy::Struct) => {
@@ -898,12 +899,10 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     pub(crate) fn deserialize_scalar(
         &mut self,
         mut wip: Partial<'input, BORROW>,
+        scalar_type: Option<ScalarType>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         // Hint to non-self-describing parsers what scalar type is expected
         let shape = wip.shape();
-
-        // Use ScalarType for fast TypeId-based dispatch instead of string matching
-        let scalar_type = shape.scalar_type();
 
         // First, try hint_opaque_scalar for types that may have format-specific
         // binary representations (e.g., UUID as 16 raw bytes in postcard)

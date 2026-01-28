@@ -91,7 +91,11 @@ pub enum DeserStrategy {
         inner_node: NodeId,
     },
     /// Scalar with FromStr
-    Scalar,
+    Scalar {
+        /// Precomputed scalar type for fast hint dispatch.
+        /// None for opaque scalars that need parser-specific handling.
+        scalar_type: Option<ScalarType>,
+    },
     /// Named struct
     Struct,
     /// Tuple or tuple struct
@@ -1019,9 +1023,9 @@ impl TypePlanBuilder {
         // Create placeholder node first so children can reference it.
         // We use Scalar as a dummy strategy - it will be overwritten before we return.
         let placeholder = TypePlanNode {
-            shape,                           // Original shape (conversion target)
-            kind: TypePlanNodeKind::Scalar,  // Placeholder, will be replaced
-            strategy: DeserStrategy::Scalar, // Placeholder, will be replaced
+            shape,                                                 // Original shape (conversion target)
+            kind: TypePlanNodeKind::Scalar,                        // Placeholder, will be replaced
+            strategy: DeserStrategy::Scalar { scalar_type: None }, // Placeholder, will be replaced
             has_default: shape.is(Characteristic::Default),
             proxy: effective_proxy,
             field_init_plans: Vec::new(), // Placeholder, will be replaced for structs
@@ -1141,7 +1145,9 @@ impl TypePlanBuilder {
 
         // Priority 6: Scalars with FromStr
         if matches!(&shape.def, Def::Scalar) && shape.vtable.has_parse() {
-            return Ok(DeserStrategy::Scalar);
+            return Ok(DeserStrategy::Scalar {
+                scalar_type: shape.scalar_type(),
+            });
         }
 
         // Priority 7: Match on the kind
@@ -1154,7 +1160,9 @@ impl TypePlanBuilder {
                         return Ok(DeserStrategy::Tuple);
                     }
                 }
-                DeserStrategy::Scalar
+                DeserStrategy::Scalar {
+                    scalar_type: shape.scalar_type(),
+                }
             }
             TypePlanNodeKind::Struct(struct_plan) => {
                 use facet_core::StructKind;
