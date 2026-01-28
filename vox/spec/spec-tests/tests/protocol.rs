@@ -5,7 +5,7 @@ use roam_wire::{Hello, Message, MetadataValue};
 use spec_tests::harness::{accept_subject, our_hello, run_async};
 use tokio::io::AsyncWriteExt;
 
-fn metadata_empty() -> Vec<(String, MetadataValue)> {
+fn metadata_empty() -> Vec<(String, MetadataValue, u64)> {
     Vec::new()
 }
 
@@ -26,11 +26,8 @@ fn handshake_subject_sends_hello_without_prompt() {
             .ok_or_else(|| "did not receive any message (expected Hello)".to_string())?;
 
         match msg {
-            Message::Hello(Hello::V2 { .. }) => {}
-            Message::Hello(Hello::V1 { .. }) => {
-                return Err("received Hello::V1, but V1 is no longer supported".to_string());
-            }
-            other => return Err(format!("first message must be Hello, got {other:?}")),
+            Message::Hello(Hello::V3 { .. }) => {}
+            other => return Err(format!("first message must be Hello::V3, got {other:?}")),
         }
 
         // Clean shutdown: send our Hello so a well-behaved subject can proceed.

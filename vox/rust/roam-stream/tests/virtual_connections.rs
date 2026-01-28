@@ -661,10 +661,12 @@ async fn connect_with_metadata() {
         (
             "client-id".to_string(),
             MetadataValue::String("test-client-123".to_string()),
+            0,
         ),
         (
             "version".to_string(),
             MetadataValue::String("1.0".to_string()),
+            0,
         ),
     ];
     let virtual_handle = root_handle.connect(metadata, None).await.unwrap();
@@ -702,6 +704,7 @@ async fn connect_explicit_rejection() {
                 vec![(
                     "error-code".to_string(),
                     roam_wire::MetadataValue::String("401".to_string()),
+                    0,
                 )],
             );
         }

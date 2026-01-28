@@ -10,7 +10,8 @@ import {
   MetadataValueDiscriminant,
   HelloDiscriminant,
   // Factory functions
-  helloV1,
+  helloV3,
+  MetadataFlags,
   metadataString,
   metadataBytes,
   metadataU64,
@@ -69,8 +70,7 @@ describe("wire discriminants", () => {
   });
 
   it("has correct Hello discriminants", () => {
-    expect(HelloDiscriminant.V1).toBe(0);
-    expect(HelloDiscriminant.V2).toBe(1);
+    expect(HelloDiscriminant.V3).toBe(0);
   });
 });
 
@@ -80,9 +80,9 @@ describe("wire discriminants", () => {
 
 describe("factory functions", () => {
   describe("Hello", () => {
-    it("creates Hello.V1", () => {
-      const hello = helloV1(65536, 1024);
-      expect(hello.tag).toBe("V1");
+    it("creates Hello.V3", () => {
+      const hello = helloV3(65536, 1024);
+      expect(hello.tag).toBe("V3");
       expect(hello.maxPayloadSize).toBe(65536);
       expect(hello.initialChannelCredit).toBe(1024);
     });
@@ -111,7 +111,7 @@ describe("factory functions", () => {
 
   describe("Message", () => {
     it("creates Message.Hello", () => {
-      const hello = helloV1(65536, 1024);
+      const hello = helloV3(65536, 1024);
       const msg = messageHello(hello);
       expect(msg.tag).toBe("Hello");
       if (msg.tag === "Hello") {
@@ -139,7 +139,7 @@ describe("factory functions", () => {
     });
 
     it("creates Message.Request with metadata", () => {
-      const metadata: MetadataEntry[] = [["key", metadataString("value")]];
+      const metadata: MetadataEntry[] = [["key", metadataString("value"), MetadataFlags.NONE]];
       const msg = messageRequest(1n, 0x123456n, new Uint8Array([1, 2, 3]), metadata);
       if (msg.tag === "Request") {
         expect(msg.metadata).toEqual(metadata);
@@ -207,11 +207,9 @@ describe("factory functions", () => {
 describe("wire schemas", () => {
   it("HelloSchema has correct structure", () => {
     expect(HelloSchema.kind).toBe("enum");
-    expect(HelloSchema.variants).toHaveLength(2);
-    expect(HelloSchema.variants[0].name).toBe("V1");
+    expect(HelloSchema.variants).toHaveLength(1);
+    expect(HelloSchema.variants[0].name).toBe("V3");
     expect(HelloSchema.variants[0].discriminant).toBe(0);
-    expect(HelloSchema.variants[1].name).toBe("V2");
-    expect(HelloSchema.variants[1].discriminant).toBe(1);
   });
 
   it("MetadataValueSchema has correct structure", () => {
@@ -227,9 +225,10 @@ describe("wire schemas", () => {
 
   it("MetadataEntrySchema has correct structure", () => {
     expect(MetadataEntrySchema.kind).toBe("tuple");
-    expect(MetadataEntrySchema.elements).toHaveLength(2);
+    expect(MetadataEntrySchema.elements).toHaveLength(3);
     expect(MetadataEntrySchema.elements[0]).toEqual({ kind: "string" });
     expect(MetadataEntrySchema.elements[1]).toEqual({ kind: "ref", name: "MetadataValue" });
+    expect(MetadataEntrySchema.elements[2]).toEqual({ kind: "u64" });
   });
 
   it("MessageSchema has correct structure", () => {
@@ -277,15 +276,15 @@ describe("wire schemas", () => {
 // ============================================================================
 
 describe("Hello codec", () => {
-  it("roundtrips Hello.V1", () => {
-    const hello = helloV1(65536, 1024);
+  it("roundtrips Hello.V3", () => {
+    const hello = helloV3(65536, 1024);
     const encoded = encodeHello(hello);
     const decoded = decodeHello(encoded);
     expect(decoded.value).toEqual(hello);
     expect(decoded.next).toBe(encoded.length);
   });
 
-  it("roundtrips Hello.V1 with different values", () => {
+  it("roundtrips Hello.V3 with different values", () => {
     const testCases = [
       { maxPayloadSize: 0, initialChannelCredit: 0 },
       { maxPayloadSize: 1, initialChannelCredit: 1 },
@@ -294,15 +293,15 @@ describe("Hello codec", () => {
     ];
 
     for (const { maxPayloadSize, initialChannelCredit } of testCases) {
-      const hello = helloV1(maxPayloadSize, initialChannelCredit);
+      const hello = helloV3(maxPayloadSize, initialChannelCredit);
       const encoded = encodeHello(hello);
       const decoded = decodeHello(encoded);
       expect(decoded.value).toEqual(hello);
     }
   });
 
-  it("encodes Hello.V1 with discriminant 0", () => {
-    const hello = helloV1(65536, 1024);
+  it("encodes Hello.V3 with discriminant 0", () => {
+    const hello = helloV3(65536, 1024);
     const encoded = encodeHello(hello);
     expect(encoded[0]).toBe(0); // First byte is discriminant
   });
@@ -371,7 +370,7 @@ describe("MetadataValue codec", () => {
 
 describe("MetadataEntry codec", () => {
   it("roundtrips entry with String value", () => {
-    const entry: MetadataEntry = ["content-type", metadataString("application/json")];
+    const entry: MetadataEntry = ["content-type", metadataString("application/json"), MetadataFlags.NONE];
     const encoded = encodeMetadataEntry(entry);
     const decoded = decodeMetadataEntry(encoded);
     expect(decoded.value).toEqual(entry);
@@ -381,6 +380,7 @@ describe("MetadataEntry codec", () => {
     const entry: MetadataEntry = [
       "binary-data",
       metadataBytes(new Uint8Array([0xde, 0xad, 0xbe, 0xef])),
+      MetadataFlags.NONE,
     ];
     const encoded = encodeMetadataEntry(entry);
     const decoded = decodeMetadataEntry(encoded);
@@ -388,10 +388,18 @@ describe("MetadataEntry codec", () => {
   });
 
   it("roundtrips entry with U64 value", () => {
-    const entry: MetadataEntry = ["content-length", metadataU64(1024n)];
+    const entry: MetadataEntry = ["content-length", metadataU64(1024n), MetadataFlags.NONE];
     const encoded = encodeMetadataEntry(entry);
     const decoded = decodeMetadataEntry(encoded);
     expect(decoded.value).toEqual(entry);
+  });
+
+  it("roundtrips entry with SENSITIVE flag", () => {
+    const entry: MetadataEntry = ["authorization", metadataString("Bearer token"), MetadataFlags.SENSITIVE];
+    const encoded = encodeMetadataEntry(entry);
+    const decoded = decodeMetadataEntry(encoded);
+    expect(decoded.value).toEqual(entry);
+    expect(decoded.value[2]).toBe(MetadataFlags.SENSITIVE);
   });
 });
 
@@ -402,14 +410,14 @@ describe("MetadataEntry codec", () => {
 describe("Message codec", () => {
   describe("Message.Hello", () => {
     it("roundtrips", () => {
-      const msg = messageHello(helloV1(65536, 1024));
+      const msg = messageHello(helloV3(65536, 1024));
       const encoded = encodeMessage(msg);
       const decoded = decodeMessage(encoded);
       expect(decoded.value).toEqual(msg);
     });
 
     it("encodes with discriminant 0", () => {
-      const msg = messageHello(helloV1(65536, 1024));
+      const msg = messageHello(helloV3(65536, 1024));
       const encoded = encodeMessage(msg);
       expect(encoded[0]).toBe(0);
     });
@@ -447,9 +455,9 @@ describe("Message codec", () => {
 
     it("roundtrips with metadata", () => {
       const metadata: MetadataEntry[] = [
-        ["key1", metadataString("value1")],
-        ["key2", metadataU64(42n)],
-        ["key3", metadataBytes(new Uint8Array([1, 2, 3]))],
+        ["key1", metadataString("value1"), MetadataFlags.NONE],
+        ["key2", metadataU64(42n), MetadataFlags.NONE],
+        ["key3", metadataBytes(new Uint8Array([1, 2, 3])), MetadataFlags.NONE],
       ];
       const msg = messageRequest(1n, 0x123456789abcdef0n, new Uint8Array([1, 2, 3, 4]), metadata);
       const encoded = encodeMessage(msg);
@@ -480,7 +488,7 @@ describe("Message codec", () => {
     });
 
     it("roundtrips with metadata", () => {
-      const metadata: MetadataEntry[] = [["status", metadataString("ok")]];
+      const metadata: MetadataEntry[] = [["status", metadataString("ok"), MetadataFlags.NONE]];
       const msg = messageResponse(1n, new Uint8Array([5, 6, 7, 8]), metadata);
       const encoded = encodeMessage(msg);
       const decoded = decodeMessage(encoded);
@@ -599,7 +607,7 @@ describe("multiple messages codec", () => {
 
   it("encodes and decodes multiple messages", () => {
     const messages: Message[] = [
-      messageHello(helloV1(65536, 1024)),
+      messageHello(helloV3(65536, 1024)),
       messageRequest(1n, 100n, new Uint8Array([1, 2, 3])),
       messageResponse(1n, new Uint8Array([4, 5, 6])),
       messageData(10n, new Uint8Array([7, 8, 9])),
@@ -613,7 +621,7 @@ describe("multiple messages codec", () => {
 
   it("encodes and decodes all message types", () => {
     const messages: Message[] = [
-      messageHello(helloV1(1000, 100)),
+      messageHello(helloV3(1000, 100)),
       messageGoodbye("reason"),
       messageRequest(1n, 2n, new Uint8Array([1])),
       messageResponse(1n, new Uint8Array([2])),
@@ -677,7 +685,7 @@ describe("edge cases", () => {
   it("handles many metadata entries", () => {
     const metadata: MetadataEntry[] = [];
     for (let i = 0; i < 100; i++) {
-      metadata.push([`key-${i}`, metadataString(`value-${i}`)]);
+      metadata.push([`key-${i}`, metadataString(`value-${i}`), MetadataFlags.NONE]);
     }
     const msg = messageRequest(1n, 2n, new Uint8Array([]), metadata);
     const encoded = encodeMessage(msg);

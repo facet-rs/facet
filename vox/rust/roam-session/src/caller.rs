@@ -269,9 +269,9 @@ impl Caller for ConnectionHandle {
 /// // Simple call
 /// let result = client.subscribe(route).await?;
 ///
-/// // With metadata
+/// // With metadata (key, value, flags)
 /// let result = client.subscribe(route)
-///     .with_metadata(vec![("trace-id".into(), MetadataValue::String("abc".into()))])
+///     .with_metadata(vec![("trace-id".into(), MetadataValue::String("abc".into()), 0)])
 ///     .await?;
 /// ```
 pub struct CallFuture<C, Args, Ok, Err>

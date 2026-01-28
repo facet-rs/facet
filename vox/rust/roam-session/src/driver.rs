@@ -115,9 +115,9 @@ impl Default for HandshakeConfig {
 }
 
 impl HandshakeConfig {
-    /// Convert to Hello message (v2 format).
+    /// Convert to Hello message (v3 format).
     pub fn to_hello(&self) -> Hello {
-        Hello::V2 {
+        Hello::V3 {
             max_payload_size: self.max_payload_size,
             initial_channel_credit: self.initial_channel_credit,
         }
@@ -1307,7 +1307,7 @@ where
         conn_id: ConnectionId,
         request_id: u64,
         method_id: u64,
-        metadata: Vec<(String, roam_wire::MetadataValue)>,
+        metadata: roam_wire::Metadata,
         channels: Vec<u64>,
         payload: Vec<u8>,
     ) -> Result<(), ConnectionError> {
@@ -1581,26 +1581,7 @@ where
 
     // Wait for peer Hello with timeout
     let peer_hello = match io.recv_timeout(Duration::from_secs(5)).await {
-        Ok(Some(Message::Hello(Hello::V2 {
-            max_payload_size,
-            initial_channel_credit,
-        }))) => Hello::V2 {
-            max_payload_size,
-            initial_channel_credit,
-        },
-        Ok(Some(Message::Hello(Hello::V1 { .. }))) => {
-            // V1 is no longer supported - reject it
-            let _ = io
-                .send(&Message::Goodbye {
-                    conn_id: ConnectionId::ROOT,
-                    reason: "message.hello.unknown-version".into(),
-                })
-                .await;
-            return Err(ConnectionError::ProtocolViolation {
-                rule_id: "message.hello.unknown-version",
-                context: "received Hello::V1, but V1 is no longer supported".into(),
-            });
-        }
+        Ok(Some(Message::Hello(hello))) => hello,
         Ok(Some(_)) => {
             let _ = io
                 .send(&Message::Goodbye {
@@ -1616,7 +1597,7 @@ where
         Ok(None) => return Err(ConnectionError::Closed),
         Err(e) => {
             let raw = io.last_decoded();
-            let is_unknown_hello = raw.len() >= 2 && raw[0] == 0x00 && raw[1] > 0x01;
+            let is_unknown_hello = raw.len() >= 2 && raw[0] == 0x00 && raw[1] > 0x00;
             let version = if is_unknown_hello { raw[1] } else { 0 };
 
             if is_unknown_hello {
@@ -1635,25 +1616,19 @@ where
         }
     };
 
-    // Negotiate parameters (both sides MUST use V2)
-    let (our_max, our_credit) = match &our_hello {
-        Hello::V2 {
-            max_payload_size,
-            initial_channel_credit,
-        } => (*max_payload_size, *initial_channel_credit),
-        Hello::V1 { .. } => unreachable!("we always send V2"),
-    };
-    let (peer_max, peer_credit) = match &peer_hello {
-        Hello::V2 {
-            max_payload_size,
-            initial_channel_credit,
-        } => (*max_payload_size, *initial_channel_credit),
-        Hello::V1 { .. } => unreachable!("V1 is rejected above"),
-    };
+    // Negotiate parameters (both sides MUST use V3)
+    let Hello::V3 {
+        max_payload_size: our_max,
+        initial_channel_credit: our_credit,
+    } = &our_hello;
+    let Hello::V3 {
+        max_payload_size: peer_max,
+        initial_channel_credit: peer_credit,
+    } = &peer_hello;
 
     let negotiated = Negotiated {
-        max_payload_size: our_max.min(peer_max),
-        initial_credit: our_credit.min(peer_credit),
+        max_payload_size: *our_max.min(peer_max),
+        initial_credit: *our_credit.min(peer_credit),
     };
 
     // Create unified channel for all messages

@@ -7,36 +7,29 @@ import Foundation
 /// r[impl message.hello.structure] - Hello contains version, maxPayloadSize, initialChannelCredit.
 /// r[impl message.hello.version] - Version field determines protocol version.
 public enum Hello: Sendable {
-    case v1(maxPayloadSize: UInt32, initialChannelCredit: UInt32)
-    case v2(maxPayloadSize: UInt32, initialChannelCredit: UInt32)
+    case v3(maxPayloadSize: UInt32, initialChannelCredit: UInt32)
 }
 
 extension Hello {
     public var maxPayloadSize: UInt32 {
         switch self {
-        case .v1(let size, _), .v2(let size, _):
+        case .v3(let size, _):
             return size
         }
     }
 
     public var initialChannelCredit: UInt32 {
         switch self {
-        case .v1(_, let credit), .v2(_, let credit):
+        case .v3(_, let credit):
             return credit
         }
     }
 
     public func encode() -> [UInt8] {
         switch self {
-        case .v1(let maxPayload, let initialCredit):
+        case .v3(let maxPayload, let initialCredit):
             var out: [UInt8] = []
-            out += encodeVarint(0)  // V1 discriminant
-            out += encodeVarint(UInt64(maxPayload))
-            out += encodeVarint(UInt64(initialCredit))
-            return out
-        case .v2(let maxPayload, let initialCredit):
-            var out: [UInt8] = []
-            out += encodeVarint(1)  // V2 discriminant
+            out += encodeVarint(0)  // V3 discriminant (now at position 0)
             out += encodeVarint(UInt64(maxPayload))
             out += encodeVarint(UInt64(initialCredit))
             return out
@@ -49,11 +42,7 @@ extension Hello {
         case 0:
             let maxPayload = try decodeVarintU32(from: data, offset: &offset)
             let initialCredit = try decodeVarintU32(from: data, offset: &offset)
-            return .v1(maxPayloadSize: maxPayload, initialChannelCredit: initialCredit)
-        case 1:
-            let maxPayload = try decodeVarintU32(from: data, offset: &offset)
-            let initialCredit = try decodeVarintU32(from: data, offset: &offset)
-            return .v2(maxPayloadSize: maxPayload, initialChannelCredit: initialCredit)
+            return .v3(maxPayloadSize: maxPayload, initialChannelCredit: initialCredit)
         default:
             throw WireError.unknownHelloVariant
         }
@@ -66,12 +55,40 @@ extension Hello {
 public enum MetadataValue: Sendable {
     case string(String)
     case bytes([UInt8])
-    case integer(Int64)
+    case u64(UInt64)
 }
+
+// MARK: - MetadataFlags
+
+/// Metadata entry flags.
+///
+/// r[impl call.metadata.flags] - Flags control metadata handling behavior.
+public struct MetadataFlags: OptionSet, Sendable {
+    public let rawValue: UInt64
+
+    public init(rawValue: UInt64) {
+        self.rawValue = rawValue
+    }
+
+    /// No special handling.
+    public static let none = MetadataFlags([])
+
+    /// Value MUST NOT be logged, traced, or included in error messages.
+    public static let sensitive = MetadataFlags(rawValue: 1 << 0)
+
+    /// Value MUST NOT be forwarded to downstream calls.
+    public static let noPropagate = MetadataFlags(rawValue: 1 << 1)
+}
+
+/// A metadata entry is a (key, value, flags) triple.
+///
+/// r[impl call.metadata.type] - Metadata is a list of entries.
+/// r[impl call.metadata.flags] - Each entry includes flags for handling behavior.
+public typealias MetadataEntry = (key: String, value: MetadataValue, flags: UInt64)
 
 // MARK: - Message
 
-/// Wire protocol message types (v2 protocol).
+/// Wire protocol message types (v3 protocol).
 ///
 /// r[impl wire.message-types] - All wire message types.
 /// r[impl core.call] - Request/Response messages implement the call abstraction.
@@ -85,15 +102,15 @@ public enum Message: Sendable {
 
     // Discriminant 1: Connect (virtual connection control - no conn_id)
     /// r[impl message.connect.initiate] - Request a new virtual connection.
-    case connect(requestId: UInt64, metadata: [(String, MetadataValue)])
+    case connect(requestId: UInt64, metadata: [MetadataEntry])
 
     // Discriminant 2: Accept (virtual connection control - no conn_id)
     /// r[impl message.accept.response] - Accept a virtual connection request.
-    case accept(requestId: UInt64, connId: UInt64, metadata: [(String, MetadataValue)])
+    case accept(requestId: UInt64, connId: UInt64, metadata: [MetadataEntry])
 
     // Discriminant 3: Reject (virtual connection control - no conn_id)
     /// r[impl message.reject.response] - Reject a virtual connection request.
-    case reject(requestId: UInt64, reason: String, metadata: [(String, MetadataValue)])
+    case reject(requestId: UInt64, reason: String, metadata: [MetadataEntry])
 
     // Discriminant 4: Goodbye (connection control - scoped to conn_id)
     /// r[impl message.goodbye.send] - Close a virtual connection.
@@ -103,12 +120,12 @@ public enum Message: Sendable {
     // Discriminant 5: Request (RPC - scoped to conn_id)
     /// r[impl channeling.request.channels] - Channel IDs listed explicitly for proxy support.
     case request(
-        connId: UInt64, requestId: UInt64, methodId: UInt64, metadata: [(String, MetadataValue)],
+        connId: UInt64, requestId: UInt64, methodId: UInt64, metadata: [MetadataEntry],
         channels: [UInt64], payload: [UInt8])
 
     // Discriminant 6: Response (RPC - scoped to conn_id)
     case response(
-        connId: UInt64, requestId: UInt64, metadata: [(String, MetadataValue)],
+        connId: UInt64, requestId: UInt64, metadata: [MetadataEntry],
         channels: [UInt64], payload: [UInt8])
 
     // Discriminant 7: Cancel (RPC - scoped to conn_id)
@@ -329,30 +346,33 @@ extension Message {
 // MARK: - Metadata Encoding
 
 /// r[impl core.metadata] - Metadata is key-value pairs attached to requests/responses.
-/// r[impl call.metadata.type] - Values can be string, bytes, or integer.
+/// r[impl call.metadata.type] - Values can be string, bytes, or u64.
+/// r[impl call.metadata.flags] - Each entry includes flags for handling behavior.
 /// r[impl call.metadata.keys] - Keys are UTF-8 strings.
 /// r[impl call.metadata.order] - Metadata entries preserve insertion order.
 /// r[impl call.metadata.duplicates] - Duplicate keys are allowed.
 /// r[impl call.metadata.unknown] - Unknown metadata keys are ignored.
-func encodeMetadata(_ metadata: [(String, MetadataValue)]) -> [UInt8] {
+func encodeMetadata(_ metadata: [MetadataEntry]) -> [UInt8] {
     var out = encodeVarint(UInt64(metadata.count))
-    for (key, value) in metadata {
-        out += encodeString(key)
-        switch value {
+    for entry in metadata {
+        out += encodeString(entry.key)
+        switch entry.value {
         case .string(let s):
             out += [0] + encodeString(s)
         case .bytes(let b):
             out += [1] + encodeBytes(b)
-        case .integer(let i):
-            out += [2] + encodeI64(i)
+        case .u64(let n):
+            out += [2] + encodeVarint(n)
         }
+        // r[impl call.metadata.flags] - Encode flags as varint
+        out += encodeVarint(entry.flags)
     }
     return out
 }
 
-func decodeMetadata(from data: Data, offset: inout Int) throws -> [(String, MetadataValue)] {
+func decodeMetadata(from data: Data, offset: inout Int) throws -> [MetadataEntry] {
     let count = try decodeVarint(from: data, offset: &offset)
-    var result: [(String, MetadataValue)] = []
+    var result: [MetadataEntry] = []
     for _ in 0..<count {
         let key = try decodeString(from: data, offset: &offset)
         let valueDisc = try decodeU8(from: data, offset: &offset)
@@ -363,11 +383,13 @@ func decodeMetadata(from data: Data, offset: inout Int) throws -> [(String, Meta
         case 1:
             value = .bytes(Array(try decodeBytes(from: data, offset: &offset)))
         case 2:
-            value = .integer(try decodeI64(from: data, offset: &offset))
+            value = .u64(try decodeVarint(from: data, offset: &offset))
         default:
             throw WireError.unknownMetadataVariant
         }
-        result.append((key, value))
+        // r[impl call.metadata.flags] - Decode flags as varint
+        let flags = try decodeVarint(from: data, offset: &offset)
+        result.append((key: key, value: value, flags: flags))
     }
     return result
 }

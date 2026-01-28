@@ -10,7 +10,7 @@
 import {
   type Hello,
   type MetadataEntry,
-  helloV2,
+  helloV3,
   messageHello,
   messageGoodbye,
   messageRequest,
@@ -34,7 +34,7 @@ import { type MessageTransport } from "./transport.ts";
 import type { Caller, CallerRequest } from "./caller.ts";
 import { MiddlewareCaller } from "./caller.ts";
 import type { ClientMiddleware } from "./middleware.ts";
-import { metadataMapToEntries } from "./metadata.ts";
+import { clientMetadataToEntries } from "./metadata.ts";
 import { encodeWithSchema, decodeWithSchema } from "@bearcove/roam-postcard";
 import { tryDecodeRpcResult } from "@bearcove/roam-wire";
 
@@ -981,8 +981,7 @@ async function waitForPeerHello<T extends MessageTransport>(
 
     if (msg.tag === "Hello") {
       // r[impl message.hello.unknown-version] - reject unknown Hello versions
-      // Accept V1 (deprecated) and V2 (current)
-      if (msg.value.tag !== "V1" && msg.value.tag !== "V2") {
+      if (msg.value.tag !== "V3") {
         await io.send(encodeMessage(messageGoodbye("message.hello.unknown-version")));
         io.close();
         throw ConnectionError.protocol({
@@ -1004,9 +1003,9 @@ async function waitForPeerHello<T extends MessageTransport>(
   }
 }
 
-/** Default Hello message (V2 for virtual connection support). */
+/** Default Hello message (V3 for metadata flags support). */
 export function defaultHello(): Hello {
-  return helloV2(1024 * 1024, 64 * 1024);
+  return helloV3(1024 * 1024, 64 * 1024);
 }
 
 /**
@@ -1035,8 +1034,8 @@ export class ConnectionCaller<T extends MessageTransport = MessageTransport> imp
       payload = encodeWithSchema(values, { kind: "tuple", elements: request.schema.args });
     }
 
-    // Convert metadata map to wire format entries
-    const metadataEntries = request.metadata ? metadataMapToEntries(request.metadata) : [];
+    // Convert metadata to wire format entries
+    const metadataEntries = request.metadata ? clientMetadataToEntries(request.metadata) : [];
 
     // Build the wire message
     const requestId = this.conn["nextRequestId"]++;

@@ -3,13 +3,13 @@
 // Allows adding metadata before making the call:
 //   await client.echo("hello").withMeta("trace-id", "abc123");
 
-import type { ClientMetadataValue } from "./middleware.ts";
+import { ClientMetadata } from "./metadata.ts";
 
 /**
  * Executor function type for CallBuilder.
  * Takes metadata and returns the call result.
  */
-export type CallExecutor<T> = (metadata: Map<string, ClientMetadataValue>) => Promise<T>;
+export type CallExecutor<T> = (metadata: ClientMetadata) => Promise<T>;
 
 /**
  * Fluent builder for RPC calls.
@@ -42,9 +42,9 @@ export type CallExecutor<T> = (metadata: Map<string, ClientMetadataValue>) => Pr
 export class CallBuilder<T> implements PromiseLike<T> {
   private resultPromise: Promise<T>;
 
-  constructor(executor: CallExecutor<T>, metadata?: Map<string, ClientMetadataValue>) {
-    // Execute immediately with the provided metadata (or empty map)
-    this.resultPromise = executor(metadata ?? new Map());
+  constructor(executor: CallExecutor<T>, metadata?: ClientMetadata) {
+    // Execute immediately with the provided metadata (or empty)
+    this.resultPromise = executor(metadata ?? new ClientMetadata());
   }
 
   /**
@@ -80,10 +80,9 @@ export class CallBuilder<T> implements PromiseLike<T> {
  *
  * This is the primary way to add per-call metadata:
  * ```typescript
- * await withMeta(
- *   new Map([["auth", "Bearer token"]]),
- *   (meta) => client.echo("hello", meta)
- * );
+ * const meta = new ClientMetadata();
+ * meta.setSensitive("authorization", "Bearer token");
+ * await withMeta(meta, (m) => client.echo("hello", m));
  * ```
  *
  * For most use cases, prefer using middleware instead:
@@ -94,7 +93,7 @@ export class CallBuilder<T> implements PromiseLike<T> {
  * ```
  */
 export function withMeta<T>(
-  metadata: Map<string, ClientMetadataValue>,
+  metadata: ClientMetadata,
   executor: CallExecutor<T>,
 ): CallBuilder<T> {
   return new CallBuilder(executor, metadata);

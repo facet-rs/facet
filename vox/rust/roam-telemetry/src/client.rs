@@ -111,6 +111,7 @@ impl<C: Caller> Caller for TracingCaller<C> {
         metadata.push((
             "traceparent".to_string(),
             MetadataValue::String(traceparent),
+            0, // flags - traceparent is not sensitive
         ));
 
         let start_time_ns = SystemTime::now()
@@ -194,6 +195,7 @@ impl<C: Caller> Caller for TracingCaller<C> {
         metadata.push((
             "traceparent".to_string(),
             MetadataValue::String(traceparent),
+            0, // flags - traceparent is not sensitive
         ));
 
         let start_time_ns = SystemTime::now()

@@ -10,8 +10,9 @@ import { fileURLToPath } from "node:url";
 
 import {
   type MetadataEntry,
-  helloV2,
+  helloV3,
   metadataString,
+  MetadataFlags,
   messageHello,
   messageGoodbye,
   messageRequest,
@@ -55,9 +56,9 @@ function hexDump(bytes: Uint8Array): string {
 
 describe("Hello golden vectors", () => {
   it("encodes Hello V2 (small values) matching Rust", () => {
-    const hello = helloV2(1024, 64);
+    const hello = helloV3(1024, 64);
     const encoded = encodeHello(hello);
-    const expected = loadGoldenVector("wire/hello_v2_small.bin");
+    const expected = loadGoldenVector("wire/hello_v3_small.bin");
 
     if (!arraysEqual(encoded, expected)) {
       console.log("Expected:", hexDump(expected));
@@ -68,9 +69,9 @@ describe("Hello golden vectors", () => {
   });
 
   it("encodes Hello V2 (typical values) matching Rust", () => {
-    const hello = helloV2(1024 * 1024, 64 * 1024);
+    const hello = helloV3(1024 * 1024, 64 * 1024);
     const encoded = encodeHello(hello);
-    const expected = loadGoldenVector("wire/hello_v2_typical.bin");
+    const expected = loadGoldenVector("wire/hello_v3_typical.bin");
 
     if (!arraysEqual(encoded, expected)) {
       console.log("Expected:", hexDump(expected));
@@ -81,16 +82,16 @@ describe("Hello golden vectors", () => {
   });
 
   it("decodes Hello V2 (small) from Rust bytes", () => {
-    const bytes = loadGoldenVector("wire/hello_v2_small.bin");
+    const bytes = loadGoldenVector("wire/hello_v3_small.bin");
     const decoded = decodeHello(bytes);
-    expect(decoded.value).toEqual(helloV2(1024, 64));
+    expect(decoded.value).toEqual(helloV3(1024, 64));
     expect(decoded.next).toBe(bytes.length);
   });
 
   it("decodes Hello V2 (typical) from Rust bytes", () => {
-    const bytes = loadGoldenVector("wire/hello_v2_typical.bin");
+    const bytes = loadGoldenVector("wire/hello_v3_typical.bin");
     const decoded = decodeHello(bytes);
-    expect(decoded.value).toEqual(helloV2(1024 * 1024, 64 * 1024));
+    expect(decoded.value).toEqual(helloV3(1024 * 1024, 64 * 1024));
     expect(decoded.next).toBe(bytes.length);
   });
 });
@@ -101,7 +102,7 @@ describe("Hello golden vectors", () => {
 
 describe("Message::Hello golden vectors", () => {
   it("encodes Message::Hello (small) matching Rust", () => {
-    const msg = messageHello(helloV2(1024, 64));
+    const msg = messageHello(helloV3(1024, 64));
     const encoded = encodeMessage(msg);
     const expected = loadGoldenVector("wire/message_hello_small.bin");
 
@@ -114,7 +115,7 @@ describe("Message::Hello golden vectors", () => {
   });
 
   it("encodes Message::Hello (typical) matching Rust", () => {
-    const msg = messageHello(helloV2(1024 * 1024, 64 * 1024));
+    const msg = messageHello(helloV3(1024 * 1024, 64 * 1024));
     const encoded = encodeMessage(msg);
     const expected = loadGoldenVector("wire/message_hello_typical.bin");
 
@@ -131,7 +132,7 @@ describe("Message::Hello golden vectors", () => {
     const decoded = decodeMessage(bytes);
     expect(decoded.value.tag).toBe("Hello");
     if (decoded.value.tag === "Hello") {
-      expect(decoded.value.value).toEqual(helloV2(1024 * 1024, 64 * 1024));
+      expect(decoded.value.value).toEqual(helloV3(1024 * 1024, 64 * 1024));
     }
     expect(decoded.next).toBe(bytes.length);
   });
@@ -208,7 +209,7 @@ describe("Message::Request golden vectors", () => {
   });
 
   it("encodes Request with metadata matching Rust", () => {
-    const metadata: MetadataEntry[] = [["key", metadataString("value")]];
+    const metadata: MetadataEntry[] = [["key", metadataString("value"), MetadataFlags.NONE]];
     const msg = messageRequest(5n, 100n, new Uint8Array([]), metadata);
     const encoded = encodeMessage(msg);
     const expected = loadGoldenVector("wire/message_request_with_metadata.bin");
@@ -231,6 +232,7 @@ describe("Message::Request golden vectors", () => {
       expect(decoded.value.metadata.length).toBe(1);
       expect(decoded.value.metadata[0][0]).toBe("key");
       expect(decoded.value.metadata[0][1]).toEqual(metadataString("value"));
+      expect(decoded.value.metadata[0][2]).toBe(MetadataFlags.NONE);
     }
     expect(decoded.next).toBe(bytes.length);
   });

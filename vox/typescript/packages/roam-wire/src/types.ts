@@ -8,19 +8,10 @@
 // ============================================================================
 
 /**
- * Hello message variant V1 (deprecated).
+ * Hello message variant V3 (supports virtual connections and metadata flags).
  */
-export interface HelloV1 {
-  tag: "V1";
-  maxPayloadSize: number;
-  initialChannelCredit: number;
-}
-
-/**
- * Hello message variant V2 (supports virtual connections).
- */
-export interface HelloV2 {
-  tag: "V2";
+export interface HelloV3 {
+  tag: "V3";
   maxPayloadSize: number;
   initialChannelCredit: number;
 }
@@ -30,7 +21,7 @@ export interface HelloV2 {
  *
  * r[impl message.hello.structure]
  */
-export type Hello = HelloV1 | HelloV2;
+export type Hello = HelloV3;
 
 // ============================================================================
 // MetadataValue
@@ -68,9 +59,26 @@ export interface MetadataValueU64 {
 export type MetadataValue = MetadataValueString | MetadataValueBytes | MetadataValueU64;
 
 /**
- * A metadata entry is a key-value pair.
+ * Metadata flags.
+ *
+ * r[impl call.metadata.flags]
  */
-export type MetadataEntry = [string, MetadataValue];
+export const MetadataFlags = {
+  /** No special handling. */
+  NONE: 0n,
+  /** Value MUST NOT be logged, traced, or included in error messages. */
+  SENSITIVE: 1n << 0n,
+  /** Value MUST NOT be forwarded to downstream calls. */
+  NO_PROPAGATE: 1n << 1n,
+} as const;
+
+/**
+ * A metadata entry is a (key, value, flags) triple.
+ *
+ * r[impl call.metadata.type] - Metadata is a list of entries.
+ * r[impl call.metadata.flags] - Each entry includes flags for handling behavior.
+ */
+export type MetadataEntry = [string, MetadataValue, bigint];
 
 // ============================================================================
 // Message
@@ -280,8 +288,7 @@ export const MetadataValueDiscriminant = {
  * Wire discriminant values for Hello variants.
  */
 export const HelloDiscriminant = {
-  V1: 0,
-  V2: 1,
+  V3: 0,
 } as const;
 
 // ============================================================================
@@ -289,17 +296,10 @@ export const HelloDiscriminant = {
 // ============================================================================
 
 /**
- * Create a Hello.V1 message (deprecated).
+ * Create a Hello.V3 message.
  */
-export function helloV1(maxPayloadSize: number, initialChannelCredit: number): HelloV1 {
-  return { tag: "V1", maxPayloadSize, initialChannelCredit };
-}
-
-/**
- * Create a Hello.V2 message.
- */
-export function helloV2(maxPayloadSize: number, initialChannelCredit: number): HelloV2 {
-  return { tag: "V2", maxPayloadSize, initialChannelCredit };
+export function helloV3(maxPayloadSize: number, initialChannelCredit: number): HelloV3 {
+  return { tag: "V3", maxPayloadSize, initialChannelCredit };
 }
 
 /**

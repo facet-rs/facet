@@ -16,8 +16,7 @@ export { RpcError, RpcErrorCode, decodeRpcResult, decodeUserError, tryDecodeRpcR
 
 export type {
   // Hello
-  HelloV1,
-  HelloV2,
+  HelloV3,
   Hello,
   // MetadataValue
   MetadataValueString,
@@ -46,9 +45,10 @@ export {
   MessageDiscriminant,
   MetadataValueDiscriminant,
   HelloDiscriminant,
+  // Metadata flags
+  MetadataFlags,
   // Factory functions
-  helloV1,
-  helloV2,
+  helloV3,
   metadataString,
   metadataBytes,
   metadataU64,

@@ -245,7 +245,7 @@ impl Connector for DaemonConnector {
     }
 
     fn hello(&self) -> Hello {
-        Hello::V1 {
+        Hello::V3 {
             max_payload_size: 1024 * 1024,
             initial_channel_credit: 64 * 1024,
         }

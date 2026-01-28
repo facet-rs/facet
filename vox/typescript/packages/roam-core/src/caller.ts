@@ -9,9 +9,9 @@ import type {
   ClientContext,
   CallRequest,
   CallOutcome,
-  ClientMetadataValue,
 } from "./middleware.ts";
 import { Extensions, RejectionError } from "./middleware.ts";
+import { ClientMetadata } from "./metadata.ts";
 
 /**
  * Internal request representation used by Caller implementations.
@@ -53,7 +53,7 @@ export interface CallerRequest {
   /**
    * Metadata to send with the request.
    */
-  metadata?: Map<string, ClientMetadataValue>;
+  metadata?: ClientMetadata;
 }
 
 /**
@@ -125,7 +125,7 @@ export class MiddlewareCaller implements Caller {
     const callRequest: CallRequest = {
       method: request.method,
       args: { ...request.args },
-      metadata: request.metadata ? new Map(request.metadata) : new Map(),
+      metadata: request.metadata ? request.metadata.clone() : new ClientMetadata(),
     };
 
     // Run pre hooks

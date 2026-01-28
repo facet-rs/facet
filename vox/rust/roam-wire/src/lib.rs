@@ -132,17 +132,11 @@ impl std::fmt::Display for MethodId {
 #[repr(u8)]
 #[derive(Debug, Clone, PartialEq, Eq, Facet)]
 pub enum Hello {
-    /// Spec v1 Hello - deprecated, will be rejected.
-    V1 {
+    /// Spec v3 Hello - metadata includes flags.
+    V3 {
         max_payload_size: u32,
         initial_channel_credit: u32,
     } = 0,
-
-    /// Spec v2 Hello - supports virtual connections.
-    V2 {
-        max_payload_size: u32,
-        initial_channel_credit: u32,
-    } = 1,
 }
 
 /// Metadata value.
@@ -166,6 +160,20 @@ impl MetadataValue {
     }
 }
 
+/// Metadata entry flags.
+///
+/// r[impl call.metadata.flags] - Flags control metadata handling behavior.
+pub mod metadata_flags {
+    /// No special handling.
+    pub const NONE: u64 = 0;
+
+    /// Value MUST NOT be logged, traced, or included in error messages.
+    pub const SENSITIVE: u64 = 1 << 0;
+
+    /// Value MUST NOT be forwarded to downstream calls.
+    pub const NO_PROPAGATE: u64 = 1 << 1;
+}
+
 /// Metadata validation limits.
 ///
 /// r[impl call.metadata.limits] - Metadata has size limits.
@@ -186,7 +194,7 @@ pub mod metadata_limits {
 /// r[impl call.metadata.keys] - Keys at most 256 bytes.
 /// r[impl call.metadata.order] - Order is preserved (Vec maintains order).
 /// r[impl call.metadata.duplicates] - Duplicate keys are allowed.
-pub fn validate_metadata(metadata: &[(String, MetadataValue)]) -> Result<(), &'static str> {
+pub fn validate_metadata(metadata: &[(String, MetadataValue, u64)]) -> Result<(), &'static str> {
     use metadata_limits::*;
 
     // Check entry count
@@ -196,7 +204,7 @@ pub fn validate_metadata(metadata: &[(String, MetadataValue)]) -> Result<(), &'s
 
     let mut total_size = 0usize;
 
-    for (key, value) in metadata {
+    for (key, value, _flags) in metadata {
         // Check key size
         if key.len() > MAX_KEY_SIZE {
             return Err("call.metadata.limits");
@@ -208,7 +216,7 @@ pub fn validate_metadata(metadata: &[(String, MetadataValue)]) -> Result<(), &'s
             return Err("call.metadata.limits");
         }
 
-        // Accumulate total size
+        // Accumulate total size (flags are varint-encoded, typically 1 byte)
         total_size += key.len() + value_len;
     }
 
@@ -220,8 +228,11 @@ pub fn validate_metadata(metadata: &[(String, MetadataValue)]) -> Result<(), &'s
     Ok(())
 }
 
-/// Metadata type alias for convenience.
-pub type Metadata = Vec<(String, MetadataValue)>;
+/// Metadata entry: (key, value, flags).
+///
+/// r[impl call.metadata.type] - Metadata is a list of entries.
+/// r[impl call.metadata.flags] - Each entry includes flags for handling behavior.
+pub type Metadata = Vec<(String, MetadataValue, u64)>;
 
 /// Protocol message.
 ///

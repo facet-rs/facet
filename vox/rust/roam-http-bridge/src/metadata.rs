@@ -54,7 +54,9 @@ impl BridgeMetadata {
     }
 
     /// Convert to roam wire metadata format.
-    pub fn to_wire_metadata(&self) -> Vec<(String, roam_wire::MetadataValue)> {
+    pub fn to_wire_metadata(&self) -> roam_wire::Metadata {
+        use roam_wire::metadata_flags;
+
         self.entries
             .iter()
             .map(|(k, v)| {
@@ -62,7 +64,13 @@ impl BridgeMetadata {
                     MetadataValue::String(s) => roam_wire::MetadataValue::String(s.clone()),
                     MetadataValue::Bytes(b) => roam_wire::MetadataValue::Bytes(b.clone()),
                 };
-                (k.clone(), wire_value)
+                // r[call.metadata.flags] - Mark authorization as sensitive
+                let flags = if k == "authorization" {
+                    metadata_flags::SENSITIVE
+                } else {
+                    metadata_flags::NONE
+                };
+                (k.clone(), wire_value, flags)
             })
             .collect()
     }

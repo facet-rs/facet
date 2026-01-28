@@ -13,7 +13,7 @@ use std::io;
 use std::time::Duration;
 
 use roam_frame::{Frame, INLINE_PAYLOAD_LEN, INLINE_PAYLOAD_SLOT, MsgDesc, Payload};
-use roam_wire::{Message, MetadataValue};
+use roam_wire::Message;
 
 use crate::guest::{SendError, ShmGuest};
 use crate::msg::msg_type;
@@ -450,7 +450,7 @@ pub fn frame_to_message(frame: Frame) -> Result<Message, ConvertError> {
 #[derive(facet::Facet)]
 struct CombinedPayload {
     conn_id: u64,
-    metadata: Vec<(String, MetadataValue)>,
+    metadata: roam_wire::Metadata,
     channels: Vec<u64>,
     payload: Vec<u8>,
 }
@@ -458,13 +458,13 @@ struct CombinedPayload {
 /// Encode conn_id + metadata + channels + payload for Request messages.
 fn encode_request_payload(
     conn_id: roam_wire::ConnectionId,
-    metadata: &[(String, MetadataValue)],
+    metadata: &roam_wire::Metadata,
     channels: &[u64],
     payload: &[u8],
 ) -> Vec<u8> {
     let combined = CombinedPayload {
         conn_id: conn_id.0,
-        metadata: metadata.to_vec(),
+        metadata: metadata.clone(),
         channels: channels.to_vec(),
         payload: payload.to_vec(),
     };
@@ -481,13 +481,13 @@ fn encode_request_payload(
 /// Encode conn_id + metadata + channels + payload for Response messages.
 fn encode_response_payload(
     conn_id: roam_wire::ConnectionId,
-    metadata: &[(String, MetadataValue)],
+    metadata: &roam_wire::Metadata,
     channels: &[u64],
     payload: &[u8],
 ) -> Vec<u8> {
     let combined = CombinedPayload {
         conn_id: conn_id.0,
-        metadata: metadata.to_vec(),
+        metadata: metadata.clone(),
         channels: channels.to_vec(),
         payload: payload.to_vec(),
     };
@@ -497,7 +497,7 @@ fn encode_response_payload(
 type DecodedRequestPayloadWithConnId = Result<
     (
         roam_wire::ConnectionId,
-        Vec<(String, MetadataValue)>,
+        roam_wire::Metadata,
         Vec<u64>,
         Vec<u8>,
     ),
@@ -507,7 +507,7 @@ type DecodedRequestPayloadWithConnId = Result<
 type DecodedResponsePayloadWithConnId = Result<
     (
         roam_wire::ConnectionId,
-        Vec<(String, MetadataValue)>,
+        roam_wire::Metadata,
         Vec<u64>,
         Vec<u8>,
     ),
@@ -914,7 +914,7 @@ mod async_transport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use roam_wire::{ConnectionId, Hello};
+    use roam_wire::{ConnectionId, Hello, MetadataValue};
 
     #[test]
     fn roundtrip_request() {
@@ -925,6 +925,7 @@ mod tests {
             metadata: vec![(
                 "key".to_string(),
                 MetadataValue::String("value".to_string()),
+                0, // flags
             )],
             channels: vec![],
             payload: b"hello world".to_vec(),
@@ -1029,7 +1030,7 @@ mod tests {
 
     #[test]
     fn hello_not_supported() {
-        let msg = Message::Hello(Hello::V2 {
+        let msg = Message::Hello(Hello::V3 {
             max_payload_size: 64 * 1024,
             initial_channel_credit: 64 * 1024,
         });

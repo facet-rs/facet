@@ -37,8 +37,8 @@ impl PendingSpan {
         let trace_ctx = ctx
             .metadata()
             .iter()
-            .find(|(k, _)| k == TraceContext::TRACEPARENT_KEY)
-            .and_then(|(_, v)| match v {
+            .find(|(k, _, _)| k == TraceContext::TRACEPARENT_KEY)
+            .and_then(|(_, v, _)| match v {
                 roam_wire::MetadataValue::String(s) => TraceContext::parse(s),
                 _ => None,
             });
@@ -64,12 +64,18 @@ impl PendingSpan {
         ];
 
         // Add metadata as attributes (limited to avoid bloat)
-        for (key, value) in ctx.metadata().iter().take(10) {
+        // r[impl call.metadata.flags] - Respect SENSITIVE flag
+        for (key, value, flags) in ctx.metadata().iter().take(10) {
             if key != TraceContext::TRACEPARENT_KEY {
-                let value_str = match value {
-                    roam_wire::MetadataValue::String(s) => s.clone(),
-                    roam_wire::MetadataValue::Bytes(b) => format!("<{} bytes>", b.len()),
-                    roam_wire::MetadataValue::U64(n) => n.to_string(),
+                let is_sensitive = (flags & roam_wire::metadata_flags::SENSITIVE) != 0;
+                let value_str = if is_sensitive {
+                    "[REDACTED]".to_string()
+                } else {
+                    match value {
+                        roam_wire::MetadataValue::String(s) => s.clone(),
+                        roam_wire::MetadataValue::Bytes(b) => format!("<{} bytes>", b.len()),
+                        roam_wire::MetadataValue::U64(n) => n.to_string(),
+                    }
                 };
                 attributes.push(KeyValue::string(format!("rpc.metadata.{}", key), value_str));
             }

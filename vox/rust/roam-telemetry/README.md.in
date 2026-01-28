@@ -70,7 +70,7 @@ async fn my_handler(ctx: &Context, ...) -> Result<...> {
         downstream_client
             .call()
             .with_metadata(vec![
-                ("traceparent".into(), MetadataValue::String(traceparent))
+                ("traceparent".into(), MetadataValue::String(traceparent), 0)
             ])
             .await?;
     }

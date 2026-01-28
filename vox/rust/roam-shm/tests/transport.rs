@@ -41,6 +41,7 @@ async fn guest_transport_send_request() {
         metadata: vec![(
             "auth".to_string(),
             MetadataValue::String("token123".to_string()),
+            0, // flags
         )],
         channels: vec![],
         payload: b"request body".to_vec(),
@@ -98,8 +99,13 @@ async fn host_guest_transport_roundtrip() {
             (
                 "key1".to_string(),
                 MetadataValue::String("value1".to_string()),
+                0, // flags
             ),
-            ("key2".to_string(), MetadataValue::Bytes(vec![1, 2, 3, 4])),
+            (
+                "key2".to_string(),
+                MetadataValue::Bytes(vec![1, 2, 3, 4]),
+                0, // flags
+            ),
         ],
         channels: vec![],
         payload: b"hello server".to_vec(),
@@ -259,6 +265,7 @@ async fn large_metadata() {
         metadata.push((
             format!("key{}", i),
             MetadataValue::String(format!("value{}", i)),
+            0, // flags
         ));
     }
 

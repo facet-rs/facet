@@ -147,7 +147,18 @@ export function loggingMiddleware(options: LoggingOptions = {}): ClientMiddlewar
       }
 
       if (logMetadata && request.metadata.size > 0) {
-        logObj.metadata = Object.fromEntries(request.metadata.entries());
+        // r[impl call.metadata.flags] - Respect SENSITIVE flag when logging
+        const metaObj: Record<string, unknown> = {};
+        for (const [key, value, _flags] of request.metadata) {
+          if (request.metadata.isSensitive(key)) {
+            metaObj[key] = "[REDACTED]";
+          } else if (value instanceof Uint8Array) {
+            metaObj[key] = `<${value.length} bytes>`;
+          } else {
+            metaObj[key] = value;
+          }
+        }
+        logObj.metadata = metaObj;
       }
 
       console.log(`→ ${request.method}`, logObj);

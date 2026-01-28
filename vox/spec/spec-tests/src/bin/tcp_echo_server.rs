@@ -66,7 +66,7 @@ async fn handle_connection(stream: TcpStream) -> Result<(), Box<dyn std::error::
     let mut io = CobsFramed::new(stream);
 
     // Send our Hello
-    let our_hello = Hello::V2 {
+    let our_hello = Hello::V3 {
         max_payload_size: 1024 * 1024,
         initial_channel_credit: 64 * 1024,
     };
@@ -75,13 +75,10 @@ async fn handle_connection(stream: TcpStream) -> Result<(), Box<dyn std::error::
     // Wait for client Hello
     let msg = io.recv().await?.ok_or("expected Hello")?;
     let _negotiated_max = match msg {
-        Message::Hello(Hello::V2 {
+        Message::Hello(Hello::V3 {
             max_payload_size, ..
         }) => max_payload_size,
-        Message::Hello(Hello::V1 { .. }) => {
-            return Err("received Hello::V1, but V1 is no longer supported".into());
-        }
-        _ => return Err("expected Hello".into()),
+        _ => return Err("expected Hello::V3".into()),
     };
 
     // Handle requests

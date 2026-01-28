@@ -28,24 +28,24 @@ fn main() {
     let wire_dir = out_dir.join("wire");
     fs::create_dir_all(&wire_dir).expect("failed to create wire directory");
 
-    // Hello messages (V2 for spec v2.0.0)
-    let hello_small = Hello::V2 {
+    // Hello messages (V3 for spec v3.0.0)
+    let hello_small = Hello::V3 {
         max_payload_size: 1024,
         initial_channel_credit: 64,
     };
     write_vector(
         &wire_dir,
-        "hello_v2_small",
+        "hello_v3_small",
         &facet_postcard::to_vec(&hello_small).unwrap(),
     );
 
-    let hello_typical = Hello::V2 {
+    let hello_typical = Hello::V3 {
         max_payload_size: 1024 * 1024,
         initial_channel_credit: 64 * 1024,
     };
     write_vector(
         &wire_dir,
-        "hello_v2_typical",
+        "hello_v3_typical",
         &facet_postcard::to_vec(&hello_typical).unwrap(),
     );
 
@@ -80,6 +80,7 @@ fn main() {
         metadata: vec![(
             "auth".to_string(),
             MetadataValue::String("token123".to_string()),
+            0, // flags
         )],
     };
     write_vector(
@@ -167,6 +168,7 @@ fn main() {
         metadata: vec![(
             "key".to_string(),
             MetadataValue::String("value".to_string()),
+            0, // flags
         )],
         channels: vec![],
         payload: vec![],
@@ -698,8 +700,8 @@ fn main() {
     write_vector(&cobs_dir, "multiple_zeros_encoded", &encoded);
     write_vector(&cobs_dir, "multiple_zeros_raw", &data);
 
-    // Hello message (v2)
-    let hello = Message::Hello(Hello::V2 {
+    // Hello message (v3)
+    let hello = Message::Hello(Hello::V3 {
         max_payload_size: 1024 * 1024,
         initial_channel_credit: 64 * 1024,
     });

@@ -3,11 +3,10 @@
 // Middleware allows intercepting and modifying requests/responses,
 // enabling patterns like auth injection, tracing, logging, and observability.
 
-/**
- * Metadata value type for client middleware.
- * Values can be strings, u64 bigints, or raw bytes.
- */
-export type ClientMetadataValue = string | bigint | Uint8Array;
+import type { ClientMetadata } from "./metadata.ts";
+
+// Re-export for backwards compatibility
+export type { ClientMetadataValue } from "./metadata.ts";
 
 /**
  * Extensions provide type-safe, symbol-keyed storage for middleware state.
@@ -87,8 +86,9 @@ export interface CallRequest {
   /**
    * Request metadata (headers).
    * Middleware can add/modify entries for auth, tracing, etc.
+   * Use `set()` for normal metadata, `setSensitive()` for sensitive values.
    */
-  metadata: Map<string, ClientMetadataValue>;
+  metadata: ClientMetadata;
 }
 
 /**
@@ -145,7 +145,8 @@ export class RejectionError extends Error {
  * ```typescript
  * const authMiddleware: ClientMiddleware = {
  *   pre(ctx, request) {
- *     request.metadata.set("authorization", `Bearer ${getToken()}`);
+ *     // Use setSensitive for auth tokens so they're redacted in logs
+ *     request.metadata.setSensitive("authorization", `Bearer ${getToken()}`);
  *   }
  * };
  *

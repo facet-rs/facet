@@ -14,7 +14,7 @@ use roam_wire::{ConnectionId, Hello, Message, MetadataValue};
 use spec_tests::harness::{accept_subject, accept_subject_with_options, our_hello, run_async};
 use spec_tests::testbed::method_id;
 
-fn metadata_empty() -> Vec<(String, MetadataValue)> {
+fn metadata_empty() -> Vec<(String, MetadataValue, u64)> {
     Vec::new()
 }
 
@@ -30,11 +30,11 @@ async fn complete_hello_handshake(
         .ok_or_else(|| "expected Hello from subject".to_string())?;
 
     let (their_max_payload, their_credit) = match msg {
-        Message::Hello(Hello::V2 {
+        Message::Hello(Hello::V3 {
             max_payload_size,
             initial_channel_credit,
         }) => (max_payload_size, initial_channel_credit),
-        other => return Err(format!("expected Hello::V2, got {other:?}")),
+        other => return Err(format!("expected Hello::V3, got {other:?}")),
     };
 
     // Send our Hello
@@ -305,8 +305,9 @@ fn connect_message_structure() {
                 (
                     "auth".to_string(),
                     MetadataValue::String("token123".to_string()),
+                    0,
                 ),
-                ("version".to_string(), MetadataValue::U64(2)),
+                ("version".to_string(), MetadataValue::U64(2), 0),
             ],
         };
         io.send(&connect_msg).await.map_err(|e| e.to_string())?;

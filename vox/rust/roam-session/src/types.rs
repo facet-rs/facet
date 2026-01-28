@@ -84,7 +84,7 @@ pub enum DriverMessage {
         conn_id: roam_wire::ConnectionId,
         request_id: u64,
         method_id: u64,
-        metadata: Vec<(String, roam_wire::MetadataValue)>,
+        metadata: roam_wire::Metadata,
         /// Channel IDs used by this call (Tx/Rx), in declaration order.
         channels: Vec<u64>,
         payload: Vec<u8>,

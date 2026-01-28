@@ -748,7 +748,7 @@ where
         conn_id: ConnectionId,
         request_id: u64,
         method_id: u64,
-        metadata: Vec<(String, roam_wire::MetadataValue)>,
+        metadata: roam_wire::Metadata,
         channels: Vec<u64>,
         payload: Vec<u8>,
     ) -> Result<(), ShmConnectionError> {
@@ -2258,7 +2258,7 @@ impl MultiPeerHostDriver {
         conn_id: ConnectionId,
         request_id: u64,
         method_id: u64,
-        metadata: Vec<(String, roam_wire::MetadataValue)>,
+        metadata: roam_wire::Metadata,
         channels: Vec<u64>,
         payload: Vec<u8>,
     ) -> Result<(), ShmConnectionError> {

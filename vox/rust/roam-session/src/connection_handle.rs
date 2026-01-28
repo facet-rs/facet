@@ -703,7 +703,7 @@ impl ConnectionHandle {
         &self,
         method_id: u64,
         payload: Vec<u8>,
-        metadata: Vec<(String, roam_wire::MetadataValue)>,
+        metadata: roam_wire::Metadata,
     ) -> Result<Vec<u8>, TransportError> {
         self.call_raw_full(method_id, metadata, Vec::new(), payload, None)
             .await
@@ -716,7 +716,7 @@ impl ConnectionHandle {
     async fn call_raw_full(
         &self,
         method_id: u64,
-        metadata: Vec<(String, roam_wire::MetadataValue)>,
+        metadata: roam_wire::Metadata,
         channels: Vec<u64>,
         payload: Vec<u8>,
         args_debug: Option<String>,

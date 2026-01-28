@@ -33,25 +33,25 @@ struct WireEncodingTests {
     // MARK: - Hello Tests
 
     @Test func testHelloEncodingSmall() throws {
-        let hello = Hello.v1(maxPayloadSize: 1024, initialChannelCredit: 64)
-        try assertEncoding(hello.encode(), "wire/hello_v1_small.bin")
+        let hello = Hello.v3(maxPayloadSize: 1024, initialChannelCredit: 64)
+        try assertEncoding(hello.encode(), "wire/hello_v3_small.bin")
     }
 
     @Test func testHelloEncodingTypical() throws {
-        let hello = Hello.v1(maxPayloadSize: 1_048_576, initialChannelCredit: 65536)
-        try assertEncoding(hello.encode(), "wire/hello_v1_typical.bin")
+        let hello = Hello.v3(maxPayloadSize: 1_048_576, initialChannelCredit: 65536)
+        try assertEncoding(hello.encode(), "wire/hello_v3_typical.bin")
     }
 
     // MARK: - Message Tests
 
     @Test func testMessageHelloSmall() throws {
-        let hello = Hello.v1(maxPayloadSize: 1024, initialChannelCredit: 64)
+        let hello = Hello.v3(maxPayloadSize: 1024, initialChannelCredit: 64)
         let msg = Message.hello(hello)
         try assertEncoding(msg.encode(), "wire/message_hello_small.bin")
     }
 
     @Test func testMessageHelloTypical() throws {
-        let hello = Hello.v1(maxPayloadSize: 1_048_576, initialChannelCredit: 65536)
+        let hello = Hello.v3(maxPayloadSize: 1_048_576, initialChannelCredit: 65536)
         let msg = Message.hello(hello)
         try assertEncoding(msg.encode(), "wire/message_hello_typical.bin")
     }
@@ -108,7 +108,7 @@ struct WireEncodingTests {
         let bytes = try loadGoldenVector("wire/message_hello_small.bin")
         let msg = try Message.decode(from: Data(bytes))
         guard case .hello(let hello) = msg,
-            case .v1(let maxPayload, let initialCredit) = hello
+            case .v3(let maxPayload, let initialCredit) = hello
         else {
             Issue.record("Expected Hello message")
             return

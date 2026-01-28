@@ -27,17 +27,11 @@ fn wire_spy_enabled() -> bool {
 fn format_message(msg: &Message, direction: &str) -> String {
     match msg {
         Message::Hello(hello) => match hello {
-            Hello::V1 {
+            Hello::V3 {
                 max_payload_size,
                 initial_channel_credit,
             } => format!(
-                "{direction} Hello::V1 {{ max_payload: {max_payload_size}, credit: {initial_channel_credit} }}"
-            ),
-            Hello::V2 {
-                max_payload_size,
-                initial_channel_credit,
-            } => format!(
-                "{direction} Hello::V2 {{ max_payload: {max_payload_size}, credit: {initial_channel_credit} }}"
+                "{direction} Hello::V3 {{ max_payload: {max_payload_size}, credit: {initial_channel_credit} }}"
             ),
         },
         Message::Goodbye { reason, .. } => format!("{direction} Goodbye {{ reason: {reason:?} }}"),
@@ -108,7 +102,7 @@ pub fn run_async<T>(f: impl std::future::Future<Output = T>) -> T {
 }
 
 pub fn our_hello(max_payload_size: u32) -> Hello {
-    Hello::V2 {
+    Hello::V3 {
         max_payload_size,
         initial_channel_credit: 64 * 1024,
     }
@@ -294,7 +288,6 @@ pub async fn spawn_subject_client(peer_addr: &str, scenario: &str) -> Result<Chi
 /// roam-against-roam.
 pub mod wire_server {
     use super::*;
-    use roam_wire::MetadataValue;
     use std::collections::HashMap;
 
     /// Run a wire-level server for the given scenario.
@@ -332,11 +325,8 @@ pub mod wire_server {
             .ok_or("connection closed before hello")?;
 
         match msg {
-            Message::Hello(Hello::V2 { .. }) => {}
-            Message::Hello(Hello::V1 { .. }) => {
-                return Err("received Hello::V1, but V1 is no longer supported".to_string());
-            }
-            other => return Err(format!("expected Hello, got {other:?}")),
+            Message::Hello(Hello::V3 { .. }) => {}
+            other => return Err(format!("expected Hello::V3, got {other:?}")),
         }
 
         // Handle requests until client disconnects
@@ -363,7 +353,7 @@ pub mod wire_server {
         pub transform: u64,
     }
 
-    fn metadata_empty() -> Vec<(String, MetadataValue)> {
+    fn metadata_empty() -> roam_wire::Metadata {
         Vec::new()
     }
 

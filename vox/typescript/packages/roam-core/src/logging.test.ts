@@ -4,6 +4,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { loggingMiddleware } from "./logging.ts";
 import { Extensions } from "./middleware.ts";
 import type { ClientContext, CallRequest, CallOutcome } from "./middleware.ts";
+import { ClientMetadata } from "./metadata.ts";
 
 // Mock localStorage
 const mockLocalStorage: Record<string, string> = {};
@@ -42,7 +43,7 @@ describe("loggingMiddleware", () => {
     const request: CallRequest = {
       method: "Service.method",
       args: {},
-      metadata: new Map(),
+      metadata: new ClientMetadata(),
     };
 
     // Pre hook
@@ -72,7 +73,7 @@ describe("loggingMiddleware", () => {
     const request: CallRequest = {
       method: "Service.echo",
       args: { message: "hello", count: 42 },
-      metadata: new Map(),
+      metadata: new ClientMetadata(),
     };
 
     middleware.pre?.(ctx, request);
@@ -87,7 +88,7 @@ describe("loggingMiddleware", () => {
     const request: CallRequest = {
       method: "Service.echo",
       args: { message: "hello" },
-      metadata: new Map(),
+      metadata: new ClientMetadata(),
     };
 
     middleware.pre?.(ctx, request);
@@ -100,7 +101,7 @@ describe("loggingMiddleware", () => {
     const request: CallRequest = {
       method: "Service.method",
       args: {},
-      metadata: new Map(),
+      metadata: new ClientMetadata(),
     };
 
     middleware.pre?.(ctx, request);
@@ -117,7 +118,7 @@ describe("loggingMiddleware", () => {
     const request: CallRequest = {
       method: "Service.method",
       args: {},
-      metadata: new Map(),
+      metadata: new ClientMetadata(),
     };
 
     middleware.pre?.(ctx, request);
@@ -132,13 +133,13 @@ describe("loggingMiddleware", () => {
   it("logs metadata when enabled", () => {
     const middleware = loggingMiddleware({ logMetadata: true });
     const ctx: ClientContext = { extensions: new Extensions() };
+    const metadata = new ClientMetadata();
+    metadata.set("authorization", "Bearer token");
+    metadata.set("trace-id", "123");
     const request: CallRequest = {
       method: "Service.method",
       args: {},
-      metadata: new Map([
-        ["authorization", "Bearer token"],
-        ["trace-id", "123"],
-      ]),
+      metadata,
     };
 
     middleware.pre?.(ctx, request);
@@ -150,13 +151,34 @@ describe("loggingMiddleware", () => {
     });
   });
 
+  it("redacts sensitive metadata when logged", () => {
+    const middleware = loggingMiddleware({ logMetadata: true });
+    const ctx: ClientContext = { extensions: new Extensions() };
+    const metadata = new ClientMetadata();
+    metadata.setSensitive("authorization", "Bearer super-secret-token");
+    metadata.set("trace-id", "123");
+    const request: CallRequest = {
+      method: "Service.method",
+      args: {},
+      metadata,
+    };
+
+    middleware.pre?.(ctx, request);
+    expect(consoleLogs[0].data).toMatchObject({
+      metadata: {
+        authorization: "[REDACTED]",
+        "trace-id": "123",
+      },
+    });
+  });
+
   it("logs errors", async () => {
     const middleware = loggingMiddleware();
     const ctx: ClientContext = { extensions: new Extensions() };
     const request: CallRequest = {
       method: "Service.method",
       args: {},
-      metadata: new Map(),
+      metadata: new ClientMetadata(),
     };
 
     middleware.pre?.(ctx, request);
@@ -180,7 +202,7 @@ describe("loggingMiddleware", () => {
     const request: CallRequest = {
       method: "Service.fast",
       args: {},
-      metadata: new Map(),
+      metadata: new ClientMetadata(),
     };
 
     middleware.pre?.(ctx, request);
@@ -200,7 +222,7 @@ describe("loggingMiddleware", () => {
     const request: CallRequest = {
       method: "Service.slow",
       args: {},
-      metadata: new Map(),
+      metadata: new ClientMetadata(),
     };
 
     middleware.pre?.(ctx, request);
@@ -223,7 +245,7 @@ describe("loggingMiddleware", () => {
     const request: CallRequest = {
       method: "Service.method",
       args: {},
-      metadata: new Map(),
+      metadata: new ClientMetadata(),
     };
 
     middleware.pre?.(ctx, request);
@@ -238,7 +260,7 @@ describe("loggingMiddleware", () => {
     const request: CallRequest = {
       method: "Service.method",
       args: {},
-      metadata: new Map(),
+      metadata: new ClientMetadata(),
     };
 
     middleware.pre?.(ctx, request);
@@ -258,7 +280,7 @@ describe("loggingMiddleware", () => {
     const request: CallRequest = {
       method: "Service.method",
       args: {},
-      metadata: new Map(),
+      metadata: new ClientMetadata(),
     };
 
     middleware.pre?.(ctx, request);
@@ -273,7 +295,7 @@ describe("loggingMiddleware", () => {
     const request: CallRequest = {
       method: "Service.method",
       args: {},
-      metadata: new Map(),
+      metadata: new ClientMetadata(),
     };
 
     middleware.pre?.(ctx, request);

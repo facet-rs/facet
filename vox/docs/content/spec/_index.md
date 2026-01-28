@@ -6,7 +6,7 @@ weight = 10
 
 # Introduction
 
-This is roam specification v2.0.0, last updated January 20, 2026. It canonically
+This is roam specification v3.0.0, last updated January 28, 2026. It canonically
 lives at <https://github.com/bearcove/roam> — where you can get the latest version.
 
 roam is a **Rust-native** RPC protocol. We don't claim to be language-neutral —
@@ -524,7 +524,7 @@ A Request contains:
 Request {
     request_id: u64,
     method_id: u64,
-    metadata: Vec<(String, MetadataValue)>,
+    metadata: Metadata,
     channels: Vec<u64>,  // Channel IDs used by this call, in declaration order
     payload: Vec<u8>,  // [^POSTCARD]-encoded arguments
 }
@@ -556,7 +556,7 @@ A Response contains:
 ```rust
 Response {
     request_id: u64,
-    metadata: Vec<(String, MetadataValue)>,
+    metadata: Metadata,
     payload: Vec<u8>,  // [^POSTCARD]-encoded Result<T, RoamError<E>>
 }
 ```
@@ -594,7 +594,8 @@ Requests and Responses carry a `metadata` field for out-of-band information.
 
 > r[call.metadata.type]
 >
-> Metadata is a list of key-value pairs: `Vec<(String, MetadataValue)>`.
+> Metadata is a list of entries: `Vec<(String, MetadataValue, u64)>`.
+> Each entry is a triple of (key, value, flags).
 
 ```rust
 enum MetadataValue {
@@ -602,7 +603,22 @@ enum MetadataValue {
     Bytes(Vec<u8>),  // 1
     U64(u64),        // 2
 }
+
+// Metadata entry: (key, value, flags)
+type Metadata = Vec<(String, MetadataValue, u64)>;
 ```
+
+> r[call.metadata.flags]
+>
+> The flags field is a `u64` bitfield controlling metadata handling:
+>
+> | Bit | Name | Meaning |
+> |-----|------|---------|
+> | 0 | `SENSITIVE` | Value MUST NOT be logged, traced, or included in error messages |
+> | 1 | `NO_PROPAGATE` | Value MUST NOT be forwarded to downstream calls |
+> | 2-63 | Reserved | MUST be zero; peers MUST ignore unknown flag bits |
+>
+> Flags are encoded as a varint, so common values (0, 1, 2, 3) use only 1 byte.
 
 > r[call.metadata.keys]
 >
@@ -643,9 +659,31 @@ Metadata is application-defined. Common uses include:
 
 - **Deadlines**: Absolute timestamp after which the caller no longer cares
 - **Distributed tracing**: W3C traceparent/tracestate, or other trace IDs
-- **Authentication**: Bearer tokens, API keys, signatures
+- **Authentication**: Bearer tokens, API keys, signatures (with `SENSITIVE` flag)
 - **Priority**: Scheduling hints for request processing order
 - **Compression**: Indicating payload compression scheme
+
+### Flag Usage Examples
+
+Authentication tokens should be marked sensitive to prevent logging:
+
+```rust
+metadata.push((
+    "authorization".to_string(),
+    MetadataValue::String("Bearer sk-...".to_string()),
+    SENSITIVE,  // bit 0 = don't log this value
+));
+```
+
+Session tokens that shouldn't leak to downstream services:
+
+```rust
+metadata.push((
+    "session-id".to_string(),
+    MetadataValue::String(session_id),
+    SENSITIVE | NO_PROPAGATE,  // bits 0+1 = don't log, don't forward
+));
+```
 
 ## RoamError
 
@@ -1161,16 +1199,16 @@ enum Message {
     Hello(Hello),
     
     // Virtual connection control
-    Connect { request_id: u64, metadata: Vec<(String, MetadataValue)> },
-    Accept { request_id: u64, conn_id: u64, metadata: Vec<(String, MetadataValue)> },
-    Reject { request_id: u64, reason: String, metadata: Vec<(String, MetadataValue)> },
+    Connect { request_id: u64, metadata: Metadata },
+    Accept { request_id: u64, conn_id: u64, metadata: Metadata },
+    Reject { request_id: u64, reason: String, metadata: Metadata },
     
     // Connection control (conn_id scoped)
     Goodbye { conn_id: u64, reason: String },
     
     // RPC (conn_id scoped)
-    Request { conn_id: u64, request_id: u64, method_id: u64, metadata: Vec<(String, MetadataValue)>, channels: Vec<u64>, payload: Vec<u8> },
-    Response { conn_id: u64, request_id: u64, metadata: Vec<(String, MetadataValue)>, payload: Vec<u8> },
+    Request { conn_id: u64, request_id: u64, method_id: u64, metadata: Metadata, channels: Vec<u64>, payload: Vec<u8> },
+    Response { conn_id: u64, request_id: u64, metadata: Metadata, payload: Vec<u8> },
     Cancel { conn_id: u64, request_id: u64 },
     
     // Channels (conn_id scoped)
@@ -1229,7 +1267,7 @@ type, and each variant contains only the fields it needs.
 
 ```rust
 enum Hello {
-    V1 {
+    V3 {
         max_payload_size: u32,
         initial_channel_credit: u32,
     },
@@ -1257,9 +1295,9 @@ enum Hello {
 These messages manage virtual connections on a link.
 
 ```rust
-Connect { request_id: u64, metadata: Vec<(String, MetadataValue)> }
-Accept { request_id: u64, conn_id: u64, metadata: Vec<(String, MetadataValue)> }
-Reject { request_id: u64, reason: String, metadata: Vec<(String, MetadataValue)> }
+Connect { request_id: u64, metadata: Metadata }
+Accept { request_id: u64, conn_id: u64, metadata: Metadata }
+Reject { request_id: u64, reason: String, metadata: Metadata }
 ```
 
 > r[message.connect.initiate]

@@ -12,12 +12,11 @@ import type { Schema, SchemaRegistry, EnumSchema, TupleSchema } from "@bearcove/
 /**
  * Schema for Hello enum.
  *
- * Rust definition:
+ * Rust definition (v3.0.0):
  * ```rust
  * #[repr(u8)]
  * pub enum Hello {
- *     V1 { max_payload_size: u32, initial_channel_credit: u32 } = 0,
- *     V2 { max_payload_size: u32, initial_channel_credit: u32 } = 1,
+ *     V3 { max_payload_size: u32, initial_channel_credit: u32 } = 0,
  * }
  * ```
  */
@@ -25,16 +24,8 @@ export const HelloSchema: EnumSchema = {
   kind: "enum",
   variants: [
     {
-      name: "V1",
+      name: "V3",
       discriminant: 0,
-      fields: {
-        maxPayloadSize: { kind: "u32" },
-        initialChannelCredit: { kind: "u32" },
-      },
-    },
-    {
-      name: "V2",
-      discriminant: 1,
       fields: {
         maxPayloadSize: { kind: "u32" },
         initialChannelCredit: { kind: "u32" },
@@ -74,11 +65,14 @@ export const MetadataValueSchema: EnumSchema = {
 // ============================================================================
 
 /**
- * Schema for a metadata entry tuple (String, MetadataValue).
+ * Schema for a metadata entry tuple (String, MetadataValue, u64).
+ *
+ * r[impl call.metadata.type] - Metadata is a list of entries.
+ * r[impl call.metadata.flags] - Each entry includes flags for handling behavior.
  */
 export const MetadataEntrySchema: TupleSchema = {
   kind: "tuple",
-  elements: [{ kind: "string" }, { kind: "ref", name: "MetadataValue" }],
+  elements: [{ kind: "string" }, { kind: "ref", name: "MetadataValue" }, { kind: "u64" }],
 };
 
 // ============================================================================
@@ -88,17 +82,17 @@ export const MetadataEntrySchema: TupleSchema = {
 /**
  * Schema for Message enum.
  *
- * Rust definition (v2.0.0):
+ * Rust definition (v3.0.0):
  * ```rust
  * #[repr(u8)]
  * pub enum Message {
  *     Hello(Hello) = 0,
- *     Connect { request_id: u64, metadata: Vec<(String, MetadataValue)> } = 1,
- *     Accept { request_id: u64, conn_id: u64, metadata: Vec<(String, MetadataValue)> } = 2,
- *     Reject { request_id: u64, reason: String, metadata: Vec<(String, MetadataValue)> } = 3,
+ *     Connect { request_id: u64, metadata: Metadata } = 1,
+ *     Accept { request_id: u64, conn_id: u64, metadata: Metadata } = 2,
+ *     Reject { request_id: u64, reason: String, metadata: Metadata } = 3,
  *     Goodbye { conn_id: u64, reason: String } = 4,
- *     Request { conn_id: u64, request_id: u64, method_id: u64, metadata: Vec<(String, MetadataValue)>, channels: Vec<u64>, payload: Vec<u8> } = 5,
- *     Response { conn_id: u64, request_id: u64, metadata: Vec<(String, MetadataValue)>, channels: Vec<u64>, payload: Vec<u8> } = 6,
+ *     Request { conn_id: u64, request_id: u64, method_id: u64, metadata: Metadata, channels: Vec<u64>, payload: Vec<u8> } = 5,
+ *     Response { conn_id: u64, request_id: u64, metadata: Metadata, channels: Vec<u64>, payload: Vec<u8> } = 6,
  *     Cancel { conn_id: u64, request_id: u64 } = 7,
  *     Data { conn_id: u64, channel_id: u64, payload: Vec<u8> } = 8,
  *     Close { conn_id: u64, channel_id: u64 } = 9,
@@ -106,6 +100,8 @@ export const MetadataEntrySchema: TupleSchema = {
  *     Credit { conn_id: u64, channel_id: u64, bytes: u32 } = 11,
  * }
  * ```
+ *
+ * Where `Metadata = Vec<(String, MetadataValue, u64)>`.
  */
 export const MessageSchema: EnumSchema = {
   kind: "enum",
