@@ -106,7 +106,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                     trace!(?key, "deserialize_struct_simple: got FieldKey");
 
                     // Unit keys don't make sense for struct fields
-                    let key_name = match &key.name {
+                    let key_name = match key.name() {
                         Some(name) => name.as_ref(),
                         None => {
                             // Skip unit keys in struct context

@@ -511,7 +511,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                     }
                     if depth == 1 {
                         // Top-level field - save name, wait for value
-                        pending_field_name = key.name;
+                        pending_field_name = key.name().cloned();
                     }
                 }
                 ParseEventKind::Scalar(scalar) => {
@@ -794,7 +794,14 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                             // Begin key
                             wip = wip
                                 .begin_key()?
-                                .with(|w| self.deserialize_map_key(w, key.name, key.doc, key.tag))?
+                                .with(|w| {
+                                    self.deserialize_map_key(
+                                        w,
+                                        key.name().cloned(),
+                                        key.doc().map(|d| d.to_vec()),
+                                        key.tag().cloned(),
+                                    )
+                                })?
                                 .end()?;
 
                             // Begin value
@@ -929,7 +936,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                         ParseEventKind::StructEnd => break,
                         ParseEventKind::FieldKey(key) => {
                             // Look for _arg field (single argument)
-                            if key.name.as_deref() == Some("_arg") {
+                            if key.name().map(|c| c.as_ref()) == Some("_arg") {
                                 let value_event = self.expect_event("argument value")?;
                                 if let ParseEventKind::Scalar(scalar) = value_event.kind {
                                     found_scalar = Some(scalar);

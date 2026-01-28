@@ -102,7 +102,7 @@ pub fn solve_variant<'de>(
             ParseEventKind::FieldKey(key) => {
                 if depth == 1 && in_struct {
                     // Top-level field - feed to solver
-                    if let Some(name) = key.name
+                    if let Some(name) = key.name().cloned()
                         && let Some(handle) = handle_key(&mut solver, name)
                     {
                         break Some(handle);

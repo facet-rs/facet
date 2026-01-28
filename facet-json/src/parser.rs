@@ -159,7 +159,7 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
                 .map_err(scan_error_to_parse_error)?;
         }
 
-        self.state.last_token_start = spanned.span.offset;
+        self.state.last_token_start = spanned.span.offset as usize;
         self.state.scanner_pos = self.scanner.pos();
 
         let kind = match spanned.token {
@@ -369,7 +369,7 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
             .scanner
             .next_token(self.input)
             .map_err(scan_error_to_parse_error)?;
-        let start = first.span.offset;
+        let start = first.span.offset as usize;
         self.state.scanner_pos = self.scanner.pos();
 
         match first.token {
@@ -783,7 +783,7 @@ impl<'de, const TRUSTED_UTF8: bool> FormatParser<'de> for JsonParser<'de, TRUSTE
                 .scanner
                 .next_token(self.input)
                 .map_err(scan_error_to_parse_error)?;
-            let start = first.span.offset;
+            let start = first.span.offset as usize;
             self.state.scanner_pos = self.scanner.pos();
 
             // Skip the rest of the value if it's a container

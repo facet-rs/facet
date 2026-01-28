@@ -284,14 +284,16 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         // Get the variant name from the field key
         let event = self.expect_event("value")?;
         let field_key_name = match event.kind {
-            ParseEventKind::FieldKey(key) => key.name.ok_or_else(|| DeserializeError {
-                span: Some(self.last_span),
-                path: Some(wip.path()),
-                kind: DeserializeErrorKind::UnexpectedToken {
-                    expected: "variant name",
-                    got: "unit key".into(),
-                },
-            })?,
+            ParseEventKind::FieldKey(key) => {
+                key.name().cloned().ok_or_else(|| DeserializeError {
+                    span: Some(self.last_span),
+                    path: Some(wip.path()),
+                    kind: DeserializeErrorKind::UnexpectedToken {
+                        expected: "variant name",
+                        got: "unit key".into(),
+                    },
+                })?
+            }
             other => {
                 return Err(DeserializeError {
                     span: Some(self.last_span),
@@ -472,7 +474,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 ParseEventKind::StructEnd => break,
                 ParseEventKind::FieldKey(key) => {
                     // Unit keys don't make sense for struct fields
-                    let key_name = match &key.name {
+                    let key_name = match key.name() {
                         Some(name) => name.as_ref(),
                         None => {
                             // Skip unit keys in struct context
@@ -591,7 +593,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         // Get the variant name from FieldKey
         let field_event = self.expect_event("enum field key")?;
         let variant_name = match field_event.kind {
-            ParseEventKind::FieldKey(key) => key.name.ok_or_else(|| {
+            ParseEventKind::FieldKey(key) => key.name().cloned().ok_or_else(|| {
                 self.mk_err(
                     &wip,
                     DeserializeErrorKind::UnexpectedToken {
@@ -810,14 +812,16 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         // Read the FieldKey with the variant name ("Ok" or "Err")
         let key_event = self.expect_event("variant key for Result")?;
         let variant_name = match key_event.kind {
-            ParseEventKind::FieldKey(key) => key.name.ok_or_else(|| DeserializeError {
-                span: Some(self.last_span),
-                path: Some(wip.path()),
-                kind: DeserializeErrorKind::UnexpectedToken {
-                    expected: "variant name",
-                    got: "unit key".into(),
-                },
-            })?,
+            ParseEventKind::FieldKey(key) => {
+                key.name().cloned().ok_or_else(|| DeserializeError {
+                    span: Some(self.last_span),
+                    path: Some(wip.path()),
+                    kind: DeserializeErrorKind::UnexpectedToken {
+                        expected: "variant name",
+                        got: "unit key".into(),
+                    },
+                })?
+            }
             _ => {
                 return Err(DeserializeError {
                     span: Some(self.last_span),
@@ -939,7 +943,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 ParseEventKind::StructEnd => break,
                 ParseEventKind::FieldKey(key) => {
                     // Unit keys don't make sense for struct fields
-                    let key_name = match &key.name {
+                    let key_name = match key.name() {
                         Some(name) => name.as_ref(),
                         None => {
                             // Skip unit keys in struct context
@@ -1067,7 +1071,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 ParseEventKind::StructEnd => break,
                 ParseEventKind::FieldKey(key) => {
                     // Unit keys don't make sense for adjacently tagged enums
-                    let key_name = match &key.name {
+                    let key_name = match key.name() {
                         Some(name) => name.as_ref(),
                         None => {
                             // Skip unit keys
@@ -1287,7 +1291,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                             }
                         }
                         ParseEventKind::FieldKey(key) => {
-                            let key_name = match &key.name {
+                            let key_name = match key.name() {
                                 Some(name) => name.as_ref(),
                                 None => {
                                     self.skip_value()?;

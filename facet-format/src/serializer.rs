@@ -104,7 +104,7 @@ pub trait FormatSerializer {
     /// Formats that support tags (like Styx) should override this.
     fn emit_field_key(&mut self, key: &crate::FieldKey<'_>) -> Result<(), Self::Error> {
         // Default: ignore tag and doc, just emit the name (empty string if None)
-        let name = key.name.as_deref().unwrap_or("");
+        let name = key.name().map(|c| c.as_ref()).unwrap_or("");
         self.field_key(name)
     }
     /// End a map/object/struct.

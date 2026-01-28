@@ -435,9 +435,11 @@ fn convert_event_to_raw(event: ParseEvent<'_>) -> RawEvent {
         },
         ParseEventKind::FieldKey(key) => {
             // For JIT, unit keys become empty strings (we don't have a way to represent None)
-            let (ptr, len) = match key.name {
+            let (ptr, len) = match key.name() {
                 Some(Cow::Borrowed(s)) => (s.as_ptr(), s.len()),
                 Some(Cow::Owned(s)) => {
+                    // Owned string - need to clone it for JIT to keep alive
+                    let s = s.clone();
                     // Use into_raw_parts to prevent the string from being dropped.
                     // We store the raw parts in thread-local storage and free them
                     // on the next call to next_event_wrapper.
