@@ -62,7 +62,7 @@ mod tracing_macros;
 #[cfg(test)]
 mod value_expr_test;
 
-pub use error::{RenderError, StyxError, StyxErrorKind};
+pub use error::RenderError;
 pub use facet_format::DeserializeError;
 pub use facet_format::SerializeError;
 #[cfg(feature = "figue")]

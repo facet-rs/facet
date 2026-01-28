@@ -1,10 +1,7 @@
 //! Error types for Styx parsing.
 
-use std::fmt;
-
 use ariadne::{Color, Config, Label, Report, ReportKind, Source};
 use facet_format::{DeserializeError, DeserializeErrorKind};
-use styx_parse::Span;
 
 /// Get ariadne config, respecting NO_COLOR env var.
 fn ariadne_config() -> Config {
@@ -16,175 +13,7 @@ fn ariadne_config() -> Config {
     }
 }
 
-/// Error that can occur during Styx parsing.
-#[derive(Debug, Clone, PartialEq)]
-pub struct StyxError {
-    pub kind: StyxErrorKind,
-    pub span: Option<Span>,
-}
-
-impl StyxError {
-    pub fn new(kind: StyxErrorKind, span: Option<Span>) -> Self {
-        Self { kind, span }
-    }
-
-    /// Render this error with ariadne.
-    ///
-    /// Returns a string containing the formatted error message with source context.
-    pub fn render(&self, filename: &str, source: &str) -> String {
-        let mut output = Vec::new();
-        self.write_report(filename, source, &mut output);
-        String::from_utf8(output).unwrap_or_else(|_| format!("{}", self))
-    }
-
-    /// Write the error report to a writer.
-    pub fn write_report<W: std::io::Write>(&self, filename: &str, source: &str, writer: W) {
-        let report = self.build_report(filename, source);
-        let _ = report
-            .with_config(ariadne_config())
-            .finish()
-            .write((filename, Source::from(source)), writer);
-    }
-
-    /// Build an ariadne report for this error.
-    pub fn build_report<'a>(
-        &self,
-        filename: &'a str,
-        _source: &str,
-    ) -> ariadne::ReportBuilder<'static, (&'a str, std::ops::Range<usize>)> {
-        let range = self
-            .span
-            .map(|s| s.start as usize..s.end as usize)
-            .unwrap_or(0..1);
-
-        match &self.kind {
-            // diag[impl diagnostic.deser.invalid-value]
-            StyxErrorKind::InvalidScalar { value, expected } => {
-                Report::build(ReportKind::Error, (filename, range.clone()))
-                    .with_message(format!("invalid value '{}'", value))
-                    .with_label(
-                        Label::new((filename, range))
-                            .with_message(format!("expected {}", expected))
-                            .with_color(Color::Red),
-                    )
-            }
-
-            // diag[impl diagnostic.deser.missing-field]
-            StyxErrorKind::MissingField { name } => {
-                Report::build(ReportKind::Error, (filename, range.clone()))
-                    .with_message(format!("missing required field '{}'", name))
-                    .with_label(
-                        Label::new((filename, range))
-                            .with_message("in this object")
-                            .with_color(Color::Red),
-                    )
-                    .with_help(format!("add the required field: {} <value>", name))
-            }
-
-            // diag[impl diagnostic.deser.unknown-field]
-            StyxErrorKind::UnknownField { name } => {
-                Report::build(ReportKind::Error, (filename, range.clone()))
-                    .with_message(format!("unknown field '{}'", name))
-                    .with_label(
-                        Label::new((filename, range))
-                            .with_message("unknown field")
-                            .with_color(Color::Red),
-                    )
-            }
-
-            StyxErrorKind::UnexpectedToken { got, expected } => {
-                Report::build(ReportKind::Error, (filename, range.clone()))
-                    .with_message(format!("unexpected token '{}'", got))
-                    .with_label(
-                        Label::new((filename, range))
-                            .with_message(format!("expected {}", expected))
-                            .with_color(Color::Red),
-                    )
-            }
-
-            StyxErrorKind::UnexpectedEof { expected } => {
-                Report::build(ReportKind::Error, (filename, range.clone()))
-                    .with_message("unexpected end of input")
-                    .with_label(
-                        Label::new((filename, range))
-                            .with_message(format!("expected {}", expected))
-                            .with_color(Color::Red),
-                    )
-            }
-
-            StyxErrorKind::InvalidEscape { sequence } => {
-                Report::build(ReportKind::Error, (filename, range.clone()))
-                    .with_message(format!("invalid escape sequence '{}'", sequence))
-                    .with_label(
-                        Label::new((filename, range))
-                            .with_message("invalid escape")
-                            .with_color(Color::Red),
-                    )
-                    .with_help("valid escapes are: \\\\, \\\", \\n, \\r, \\t, \\uXXXX, \\u{X...}")
-            }
-        }
-    }
-}
-
-impl fmt::Display for StyxError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.kind)?;
-        if let Some(span) = &self.span {
-            write!(f, " at offset {}", span.start)?;
-        }
-        Ok(())
-    }
-}
-
-impl std::error::Error for StyxError {}
-
-/// Kind of Styx error.
-#[derive(Debug, Clone, PartialEq)]
-pub enum StyxErrorKind {
-    /// Unexpected token.
-    UnexpectedToken { got: String, expected: &'static str },
-    /// Unexpected end of input.
-    UnexpectedEof { expected: &'static str },
-    /// Invalid scalar value for target type.
-    InvalidScalar {
-        value: String,
-        expected: &'static str,
-    },
-    /// Missing required field.
-    MissingField { name: String },
-    /// Unknown field.
-    UnknownField { name: String },
-    /// Invalid escape sequence.
-    InvalidEscape { sequence: String },
-}
-
-impl fmt::Display for StyxErrorKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            StyxErrorKind::UnexpectedToken { got, expected } => {
-                write!(f, "unexpected token '{}', expected {}", got, expected)
-            }
-            StyxErrorKind::UnexpectedEof { expected } => {
-                write!(f, "unexpected end of input, expected {}", expected)
-            }
-            StyxErrorKind::InvalidScalar { value, expected } => {
-                write!(f, "invalid value '{}', expected {}", value, expected)
-            }
-            StyxErrorKind::MissingField { name } => {
-                write!(f, "missing required field '{}'", name)
-            }
-            StyxErrorKind::UnknownField { name } => {
-                write!(f, "unknown field '{}'", name)
-            }
-            StyxErrorKind::InvalidEscape { sequence } => {
-                write!(f, "invalid escape sequence '{}'", sequence)
-            }
-        }
-    }
-}
-
 /// Convert a facet_reflect::Span to a Range<usize>.
-#[allow(dead_code)]
 fn reflect_span_to_range(span: &facet_reflect::Span) -> std::ops::Range<usize> {
     let start = span.offset as usize;
     let end = start + span.len as usize;
@@ -192,7 +21,6 @@ fn reflect_span_to_range(span: &facet_reflect::Span) -> std::ops::Range<usize> {
 }
 
 /// Trait for rendering errors with ariadne diagnostics.
-#[allow(dead_code)]
 pub trait RenderError {
     /// Render this error with ariadne.
     ///
@@ -224,7 +52,6 @@ impl RenderError for DeserializeError {
     }
 }
 
-#[allow(dead_code)]
 fn build_deserialize_error_report<'a>(
     err: &DeserializeError,
     filename: &'a str,
@@ -251,7 +78,7 @@ fn build_deserialize_error_report<'a>(
                     .with_message(format!("in {}", container_shape))
                     .with_color(Color::Red),
             )
-            .with_help(format!("add the required field: {} <value>", field)),
+            .with_help(format!("{} <value>", field)),
 
         // Unknown field from facet-format
         DeserializeErrorKind::UnknownField { field, suggestion } => {

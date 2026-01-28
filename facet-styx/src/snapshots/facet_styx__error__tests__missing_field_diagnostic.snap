@@ -9,5 +9,5 @@ Error: missing required field 'age'
    │      ──┬──  
    │        ╰──── in Person
    │ 
-   │ Help: add the required field: age <value>
+   │ Help: age <value>
 ───╯
