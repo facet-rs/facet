@@ -14,6 +14,8 @@ use facet_core::{
 use hashbrown::HashMap;
 use indextree::Arena;
 
+use crate::AllocError;
+
 // Re-export NodeId for use by other modules
 pub use indextree::NodeId;
 
@@ -44,43 +46,95 @@ pub struct TypePlanNode {
     pub proxy: Option<&'static ProxyDef>,
 }
 
-/// Precomputed deserialization strategy.
+/// Precomputed deserialization strategy with all data needed to execute it.
 ///
-/// This tells facet-format exactly how to deserialize a value without
-/// needing to inspect Shape/Def/vtable at runtime. Computed once at
-/// TypePlan build time.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// This is denormalized: we store NodeIds, proxy defs, etc. directly so the
+/// deserializer can follow the plan without chasing pointers through Shape/vtable.
+#[derive(Debug, Clone)]
 pub enum DeserStrategy {
-    /// Has container-level proxy - call begin_custom_deserialization_from_shape
-    Proxy,
-    /// Smart pointer (Box, Arc, Rc) - call deserialize_pointer
-    Pointer,
-    /// Transparent wrapper with try_from - call begin_inner, deserialize, convert
-    TransparentConvert,
-    /// Scalar with FromStr - call deserialize_scalar
+    /// Container-level proxy: the type itself has `#[facet(proxy = X)]`
+    ContainerProxy {
+        /// The proxy definition containing conversion functions
+        proxy_def: &'static ProxyDef,
+        /// The shape of the proxy type (what we deserialize)
+        proxy_shape: &'static Shape,
+        /// NodeId of the child node representing the proxy type's structure
+        proxy_node: NodeId,
+    },
+    /// Field-level proxy: the field has `#[facet(proxy = X)]` but the type doesn't
+    FieldProxy {
+        /// The proxy definition containing conversion functions
+        proxy_def: &'static ProxyDef,
+        /// The shape of the proxy type (what we deserialize)
+        proxy_shape: &'static Shape,
+        /// NodeId of the child node representing the proxy type's structure
+        proxy_node: NodeId,
+    },
+    /// Smart pointer (Box, Arc, Rc) with known pointee type
+    Pointer {
+        /// NodeId of the pointee type's plan
+        pointee_node: NodeId,
+    },
+    /// Opaque smart pointer (`#[facet(opaque)]`) - cannot be deserialized, only set wholesale
+    OpaquePointer,
+    /// Opaque type (`Opaque<T>`) - cannot be deserialized, only set wholesale via proxy
+    Opaque,
+    /// Transparent wrapper with try_from (like NonZero)
+    TransparentConvert {
+        /// NodeId of the inner type's plan
+        inner_node: NodeId,
+    },
+    /// Scalar with FromStr
     Scalar,
-    /// Named struct - call deserialize_struct
+    /// Named struct
     Struct,
-    /// Tuple or tuple struct - call deserialize_tuple
+    /// Tuple or tuple struct
     Tuple,
-    /// Enum - call deserialize_enum
+    /// Enum
     Enum,
-    /// `Option<T>` - handle None/Some
-    Option,
-    /// `Result<T, E>` - handle Ok/Err
-    Result,
-    /// List (Vec, VecDeque, etc.) - call deserialize_list
-    List,
-    /// Map (HashMap, BTreeMap, etc.) - call deserialize_map
-    Map,
-    /// Set (HashSet, BTreeSet, etc.) - call deserialize_set
-    Set,
-    /// Fixed-size array [T; N] - call deserialize_array
-    Array,
-    /// BackRef to recursive type - follow the reference
-    BackRef,
-    /// Unknown - fall back to runtime dispatch (shouldn't happen)
-    Unknown,
+    /// `Option<T>`
+    Option {
+        /// NodeId of the Some variant's inner type plan
+        some_node: NodeId,
+    },
+    /// `Result<T, E>`
+    Result {
+        /// NodeId of the Ok variant's type plan
+        ok_node: NodeId,
+        /// NodeId of the Err variant's type plan
+        err_node: NodeId,
+    },
+    /// List (Vec, VecDeque, etc.)
+    List {
+        /// NodeId of the item type's plan
+        item_node: NodeId,
+    },
+    /// Map (HashMap, BTreeMap, etc.)
+    Map {
+        /// NodeId of the key type's plan
+        key_node: NodeId,
+        /// NodeId of the value type's plan
+        value_node: NodeId,
+    },
+    /// Set (HashSet, BTreeSet, etc.)
+    Set {
+        /// NodeId of the item type's plan
+        item_node: NodeId,
+    },
+    /// Fixed-size array [T; N]
+    Array {
+        /// Array length
+        len: usize,
+        /// NodeId of the item type's plan
+        item_node: NodeId,
+    },
+    /// DynamicValue (like `facet_value::Value`)
+    DynamicValue,
+    /// BackRef to recursive type - deser_strategy() resolves this
+    BackRef {
+        /// NodeId of the target node this backref points to
+        target: NodeId,
+    },
 }
 
 /// The specific kind of type and its deserialization strategy.
@@ -133,15 +187,22 @@ pub enum TypePlanNodeKind {
     /// Child: pointee type T
     Pointer,
 
+    /// Opaque smart pointers (`#[facet(opaque)]`)
+    /// No child - the pointee type is unknown/opaque
+    OpaquePointer,
+
+    /// Opaque types (`Opaque<T>`) - can only be set wholesale, not deserialized
+    Opaque,
+
+    /// DynamicValue (like `serde_json::Value`)
+    DynamicValue,
+
     /// Transparent wrappers (newtypes)
     /// Child: inner type
     Transparent,
 
     /// Back-reference to an ancestor node (for recursive types)
     BackRef(NodeId),
-
-    /// Unknown/unsupported type - fall back to runtime dispatch
-    Unknown,
 }
 
 /// Precomputed plan for struct deserialization.
@@ -402,11 +463,11 @@ impl TypePlanBuilder {
     }
 
     /// Build a node for a shape, returning its NodeId.
-    /// Uses the shape's own proxy if present.
-    fn build_node(&mut self, shape: &'static Shape) -> NodeId {
-        // Check for type-level proxy on the shape itself
-        let proxy = shape.effective_proxy(self.format_namespace);
-        self.build_node_with_proxy(shape, proxy)
+    /// Uses the shape's own proxy if present (container-level proxy).
+    fn build_node(&mut self, shape: &'static Shape) -> Result<NodeId, AllocError> {
+        // No field-level proxy when building directly - container proxy will be detected
+        // inside build_node_with_proxy from the shape itself
+        self.build_node_with_proxy(shape, None)
     }
 
     /// Build a node for a shape with an optional explicit proxy override.
@@ -417,25 +478,23 @@ impl TypePlanBuilder {
     ///
     /// The node stores:
     /// - `shape`: the original type (conversion target, for metadata)
-    /// - `kind`: built from proxy shape if present (for navigation during deserialization)
+    /// - `kind`: built from the original shape (not the proxy)
     /// - `proxy`: proxy definition (for conversion detection)
+    ///
+    /// If a proxy is present, a child node is built for the proxy type, and the
+    /// strategy includes the child's NodeId so the deserializer can navigate to it.
     fn build_node_with_proxy(
         &mut self,
         shape: &'static Shape,
-        explicit_proxy: Option<&'static ProxyDef>,
-    ) -> NodeId {
+        field_proxy: Option<&'static ProxyDef>,
+    ) -> Result<NodeId, AllocError> {
         let type_id = shape.id;
 
-        // Field-level proxy takes precedence, then fall back to type-level proxy
-        let proxy = explicit_proxy.or_else(|| shape.effective_proxy(self.format_namespace));
+        // Get container-level proxy (from the type itself)
+        let container_proxy = shape.effective_proxy(self.format_namespace);
 
-        // For navigation, we need to build the tree structure based on what we'll
-        // actually deserialize. If there's a proxy, that's the proxy shape.
-        let navigation_shape = if let Some(proxy_def) = proxy {
-            proxy_def.shape
-        } else {
-            shape
-        };
+        // Field-level proxy takes precedence
+        let effective_proxy = field_proxy.or(container_proxy);
 
         // Check if we're already building this type (cycle detected)
         // Use the original type_id for cycle detection
@@ -444,31 +503,55 @@ impl TypePlanBuilder {
             let backref_node = TypePlanNode {
                 shape, // Original shape (conversion target)
                 kind: TypePlanNodeKind::BackRef(existing_id),
-                strategy: DeserStrategy::BackRef,
+                strategy: DeserStrategy::BackRef {
+                    target: existing_id,
+                },
                 has_default: shape.is(Characteristic::Default),
-                proxy,
+                proxy: effective_proxy,
             };
-            return self.arena.new_node(backref_node);
+            return Ok(self.arena.new_node(backref_node));
         }
 
-        // Create placeholder node first so children can reference it
+        // Create placeholder node first so children can reference it.
+        // We use Scalar as a dummy strategy - it will be overwritten before we return.
         let placeholder = TypePlanNode {
-            shape,                            // Original shape (conversion target)
-            kind: TypePlanNodeKind::Unknown,  // Will be replaced
-            strategy: DeserStrategy::Unknown, // Will be replaced
+            shape,                           // Original shape (conversion target)
+            kind: TypePlanNodeKind::Scalar,  // Placeholder, will be replaced
+            strategy: DeserStrategy::Scalar, // Placeholder, will be replaced
             has_default: shape.is(Characteristic::Default),
-            proxy,
+            proxy: effective_proxy,
         };
         let node_id = self.arena.new_node(placeholder);
 
         // Mark this type as being built
         self.building.insert(type_id, node_id);
 
-        // Build the kind and children from navigation_shape (proxy if present)
-        let kind = self.build_kind(navigation_shape, node_id);
+        // If there's a proxy, build a child node for the proxy type FIRST.
+        // This child represents what we actually deserialize.
+        let proxy_node = if let Some(proxy_def) = effective_proxy {
+            // Build a node for the proxy type itself (no proxy inheritance)
+            let proxy_shape = proxy_def.shape;
+            // Recursively build the proxy type's node - it will have its own kind/strategy
+            let proxy_child_id = self.build_node(proxy_shape)?;
+            node_id.append(proxy_child_id, &mut self.arena);
+            Some(proxy_child_id)
+        } else {
+            None
+        };
 
-        // Compute the deserialization strategy based on original shape and proxy
-        let strategy = self.compute_strategy(shape, &kind, proxy);
+        // Build the kind for the original shape (not proxy) - this is used for
+        // non-proxy operations on the type
+        let kind = self.build_kind(shape, node_id)?;
+
+        // Compute the deserialization strategy
+        let strategy = self.compute_strategy(
+            shape,
+            &kind,
+            container_proxy,
+            field_proxy,
+            proxy_node,
+            node_id,
+        )?;
 
         // Update the node with the real kind and strategy
         let node = self.arena.get_mut(node_id).unwrap().get_mut();
@@ -479,34 +562,58 @@ impl TypePlanBuilder {
         // This ensures only ancestors are tracked, not all visited types
         self.building.remove(&type_id);
 
-        node_id
+        Ok(node_id)
     }
 
-    /// Compute the deserialization strategy based on shape, kind, and proxy.
+    /// Compute the deserialization strategy with all data needed to execute it.
     ///
-    /// This mirrors the dispatch logic in facet-format's `deserialize_into` but
-    /// computes it once at TypePlan build time instead of at every deserialization.
+    /// `proxy_node` is the NodeId of the child node for the proxy type (if any).
+    /// `parent_id` is used to find child NodeIds that were built by `build_kind`.
     fn compute_strategy(
         &self,
         shape: &'static Shape,
         kind: &TypePlanNodeKind,
         proxy: Option<&'static ProxyDef>,
-    ) -> DeserStrategy {
-        // Priority 1: If there's a container-level proxy, use Proxy strategy
-        // This handles #[facet(proxy = ...)] or #[facet(json::proxy = ...)]
-        if proxy.is_some() {
-            return DeserStrategy::Proxy;
+        explicit_field_proxy: Option<&'static ProxyDef>,
+        proxy_node: Option<NodeId>,
+        parent_id: NodeId,
+    ) -> Result<DeserStrategy, AllocError> {
+        // Helper to get nth child (skipping proxy node if present)
+        let child_offset = if proxy_node.is_some() { 1 } else { 0 };
+        let nth_child = |n: usize| -> NodeId {
+            parent_id
+                .children(&self.arena)
+                .nth(n + child_offset)
+                .expect("child should exist")
+        };
+        let first_child = || nth_child(0);
+
+        // Priority 1: Field-level proxy (field has proxy, type doesn't)
+        if let Some(field_proxy) = explicit_field_proxy {
+            return Ok(DeserStrategy::FieldProxy {
+                proxy_def: field_proxy,
+                proxy_shape: field_proxy.shape,
+                proxy_node: proxy_node.expect("field proxy requires proxy_node"),
+            });
         }
 
-        // Priority 2: Smart pointers (Box, Arc, Rc) get Pointer strategy
+        // Priority 2: Container-level proxy (type itself has proxy)
+        if let Some(container_proxy) = proxy {
+            return Ok(DeserStrategy::ContainerProxy {
+                proxy_def: container_proxy,
+                proxy_shape: container_proxy.shape,
+                proxy_node: proxy_node.expect("container proxy requires proxy_node"),
+            });
+        }
+
+        // Priority 3: Smart pointers (Box, Arc, Rc)
         if matches!(kind, TypePlanNodeKind::Pointer) {
-            return DeserStrategy::Pointer;
+            return Ok(DeserStrategy::Pointer {
+                pointee_node: first_child(),
+            });
         }
 
-        // Priority 3: Types with .inner and try_from (like NonZero<T>)
-        // These have def: Scalar but need to deserialize via begin_inner + conversion.
-        // Collections have .inner for variance but shouldn't use this path.
-        // OrderedFloat has .inner but NO try_from - it uses FromStr directly.
+        // Priority 4: Types with .inner and try_from (like NonZero<T>)
         if shape.inner.is_some()
             && shape.vtable.has_try_from()
             && !matches!(
@@ -514,41 +621,36 @@ impl TypePlanBuilder {
                 Def::List(_) | Def::Map(_) | Def::Set(_) | Def::Array(_)
             )
         {
-            return DeserStrategy::TransparentConvert;
+            return Ok(DeserStrategy::TransparentConvert {
+                inner_node: first_child(),
+            });
         }
 
-        // Priority 4: Transparent wrappers with try_from (TypePlanNodeKind::Transparent)
-        // This is a fallback for types that `build_kind` identified as Transparent
+        // Priority 5: Transparent wrappers with try_from
         if matches!(kind, TypePlanNodeKind::Transparent) && shape.vtable.has_try_from() {
-            return DeserStrategy::TransparentConvert;
+            return Ok(DeserStrategy::TransparentConvert {
+                inner_node: first_child(),
+            });
         }
 
-        // Priority 5: Scalars with FromStr capability
-        // Important: Check this BEFORE tuple structs because types like OrderedFloat
-        // have def: Scalar but ty: Struct(Tuple)
+        // Priority 6: Scalars with FromStr
         if matches!(&shape.def, Def::Scalar) && shape.vtable.has_parse() {
-            return DeserStrategy::Scalar;
+            return Ok(DeserStrategy::Scalar);
         }
 
-        // Priority 6: Match on the kind for everything else
-        match kind {
+        // Priority 7: Match on the kind
+        Ok(match kind {
             TypePlanNodeKind::Scalar => {
-                // For Scalar kind without FromStr, check if it's actually a tuple struct
-                // (like empty tuple `()` which has def: Scalar but ty: Struct(Tuple))
+                // Empty tuple has def: Scalar but ty: Struct(Tuple)
                 if let Type::User(UserType::Struct(struct_def)) = &shape.ty {
                     use facet_core::StructKind;
-                    match struct_def.kind {
-                        StructKind::Tuple | StructKind::TupleStruct => {
-                            return DeserStrategy::Tuple;
-                        }
-                        _ => {}
+                    if matches!(struct_def.kind, StructKind::Tuple | StructKind::TupleStruct) {
+                        return Ok(DeserStrategy::Tuple);
                     }
                 }
-                // Real scalars without FromStr
                 DeserStrategy::Scalar
             }
             TypePlanNodeKind::Struct(struct_plan) => {
-                // Distinguish between named structs and tuple structs
                 use facet_core::StructKind;
                 match struct_plan.struct_def.kind {
                     StructKind::Tuple | StructKind::TupleStruct => DeserStrategy::Tuple,
@@ -556,117 +658,150 @@ impl TypePlanBuilder {
                 }
             }
             TypePlanNodeKind::Enum(_) => DeserStrategy::Enum,
-            TypePlanNodeKind::Option => DeserStrategy::Option,
-            TypePlanNodeKind::Result => DeserStrategy::Result,
-            TypePlanNodeKind::List | TypePlanNodeKind::Slice => DeserStrategy::List,
-            TypePlanNodeKind::Map => DeserStrategy::Map,
-            TypePlanNodeKind::Set => DeserStrategy::Set,
-            TypePlanNodeKind::Array { .. } => DeserStrategy::Array,
-            TypePlanNodeKind::Pointer => DeserStrategy::Pointer, // Already handled above, but for completeness
+            TypePlanNodeKind::Option => DeserStrategy::Option {
+                some_node: first_child(),
+            },
+            TypePlanNodeKind::Result => DeserStrategy::Result {
+                ok_node: nth_child(0),
+                err_node: nth_child(1),
+            },
+            TypePlanNodeKind::List | TypePlanNodeKind::Slice => DeserStrategy::List {
+                item_node: first_child(),
+            },
+            TypePlanNodeKind::Map => DeserStrategy::Map {
+                key_node: nth_child(0),
+                value_node: nth_child(1),
+            },
+            TypePlanNodeKind::Set => DeserStrategy::Set {
+                item_node: first_child(),
+            },
+            TypePlanNodeKind::Array { len } => DeserStrategy::Array {
+                len: *len,
+                item_node: first_child(),
+            },
+            TypePlanNodeKind::DynamicValue => DeserStrategy::DynamicValue,
+            TypePlanNodeKind::Pointer => DeserStrategy::Pointer {
+                pointee_node: first_child(),
+            },
+            TypePlanNodeKind::OpaquePointer => DeserStrategy::OpaquePointer,
+            TypePlanNodeKind::Opaque => DeserStrategy::Opaque,
             TypePlanNodeKind::Transparent => {
-                // Transparent without try_from - this type relies on inner deserialization
-                // The deserializer should recurse into the inner type
-                DeserStrategy::Unknown
+                // Transparent wrapper without try_from - unsupported
+                return Err(AllocError {
+                    shape,
+                    operation: "transparent wrapper requires try_from for deserialization",
+                });
             }
-            TypePlanNodeKind::BackRef(_) => DeserStrategy::BackRef,
-            TypePlanNodeKind::Unknown => DeserStrategy::Unknown,
-        }
+            TypePlanNodeKind::BackRef(target) => DeserStrategy::BackRef { target: *target },
+        })
     }
 
     /// Build the TypePlanNodeKind for a shape, attaching children to parent_id.
-    fn build_kind(&mut self, shape: &'static Shape, parent_id: NodeId) -> TypePlanNodeKind {
+    fn build_kind(
+        &mut self,
+        shape: &'static Shape,
+        parent_id: NodeId,
+    ) -> Result<TypePlanNodeKind, AllocError> {
         // Check shape.def first - this tells us the semantic meaning of the type
-        match &shape.def {
+        Ok(match &shape.def {
             Def::Scalar => {
                 // For scalar types with shape.inner (like NonZero<T>), build a child node
                 // for the inner type. This enables proper TypePlan navigation when
                 // begin_inner() is called for transparent wrapper deserialization.
                 if let Some(inner_shape) = shape.inner {
-                    let inner_id = self.build_node(inner_shape);
+                    let inner_id = self.build_node(inner_shape)?;
                     parent_id.append(inner_id, &mut self.arena);
                 }
                 TypePlanNodeKind::Scalar
             }
 
             Def::Option(opt_def) => {
-                let inner_id = self.build_node(opt_def.t());
+                let inner_id = self.build_node(opt_def.t())?;
                 parent_id.append(inner_id, &mut self.arena);
                 TypePlanNodeKind::Option
             }
 
             Def::Result(res_def) => {
-                let ok_id = self.build_node(res_def.t());
-                let err_id = self.build_node(res_def.e());
+                let ok_id = self.build_node(res_def.t())?;
+                let err_id = self.build_node(res_def.e())?;
                 parent_id.append(ok_id, &mut self.arena);
                 parent_id.append(err_id, &mut self.arena);
                 TypePlanNodeKind::Result
             }
 
             Def::List(list_def) => {
-                let item_id = self.build_node(list_def.t());
+                let item_id = self.build_node(list_def.t())?;
                 parent_id.append(item_id, &mut self.arena);
                 TypePlanNodeKind::List
             }
 
             Def::Map(map_def) => {
-                let key_id = self.build_node(map_def.k());
-                let value_id = self.build_node(map_def.v());
+                let key_id = self.build_node(map_def.k())?;
+                let value_id = self.build_node(map_def.v())?;
                 parent_id.append(key_id, &mut self.arena);
                 parent_id.append(value_id, &mut self.arena);
                 TypePlanNodeKind::Map
             }
 
             Def::Set(set_def) => {
-                let item_id = self.build_node(set_def.t());
+                let item_id = self.build_node(set_def.t())?;
                 parent_id.append(item_id, &mut self.arena);
                 TypePlanNodeKind::Set
             }
 
             Def::Array(arr_def) => {
-                let item_id = self.build_node(arr_def.t());
+                let item_id = self.build_node(arr_def.t())?;
                 parent_id.append(item_id, &mut self.arena);
                 TypePlanNodeKind::Array { len: arr_def.n }
             }
 
             Def::Pointer(ptr_def) => {
                 if let Some(pointee) = ptr_def.pointee() {
-                    let pointee_id = self.build_node(pointee);
+                    let pointee_id = self.build_node(pointee)?;
                     parent_id.append(pointee_id, &mut self.arena);
                     TypePlanNodeKind::Pointer
                 } else {
-                    TypePlanNodeKind::Unknown
+                    // Opaque pointer - no pointee shape available
+                    TypePlanNodeKind::OpaquePointer
                 }
             }
 
+            Def::DynamicValue(_) => TypePlanNodeKind::DynamicValue,
+
             _ => {
-                // Check Type for struct/enum/slice
+                // Check Type for struct/enum/slice - these have Def::Undefined but meaningful ty
                 match &shape.ty {
                     Type::User(UserType::Struct(struct_type)) => {
-                        TypePlanNodeKind::Struct(self.build_struct_plan(struct_type, parent_id))
+                        TypePlanNodeKind::Struct(self.build_struct_plan(struct_type, parent_id)?)
                     }
                     Type::User(UserType::Enum(enum_type)) => {
-                        TypePlanNodeKind::Enum(self.build_enum_plan(enum_type, parent_id))
+                        TypePlanNodeKind::Enum(self.build_enum_plan(enum_type, parent_id)?)
                     }
                     // Handle slices like lists - they have an element type
                     Type::Sequence(SequenceType::Slice(slice_type)) => {
-                        let item_id = self.build_node(slice_type.t);
+                        let item_id = self.build_node(slice_type.t)?;
                         parent_id.append(item_id, &mut self.arena);
                         // Use Slice kind so we can distinguish from List if needed
                         TypePlanNodeKind::Slice
                     }
+                    // Opaque types have Def::Undefined AND ty that doesn't match above
+                    Type::User(UserType::Opaque) | Type::Undefined => TypePlanNodeKind::Opaque,
                     _ => {
                         // Check for transparent wrappers (newtypes) as fallback
                         if let Some(inner) = shape.inner {
-                            let inner_id = self.build_node(inner);
+                            let inner_id = self.build_node(inner)?;
                             parent_id.append(inner_id, &mut self.arena);
                             TypePlanNodeKind::Transparent
                         } else {
-                            TypePlanNodeKind::Unknown
+                            return Err(AllocError {
+                                shape,
+                                operation: "unsupported type for deserialization",
+                            });
                         }
                     }
                 }
             }
-        }
+        })
     }
 
     /// Build a StructPlan, attaching field children to parent_id.
@@ -674,7 +809,7 @@ impl TypePlanBuilder {
         &mut self,
         struct_def: &'static StructType,
         parent_id: NodeId,
-    ) -> StructPlan {
+    ) -> Result<StructPlan, AllocError> {
         let mut fields = Vec::with_capacity(struct_def.fields.len());
 
         for field in struct_def.fields.iter() {
@@ -683,7 +818,7 @@ impl TypePlanBuilder {
 
             // Check for field-level proxy (takes precedence over type-level proxy)
             let field_proxy = field.effective_proxy(self.format_namespace);
-            let child_id = self.build_node_with_proxy(field.shape(), field_proxy);
+            let child_id = self.build_node_with_proxy(field.shape(), field_proxy)?;
             parent_id.append(child_id, &mut self.arena);
         }
 
@@ -691,17 +826,21 @@ impl TypePlanBuilder {
         let field_lookup = FieldLookup::new(&fields);
         let num_fields = fields.len();
 
-        StructPlan {
+        Ok(StructPlan {
             struct_def,
             fields,
             field_lookup,
             has_flatten,
             num_fields,
-        }
+        })
     }
 
     /// Build an EnumPlan, attaching variant field children appropriately.
-    fn build_enum_plan(&mut self, enum_def: &'static EnumType, parent_id: NodeId) -> EnumPlan {
+    fn build_enum_plan(
+        &mut self,
+        enum_def: &'static EnumType,
+        parent_id: NodeId,
+    ) -> Result<EnumPlan, AllocError> {
         let mut variants = Vec::with_capacity(enum_def.variants.len());
 
         for variant in enum_def.variants.iter() {
@@ -713,7 +852,7 @@ impl TypePlanBuilder {
 
                 // Check for field-level proxy (takes precedence over type-level proxy)
                 let field_proxy = field.effective_proxy(self.format_namespace);
-                let child_id = self.build_node_with_proxy(field.shape(), field_proxy);
+                let child_id = self.build_node_with_proxy(field.shape(), field_proxy)?;
                 parent_id.append(child_id, &mut self.arena);
             }
 
@@ -732,12 +871,12 @@ impl TypePlanBuilder {
         let variant_lookup = VariantLookup::new(&variants);
         let num_variants = variants.len();
 
-        EnumPlan {
+        Ok(EnumPlan {
             enum_def,
             variants,
             variant_lookup,
             num_variants,
-        }
+        })
     }
 
     fn finish(self, root: NodeId) -> TypePlan {
@@ -783,7 +922,10 @@ impl TypePlan {
     /// to handle recursive types without stack overflow.
     ///
     /// For format-specific proxy resolution, use [`build_for_format`](Self::build_for_format).
-    pub fn build(shape: &'static Shape) -> Self {
+    /// Build a TypePlan from a Shape.
+    ///
+    /// Returns an error if the shape contains types that cannot be deserialized.
+    pub fn build(shape: &'static Shape) -> Result<Self, crate::AllocError> {
         Self::build_for_format(shape, None)
     }
 
@@ -791,10 +933,15 @@ impl TypePlan {
     ///
     /// The `format_namespace` (e.g., "json", "xml", "toml") is used to resolve
     /// format-specific proxies via `#[facet(proxy(json = ...))]` attributes.
-    pub fn build_for_format(shape: &'static Shape, format_namespace: Option<&'static str>) -> Self {
+    ///
+    /// Returns an error if the shape contains types that cannot be deserialized.
+    pub fn build_for_format(
+        shape: &'static Shape,
+        format_namespace: Option<&'static str>,
+    ) -> Result<Self, crate::AllocError> {
         let mut builder = TypePlanBuilder::new(format_namespace);
-        let root = builder.build_node(shape);
-        builder.finish(root)
+        let root = builder.build_node(shape)?;
+        Ok(builder.finish(root))
     }
 
     /// Get the root NodeId.
@@ -1049,7 +1196,7 @@ mod tests {
 
     #[test]
     fn test_typeplan_struct() {
-        let plan = TypePlan::build(TestStruct::SHAPE);
+        let plan = TypePlan::build(TestStruct::SHAPE).unwrap();
         let root = plan.root_node();
 
         assert_eq!(root.shape, TestStruct::SHAPE);
@@ -1098,7 +1245,7 @@ mod tests {
 
     #[test]
     fn test_typeplan_enum() {
-        let plan = TypePlan::build(TestEnum::SHAPE);
+        let plan = TypePlan::build(TestEnum::SHAPE).unwrap();
         let root = plan.root_node();
 
         assert_eq!(root.shape, TestEnum::SHAPE);
@@ -1129,7 +1276,7 @@ mod tests {
 
     #[test]
     fn test_typeplan_list() {
-        let plan = TypePlan::build(<Vec<u32> as Facet>::SHAPE);
+        let plan = TypePlan::build(<Vec<u32> as Facet>::SHAPE).unwrap();
         let root = plan.root_node();
 
         match &root.kind {
@@ -1148,7 +1295,7 @@ mod tests {
     #[test]
     fn test_typeplan_recursive() {
         // This should NOT stack overflow - indextree handles the cycle
-        let plan = TypePlan::build(RecursiveStruct::SHAPE);
+        let plan = TypePlan::build(RecursiveStruct::SHAPE).unwrap();
         let root = plan.root_node();
 
         match &root.kind {

@@ -292,9 +292,18 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
     /// Begin bulding the source shape for custom deserialization, calling end() for this frame will
     /// call the deserialize_with function provided by the field and set the field using the result.
     pub fn begin_custom_deserialization(mut self) -> Result<Self, ReflectError> {
+        use crate::typeplan::DeserStrategy;
+
         let current_frame = self.frames().last().unwrap();
         let target_shape = current_frame.allocated.shape();
         trace!("begin_custom_deserialization: target_shape={target_shape}");
+
+        // Get the proxy_node from the DeserStrategy if available
+        let proxy_node = match self.deser_strategy() {
+            Some(DeserStrategy::FieldProxy { proxy_node, .. }) => Some(*proxy_node),
+            _ => None,
+        };
+
         if let Some(field) = self.parent_field() {
             trace!("begin_custom_deserialization: field name={}", field.name);
             if let Some(proxy_def) = field.proxy() {
@@ -312,9 +321,11 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     .expect("must be sized")
                     .size();
 
-                // TypePlan already builds for proxy shapes at the field level,
-                // so the current frame's type_plan represents the proxy structure
-                let parent_type_plan = self.frames().last().unwrap().type_plan;
+                // Use proxy_node from the strategy if available, otherwise fall back to current type_plan.
+                // Using proxy_node is critical to avoid infinite recursion when deser_strategy()
+                // returns FieldProxy.
+                let type_plan_for_frame =
+                    proxy_node.unwrap_or_else(|| self.frames().last().unwrap().type_plan);
 
                 trace!(
                     "begin_custom_deserialization: Creating frame for deserialization type {source_shape}"
@@ -323,7 +334,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     source_data,
                     AllocatedShape::new(source_shape, source_size),
                     FrameOwnership::Owned,
-                    parent_type_plan,
+                    type_plan_for_frame,
                 );
                 new_frame.using_custom_deserialization = true;
                 self.mode.stack_mut().push(new_frame);
@@ -368,11 +379,29 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         mut self,
         format_namespace: Option<&str>,
     ) -> Result<(Self, bool), ReflectError> {
+        use crate::typeplan::DeserStrategy;
+
         let current_frame = self.frames().last().unwrap();
         let target_shape = current_frame.allocated.shape();
         trace!(
             "begin_custom_deserialization_from_shape_with_format: target_shape={target_shape}, format={format_namespace:?}"
         );
+
+        // Get the proxy_node from the DeserStrategy - this is the TypePlan node for the proxy type
+        let proxy_node = match self.deser_strategy() {
+            Some(DeserStrategy::ContainerProxy { proxy_node, .. }) => *proxy_node,
+            _ => {
+                // No container proxy strategy - check if there's a proxy on the shape
+                // (this can happen if deser_strategy returns something else, but shape has proxy)
+                let Some(proxy_def) = target_shape.effective_proxy(format_namespace) else {
+                    return Ok((self, false));
+                };
+                // Fall back to parent's type_plan if we don't have a proper proxy_node
+                // This is a rare path for backwards compatibility
+                let _ = proxy_def;
+                return Ok((self, false));
+            }
+        };
 
         // Use effective_proxy for format-aware resolution
         let Some(proxy_def) = target_shape.effective_proxy(format_namespace) else {
@@ -392,18 +421,17 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             .expect("must be sized")
             .size();
 
-        // TypePlan already builds for proxy shapes at the container level,
-        // so the current frame's type_plan represents the proxy structure
-        let parent_type_plan = self.frames().last().unwrap().type_plan;
-
         trace!(
             "begin_custom_deserialization_from_shape_with_format: Creating frame for deserialization type {source_shape}"
         );
+        // Use proxy_node - the TypePlan child node for the proxy type's structure.
+        // This is critical: using parent_type_plan would cause deser_strategy() to return
+        // ContainerProxy again, causing infinite recursion.
         let mut new_frame = Frame::new(
             source_data,
             AllocatedShape::new(source_shape, source_size),
             FrameOwnership::Owned,
-            parent_type_plan,
+            proxy_node,
         );
         new_frame.using_custom_deserialization = true;
         // Store the target shape's proxy in the frame so end() can use it for conversion
@@ -425,11 +453,36 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         mut self,
         format_namespace: Option<&str>,
     ) -> Result<Self, ReflectError> {
+        use crate::typeplan::DeserStrategy;
+
         let current_frame = self.frames().last().unwrap();
         let target_shape = current_frame.allocated.shape();
         trace!(
             "begin_custom_deserialization_with_format: target_shape={target_shape}, format={format_namespace:?}"
         );
+
+        // Get the proxy_node from the DeserStrategy - this is the TypePlan node for the proxy type
+        let proxy_node = match self.deser_strategy() {
+            Some(DeserStrategy::FieldProxy { proxy_node, .. }) => *proxy_node,
+            _ => {
+                // No field proxy strategy - fall back to checking the field directly
+                let Some(field) = self.parent_field() else {
+                    return Err(self.err(ReflectErrorKind::OperationFailed {
+                        shape: target_shape,
+                        operation: "not currently processing a field",
+                    }));
+                };
+                if field.effective_proxy(format_namespace).is_none() {
+                    return Err(self.err(ReflectErrorKind::OperationFailed {
+                        shape: target_shape,
+                        operation: "field does not have a proxy",
+                    }));
+                }
+                // Fall back to current type_plan if no FieldProxy strategy
+                self.frames().last().unwrap().type_plan
+            }
+        };
+
         if let Some(field) = self.parent_field() {
             trace!(
                 "begin_custom_deserialization_with_format: field name={}",
@@ -451,18 +504,17 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     .expect("must be sized")
                     .size();
 
-                // TypePlan already builds for proxy shapes at the field level,
-                // so the current frame's type_plan represents the proxy structure
-                let parent_type_plan = self.frames().last().unwrap().type_plan;
-
                 trace!(
                     "begin_custom_deserialization_with_format: Creating frame for deserialization type {source_shape}"
                 );
+                // Use proxy_node - the TypePlan child node for the proxy type's structure.
+                // This is critical: using the parent's type_plan would cause deser_strategy()
+                // to return FieldProxy again, causing infinite recursion.
                 let mut new_frame = Frame::new(
                     source_data,
                     AllocatedShape::new(source_shape, source_size),
                     FrameOwnership::Owned,
-                    parent_type_plan,
+                    proxy_node,
                 );
                 new_frame.using_custom_deserialization = true;
                 // Store the proxy def so end() can use the correct convert_in function

@@ -16,7 +16,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     /// repeated runtime inspection of Shape/Def/vtable during deserialization.
     pub fn deserialize_into(
         &mut self,
-        mut wip: Partial<'input, BORROW>,
+        wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
         let shape = wip.shape();
@@ -57,41 +57,31 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         // === STRATEGY-BASED DISPATCH ===
         // Use the precomputed DeserStrategy for O(1) dispatch
 
-        let strategy = wip.deser_strategy().unwrap_or(DeserStrategy::Unknown);
+        let strategy = wip.deser_strategy();
         trace!(?strategy, "deserialize_into: using precomputed strategy");
 
         match strategy {
-            DeserStrategy::Proxy => {
-                // Container-level or field-level proxy - deserialize into proxy type then convert
+            Some(DeserStrategy::ContainerProxy { .. }) => {
+                // Container-level proxy - the type itself has #[facet(proxy = X)]
                 let format_ns = self.parser.format_namespace();
-                let (wip_returned, has_proxy) =
+                let (wip, _) =
                     wip.begin_custom_deserialization_from_shape_with_format(format_ns)?;
-                wip = wip_returned;
-                if has_proxy {
-                    return Ok(wip.with(|w| self.deserialize_into(w))?.end()?);
-                }
-                // Fallback: check field-level proxy
-                if wip
-                    .parent_field()
-                    .and_then(|field| field.effective_proxy(format_ns))
-                    .is_some()
-                {
-                    return Ok(wip
-                        .begin_custom_deserialization_with_format(format_ns)?
-                        .with(|w| self.deserialize_into(w))?
-                        .end()?);
-                }
-                // If no proxy found (shouldn't happen if TypePlan is correct), fall through to Unknown
-                self.deserialize_fallback(wip)
+                Ok(wip.with(|w| self.deserialize_into(w))?.end()?)
             }
 
-            DeserStrategy::Pointer => {
+            Some(DeserStrategy::FieldProxy { .. }) => {
+                // Field-level proxy - the field has #[facet(proxy = X)]
+                let format_ns = self.parser.format_namespace();
+                let wip = wip.begin_custom_deserialization_with_format(format_ns)?;
+                Ok(wip.with(|w| self.deserialize_into(w))?.end()?)
+            }
+
+            Some(DeserStrategy::Pointer { .. }) => {
                 trace!("deserialize_into: dispatching to deserialize_pointer");
                 self.deserialize_pointer(wip)
             }
 
-            DeserStrategy::TransparentConvert => {
-                // Transparent wrapper with try_from (like NonZero)
+            Some(DeserStrategy::TransparentConvert { .. }) => {
                 trace!("deserialize_into: dispatching via begin_inner (transparent convert)");
                 Ok(wip
                     .begin_inner()?
@@ -99,106 +89,91 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                     .end()?)
             }
 
-            DeserStrategy::Scalar => {
+            Some(DeserStrategy::Scalar) => {
                 trace!("deserialize_into: dispatching to deserialize_scalar");
                 self.deserialize_scalar(wip)
             }
 
-            DeserStrategy::Struct => {
+            Some(DeserStrategy::Struct) => {
                 trace!("deserialize_into: dispatching to deserialize_struct");
                 self.deserialize_struct(wip)
             }
 
-            DeserStrategy::Tuple => {
+            Some(DeserStrategy::Tuple) => {
                 trace!("deserialize_into: dispatching to deserialize_tuple");
                 self.deserialize_tuple(wip)
             }
 
-            DeserStrategy::Enum => {
+            Some(DeserStrategy::Enum) => {
                 trace!("deserialize_into: dispatching to deserialize_enum");
                 self.deserialize_enum(wip)
             }
 
-            DeserStrategy::Option => {
+            Some(DeserStrategy::Option { .. }) => {
                 trace!("deserialize_into: dispatching to deserialize_option");
                 self.deserialize_option(wip)
             }
 
-            DeserStrategy::Result => {
+            Some(DeserStrategy::Result { .. }) => {
                 trace!("deserialize_into: dispatching to deserialize_result_as_enum");
                 self.deserialize_result_as_enum(wip)
             }
 
-            DeserStrategy::List => {
+            Some(DeserStrategy::List { .. }) => {
                 trace!("deserialize_into: dispatching to deserialize_list");
                 self.deserialize_list(wip)
             }
 
-            DeserStrategy::Map => {
+            Some(DeserStrategy::Map { .. }) => {
                 trace!("deserialize_into: dispatching to deserialize_map");
                 self.deserialize_map(wip)
             }
 
-            DeserStrategy::Set => {
+            Some(DeserStrategy::Set { .. }) => {
                 trace!("deserialize_into: dispatching to deserialize_set");
                 self.deserialize_set(wip)
             }
 
-            DeserStrategy::Array => {
+            Some(DeserStrategy::Array { .. }) => {
                 trace!("deserialize_into: dispatching to deserialize_array");
                 self.deserialize_array(wip)
             }
 
-            DeserStrategy::BackRef => {
+            Some(DeserStrategy::DynamicValue) => {
+                trace!("deserialize_into: dispatching to deserialize_dynamic_value");
+                self.deserialize_dynamic_value(wip)
+            }
+
+            Some(DeserStrategy::BackRef { .. }) => {
                 // BackRef is automatically resolved by deser_strategy() - this branch
                 // should never be reached. If it is, something is wrong with TypePlan.
                 unreachable!("deser_strategy() should resolve BackRef to target strategy")
             }
 
-            DeserStrategy::Unknown => {
-                trace!("deserialize_into: Unknown strategy - using runtime fallback");
-                self.deserialize_fallback(wip)
-            }
-        }
-    }
-
-    /// Fallback deserialization using runtime shape inspection.
-    ///
-    /// This is used when the precomputed strategy is Unknown or BackRef,
-    /// or when special cases need runtime dispatch.
-    fn deserialize_fallback(
-        &mut self,
-        wip: Partial<'input, BORROW>,
-    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
-        let shape = wip.shape();
-
-        // Check Def for containers and special types
-        match &shape.def {
-            Def::Option(_) => self.deserialize_option(wip),
-            Def::Result(_) => self.deserialize_result_as_enum(wip),
-            Def::Pointer(_) => self.deserialize_pointer(wip),
-            Def::List(_) => self.deserialize_list(wip),
-            Def::Map(_) => self.deserialize_map(wip),
-            Def::Array(_) => self.deserialize_array(wip),
-            Def::Set(_) => self.deserialize_set(wip),
-            Def::DynamicValue(_) => self.deserialize_dynamic_value(wip),
-            Def::Scalar if shape.vtable.has_parse() => self.deserialize_scalar(wip),
-            _ => {
-                // Check Type for structs and enums
-                match &shape.ty {
-                    Type::User(UserType::Struct(struct_def)) => {
-                        if matches!(struct_def.kind, StructKind::Tuple | StructKind::TupleStruct) {
-                            self.deserialize_tuple(wip)
-                        } else {
-                            self.deserialize_struct(wip)
-                        }
-                    }
-                    Type::User(UserType::Enum(_)) => self.deserialize_enum(wip),
-                    _ => Err(DeserializeErrorKind::Unsupported {
-                        message: format!("unsupported shape def: {:?}", shape.def).into(),
-                    }
-                    .with_span(self.last_span)),
+            Some(DeserStrategy::OpaquePointer) | Some(DeserStrategy::Opaque) => {
+                // Opaque types/pointers cannot be deserialized from formats without a proxy.
+                // They must have a #[facet(proxy = ...)] attribute to be deserializable.
+                Err(DeserializeErrorKind::Unsupported {
+                    message: format!(
+                        "cannot deserialize opaque type {} - add a proxy to make it deserializable",
+                        shape
+                    )
+                    .into(),
                 }
+                .with_span(self.last_span))
+            }
+
+            None => {
+                // This should not happen - TypePlan::build errors at allocation time for
+                // unsupported types. If we get here, something went wrong with plan tracking.
+                Err(DeserializeErrorKind::Unsupported {
+                    message: format!(
+                        "missing deserialization strategy for shape: {:?} (TypePlan bug)",
+                        shape.def
+                    )
+                    .into(),
+                }
+                .with_span(self.last_span))
             }
         }
     }

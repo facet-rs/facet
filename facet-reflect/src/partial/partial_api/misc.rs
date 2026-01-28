@@ -1,6 +1,7 @@
 use facet_path::Path;
 
 use super::*;
+use crate::typeplan::DeserStrategy;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Misc.
@@ -142,18 +143,16 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// - The Partial is not active
     /// - There are no frames
     #[inline]
-    pub fn deser_strategy(&self) -> Option<crate::typeplan::DeserStrategy> {
-        use crate::typeplan::TypePlanNodeKind;
-
+    pub fn deser_strategy(&self) -> Option<&DeserStrategy> {
         let node = self.plan_node()?;
 
         // If this is a BackRef, follow the reference to get the actual strategy
-        if let TypePlanNodeKind::BackRef(target_id) = &node.kind {
-            let target_node = self.root_plan.get(*target_id)?;
-            return Some(target_node.strategy);
+        if let DeserStrategy::BackRef { target } = &node.strategy {
+            let target_node = self.root_plan.get(*target)?;
+            return Some(&target_node.strategy);
         }
 
-        Some(node.strategy)
+        Some(&node.strategy)
     }
 
     /// Returns true if the current frame is building a smart pointer slice (Arc<\[T\]>, Rc<\[T\]>, Box<\[T\]>).
