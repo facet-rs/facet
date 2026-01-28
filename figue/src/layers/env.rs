@@ -1802,7 +1802,9 @@ mod tests {
 
         // The span should point to the value "8080" in the source_text
         let span = port.span().unwrap();
-        let pointed_text = &source_text[span.offset..span.offset + span.len];
+        let offset = span.offset as usize;
+        let len = span.len as usize;
+        let pointed_text = &source_text[offset..offset + len];
         assert_eq!(
             pointed_text, "8080",
             "span should point to the value in source_text"
@@ -1834,7 +1836,9 @@ mod tests {
         let db_url = get_nested(&value, &["config", "database_url"]).expect("config.database_url");
 
         let span = db_url.span().expect("db_url should have a span");
-        let pointed_text = &source_text[span.offset..span.offset + span.len];
+        let offset = span.offset as usize;
+        let len = span.len as usize;
+        let pointed_text = &source_text[offset..offset + len];
         assert_eq!(
             pointed_text, "postgres://localhost/db",
             "span should point to the value in source_text"

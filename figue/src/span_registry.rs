@@ -27,7 +27,7 @@ pub struct SpanRegistry {
     /// Each entry represents one value in the ConfigValue tree.
     entries: Vec<SpanEntry>,
     /// Next virtual offset to assign.
-    next_offset: usize,
+    next_offset: u32,
 }
 
 impl SpanRegistry {
@@ -43,7 +43,7 @@ impl SpanRegistry {
     pub fn register(&mut self, real_span: Span, provenance: Provenance) -> Span {
         let virtual_offset = self.next_offset;
         // Use the real length so error highlighting works correctly
-        let virtual_span = Span::new(virtual_offset, real_span.len);
+        let virtual_span = Span::new(virtual_offset as usize, real_span.len as usize);
 
         self.entries.push(SpanEntry {
             real_span,
@@ -62,7 +62,7 @@ impl SpanRegistry {
     #[allow(dead_code)]
     pub fn lookup(&self, virtual_span: Span) -> Option<&SpanEntry> {
         // Find the entry whose virtual offset range contains this span
-        let mut current_offset = 0;
+        let mut current_offset: u32 = 0;
         for entry in &self.entries {
             let entry_len = entry.real_span.len.max(1);
             if virtual_span.offset >= current_offset
@@ -77,7 +77,8 @@ impl SpanRegistry {
 
     /// Look up by just the offset (for facet-format errors that only give offset).
     pub fn lookup_by_offset(&self, offset: usize) -> Option<&SpanEntry> {
-        let mut current_offset = 0;
+        let offset = offset as u32;
+        let mut current_offset: u32 = 0;
         for entry in &self.entries {
             let entry_len = entry.real_span.len.max(1);
             if offset >= current_offset && offset < current_offset + entry_len {
@@ -153,7 +154,9 @@ mod tests {
         let virtual_span = registry.register(real, prov);
 
         // Should find by the start offset
-        let entry = registry.lookup_by_offset(virtual_span.offset).unwrap();
+        let entry = registry
+            .lookup_by_offset(virtual_span.offset as usize)
+            .unwrap();
         assert_eq!(entry.real_span.offset, 50);
     }
 }

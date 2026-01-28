@@ -1818,7 +1818,7 @@ mod tests {
             ..
         }) = event
         {
-            assert_eq!(key.name.as_ref().map(|s| s.as_ref()), Some("name"));
+            assert_eq!(key.name().as_ref().map(|c| c.as_ref()), Some("name"));
         } else {
             panic!("expected FieldKey");
         }
@@ -1841,7 +1841,7 @@ mod tests {
             ..
         }) = event
         {
-            assert_eq!(key.name.as_ref().map(|s| s.as_ref()), Some("age"));
+            assert_eq!(key.name().as_ref().map(|c| c.as_ref()), Some("age"));
         } else {
             panic!("expected FieldKey");
         }
