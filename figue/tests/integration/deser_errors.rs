@@ -6,7 +6,7 @@
 
 use crate::assert_diag_snapshot;
 use facet::Facet;
-use figue::{self as args, builder, Driver, DriverError, MockEnv};
+use figue::{self as args, Driver, DriverError, MockEnv, builder};
 
 // ============================================================================
 // Test schemas
@@ -53,10 +53,7 @@ struct ArgsWithNestedConfig {
 #[test]
 fn test_deser_error_env_wrong_type_for_port() {
     // Port expects u16 but we provide a string
-    let env = MockEnv::from_pairs([
-        ("APP__PORT", "not_a_number"),
-        ("APP__HOST", "localhost"),
-    ]);
+    let env = MockEnv::from_pairs([("APP__PORT", "not_a_number"), ("APP__HOST", "localhost")]);
 
     let config = builder::<ArgsWithSimpleConfig>()
         .unwrap()
