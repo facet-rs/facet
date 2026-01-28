@@ -288,7 +288,9 @@ export const MetadataValueDiscriminant = {
  * Wire discriminant values for Hello variants.
  */
 export const HelloDiscriminant = {
-  V3: 0,
+  V1: 0, // deprecated
+  V2: 1, // deprecated
+  V3: 2,
 } as const;
 
 // ============================================================================

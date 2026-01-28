@@ -70,7 +70,9 @@ describe("wire discriminants", () => {
   });
 
   it("has correct Hello discriminants", () => {
-    expect(HelloDiscriminant.V3).toBe(0);
+    expect(HelloDiscriminant.V1).toBe(0);
+    expect(HelloDiscriminant.V2).toBe(1);
+    expect(HelloDiscriminant.V3).toBe(2);
   });
 });
 
@@ -207,9 +209,13 @@ describe("factory functions", () => {
 describe("wire schemas", () => {
   it("HelloSchema has correct structure", () => {
     expect(HelloSchema.kind).toBe("enum");
-    expect(HelloSchema.variants).toHaveLength(1);
-    expect(HelloSchema.variants[0].name).toBe("V3");
+    expect(HelloSchema.variants).toHaveLength(3);
+    expect(HelloSchema.variants[0].name).toBe("V1");
     expect(HelloSchema.variants[0].discriminant).toBe(0);
+    expect(HelloSchema.variants[1].name).toBe("V2");
+    expect(HelloSchema.variants[1].discriminant).toBe(1);
+    expect(HelloSchema.variants[2].name).toBe("V3");
+    expect(HelloSchema.variants[2].discriminant).toBe(2);
   });
 
   it("MetadataValueSchema has correct structure", () => {
@@ -300,10 +306,10 @@ describe("Hello codec", () => {
     }
   });
 
-  it("encodes Hello.V3 with discriminant 0", () => {
+  it("encodes Hello.V3 with discriminant 2", () => {
     const hello = helloV3(65536, 1024);
     const encoded = encodeHello(hello);
-    expect(encoded[0]).toBe(0); // First byte is discriminant
+    expect(encoded[0]).toBe(2); // First byte is discriminant
   });
 });
 
