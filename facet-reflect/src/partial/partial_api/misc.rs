@@ -308,7 +308,14 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
     /// Mark a field as initialized in a frame's tracker
     fn mark_field_initialized(frame: &mut Frame, field_name: &str) {
+        crate::trace!(
+            "mark_field_initialized: field_name={}, frame shape={}, tracker={:?}",
+            field_name,
+            frame.allocated.shape(),
+            frame.tracker.kind()
+        );
         if let Some(idx) = Self::find_field_index(frame, field_name) {
+            crate::trace!("mark_field_initialized: found field at index {}", idx);
             // If the tracker is Scalar but this is a struct type, upgrade to Struct tracker.
             // This can happen if the frame was deinit'd (e.g., by a failed set_default)
             // which resets the tracker to Scalar.
@@ -323,15 +330,30 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
             match &mut frame.tracker {
                 Tracker::Struct { iset, .. } => {
+                    crate::trace!("mark_field_initialized: setting iset for struct");
                     iset.set(idx);
                 }
                 Tracker::Enum { data, .. } => {
+                    crate::trace!(
+                        "mark_field_initialized: setting data for enum, before={:?}",
+                        data
+                    );
                     data.set(idx);
+                    crate::trace!(
+                        "mark_field_initialized: setting data for enum, after={:?}",
+                        data
+                    );
                 }
                 Tracker::Array { iset, .. } => {
+                    crate::trace!("mark_field_initialized: setting iset for array");
                     iset.set(idx);
                 }
-                _ => {}
+                _ => {
+                    crate::trace!(
+                        "mark_field_initialized: no match for tracker {:?}",
+                        frame.tracker.kind()
+                    );
+                }
             }
         }
     }
@@ -392,6 +414,39 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
     /// Pops the current frame off the stack, indicating we're done initializing the current field
     pub fn end(mut self) -> Result<Self, ReflectError> {
+        // FAST PATH: Handle the common case of ending a simple scalar field in a struct.
+        // This avoids all the edge-case checks (SmartPointerSlice, deferred mode, custom
+        // deserialization, etc.) that dominate the slow path.
+        if self.frames().len() >= 2 && !self.is_deferred() {
+            let frames = self.frames_mut();
+            let top_idx = frames.len() - 1;
+            let parent_idx = top_idx - 1;
+
+            // Check if this is a simple scalar field being returned to a struct parent
+            if let (
+                Tracker::Scalar,
+                true, // is_init
+                FrameOwnership::Field { field_idx },
+                false, // not using custom deserialization
+            ) = (
+                &frames[top_idx].tracker,
+                frames[top_idx].is_init,
+                frames[top_idx].ownership,
+                frames[top_idx].using_custom_deserialization,
+            ) && let Tracker::Struct {
+                iset,
+                current_child,
+            } = &mut frames[parent_idx].tracker
+            {
+                // Fast path: just update parent's iset and pop
+                iset.set(field_idx);
+                *current_child = None;
+                frames.pop();
+                return Ok(self);
+            }
+        }
+
+        // SLOW PATH: Handle all the edge cases
         if let Some(_frame) = self.frames().last() {
             crate::trace!(
                 "end() called: shape={}, tracker={:?}, is_init={}",
@@ -512,9 +567,10 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     }
                     FrameOwnership::TrackedBuffer
                     | FrameOwnership::BorrowedInPlace
-                    | FrameOwnership::External => {
+                    | FrameOwnership::External
+                    | FrameOwnership::ListSlot => {
                         return Err(self.err(ReflectErrorKind::InvariantViolation {
-                            invariant: "SmartPointerSlice cannot have TrackedBuffer/BorrowedInPlace/External ownership after conversion",
+                            invariant: "SmartPointerSlice cannot have TrackedBuffer/BorrowedInPlace/External/ListSlot ownership after conversion",
                         }));
                     }
                 }
@@ -949,9 +1005,16 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     current_child,
                     ..
                 } => {
+                    crate::trace!(
+                        "end(): Enum field {} child_is_initialized={}, data before={:?}",
+                        field_idx,
+                        child_is_initialized,
+                        data
+                    );
                     if child_is_initialized {
                         data.set(field_idx); // Parent reclaims responsibility only if child was init
                     }
+                    crate::trace!("end(): Enum field {} data after={:?}", field_idx, data);
                     *current_child = None;
                 }
                 _ => {}
@@ -1000,30 +1063,50 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             }
             Tracker::List { current_child } if parent_frame.is_init => {
                 if current_child.is_some() {
-                    // We just popped an element frame, now push it to the list
+                    // We just popped an element frame, now add it to the list
                     if let Def::List(list_def) = parent_shape.def {
-                        let Some(push_fn) = list_def.push() else {
-                            return Err(self.err(ReflectErrorKind::OperationFailed {
-                                shape: parent_shape,
-                                operation: "List missing push function",
-                            }));
-                        };
+                        // Check if we used direct-fill (ListSlot) or heap allocation (Owned)
+                        if matches!(popped_frame.ownership, FrameOwnership::ListSlot) {
+                            // Direct-fill: element was written directly into Vec's buffer
+                            // Just increment the length
+                            let Some(set_len_fn) = list_def.set_len() else {
+                                return Err(self.err(ReflectErrorKind::OperationFailed {
+                                    shape: parent_shape,
+                                    operation: "List missing set_len function for direct-fill",
+                                }));
+                            };
+                            let current_len = unsafe {
+                                (list_def.vtable.len)(parent_frame.data.assume_init().as_const())
+                            };
+                            unsafe {
+                                set_len_fn(parent_frame.data.assume_init(), current_len + 1);
+                            }
+                            // No dealloc needed - memory belongs to Vec
+                        } else {
+                            // Fallback: element is in separate heap buffer, use push to copy
+                            let Some(push_fn) = list_def.push() else {
+                                return Err(self.err(ReflectErrorKind::OperationFailed {
+                                    shape: parent_shape,
+                                    operation: "List missing push function",
+                                }));
+                            };
 
-                        // The child frame contained the element value
-                        let element_ptr = PtrMut::new(popped_frame.data.as_mut_byte_ptr());
+                            // The child frame contained the element value
+                            let element_ptr = PtrMut::new(popped_frame.data.as_mut_byte_ptr());
 
-                        // Use push to add element to the list
-                        unsafe {
-                            push_fn(
-                                PtrMut::new(parent_frame.data.as_mut_byte_ptr()),
-                                element_ptr,
-                            );
+                            // Use push to add element to the list
+                            unsafe {
+                                push_fn(
+                                    PtrMut::new(parent_frame.data.as_mut_byte_ptr()),
+                                    element_ptr,
+                                );
+                            }
+
+                            // Push moved out of popped_frame
+                            popped_frame.tracker = Tracker::Scalar;
+                            popped_frame.is_init = false;
+                            popped_frame.dealloc();
                         }
-
-                        // Push moved out of popped_frame
-                        popped_frame.tracker = Tracker::Scalar;
-                        popped_frame.is_init = false;
-                        popped_frame.dealloc();
 
                         *current_child = None;
                     }

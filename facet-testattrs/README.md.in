@@ -1,0 +1,3 @@
+Test attribute macros for the facet ecosystem.
+
+This crate provides proc-macro attributes used in facet's test suite.

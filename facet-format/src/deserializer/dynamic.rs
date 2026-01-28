@@ -479,7 +479,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             ));
         }
 
-        wip = wip.init_list()?;
+        // Count buffered items to pre-reserve capacity
+        let capacity_hint = self.count_buffered_sequence_items();
+        wip = wip.init_list_with_capacity(capacity_hint)?;
 
         loop {
             let event = self.expect_peek("element or sequence end")?;

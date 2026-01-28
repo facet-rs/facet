@@ -12,8 +12,16 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
     /// `init_list` does not clear the list if it was previously initialized.
     /// `init_list` does not push a new frame to the stack, and thus does not
     /// require `end` to be called afterwards.
-    pub fn init_list(mut self) -> Result<Self, ReflectError> {
-        crate::trace!("init_list()");
+    pub fn init_list(self) -> Result<Self, ReflectError> {
+        self.init_list_with_capacity(0)
+    }
+
+    /// Initializes a list with a capacity hint for pre-allocation.
+    ///
+    /// Like `init_list`, but reserves space for `capacity` elements upfront.
+    /// This reduces allocations when the number of elements is known or estimated.
+    pub fn init_list_with_capacity(mut self, capacity: usize) -> Result<Self, ReflectError> {
+        crate::trace!("init_list_with_capacity({capacity})");
 
         // Get shape upfront to avoid borrow conflicts
         let shape = self.frames().last().unwrap().allocated.shape();
@@ -96,11 +104,11 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     }
                 };
 
-                // Initialize the list with default capacity (0)
+                // Initialize the list with the given capacity
                 // Need to re-borrow frame after the early returns above
                 let frame = self.frames_mut().last_mut().unwrap();
                 unsafe {
-                    init_fn(frame.data, 0);
+                    init_fn(frame.data, capacity);
                 }
 
                 // Update tracker to List state and mark as initialized
@@ -386,7 +394,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         // Get the element shape
         let element_shape = list_def.t();
 
-        // Allocate space for the new element
+        // Calculate element layout
         let element_layout = match element_shape.layout.sized_layout() {
             Ok(layout) => layout,
             Err(_) => {
@@ -396,10 +404,47 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 }));
             }
         };
-        let element_data = if element_layout.size() == 0 {
-            // For ZST, use a non-null but unallocated pointer
-            PtrUninit::new(NonNull::<u8>::dangling().as_ptr())
+
+        // Try direct-fill: write directly into Vec's reserved buffer
+        // This avoids a separate heap allocation + copy for each element
+        let (element_data, ownership) = if let (
+            Some(reserve_fn),
+            Some(as_mut_ptr_fn),
+            Some(_set_len_fn),
+            Some(capacity_fn),
+        ) = (
+            list_def.reserve(),
+            list_def.as_mut_ptr_typed(),
+            list_def.set_len(),
+            list_def.capacity(),
+        ) {
+            // Get current length and capacity
+            let current_len = unsafe { (list_def.vtable.len)(frame.data.assume_init().as_const()) };
+            let current_capacity = unsafe { capacity_fn(frame.data.assume_init().as_const()) };
+
+            // Only reserve if we need more space
+            if current_len >= current_capacity {
+                // Reserve with growth factor to reduce future vtable calls
+                // Use max(len, 4) to handle empty vecs and small lists
+                let additional = current_len.max(4);
+                unsafe {
+                    reserve_fn(frame.data.assume_init(), additional);
+                }
+            }
+
+            // Get pointer to the buffer and calculate element offset
+            let buffer_ptr = unsafe { as_mut_ptr_fn(frame.data.assume_init()) };
+            let element_ptr = unsafe { buffer_ptr.add(current_len * element_layout.size()) };
+
+            (PtrUninit::new(element_ptr), FrameOwnership::ListSlot)
+        } else if element_layout.size() == 0 {
+            // ZST: use dangling pointer, no allocation needed
+            (
+                PtrUninit::new(NonNull::<u8>::dangling().as_ptr()),
+                FrameOwnership::Owned,
+            )
         } else {
+            // Fallback: allocate separate buffer, will be copied by push()
             let element_ptr: *mut u8 = unsafe { ::alloc::alloc::alloc(element_layout) };
             let Some(element_ptr) = NonNull::new(element_ptr) else {
                 return Err(self.err(ReflectErrorKind::OperationFailed {
@@ -407,14 +452,14 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     operation: "failed to allocate memory for list element",
                 }));
             };
-            PtrUninit::new(element_ptr.as_ptr())
+            (PtrUninit::new(element_ptr.as_ptr()), FrameOwnership::Owned)
         };
 
         // Push a new frame for the element
         self.frames_mut().push(Frame::new(
             element_data,
             AllocatedShape::new(element_shape, element_layout.size()),
-            FrameOwnership::Owned,
+            ownership,
         ));
 
         Ok(self)

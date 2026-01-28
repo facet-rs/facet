@@ -932,10 +932,6 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             });
         }
 
-        // Track which fields have been set
-        let num_fields = variant_fields.len();
-        let mut fields_set = vec![false; num_fields];
-
         // Process all fields
         loop {
             let event = self.expect_event("value")?;
@@ -963,7 +959,6 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                             .begin_nth_field(idx)?
                             .with(|w| self.deserialize_into(w))?
                             .end()?;
-                        fields_set[idx] = true;
                     } else {
                         // Unknown field - skip
                         self.skip_value()?;
@@ -984,7 +979,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
         // Apply defaults for missing fields
         for (idx, field) in variant_fields.iter().enumerate() {
-            if fields_set[idx] {
+            if wip.is_field_set(idx)? {
                 continue;
             }
 
@@ -1265,7 +1260,6 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 }
 
                 let num_fields = variant_fields.len();
-                let mut fields_set = vec![false; num_fields];
                 let mut ordered_field_index = 0usize;
 
                 // Track currently open path segments for flatten handling
@@ -1287,7 +1281,6 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                                     .begin_nth_field(idx)?
                                     .with(|w| self.deserialize_into(w))?
                                     .end()?;
-                                fields_set[idx] = true;
                             }
                         }
                         ParseEventKind::FieldKey(key) => {
@@ -1350,7 +1343,6 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                                         .begin_nth_field(idx)?
                                         .with(|w| self.deserialize_into(w))?
                                         .end()?;
-                                    fields_set[idx] = true;
                                 } else {
                                     self.skip_value()?;
                                 }
@@ -1394,7 +1386,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 // Apply defaults for missing fields (when not using flatten/deferred mode)
                 if !has_flatten {
                     for (idx, field) in variant_fields.iter().enumerate() {
-                        if fields_set[idx] {
+                        if wip.is_field_set(idx)? {
                             continue;
                         }
 

@@ -290,6 +290,12 @@ pub(crate) enum FrameOwnership {
     /// On drop: deinit if initialized (drop partially constructed values), but do NOT deallocate.
     /// The caller owns the memory and is responsible for its lifetime.
     External,
+
+    /// Points directly into a Vec's reserved buffer space.
+    /// Used by `begin_list_item()` for direct-fill optimization.
+    /// On successful end(): parent calls `set_len(len + 1)` instead of `push`.
+    /// On drop/failure: no dealloc (memory belongs to Vec), no `set_len` (element not complete).
+    ListSlot,
 }
 
 impl FrameOwnership {
@@ -920,6 +926,11 @@ impl Frame {
         match &mut self.tracker {
             Tracker::Struct { iset, .. } => {
                 if let Type::User(UserType::Struct(struct_type)) = self.allocated.shape().ty {
+                    // Fast path: if ALL fields are set, nothing to do
+                    if iset.all_set(struct_type.fields.len()) {
+                        return Ok(());
+                    }
+
                     // Check if NO fields have been set and the container has a default
                     let no_fields_set = (0..struct_type.fields.len()).all(|i| !iset.get(i));
                     if no_fields_set {
@@ -964,6 +975,12 @@ impl Frame {
                 }
             }
             Tracker::Enum { variant, data, .. } => {
+                // Fast path: if ALL fields are set, nothing to do
+                let num_fields = variant.data.fields.len();
+                if num_fields == 0 || data.all_set(num_fields) {
+                    return Ok(());
+                }
+
                 // Check if the container has #[facet(default)] attribute
                 let container_has_default = self.allocated.shape().has_default_attr();
 

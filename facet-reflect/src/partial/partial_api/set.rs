@@ -314,12 +314,15 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// there is no need to drop it in place.
     pub unsafe fn set_from_function<F>(mut self, f: F) -> Result<Self, ReflectError>
     where
-        F: FnOnce(PtrUninit) -> Result<(), ReflectError>,
+        F: FnOnce(PtrUninit) -> Result<(), ReflectErrorKind>,
     {
         let frame = self.frames_mut().last_mut().unwrap();
 
         frame.deinit_for_replace();
-        f(frame.data)?;
+        if let Err(kind) = f(frame.data) {
+            // Only compute path on error (path construction allocates)
+            return Err(self.err(kind));
+        }
 
         // safety: `f()` returned Ok, so `frame.data` must be initialized
         unsafe {
@@ -341,23 +344,16 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     pub fn set_default(self) -> Result<Self, ReflectError> {
         let frame = self.frames().last().unwrap();
         let shape = frame.allocated.shape();
-        let path = self.path();
 
         // SAFETY: `call_default_in_place` fully initializes the passed pointer.
         unsafe {
             self.set_from_function(move |ptr| {
-                shape
-                    .call_default_in_place(ptr.assume_init())
-                    .ok_or_else(|| {
-                        ReflectError::new(
-                            ReflectErrorKind::OperationFailed {
-                                shape,
-                                operation: "type does not implement Default",
-                            },
-                            path.clone(),
-                        )
-                    })?;
-                Ok(())
+                shape.call_default_in_place(ptr.assume_init()).ok_or(
+                    ReflectErrorKind::OperationFailed {
+                        shape,
+                        operation: "type does not implement Default",
+                    },
+                )
             })
         }
     }
