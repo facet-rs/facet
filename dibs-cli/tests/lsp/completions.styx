@@ -80,9 +80,40 @@ tests (
         inlay_hints {
             count 3
             has (
-                {label ": BIGINT"}
-                {label ": TEXT"}
-                {label ": BOOLEAN"}
+                {label ": BIGINT" line 4}
+                {label ": TEXT" line 5}
+                {label ": BOOLEAN" line 6}
+            )
+        }
+    }
+
+    {
+        name "inlay hints appear on correct lines with multiple queries"
+        input <<STYX
+            FirstQuery @query{
+                from product
+                select {
+                    id
+                    handle
+                }
+            }
+            SecondQuery @query{
+                from product_variant
+                select {
+                    id
+                    sku
+                    title
+                }
+            }
+            STYX
+        inlay_hints {
+            count 5
+            has (
+                {label ": BIGINT" line 4}
+                {label ": TEXT" line 5}
+                {label ": BIGINT" line 11}
+                {label ": TEXT" line 12}
+                {label ": TEXT" line 13}
             )
         }
     }
