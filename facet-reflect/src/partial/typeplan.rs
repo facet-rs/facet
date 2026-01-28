@@ -1267,90 +1267,90 @@ impl TypePlan {
     #[inline]
     pub fn list_item_node(&self, parent: NodeId) -> Option<NodeId> {
         let node = self.get(parent)?;
-        match &node.kind {
-            TypePlanNodeKind::List | TypePlanNodeKind::Array { .. } | TypePlanNodeKind::Slice => {
-                self.first_child(parent)
+        match &node.strategy {
+            DeserStrategy::List { item_node } | DeserStrategy::Array { item_node, .. } => {
+                Some(*item_node)
             }
             _ => None,
         }
     }
 
-    /// Get the child NodeId for set items (first child).
+    /// Get the child NodeId for set items.
     #[inline]
     pub fn set_item_node(&self, parent: NodeId) -> Option<NodeId> {
         let node = self.get(parent)?;
-        match &node.kind {
-            TypePlanNodeKind::Set => self.first_child(parent),
+        match &node.strategy {
+            DeserStrategy::Set { item_node } => Some(*item_node),
             _ => None,
         }
     }
 
-    /// Get the child NodeId for map keys (first child).
+    /// Get the child NodeId for map keys.
     #[inline]
     pub fn map_key_node(&self, parent: NodeId) -> Option<NodeId> {
         let node = self.get(parent)?;
-        match &node.kind {
-            TypePlanNodeKind::Map => self.first_child(parent),
+        match &node.strategy {
+            DeserStrategy::Map { key_node, .. } => Some(*key_node),
             _ => None,
         }
     }
 
-    /// Get the child NodeId for map values (second child).
+    /// Get the child NodeId for map values.
     #[inline]
     pub fn map_value_node(&self, parent: NodeId) -> Option<NodeId> {
         let node = self.get(parent)?;
-        match &node.kind {
-            TypePlanNodeKind::Map => self.nth_child(parent, 1),
+        match &node.strategy {
+            DeserStrategy::Map { value_node, .. } => Some(*value_node),
             _ => None,
         }
     }
 
-    /// Get the child NodeId for Option inner type (first child).
+    /// Get the child NodeId for Option inner type.
     #[inline]
     pub fn option_inner_node(&self, parent: NodeId) -> Option<NodeId> {
         let node = self.get(parent)?;
-        match &node.kind {
-            TypePlanNodeKind::Option => self.first_child(parent),
+        match &node.strategy {
+            DeserStrategy::Option { some_node } => Some(*some_node),
             _ => None,
         }
     }
 
-    /// Get the child NodeId for Result Ok type (first child).
+    /// Get the child NodeId for Result Ok type.
     #[inline]
     pub fn result_ok_node(&self, parent: NodeId) -> Option<NodeId> {
         let node = self.get(parent)?;
-        match &node.kind {
-            TypePlanNodeKind::Result => self.first_child(parent),
+        match &node.strategy {
+            DeserStrategy::Result { ok_node, .. } => Some(*ok_node),
             _ => None,
         }
     }
 
-    /// Get the child NodeId for Result Err type (second child).
+    /// Get the child NodeId for Result Err type.
     #[inline]
     pub fn result_err_node(&self, parent: NodeId) -> Option<NodeId> {
         let node = self.get(parent)?;
-        match &node.kind {
-            TypePlanNodeKind::Result => self.nth_child(parent, 1),
+        match &node.strategy {
+            DeserStrategy::Result { err_node, .. } => Some(*err_node),
             _ => None,
         }
     }
 
-    /// Get the child NodeId for pointer pointee (first child).
+    /// Get the child NodeId for pointer pointee.
     #[inline]
     pub fn pointer_pointee_node(&self, parent: NodeId) -> Option<NodeId> {
         let node = self.get(parent)?;
-        match &node.kind {
-            TypePlanNodeKind::Pointer => self.first_child(parent),
+        match &node.strategy {
+            DeserStrategy::Pointer { pointee_node } => Some(*pointee_node),
             _ => None,
         }
     }
 
-    /// Get the child NodeId for transparent wrapper inner (first child).
+    /// Get the child NodeId for transparent wrapper inner.
     #[inline]
     pub fn transparent_inner_node(&self, parent: NodeId) -> Option<NodeId> {
         let node = self.get(parent)?;
-        match &node.kind {
-            TypePlanNodeKind::Transparent => self.first_child(parent),
+        match &node.strategy {
+            DeserStrategy::TransparentConvert { inner_node } => Some(*inner_node),
             _ => None,
         }
     }
