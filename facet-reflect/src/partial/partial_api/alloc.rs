@@ -42,7 +42,29 @@ impl<'facet> Partial<'facet, true> {
     /// **Safe alternative**: Use [`Partial::alloc::<T>()`](Self::alloc) which gets the shape
     /// from `T::SHAPE` (guaranteed safe by `unsafe impl Facet for T`).
     pub unsafe fn alloc_shape(shape: &'static Shape) -> Result<Self, AllocError> {
-        alloc_shape_inner(shape)
+        alloc_shape_inner(shape, None)
+    }
+
+    /// Allocates with format-specific proxy resolution.
+    ///
+    /// The `format_namespace` (e.g., "json", "xml") is used to resolve
+    /// format-specific proxies in the TypePlan.
+    pub fn alloc_for_format<T>(format_namespace: &'static str) -> Result<Self, AllocError>
+    where
+        T: Facet<'facet> + ?Sized,
+    {
+        unsafe { Self::alloc_shape_for_format(T::SHAPE, format_namespace) }
+    }
+
+    /// Allocates with format-specific proxy resolution from a shape.
+    ///
+    /// # Safety
+    /// Same requirements as `alloc_shape`.
+    pub unsafe fn alloc_shape_for_format(
+        shape: &'static Shape,
+        format_namespace: &'static str,
+    ) -> Result<Self, AllocError> {
+        alloc_shape_inner(shape, Some(format_namespace))
     }
 }
 
@@ -83,7 +105,26 @@ impl Partial<'static, false> {
     /// **Safe alternative**: Use [`Partial::alloc_owned::<T>()`](Self::alloc_owned) which gets the shape
     /// from `T::SHAPE` (guaranteed safe by `unsafe impl Facet for T`).
     pub unsafe fn alloc_shape_owned(shape: &'static Shape) -> Result<Self, AllocError> {
-        alloc_shape_inner(shape)
+        alloc_shape_inner(shape, None)
+    }
+
+    /// Allocates with format-specific proxy resolution (owned variant).
+    pub fn alloc_owned_for_format<T>(format_namespace: &'static str) -> Result<Self, AllocError>
+    where
+        T: Facet<'static> + ?Sized,
+    {
+        unsafe { Self::alloc_shape_owned_for_format(T::SHAPE, format_namespace) }
+    }
+
+    /// Allocates with format-specific proxy resolution from a shape (owned variant).
+    ///
+    /// # Safety
+    /// Same requirements as `alloc_shape_owned`.
+    pub unsafe fn alloc_shape_owned_for_format(
+        shape: &'static Shape,
+        format_namespace: &'static str,
+    ) -> Result<Self, AllocError> {
+        alloc_shape_inner(shape, Some(format_namespace))
     }
 }
 
@@ -129,6 +170,20 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// let value = unsafe { slot.assume_init() };
     /// ```
     pub unsafe fn from_raw(ptr: PtrUninit, shape: &'static Shape) -> Result<Self, AllocError> {
+        // SAFETY: Caller must uphold same requirements as from_raw_for_format
+        unsafe { Self::from_raw_for_format(ptr, shape, None) }
+    }
+
+    /// Creates a [Partial] with format-specific proxy resolution that writes into
+    /// caller-provided memory.
+    ///
+    /// # Safety
+    /// Same requirements as `from_raw`.
+    pub unsafe fn from_raw_for_format(
+        ptr: PtrUninit,
+        shape: &'static Shape,
+        format_namespace: Option<&'static str>,
+    ) -> Result<Self, AllocError> {
         crate::trace!(
             "from_raw({:p}, {:?}), with layout {:?}",
             ptr.as_mut_byte_ptr(),
@@ -147,7 +202,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             .size();
 
         // Build the TypePlan once for the entire deserialization
-        let root_plan = Box::new(TypePlan::build(shape));
+        let root_plan = Box::new(TypePlan::build_for_format(shape, format_namespace));
         let root_node = Some(root_plan.root());
 
         // Preallocate a couple of frames for nested structures
@@ -170,6 +225,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
 fn alloc_shape_inner<'facet, const BORROW: bool>(
     shape: &'static Shape,
+    format_namespace: Option<&'static str>,
 ) -> Result<Partial<'facet, BORROW>, AllocError> {
     crate::trace!(
         "alloc_shape({:?}), with layout {:?}",
@@ -186,7 +242,8 @@ fn alloc_shape_inner<'facet, const BORROW: bool>(
     let allocated_size = shape.layout.sized_layout().expect("must be sized").size();
 
     // Build the TypePlan once for the entire deserialization
-    let root_plan = Box::new(TypePlan::build(shape));
+    // Pass format_namespace to enable format-specific proxy resolution
+    let root_plan = Box::new(TypePlan::build_for_format(shape, format_namespace));
     let root_node = Some(root_plan.root());
 
     // Preallocate a couple of frames. The cost of allocating 4 frames is

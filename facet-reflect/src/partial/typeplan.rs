@@ -8,7 +8,8 @@
 
 use alloc::vec::Vec;
 use facet_core::{
-    Characteristic, ConstTypeId, Def, EnumType, Field, Shape, StructType, Type, UserType, Variant,
+    Characteristic, ConstTypeId, Def, EnumType, Field, ProxyDef, Shape, StructType, Type, UserType,
+    Variant,
 };
 use hashbrown::HashMap;
 use indextree::Arena;
@@ -37,6 +38,8 @@ pub struct TypePlanNode {
     pub kind: TypePlanNodeKind,
     /// Whether this type has a Default implementation
     pub has_default: bool,
+    /// Precomputed proxy for this shape (format-specific or generic)
+    pub proxy: Option<&'static ProxyDef>,
 }
 
 /// The specific kind of type and its deserialization strategy.
@@ -340,13 +343,16 @@ struct TypePlanBuilder {
     /// Map from TypeId to NodeId for cycle detection
     /// If a type is in this map, we're currently building it (ancestor on call stack)
     building: HashMap<ConstTypeId, NodeId>,
+    /// Format namespace for resolving format-specific proxies (e.g., "json", "xml")
+    format_namespace: Option<&'static str>,
 }
 
 impl TypePlanBuilder {
-    fn new() -> Self {
+    fn new(format_namespace: Option<&'static str>) -> Self {
         Self {
             arena: Arena::new(),
             building: HashMap::new(),
+            format_namespace,
         }
     }
 
@@ -355,6 +361,9 @@ impl TypePlanBuilder {
     fn build_node(&mut self, shape: &'static Shape) -> NodeId {
         let type_id = shape.id;
 
+        // Precompute proxy for this shape using format namespace
+        let proxy = shape.effective_proxy(self.format_namespace);
+
         // Check if we're already building this type (cycle detected)
         if let Some(&existing_id) = self.building.get(&type_id) {
             // Create a BackRef node pointing to the existing node
@@ -362,6 +371,7 @@ impl TypePlanBuilder {
                 shape,
                 kind: TypePlanNodeKind::BackRef(existing_id),
                 has_default: shape.is(Characteristic::Default),
+                proxy,
             };
             return self.arena.new_node(backref_node);
         }
@@ -371,6 +381,7 @@ impl TypePlanBuilder {
             shape,
             kind: TypePlanNodeKind::Unknown, // Will be replaced
             has_default: shape.is(Characteristic::Default),
+            proxy,
         };
         let node_id = self.arena.new_node(placeholder);
 
@@ -576,12 +587,22 @@ impl FieldPlanMeta {
 }
 
 impl TypePlan {
-    /// Build a TypePlan from a Shape.
+    /// Build a TypePlan from a Shape with no format-specific proxy resolution.
     ///
     /// This recursively builds plans for nested types, using arena allocation
     /// to handle recursive types without stack overflow.
+    ///
+    /// For format-specific proxy resolution, use [`build_for_format`](Self::build_for_format).
     pub fn build(shape: &'static Shape) -> Self {
-        let mut builder = TypePlanBuilder::new();
+        Self::build_for_format(shape, None)
+    }
+
+    /// Build a TypePlan from a Shape with format-specific proxy resolution.
+    ///
+    /// The `format_namespace` (e.g., "json", "xml", "toml") is used to resolve
+    /// format-specific proxies via `#[facet(proxy(json = ...))]` attributes.
+    pub fn build_for_format(shape: &'static Shape, format_namespace: Option<&'static str>) -> Self {
+        let mut builder = TypePlanBuilder::new(format_namespace);
         let root = builder.build_node(shape);
         builder.finish(root)
     }
