@@ -57,7 +57,7 @@ name = "format_suite"
 harness = false
 
 [[bench]]
-name = "large_json"
+name = "citm"
 harness = false
 
 [[bench]]

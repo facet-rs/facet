@@ -74,38 +74,55 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
     /// The element should be set using `set()` or similar methods, then `end()` to complete.
     pub fn begin_set_item(mut self) -> Result<Self, ReflectError> {
         crate::trace!("begin_set_item()");
-        // Get shape upfront to avoid borrow conflicts
-        let shape = self.frames().last().unwrap().allocated.shape();
-        let frame = self.frames_mut().last_mut().unwrap();
-
-        // Check that we have a Set that's been initialized
-        let set_def = match &shape.def {
-            Def::Set(set_def) => set_def,
-            _ => {
-                return Err(self.err(ReflectErrorKind::OperationFailed {
-                    shape,
-                    operation: "init_set_item can only be called on Set types",
-                }));
-            }
+        // Get frame info immutably first
+        let (shape, parent_type_plan, set_def, is_init, has_current_child) = {
+            let frame = self.frames().last().unwrap();
+            let shape = frame.allocated.shape();
+            let set_def = match &shape.def {
+                Def::Set(set_def) => *set_def,
+                _ => {
+                    return Err(self.err(ReflectErrorKind::OperationFailed {
+                        shape,
+                        operation: "init_set_item can only be called on Set types",
+                    }));
+                }
+            };
+            let has_current_child = match &frame.tracker {
+                Tracker::Set { current_child } => *current_child,
+                _ => {
+                    return Err(self.err(ReflectErrorKind::OperationFailed {
+                        shape,
+                        operation: "must call init_set() before begin_set_item()",
+                    }));
+                }
+            };
+            (
+                shape,
+                frame.type_plan,
+                set_def,
+                frame.is_init,
+                has_current_child,
+            )
         };
 
         // Verify the tracker is in Set state and initialized
-        match &mut frame.tracker {
-            Tracker::Set { current_child } if frame.is_init => {
-                if *current_child {
-                    return Err(self.err(ReflectErrorKind::OperationFailed {
-                        shape,
-                        operation: "already pushing an element, call end() first",
-                    }));
-                }
-                *current_child = true;
-            }
-            _ => {
-                return Err(self.err(ReflectErrorKind::OperationFailed {
-                    shape,
-                    operation: "must call init_set() before begin_set_item()",
-                }));
-            }
+        if !is_init {
+            return Err(self.err(ReflectErrorKind::OperationFailed {
+                shape,
+                operation: "must call init_set() before begin_set_item()",
+            }));
+        }
+        if has_current_child {
+            return Err(self.err(ReflectErrorKind::OperationFailed {
+                shape,
+                operation: "already pushing an element, call end() first",
+            }));
+        }
+
+        // Update tracker to indicate we're building a child
+        match &mut self.mode.stack_mut().last_mut().unwrap().tracker {
+            Tracker::Set { current_child } => *current_child = true,
+            _ => unreachable!(),
         }
 
         // Get the element shape
@@ -131,10 +148,16 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         };
 
         // Push a new frame for the element
-        self.frames_mut().push(Frame::new(
+        // Get child type plan NodeId for set items
+        let child_plan = self
+            .root_plan
+            .set_item_node(parent_type_plan)
+            .expect("TypePlan should have item node for Set");
+        self.mode.stack_mut().push(Frame::new(
             PtrUninit::new(element_ptr.as_ptr()),
             AllocatedShape::new(element_shape, element_layout.size()),
             FrameOwnership::Owned,
+            child_plan,
         ));
 
         Ok(self)

@@ -112,6 +112,7 @@
 use alloc::{collections::BTreeMap, vec::Vec};
 
 mod iset;
+pub mod typeplan;
 
 mod partial_api;
 
@@ -227,6 +228,11 @@ pub struct Partial<'facet, const BORROW: bool = true> {
 
     /// current state of the Partial
     state: PartialState,
+
+    /// Precomputed deserialization plan for the root type.
+    /// Built once at allocation time, navigated in parallel with value construction.
+    /// Each Frame holds a pointer into this tree.
+    root_plan: alloc::boxed::Box<typeplan::TypePlan>,
 
     invariant: PhantomData<fn(&'facet ()) -> &'facet ()>,
 }
@@ -366,6 +372,14 @@ pub(crate) struct Frame {
     /// Container-level proxy definition (from `#[facet(proxy = ...)]` on the shape).
     /// Used during custom deserialization to convert from proxy type to target type.
     pub(crate) shape_level_proxy: Option<&'static facet_core::ProxyDef>,
+
+    /// NodeId into the precomputed TypePlan for this frame's type.
+    /// This is navigated in parallel with the value - when we begin_nth_field,
+    /// the new frame gets the NodeId for that field's child plan.
+    /// The TypePlan arena is owned by Partial and lives as long as the Partial.
+    /// Always present - TypePlan is built for what we actually deserialize into
+    /// (including proxies).
+    pub(crate) type_plan: typeplan::NodeId,
 }
 
 #[derive(Debug)]
@@ -411,6 +425,8 @@ pub(crate) enum Tracker {
     Enum {
         /// Variant chosen for the enum
         variant: &'static Variant,
+        /// Index of the variant in the enum's variants array
+        variant_idx: usize,
         /// tracks enum fields (for the given variant)
         data: ISet,
         /// If we're pushing another frame, this is set to the field index
@@ -532,7 +548,12 @@ impl Tracker {
 }
 
 impl Frame {
-    const fn new(data: PtrUninit, allocated: AllocatedShape, ownership: FrameOwnership) -> Self {
+    fn new(
+        data: PtrUninit,
+        allocated: AllocatedShape,
+        ownership: FrameOwnership,
+        type_plan: typeplan::NodeId,
+    ) -> Self {
         // For empty structs (structs with 0 fields), start as initialized since there's nothing to initialize
         // This includes empty tuples () which are zero-sized types with no fields to initialize
         let is_init = matches!(
@@ -548,6 +569,7 @@ impl Frame {
             ownership,
             using_custom_deserialization: false,
             shape_level_proxy: None,
+            type_plan,
         }
     }
 

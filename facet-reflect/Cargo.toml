@@ -18,7 +18,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [features]
 default = ["std"]
-std = ["alloc", "facet-core/std", "facet-path/std"] # Enable the standard library features
+std = ["alloc", "facet-core/std", "facet-path/std", "indextree/std"] # Enable the standard library features
 alloc = [
     "facet-core/alloc",
     "facet-path/alloc",
@@ -54,6 +54,8 @@ fn-ptr = [
 camino = { workspace = true, optional = true }
 facet-core = { path = "../facet-core", version = "0.43.2", default-features = false }
 facet-path = { version = "0.43.2", path = "../facet-path", default-features = false }
+hashbrown = "0.15"
+indextree = { version = "4.7.4", default-features = false }
 tracing = { workspace = true, optional = true }
 ulid = { workspace = true, optional = true }
 uuid = { workspace = true, optional = true }

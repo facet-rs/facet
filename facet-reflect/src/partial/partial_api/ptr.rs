@@ -38,15 +38,15 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         // Handle re-initialization if the smart pointer is already initialized
         self.prepare_for_reinitialization();
 
-        // Get shape upfront to avoid borrow conflicts
+        // Get shape and type_plan upfront to avoid borrow conflicts
         let shape = self.frames().last().unwrap().allocated.shape();
-        let frame = self.frames_mut().last_mut().unwrap();
+        let parent_type_plan = self.frames().last().unwrap().type_plan;
 
         if pointee_shape.layout.sized_layout().is_ok() {
             // pointee is sized, we can allocate it — for `Arc<T>` we'll be allocating a `T` and
             // holding onto it. We'll build a new Arc with it when ending the smart pointer frame.
 
-            frame.tracker = Tracker::SmartPointer;
+            self.mode.stack_mut().last_mut().unwrap().tracker = Tracker::SmartPointer;
 
             let inner_layout = match pointee_shape.layout.sized_layout() {
                 Ok(layout) => layout,
@@ -66,10 +66,16 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             };
 
             // Push a new frame for the inner value
-            self.frames_mut().push(Frame::new(
+            // Get child type plan NodeId for smart pointer pointee
+            let child_plan = self
+                .root_plan
+                .pointer_pointee_node(parent_type_plan)
+                .expect("TypePlan should have pointee node for sized pointer");
+            self.mode.stack_mut().push(Frame::new(
                 PtrUninit::new(inner_ptr.as_ptr()),
                 AllocatedShape::new(pointee_shape, inner_layout.size()),
                 FrameOwnership::Owned,
+                child_plan,
             ));
         } else {
             // pointee is unsized, we only support a handful of cases there
@@ -89,13 +95,19 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     }));
                 };
                 let string_size = string_layout.size();
+                // For Arc<str> -> String conversion, TypePlan builds for the conversion source (String)
+                let child_plan = self
+                    .root_plan
+                    .pointer_pointee_node(parent_type_plan)
+                    .expect("TypePlan should have pointee node for str->String conversion");
                 let new_frame = Frame::new(
                     PtrUninit::new(string_ptr.as_ptr()),
                     AllocatedShape::new(String::SHAPE, string_size),
                     FrameOwnership::Owned,
+                    child_plan,
                 );
                 // Frame::new already sets tracker = Scalar and is_init = false
-                self.frames_mut().push(new_frame);
+                self.mode.stack_mut().push(new_frame);
             } else if let Type::Sequence(SequenceType::Slice(_st)) = pointee_shape.ty {
                 crate::trace!("Pointee is [{}]", _st.t);
 
@@ -114,6 +126,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 let builder_ptr = (slice_builder_vtable.new_fn)();
 
                 // Deallocate the original Arc allocation before replacing with slice builder
+                let frame = self.mode.stack_mut().last_mut().unwrap();
                 if let FrameOwnership::Owned = frame.ownership
                     && let Ok(layout) = shape.layout.sized_layout()
                     && layout.size() > 0

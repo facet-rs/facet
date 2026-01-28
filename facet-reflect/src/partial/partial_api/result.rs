@@ -39,8 +39,9 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         }
 
         // Set tracker to indicate we're building the Ok value
-        let frame = self.frames_mut().last_mut().unwrap();
-        frame.tracker = Tracker::Result {
+        // Get the type_plan before modifying tracker
+        let parent_type_plan = self.frames().last().unwrap().type_plan;
+        self.mode.stack_mut().last_mut().unwrap().tracker = Tracker::Result {
             is_ok: true,
             building_inner: true,
         };
@@ -69,12 +70,18 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         };
 
         // Create a new frame for the inner value
+        // Get child type plan NodeId for Result Ok type
+        let child_plan = self
+            .root_plan
+            .result_ok_node(parent_type_plan)
+            .expect("TypePlan should have Ok node for Result");
         let inner_frame = Frame::new(
             inner_data,
             AllocatedShape::new(inner_shape, inner_layout.size()),
             FrameOwnership::Owned,
+            child_plan,
         );
-        self.frames_mut().push(inner_frame);
+        self.mode.stack_mut().push(inner_frame);
 
         Ok(self)
     }
@@ -113,8 +120,9 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         }
 
         // Set tracker to indicate we're building the Err value
-        let frame = self.frames_mut().last_mut().unwrap();
-        frame.tracker = Tracker::Result {
+        // Get the type_plan before modifying tracker
+        let parent_type_plan = self.frames().last().unwrap().type_plan;
+        self.mode.stack_mut().last_mut().unwrap().tracker = Tracker::Result {
             is_ok: false,
             building_inner: true,
         };
@@ -143,12 +151,18 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         };
 
         // Create a new frame for the inner value
+        // Get child type plan NodeId for Result Err type
+        let child_plan = self
+            .root_plan
+            .result_err_node(parent_type_plan)
+            .expect("TypePlan should have Err node for Result");
         let inner_frame = Frame::new(
             inner_data,
             AllocatedShape::new(inner_shape, inner_layout.size()),
             FrameOwnership::Owned,
+            child_plan,
         );
-        self.frames_mut().push(inner_frame);
+        self.mode.stack_mut().push(inner_frame);
 
         Ok(self)
     }

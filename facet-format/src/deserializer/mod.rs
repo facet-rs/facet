@@ -308,13 +308,16 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
     where
         T: Facet<'static>,
     {
+        // Get format namespace for format-specific proxy resolution in TypePlan
+        let format_ns = self.parser.format_namespace();
+
         // SAFETY: alloc_owned produces Partial<'static, false>, but our deserializer
         // expects 'input. Since BORROW=false means we never borrow from input anyway,
         // this is safe. We also transmute the HeapValue back to 'static before materializing.
         #[allow(unsafe_code)]
         let wip: Partial<'input, false> = unsafe {
             core::mem::transmute::<Partial<'static, false>, Partial<'input, false>>(
-                Partial::alloc_owned::<T>()?,
+                Partial::alloc_owned_for_format_opt::<T>(format_ns)?,
             )
         };
 
@@ -352,13 +355,16 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
     where
         T: Facet<'static>,
     {
+        // Get format namespace for format-specific proxy resolution in TypePlan
+        let format_ns = self.parser.format_namespace();
+
         // SAFETY: alloc_owned produces Partial<'static, false>, but our deserializer
         // expects 'input. Since BORROW=false means we never borrow from input anyway,
         // this is safe. We also transmute the HeapValue back to 'static before materializing.
         #[allow(unsafe_code)]
         let wip: Partial<'input, false> = unsafe {
             core::mem::transmute::<Partial<'static, false>, Partial<'input, false>>(
-                Partial::alloc_owned::<T>()?,
+                Partial::alloc_owned_for_format_opt::<T>(format_ns)?,
             )
         };
         let wip = wip.begin_deferred()?;
@@ -394,10 +400,13 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
     where
         T: Facet<'static>,
     {
+        // Get format namespace for format-specific proxy resolution in TypePlan
+        let format_ns = self.parser.format_namespace();
+
         #[allow(unsafe_code)]
         let wip: Partial<'input, false> = unsafe {
             core::mem::transmute::<Partial<'static, false>, Partial<'input, false>>(
-                Partial::alloc_owned::<T>()?,
+                Partial::alloc_owned_for_format_opt::<T>(format_ns)?,
             )
         };
 
@@ -746,11 +755,6 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             }
             None => Ok(None),
         }
-    }
-
-    /// Check if a field matches a given name by effective name or alias.
-    fn field_matches(field: &facet_core::Field, name: &str) -> bool {
-        field.effective_name() == name || field.alias.iter().any(|alias| *alias == name)
     }
 
     /// Make an error using the last span, the current path of the given wip.

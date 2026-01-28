@@ -1,10 +1,35 @@
-use facet_core::{Type, UserType};
+use facet_core::{StructType, Type, UserType};
 use facet_reflect::Partial;
 
 use crate::{
     DeserializeError, DeserializeErrorKind, FormatDeserializer, ParseEventKind, ScalarValue,
     SpanGuard,
 };
+
+/// Look up a field by name using precomputed TypePlan if available, otherwise linear scan.
+///
+/// The TypePlan's FieldLookup is precomputed at `Partial::alloc()` time and provides
+/// O(1) or O(log n) lookup. If no TypePlan is available (custom deserialization frames),
+/// this falls back to a linear scan through struct fields.
+#[inline]
+fn lookup_field<const BORROW: bool>(
+    wip: &Partial<'_, BORROW>,
+    struct_def: &'static StructType,
+    name: &str,
+) -> Option<usize> {
+    // Try precomputed lookup from TypePlan first
+    if let Some(plan) = wip.struct_plan() {
+        return plan.field_lookup.find(name);
+    }
+
+    // Fallback: linear scan through fields (for frames without TypePlan)
+    struct_def
+        .fields
+        .iter()
+        .enumerate()
+        .find(|(_, f)| f.effective_name() == name || f.alias == Some(name))
+        .map(|(i, _)| i)
+}
 
 impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BORROW> {
     /// Deserialize a struct without flattened fields (simple case).
@@ -110,14 +135,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                         }
                     };
 
-                    // Look up field in struct fields by name/alias
-                    let field_info = struct_def
-                        .fields
-                        .iter()
-                        .enumerate()
-                        .find(|(_, f)| Self::field_matches(f, key_name));
-
-                    if let Some((idx, field)) = field_info {
+                    // Look up field by name/alias using precomputed TypePlan lookup
+                    if let Some(idx) = lookup_field(&wip, struct_def, key_name) {
+                        let field = &struct_def.fields[idx];
                         trace!(
                             idx,
                             field_name = field.name,

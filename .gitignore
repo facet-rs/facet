@@ -48,3 +48,7 @@ scripts/pnpm-lock.yaml
 scripts/app.js
 .tracey/
 .playwright-mcp/
+*.callgrind
+heaptrack.*.zst
+citm_catalog.json
+twitter.json

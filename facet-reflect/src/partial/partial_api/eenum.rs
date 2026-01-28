@@ -19,16 +19,9 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// This searches by effective name (respecting `#[facet(rename = "...")]` attributes).
     pub fn find_variant(&self, variant_name: &str) -> Option<(usize, &'static Variant)> {
         let frame = self.frames().last()?;
-
-        if let Type::User(UserType::Enum(enum_def)) = frame.allocated.shape().ty {
-            enum_def
-                .variants
-                .iter()
-                .enumerate()
-                .find(|(_, v)| v.effective_name() == variant_name)
-        } else {
-            None
-        }
+        let enum_plan = self.root_plan.as_enum_plan(frame.type_plan)?;
+        let idx = enum_plan.variant_lookup.find(variant_name)?;
+        Some((idx, enum_plan.variants[idx].variant))
     }
 
     /// Assuming the current frame is an enum, this selects a variant by index
@@ -58,7 +51,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         }
         let variant = &enum_type.variants[index];
 
-        self.select_variant_internal(&enum_type, variant)?;
+        self.select_variant_internal(&enum_type, variant, index)?;
         Ok(self)
     }
 
@@ -71,10 +64,11 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         let frame = self.frames().last().unwrap();
         let enum_type = frame.get_enum_type().map_err(|e| self.err(e))?;
         let shape = frame.allocated.shape();
-        let Some(variant) = enum_type
+        let Some((variant_idx, variant)) = enum_type
             .variants
             .iter()
-            .find(|v| v.effective_name() == variant_name)
+            .enumerate()
+            .find(|(_, v)| v.effective_name() == variant_name)
         else {
             return Err(self.err(ReflectErrorKind::OperationFailed {
                 shape,
@@ -82,7 +76,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             }));
         };
 
-        self.select_variant_internal(&enum_type, variant)?;
+        self.select_variant_internal(&enum_type, variant, variant_idx)?;
         Ok(self)
     }
 
@@ -106,10 +100,11 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         };
 
         // Find the variant with the matching discriminant
-        let Some(variant) = enum_type
+        let Some((variant_idx, variant)) = enum_type
             .variants
             .iter()
-            .find(|v| v.discriminant == Some(discriminant))
+            .enumerate()
+            .find(|(_, v)| v.discriminant == Some(discriminant))
         else {
             return Err(self.err(ReflectErrorKind::OperationFailed {
                 shape: frame.allocated.shape(),
@@ -118,7 +113,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         };
 
         // Update the frame tracker to select the variant
-        self.select_variant_internal(&enum_type, variant)?;
+        self.select_variant_internal(&enum_type, variant, variant_idx)?;
 
         Ok(self)
     }

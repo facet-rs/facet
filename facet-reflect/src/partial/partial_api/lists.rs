@@ -208,17 +208,22 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
     pub fn begin_list_item(mut self) -> Result<Self, ReflectError> {
         crate::trace!("begin_list_item()");
 
-        // Get shape upfront to avoid borrow conflicts
-        let shape = self.frames().last().unwrap().allocated.shape();
-        let frame = self.frames_mut().last_mut().unwrap();
+        // Get immutable data upfront - shape and type_plan are Copy
+        let frame = self.frames().last().unwrap();
+        let shape = frame.allocated.shape();
+        let parent_type_plan = frame.type_plan;
+
+        // Check tracker state immutably first to determine which path to take
+        let tracker_kind = frame.tracker.kind();
 
         // Check if we're building a smart pointer slice
-        if let Tracker::SmartPointerSlice {
-            building_item,
-            vtable: _,
-        } = &frame.tracker
-        {
-            if *building_item {
+        if tracker_kind == crate::error::TrackerKind::SmartPointerSlice {
+            let frame = self.mode.stack_mut().last_mut().unwrap();
+            if let Tracker::SmartPointerSlice {
+                building_item: true,
+                vtable: _,
+            } = &frame.tracker
+            {
                 return Err(self.err(ReflectErrorKind::OperationFailed {
                     shape,
                     operation: "already building an item, call end() first",
@@ -278,20 +283,31 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 PtrUninit::new(element_ptr.as_ptr())
             };
 
+            // Get child type plan NodeId for slice items
+            // Navigate: Pointer -> Slice -> element
+            let slice_node = self
+                .root_plan
+                .pointer_pointee_node(parent_type_plan)
+                .expect("TypePlan must have slice node for smart pointer");
+            let child_plan = self
+                .root_plan
+                .list_item_node(slice_node)
+                .expect("TypePlan must have item node for slice");
+
             // Create and push the element frame
             crate::trace!("Pushing element frame, which we just allocated");
             let element_frame = Frame::new(
                 element_data,
                 AllocatedShape::new(element_shape, element_layout.size()),
                 FrameOwnership::Owned,
+                child_plan,
             );
-            self.frames_mut().push(element_frame);
+            self.mode.stack_mut().push(element_frame);
 
             // Mark that we're building an item
-            // We need to update the tracker after pushing the frame
-            let parent_idx = self.frames().len() - 2;
+            let parent_idx = self.mode.stack().len() - 2;
             if let Tracker::SmartPointerSlice { building_item, .. } =
-                &mut self.frames_mut()[parent_idx].tracker
+                &mut self.mode.stack_mut()[parent_idx].tracker
             {
                 crate::trace!("Marking element frame as building item");
                 *building_item = true;
@@ -301,61 +317,66 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         }
 
         // Check if we're building a DynamicValue array
-        if let Tracker::DynamicValue {
-            state: DynamicValueState::Array { building_element },
-        } = &frame.tracker
-        {
-            if *building_element {
-                return Err(self.err(ReflectErrorKind::OperationFailed {
-                    shape,
-                    operation: "already building an element, call end() first",
-                }));
-            }
-
-            // For DynamicValue arrays, the element shape is the same DynamicValue shape
-            // (Value arrays contain Value elements)
-            let element_shape = shape;
-            let element_layout = match element_shape.layout.sized_layout() {
-                Ok(layout) => layout,
-                Err(_) => {
-                    return Err(self.err(ReflectErrorKind::Unsized {
-                        shape: element_shape,
-                        operation: "begin_list_item: calculating element layout",
-                    }));
-                }
-            };
-
-            let element_data = if element_layout.size() == 0 {
-                // For ZST, use a non-null but unallocated pointer
-                PtrUninit::new(NonNull::<u8>::dangling().as_ptr())
-            } else {
-                let element_ptr: *mut u8 = unsafe { ::alloc::alloc::alloc(element_layout) };
-                let Some(element_ptr) = NonNull::new(element_ptr) else {
-                    return Err(self.err(ReflectErrorKind::OperationFailed {
-                        shape,
-                        operation: "failed to allocate memory for list element",
-                    }));
-                };
-                PtrUninit::new(element_ptr.as_ptr())
-            };
-
-            // Push a new frame for the element
-            self.frames_mut().push(Frame::new(
-                element_data,
-                AllocatedShape::new(element_shape, element_layout.size()),
-                FrameOwnership::Owned,
-            ));
-
-            // Mark that we're building an element
-            let parent_idx = self.frames().len() - 2;
+        if tracker_kind == crate::error::TrackerKind::DynamicValue {
+            let frame = self.mode.stack().last().unwrap();
             if let Tracker::DynamicValue {
                 state: DynamicValueState::Array { building_element },
-            } = &mut self.frames_mut()[parent_idx].tracker
+            } = &frame.tracker
             {
-                *building_element = true;
-            }
+                if *building_element {
+                    return Err(self.err(ReflectErrorKind::OperationFailed {
+                        shape,
+                        operation: "already building an element, call end() first",
+                    }));
+                }
 
-            return Ok(self);
+                // For DynamicValue arrays, the element shape is the same DynamicValue shape
+                // (Value arrays contain Value elements)
+                let element_shape = shape;
+                let element_layout = match element_shape.layout.sized_layout() {
+                    Ok(layout) => layout,
+                    Err(_) => {
+                        return Err(self.err(ReflectErrorKind::Unsized {
+                            shape: element_shape,
+                            operation: "begin_list_item: calculating element layout",
+                        }));
+                    }
+                };
+
+                let element_data = if element_layout.size() == 0 {
+                    // For ZST, use a non-null but unallocated pointer
+                    PtrUninit::new(NonNull::<u8>::dangling().as_ptr())
+                } else {
+                    let element_ptr: *mut u8 = unsafe { ::alloc::alloc::alloc(element_layout) };
+                    let Some(element_ptr) = NonNull::new(element_ptr) else {
+                        return Err(self.err(ReflectErrorKind::OperationFailed {
+                            shape,
+                            operation: "failed to allocate memory for list element",
+                        }));
+                    };
+                    PtrUninit::new(element_ptr.as_ptr())
+                };
+
+                // For DynamicValue arrays, use the same type plan (self-recursive)
+                let child_plan = parent_type_plan;
+                self.mode.stack_mut().push(Frame::new(
+                    element_data,
+                    AllocatedShape::new(element_shape, element_layout.size()),
+                    FrameOwnership::Owned,
+                    child_plan,
+                ));
+
+                // Mark that we're building an element
+                let parent_idx = self.mode.stack().len() - 2;
+                if let Tracker::DynamicValue {
+                    state: DynamicValueState::Array { building_element },
+                } = &mut self.mode.stack_mut()[parent_idx].tracker
+                {
+                    *building_element = true;
+                }
+
+                return Ok(self);
+            }
         }
 
         // Check that we have a List that's been initialized
@@ -370,24 +391,27 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         };
 
         // Verify the tracker is in List state and initialized
-        match &mut frame.tracker {
-            Tracker::List { current_child } if frame.is_init => {
-                if current_child.is_some() {
+        {
+            let frame = self.mode.stack_mut().last_mut().unwrap();
+            match &mut frame.tracker {
+                Tracker::List { current_child } if frame.is_init => {
+                    if current_child.is_some() {
+                        return Err(self.err(ReflectErrorKind::OperationFailed {
+                            shape,
+                            operation: "already pushing an element, call pop() first",
+                        }));
+                    }
+                    // Get the current length to use as the index for path tracking
+                    let current_len =
+                        unsafe { (list_def.vtable.len)(frame.data.assume_init().as_const()) };
+                    *current_child = Some(current_len);
+                }
+                _ => {
                     return Err(self.err(ReflectErrorKind::OperationFailed {
                         shape,
-                        operation: "already pushing an element, call pop() first",
+                        operation: "must call init_list() before push()",
                     }));
                 }
-                // Get the current length to use as the index for path tracking
-                let current_len =
-                    unsafe { (list_def.vtable.len)(frame.data.assume_init().as_const()) };
-                *current_child = Some(current_len);
-            }
-            _ => {
-                return Err(self.err(ReflectErrorKind::OperationFailed {
-                    shape,
-                    operation: "must call init_list() before push()",
-                }));
             }
         }
 
@@ -407,59 +431,65 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
 
         // Try direct-fill: write directly into Vec's reserved buffer
         // This avoids a separate heap allocation + copy for each element
-        let (element_data, ownership) = if let (
-            Some(reserve_fn),
-            Some(as_mut_ptr_fn),
-            Some(_set_len_fn),
-            Some(capacity_fn),
-        ) = (
-            list_def.reserve(),
-            list_def.as_mut_ptr_typed(),
-            list_def.set_len(),
-            list_def.capacity(),
-        ) {
-            // Get current length and capacity
-            let current_len = unsafe { (list_def.vtable.len)(frame.data.assume_init().as_const()) };
-            let current_capacity = unsafe { capacity_fn(frame.data.assume_init().as_const()) };
+        let (element_data, ownership) = {
+            let frame = self.mode.stack_mut().last_mut().unwrap();
+            if let (Some(reserve_fn), Some(as_mut_ptr_fn), Some(_set_len_fn), Some(capacity_fn)) = (
+                list_def.reserve(),
+                list_def.as_mut_ptr_typed(),
+                list_def.set_len(),
+                list_def.capacity(),
+            ) {
+                // Get current length and capacity
+                let current_len =
+                    unsafe { (list_def.vtable.len)(frame.data.assume_init().as_const()) };
+                let current_capacity = unsafe { capacity_fn(frame.data.assume_init().as_const()) };
 
-            // Only reserve if we need more space
-            if current_len >= current_capacity {
-                // Reserve with growth factor to reduce future vtable calls
-                // Use max(len, 4) to handle empty vecs and small lists
-                let additional = current_len.max(4);
-                unsafe {
-                    reserve_fn(frame.data.assume_init(), additional);
+                // Only reserve if we need more space
+                if current_len >= current_capacity {
+                    // Reserve with growth factor to reduce future vtable calls
+                    // Use max(len, 4) to handle empty vecs and small lists
+                    let additional = current_len.max(4);
+                    unsafe {
+                        reserve_fn(frame.data.assume_init(), additional);
+                    }
                 }
+
+                // Get pointer to the buffer and calculate element offset
+                let buffer_ptr = unsafe { as_mut_ptr_fn(frame.data.assume_init()) };
+                let element_ptr = unsafe { buffer_ptr.add(current_len * element_layout.size()) };
+
+                (PtrUninit::new(element_ptr), FrameOwnership::ListSlot)
+            } else if element_layout.size() == 0 {
+                // ZST: use dangling pointer, no allocation needed
+                (
+                    PtrUninit::new(NonNull::<u8>::dangling().as_ptr()),
+                    FrameOwnership::Owned,
+                )
+            } else {
+                // Fallback: allocate separate buffer, will be copied by push()
+                let element_ptr: *mut u8 = unsafe { ::alloc::alloc::alloc(element_layout) };
+                let Some(element_ptr) = NonNull::new(element_ptr) else {
+                    return Err(self.err(ReflectErrorKind::OperationFailed {
+                        shape,
+                        operation: "failed to allocate memory for list element",
+                    }));
+                };
+                (PtrUninit::new(element_ptr.as_ptr()), FrameOwnership::Owned)
             }
-
-            // Get pointer to the buffer and calculate element offset
-            let buffer_ptr = unsafe { as_mut_ptr_fn(frame.data.assume_init()) };
-            let element_ptr = unsafe { buffer_ptr.add(current_len * element_layout.size()) };
-
-            (PtrUninit::new(element_ptr), FrameOwnership::ListSlot)
-        } else if element_layout.size() == 0 {
-            // ZST: use dangling pointer, no allocation needed
-            (
-                PtrUninit::new(NonNull::<u8>::dangling().as_ptr()),
-                FrameOwnership::Owned,
-            )
-        } else {
-            // Fallback: allocate separate buffer, will be copied by push()
-            let element_ptr: *mut u8 = unsafe { ::alloc::alloc::alloc(element_layout) };
-            let Some(element_ptr) = NonNull::new(element_ptr) else {
-                return Err(self.err(ReflectErrorKind::OperationFailed {
-                    shape,
-                    operation: "failed to allocate memory for list element",
-                }));
-            };
-            (PtrUninit::new(element_ptr.as_ptr()), FrameOwnership::Owned)
         };
 
+        // Get child type plan NodeId for list items - root_plan is free to access now
+        let child_plan = self
+            .root_plan
+            .list_item_node(parent_type_plan)
+            .expect("TypePlan must have list item node");
+
         // Push a new frame for the element
-        self.frames_mut().push(Frame::new(
+        self.mode.stack_mut().push(Frame::new(
             element_data,
             AllocatedShape::new(element_shape, element_layout.size()),
             ownership,
+            child_plan,
         ));
 
         Ok(self)

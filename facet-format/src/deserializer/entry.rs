@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use facet_core::{Def, Shape, StructKind, Type, UserType};
-use facet_reflect::Partial;
+use facet_reflect::{Partial, typeplan::DeserStrategy};
 
 use crate::{
     ContainerKind, DeserializeError, DeserializeErrorKind, FieldEvidence, FieldLocationHint,
@@ -10,9 +10,13 @@ use crate::{
 
 impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BORROW> {
     /// Main deserialization entry point - deserialize into a Partial.
+    ///
+    /// Uses the precomputed `DeserStrategy` from TypePlan for fast dispatch.
+    /// The strategy is computed once at Partial allocation time, eliminating
+    /// repeated runtime inspection of Shape/Def/vtable during deserialization.
     pub fn deserialize_into(
         &mut self,
-        mut wip: Partial<'input, BORROW>,
+        wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
         let shape = wip.shape();
@@ -21,56 +25,22 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             "deserialize_into: starting"
         );
 
-        // Check for raw capture type (e.g., RawJson)
-        // Raw capture types are tuple structs with a single Cow<str> field
+        // === SPECIAL CASES (cannot be precomputed) ===
+
+        // Check for raw capture type (e.g., RawJson) - parser-specific
         if self.parser.raw_capture_shape() == Some(shape) {
-            // Parser doesn't support raw capture (e.g., streaming mode)
             let Some(raw) = self.capture_raw()? else {
                 return Err(DeserializeErrorKind::RawCaptureNotSupported { shape }
                     .with_span(self.last_span));
             };
-
-            // The raw type is a tuple struct like RawJson(Cow<str>)
-            // Access field 0 (the Cow<str>) and set it
             return Ok(wip
                 .begin_nth_field(0)?
                 .with(|w| self.set_string_value(w, Cow::Borrowed(raw)))?
                 .end()?);
         }
 
-        // Check for container-level proxy (format-specific proxies take precedence)
-        let format_ns = self.parser.format_namespace();
-        let (wip_returned, has_proxy) =
-            wip.begin_custom_deserialization_from_shape_with_format(format_ns)?;
-        wip = wip_returned;
-        if has_proxy {
-            return Ok(wip.with(|w| self.deserialize_into(w))?.end()?);
-        }
-
-        // Check for field-level proxy (opaque types with proxy attribute)
-        // Format-specific proxies take precedence over format-agnostic proxies
-        if wip
-            .parent_field()
-            .and_then(|field| field.effective_proxy(format_ns))
-            .is_some()
-        {
-            return Ok(wip
-                .begin_custom_deserialization_with_format(format_ns)?
-                .with(|w| self.deserialize_into(w))?
-                .end()?);
-        }
-
-        // Check Def first for Option
-        if matches!(&shape.def, Def::Option(_)) {
-            return self.deserialize_option(wip);
-        }
-
-        // Check Def for Result - treat it as a 2-variant enum
-        if matches!(&shape.def, Def::Result(_)) {
-            return self.deserialize_result_as_enum(wip);
-        }
-
-        // Priority 1: Check for builder_shape (immutable collections like Bytes -> BytesMut)
+        // Check for builder_shape (immutable collections like Bytes -> BytesMut)
+        // This is a special case that can't easily be represented in DeserStrategy
         if shape.builder_shape.is_some() {
             return Ok(wip
                 .begin_inner()?
@@ -78,121 +48,183 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 .end()?);
         }
 
-        // Priority 2: Check for smart pointers (Box, Arc, Rc)
-        if matches!(&shape.def, Def::Pointer(_)) {
-            return self.deserialize_pointer(wip);
-        }
-
-        // Priority 3: Check for .inner (transparent wrappers like NonZero)
-        // Collections (List/Map/Set/Array) have .inner for variance but shouldn't use this path
-        // Opaque scalars (like ULID) may have .inner for documentation but should NOT be
-        // deserialized as transparent wrappers - they use hint_opaque_scalar instead
-        let is_opaque_scalar =
-            matches!(shape.def, Def::Scalar) && matches!(shape.ty, Type::User(UserType::Opaque));
-        if shape.inner.is_some()
-            && !is_opaque_scalar
-            && !matches!(
-                &shape.def,
-                Def::List(_) | Def::Map(_) | Def::Set(_) | Def::Array(_)
-            )
-        {
-            return Ok(wip
-                .begin_inner()?
-                .with(|w| self.deserialize_into(w))?
-                .end()?);
-        }
-
-        // Priority 4: Check for metadata containers (like Spanned<T>, Documented<T>)
-        // These deserialize transparently - the value field gets the data,
-        // metadata fields are populated from parser state (span, doc, tag, etc.)
+        // Check for metadata containers (like `Spanned<T>`, `Documented<T>`)
+        // These require field-by-field handling that can't be precomputed
         if shape.is_metadata_container() {
-            trace!("deserialize_into: metadata container detected");
-            if let Type::User(UserType::Struct(st)) = &shape.ty {
-                for field in st.fields {
-                    match field.metadata_kind() {
-                        Some("span") => {
-                            // Populate span from parser's current position
-                            let span = self.last_span;
-                            wip = wip
-                                .begin_field(field.effective_name())?
-                                .begin_some()?
-                                .begin_field("offset")?
-                                .set(span.offset)?
-                                .end()?
-                                .begin_field("len")?
-                                .set(span.len)?
-                                .end()?
-                                .end()?
-                                .end()?;
-                        }
-                        Some(_other) => {
-                            // Other metadata types (doc, tag) - set to default for now
-                            wip = wip
-                                .begin_field(field.effective_name())?
-                                .set_default()?
-                                .end()?;
-                        }
-                        None => {
-                            // This is the value field - recurse into it
-                            wip = wip
-                                .begin_field(field.effective_name())?
-                                .with(|w| self.deserialize_into(w))?
-                                .end()?;
-                        }
-                    }
-                }
-            }
-            return Ok(wip);
+            return self.deserialize_metadata_container(wip);
         }
 
-        // Priority 5: Check the Type for structs and enums
-        match &shape.ty {
-            Type::User(UserType::Struct(struct_def)) => {
-                if matches!(struct_def.kind, StructKind::Tuple | StructKind::TupleStruct) {
-                    trace!("deserialize_into: dispatching to deserialize_tuple");
-                    return self.deserialize_tuple(wip);
-                }
-                trace!("deserialize_into: dispatching to deserialize_struct");
-                return self.deserialize_struct(wip);
-            }
-            Type::User(UserType::Enum(_)) => {
-                trace!("deserialize_into: dispatching to deserialize_enum");
-                return self.deserialize_enum(wip);
-            }
-            _ => {}
-        }
+        // === STRATEGY-BASED DISPATCH ===
+        // Use the precomputed DeserStrategy for O(1) dispatch
 
-        // Priority 6: Check Def for containers and scalars
-        match &shape.def {
-            Def::Scalar => {
+        let strategy = wip.deser_strategy();
+        trace!(?strategy, "deserialize_into: using precomputed strategy");
+
+        match strategy {
+            Some(DeserStrategy::ContainerProxy { .. }) => {
+                // Container-level proxy - the type itself has #[facet(proxy = X)]
+                let format_ns = self.parser.format_namespace();
+                let (wip, _) =
+                    wip.begin_custom_deserialization_from_shape_with_format(format_ns)?;
+                Ok(wip.with(|w| self.deserialize_into(w))?.end()?)
+            }
+
+            Some(DeserStrategy::FieldProxy { .. }) => {
+                // Field-level proxy - the field has #[facet(proxy = X)]
+                let format_ns = self.parser.format_namespace();
+                let wip = wip.begin_custom_deserialization_with_format(format_ns)?;
+                Ok(wip.with(|w| self.deserialize_into(w))?.end()?)
+            }
+
+            Some(DeserStrategy::Pointer { .. }) => {
+                trace!("deserialize_into: dispatching to deserialize_pointer");
+                self.deserialize_pointer(wip)
+            }
+
+            Some(DeserStrategy::TransparentConvert { .. }) => {
+                trace!("deserialize_into: dispatching via begin_inner (transparent convert)");
+                Ok(wip
+                    .begin_inner()?
+                    .with(|w| self.deserialize_into(w))?
+                    .end()?)
+            }
+
+            Some(DeserStrategy::Scalar) => {
                 trace!("deserialize_into: dispatching to deserialize_scalar");
                 self.deserialize_scalar(wip)
             }
-            Def::List(_) => {
+
+            Some(DeserStrategy::Struct) => {
+                trace!("deserialize_into: dispatching to deserialize_struct");
+                self.deserialize_struct(wip)
+            }
+
+            Some(DeserStrategy::Tuple) => {
+                trace!("deserialize_into: dispatching to deserialize_tuple");
+                self.deserialize_tuple(wip)
+            }
+
+            Some(DeserStrategy::Enum) => {
+                trace!("deserialize_into: dispatching to deserialize_enum");
+                self.deserialize_enum(wip)
+            }
+
+            Some(DeserStrategy::Option { .. }) => {
+                trace!("deserialize_into: dispatching to deserialize_option");
+                self.deserialize_option(wip)
+            }
+
+            Some(DeserStrategy::Result { .. }) => {
+                trace!("deserialize_into: dispatching to deserialize_result_as_enum");
+                self.deserialize_result_as_enum(wip)
+            }
+
+            Some(DeserStrategy::List { .. }) => {
                 trace!("deserialize_into: dispatching to deserialize_list");
                 self.deserialize_list(wip)
             }
-            Def::Map(_) => {
+
+            Some(DeserStrategy::Map { .. }) => {
                 trace!("deserialize_into: dispatching to deserialize_map");
                 self.deserialize_map(wip)
             }
-            Def::Array(_) => {
-                trace!("deserialize_into: dispatching to deserialize_array");
-                self.deserialize_array(wip)
-            }
-            Def::Set(_) => {
+
+            Some(DeserStrategy::Set { .. }) => {
                 trace!("deserialize_into: dispatching to deserialize_set");
                 self.deserialize_set(wip)
             }
-            Def::DynamicValue(_) => {
+
+            Some(DeserStrategy::Array { .. }) => {
+                trace!("deserialize_into: dispatching to deserialize_array");
+                self.deserialize_array(wip)
+            }
+
+            Some(DeserStrategy::DynamicValue) => {
                 trace!("deserialize_into: dispatching to deserialize_dynamic_value");
                 self.deserialize_dynamic_value(wip)
             }
-            _ => Err(DeserializeErrorKind::Unsupported {
-                message: format!("unsupported shape def: {:?}", shape.def).into(),
+
+            Some(DeserStrategy::BackRef { .. }) => {
+                // BackRef is automatically resolved by deser_strategy() - this branch
+                // should never be reached. If it is, something is wrong with TypePlan.
+                unreachable!("deser_strategy() should resolve BackRef to target strategy")
             }
-            .with_span(self.last_span)),
+
+            Some(DeserStrategy::OpaquePointer) | Some(DeserStrategy::Opaque) => {
+                // Opaque types/pointers cannot be deserialized from formats without a proxy.
+                // They must have a #[facet(proxy = ...)] attribute to be deserializable.
+                Err(DeserializeErrorKind::Unsupported {
+                    message: format!(
+                        "cannot deserialize opaque type {} - add a proxy to make it deserializable",
+                        shape
+                    )
+                    .into(),
+                }
+                .with_span(self.last_span))
+            }
+
+            None => {
+                // This should not happen - TypePlan::build errors at allocation time for
+                // unsupported types. If we get here, something went wrong with plan tracking.
+                Err(DeserializeErrorKind::Unsupported {
+                    message: format!(
+                        "missing deserialization strategy for shape: {:?} (TypePlan bug)",
+                        shape.def
+                    )
+                    .into(),
+                }
+                .with_span(self.last_span))
+            }
         }
+    }
+
+    /// Deserialize a metadata container (like `Spanned<T>`, `Documented<T>`).
+    ///
+    /// These require special handling - the value field gets the data,
+    /// metadata fields are populated from parser state.
+    fn deserialize_metadata_container(
+        &mut self,
+        mut wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        trace!("deserialize_into: metadata container detected");
+        let shape = wip.shape();
+
+        if let Type::User(UserType::Struct(st)) = &shape.ty {
+            for field in st.fields {
+                match field.metadata_kind() {
+                    Some("span") => {
+                        // Populate span from parser's current position
+                        let span = self.last_span;
+                        wip = wip
+                            .begin_field(field.effective_name())?
+                            .begin_some()?
+                            .begin_field("offset")?
+                            .set(span.offset)?
+                            .end()?
+                            .begin_field("len")?
+                            .set(span.len)?
+                            .end()?
+                            .end()?
+                            .end()?;
+                    }
+                    Some(_other) => {
+                        // Other metadata types (doc, tag) - set to default for now
+                        wip = wip
+                            .begin_field(field.effective_name())?
+                            .set_default()?
+                            .end()?;
+                    }
+                    None => {
+                        // This is the value field - recurse into it
+                        wip = wip
+                            .begin_field(field.effective_name())?
+                            .with(|w| self.deserialize_into(w))?
+                            .end()?;
+                    }
+                }
+            }
+        }
+        Ok(wip)
     }
 
     /// Deserialize using an explicit source shape for parser hints.
@@ -1009,7 +1041,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
         trace!(shape_name = %shape, shape_def = ?shape.def, ?key, ?doc, ?tag, "deserialize_map_key");
 
-        // Handle metadata containers (like Documented<T> or ObjectKey): populate metadata and recurse into value
+        // Handle metadata containers (like `Documented<T>` or `ObjectKey`): populate metadata and recurse into value
         if shape.is_metadata_container() {
             trace!("deserialize_map_key: metadata container detected");
 

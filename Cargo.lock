@@ -1286,6 +1286,8 @@ dependencies = [
  "facet-path",
  "facet-testhelpers",
  "facet-value",
+ "hashbrown 0.15.5",
+ "indextree",
  "insta",
  "proptest",
  "tempfile",
@@ -1585,6 +1587,8 @@ version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
 dependencies = [
+ "allocator-api2",
+ "equivalent",
  "foldhash 0.1.5",
  "serde",
 ]
@@ -1828,6 +1832,12 @@ dependencies = [
  "serde",
  "serde_core",
 ]
+
+[[package]]
+name = "indextree"
+version = "4.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb9e21e48c85fa6643a38caca564645a3bbc9211edf506fc8ed690c7e7b4d3c7"
 
 [[package]]
 name = "indoc"
