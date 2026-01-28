@@ -1,6 +1,6 @@
 extern crate alloc;
 
-use alloc::{borrow::Cow, format, vec::Vec};
+use alloc::{borrow::Cow, collections::VecDeque, format, vec::Vec};
 
 use facet_core::Facet as _;
 use facet_format::{
@@ -634,8 +634,12 @@ impl<'de, const TRUSTED_UTF8: bool> FormatParser<'de> for JsonParser<'de, TRUSTE
         self.produce_event()
     }
 
-    fn next_events(&mut self, buf: &mut [ParseEvent<'de>]) -> Result<usize, ParseError> {
-        if buf.is_empty() {
+    fn next_events(
+        &mut self,
+        buf: &mut VecDeque<ParseEvent<'de>>,
+        limit: usize,
+    ) -> Result<usize, ParseError> {
+        if limit == 0 {
             return Ok(0);
         }
 
@@ -644,15 +648,15 @@ impl<'de, const TRUSTED_UTF8: bool> FormatParser<'de> for JsonParser<'de, TRUSTE
         // First, drain any peeked event
         if let Some(event) = self.state.event_peek.take() {
             self.state.peek_start_offset = None;
-            buf[count] = event;
+            buf.push_back(event);
             count += 1;
         }
 
         // Simple implementation: just call produce_event in a loop
-        while count < buf.len() {
+        while count < limit {
             match self.produce_event()? {
                 Some(event) => {
-                    buf[count] = event;
+                    buf.push_back(event);
                     count += 1;
                 }
                 None => break,

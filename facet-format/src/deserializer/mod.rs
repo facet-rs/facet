@@ -421,13 +421,8 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     /// Refill the event buffer from the parser.
     #[inline]
     fn refill_buffer(&mut self) -> Result<(), ParseError> {
-        // Use a temporary Vec for next_events, then extend the VecDeque
-        let mut temp = vec![
-            ParseEvent::new(crate::ParseEventKind::StructEnd, Span::new(0, 0));
-            self.buffer_capacity
-        ];
-        let count = self.parser.next_events(&mut temp)?;
-        self.event_buffer.extend(temp.into_iter().take(count));
+        self.parser
+            .next_events(&mut self.event_buffer, self.buffer_capacity)?;
         Ok(())
     }
 

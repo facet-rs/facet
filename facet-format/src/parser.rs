@@ -1,4 +1,7 @@
+extern crate alloc;
+
 use crate::ParseError;
+use alloc::collections::VecDeque;
 use facet_reflect::Span;
 
 /// Opaque token returned by [`FormatParser::save`].
@@ -28,21 +31,25 @@ pub trait FormatParser<'de> {
     /// from the internal buffer before reading new events from the input.
     fn next_event(&mut self) -> Result<Option<crate::ParseEvent<'de>>, ParseError>;
 
-    /// Read multiple parse events into a buffer, returning the number of events read.
+    /// Read multiple parse events into a deque, returning the number of events read.
     ///
     /// This is an optimization for parsers that can produce multiple events efficiently
     /// in a single call, amortizing function call overhead and improving cache locality.
     ///
     /// Returns `Ok(0)` at end-of-input (EOF).
     ///
-    /// The default implementation calls `next_event` repeatedly to fill the buffer.
+    /// The default implementation calls `next_event` repeatedly up to `limit` times.
     /// Parsers can override this for better performance.
-    fn next_events(&mut self, buf: &mut [crate::ParseEvent<'de>]) -> Result<usize, ParseError> {
+    fn next_events(
+        &mut self,
+        buf: &mut VecDeque<crate::ParseEvent<'de>>,
+        limit: usize,
+    ) -> Result<usize, ParseError> {
         let mut count = 0;
-        for slot in buf.iter_mut() {
+        while count < limit {
             match self.next_event()? {
                 Some(event) => {
-                    *slot = event;
+                    buf.push_back(event);
                     count += 1;
                 }
                 None => break,
@@ -282,103 +289,6 @@ pub trait FormatParser<'de> {
     /// Default: returns `None` (only format-agnostic proxies are used).
     fn format_namespace(&self) -> Option<&'static str> {
         None
-    }
-}
-
-// Implement FormatParser for &mut dyn FormatParser trait objects.
-// This allows using `&mut dyn FormatParser<'de>` wherever `P: FormatParser<'de>` is expected.
-// FIXME: I'm not sure this impl is needed.
-impl<'de> FormatParser<'de> for &mut dyn FormatParser<'de> {
-    fn next_event(&mut self) -> Result<Option<crate::ParseEvent<'de>>, ParseError> {
-        (**self).next_event()
-    }
-
-    fn next_events(&mut self, buf: &mut [crate::ParseEvent<'de>]) -> Result<usize, ParseError> {
-        (**self).next_events(buf)
-    }
-
-    fn peek_event(&mut self) -> Result<Option<crate::ParseEvent<'de>>, ParseError> {
-        (**self).peek_event()
-    }
-
-    fn skip_value(&mut self) -> Result<(), ParseError> {
-        (**self).skip_value()
-    }
-
-    fn save(&mut self) -> SavePoint {
-        (**self).save()
-    }
-
-    fn restore(&mut self, save_point: SavePoint) {
-        (**self).restore(save_point)
-    }
-
-    fn capture_raw(&mut self) -> Result<Option<&'de str>, ParseError> {
-        (**self).capture_raw()
-    }
-
-    fn input(&self) -> Option<&'de [u8]> {
-        (**self).input()
-    }
-
-    fn raw_capture_shape(&self) -> Option<&'static facet_core::Shape> {
-        (**self).raw_capture_shape()
-    }
-
-    fn is_self_describing(&self) -> bool {
-        (**self).is_self_describing()
-    }
-
-    fn hint_struct_fields(&mut self, num_fields: usize) {
-        (**self).hint_struct_fields(num_fields)
-    }
-
-    fn hint_scalar_type(&mut self, hint: ScalarTypeHint) {
-        (**self).hint_scalar_type(hint)
-    }
-
-    fn hint_sequence(&mut self) {
-        (**self).hint_sequence()
-    }
-
-    fn hint_byte_sequence(&mut self) -> bool {
-        (**self).hint_byte_sequence()
-    }
-
-    fn hint_array(&mut self, len: usize) {
-        (**self).hint_array(len)
-    }
-
-    fn hint_option(&mut self) {
-        (**self).hint_option()
-    }
-
-    fn hint_map(&mut self) {
-        (**self).hint_map()
-    }
-
-    fn hint_dynamic_value(&mut self) {
-        (**self).hint_dynamic_value()
-    }
-
-    fn hint_enum(&mut self, variants: &[EnumVariantHint]) {
-        (**self).hint_enum(variants)
-    }
-
-    fn hint_opaque_scalar(
-        &mut self,
-        type_identifier: &'static str,
-        shape: &'static facet_core::Shape,
-    ) -> bool {
-        (**self).hint_opaque_scalar(type_identifier, shape)
-    }
-
-    fn current_span(&self) -> Option<facet_reflect::Span> {
-        (**self).current_span()
-    }
-
-    fn format_namespace(&self) -> Option<&'static str> {
-        (**self).format_namespace()
     }
 }
 
