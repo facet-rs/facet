@@ -120,7 +120,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     #[inline]
     pub fn field_init_plans(&self) -> &[crate::typeplan::FieldInitPlan] {
         let frame = self.frames().last().unwrap();
-        let plan_node = self.root_plan.get(frame.type_plan).unwrap();
+        let plan_node = self.root_plan.get(frame.type_plan);
         &plan_node.field_init_plans
     }
 
@@ -138,7 +138,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             return None;
         }
         let frame = self.frames().last()?;
-        self.root_plan.get(frame.type_plan)
+        Some(self.root_plan.get(frame.type_plan))
     }
 
     /// Returns the precomputed deserialization strategy for the current frame.
@@ -159,7 +159,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
         // If this is a BackRef, follow the reference to get the actual strategy
         if let DeserStrategy::BackRef { target } = &node.strategy {
-            let target_node = self.root_plan.get(*target)?;
+            let target_node = self.root_plan.get(*target);
             return Some(&target_node.strategy);
         }
 
@@ -742,22 +742,21 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
             // Look up plans from root_plan (separate borrow from mode)
             let plans_info = frame_info.and_then(|(type_plan, variant_idx)| {
-                self.root_plan.get(type_plan).and_then(|plan_node| {
-                    match &plan_node.kind {
-                        TypePlanNodeKind::Struct(_) => {
-                            // For structs, field_init_plans is on the node directly
-                            let plans = &plan_node.field_init_plans[..];
-                            Some(plans)
-                        }
-                        TypePlanNodeKind::Enum(enum_plan) => variant_idx.and_then(|idx| {
-                            enum_plan
-                                .variants
-                                .get(idx)
-                                .map(|v| v.field_init_plans.as_slice())
-                        }),
-                        _ => None,
+                let plan_node = self.root_plan.get(type_plan);
+                match &plan_node.kind {
+                    TypePlanNodeKind::Struct(_) => {
+                        // For structs, field_init_plans is on the node directly
+                        let plans = &plan_node.field_init_plans[..];
+                        Some(plans)
                     }
-                })
+                    TypePlanNodeKind::Enum(enum_plan) => variant_idx.and_then(|idx| {
+                        enum_plan
+                            .variants
+                            .get(idx)
+                            .map(|v| v.field_init_plans.as_slice())
+                    }),
+                    _ => None,
+                }
             });
 
             if let Some(plans) = plans_info {

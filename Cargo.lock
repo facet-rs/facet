@@ -1297,7 +1297,6 @@ dependencies = [
  "facet-testhelpers",
  "facet-value",
  "hashbrown 0.16.1",
- "indextree",
  "insta",
  "proptest",
  "regex",
@@ -1843,12 +1842,6 @@ dependencies = [
  "serde",
  "serde_core",
 ]
-
-[[package]]
-name = "indextree"
-version = "4.7.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb9e21e48c85fa6643a38caca564645a3bbc9211edf506fc8ed690c7e7b4d3c7"
 
 [[package]]
 name = "indoc"

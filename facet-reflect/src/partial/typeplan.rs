@@ -2,9 +2,6 @@
 //!
 //! Instead of repeatedly inspecting Shape/Def at runtime during deserialization,
 //! we build a plan tree once that encodes all the decisions we'll make.
-//!
-//! Uses indextree for arena-based allocation, which naturally handles recursive
-//! types by storing NodeId back-references instead of causing infinite recursion.
 
 use alloc::vec::Vec;
 use facet_core::{
@@ -12,12 +9,12 @@ use facet_core::{
     ScalarType, SequenceType, Shape, StructType, Type, UserType, ValidatorFn, Variant,
 };
 use hashbrown::HashMap;
-use indextree::Arena;
 
+use super::arena::{Arena, Idx};
 use crate::AllocError;
 
-// Re-export NodeId for use by other modules
-pub use indextree::NodeId;
+/// Node identifier in a TypePlan.
+pub(crate) type NodeId = Idx<TypePlanNode>;
 
 /// Precomputed deserialization plan tree for a type.
 ///
@@ -27,7 +24,7 @@ pub use indextree::NodeId;
 pub struct TypePlan {
     /// Arena that owns all plan nodes
     arena: Arena<TypePlanNode>,
-    /// Root node of the plan tree
+    /// Root node
     root: NodeId,
 }
 
@@ -1029,7 +1026,7 @@ impl TypePlanBuilder {
                 proxy: effective_proxy,
                 field_init_plans: Vec::new(),
             };
-            return Ok(self.arena.new_node(backref_node));
+            return Ok(self.arena.alloc(backref_node));
         }
 
         // Create placeholder node first so children can reference it.
@@ -1045,7 +1042,7 @@ impl TypePlanBuilder {
             proxy: effective_proxy,
             field_init_plans: Vec::new(), // Placeholder, will be replaced for structs
         };
-        let node_id = self.arena.new_node(placeholder);
+        let node_id = self.arena.alloc(placeholder);
 
         // Mark this type as being built
         self.building.insert(type_id, node_id);
@@ -1056,16 +1053,14 @@ impl TypePlanBuilder {
             // Build a node for the proxy type itself (no proxy inheritance)
             let proxy_shape = proxy_def.shape;
             // Recursively build the proxy type's node - it will have its own kind/strategy
-            let proxy_child_id = self.build_node(proxy_shape)?;
-            node_id.append(proxy_child_id, &mut self.arena);
-            Some(proxy_child_id)
+            Some(self.build_node(proxy_shape)?)
         } else {
             None
         };
 
         // Build the kind for the original shape (not proxy) - this is used for
         // non-proxy operations on the type
-        let (kind, field_init_plans) = self.build_kind(shape, node_id)?;
+        let (kind, field_init_plans, children) = self.build_kind(shape)?;
 
         // Compute the deserialization strategy
         let strategy = self.compute_strategy(
@@ -1074,11 +1069,11 @@ impl TypePlanBuilder {
             container_proxy,
             field_proxy,
             proxy_node,
-            node_id,
+            &children,
         )?;
 
         // Update the node with the real kind, strategy, and field init plans
-        let node = self.arena.get_mut(node_id).unwrap().get_mut();
+        let node = self.arena.get_mut(node_id);
         node.kind = kind;
         node.strategy = strategy;
         node.field_init_plans = field_init_plans;
@@ -1093,7 +1088,7 @@ impl TypePlanBuilder {
     /// Compute the deserialization strategy with all data needed to execute it.
     ///
     /// `proxy_node` is the NodeId of the child node for the proxy type (if any).
-    /// `parent_id` is used to find child NodeIds that were built by `build_kind`.
+    /// `children` contains the child NodeIds built by `build_kind`.
     fn compute_strategy(
         &self,
         shape: &'static Shape,
@@ -1101,17 +1096,10 @@ impl TypePlanBuilder {
         proxy: Option<&'static ProxyDef>,
         explicit_field_proxy: Option<&'static ProxyDef>,
         proxy_node: Option<NodeId>,
-        parent_id: NodeId,
+        children: &[NodeId],
     ) -> Result<DeserStrategy, AllocError> {
-        // Helper to get nth child (skipping proxy node if present)
-        let child_offset = if proxy_node.is_some() { 1 } else { 0 };
-        let nth_child = |n: usize| -> NodeId {
-            parent_id
-                .children(&self.arena)
-                .nth(n + child_offset)
-                .expect("child should exist")
-        };
-        let first_child = || nth_child(0);
+        let nth_child = |n: usize| -> NodeId { children[n] };
+        let first_child = || children[0];
 
         // Priority 1: Field-level proxy (field has proxy, type doesn't)
         if let Some(field_proxy) = explicit_field_proxy {
@@ -1250,11 +1238,13 @@ impl TypePlanBuilder {
 
     /// Build the TypePlanNodeKind for a shape, attaching children to parent_id.
     /// Returns (kind, field_init_plans) - plans is non-empty only for structs.
+    /// Build the kind for a shape and return child NodeIds for compute_strategy.
     fn build_kind(
         &mut self,
         shape: &'static Shape,
-        parent_id: NodeId,
-    ) -> Result<(TypePlanNodeKind, Vec<FieldInitPlan>), AllocError> {
+    ) -> Result<(TypePlanNodeKind, Vec<FieldInitPlan>, Vec<NodeId>), AllocError> {
+        let mut children = Vec::new();
+
         // Check shape.def first - this tells us the semantic meaning of the type
         let kind = match &shape.def {
             Def::Scalar => {
@@ -1262,56 +1252,46 @@ impl TypePlanBuilder {
                 // for the inner type. This enables proper TypePlan navigation when
                 // begin_inner() is called for transparent wrapper deserialization.
                 if let Some(inner_shape) = shape.inner {
-                    let inner_id = self.build_node(inner_shape)?;
-                    parent_id.append(inner_id, &mut self.arena);
+                    children.push(self.build_node(inner_shape)?);
                 }
                 TypePlanNodeKind::Scalar
             }
 
             Def::Option(opt_def) => {
-                let inner_id = self.build_node(opt_def.t())?;
-                parent_id.append(inner_id, &mut self.arena);
+                children.push(self.build_node(opt_def.t())?);
                 TypePlanNodeKind::Option
             }
 
             Def::Result(res_def) => {
-                let ok_id = self.build_node(res_def.t())?;
-                let err_id = self.build_node(res_def.e())?;
-                parent_id.append(ok_id, &mut self.arena);
-                parent_id.append(err_id, &mut self.arena);
+                children.push(self.build_node(res_def.t())?);
+                children.push(self.build_node(res_def.e())?);
                 TypePlanNodeKind::Result
             }
 
             Def::List(list_def) => {
-                let item_id = self.build_node(list_def.t())?;
-                parent_id.append(item_id, &mut self.arena);
+                children.push(self.build_node(list_def.t())?);
                 TypePlanNodeKind::List
             }
 
             Def::Map(map_def) => {
-                let key_id = self.build_node(map_def.k())?;
-                let value_id = self.build_node(map_def.v())?;
-                parent_id.append(key_id, &mut self.arena);
-                parent_id.append(value_id, &mut self.arena);
+                children.push(self.build_node(map_def.k())?);
+                children.push(self.build_node(map_def.v())?);
                 TypePlanNodeKind::Map
             }
 
             Def::Set(set_def) => {
-                let item_id = self.build_node(set_def.t())?;
-                parent_id.append(item_id, &mut self.arena);
+                children.push(self.build_node(set_def.t())?);
                 TypePlanNodeKind::Set
             }
 
             Def::Array(arr_def) => {
-                let item_id = self.build_node(arr_def.t())?;
-                parent_id.append(item_id, &mut self.arena);
+                children.push(self.build_node(arr_def.t())?);
                 TypePlanNodeKind::Array { len: arr_def.n }
             }
 
             Def::Pointer(ptr_def) => {
                 if let Some(pointee) = ptr_def.pointee() {
-                    let pointee_id = self.build_node(pointee)?;
-                    parent_id.append(pointee_id, &mut self.arena);
+                    children.push(self.build_node(pointee)?);
                     TypePlanNodeKind::Pointer
                 } else {
                     // Opaque pointer - no pointee shape available
@@ -1326,16 +1306,21 @@ impl TypePlanBuilder {
                 match &shape.ty {
                     Type::User(UserType::Struct(struct_type)) => {
                         let (struct_plan, field_init_plans) =
-                            self.build_struct_plan(shape, struct_type, parent_id)?;
-                        return Ok((TypePlanNodeKind::Struct(struct_plan), field_init_plans));
+                            self.build_struct_plan(shape, struct_type)?;
+                        // Struct fields store their NodeIds in FieldPlanMeta, no children needed
+                        return Ok((
+                            TypePlanNodeKind::Struct(struct_plan),
+                            field_init_plans,
+                            Vec::new(),
+                        ));
                     }
                     Type::User(UserType::Enum(enum_type)) => {
-                        TypePlanNodeKind::Enum(self.build_enum_plan(enum_type, parent_id)?)
+                        // Enum variants store their NodeIds in VariantPlanMeta, no children needed
+                        TypePlanNodeKind::Enum(self.build_enum_plan(enum_type)?)
                     }
                     // Handle slices like lists - they have an element type
                     Type::Sequence(SequenceType::Slice(slice_type)) => {
-                        let item_id = self.build_node(slice_type.t)?;
-                        parent_id.append(item_id, &mut self.arena);
+                        children.push(self.build_node(slice_type.t)?);
                         // Use Slice kind so we can distinguish from List if needed
                         TypePlanNodeKind::Slice
                     }
@@ -1344,8 +1329,7 @@ impl TypePlanBuilder {
                     _ => {
                         // Check for transparent wrappers (newtypes) as fallback
                         if let Some(inner) = shape.inner {
-                            let inner_id = self.build_node(inner)?;
-                            parent_id.append(inner_id, &mut self.arena);
+                            children.push(self.build_node(inner)?);
                             TypePlanNodeKind::Transparent
                         } else {
                             return Err(AllocError {
@@ -1358,15 +1342,14 @@ impl TypePlanBuilder {
             }
         };
         // For non-struct types, return empty field_init_plans
-        Ok((kind, Vec::new()))
+        Ok((kind, Vec::new(), children))
     }
 
-    /// Build a StructPlan, attaching field children to parent_id.
+    /// Build a StructPlan. Field NodeIds are stored in FieldPlanMeta.
     fn build_struct_plan(
         &mut self,
         shape: &'static Shape,
         struct_def: &'static StructType,
-        parent_id: NodeId,
     ) -> Result<(StructPlan, Vec<FieldInitPlan>), AllocError> {
         let mut fields = Vec::with_capacity(struct_def.fields.len());
         let mut field_init_plans = Vec::new();
@@ -1378,9 +1361,8 @@ impl TypePlanBuilder {
             // Build the type plan node for this field first
             let field_proxy = field.effective_proxy(self.format_namespace);
             let child_id = self.build_node_with_proxy(field.shape(), field_proxy)?;
-            parent_id.append(child_id, &mut self.arena);
 
-            // Now create field metadata with the NodeId
+            // Store NodeId in field metadata
             let field_meta = FieldPlanMeta::new(field, child_id);
             fields.push(field_meta);
 
@@ -1567,11 +1549,8 @@ impl TypePlanBuilder {
     }
 
     /// Build an EnumPlan, attaching variant field children appropriately.
-    fn build_enum_plan(
-        &mut self,
-        enum_def: &'static EnumType,
-        parent_id: NodeId,
-    ) -> Result<EnumPlan, AllocError> {
+    /// Build an EnumPlan. Field NodeIds are stored in VariantPlanMeta.
+    fn build_enum_plan(&mut self, enum_def: &'static EnumType) -> Result<EnumPlan, AllocError> {
         let mut variants = Vec::with_capacity(enum_def.variants.len());
 
         for variant in enum_def.variants.iter() {
@@ -1579,10 +1558,9 @@ impl TypePlanBuilder {
             let mut field_init_plans = Vec::new();
 
             for (index, field) in variant.data.fields.iter().enumerate() {
-                // Build the type plan node for this field first
+                // Build the type plan node for this field
                 let field_proxy = field.effective_proxy(self.format_namespace);
                 let child_id = self.build_node_with_proxy(field.shape(), field_proxy)?;
-                parent_id.append(child_id, &mut self.arena);
 
                 // Now create field metadata with the NodeId
                 let field_meta = FieldPlanMeta::new(field, child_id);
@@ -1688,41 +1666,14 @@ impl TypePlan {
 
     /// Get the root NodeId.
     #[inline]
-    pub fn root(&self) -> NodeId {
+    pub(crate) fn root(&self) -> NodeId {
         self.root
     }
 
     /// Get a node by NodeId.
     #[inline]
-    pub fn get(&self, id: NodeId) -> Option<&TypePlanNode> {
-        self.arena.get(id).map(|n| n.get())
-    }
-
-    /// Get the root node.
-    #[inline]
-    pub fn root_node(&self) -> &TypePlanNode {
-        self.arena.get(self.root).unwrap().get()
-    }
-
-    /// Get the first child NodeId of a node.
-    #[inline]
-    pub fn first_child(&self, id: NodeId) -> Option<NodeId> {
-        self.arena.get(id)?.first_child()
-    }
-
-    /// Get the nth child NodeId of a node (0-indexed).
-    #[inline]
-    pub fn nth_child(&self, id: NodeId, n: usize) -> Option<NodeId> {
-        let mut child = self.first_child(id)?;
-        for _ in 0..n {
-            child = self.arena.get(child)?.next_sibling()?;
-        }
-        Some(child)
-    }
-
-    /// Get children of a node as an iterator of NodeIds.
-    pub fn children(&self, id: NodeId) -> impl Iterator<Item = NodeId> + '_ {
-        id.children(&self.arena)
+    pub(crate) fn get(&self, id: NodeId) -> &TypePlanNode {
+        self.arena.get(id)
     }
 
     // Navigation helpers that return NodeId
@@ -1730,9 +1681,9 @@ impl TypePlan {
     /// Get the child NodeId for a struct field by index.
     /// Follows BackRef nodes for recursive types.
     #[inline]
-    pub fn struct_field_node(&self, parent: NodeId, idx: usize) -> Option<NodeId> {
+    pub(crate) fn struct_field_node(&self, parent: NodeId, idx: usize) -> Option<NodeId> {
         let resolved = self.resolve_backref(parent)?;
-        let node = self.get(resolved)?;
+        let node = self.get(resolved);
         let struct_plan = match &node.kind {
             TypePlanNodeKind::Struct(p) => p,
             _ => return None,
@@ -1743,14 +1694,14 @@ impl TypePlan {
     /// Get the child NodeId for an enum variant's field.
     /// Follows BackRef nodes for recursive types.
     #[inline]
-    pub fn enum_variant_field_node(
+    pub(crate) fn enum_variant_field_node(
         &self,
         parent: NodeId,
         variant_idx: usize,
         field_idx: usize,
     ) -> Option<NodeId> {
         let resolved = self.resolve_backref(parent)?;
-        let node = self.get(resolved)?;
+        let node = self.get(resolved);
         let enum_plan = match &node.kind {
             TypePlanNodeKind::Enum(p) => p,
             _ => return None,
@@ -1759,10 +1710,10 @@ impl TypePlan {
         Some(variant.fields.get(field_idx)?.type_node)
     }
 
-    /// Get the child NodeId for list/array items (first child).
+    /// Get the child NodeId for list/array items.
     #[inline]
-    pub fn list_item_node(&self, parent: NodeId) -> Option<NodeId> {
-        let node = self.get(parent)?;
+    pub(crate) fn list_item_node(&self, parent: NodeId) -> Option<NodeId> {
+        let node = self.get(parent);
         match &node.strategy {
             DeserStrategy::List { item_node, .. } | DeserStrategy::Array { item_node, .. } => {
                 Some(*item_node)
@@ -1774,8 +1725,8 @@ impl TypePlan {
 
     /// Get the child NodeId for set items.
     #[inline]
-    pub fn set_item_node(&self, parent: NodeId) -> Option<NodeId> {
-        let node = self.get(parent)?;
+    pub(crate) fn set_item_node(&self, parent: NodeId) -> Option<NodeId> {
+        let node = self.get(parent);
         match &node.strategy {
             DeserStrategy::Set { item_node } => Some(*item_node),
             DeserStrategy::BackRef { target } => self.set_item_node(*target),
@@ -1785,8 +1736,8 @@ impl TypePlan {
 
     /// Get the child NodeId for map keys.
     #[inline]
-    pub fn map_key_node(&self, parent: NodeId) -> Option<NodeId> {
-        let node = self.get(parent)?;
+    pub(crate) fn map_key_node(&self, parent: NodeId) -> Option<NodeId> {
+        let node = self.get(parent);
         match &node.strategy {
             DeserStrategy::Map { key_node, .. } => Some(*key_node),
             DeserStrategy::BackRef { target } => self.map_key_node(*target),
@@ -1796,8 +1747,8 @@ impl TypePlan {
 
     /// Get the child NodeId for map values.
     #[inline]
-    pub fn map_value_node(&self, parent: NodeId) -> Option<NodeId> {
-        let node = self.get(parent)?;
+    pub(crate) fn map_value_node(&self, parent: NodeId) -> Option<NodeId> {
+        let node = self.get(parent);
         match &node.strategy {
             DeserStrategy::Map { value_node, .. } => Some(*value_node),
             DeserStrategy::BackRef { target } => self.map_value_node(*target),
@@ -1807,8 +1758,8 @@ impl TypePlan {
 
     /// Get the child NodeId for Option inner type.
     #[inline]
-    pub fn option_inner_node(&self, parent: NodeId) -> Option<NodeId> {
-        let node = self.get(parent)?;
+    pub(crate) fn option_inner_node(&self, parent: NodeId) -> Option<NodeId> {
+        let node = self.get(parent);
         match &node.strategy {
             DeserStrategy::Option { some_node } => Some(*some_node),
             DeserStrategy::BackRef { target } => self.option_inner_node(*target),
@@ -1818,8 +1769,8 @@ impl TypePlan {
 
     /// Get the child NodeId for Result Ok type.
     #[inline]
-    pub fn result_ok_node(&self, parent: NodeId) -> Option<NodeId> {
-        let node = self.get(parent)?;
+    pub(crate) fn result_ok_node(&self, parent: NodeId) -> Option<NodeId> {
+        let node = self.get(parent);
         match &node.strategy {
             DeserStrategy::Result { ok_node, .. } => Some(*ok_node),
             DeserStrategy::BackRef { target } => self.result_ok_node(*target),
@@ -1829,8 +1780,8 @@ impl TypePlan {
 
     /// Get the child NodeId for Result Err type.
     #[inline]
-    pub fn result_err_node(&self, parent: NodeId) -> Option<NodeId> {
-        let node = self.get(parent)?;
+    pub(crate) fn result_err_node(&self, parent: NodeId) -> Option<NodeId> {
+        let node = self.get(parent);
         match &node.strategy {
             DeserStrategy::Result { err_node, .. } => Some(*err_node),
             DeserStrategy::BackRef { target } => self.result_err_node(*target),
@@ -1840,8 +1791,8 @@ impl TypePlan {
 
     /// Get the child NodeId for pointer pointee.
     #[inline]
-    pub fn pointer_pointee_node(&self, parent: NodeId) -> Option<NodeId> {
-        let node = self.get(parent)?;
+    pub(crate) fn pointer_pointee_node(&self, parent: NodeId) -> Option<NodeId> {
+        let node = self.get(parent);
         match &node.strategy {
             DeserStrategy::Pointer { pointee_node } => Some(*pointee_node),
             DeserStrategy::BackRef { target } => self.pointer_pointee_node(*target),
@@ -1849,27 +1800,18 @@ impl TypePlan {
         }
     }
 
-    /// Get the child NodeId for transparent wrapper inner.
-    #[inline]
-    pub fn transparent_inner_node(&self, parent: NodeId) -> Option<NodeId> {
-        let node = self.get(parent)?;
-        match &node.strategy {
-            DeserStrategy::TransparentConvert { inner_node } => Some(*inner_node),
-            DeserStrategy::BackRef { target } => self.transparent_inner_node(*target),
-            _ => None,
-        }
-    }
-
     /// Get the child NodeId for shape.inner navigation (used by begin_inner).
     ///
-    /// This works for both Transparent nodes and Scalar nodes that have an inner
-    /// type (like `NonZero<T>`). Returns the first child if present.
+    /// This works for TransparentConvert strategy which has an inner_node.
     #[inline]
-    pub fn inner_node(&self, parent: NodeId) -> Option<NodeId> {
-        let node = self.get(parent)?;
-        // Check if the node has shape.inner - if so, the first child is the inner node
+    pub(crate) fn inner_node(&self, parent: NodeId) -> Option<NodeId> {
+        let node = self.get(parent);
         if node.shape.inner.is_some() {
-            self.first_child(parent)
+            // For types with shape.inner, the inner_node is stored in TransparentConvert strategy
+            match &node.strategy {
+                DeserStrategy::TransparentConvert { inner_node } => Some(*inner_node),
+                _ => None,
+            }
         } else {
             None
         }
@@ -1877,8 +1819,8 @@ impl TypePlan {
 
     /// Resolve a BackRef to get the actual node it points to.
     #[inline]
-    pub fn resolve_backref(&self, id: NodeId) -> Option<NodeId> {
-        let node = self.get(id)?;
+    pub(crate) fn resolve_backref(&self, id: NodeId) -> Option<NodeId> {
+        let node = self.get(id);
         match &node.kind {
             TypePlanNodeKind::BackRef(target) => Some(*target),
             _ => Some(id), // Not a backref, return self
@@ -1888,9 +1830,9 @@ impl TypePlan {
     /// Get the StructPlan if a node is a struct type.
     /// Follows BackRef nodes for recursive types.
     #[inline]
-    pub fn as_struct_plan(&self, id: NodeId) -> Option<&StructPlan> {
+    pub(crate) fn as_struct_plan(&self, id: NodeId) -> Option<&StructPlan> {
         let resolved = self.resolve_backref(id)?;
-        let node = self.get(resolved)?;
+        let node = self.get(resolved);
         match &node.kind {
             TypePlanNodeKind::Struct(plan) => Some(plan),
             _ => None,
@@ -1900,9 +1842,9 @@ impl TypePlan {
     /// Get the EnumPlan if a node is an enum type.
     /// Follows BackRef nodes for recursive types.
     #[inline]
-    pub fn as_enum_plan(&self, id: NodeId) -> Option<&EnumPlan> {
+    pub(crate) fn as_enum_plan(&self, id: NodeId) -> Option<&EnumPlan> {
         let resolved = self.resolve_backref(id)?;
-        let node = self.get(resolved)?;
+        let node = self.get(resolved);
         match &node.kind {
             TypePlanNodeKind::Enum(plan) => Some(plan),
             _ => None,
@@ -1941,7 +1883,7 @@ mod tests {
     #[test]
     fn test_typeplan_struct() {
         let plan = TypePlan::build(TestStruct::SHAPE).unwrap();
-        let root = plan.root_node();
+        let root = plan.get(plan.root());
 
         assert_eq!(root.shape, TestStruct::SHAPE);
         assert!(!root.has_default);
@@ -1969,12 +1911,12 @@ mod tests {
 
                 // Check child plan for Option field (field index 2 = third child)
                 let email_child = plan.struct_field_node(plan.root(), 2).unwrap();
-                let email_node = plan.get(email_child).unwrap();
+                let email_node = plan.get(email_child);
                 match &email_node.kind {
                     TypePlanNodeKind::Option => {
                         // inner should be String (scalar)
                         let inner = plan.option_inner_node(email_child).unwrap();
-                        let inner_node = plan.get(inner).unwrap();
+                        let inner_node = plan.get(inner);
                         match &inner_node.kind {
                             TypePlanNodeKind::Scalar => {}
                             other => panic!("Expected Scalar for String, got {:?}", other),
@@ -1990,7 +1932,7 @@ mod tests {
     #[test]
     fn test_typeplan_enum() {
         let plan = TypePlan::build(TestEnum::SHAPE).unwrap();
-        let root = plan.root_node();
+        let root = plan.get(plan.root());
 
         assert_eq!(root.shape, TestEnum::SHAPE);
 
@@ -2021,12 +1963,12 @@ mod tests {
     #[test]
     fn test_typeplan_list() {
         let plan = TypePlan::build(<Vec<u32> as Facet>::SHAPE).unwrap();
-        let root = plan.root_node();
+        let root = plan.get(plan.root());
 
         match &root.kind {
             TypePlanNodeKind::List => {
                 let item = plan.list_item_node(plan.root()).unwrap();
-                let item_node = plan.get(item).unwrap();
+                let item_node = plan.get(item);
                 match &item_node.kind {
                     TypePlanNodeKind::Scalar => {}
                     other => panic!("Expected Scalar for u32, got {:?}", other),
@@ -2040,7 +1982,7 @@ mod tests {
     fn test_typeplan_recursive() {
         // This should NOT stack overflow - indextree handles the cycle
         let plan = TypePlan::build(RecursiveStruct::SHAPE).unwrap();
-        let root = plan.root_node();
+        let root = plan.get(plan.root());
 
         match &root.kind {
             TypePlanNodeKind::Struct(struct_plan) => {
@@ -2051,19 +1993,19 @@ mod tests {
                 // The 'next' field is Option<Box<RecursiveStruct>>
                 // Its child plan should eventually contain a BackRef
                 let next_child = plan.struct_field_node(plan.root(), 1).unwrap();
-                let next_node = plan.get(next_child).unwrap();
+                let next_node = plan.get(next_child);
 
                 // Should be Option
                 assert!(matches!(next_node.kind, TypePlanNodeKind::Option));
 
                 // Inner should be Pointer (Box)
                 let inner = plan.option_inner_node(next_child).unwrap();
-                let inner_node = plan.get(inner).unwrap();
+                let inner_node = plan.get(inner);
                 assert!(matches!(inner_node.kind, TypePlanNodeKind::Pointer));
 
                 // Pointee should be BackRef to root (or a struct with BackRef)
                 let pointee = plan.pointer_pointee_node(inner).unwrap();
-                let pointee_node = plan.get(pointee).unwrap();
+                let pointee_node = plan.get(pointee);
 
                 // This should be a BackRef pointing to the root
                 match &pointee_node.kind {
