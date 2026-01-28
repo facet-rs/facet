@@ -803,7 +803,7 @@ mod ariadne_impl {
 
             // Add path information as a note if available
             if let Some(ref path) = self.path {
-                report = report.with_note(format!("at path: {path:?}"));
+                report = report.with_note(format!("at path: {path}"));
             }
 
             report
