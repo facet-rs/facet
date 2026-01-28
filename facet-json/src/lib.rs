@@ -109,8 +109,8 @@ where
 {
     use facet_format::FormatDeserializer;
     // TRUSTED_UTF8 = true: input came from &str, so it's valid UTF-8
-    let parser = JsonParser::<true>::new(input.as_bytes());
-    let mut de = FormatDeserializer::new_owned(parser);
+    let mut parser = JsonParser::<true>::new(input.as_bytes());
+    let mut de = FormatDeserializer::new_owned(&mut parser);
     de.deserialize_root()
 }
 
@@ -146,8 +146,8 @@ where
     T: facet_core::Facet<'static>,
 {
     use facet_format::FormatDeserializer;
-    let parser = JsonParser::<false>::new(input);
-    let mut de = FormatDeserializer::new_owned(parser);
+    let mut parser = JsonParser::<false>::new(input);
+    let mut de = FormatDeserializer::new_owned(&mut parser);
     de.deserialize_root()
 }
 
@@ -184,8 +184,8 @@ where
 {
     use facet_format::FormatDeserializer;
     // TRUSTED_UTF8 = true: input came from &str, so it's valid UTF-8
-    let parser = JsonParser::<true>::new(input.as_bytes());
-    let mut de = FormatDeserializer::new(parser);
+    let mut parser = JsonParser::<true>::new(input.as_bytes());
+    let mut de = FormatDeserializer::new(&mut parser);
     de.deserialize_root()
 }
 
@@ -221,8 +221,8 @@ where
     'input: 'facet,
 {
     use facet_format::FormatDeserializer;
-    let parser = JsonParser::<false>::new(input);
-    let mut de = FormatDeserializer::new(parser);
+    let mut parser = JsonParser::<false>::new(input);
+    let mut de = FormatDeserializer::new(&mut parser);
     de.deserialize_root()
 }
 
@@ -261,8 +261,8 @@ pub fn from_str_into<'facet>(
 ) -> Result<facet_reflect::Partial<'facet, false>, DeserializeError> {
     use facet_format::FormatDeserializer;
     // TRUSTED_UTF8 = true: input came from &str, so it's valid UTF-8
-    let parser = JsonParser::<true>::new(input.as_bytes());
-    let mut de = FormatDeserializer::new_owned(parser);
+    let mut parser = JsonParser::<true>::new(input.as_bytes());
+    let mut de = FormatDeserializer::new_owned(&mut parser);
 
     // SAFETY: The deserializer expects Partial<'input, false> where 'input is the
     // lifetime of the JSON bytes. Since BORROW=false, no data is borrowed from the
@@ -324,8 +324,8 @@ pub fn from_slice_into<'facet>(
     partial: facet_reflect::Partial<'facet, false>,
 ) -> Result<facet_reflect::Partial<'facet, false>, DeserializeError> {
     use facet_format::FormatDeserializer;
-    let parser = JsonParser::<false>::new(input);
-    let mut de = FormatDeserializer::new_owned(parser);
+    let mut parser = JsonParser::<false>::new(input);
+    let mut de = FormatDeserializer::new_owned(&mut parser);
 
     // SAFETY: The deserializer expects Partial<'input, false> where 'input is the
     // lifetime of the JSON bytes. Since BORROW=false, no data is borrowed from the
@@ -391,8 +391,8 @@ where
 {
     use facet_format::FormatDeserializer;
     // TRUSTED_UTF8 = true: input came from &str, so it's valid UTF-8
-    let parser = JsonParser::<true>::new(input.as_bytes());
-    let mut de = FormatDeserializer::new(parser);
+    let mut parser = JsonParser::<true>::new(input.as_bytes());
+    let mut de = FormatDeserializer::new(&mut parser);
     de.deserialize_into(partial)
 }
 
@@ -433,7 +433,7 @@ where
     'input: 'facet,
 {
     use facet_format::FormatDeserializer;
-    let parser = JsonParser::<false>::new(input);
-    let mut de = FormatDeserializer::new(parser);
+    let mut parser = JsonParser::<false>::new(input);
+    let mut de = FormatDeserializer::new(&mut parser);
     de.deserialize_into(partial)
 }

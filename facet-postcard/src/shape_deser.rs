@@ -36,8 +36,8 @@ pub fn from_slice_with_shape(
     input: &[u8],
     source_shape: &'static Shape,
 ) -> Result<Value, DeserializeError> {
-    let parser = PostcardParser::new(input);
-    let mut de = FormatDeserializer::new_owned(parser);
+    let mut parser = PostcardParser::new(input);
+    let mut de = FormatDeserializer::new_owned(&mut parser);
     de.deserialize_with_shape(source_shape)
 }
 

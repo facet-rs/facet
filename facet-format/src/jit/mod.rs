@@ -618,7 +618,7 @@ where
     }
 
     // Fall back to reflection-based deserialization
-    FormatDeserializer::new(parser).deserialize()
+    FormatDeserializer::new(&mut parser).deserialize()
 }
 
 // =============================================================================
@@ -874,5 +874,5 @@ where
     }
 
     // Fall back to reflection-based deserialization
-    FormatDeserializer::new(parser).deserialize()
+    FormatDeserializer::new(&mut parser).deserialize()
 }

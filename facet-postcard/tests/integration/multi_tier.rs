@@ -25,8 +25,8 @@ mod tier_helpers {
     where
         T: Facet<'de>,
     {
-        let parser = PostcardParser::new(input);
-        let mut de = FormatDeserializer::new(parser);
+        let mut parser = PostcardParser::new(input);
+        let mut de = FormatDeserializer::new(&mut parser);
         de.deserialize()
     }
 

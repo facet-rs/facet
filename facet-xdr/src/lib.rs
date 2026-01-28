@@ -78,8 +78,8 @@ where
     T: facet_core::Facet<'static>,
 {
     use facet_format::FormatDeserializer;
-    let parser = XdrParser::new(input);
-    let mut de = FormatDeserializer::new_owned(parser);
+    let mut parser = XdrParser::new(input);
+    let mut de = FormatDeserializer::new_owned(&mut parser);
     de.deserialize()
 }
 
@@ -115,7 +115,7 @@ where
     'input: 'facet,
 {
     use facet_format::FormatDeserializer;
-    let parser = XdrParser::new(input);
-    let mut de = FormatDeserializer::new(parser);
+    let mut parser = XdrParser::new(input);
+    let mut de = FormatDeserializer::new(&mut parser);
     de.deserialize()
 }

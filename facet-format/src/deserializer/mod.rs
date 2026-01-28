@@ -178,7 +178,7 @@ pub const DEFAULT_EVENT_BUFFER_SIZE: usize = 512;
 /// than `'input` (e.g., for streaming parsers that produce owned data but contain
 /// references to internal state).
 pub struct FormatDeserializer<'parser, 'input, const BORROW: bool> {
-    parser: Box<dyn FormatParser<'input> + 'parser>,
+    parser: &'parser mut dyn FormatParser<'input>,
 
     /// The span of the most recently consumed event (for error reporting).
     last_span: Span,
@@ -201,17 +201,17 @@ pub struct FormatDeserializer<'parser, 'input, const BORROW: bool> {
 
 impl<'parser, 'input> FormatDeserializer<'parser, 'input, true> {
     /// Create a new deserializer that can borrow strings from input.
-    pub fn new(parser: impl FormatParser<'input> + 'parser) -> Self {
+    pub fn new(parser: &'parser mut dyn FormatParser<'input>) -> Self {
         Self::with_buffer_capacity(parser, DEFAULT_EVENT_BUFFER_SIZE)
     }
 
     /// Create a new deserializer with a custom buffer capacity.
     pub fn with_buffer_capacity(
-        parser: impl FormatParser<'input> + 'parser,
+        parser: &'parser mut dyn FormatParser<'input>,
         buffer_capacity: usize,
     ) -> Self {
         Self {
-            parser: Box::new(parser),
+            parser,
             last_span: Span { offset: 0, len: 0 },
             event_buffer: VecDeque::with_capacity(buffer_capacity),
             buffer_capacity,
@@ -224,17 +224,17 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, true> {
 
 impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
     /// Create a new deserializer that produces owned strings.
-    pub fn new_owned(parser: impl FormatParser<'input> + 'parser) -> Self {
+    pub fn new_owned(parser: &'parser mut dyn FormatParser<'input>) -> Self {
         Self::with_buffer_capacity_owned(parser, DEFAULT_EVENT_BUFFER_SIZE)
     }
 
     /// Create a new deserializer with a custom buffer capacity.
     pub fn with_buffer_capacity_owned(
-        parser: impl FormatParser<'input> + 'parser,
+        parser: &'parser mut dyn FormatParser<'input>,
         buffer_capacity: usize,
     ) -> Self {
         Self {
-            parser: Box::new(parser),
+            parser,
             last_span: Span { offset: 0, len: 0 },
             event_buffer: VecDeque::with_capacity(buffer_capacity),
             buffer_capacity,
@@ -246,14 +246,9 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
 }
 
 impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BORROW> {
-    /// Consume the facade and return the underlying parser.
-    pub fn into_inner(self) -> Box<dyn FormatParser<'input> + 'parser> {
-        self.parser
-    }
-
     /// Borrow the inner parser mutably.
     pub fn parser_mut(&mut self) -> &mut dyn FormatParser<'input> {
-        &mut *self.parser
+        self.parser
     }
 }
 

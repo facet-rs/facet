@@ -103,8 +103,8 @@ where
     T: facet_core::Facet<'static>,
 {
     use facet_format::FormatDeserializer;
-    let parser = PostcardParser::new(input);
-    let mut de = FormatDeserializer::new_owned(parser);
+    let mut parser = PostcardParser::new(input);
+    let mut de = FormatDeserializer::new_owned(&mut parser);
     de.deserialize()
 }
 
@@ -141,8 +141,8 @@ where
     'input: 'facet,
 {
     use facet_format::FormatDeserializer;
-    let parser = PostcardParser::new(input);
-    let mut de = FormatDeserializer::new(parser);
+    let mut parser = PostcardParser::new(input);
+    let mut de = FormatDeserializer::new(&mut parser);
     de.deserialize()
 }
 
@@ -181,8 +181,8 @@ pub fn from_slice_into<'facet>(
     partial: facet_reflect::Partial<'facet, false>,
 ) -> Result<facet_reflect::Partial<'facet, false>, DeserializeError> {
     use facet_format::FormatDeserializer;
-    let parser = PostcardParser::new(input);
-    let mut de = FormatDeserializer::new_owned(parser);
+    let mut parser = PostcardParser::new(input);
+    let mut de = FormatDeserializer::new_owned(&mut parser);
 
     // SAFETY: The deserializer expects Partial<'input, false> where 'input is the
     // lifetime of the postcard bytes. Since BORROW=false, no data is borrowed from the
@@ -248,7 +248,7 @@ where
     'input: 'facet,
 {
     use facet_format::FormatDeserializer;
-    let parser = PostcardParser::new(input);
-    let mut de = FormatDeserializer::new(parser);
+    let mut parser = PostcardParser::new(input);
+    let mut de = FormatDeserializer::new(&mut parser);
     de.deserialize_into(partial)
 }

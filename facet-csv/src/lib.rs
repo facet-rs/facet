@@ -57,8 +57,8 @@ where
     T: facet_core::Facet<'static>,
 {
     use facet_format::FormatDeserializer;
-    let parser = CsvParser::new(input);
-    let mut de = FormatDeserializer::new_owned(parser);
+    let mut parser = CsvParser::new(input);
+    let mut de = FormatDeserializer::new_owned(&mut parser);
     de.deserialize_root()
 }
 
@@ -87,8 +87,8 @@ where
     'input: 'facet,
 {
     use facet_format::FormatDeserializer;
-    let parser = CsvParser::new(input);
-    let mut de = FormatDeserializer::new(parser);
+    let mut parser = CsvParser::new(input);
+    let mut de = FormatDeserializer::new(&mut parser);
     de.deserialize_root()
 }
 
