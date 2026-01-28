@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use facet_core::{Def, Shape, StructKind, Type, UserType};
+use facet_core::{Def, Facet, Shape, StructKind, Type, UserType};
 use facet_reflect::{Partial, typeplan::DeserStrategy};
 
 use crate::{
@@ -575,11 +575,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         // Check if this is a Vec<u8> - if so, try the optimized byte sequence path
         // We specifically check for Vec (not Bytes, BytesMut, or other list-like types)
         // because those types may have different builder patterns
-        let is_byte_vec = wip.shape().type_identifier == "Vec"
-            && matches!(
-                &wip.shape().def,
-                Def::List(list_def) if list_def.t.type_identifier == "u8"
-            );
+        let is_byte_vec = *wip.shape() == *<Vec<u8>>::SHAPE;
 
         if is_byte_vec && self.parser.hint_byte_sequence() {
             // Parser supports bulk byte reading - expect Scalar(Bytes(...))
