@@ -392,6 +392,39 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
     /// Pops the current frame off the stack, indicating we're done initializing the current field
     pub fn end(mut self) -> Result<Self, ReflectError> {
+        // FAST PATH: Handle the common case of ending a simple scalar field in a struct.
+        // This avoids all the edge-case checks (SmartPointerSlice, deferred mode, custom
+        // deserialization, etc.) that dominate the slow path.
+        if self.frames().len() >= 2 && !self.is_deferred() {
+            let frames = self.frames_mut();
+            let top_idx = frames.len() - 1;
+            let parent_idx = top_idx - 1;
+
+            // Check if this is a simple scalar field being returned to a struct parent
+            if let (
+                Tracker::Scalar,
+                true, // is_init
+                FrameOwnership::Field { field_idx },
+                false, // not using custom deserialization
+            ) = (
+                &frames[top_idx].tracker,
+                frames[top_idx].is_init,
+                frames[top_idx].ownership,
+                frames[top_idx].using_custom_deserialization,
+            ) && let Tracker::Struct {
+                iset,
+                current_child,
+            } = &mut frames[parent_idx].tracker
+            {
+                // Fast path: just update parent's iset and pop
+                iset.set(field_idx);
+                *current_child = None;
+                frames.pop();
+                return Ok(self);
+            }
+        }
+
+        // SLOW PATH: Handle all the edge cases
         if let Some(_frame) = self.frames().last() {
             crate::trace!(
                 "end() called: shape={}, tracker={:?}, is_init={}",
