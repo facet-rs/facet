@@ -1271,6 +1271,7 @@ impl TypePlan {
             DeserStrategy::List { item_node } | DeserStrategy::Array { item_node, .. } => {
                 Some(*item_node)
             }
+            DeserStrategy::BackRef { target } => self.list_item_node(*target),
             _ => None,
         }
     }
@@ -1281,6 +1282,7 @@ impl TypePlan {
         let node = self.get(parent)?;
         match &node.strategy {
             DeserStrategy::Set { item_node } => Some(*item_node),
+            DeserStrategy::BackRef { target } => self.set_item_node(*target),
             _ => None,
         }
     }
@@ -1291,6 +1293,7 @@ impl TypePlan {
         let node = self.get(parent)?;
         match &node.strategy {
             DeserStrategy::Map { key_node, .. } => Some(*key_node),
+            DeserStrategy::BackRef { target } => self.map_key_node(*target),
             _ => None,
         }
     }
@@ -1301,6 +1304,7 @@ impl TypePlan {
         let node = self.get(parent)?;
         match &node.strategy {
             DeserStrategy::Map { value_node, .. } => Some(*value_node),
+            DeserStrategy::BackRef { target } => self.map_value_node(*target),
             _ => None,
         }
     }
@@ -1311,6 +1315,7 @@ impl TypePlan {
         let node = self.get(parent)?;
         match &node.strategy {
             DeserStrategy::Option { some_node } => Some(*some_node),
+            DeserStrategy::BackRef { target } => self.option_inner_node(*target),
             _ => None,
         }
     }
@@ -1321,6 +1326,7 @@ impl TypePlan {
         let node = self.get(parent)?;
         match &node.strategy {
             DeserStrategy::Result { ok_node, .. } => Some(*ok_node),
+            DeserStrategy::BackRef { target } => self.result_ok_node(*target),
             _ => None,
         }
     }
@@ -1331,6 +1337,7 @@ impl TypePlan {
         let node = self.get(parent)?;
         match &node.strategy {
             DeserStrategy::Result { err_node, .. } => Some(*err_node),
+            DeserStrategy::BackRef { target } => self.result_err_node(*target),
             _ => None,
         }
     }
@@ -1341,6 +1348,7 @@ impl TypePlan {
         let node = self.get(parent)?;
         match &node.strategy {
             DeserStrategy::Pointer { pointee_node } => Some(*pointee_node),
+            DeserStrategy::BackRef { target } => self.pointer_pointee_node(*target),
             _ => None,
         }
     }
@@ -1351,6 +1359,7 @@ impl TypePlan {
         let node = self.get(parent)?;
         match &node.strategy {
             DeserStrategy::TransparentConvert { inner_node } => Some(*inner_node),
+            DeserStrategy::BackRef { target } => self.transparent_inner_node(*target),
             _ => None,
         }
     }
