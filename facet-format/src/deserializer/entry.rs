@@ -85,12 +85,11 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
         // Priority 3: Check for .inner (transparent wrappers like NonZero)
         // Collections (List/Map/Set/Array) have .inner for variance but shouldn't use this path
-        // Opaque scalars (like ULID) may have .inner for documentation but should NOT be
-        // deserialized as transparent wrappers - they use hint_opaque_scalar instead
-        let is_opaque_scalar =
-            matches!(shape.def, Def::Scalar) && matches!(shape.ty, Type::User(UserType::Opaque));
+        // Scalars without try_from (like OrderedFloat) should NOT use begin_inner either -
+        // they use FromStr directly. NonZero has try_from and SHOULD use begin_inner.
+        let has_try_from = shape.vtable.has_try_from();
         if shape.inner.is_some()
-            && !is_opaque_scalar
+            && has_try_from
             && !matches!(
                 &shape.def,
                 Def::List(_) | Def::Map(_) | Def::Set(_) | Def::Array(_)
@@ -145,7 +144,16 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             return Ok(wip);
         }
 
-        // Priority 5: Check the Type for structs and enums
+        // Priority 5: Check Def::Scalar for types with FromStr capability
+        // Types like OrderedFloat have ty: Struct but should be deserialized as scalars
+        // via FromStr, not as tuple structs. However, empty tuples () are also Scalar
+        // but don't have FromStr - they should go through deserialize_tuple.
+        if matches!(&shape.def, Def::Scalar) && shape.vtable.has_parse() {
+            trace!("deserialize_into: dispatching to deserialize_scalar (has FromStr)");
+            return self.deserialize_scalar(wip);
+        }
+
+        // Priority 6: Check the Type for structs and enums
         match &shape.ty {
             Type::User(UserType::Struct(struct_def)) => {
                 if matches!(struct_def.kind, StructKind::Tuple | StructKind::TupleStruct) {
@@ -162,12 +170,8 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             _ => {}
         }
 
-        // Priority 6: Check Def for containers and scalars
+        // Priority 7: Check Def for containers
         match &shape.def {
-            Def::Scalar => {
-                trace!("deserialize_into: dispatching to deserialize_scalar");
-                self.deserialize_scalar(wip)
-            }
             Def::List(_) => {
                 trace!("deserialize_into: dispatching to deserialize_list");
                 self.deserialize_list(wip)

@@ -220,16 +220,14 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         if tracker_kind == crate::error::TrackerKind::SmartPointerSlice {
             let frame = self.mode.stack_mut().last_mut().unwrap();
             if let Tracker::SmartPointerSlice {
-                building_item,
+                building_item: true,
                 vtable: _,
             } = &frame.tracker
             {
-                if *building_item {
-                    return Err(self.err(ReflectErrorKind::OperationFailed {
-                        shape,
-                        operation: "already building an item, call end() first",
-                    }));
-                }
+                return Err(self.err(ReflectErrorKind::OperationFailed {
+                    shape,
+                    operation: "already building an item, call end() first",
+                }));
             }
 
             // Get the element type from the smart pointer's pointee

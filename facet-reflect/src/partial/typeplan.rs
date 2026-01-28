@@ -361,41 +361,49 @@ impl TypePlanBuilder {
     }
 
     /// Build a node for a shape, returning its NodeId.
-    /// Handles cycles by returning BackRef when we detect recursion.
-    ///
-    /// We build the plan for what we're actually deserializing into:
-    /// - If there's a proxy, use proxy.shape
-    /// - If there's a builder_shape, use that (e.g., Bytes builds from Vec<u8>)
-    /// - If there's an inner with try_from, use inner (e.g., Arc<str> from String)
-    /// - Otherwise, use the shape itself
+    /// Uses the shape's own proxy if present.
     fn build_node(&mut self, shape: &'static Shape) -> NodeId {
+        // Check for type-level proxy on the shape itself
+        let proxy = shape.effective_proxy(self.format_namespace);
+        self.build_node_with_proxy(shape, proxy)
+    }
+
+    /// Build a node for a shape with an optional explicit proxy override.
+    /// Used for field-level proxies where the proxy is on the field, not the type.
+    ///
+    /// If `explicit_proxy` is Some, it overrides the shape's own proxy.
+    /// If `explicit_proxy` is None, we check the shape's own proxy.
+    ///
+    /// The node stores:
+    /// - `shape`: the original type (conversion target, for metadata)
+    /// - `kind`: built from proxy shape if present (for navigation during deserialization)
+    /// - `proxy`: proxy definition (for conversion detection)
+    fn build_node_with_proxy(
+        &mut self,
+        shape: &'static Shape,
+        explicit_proxy: Option<&'static ProxyDef>,
+    ) -> NodeId {
         let type_id = shape.id;
 
-        // Precompute proxy for this shape using format namespace
-        let proxy = shape.effective_proxy(self.format_namespace);
+        // Field-level proxy takes precedence, then fall back to type-level proxy
+        let proxy = explicit_proxy.or_else(|| shape.effective_proxy(self.format_namespace));
 
-        // Determine what shape we're actually deserializing into
-        // Priority: proxy > builder_shape > inner (with try_from) > shape itself
-        let build_shape = proxy
-            .map(|p| p.shape)
-            .or(shape.builder_shape)
-            .or_else(|| {
-                if shape.vtable.has_try_from() {
-                    shape.inner
-                } else {
-                    None
-                }
-            })
-            .unwrap_or(shape);
+        // For navigation, we need to build the tree structure based on what we'll
+        // actually deserialize. If there's a proxy, that's the proxy shape.
+        let navigation_shape = if let Some(proxy_def) = proxy {
+            proxy_def.shape
+        } else {
+            shape
+        };
 
         // Check if we're already building this type (cycle detected)
         // Use the original type_id for cycle detection
         if let Some(&existing_id) = self.building.get(&type_id) {
             // Create a BackRef node pointing to the existing node
             let backref_node = TypePlanNode {
-                shape: build_shape,
+                shape, // Original shape (conversion target)
                 kind: TypePlanNodeKind::BackRef(existing_id),
-                has_default: build_shape.is(Characteristic::Default),
+                has_default: shape.is(Characteristic::Default),
                 proxy,
             };
             return self.arena.new_node(backref_node);
@@ -403,9 +411,9 @@ impl TypePlanBuilder {
 
         // Create placeholder node first so children can reference it
         let placeholder = TypePlanNode {
-            shape: build_shape,
+            shape,                           // Original shape (conversion target)
             kind: TypePlanNodeKind::Unknown, // Will be replaced
-            has_default: build_shape.is(Characteristic::Default),
+            has_default: shape.is(Characteristic::Default),
             proxy,
         };
         let node_id = self.arena.new_node(placeholder);
@@ -413,8 +421,8 @@ impl TypePlanBuilder {
         // Mark this type as being built
         self.building.insert(type_id, node_id);
 
-        // Build the actual kind and children from the build_shape (proxy or original)
-        let kind = self.build_kind(build_shape, node_id);
+        // Build the kind and children from navigation_shape (proxy if present)
+        let kind = self.build_kind(navigation_shape, node_id);
 
         // Update the node with the real kind
         self.arena.get_mut(node_id).unwrap().get_mut().kind = kind;
@@ -525,15 +533,9 @@ impl TypePlanBuilder {
             let field_meta = FieldPlanMeta::from_field(field);
             fields.push(field_meta);
 
-            // Check for field-level proxy first, then fall back to field's shape
-            // (which may have its own type-level proxy, handled in build_node)
-            let field_shape = field
-                .effective_proxy(self.format_namespace)
-                .map(|p| p.shape)
-                .unwrap_or_else(|| field.shape());
-
-            // Build child plan for this field and attach to parent
-            let child_id = self.build_node(field_shape);
+            // Check for field-level proxy (takes precedence over type-level proxy)
+            let field_proxy = field.effective_proxy(self.format_namespace);
+            let child_id = self.build_node_with_proxy(field.shape(), field_proxy);
             parent_id.append(child_id, &mut self.arena);
         }
 
@@ -561,14 +563,9 @@ impl TypePlanBuilder {
                 let field_meta = FieldPlanMeta::from_field(field);
                 variant_fields.push(field_meta);
 
-                // Check for field-level proxy first, then fall back to field's shape
-                let field_shape = field
-                    .effective_proxy(self.format_namespace)
-                    .map(|p| p.shape)
-                    .unwrap_or_else(|| field.shape());
-
-                // Build child plan for this field and attach to parent
-                let child_id = self.build_node(field_shape);
+                // Check for field-level proxy (takes precedence over type-level proxy)
+                let field_proxy = field.effective_proxy(self.format_namespace);
+                let child_id = self.build_node_with_proxy(field.shape(), field_proxy);
                 parent_id.append(child_id, &mut self.arena);
             }
 
@@ -694,17 +691,20 @@ impl TypePlan {
     // Navigation helpers that return NodeId
 
     /// Get the child NodeId for a struct field by index.
+    /// Follows BackRef nodes for recursive types.
     #[inline]
     pub fn struct_field_node(&self, parent: NodeId, idx: usize) -> Option<NodeId> {
-        let node = self.get(parent)?;
+        let resolved = self.resolve_backref(parent)?;
+        let node = self.get(resolved)?;
         if !matches!(node.kind, TypePlanNodeKind::Struct(_)) {
             return None;
         }
-        self.nth_child(parent, idx)
+        self.nth_child(resolved, idx)
     }
 
     /// Get the child NodeId for an enum variant's field.
     /// For enums, children are laid out as: [variant0_field0, variant0_field1, ..., variant1_field0, ...]
+    /// Follows BackRef nodes for recursive types.
     #[inline]
     pub fn enum_variant_field_node(
         &self,
@@ -712,7 +712,8 @@ impl TypePlan {
         variant_idx: usize,
         field_idx: usize,
     ) -> Option<NodeId> {
-        let node = self.get(parent)?;
+        let resolved = self.resolve_backref(parent)?;
+        let node = self.get(resolved)?;
         let enum_plan = match &node.kind {
             TypePlanNodeKind::Enum(p) => p,
             _ => return None,
@@ -725,7 +726,7 @@ impl TypePlan {
         }
         offset += field_idx;
 
-        self.nth_child(parent, offset)
+        self.nth_child(resolved, offset)
     }
 
     /// Get the child NodeId for list/array items (first child).
@@ -831,9 +832,11 @@ impl TypePlan {
     }
 
     /// Get the StructPlan if a node is a struct type.
+    /// Follows BackRef nodes for recursive types.
     #[inline]
     pub fn as_struct_plan(&self, id: NodeId) -> Option<&StructPlan> {
-        let node = self.get(id)?;
+        let resolved = self.resolve_backref(id)?;
+        let node = self.get(resolved)?;
         match &node.kind {
             TypePlanNodeKind::Struct(plan) => Some(plan),
             _ => None,
@@ -841,9 +844,11 @@ impl TypePlan {
     }
 
     /// Get the EnumPlan if a node is an enum type.
+    /// Follows BackRef nodes for recursive types.
     #[inline]
     pub fn as_enum_plan(&self, id: NodeId) -> Option<&EnumPlan> {
-        let node = self.get(id)?;
+        let resolved = self.resolve_backref(id)?;
+        let node = self.get(resolved)?;
         match &node.kind {
             TypePlanNodeKind::Enum(plan) => Some(plan),
             _ => None,

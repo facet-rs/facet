@@ -116,6 +116,24 @@ impl Partial<'static, false> {
         unsafe { Self::alloc_shape_owned_for_format(T::SHAPE, format_namespace) }
     }
 
+    /// Allocates with optional format-specific proxy resolution (owned variant).
+    ///
+    /// If `format_namespace` is `Some("json")`, format-specific proxies like
+    /// `#[facet(json::proxy = ...)]` will be included in the TypePlan.
+    ///
+    /// # Safety
+    /// This is safe because `T::SHAPE` comes from the Facet implementation for T,
+    /// which is an unsafe trait requiring accurate shape descriptions.
+    pub fn alloc_owned_for_format_opt<T>(
+        format_namespace: Option<&'static str>,
+    ) -> Result<Self, AllocError>
+    where
+        T: Facet<'static> + ?Sized,
+    {
+        // SAFETY: T::SHAPE comes from the Facet implementation for T.
+        alloc_shape_inner(T::SHAPE, format_namespace)
+    }
+
     /// Allocates with format-specific proxy resolution from a shape (owned variant).
     ///
     /// # Safety
