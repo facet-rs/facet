@@ -61,10 +61,8 @@ impl ConnectionProvider for Arc<Client> {
 }
 
 /// Wrapper around a deadpool pooled connection that provides direct deref to `Client`.
-#[cfg(feature = "deadpool")]
 pub struct PooledConnection(deadpool_postgres::Object);
 
-#[cfg(feature = "deadpool")]
 impl Deref for PooledConnection {
     type Target = Client;
 
@@ -75,7 +73,6 @@ impl Deref for PooledConnection {
 }
 
 /// Implementation for deadpool connection pool.
-#[cfg(feature = "deadpool")]
 impl ConnectionProvider for deadpool_postgres::Pool {
     type Guard<'a> = PooledConnection;
 

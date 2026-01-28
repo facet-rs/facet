@@ -14,14 +14,10 @@ categories = ["database"]
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
-[features]
-default = []
-deadpool = ["dep:deadpool-postgres"]
-
 [dependencies]
 bytes.workspace = true
 tokio-postgres = { workspace = true, features = ["with-chrono-0_4"] }
-deadpool-postgres = { workspace = true, optional = true }
+deadpool-postgres.workspace = true
 chrono.workspace = true
 rust_decimal = { workspace = true, features = ["db-tokio-postgres"] }
 tokio.workspace = true

@@ -61,6 +61,7 @@ pub mod query;
 pub mod schema;
 pub mod service;
 pub mod solver;
+mod traced;
 
 pub use backoffice::SquelServiceImpl;
 pub use diff::{Change, SchemaDiff, TableDiff};
@@ -70,6 +71,7 @@ pub use meta::{create_meta_tables_sql, record_migration_sql, sync_tables_sql};
 pub use migrate::{Migration, MigrationContext, MigrationRunner, MigrationStatus};
 pub use pool::ConnectionProvider;
 pub use service::{DibsServiceImpl, run_service};
+pub use traced::{Connection, ConnectionExt, TracedConn, TracedObject, TracedPool};
 
 // Re-export proto types for convenience
 pub use dibs_proto::*;
