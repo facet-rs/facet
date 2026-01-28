@@ -65,7 +65,7 @@ fn format_event(event: &ParseEvent) -> String {
         ParseEventKind::StructEnd => "StructEnd".to_string(),
         ParseEventKind::SequenceStart(_) => "SequenceStart".to_string(),
         ParseEventKind::SequenceEnd => "SequenceEnd".to_string(),
-        ParseEventKind::FieldKey(k) => format!("FieldKey({:?})", k.name.as_ref()),
+        ParseEventKind::FieldKey(k) => format!("FieldKey({:?})", k.name()),
         other => format!("{:?}", other),
     }
 }

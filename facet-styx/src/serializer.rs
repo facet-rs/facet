@@ -59,15 +59,21 @@ fn extract_field_key<'mem, 'facet>(key: Peek<'mem, 'facet>) -> Option<FieldKey<'
             }
         }
 
-        return Some(FieldKey {
-            name: name_value,
-            tag: tag_value,
-            doc: if doc_lines.is_empty() {
-                None
-            } else {
-                Some(doc_lines)
-            },
-            location: FieldLocationHint::KeyValue,
+        // Construct FieldKey using available constructors
+        // Priority: if we have a name, use it; otherwise use tag
+        return Some(match (name_value, tag_value) {
+            (Some(name), _) => {
+                // Name takes priority - use with_doc if we have doc lines
+                FieldKey::with_doc(name, FieldLocationHint::KeyValue, doc_lines)
+            }
+            (None, Some(tag)) => {
+                // Tag only - use tagged_with_doc
+                FieldKey::tagged_with_doc(tag, FieldLocationHint::KeyValue, doc_lines)
+            }
+            (None, None) => {
+                // Unit key with optional doc
+                FieldKey::unit_with_doc(FieldLocationHint::KeyValue, doc_lines)
+            }
         });
     }
 
@@ -225,8 +231,7 @@ impl FormatSerializer for StyxSerializer {
         trace!(?key, "emit_field_key");
 
         let doc_lines: Vec<&str> = key
-            .doc
-            .as_ref()
+            .doc()
             .map(|d| d.iter().map(|s| s.as_ref()).collect())
             .unwrap_or_default();
 
@@ -235,7 +240,10 @@ impl FormatSerializer for StyxSerializer {
         // - `@tag` → tag=Some("tag"), name=None
         // - `name` → tag=None, name=Some("name")
         // - `@tag"name"` → tag=Some("tag"), name=Some("name")
-        match (key.tag.as_deref(), key.name.as_deref()) {
+        match (
+            key.tag().map(|c| c.as_ref()),
+            key.name().map(|c| c.as_ref()),
+        ) {
             (Some(tag), Some(name)) => {
                 // @tag"name" - tagged with value
                 let key_str = if tag.is_empty() {

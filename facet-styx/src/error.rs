@@ -186,8 +186,8 @@ impl fmt::Display for StyxErrorKind {
 /// Convert a facet_reflect::Span to a Range<usize>.
 #[allow(dead_code)]
 fn reflect_span_to_range(span: &facet_reflect::Span) -> std::ops::Range<usize> {
-    let start = span.offset;
-    let end = start + span.len;
+    let start = span.offset as usize;
+    let end = start + span.len as usize;
     start..end
 }
 

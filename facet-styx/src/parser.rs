@@ -260,10 +260,10 @@ impl<'de> StyxParser<'de> {
         let span = self
             .current_span
             .map(|s| ReflectSpan {
-                offset: s.start as usize,
-                len: (s.end - s.start) as usize,
+                offset: s.start,
+                len: s.end - s.start,
             })
-            .unwrap_or(ReflectSpan { offset: 0, len: 1 });
+            .unwrap_or(ReflectSpan::new(0, 1));
         ParseError::new(
             span,
             DeserializeErrorKind::UnexpectedToken {
@@ -275,17 +275,14 @@ impl<'de> StyxParser<'de> {
 
     /// Convert a Styx span to a facet_reflect span.
     fn to_reflect_span(&self, span: Span) -> ReflectSpan {
-        ReflectSpan {
-            offset: span.start as usize,
-            len: (span.end - span.start) as usize,
-        }
+        ReflectSpan::new(span.start as usize, (span.end - span.start) as usize)
     }
 
     /// Get the current span for event creation.
     fn event_span(&self) -> ReflectSpan {
         self.current_span
             .map(|s| self.to_reflect_span(s))
-            .unwrap_or(ReflectSpan { offset: 0, len: 0 })
+            .unwrap_or(ReflectSpan::new(0, 0))
     }
 
     /// Create a parse event with the current span.
@@ -734,10 +731,8 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
     }
 
     fn current_span(&self) -> Option<facet_reflect::Span> {
-        self.current_span.map(|s| facet_reflect::Span {
-            offset: s.start as usize,
-            len: (s.end - s.start) as usize,
-        })
+        self.current_span
+            .map(|s| facet_reflect::Span::new(s.start as usize, (s.end - s.start) as usize))
     }
 
     fn raw_capture_shape(&self) -> Option<&'static facet_core::Shape> {
