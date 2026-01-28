@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use facet_core::{Def, Facet, Shape, StructKind, Type, UserType};
+use facet_core::{Def, Facet, ScalarType, Shape, StructKind, Type, UserType};
 use facet_reflect::{Partial, typeplan::DeserStrategy};
 
 use crate::{
@@ -902,41 +902,30 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         // Hint to non-self-describing parsers what scalar type is expected
         let shape = wip.shape();
 
+        // Use ScalarType for fast TypeId-based dispatch instead of string matching
+        let scalar_type = shape.scalar_type();
+
         // First, try hint_opaque_scalar for types that may have format-specific
         // binary representations (e.g., UUID as 16 raw bytes in postcard)
-        let opaque_handled = match shape.type_identifier {
+        let opaque_handled = if scalar_type.is_some() {
             // Standard primitives are never opaque
-            "bool" | "u8" | "u16" | "u32" | "u64" | "u128" | "usize" | "i8" | "i16" | "i32"
-            | "i64" | "i128" | "isize" | "f32" | "f64" | "String" | "&str" | "char" => false,
+            false
+        } else {
             // For all other scalar types, ask the parser if it handles them specially
-            _ => self.parser.hint_opaque_scalar(shape.type_identifier, shape),
+            self.parser.hint_opaque_scalar(shape.type_identifier, shape)
         };
 
         // If the parser didn't handle the opaque type, fall back to standard hints
         if !opaque_handled {
-            let hint = match shape.type_identifier {
-                "bool" => Some(ScalarTypeHint::Bool),
-                "u8" => Some(ScalarTypeHint::U8),
-                "u16" => Some(ScalarTypeHint::U16),
-                "u32" => Some(ScalarTypeHint::U32),
-                "u64" => Some(ScalarTypeHint::U64),
-                "u128" => Some(ScalarTypeHint::U128),
-                "usize" => Some(ScalarTypeHint::Usize),
-                "i8" => Some(ScalarTypeHint::I8),
-                "i16" => Some(ScalarTypeHint::I16),
-                "i32" => Some(ScalarTypeHint::I32),
-                "i64" => Some(ScalarTypeHint::I64),
-                "i128" => Some(ScalarTypeHint::I128),
-                "isize" => Some(ScalarTypeHint::Isize),
-                "f32" => Some(ScalarTypeHint::F32),
-                "f64" => Some(ScalarTypeHint::F64),
-                "String" | "&str" => Some(ScalarTypeHint::String),
-                "char" => Some(ScalarTypeHint::Char),
+            let hint = scalar_type_to_hint(scalar_type).or_else(|| {
                 // For unknown scalar types, check if they implement FromStr
                 // (e.g., camino::Utf8PathBuf, types not handled by hint_opaque_scalar)
-                _ if shape.is_from_str() => Some(ScalarTypeHint::String),
-                _ => None,
-            };
+                if shape.is_from_str() {
+                    Some(ScalarTypeHint::String)
+                } else {
+                    None
+                }
+            });
             if let Some(hint) = hint {
                 self.parser.hint_scalar_type(hint);
             }
@@ -1137,5 +1126,34 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             Err(MapKeyTerminalResult::NeedsSetString { wip, s }) => self.set_string_value(wip, s),
             Err(MapKeyTerminalResult::Error(e)) => Err(e),
         }
+    }
+}
+
+/// Convert a ScalarType to a ScalarTypeHint for non-self-describing parsers.
+///
+/// Returns None for types that don't have a direct hint mapping (Unit, CowStr,
+/// network addresses, ConstTypeId).
+#[inline]
+fn scalar_type_to_hint(scalar_type: Option<ScalarType>) -> Option<ScalarTypeHint> {
+    match scalar_type? {
+        ScalarType::Bool => Some(ScalarTypeHint::Bool),
+        ScalarType::U8 => Some(ScalarTypeHint::U8),
+        ScalarType::U16 => Some(ScalarTypeHint::U16),
+        ScalarType::U32 => Some(ScalarTypeHint::U32),
+        ScalarType::U64 => Some(ScalarTypeHint::U64),
+        ScalarType::U128 => Some(ScalarTypeHint::U128),
+        ScalarType::USize => Some(ScalarTypeHint::Usize),
+        ScalarType::I8 => Some(ScalarTypeHint::I8),
+        ScalarType::I16 => Some(ScalarTypeHint::I16),
+        ScalarType::I32 => Some(ScalarTypeHint::I32),
+        ScalarType::I64 => Some(ScalarTypeHint::I64),
+        ScalarType::I128 => Some(ScalarTypeHint::I128),
+        ScalarType::ISize => Some(ScalarTypeHint::Isize),
+        ScalarType::F32 => Some(ScalarTypeHint::F32),
+        ScalarType::F64 => Some(ScalarTypeHint::F64),
+        ScalarType::Char => Some(ScalarTypeHint::Char),
+        ScalarType::Str | ScalarType::String => Some(ScalarTypeHint::String),
+        // Types that need special handling or FromStr fallback
+        _ => None,
     }
 }
