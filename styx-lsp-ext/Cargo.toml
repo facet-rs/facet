@@ -14,4 +14,4 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 [dependencies]
 facet.workspace = true
 styx-tree = { path = "../styx-tree", version = "1.0", features = ["facet"] }
-roam = { git = "https://github.com/bearcove/roam", branch = "main", version = "0.6.0" }
+roam = { git = "https://github.com/bearcove/roam", branch = "main", version = "3" }
