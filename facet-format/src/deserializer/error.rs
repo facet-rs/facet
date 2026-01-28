@@ -741,3 +741,83 @@ impl DeserializeError {
         self
     }
 }
+
+// ============================================================
+// Pretty error rendering with ariadne
+// ============================================================
+
+#[cfg(feature = "ariadne")]
+mod ariadne_impl {
+    use super::*;
+    use ariadne::{Color, Label, Report, ReportKind, Source};
+    use std::io::Write;
+
+    impl DeserializeError {
+        /// Render this error as a pretty diagnostic using ariadne.
+        ///
+        /// # Arguments
+        /// * `filename` - The filename to show in the diagnostic (e.g., "queries.styx")
+        /// * `source` - The source text that was being parsed
+        ///
+        /// # Returns
+        /// A string containing the formatted diagnostic with colors (ANSI codes).
+        pub fn to_pretty(&self, filename: &str, source: &str) -> String {
+            let mut buf = Vec::new();
+            self.write_pretty(&mut buf, filename, source)
+                .expect("writing to Vec<u8> should never fail");
+            String::from_utf8(buf).expect("ariadne output should be valid UTF-8")
+        }
+
+        /// Write this error as a pretty diagnostic to a writer.
+        ///
+        /// # Arguments
+        /// * `writer` - Where to write the diagnostic
+        /// * `filename` - The filename to show in the diagnostic
+        /// * `source` - The source text that was being parsed
+        pub fn write_pretty<W: Write>(
+            &self,
+            writer: &mut W,
+            filename: &str,
+            source: &str,
+        ) -> std::io::Result<()> {
+            let (offset, len) = match self.span {
+                Some(span) => (span.offset as usize, span.len as usize),
+                None => (0, 0),
+            };
+
+            // Clamp to source bounds
+            let offset = offset.min(source.len());
+            let end = (offset + len).min(source.len());
+            let range = offset..end.max(offset + 1).min(source.len());
+
+            let message = self.kind.to_string();
+
+            let mut report =
+                Report::build(ReportKind::Error, (filename, range.clone())).with_message(&message);
+
+            // Add the main label pointing to the error location
+            let label = Label::new((filename, range))
+                .with_message(&message)
+                .with_color(Color::Red);
+            report = report.with_label(label);
+
+            // Add path information as a note if available
+            if let Some(ref path) = self.path {
+                report = report.with_note(format!("at path: {path:?}"));
+            }
+
+            report
+                .finish()
+                .write((filename, Source::from(source)), writer)
+        }
+
+        /// Print this error as a pretty diagnostic to stderr.
+        ///
+        /// # Arguments
+        /// * `filename` - The filename to show in the diagnostic
+        /// * `source` - The source text that was being parsed
+        pub fn eprint(&self, filename: &str, source: &str) {
+            let _ = self.write_pretty(&mut std::io::stderr(), filename, source);
+        }
+    }
+}
