@@ -51,7 +51,7 @@ struct Status {
     favorited: bool,
     retweeted: bool,
     lang: String,
-    #[facet(default)]
+    #[facet(default, recursive_type)]
     retweeted_status: Option<Box<Status>>,
     #[facet(default)]
     possibly_sensitive: Option<bool>,

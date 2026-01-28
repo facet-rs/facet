@@ -220,10 +220,15 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         }
 
         // Push a new frame for the key
+        // Get child type plan NodeId for map keys
+        let child_plan = frame
+            .type_plan
+            .and_then(|pn| self.root_plan.map_key_node(pn));
         self.frames_mut().push(Frame::new(
             PtrUninit::new(key_ptr_raw.as_ptr()),
             AllocatedShape::new(key_shape, key_layout.size()),
             FrameOwnership::TrackedBuffer,
+            child_plan,
         ));
 
         Ok(self)
@@ -311,10 +316,15 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         }
 
         // Push a new frame for the value
+        // Get child type plan NodeId for map values
+        let child_plan = frame
+            .type_plan
+            .and_then(|pn| self.root_plan.map_value_node(pn));
         self.frames_mut().push(Frame::new(
             value_ptr,
             AllocatedShape::new(value_shape, value_layout.size()),
             FrameOwnership::TrackedBuffer,
+            child_plan,
         ));
 
         Ok(self)
@@ -393,10 +403,13 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     .sized_layout()
                     .expect("value must be sized")
                     .size();
+                // For DynamicValue, use the same type plan (self-recursive)
+                let child_plan = frame.type_plan;
                 let mut new_frame = Frame::new(
                     existing_ptr.as_uninit(),
                     AllocatedShape::new(value_shape, value_size),
                     FrameOwnership::BorrowedInPlace,
+                    child_plan,
                 );
                 new_frame.is_init = true;
                 // Set tracker to reflect it's an initialized DynamicValue
@@ -442,10 +455,13 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         }
 
         // Push a new frame for the value
+        // For DynamicValue, use the same type plan (self-recursive)
+        let child_plan = frame.type_plan;
         self.frames_mut().push(Frame::new(
             PtrUninit::new(value_ptr.as_ptr()),
             AllocatedShape::new(value_shape, value_layout.size()),
             FrameOwnership::Owned,
+            child_plan,
         ));
 
         Ok(self)

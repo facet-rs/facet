@@ -10,25 +10,25 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
     /// then this returns `None` for sure.
     pub fn field_index(&self, field_name: &str) -> Option<usize> {
         let frame = self.frames().last()?;
+        let node_id = frame.type_plan?;
 
-        match frame.allocated.shape().ty {
-            Type::User(UserType::Struct(struct_def)) => {
-                struct_def.fields.iter().position(|f| f.name == field_name)
-            }
-            Type::User(UserType::Enum(_)) => {
-                // If we're in an enum variant, check its fields
-                if let Tracker::Enum { variant, .. } = &frame.tracker {
-                    variant
-                        .data
-                        .fields
-                        .iter()
-                        .position(|f| f.name == field_name)
-                } else {
-                    None
-                }
-            }
-            _ => None,
+        // For structs: use StructPlan's field_lookup
+        if let Some(struct_plan) = self.root_plan.as_struct_plan(node_id) {
+            return struct_plan.field_lookup.find(field_name);
         }
+
+        // For enums with selected variant: use variant's field_lookup
+        if let Some(enum_plan) = self.root_plan.as_enum_plan(node_id)
+            && let Tracker::Enum { variant_idx, .. } = &frame.tracker
+        {
+            return enum_plan
+                .variants
+                .get(*variant_idx)?
+                .field_lookup
+                .find(field_name);
+        }
+
+        None
     }
 
     /// Check if a struct field at the given index has been set
@@ -171,31 +171,44 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             }
         }
 
-        // Get the shape first to avoid borrow conflicts
-        let shape = self.frames().last().unwrap().allocated.shape();
+        // Get shape and parent NodeId first (NodeId is Copy, no borrow conflict)
+        let frame = self.frames().last().unwrap();
+        let shape = frame.allocated.shape();
+        let parent_node = frame.type_plan; // Copy the NodeId
 
         let next_frame = match shape.ty {
             Type::User(user_type) => match user_type {
                 UserType::Struct(struct_type) => {
+                    // Compute child NodeId before mutable borrow
+                    let child_plan =
+                        parent_node.and_then(|pn| self.root_plan.struct_field_node(pn, idx));
                     let frame = self.frames_mut().last_mut().unwrap();
-                    Self::begin_nth_struct_field(frame, struct_type, idx)
+                    Self::begin_nth_struct_field(frame, struct_type, idx, child_plan)
                         .map_err(|e| self.err(e))?
                 }
                 UserType::Enum(_) => {
-                    // Check if we have a variant selected
-                    let frame = self.frames_mut().last_mut().unwrap();
-                    match &frame.tracker {
-                        Tracker::Enum { variant, .. } => {
-                            Self::begin_nth_enum_field(frame, variant, idx)
-                                .map_err(|e| self.err(e))?
-                        }
+                    // Check if we have a variant selected and get variant info
+                    let frame = self.frames().last().unwrap();
+                    let (variant, variant_idx) = match &frame.tracker {
+                        Tracker::Enum {
+                            variant,
+                            variant_idx,
+                            ..
+                        } => (*variant, *variant_idx),
                         _ => {
                             return Err(self.err(ReflectErrorKind::OperationFailed {
                                 shape,
                                 operation: "must call select_variant before selecting enum fields",
                             }));
                         }
-                    }
+                    };
+                    // Compute child NodeId using stored variant_idx (O(1) lookup, not O(n) search)
+                    let child_plan = parent_node.and_then(|pn| {
+                        self.root_plan.enum_variant_field_node(pn, variant_idx, idx)
+                    });
+                    let frame = self.frames_mut().last_mut().unwrap();
+                    Self::begin_nth_enum_field(frame, variant, idx, child_plan)
+                        .map_err(|e| self.err(e))?
                 }
                 UserType::Union(_) => {
                     return Err(self.err(ReflectErrorKind::OperationFailed {
@@ -212,8 +225,10 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             },
             Type::Sequence(sequence_type) => match sequence_type {
                 SequenceType::Array(array_type) => {
+                    // Compute child NodeId before mutable borrow
+                    let child_plan = parent_node.and_then(|pn| self.root_plan.list_item_node(pn));
                     let frame = self.frames_mut().last_mut().unwrap();
-                    Self::begin_nth_array_element(frame, array_type, idx)
+                    Self::begin_nth_array_element(frame, array_type, idx, child_plan)
                         .map_err(|e| self.err(e))?
                 }
                 SequenceType::Slice(_) => {

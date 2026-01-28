@@ -1,5 +1,6 @@
 use super::*;
-use crate::{AllocError, AllocatedShape};
+use crate::{AllocError, AllocatedShape, typeplan::TypePlan};
+use ::alloc::boxed::Box;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Allocation, constructors etc.
@@ -145,17 +146,23 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             })?
             .size();
 
+        // Build the TypePlan once for the entire deserialization
+        let root_plan = Box::new(TypePlan::build(shape));
+        let root_node = Some(root_plan.root());
+
         // Preallocate a couple of frames for nested structures
         let mut stack = Vec::with_capacity(4);
         stack.push(Frame::new(
             ptr,
             AllocatedShape::new(shape, allocated_size),
             FrameOwnership::External,
+            root_node,
         ));
 
         Ok(Partial {
             mode: FrameMode::Strict { stack },
             state: PartialState::Active,
+            root_plan,
             invariant: PhantomData,
         })
     }
@@ -178,6 +185,10 @@ fn alloc_shape_inner<'facet, const BORROW: bool>(
     // Get the actual allocated size
     let allocated_size = shape.layout.sized_layout().expect("must be sized").size();
 
+    // Build the TypePlan once for the entire deserialization
+    let root_plan = Box::new(TypePlan::build(shape));
+    let root_node = Some(root_plan.root());
+
     // Preallocate a couple of frames. The cost of allocating 4 frames is
     // basically identical to allocating 1 frame, so for every type that
     // has at least 1 level of nesting, this saves at least one guaranteed reallocation.
@@ -186,11 +197,13 @@ fn alloc_shape_inner<'facet, const BORROW: bool>(
         data,
         AllocatedShape::new(shape, allocated_size),
         FrameOwnership::Owned,
+        root_node,
     ));
 
     Ok(Partial {
         mode: FrameMode::Strict { stack },
         state: PartialState::Active,
+        root_plan,
         invariant: PhantomData,
     })
 }

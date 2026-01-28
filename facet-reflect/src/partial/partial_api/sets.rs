@@ -131,10 +131,15 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         };
 
         // Push a new frame for the element
+        // Get child type plan NodeId for set items
+        let child_plan = frame
+            .type_plan
+            .and_then(|pn| self.root_plan.set_item_node(pn));
         self.frames_mut().push(Frame::new(
             PtrUninit::new(element_ptr.as_ptr()),
             AllocatedShape::new(element_shape, element_layout.size()),
             FrameOwnership::Owned,
+            child_plan,
         ));
 
         Ok(self)

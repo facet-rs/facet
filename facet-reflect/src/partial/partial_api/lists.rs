@@ -280,10 +280,15 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
 
             // Create and push the element frame
             crate::trace!("Pushing element frame, which we just allocated");
+            // Get child type plan NodeId for list items
+            let child_plan = frame
+                .type_plan
+                .and_then(|pn| self.root_plan.list_item_node(pn));
             let element_frame = Frame::new(
                 element_data,
                 AllocatedShape::new(element_shape, element_layout.size()),
                 FrameOwnership::Owned,
+                child_plan,
             );
             self.frames_mut().push(element_frame);
 
@@ -340,10 +345,13 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             };
 
             // Push a new frame for the element
+            // For DynamicValue arrays, use the same type plan (self-recursive)
+            let child_plan = frame.type_plan;
             self.frames_mut().push(Frame::new(
                 element_data,
                 AllocatedShape::new(element_shape, element_layout.size()),
                 FrameOwnership::Owned,
+                child_plan,
             ));
 
             // Mark that we're building an element
@@ -456,10 +464,15 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         };
 
         // Push a new frame for the element
+        // Get child type plan NodeId for list items
+        let child_plan = frame
+            .type_plan
+            .and_then(|pn| self.root_plan.list_item_node(pn));
         self.frames_mut().push(Frame::new(
             element_data,
             AllocatedShape::new(element_shape, element_layout.size()),
             ownership,
+            child_plan,
         ));
 
         Ok(self)

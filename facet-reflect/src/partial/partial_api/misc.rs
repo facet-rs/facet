@@ -81,6 +81,40 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         self.frames().last().map(|f| f.allocated.shape())
     }
 
+    /// Returns the precomputed StructPlan for the current frame, if available.
+    ///
+    /// This provides O(1) or O(log n) field lookup instead of O(n) linear scanning.
+    /// Returns `None` if:
+    /// - The Partial is not active
+    /// - The current frame has no TypePlan (e.g., custom deserialization frames)
+    /// - The current type is not a struct
+    #[inline]
+    pub fn struct_plan(&self) -> Option<&crate::typeplan::StructPlan> {
+        if self.state != PartialState::Active {
+            return None;
+        }
+        let frame = self.frames().last()?;
+        let node_id = frame.type_plan?;
+        self.root_plan.as_struct_plan(node_id)
+    }
+
+    /// Returns the precomputed EnumPlan for the current frame, if available.
+    ///
+    /// This provides O(1) or O(log n) variant lookup instead of O(n) linear scanning.
+    /// Returns `None` if:
+    /// - The Partial is not active
+    /// - The current frame has no TypePlan (e.g., custom deserialization frames)
+    /// - The current type is not an enum
+    #[inline]
+    pub fn enum_plan(&self) -> Option<&crate::typeplan::EnumPlan> {
+        if self.state != PartialState::Active {
+            return None;
+        }
+        let frame = self.frames().last()?;
+        let node_id = frame.type_plan?;
+        self.root_plan.as_enum_plan(node_id)
+    }
+
     /// Returns true if the current frame is building a smart pointer slice (Arc<\[T\]>, Rc<\[T\]>, Box<\[T\]>).
     ///
     /// This is used by deserializers to determine if they should deserialize as a list

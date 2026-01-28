@@ -66,10 +66,15 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             };
 
             // Push a new frame for the inner value
+            // Get child type plan NodeId for smart pointer pointee
+            let child_plan = frame
+                .type_plan
+                .and_then(|pn| self.root_plan.pointer_pointee_node(pn));
             self.frames_mut().push(Frame::new(
                 PtrUninit::new(inner_ptr.as_ptr()),
                 AllocatedShape::new(pointee_shape, inner_layout.size()),
                 FrameOwnership::Owned,
+                child_plan,
             ));
         } else {
             // pointee is unsized, we only support a handful of cases there
@@ -89,10 +94,12 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     }));
                 };
                 let string_size = string_layout.size();
+                // For Arc<str> -> String conversion, use None since the shapes differ
                 let new_frame = Frame::new(
                     PtrUninit::new(string_ptr.as_ptr()),
                     AllocatedShape::new(String::SHAPE, string_size),
                     FrameOwnership::Owned,
+                    None,
                 );
                 // Frame::new already sets tracker = Scalar and is_init = false
                 self.frames_mut().push(new_frame);

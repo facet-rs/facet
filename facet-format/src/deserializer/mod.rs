@@ -748,11 +748,6 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         }
     }
 
-    /// Check if a field matches a given name by effective name or alias.
-    fn field_matches(field: &facet_core::Field, name: &str) -> bool {
-        field.effective_name() == name || field.alias.iter().any(|alias| *alias == name)
-    }
-
     /// Make an error using the last span, the current path of the given wip.
     fn mk_err(
         &self,

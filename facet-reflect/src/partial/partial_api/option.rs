@@ -100,9 +100,13 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         }
 
         // Set tracker to indicate we're building the inner value
-        let frame = self.frames_mut().last_mut().unwrap();
-        frame.tracker = Tracker::Option {
-            building_inner: true,
+        // Copy the type_plan pointer before dropping the mutable borrow
+        let parent_type_plan = {
+            let frame = self.frames_mut().last_mut().unwrap();
+            frame.tracker = Tracker::Option {
+                building_inner: true,
+            };
+            frame.type_plan
         };
 
         // Get the inner type shape
@@ -155,6 +159,8 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
 
         // Create a new frame for the inner value
         // For re-entry, we use ManagedElsewhere ownership since the Option frame owns the memory
+        // Get child type plan NodeId for Option inner
+        let child_plan = parent_type_plan.and_then(|pn| self.root_plan.option_inner_node(pn));
         let mut inner_frame = Frame::new(
             inner_data,
             AllocatedShape::new(inner_shape, inner_layout.size()),
@@ -163,6 +169,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             } else {
                 FrameOwnership::Owned
             },
+            child_plan,
         );
 
         // CRITICAL: For re-entry, mark the frame as already initialized so that init_list()
@@ -247,10 +254,12 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 trace!(
                     "begin_inner: Creating frame for inner type {inner_shape} (parent is {parent_shape})"
                 );
+                // Conversion frames use a different shape than the parent, so no precomputed plan applies
                 self.frames_mut().push(Frame::new(
                     inner_data,
                     AllocatedShape::new(inner_shape, inner_layout.size()),
                     FrameOwnership::Owned,
+                    None,
                 ));
 
                 Ok(self)
@@ -294,10 +303,12 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 trace!(
                     "begin_custom_deserialization: Creating frame for deserialization type {source_shape}"
                 );
+                // Custom deserialization uses proxy shape, no precomputed plan applies
                 let mut new_frame = Frame::new(
                     source_data,
                     AllocatedShape::new(source_shape, source_size),
                     FrameOwnership::Owned,
+                    None,
                 );
                 new_frame.using_custom_deserialization = true;
                 self.frames_mut().push(new_frame);
@@ -369,10 +380,12 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         trace!(
             "begin_custom_deserialization_from_shape_with_format: Creating frame for deserialization type {source_shape}"
         );
+        // Custom deserialization uses proxy shape, no precomputed plan applies
         let mut new_frame = Frame::new(
             source_data,
             AllocatedShape::new(source_shape, source_size),
             FrameOwnership::Owned,
+            None,
         );
         new_frame.using_custom_deserialization = true;
         // Store the target shape's proxy in the frame so end() can use it for conversion
@@ -423,10 +436,12 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 trace!(
                     "begin_custom_deserialization_with_format: Creating frame for deserialization type {source_shape}"
                 );
+                // Custom deserialization uses proxy shape, no precomputed plan applies
                 let mut new_frame = Frame::new(
                     source_data,
                     AllocatedShape::new(source_shape, source_size),
                     FrameOwnership::Owned,
+                    None,
                 );
                 new_frame.using_custom_deserialization = true;
                 // Store the proxy def so end() can use the correct convert_in function

@@ -39,10 +39,14 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         }
 
         // Set tracker to indicate we're building the Ok value
-        let frame = self.frames_mut().last_mut().unwrap();
-        frame.tracker = Tracker::Result {
-            is_ok: true,
-            building_inner: true,
+        // Copy the type_plan pointer before dropping the mutable borrow
+        let parent_type_plan = {
+            let frame = self.frames_mut().last_mut().unwrap();
+            frame.tracker = Tracker::Result {
+                is_ok: true,
+                building_inner: true,
+            };
+            frame.type_plan
         };
 
         // Get the Ok type shape
@@ -69,10 +73,13 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         };
 
         // Create a new frame for the inner value
+        // Get child type plan NodeId for Result Ok type
+        let child_plan = parent_type_plan.and_then(|pn| self.root_plan.result_ok_node(pn));
         let inner_frame = Frame::new(
             inner_data,
             AllocatedShape::new(inner_shape, inner_layout.size()),
             FrameOwnership::Owned,
+            child_plan,
         );
         self.frames_mut().push(inner_frame);
 
@@ -113,10 +120,14 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         }
 
         // Set tracker to indicate we're building the Err value
-        let frame = self.frames_mut().last_mut().unwrap();
-        frame.tracker = Tracker::Result {
-            is_ok: false,
-            building_inner: true,
+        // Copy the type_plan pointer before dropping the mutable borrow
+        let parent_type_plan = {
+            let frame = self.frames_mut().last_mut().unwrap();
+            frame.tracker = Tracker::Result {
+                is_ok: false,
+                building_inner: true,
+            };
+            frame.type_plan
         };
 
         // Get the Err type shape
@@ -143,10 +154,13 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         };
 
         // Create a new frame for the inner value
+        // Get child type plan NodeId for Result Err type
+        let child_plan = parent_type_plan.and_then(|pn| self.root_plan.result_err_node(pn));
         let inner_frame = Frame::new(
             inner_data,
             AllocatedShape::new(inner_shape, inner_layout.size()),
             FrameOwnership::Owned,
+            child_plan,
         );
         self.frames_mut().push(inner_frame);
 
