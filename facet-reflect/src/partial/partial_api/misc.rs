@@ -1,12 +1,38 @@
 use facet_path::Path;
 
 use super::*;
-use crate::typeplan::DeserStrategy;
+use crate::typeplan::{DeserStrategy, FieldInitPlan, TypePlanNodeKind};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Misc.
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
+    /// Get the precomputed field initialization plans for the current frame.
+    ///
+    /// Returns `None` if:
+    /// - The frame has no TypePlan node
+    /// - The frame is not a struct or enum variant
+    fn get_field_init_plans_for_frame(&self, frame: &Frame) -> Option<&[FieldInitPlan]> {
+        let plan_node = self.root_plan.get(frame.type_plan)?;
+
+        match &plan_node.kind {
+            TypePlanNodeKind::Struct(struct_plan) => Some(&struct_plan.field_init_plans),
+            TypePlanNodeKind::Enum(enum_plan) => {
+                // For enums, we need to find which variant is active
+                if let Tracker::Enum { variant, .. } = &frame.tracker {
+                    // Find the variant in the enum plan by name
+                    enum_plan
+                        .variants
+                        .iter()
+                        .find(|v| v.name == variant.name)
+                        .map(|v| v.field_init_plans.as_slice())
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
     /// Applies a closure to this Partial, enabling chaining with operations that
     /// take ownership and return `Result<Self, E>`.
     ///

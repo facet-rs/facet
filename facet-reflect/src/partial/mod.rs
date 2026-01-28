@@ -124,9 +124,10 @@ mod heap_value;
 pub use heap_value::*;
 
 use facet_core::{
-    Def, EnumType, Field, PtrUninit, Shape, SliceBuilderVTable, Type, UserType, Variant,
+    Def, EnumType, Field, PtrMut, PtrUninit, Shape, SliceBuilderVTable, Type, UserType, Variant,
 };
 use iset::ISet;
+use typeplan::{FieldDefault, FieldInitPlan, FillRule};
 
 /// State of a partial value
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1271,6 +1272,82 @@ impl Frame {
                 }
             }
         }
+    }
+
+    /// Fill defaults and check required fields in a single pass using precomputed plans.
+    ///
+    /// This replaces the separate `fill_defaults` + `require_full_initialization` calls
+    /// with a single iteration over the precomputed `FieldInitPlan` list.
+    ///
+    /// # Arguments
+    /// * `plans` - Precomputed field initialization plans from TypePlan
+    ///
+    /// # Returns
+    /// `Ok(())` if all required fields are set (or filled with defaults), or an error
+    /// describing the first missing required field.
+    #[allow(unsafe_code)]
+    fn fill_and_require_fields(&mut self, plans: &[FieldInitPlan]) -> Result<(), ReflectErrorKind> {
+        // Get the iset based on tracker type
+        let iset = match &mut self.tracker {
+            Tracker::Struct { iset, .. } => iset,
+            Tracker::Enum { data, .. } => data,
+            // Other tracker types don't use field_init_plans
+            _ => return Ok(()),
+        };
+
+        for plan in plans {
+            if !iset.get(plan.index) {
+                // Field not set - handle according to fill rule
+                match &plan.fill_rule {
+                    FillRule::Defaultable(default) => {
+                        // Calculate field pointer
+                        let field_ptr = unsafe { self.data.field_uninit(plan.offset) };
+
+                        // Call the appropriate default function
+                        let success = match default {
+                            FieldDefault::Custom(default_fn) => {
+                                // SAFETY: default_fn writes to uninitialized memory
+                                unsafe { default_fn(field_ptr) };
+                                true
+                            }
+                            FieldDefault::FromTrait(shape) => {
+                                // SAFETY: call_default_in_place writes to the pointer
+                                let field_ptr_mut = PtrMut::new(field_ptr.as_mut_byte_ptr());
+                                unsafe { shape.call_default_in_place(field_ptr_mut) }.is_some()
+                            }
+                        };
+
+                        if success {
+                            iset.set(plan.index);
+                        } else {
+                            // Default function not available - this shouldn't happen
+                            // if TypePlan was built correctly, but handle gracefully
+                            return Err(ReflectErrorKind::UninitializedField {
+                                shape: self.allocated.shape(),
+                                field_name: plan.name,
+                            });
+                        }
+                    }
+                    FillRule::Required => {
+                        // Field is required but not set - error
+                        return Err(ReflectErrorKind::UninitializedField {
+                            shape: self.allocated.shape(),
+                            field_name: plan.name,
+                        });
+                    }
+                }
+            }
+
+            // Run validators on the (now initialized) field
+            if !plan.validators.is_empty() {
+                let field_ptr = unsafe { self.data.field_init(plan.offset) };
+                for validator in &plan.validators {
+                    validator.run(field_ptr, plan.name, self.allocated.shape())?;
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Get the [EnumType] of the frame's shape, if it is an enum type

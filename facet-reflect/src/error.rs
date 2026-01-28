@@ -134,6 +134,16 @@ pub enum ReflectErrorKind {
         shape: &'static Shape,
     },
 
+    /// A field validation failed
+    ValidationFailed {
+        /// The shape containing the field
+        shape: &'static Shape,
+        /// The name of the field that failed validation
+        field_name: &'static str,
+        /// The validation error message
+        message: alloc::string::String,
+    },
+
     /// An invariant of the reflection system was violated.
     InvariantViolation {
         /// The invariant that was violated.
@@ -339,6 +349,16 @@ impl core::fmt::Display for ReflectErrorKind {
                     "Value '{shape}' was not initialized. \
                     If you need to leave values partially initialized and come back later, \
                     use deferred mode (begin_deferred/finish_deferred)"
+                )
+            }
+            ReflectErrorKind::ValidationFailed {
+                shape,
+                field_name,
+                message,
+            } => {
+                write!(
+                    f,
+                    "Validation failed for field '{shape}::{field_name}': {message}"
                 )
             }
             ReflectErrorKind::InvariantViolation { invariant } => {

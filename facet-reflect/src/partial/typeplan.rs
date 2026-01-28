@@ -8,8 +8,8 @@
 
 use alloc::vec::Vec;
 use facet_core::{
-    Characteristic, ConstTypeId, Def, EnumType, Field, ProxyDef, SequenceType, Shape, StructType,
-    Type, UserType, Variant,
+    Characteristic, ConstTypeId, Def, DefaultInPlaceFn, DefaultSource, EnumType, Field, ProxyDef,
+    SequenceType, Shape, StructType, Type, UserType, ValidatorFn, Variant,
 };
 use hashbrown::HashMap;
 use indextree::Arena;
@@ -219,6 +219,124 @@ pub struct StructPlan {
     pub has_flatten: bool,
     /// Number of fields
     pub num_fields: usize,
+    /// Precomputed initialization plans for fields that need special handling.
+    /// Only includes fields that are required OR have defaults OR have validators.
+    /// Fields that are Option<T> without explicit defaults are NOT included
+    /// (they implicitly default to None via the type's Default impl).
+    pub field_init_plans: Vec<FieldInitPlan>,
+}
+
+/// Precomputed plan for initializing/validating a single field.
+///
+/// This combines what was previously separate logic in `fill_defaults` and
+/// `require_full_initialization` into a single data structure that can be
+/// processed in one pass.
+#[derive(Debug, Clone)]
+pub struct FieldInitPlan {
+    /// Field index in the struct (for ISet tracking)
+    pub index: usize,
+    /// Field offset in bytes from struct base (for calculating field pointer)
+    pub offset: usize,
+    /// Field name (for error messages)
+    pub name: &'static str,
+    /// How to handle this field if not set during deserialization
+    pub fill_rule: FillRule,
+    /// Validators to run after the field is set (precomputed from attributes)
+    pub validators: Vec<PrecomputedValidator>,
+}
+
+/// How to fill a field that wasn't set during deserialization.
+#[derive(Debug, Clone)]
+pub enum FillRule {
+    /// Field has a default - call this function if not set.
+    /// The function writes the default value to an uninitialized pointer.
+    Defaultable(FieldDefault),
+    /// Field is required - error if not set.
+    Required,
+}
+
+/// Source of default value for a field.
+#[derive(Debug, Clone, Copy)]
+pub enum FieldDefault {
+    /// Use a custom default function (from `#[facet(default = expr)]`)
+    Custom(DefaultInPlaceFn),
+    /// Use the type's Default trait (via shape.call_default_in_place)
+    /// We store the shape so we can call its default_in_place
+    FromTrait(&'static Shape),
+}
+
+/// A precomputed validator extracted from field attributes.
+#[derive(Debug, Clone)]
+pub struct PrecomputedValidator {
+    /// The validator kind with any associated data
+    pub kind: ValidatorKind,
+}
+
+impl PrecomputedValidator {
+    /// Run this validator on an initialized field value.
+    ///
+    /// # Safety
+    /// `field_ptr` must point to initialized memory of the correct type.
+    #[allow(unsafe_code)]
+    pub fn run(
+        &self,
+        field_ptr: facet_core::PtrMut,
+        field_name: &'static str,
+        container_shape: &'static Shape,
+    ) -> Result<(), crate::ReflectErrorKind> {
+        use crate::ReflectErrorKind;
+
+        let result: Result<(), alloc::string::String> = match &self.kind {
+            ValidatorKind::Custom(validator_fn) => {
+                // SAFETY: caller guarantees field_ptr points to valid data
+                let ptr_const = facet_core::PtrConst::new(field_ptr.as_byte_ptr());
+                unsafe { validator_fn(ptr_const) }
+            }
+            // For now, the built-in validators need access to the Partial to read typed values.
+            // We'll implement these later or keep them in the deserializer for now.
+            ValidatorKind::Min(_)
+            | ValidatorKind::Max(_)
+            | ValidatorKind::MinLength(_)
+            | ValidatorKind::MaxLength(_)
+            | ValidatorKind::Email
+            | ValidatorKind::Url
+            | ValidatorKind::Regex(_)
+            | ValidatorKind::Contains(_) => {
+                // These validators need type-aware reading which requires more infrastructure.
+                // For now, return Ok - the deserializer's run_field_validators handles these.
+                return Ok(());
+            }
+        };
+
+        result.map_err(|message| ReflectErrorKind::ValidationFailed {
+            shape: container_shape,
+            field_name,
+            message,
+        })
+    }
+}
+
+/// Kinds of validators with their precomputed data.
+#[derive(Debug, Clone)]
+pub enum ValidatorKind {
+    /// Custom validator function
+    Custom(ValidatorFn),
+    /// Minimum value (for numeric types)
+    Min(i64),
+    /// Maximum value (for numeric types)
+    Max(i64),
+    /// Minimum length (for strings/collections)
+    MinLength(usize),
+    /// Maximum length (for strings/collections)
+    MaxLength(usize),
+    /// Must be valid email
+    Email,
+    /// Must be valid URL
+    Url,
+    /// Must match regex pattern
+    Regex(&'static str),
+    /// Must contain substring
+    Contains(&'static str),
 }
 
 /// Metadata for a single field (without child plan - that's in the tree).
@@ -266,6 +384,8 @@ pub struct VariantPlanMeta {
     pub field_lookup: FieldLookup,
     /// Number of fields in this variant
     pub num_fields: usize,
+    /// Precomputed initialization plans for variant fields
+    pub field_init_plans: Vec<FieldInitPlan>,
 }
 
 /// Fast lookup from field name to field index.
@@ -811,15 +931,21 @@ impl TypePlanBuilder {
         parent_id: NodeId,
     ) -> Result<StructPlan, AllocError> {
         let mut fields = Vec::with_capacity(struct_def.fields.len());
+        let mut field_init_plans = Vec::new();
 
-        for field in struct_def.fields.iter() {
+        for (index, field) in struct_def.fields.iter().enumerate() {
             let field_meta = FieldPlanMeta::from_field(field);
-            fields.push(field_meta);
+            fields.push(field_meta.clone());
 
             // Check for field-level proxy (takes precedence over type-level proxy)
             let field_proxy = field.effective_proxy(self.format_namespace);
             let child_id = self.build_node_with_proxy(field.shape(), field_proxy)?;
             parent_id.append(child_id, &mut self.arena);
+
+            // Build the field initialization plan
+            if let Some(init_plan) = Self::build_field_init_plan(index, field) {
+                field_init_plans.push(init_plan);
+            }
         }
 
         let has_flatten = fields.iter().any(|f| f.is_flattened);
@@ -832,7 +958,141 @@ impl TypePlanBuilder {
             field_lookup,
             has_flatten,
             num_fields,
+            field_init_plans,
         })
+    }
+
+    /// Build a FieldInitPlan for a field, if it needs one.
+    ///
+    /// Returns `None` for fields that:
+    /// - Are Option<T> without explicit default (implicitly None)
+    /// - Have no validators
+    /// - Are skipped during deserialization
+    fn build_field_init_plan(index: usize, field: &'static Field) -> Option<FieldInitPlan> {
+        // Skip fields that are skipped during deserialization
+        if field.should_skip_deserializing() {
+            return None;
+        }
+
+        // Extract validators from attributes
+        let validators = Self::extract_validators(field);
+
+        // Determine the fill rule
+        let fill_rule = Self::determine_fill_rule(field);
+
+        // Only create a plan if there's something to do
+        let has_validators = !validators.is_empty();
+        let needs_fill_check = match &fill_rule {
+            Some(FillRule::Required) => true,
+            Some(FillRule::Defaultable(_)) => true,
+            None => false,
+        };
+
+        if !has_validators && !needs_fill_check {
+            return None;
+        }
+
+        Some(FieldInitPlan {
+            index,
+            offset: field.offset,
+            name: field.name,
+            fill_rule: fill_rule.unwrap_or(FillRule::Required),
+            validators,
+        })
+    }
+
+    /// Determine how to fill a field that wasn't set.
+    fn determine_fill_rule(field: &'static Field) -> Option<FillRule> {
+        let field_shape = field.shape();
+        let is_option = matches!(field_shape.def, Def::Option(_));
+
+        // Check for explicit default on the field
+        if let Some(default_source) = field.default_source() {
+            let field_default = match default_source {
+                DefaultSource::Custom(f) => FieldDefault::Custom(*f),
+                DefaultSource::FromTrait => FieldDefault::FromTrait(field_shape),
+            };
+            return Some(FillRule::Defaultable(field_default));
+        }
+
+        // Option<T> without explicit default implicitly defaults to None
+        // We don't need a plan for this - it's handled by the type's Default impl
+        if is_option && field_shape.is(Characteristic::Default) {
+            return Some(FillRule::Defaultable(FieldDefault::FromTrait(field_shape)));
+        }
+
+        // Check if the field's type has a Default impl (and field has DEFAULT flag)
+        // This handles cases like `#[facet(default)]` without an expression
+        if field_shape.is(Characteristic::Default) {
+            // Only use type's default if field explicitly allows it
+            // (Option fields already handled above)
+            return None;
+        }
+
+        // Field is required - must be set during deserialization
+        Some(FillRule::Required)
+    }
+
+    /// Extract validators from field attributes.
+    fn extract_validators(field: &'static Field) -> Vec<PrecomputedValidator> {
+        let mut validators = Vec::new();
+
+        for attr in field.attributes.iter() {
+            if attr.ns != Some("validate") {
+                continue;
+            }
+
+            let kind = match attr.key {
+                "custom" => {
+                    // SAFETY: validate::custom attribute stores a ValidatorFn
+                    let validator_fn = unsafe { *attr.data.ptr().get::<ValidatorFn>() };
+                    ValidatorKind::Custom(validator_fn)
+                }
+                "min" => {
+                    let min_val = attr
+                        .get_as::<i64>()
+                        .expect("validate::min attribute must contain i64");
+                    ValidatorKind::Min(*min_val)
+                }
+                "max" => {
+                    let max_val = attr
+                        .get_as::<i64>()
+                        .expect("validate::max attribute must contain i64");
+                    ValidatorKind::Max(*max_val)
+                }
+                "min_length" => {
+                    let min_len = attr
+                        .get_as::<usize>()
+                        .expect("validate::min_length attribute must contain usize");
+                    ValidatorKind::MinLength(*min_len)
+                }
+                "max_length" => {
+                    let max_len = attr
+                        .get_as::<usize>()
+                        .expect("validate::max_length attribute must contain usize");
+                    ValidatorKind::MaxLength(*max_len)
+                }
+                "email" => ValidatorKind::Email,
+                "url" => ValidatorKind::Url,
+                "regex" => {
+                    let pattern = attr
+                        .get_as::<&'static str>()
+                        .expect("validate::regex attribute must contain &'static str");
+                    ValidatorKind::Regex(*pattern)
+                }
+                "contains" => {
+                    let needle = attr
+                        .get_as::<&'static str>()
+                        .expect("validate::contains attribute must contain &'static str");
+                    ValidatorKind::Contains(*needle)
+                }
+                _ => continue, // Unknown validator, skip
+            };
+
+            validators.push(PrecomputedValidator { kind });
+        }
+
+        validators
     }
 
     /// Build an EnumPlan, attaching variant field children appropriately.
@@ -845,8 +1105,9 @@ impl TypePlanBuilder {
 
         for variant in enum_def.variants.iter() {
             let mut variant_fields = Vec::with_capacity(variant.data.fields.len());
+            let mut field_init_plans = Vec::new();
 
-            for field in variant.data.fields.iter() {
+            for (index, field) in variant.data.fields.iter().enumerate() {
                 let field_meta = FieldPlanMeta::from_field(field);
                 variant_fields.push(field_meta);
 
@@ -854,6 +1115,11 @@ impl TypePlanBuilder {
                 let field_proxy = field.effective_proxy(self.format_namespace);
                 let child_id = self.build_node_with_proxy(field.shape(), field_proxy)?;
                 parent_id.append(child_id, &mut self.arena);
+
+                // Build the field initialization plan
+                if let Some(init_plan) = Self::build_field_init_plan(index, field) {
+                    field_init_plans.push(init_plan);
+                }
             }
 
             let field_lookup = FieldLookup::new(&variant_fields);
@@ -865,6 +1131,7 @@ impl TypePlanBuilder {
                 fields: variant_fields,
                 field_lookup,
                 num_fields,
+                field_init_plans,
             });
         }
 
