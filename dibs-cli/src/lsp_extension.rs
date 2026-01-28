@@ -14,11 +14,11 @@ use roam_stream::CobsFramed;
 use std::path::Path;
 use std::sync::Arc;
 use styx_lsp_ext::{
-    Capability, CodeAction, CodeActionParams, CompletionItem, CompletionKind, CompletionParams,
-    DefinitionParams, Diagnostic, DiagnosticParams, DiagnosticSeverity, HoverParams, HoverResult,
-    InitializeParams, InitializeResult, InlayHint, InlayHintKind, InlayHintParams, Location,
-    OffsetToPositionParams, Position, Range, StyxLspExtension, StyxLspExtensionDispatcher,
-    StyxLspHostClient,
+    Capability, CodeAction, CodeActionKind, CodeActionParams, CompletionItem, CompletionKind,
+    CompletionParams, DefinitionParams, Diagnostic, DiagnosticParams, DiagnosticSeverity,
+    DocumentEdit, HoverParams, HoverResult, InitializeParams, InitializeResult, InlayHint,
+    InlayHintKind, InlayHintParams, Location, OffsetToPositionParams, Position, Range,
+    StyxLspExtension, StyxLspExtensionDispatcher, StyxLspHostClient, TextEdit, WorkspaceEdit,
 };
 use tokio::io::{stdin, stdout};
 use tokio::sync::RwLock;
@@ -131,6 +131,18 @@ struct ExtensionState {
     /// The service connection (kept alive).
     #[allow(dead_code)]
     connection: ServiceConnection,
+}
+
+/// Info about a redundant param reference like `column $column` that can be shortened to `column`.
+#[derive(Debug, Clone)]
+struct RedundantParamRef {
+    /// The column name (and param name, since they match).
+    name: String,
+    /// Span of the entire entry (key + value), for replacement.
+    #[allow(dead_code)]
+    entry_span: styx_tree::Span,
+    /// Span of just the value ($param), for the diagnostic highlight.
+    value_span: styx_tree::Span,
 }
 
 /// The dibs LSP extension implementation.
@@ -262,6 +274,35 @@ impl DibsExtension {
             .as_ref()
             .map(|s| s.schema.clone())
             .unwrap_or_else(|| SchemaInfo { tables: vec![] })
+    }
+
+    /// Find entries where `column $column` can be shortened to just `column`.
+    fn find_redundant_param_refs(value: &styx_tree::Value) -> Vec<RedundantParamRef> {
+        let mut results = Vec::new();
+
+        // Check entries in values, set, or other column-value blocks
+        if let Some(styx_tree::Payload::Object(obj)) = &value.payload {
+            for entry in &obj.entries {
+                if let Some(col_name) = entry.key.as_str()
+                    && let Some(val_str) = entry.value.as_str()
+                    && let Some(param_name) = val_str.strip_prefix('$')
+                    && col_name == param_name
+                    && let Some(key_span) = &entry.key.span
+                    && let Some(val_span) = &entry.value.span
+                {
+                    results.push(RedundantParamRef {
+                        name: col_name.to_string(),
+                        entry_span: styx_tree::Span {
+                            start: key_span.start,
+                            end: val_span.end,
+                        },
+                        value_span: val_span.clone(),
+                    });
+                }
+            }
+        }
+
+        results
     }
 
     /// Get completions for table names.
@@ -565,6 +606,57 @@ impl DibsExtension {
                                 diagnostics,
                             )
                             .await;
+                        }
+                    }
+                }
+
+                // Lint: redundant param references like `column $column` -> just `column`
+                for entry in &obj.entries {
+                    let key = entry.key.as_str().unwrap_or("");
+                    if matches!(key, "values" | "set") {
+                        for redundant in Self::find_redundant_param_refs(&entry.value) {
+                            diagnostics.push(Diagnostic {
+                                range: self
+                                    .span_to_range(document_uri, &redundant.value_span)
+                                    .await,
+                                severity: DiagnosticSeverity::Hint,
+                                message: format!(
+                                    "'{}' can be shortened to just '{}' (implicit @param)",
+                                    format!("{} ${}", redundant.name, redundant.name),
+                                    redundant.name
+                                ),
+                                source: Some("dibs".to_string()),
+                                code: Some("redundant-param".to_string()),
+                                data: None,
+                            });
+                        }
+                    }
+                    // Also check inside on-conflict { update { ... } }
+                    if key == "on-conflict" {
+                        if let Some(styx_tree::Payload::Object(conflict_obj)) = &entry.value.payload
+                        {
+                            for conflict_entry in &conflict_obj.entries {
+                                if conflict_entry.key.as_str() == Some("update") {
+                                    for redundant in
+                                        Self::find_redundant_param_refs(&conflict_entry.value)
+                                    {
+                                        diagnostics.push(Diagnostic {
+                                            range: self
+                                                .span_to_range(document_uri, &redundant.value_span)
+                                                .await,
+                                            severity: DiagnosticSeverity::Hint,
+                                            message: format!(
+                                                "'{}' can be shortened to just '{}' (implicit @param)",
+                                                format!("{} ${}", redundant.name, redundant.name),
+                                                redundant.name
+                                            ),
+                                            source: Some("dibs".to_string()),
+                                            code: Some("redundant-param".to_string()),
+                                            data: None,
+                                        });
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -1455,9 +1547,8 @@ impl StyxLspExtension for DibsExtension {
             "from" | "into" | "table" | "join" => self.table_completions(&params.prefix).await,
 
             // Column references - need to know which table
-            // Note: styx keys use hyphens (order-by) but paths may have underscores too
-            "select" | "where" | "order-by" | "order_by" | "group-by" | "group_by" | "values"
-            | "set" | "returning" | "target" | "update" => {
+            "select" | "where" | "order-by" | "group-by" | "values" | "set" | "returning"
+            | "target" | "update" => {
                 // Try tagged_context first (the @query block) - most reliable
                 if let Some(tagged) = &params.tagged_context
                     && let Some(table_name) = Self::find_table_in_context(tagged)
@@ -1576,13 +1667,34 @@ impl StyxLspExtension for DibsExtension {
         diagnostics
     }
 
-    async fn code_actions(
-        &self,
-        _cx: &roam::Context,
-        _params: CodeActionParams,
-    ) -> Vec<CodeAction> {
-        // Not implemented yet
-        Vec::new()
+    async fn code_actions(&self, _cx: &roam::Context, params: CodeActionParams) -> Vec<CodeAction> {
+        let mut actions = Vec::new();
+
+        // Offer quick fixes for diagnostics at this range
+        for diag in &params.diagnostics {
+            if diag.code.as_deref() == Some("redundant-param") {
+                // Extract the column name from the message
+                // Message format: "'col $col' can be shortened to just 'col' (implicit @param)"
+                if let Some(name) = diag.message.split('\'').nth(3) {
+                    actions.push(CodeAction {
+                        title: format!("Shorten to '{}'", name),
+                        kind: Some(CodeActionKind::QuickFix),
+                        edit: Some(WorkspaceEdit {
+                            changes: vec![DocumentEdit {
+                                uri: params.document_uri.clone(),
+                                edits: vec![TextEdit {
+                                    range: diag.range.clone(),
+                                    new_text: String::new(), // Just delete the $param part
+                                }],
+                            }],
+                        }),
+                        is_preferred: true,
+                    });
+                }
+            }
+        }
+
+        actions
     }
 
     async fn definition(&self, _cx: &roam::Context, params: DefinitionParams) -> Vec<Location> {

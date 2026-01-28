@@ -53,11 +53,11 @@ tests (
     }
 
     {
-        name "column completions in order_by"
+        name "column completions in order-by"
         input <<STYX
             AllProducts @query{
                 from product
-                order_by {|}
+                order-by {|}
             }
             STYX
         completions {
@@ -758,6 +758,64 @@ tests (
         diagnostics {
             count 1
             has ({message "empty select" code "empty-select"})
+        }
+    }
+
+    // ========================================================================
+    // Redundant Param Tests
+    // ========================================================================
+
+    {
+        name "lint: redundant param reference in values"
+        input <<STYX
+            InsertProduct @insert{
+                into product
+                params {handle @string}
+                values {handle $handle}
+            }
+            STYX
+        diagnostics {
+            count 1
+            has ({message "can be shortened" code "redundant-param"})
+        }
+    }
+
+    {
+        name "lint: no warning when param name differs from column"
+        input <<STYX
+            InsertProduct @insert{
+                into product
+                params {new_handle @string}
+                values {handle $new_handle}
+            }
+            STYX
+        diagnostics {
+            count 0
+        }
+    }
+
+    {
+        name "lint: redundant param in upsert values"
+        input <<STYX
+            UpsertProduct @upsert{
+                into product
+                params {handle @string, status @string}
+                values {
+                    handle $handle
+                    status $status
+                }
+                on-conflict {
+                    target {id}
+                    update {status $status}
+                }
+            }
+            STYX
+        diagnostics {
+            count 3
+            has (
+                {message "handle $handle" code "redundant-param"}
+                {message "status $status" code "redundant-param"}
+            )
         }
     }
 
