@@ -368,6 +368,11 @@ impl SchemaGenerator {
 
     /// Convert a shape to a Schema.
     fn shape_to_schema(&mut self, shape: &'static Shape) -> Schema {
+        // Handle metadata containers (like Documented<T>) - unwrap to inner value type
+        if let Some(inner_shape) = facet_reflect::get_metadata_container_value_shape(shape) {
+            return self.shape_to_schema(inner_shape);
+        }
+
         match &shape.def {
             Def::Scalar => self.scalar_to_schema(shape),
             Def::Option(opt_def) => {
