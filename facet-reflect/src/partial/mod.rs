@@ -1281,12 +1281,17 @@ impl Frame {
     ///
     /// # Arguments
     /// * `plans` - Precomputed field initialization plans from TypePlan
+    /// * `num_fields` - Total number of fields (from StructPlan/VariantPlanMeta)
     ///
     /// # Returns
     /// `Ok(())` if all required fields are set (or filled with defaults), or an error
     /// describing the first missing required field.
     #[allow(unsafe_code)]
-    fn fill_and_require_fields(&mut self, plans: &[FieldInitPlan]) -> Result<(), ReflectErrorKind> {
+    fn fill_and_require_fields(
+        &mut self,
+        plans: &[FieldInitPlan],
+        num_fields: usize,
+    ) -> Result<(), ReflectErrorKind> {
         // Get the iset based on tracker type
         let iset = match &mut self.tracker {
             Tracker::Struct { iset, .. } => iset,
@@ -1294,6 +1299,12 @@ impl Frame {
             // Other tracker types don't use field_init_plans
             _ => return Ok(()),
         };
+
+        // Fast path: if all fields are already set, nothing to do.
+        // This handles the common case where deserialization set all fields.
+        if iset.all_set(num_fields) {
+            return Ok(());
+        }
 
         for plan in plans {
             if !iset.get(plan.index) {
