@@ -112,6 +112,7 @@
 use alloc::{collections::BTreeMap, vec::Vec};
 
 mod iset;
+pub mod typeplan;
 
 mod partial_api;
 
