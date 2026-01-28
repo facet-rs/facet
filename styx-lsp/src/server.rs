@@ -1702,9 +1702,12 @@ impl LanguageServer for StyxLanguageServer {
                     Ok(ext_hints) => {
                         tracing::debug!(count = ext_hints.len(), "Got inlay hints from extension");
                         for hint in ext_hints {
-                            // Convert position - extension uses byte offsets, we need line/character
-                            let position =
-                                offset_to_position(&doc.content, hint.position.character as usize);
+                            // Extension already returns proper line/character positions
+                            // (it calls offset_to_position internally via the host RPC)
+                            let position = Position {
+                                line: hint.position.line,
+                                character: hint.position.character,
+                            };
                             hints.push(InlayHint {
                                 position,
                                 label: InlayHintLabel::String(hint.label),
