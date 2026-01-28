@@ -173,6 +173,7 @@ pub enum ParamType {
     Uuid,
     Decimal,
     Timestamp,
+    Bytes,
     /// Optional type: @optional(@string) -> Optional(vec![String])
     Optional(Vec<ParamType>),
 }
