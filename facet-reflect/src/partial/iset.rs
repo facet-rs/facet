@@ -147,46 +147,6 @@ impl ISet {
         }
     }
 
-    /// Returns true if no bits up to `count` are set.
-    #[inline]
-    pub fn none_set(&self, count: usize) -> bool {
-        if count == 0 {
-            return true;
-        }
-
-        match &self.inner {
-            ISetInner::Small(flags) => {
-                if count >= Self::BITS_PER_WORD {
-                    *flags == 0
-                } else {
-                    let mask = (1u64 << count) - 1;
-                    (*flags & mask) == 0
-                }
-            }
-            ISetInner::Large(words) => {
-                let full_words = count / Self::BITS_PER_WORD;
-                let remaining_bits = count % Self::BITS_PER_WORD;
-
-                // Check all full words are completely unset
-                for word in words.iter().take(full_words) {
-                    if *word != 0 {
-                        return false;
-                    }
-                }
-
-                // Check remaining bits in the last partial word
-                if remaining_bits > 0 && full_words < words.len() {
-                    let mask = (1u64 << remaining_bits) - 1;
-                    if (words[full_words] & mask) != 0 {
-                        return false;
-                    }
-                }
-
-                true
-            }
-        }
-    }
-
     /// Sets all bits up to `count`.
     #[inline]
     pub fn set_all(&mut self, count: usize) {

@@ -555,29 +555,18 @@ impl Frame {
         ownership: FrameOwnership,
         type_plan: typeplan::NodeId,
     ) -> Self {
-        // Initialize tracker based on shape type
-        let (tracker, is_init) = match allocated.shape().ty {
-            Type::User(UserType::Struct(struct_type)) => {
-                // For empty structs, start as initialized since there's nothing to initialize
-                let is_init = struct_type.fields.is_empty();
-                (
-                    Tracker::Struct {
-                        iset: ISet::new(struct_type.fields.len()),
-                        current_child: None,
-                    },
-                    is_init,
-                )
-            }
-            // Enums start as Scalar until a variant is selected
-            // Other types also start as Scalar
-            _ => (Tracker::Scalar, false),
-        };
+        // For empty structs (structs with 0 fields), start as initialized since there's nothing to initialize
+        // This includes empty tuples () which are zero-sized types with no fields to initialize
+        let is_init = matches!(
+            allocated.shape().ty,
+            Type::User(UserType::Struct(struct_type)) if struct_type.fields.is_empty()
+        );
 
         Self {
             data,
             allocated,
             is_init,
-            tracker,
+            tracker: Tracker::Scalar,
             ownership,
             using_custom_deserialization: false,
             shape_level_proxy: None,
@@ -640,10 +629,7 @@ impl Frame {
             Tracker::Struct { iset, .. } => {
                 // Drop initialized struct fields
                 if let Type::User(UserType::Struct(struct_type)) = self.allocated.shape().ty {
-                    let num_fields = struct_type.fields.len();
-                    if iset.all_set(num_fields) || (self.is_init && iset.none_set(num_fields)) {
-                        // Either all fields tracked as set, OR the struct was set wholesale
-                        // (is_init true with empty iset means it was set via set() not field-by-field)
+                    if iset.all_set(struct_type.fields.len()) {
                         unsafe {
                             self.allocated
                                 .shape()
@@ -1163,10 +1149,7 @@ impl Frame {
             Tracker::Struct { iset, .. } => {
                 match self.allocated.shape().ty {
                     Type::User(UserType::Struct(struct_type)) => {
-                        let num_fields = struct_type.fields.len();
-                        // Struct is fully init if all fields are set in iset, OR if it was set
-                        // wholesale (is_init true with empty iset, e.g. via custom deserialization)
-                        if iset.all_set(num_fields) || (self.is_init && iset.none_set(num_fields)) {
+                        if iset.all_set(struct_type.fields.len()) {
                             Ok(())
                         } else {
                             // Find index of the first bit not set
@@ -1308,21 +1291,39 @@ impl Frame {
         plans: &[FieldInitPlan],
         num_fields: usize,
     ) -> Result<(), ReflectErrorKind> {
+        // With lazy tracker initialization, structs start with Tracker::Scalar.
+        // If is_init is true with Scalar, the struct was set wholesale - nothing to do.
+        // If is_init is false, we need to upgrade to Tracker::Struct to track fields.
+        if !self.is_init
+            && matches!(self.tracker, Tracker::Scalar)
+            && matches!(self.allocated.shape().ty, Type::User(UserType::Struct(_)))
+        {
+            // Try container-level default first
+            let data_mut = unsafe { self.data.assume_init() };
+            if unsafe { self.allocated.shape().call_default_in_place(data_mut) }.is_some() {
+                self.is_init = true;
+                return Ok(());
+            }
+            // Upgrade to Tracker::Struct for field-by-field tracking
+            self.tracker = Tracker::Struct {
+                iset: ISet::new(num_fields),
+                current_child: None,
+            };
+        }
+
         // Get the iset based on tracker type
         let iset = match &mut self.tracker {
             Tracker::Struct { iset, .. } => iset,
             Tracker::Enum { data, .. } => data,
+            // Scalar with is_init=true means struct was set wholesale - all fields initialized
+            Tracker::Scalar if self.is_init => return Ok(()),
             // Other tracker types don't use field_init_plans
             _ => return Ok(()),
         };
 
-        // Fast path: if is_init is true but iset is empty, the struct was set wholesale
-        // (e.g., via custom deserialization or set()). All fields are initialized.
-        let set_wholesale = self.is_init && iset.none_set(num_fields);
-
-        // Fast path for defaults: if all fields are already set, no defaults needed.
+        // Fast path: if all fields are already set, no defaults needed.
         // But validators still need to run.
-        let all_fields_set = set_wholesale || iset.all_set(num_fields);
+        let all_fields_set = iset.all_set(num_fields);
 
         for plan in plans {
             if !all_fields_set && !iset.get(plan.index) {

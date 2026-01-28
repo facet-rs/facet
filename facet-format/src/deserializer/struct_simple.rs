@@ -137,10 +137,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
                     // Look up field by name/alias using precomputed TypePlan lookup
                     if let Some(idx) = lookup_field(&wip, struct_def, key_name) {
-                        let field = &struct_def.fields[idx];
                         trace!(
                             idx,
-                            field_name = field.name,
+                            field_name = struct_def.fields[idx].name,
                             "deserialize_struct_simple: matched field"
                         );
 
