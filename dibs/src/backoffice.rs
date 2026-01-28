@@ -2,8 +2,7 @@
 //!
 //! Provides generic CRUD operations for any registered table.
 
-use std::sync::Arc;
-
+use crate::pool::ConnectionProvider;
 use crate::query::{Db, Expr, SortDir, Value as QueryValue};
 use crate::schema::Schema;
 use dibs_proto::{
@@ -14,16 +13,18 @@ use dibs_proto::{
 
 /// Default implementation of SquelService.
 ///
-/// Takes a database client at construction time and uses it for all requests.
+/// Generic over the connection provider, which can be:
+/// - `Arc<tokio_postgres::Client>` for a single shared connection
+/// - `deadpool_postgres::Pool` for connection pooling (requires `deadpool` feature)
 #[derive(Clone)]
-pub struct SquelServiceImpl {
-    client: Arc<tokio_postgres::Client>,
+pub struct SquelServiceImpl<P: ConnectionProvider> {
+    pool: P,
 }
 
-impl SquelServiceImpl {
-    /// Create a new SquelServiceImpl with the given database client.
-    pub fn new(client: Arc<tokio_postgres::Client>) -> Self {
-        Self { client }
+impl<P: ConnectionProvider> SquelServiceImpl<P> {
+    /// Create a new SquelServiceImpl with the given connection provider.
+    pub fn new(pool: P) -> Self {
+        Self { pool }
     }
 }
 
@@ -214,7 +215,7 @@ fn schema_to_info(schema: &Schema) -> SchemaInfo {
 // Service implementation
 // =============================================================================
 
-impl SquelService for SquelServiceImpl {
+impl<P: ConnectionProvider> SquelService for SquelServiceImpl<P> {
     async fn schema(&self, _cx: &roam::Context) -> SchemaInfo {
         let schema = Schema::collect();
         schema_to_info(&schema)
@@ -225,7 +226,12 @@ impl SquelService for SquelServiceImpl {
         _cx: &roam::Context,
         request: ListRequest,
     ) -> Result<ListResponse, DibsError> {
-        let db = Db::new(&self.client);
+        let conn = self
+            .pool
+            .get()
+            .await
+            .map_err(|e| DibsError::QueryError(e.to_string()))?;
+        let db = Db::new(&conn);
 
         // Build the count query (same filters, no pagination)
         let mut count_builder = db
@@ -281,7 +287,12 @@ impl SquelService for SquelServiceImpl {
         _cx: &roam::Context,
         request: GetRequest,
     ) -> Result<Option<Row>, DibsError> {
-        let db = Db::new(&self.client);
+        let conn = self
+            .pool
+            .get()
+            .await
+            .map_err(|e| DibsError::QueryError(e.to_string()))?;
+        let db = Db::new(&conn);
 
         // Find the primary key column
         let table = db
@@ -312,7 +323,12 @@ impl SquelService for SquelServiceImpl {
     }
 
     async fn create(&self, _cx: &roam::Context, request: CreateRequest) -> Result<Row, DibsError> {
-        let db = Db::new(&self.client);
+        let conn = self
+            .pool
+            .get()
+            .await
+            .map_err(|e| DibsError::QueryError(e.to_string()))?;
+        let db = Db::new(&conn);
 
         let data = proto_row_to_query(&request.data);
 
@@ -329,7 +345,12 @@ impl SquelService for SquelServiceImpl {
     }
 
     async fn update(&self, _cx: &roam::Context, request: UpdateRequest) -> Result<Row, DibsError> {
-        let db = Db::new(&self.client);
+        let conn = self
+            .pool
+            .get()
+            .await
+            .map_err(|e| DibsError::QueryError(e.to_string()))?;
+        let db = Db::new(&conn);
 
         // Find the primary key column
         let table = db
@@ -363,7 +384,12 @@ impl SquelService for SquelServiceImpl {
     }
 
     async fn delete(&self, _cx: &roam::Context, request: DeleteRequest) -> Result<u64, DibsError> {
-        let db = Db::new(&self.client);
+        let conn = self
+            .pool
+            .get()
+            .await
+            .map_err(|e| DibsError::QueryError(e.to_string()))?;
+        let db = Db::new(&conn);
 
         // Find the primary key column
         let table = db

@@ -56,6 +56,7 @@ mod jsonb;
 pub mod meta;
 mod migrate;
 mod plugin;
+pub mod pool;
 pub mod query;
 pub mod schema;
 pub mod service;
@@ -67,6 +68,7 @@ pub use error::{Error, MigrationError, SqlErrorContext};
 pub use jsonb::Jsonb;
 pub use meta::{create_meta_tables_sql, record_migration_sql, sync_tables_sql};
 pub use migrate::{Migration, MigrationContext, MigrationRunner, MigrationStatus};
+pub use pool::ConnectionProvider;
 pub use service::{DibsServiceImpl, run_service};
 
 // Re-export proto types for convenience

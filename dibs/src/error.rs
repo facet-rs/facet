@@ -118,6 +118,9 @@ pub enum Error {
         expected: String,
         message: String,
     },
+
+    #[error("connection pool error: {0}")]
+    Pool(String),
 }
 
 impl Error {
