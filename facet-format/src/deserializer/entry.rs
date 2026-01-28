@@ -612,8 +612,12 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             }
         };
 
-        // Initialize the list
-        wip = wip.init_list()?;
+        // Count buffered items to pre-reserve capacity
+        let capacity_hint = self.count_buffered_sequence_items();
+        trace!("deserialize_list: capacity hint = {capacity_hint}");
+
+        // Initialize the list with capacity hint
+        wip = wip.init_list_with_capacity(capacity_hint)?;
         trace!("deserialize_list: initialized list, starting loop");
 
         loop {

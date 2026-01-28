@@ -527,6 +527,49 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         Ok(event)
     }
 
+    /// Count buffered sequence items without consuming events.
+    ///
+    /// Scans the event buffer to count how many items exist at depth 0.
+    /// Returns the count found so far - this is a lower bound useful for
+    /// pre-reserving Vec capacity.
+    ///
+    /// If the full sequence is buffered (ends with `SequenceEnd`), this
+    /// returns the exact count. Otherwise it returns a partial count.
+    #[inline]
+    pub(crate) fn count_buffered_sequence_items(&self) -> usize {
+        use crate::ParseEventKind;
+
+        let mut count = 0usize;
+        let mut depth = 0i32;
+
+        for event in &self.event_buffer {
+            match &event.kind {
+                ParseEventKind::StructStart(_) | ParseEventKind::SequenceStart(_) => {
+                    if depth == 0 {
+                        // Starting a new item at depth 0
+                        count += 1;
+                    }
+                    depth += 1;
+                }
+                ParseEventKind::StructEnd | ParseEventKind::SequenceEnd => {
+                    depth -= 1;
+                    if depth < 0 {
+                        // Found the closing SequenceEnd for our list
+                        return count;
+                    }
+                }
+                ParseEventKind::Scalar(_) if depth == 0 => {
+                    // Scalar at depth 0 is a list item
+                    count += 1;
+                }
+                _ => {}
+            }
+        }
+
+        // Return partial count - still useful for reserve
+        count
+    }
+
     /// Skip the current value using the buffer, returning start and end offsets.
     #[inline]
     fn skip_value_with_span(&mut self) -> Result<(usize, usize), DeserializeError> {
