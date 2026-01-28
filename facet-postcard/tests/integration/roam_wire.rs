@@ -14,9 +14,19 @@ use facet_postcard::{from_slice, to_vec};
 // ============================================================================
 
 /// Newtype for connection ID (Facet only, no serde).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Facet)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Facet)]
 #[repr(transparent)]
 pub struct ConnectionId(pub u64);
+
+/// Newtype for request ID (Facet only, no serde).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Facet)]
+#[repr(transparent)]
+pub struct RequestId(pub u64);
+
+/// Newtype for method ID (Facet only, no serde).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Facet)]
+#[repr(transparent)]
+pub struct MethodId(pub u64);
 
 /// Simplified Hello enum matching roam-wire (Facet only).
 #[repr(u8)]
@@ -579,4 +589,508 @@ fn test_nested_enum_with_transparent_newtypes() {
     let bytes = to_vec(&direct).expect("encode Direct");
     let decoded: Outer = from_slice(&bytes).expect("decode Direct");
     assert_eq!(decoded, direct);
+}
+
+// ============================================================================
+// Full roam-wire Message enum with typed IDs (matching actual roam-wire)
+// ============================================================================
+
+/// Full Message enum matching roam-wire exactly, with typed ID fields.
+#[repr(u8)]
+#[derive(Debug, Clone, PartialEq, Eq, Facet)]
+pub enum FullMessage {
+    Hello(Hello) = 0,
+    Connect {
+        request_id: RequestId,
+        metadata: Metadata,
+    } = 1,
+    Accept {
+        request_id: RequestId,
+        conn_id: ConnectionId,
+        metadata: Metadata,
+    } = 2,
+    Reject {
+        request_id: RequestId,
+        reason: String,
+        metadata: Metadata,
+    } = 3,
+    Goodbye {
+        conn_id: ConnectionId,
+        reason: String,
+    } = 4,
+    Request {
+        conn_id: ConnectionId,
+        request_id: RequestId,
+        method_id: MethodId,
+        metadata: Metadata,
+        channels: Vec<u64>,
+        payload: Vec<u8>,
+    } = 5,
+    Response {
+        conn_id: ConnectionId,
+        request_id: RequestId,
+        metadata: Metadata,
+        channels: Vec<u64>,
+        payload: Vec<u8>,
+    } = 6,
+    Cancel {
+        conn_id: ConnectionId,
+        request_id: RequestId,
+    } = 7,
+    Data {
+        conn_id: ConnectionId,
+        channel_id: u64,
+        payload: Vec<u8>,
+    } = 8,
+    Close {
+        conn_id: ConnectionId,
+        channel_id: u64,
+    } = 9,
+    Reset {
+        conn_id: ConnectionId,
+        channel_id: u64,
+    } = 10,
+    Credit {
+        conn_id: ConnectionId,
+        channel_id: u64,
+        bytes: u32,
+    } = 11,
+}
+
+/// Test all FullMessage variants with typed IDs
+#[test]
+fn test_full_message_all_variants() {
+    facet_testhelpers::setup();
+
+    let messages: Vec<FullMessage> = vec![
+        FullMessage::Hello(Hello::V3 {
+            max_payload_size: 1024 * 1024,
+            initial_channel_credit: 64 * 1024,
+        }),
+        FullMessage::Connect {
+            request_id: RequestId(1),
+            metadata: vec![],
+        },
+        FullMessage::Accept {
+            request_id: RequestId(1),
+            conn_id: ConnectionId(1),
+            metadata: vec![],
+        },
+        FullMessage::Reject {
+            request_id: RequestId(1),
+            reason: "rejected".to_string(),
+            metadata: vec![],
+        },
+        FullMessage::Goodbye {
+            conn_id: ConnectionId(0),
+            reason: "bye".to_string(),
+        },
+        FullMessage::Request {
+            conn_id: ConnectionId(0),
+            request_id: RequestId(1),
+            method_id: MethodId(12345),
+            metadata: vec![],
+            channels: vec![],
+            payload: vec![],
+        },
+        FullMessage::Response {
+            conn_id: ConnectionId(0),
+            request_id: RequestId(1),
+            metadata: vec![],
+            channels: vec![],
+            payload: vec![],
+        },
+        FullMessage::Cancel {
+            conn_id: ConnectionId(0),
+            request_id: RequestId(1),
+        },
+        FullMessage::Data {
+            conn_id: ConnectionId(0),
+            channel_id: 1,
+            payload: vec![1, 2, 3],
+        },
+        FullMessage::Close {
+            conn_id: ConnectionId(0),
+            channel_id: 1,
+        },
+        FullMessage::Reset {
+            conn_id: ConnectionId(0),
+            channel_id: 1,
+        },
+        FullMessage::Credit {
+            conn_id: ConnectionId(0),
+            channel_id: 1,
+            bytes: 1024,
+        },
+    ];
+
+    for (i, msg) in messages.iter().enumerate() {
+        let bytes = to_vec(msg).unwrap_or_else(|e| panic!("encode variant {i}: {e}"));
+        let decoded: FullMessage =
+            from_slice(&bytes).unwrap_or_else(|e| panic!("decode variant {i}: {e}"));
+        assert_eq!(&decoded, msg, "variant {i} mismatch");
+    }
+}
+
+/// Test Request message with channels and payload (streaming pattern)
+#[test]
+fn test_request_with_channels_and_payload() {
+    facet_testhelpers::setup();
+
+    let msg = FullMessage::Request {
+        conn_id: ConnectionId(0),
+        request_id: RequestId(42),
+        method_id: MethodId(0x123456789ABCDEF0),
+        metadata: vec![
+            (
+                "key1".to_string(),
+                MetadataValue::String("value1".to_string()),
+                0,
+            ),
+            ("key2".to_string(), MetadataValue::U64(12345), 0),
+        ],
+        channels: vec![1, 2, 3],
+        payload: vec![0xDE, 0xAD, 0xBE, 0xEF],
+    };
+
+    let bytes = to_vec(&msg).expect("encode Request");
+    let decoded: FullMessage = from_slice(&bytes).expect("decode Request");
+    assert_eq!(decoded, msg);
+}
+
+/// Test Response message with channels and payload
+#[test]
+fn test_response_with_channels_and_payload() {
+    facet_testhelpers::setup();
+
+    let msg = FullMessage::Response {
+        conn_id: ConnectionId(1),
+        request_id: RequestId(42),
+        metadata: vec![(
+            "status".to_string(),
+            MetadataValue::String("ok".to_string()),
+            0,
+        )],
+        channels: vec![100, 101],
+        payload: b"response payload data".to_vec(),
+    };
+
+    let bytes = to_vec(&msg).expect("encode Response");
+    let decoded: FullMessage = from_slice(&bytes).expect("decode Response");
+    assert_eq!(decoded, msg);
+}
+
+/// Test Data message (used in streaming)
+#[test]
+fn test_data_message_streaming() {
+    facet_testhelpers::setup();
+
+    // Test various payload sizes
+    for size in [0, 1, 10, 100, 1000, 10000] {
+        let msg = FullMessage::Data {
+            conn_id: ConnectionId(0),
+            channel_id: 42,
+            payload: vec![0xAB; size],
+        };
+
+        let bytes = to_vec(&msg).expect("encode Data");
+        let decoded: FullMessage = from_slice(&bytes).expect("decode Data");
+        assert_eq!(decoded, msg, "Data with {size} byte payload mismatch");
+    }
+}
+
+/// Test sequence of streaming messages (simulating a streaming RPC)
+#[test]
+fn test_streaming_message_sequence() {
+    facet_testhelpers::setup();
+
+    // Simulate: Request -> Data -> Data -> Data -> Close
+    let messages: Vec<FullMessage> = vec![
+        FullMessage::Request {
+            conn_id: ConnectionId(0),
+            request_id: RequestId(1),
+            method_id: MethodId(100),
+            metadata: vec![],
+            channels: vec![1], // One channel for streaming
+            payload: vec![],
+        },
+        FullMessage::Data {
+            conn_id: ConnectionId(0),
+            channel_id: 1,
+            payload: b"chunk1".to_vec(),
+        },
+        FullMessage::Data {
+            conn_id: ConnectionId(0),
+            channel_id: 1,
+            payload: b"chunk2".to_vec(),
+        },
+        FullMessage::Data {
+            conn_id: ConnectionId(0),
+            channel_id: 1,
+            payload: b"chunk3".to_vec(),
+        },
+        FullMessage::Close {
+            conn_id: ConnectionId(0),
+            channel_id: 1,
+        },
+        FullMessage::Response {
+            conn_id: ConnectionId(0),
+            request_id: RequestId(1),
+            metadata: vec![],
+            channels: vec![],
+            payload: b"final result".to_vec(),
+        },
+    ];
+
+    for (i, msg) in messages.iter().enumerate() {
+        let bytes = to_vec(msg).unwrap_or_else(|e| panic!("encode message {i}: {e}"));
+        let decoded: FullMessage =
+            from_slice(&bytes).unwrap_or_else(|e| panic!("decode message {i}: {e}"));
+        assert_eq!(&decoded, msg, "message {i} mismatch");
+    }
+}
+
+/// Test Cancel message
+#[test]
+fn test_cancel_message() {
+    facet_testhelpers::setup();
+
+    let msg = FullMessage::Cancel {
+        conn_id: ConnectionId(5),
+        request_id: RequestId(999),
+    };
+
+    let bytes = to_vec(&msg).expect("encode Cancel");
+    let decoded: FullMessage = from_slice(&bytes).expect("decode Cancel");
+    assert_eq!(decoded, msg);
+}
+
+/// Test Credit message (flow control)
+#[test]
+fn test_credit_message() {
+    facet_testhelpers::setup();
+
+    let msg = FullMessage::Credit {
+        conn_id: ConnectionId(0),
+        channel_id: 42,
+        bytes: 65536,
+    };
+
+    let bytes = to_vec(&msg).expect("encode Credit");
+    let decoded: FullMessage = from_slice(&bytes).expect("decode Credit");
+    assert_eq!(decoded, msg);
+}
+
+/// Test Reset message
+#[test]
+fn test_reset_message() {
+    facet_testhelpers::setup();
+
+    let msg = FullMessage::Reset {
+        conn_id: ConnectionId(0),
+        channel_id: 42,
+    };
+
+    let bytes = to_vec(&msg).expect("encode Reset");
+    let decoded: FullMessage = from_slice(&bytes).expect("decode Reset");
+    assert_eq!(decoded, msg);
+}
+
+/// Test metadata with all value types
+#[test]
+fn test_metadata_all_value_types() {
+    facet_testhelpers::setup();
+
+    let msg = FullMessage::Request {
+        conn_id: ConnectionId(0),
+        request_id: RequestId(1),
+        method_id: MethodId(1),
+        metadata: vec![
+            (
+                "string_key".to_string(),
+                MetadataValue::String("string value".to_string()),
+                0,
+            ),
+            (
+                "bytes_key".to_string(),
+                MetadataValue::Bytes(vec![1, 2, 3, 4, 5]),
+                0,
+            ),
+            (
+                "u64_key".to_string(),
+                MetadataValue::U64(0xFFFFFFFFFFFFFFFF),
+                0,
+            ),
+            (
+                "with_flags".to_string(),
+                MetadataValue::String("sensitive".to_string()),
+                1,
+            ), // SENSITIVE flag
+        ],
+        channels: vec![],
+        payload: vec![],
+    };
+
+    let bytes = to_vec(&msg).expect("encode Request with metadata");
+    let decoded: FullMessage = from_slice(&bytes).expect("decode Request with metadata");
+    assert_eq!(decoded, msg);
+}
+
+/// Test large channel lists
+#[test]
+fn test_large_channel_list() {
+    facet_testhelpers::setup();
+
+    let msg = FullMessage::Request {
+        conn_id: ConnectionId(0),
+        request_id: RequestId(1),
+        method_id: MethodId(1),
+        metadata: vec![],
+        channels: (0..100).collect(), // 100 channels
+        payload: vec![],
+    };
+
+    let bytes = to_vec(&msg).expect("encode Request with many channels");
+    let decoded: FullMessage = from_slice(&bytes).expect("decode Request with many channels");
+    assert_eq!(decoded, msg);
+}
+
+/// Test Connect/Accept/Reject sequence (virtual connection establishment)
+#[test]
+fn test_virtual_connection_sequence() {
+    facet_testhelpers::setup();
+
+    let connect = FullMessage::Connect {
+        request_id: RequestId(1),
+        metadata: vec![(
+            "service".to_string(),
+            MetadataValue::String("my.service".to_string()),
+            0,
+        )],
+    };
+
+    let accept = FullMessage::Accept {
+        request_id: RequestId(1),
+        conn_id: ConnectionId(42),
+        metadata: vec![],
+    };
+
+    let reject = FullMessage::Reject {
+        request_id: RequestId(2),
+        reason: "service not found".to_string(),
+        metadata: vec![],
+    };
+
+    for msg in [connect, accept, reject] {
+        let bytes = to_vec(&msg).expect("encode");
+        let decoded: FullMessage = from_slice(&bytes).expect("decode");
+        assert_eq!(decoded, msg);
+    }
+}
+
+// ============================================================================
+// Edge cases and stress tests
+// ============================================================================
+
+/// Test with maximum u64 values in IDs
+#[test]
+fn test_max_u64_ids() {
+    facet_testhelpers::setup();
+
+    let msg = FullMessage::Request {
+        conn_id: ConnectionId(u64::MAX),
+        request_id: RequestId(u64::MAX),
+        method_id: MethodId(u64::MAX),
+        metadata: vec![],
+        channels: vec![u64::MAX],
+        payload: vec![],
+    };
+
+    let bytes = to_vec(&msg).expect("encode with max IDs");
+    let decoded: FullMessage = from_slice(&bytes).expect("decode with max IDs");
+    assert_eq!(decoded, msg);
+}
+
+/// Test with zero values everywhere
+#[test]
+fn test_zero_ids() {
+    facet_testhelpers::setup();
+
+    let msg = FullMessage::Request {
+        conn_id: ConnectionId(0),
+        request_id: RequestId(0),
+        method_id: MethodId(0),
+        metadata: vec![],
+        channels: vec![0],
+        payload: vec![0],
+    };
+
+    let bytes = to_vec(&msg).expect("encode with zero IDs");
+    let decoded: FullMessage = from_slice(&bytes).expect("decode with zero IDs");
+    assert_eq!(decoded, msg);
+}
+
+/// Test empty payload and channels
+#[test]
+fn test_empty_collections() {
+    facet_testhelpers::setup();
+
+    let msg = FullMessage::Request {
+        conn_id: ConnectionId(0),
+        request_id: RequestId(1),
+        method_id: MethodId(1),
+        metadata: vec![],
+        channels: vec![],
+        payload: vec![],
+    };
+
+    let bytes = to_vec(&msg).expect("encode with empty collections");
+    let decoded: FullMessage = from_slice(&bytes).expect("decode with empty collections");
+    assert_eq!(decoded, msg);
+}
+
+/// Test deeply nested metadata values
+#[test]
+fn test_complex_metadata() {
+    facet_testhelpers::setup();
+
+    let msg = FullMessage::Request {
+        conn_id: ConnectionId(0),
+        request_id: RequestId(1),
+        method_id: MethodId(1),
+        metadata: vec![
+            // Empty string key and value
+            ("".to_string(), MetadataValue::String("".to_string()), 0),
+            // Unicode in key and value
+            (
+                "日本語キー".to_string(),
+                MetadataValue::String("日本語値".to_string()),
+                0,
+            ),
+            // Long key
+            (
+                "a".repeat(256),
+                MetadataValue::String("long key".to_string()),
+                0,
+            ),
+            // Large bytes value
+            (
+                "big_bytes".to_string(),
+                MetadataValue::Bytes(vec![0xFF; 1000]),
+                0,
+            ),
+            // Various flags
+            (
+                "flagged".to_string(),
+                MetadataValue::U64(42),
+                0xFFFFFFFFFFFFFFFF,
+            ),
+        ],
+        channels: vec![],
+        payload: vec![],
+    };
+
+    let bytes = to_vec(&msg).expect("encode with complex metadata");
+    let decoded: FullMessage = from_slice(&bytes).expect("decode with complex metadata");
+    assert_eq!(decoded, msg);
 }
