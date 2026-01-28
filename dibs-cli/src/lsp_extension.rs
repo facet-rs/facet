@@ -1046,14 +1046,18 @@ impl DibsExtension {
     ) {
         let schema = self.schema().await;
 
-        // If this is a tagged @query or @rel object, look for column references
+        // Handle tagged objects (@query, @rel, @insert, @update, @delete, @upsert)
         if let Some(tag) = &value.tag
-            && (tag.name == "query" || tag.name == "rel")
+            && matches!(
+                tag.name.as_str(),
+                "query" | "rel" | "insert" | "update" | "delete" | "upsert"
+            )
         {
             if let Some(styx_tree::Payload::Object(obj)) = &value.payload {
-                // Find the table from "from" field
+                // Find the table from "from", "into", or "table" field
                 let table_name = obj.entries.iter().find_map(|e| {
-                    if e.key.as_str() == Some("from") {
+                    let key = e.key.as_str();
+                    if matches!(key, Some("from") | Some("into") | Some("table")) {
                         e.value.as_str().map(|s| s.to_string())
                     } else {
                         None
@@ -1063,12 +1067,41 @@ impl DibsExtension {
                 if let Some(table_name) = table_name {
                     // Find the table in schema
                     if let Some(table) = schema.tables.iter().find(|t| t.name == table_name) {
-                        // Look for select/where/order_by entries and add hints
+                        // Look for column reference entries and add hints
                         for entry in &obj.entries {
                             let key = entry.key.as_str().unwrap_or("");
-                            if matches!(key, "select" | "where" | "order_by" | "group_by") {
+                            if matches!(
+                                key,
+                                "select"
+                                    | "where"
+                                    | "order-by"
+                                    | "group-by"
+                                    | "values"
+                                    | "set"
+                                    | "returning"
+                            ) {
                                 self.add_column_hints(document_uri, &entry.value, table, hints)
                                     .await;
+                            }
+                            // Handle on-conflict block (has target and update sub-blocks)
+                            if key == "on-conflict" {
+                                if let Some(styx_tree::Payload::Object(conflict_obj)) =
+                                    &entry.value.payload
+                                {
+                                    for conflict_entry in &conflict_obj.entries {
+                                        let conflict_key =
+                                            conflict_entry.key.as_str().unwrap_or("");
+                                        if matches!(conflict_key, "target" | "update") {
+                                            self.add_column_hints(
+                                                document_uri,
+                                                &conflict_entry.value,
+                                                table,
+                                                hints,
+                                            )
+                                            .await;
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -1231,29 +1264,29 @@ impl DibsExtension {
             "find_table_in_context"
         );
 
-        // Look for a "from" field in the context object
+        // Look for a "from", "into", or "table" field in the context object
         if let Some(obj) = context.as_object() {
             debug!(entries = obj.entries.len(), "checking as_object");
             for entry in &obj.entries {
                 let key = entry.key.as_str();
                 debug!(?key, "checking entry");
-                if key == Some("from") {
+                if matches!(key, Some("from") | Some("into") | Some("table")) {
                     let table = entry.value.as_str().map(|s| s.to_string());
-                    debug!(?table, "found from field");
+                    debug!(?table, "found table field");
                     return table;
                 }
             }
         }
 
-        // Also check inside tagged payloads (e.g., @query{...})
+        // Also check inside tagged payloads (e.g., @query{...}, @insert{...}, etc.)
         if let Some(styx_tree::Payload::Object(obj)) = &context.payload {
             debug!(entries = obj.entries.len(), "checking payload object");
             for entry in &obj.entries {
                 let key = entry.key.as_str();
                 debug!(?key, "checking payload entry");
-                if key == Some("from") {
+                if matches!(key, Some("from") | Some("into") | Some("table")) {
                     let table = entry.value.as_str().map(|s| s.to_string());
-                    debug!(?table, "found from in payload");
+                    debug!(?table, "found table in payload");
                     return table;
                 }
             }
@@ -1419,10 +1452,12 @@ impl StyxLspExtension for DibsExtension {
             "@rel" => self.query_field_completions(&params.prefix, true),
 
             // Table references
-            "from" | "table" | "join" => self.table_completions(&params.prefix).await,
+            "from" | "into" | "table" | "join" => self.table_completions(&params.prefix).await,
 
             // Column references - need to know which table
-            "select" | "where" | "order_by" | "group_by" => {
+            // Note: styx keys use hyphens (order-by) but paths may have underscores too
+            "select" | "where" | "order-by" | "order_by" | "group-by" | "group_by" | "values"
+            | "set" | "returning" | "target" | "update" => {
                 // Try tagged_context first (the @query block) - most reliable
                 if let Some(tagged) = &params.tagged_context
                     && let Some(table_name) = Self::find_table_in_context(tagged)
@@ -1473,8 +1508,8 @@ impl StyxLspExtension for DibsExtension {
             .as_ref()
             .and_then(Self::find_table_in_context);
 
-        // If the last path segment is "from", "table", or "join", we're hovering over a table reference
-        if matches!(last.as_str(), "from" | "table" | "join")
+        // If the last path segment is "from", "into", "table", or "join", we're hovering over a table reference
+        if matches!(last.as_str(), "from" | "into" | "table" | "join")
             && let Some(ref table_name) = table_from_tagged
             && let Some(table) = schema.tables.iter().find(|t| t.name == *table_name)
         {
