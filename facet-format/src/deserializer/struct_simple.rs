@@ -73,9 +73,6 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         }
         let deny_unknown_fields = wip.shape().has_deny_unknown_fields_attr();
 
-        // Track which fields have been set
-        let num_fields = struct_def.fields.len();
-        let mut fields_set = vec![false; num_fields];
         let mut ordered_field_index = 0usize;
 
         loop {
@@ -93,13 +90,11 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                     // Non-self-describing formats emit OrderedField events in order
                     let idx = ordered_field_index;
                     ordered_field_index += 1;
-                    if idx < num_fields {
+                    if idx < struct_def.fields.len() {
                         wip = wip
                             .begin_nth_field(idx)?
                             .with(|w| self.deserialize_into(w))?
                             .end()?;
-
-                        fields_set[idx] = true;
                     }
                 }
                 ParseEventKind::FieldKey(key) => {
@@ -137,8 +132,6 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
                         let _guard = SpanGuard::new(self.last_span);
                         wip = wip.end()?;
-
-                        fields_set[idx] = true;
                         continue;
                     }
 
