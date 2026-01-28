@@ -23,7 +23,6 @@ facet-dessert = { path = "../facet-dessert", version = "0.43.2" }
 facet-path = { path = "../facet-path", version = "0.43.2", default-features = false }
 facet-reflect = { path = "../facet-reflect", version = "0.43.2" }
 facet-solver = { path = "../facet-solver", version = "0.43.2", default-features = false }
-facet-validate = { path = "../facet-validate", version = "0.43.2" }
 
 # JIT compilation (optional)
 cranelift = { version = "0.128", optional = true }

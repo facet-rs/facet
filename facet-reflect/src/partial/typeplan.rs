@@ -9,7 +9,7 @@
 use alloc::vec::Vec;
 use facet_core::{
     Characteristic, ConstTypeId, Def, DefaultInPlaceFn, DefaultSource, EnumType, Field, ProxyDef,
-    SequenceType, Shape, StructType, Type, UserType, ValidatorFn, Variant,
+    ScalarType, SequenceType, Shape, StructType, Type, UserType, ValidatorFn, Variant,
 };
 use hashbrown::HashMap;
 use indextree::Arena;
@@ -223,6 +223,8 @@ pub struct StructPlan {
     pub field_lookup: FieldLookup,
     /// Whether any field has #[facet(flatten)]
     pub has_flatten: bool,
+    /// Whether to reject unknown fields (precomputed from `#[facet(deny_unknown_fields)]`)
+    pub deny_unknown_fields: bool,
 }
 
 /// Precomputed plan for initializing/validating a single field.
@@ -238,6 +240,8 @@ pub struct FieldInitPlan {
     pub offset: usize,
     /// Field name (for error messages)
     pub name: &'static str,
+    /// The field's type shape (for reading values during validation)
+    pub field_shape: &'static Shape,
     /// How to handle this field if not set during deserialization
     pub fill_rule: FillRule,
     /// Validators to run after the field is set (precomputed from attributes)
@@ -275,35 +279,81 @@ impl PrecomputedValidator {
     /// Run this validator on an initialized field value.
     ///
     /// # Safety
-    /// `field_ptr` must point to initialized memory of the correct type.
+    /// `field_ptr` must point to initialized memory of the type specified by the validator's scalar_type.
     #[allow(unsafe_code)]
     pub fn run(
         &self,
-        field_ptr: facet_core::PtrMut,
+        field_ptr: facet_core::PtrConst,
         field_name: &'static str,
         container_shape: &'static Shape,
     ) -> Result<(), crate::ReflectErrorKind> {
         use crate::ReflectErrorKind;
+        use alloc::format;
 
-        let result: Result<(), alloc::string::String> = match &self.kind {
+        let result: Result<(), alloc::string::String> = match self.kind {
             ValidatorKind::Custom(validator_fn) => {
                 // SAFETY: caller guarantees field_ptr points to valid data
-                let ptr_const = facet_core::PtrConst::new(field_ptr.as_byte_ptr());
-                unsafe { validator_fn(ptr_const) }
+                unsafe { validator_fn(field_ptr) }
             }
-            // For now, the built-in validators need access to the Partial to read typed values.
-            // We'll implement these later or keep them in the deserializer for now.
-            ValidatorKind::Min(_)
-            | ValidatorKind::Max(_)
-            | ValidatorKind::MinLength(_)
-            | ValidatorKind::MaxLength(_)
-            | ValidatorKind::Email
-            | ValidatorKind::Url
-            | ValidatorKind::Regex(_)
-            | ValidatorKind::Contains(_) => {
-                // These validators need type-aware reading which requires more infrastructure.
-                // For now, return Ok - the deserializer's run_field_validators handles these.
-                return Ok(());
+            ValidatorKind::Min { limit, scalar_type } => {
+                Self::validate_min(field_ptr, limit, scalar_type)
+            }
+            ValidatorKind::Max { limit, scalar_type } => {
+                Self::validate_max(field_ptr, limit, scalar_type)
+            }
+            ValidatorKind::MinLength { limit, scalar_type } => {
+                let len = Self::get_string_length(field_ptr, scalar_type);
+                if len < limit {
+                    Err(format!("length must be >= {}, got {}", limit, len))
+                } else {
+                    Ok(())
+                }
+            }
+            ValidatorKind::MaxLength { limit, scalar_type } => {
+                let len = Self::get_string_length(field_ptr, scalar_type);
+                if len > limit {
+                    Err(format!("length must be <= {}, got {}", limit, len))
+                } else {
+                    Ok(())
+                }
+            }
+            ValidatorKind::Email { scalar_type } => {
+                let s = unsafe { Self::get_string(field_ptr, scalar_type) };
+                if Self::is_valid_email(s) {
+                    Ok(())
+                } else {
+                    Err(format!("'{}' is not a valid email address", s))
+                }
+            }
+            ValidatorKind::Url { scalar_type } => {
+                let s = unsafe { Self::get_string(field_ptr, scalar_type) };
+                if Self::is_valid_url(s) {
+                    Ok(())
+                } else {
+                    Err(format!("'{}' is not a valid URL", s))
+                }
+            }
+            ValidatorKind::Regex {
+                pattern,
+                scalar_type,
+            } => {
+                let s = unsafe { Self::get_string(field_ptr, scalar_type) };
+                if Self::matches_pattern(s, pattern) {
+                    Ok(())
+                } else {
+                    Err(format!("'{}' does not match pattern '{}'", s, pattern))
+                }
+            }
+            ValidatorKind::Contains {
+                needle,
+                scalar_type,
+            } => {
+                let s = unsafe { Self::get_string(field_ptr, scalar_type) };
+                if s.contains(needle) {
+                    Ok(())
+                } else {
+                    Err(format!("'{}' does not contain '{}'", s, needle))
+                }
             }
         };
 
@@ -313,29 +363,290 @@ impl PrecomputedValidator {
             message,
         })
     }
+
+    #[allow(unsafe_code)]
+    fn validate_min(
+        field_ptr: facet_core::PtrConst,
+        limit: i64,
+        scalar_type: ScalarType,
+    ) -> Result<(), alloc::string::String> {
+        use alloc::format;
+        match scalar_type {
+            ScalarType::I8 => {
+                let v = unsafe { *field_ptr.get::<i8>() } as i64;
+                if v < limit {
+                    Err(format!("must be >= {}, got {}", limit, v))
+                } else {
+                    Ok(())
+                }
+            }
+            ScalarType::I16 => {
+                let v = unsafe { *field_ptr.get::<i16>() } as i64;
+                if v < limit {
+                    Err(format!("must be >= {}, got {}", limit, v))
+                } else {
+                    Ok(())
+                }
+            }
+            ScalarType::I32 => {
+                let v = unsafe { *field_ptr.get::<i32>() } as i64;
+                if v < limit {
+                    Err(format!("must be >= {}, got {}", limit, v))
+                } else {
+                    Ok(())
+                }
+            }
+            ScalarType::I64 => {
+                let v = unsafe { *field_ptr.get::<i64>() };
+                if v < limit {
+                    Err(format!("must be >= {}, got {}", limit, v))
+                } else {
+                    Ok(())
+                }
+            }
+            ScalarType::U8 => {
+                let v = unsafe { *field_ptr.get::<u8>() } as i64;
+                if v < limit {
+                    Err(format!("must be >= {}, got {}", limit, v))
+                } else {
+                    Ok(())
+                }
+            }
+            ScalarType::U16 => {
+                let v = unsafe { *field_ptr.get::<u16>() } as i64;
+                if v < limit {
+                    Err(format!("must be >= {}, got {}", limit, v))
+                } else {
+                    Ok(())
+                }
+            }
+            ScalarType::U32 => {
+                let v = unsafe { *field_ptr.get::<u32>() } as i64;
+                if v < limit {
+                    Err(format!("must be >= {}, got {}", limit, v))
+                } else {
+                    Ok(())
+                }
+            }
+            ScalarType::U64 => {
+                let v = unsafe { *field_ptr.get::<u64>() };
+                if v > i64::MAX as u64 {
+                    Ok(()) // Value too large to compare as i64, assume valid for min
+                } else if (v as i64) < limit {
+                    Err(format!("must be >= {}, got {}", limit, v))
+                } else {
+                    Ok(())
+                }
+            }
+            _ => Ok(()), // Non-numeric type - should not happen if TypePlan is built correctly
+        }
+    }
+
+    #[allow(unsafe_code)]
+    fn validate_max(
+        field_ptr: facet_core::PtrConst,
+        limit: i64,
+        scalar_type: ScalarType,
+    ) -> Result<(), alloc::string::String> {
+        use alloc::format;
+        match scalar_type {
+            ScalarType::I8 => {
+                let v = unsafe { *field_ptr.get::<i8>() } as i64;
+                if v > limit {
+                    Err(format!("must be <= {}, got {}", limit, v))
+                } else {
+                    Ok(())
+                }
+            }
+            ScalarType::I16 => {
+                let v = unsafe { *field_ptr.get::<i16>() } as i64;
+                if v > limit {
+                    Err(format!("must be <= {}, got {}", limit, v))
+                } else {
+                    Ok(())
+                }
+            }
+            ScalarType::I32 => {
+                let v = unsafe { *field_ptr.get::<i32>() } as i64;
+                if v > limit {
+                    Err(format!("must be <= {}, got {}", limit, v))
+                } else {
+                    Ok(())
+                }
+            }
+            ScalarType::I64 => {
+                let v = unsafe { *field_ptr.get::<i64>() };
+                if v > limit {
+                    Err(format!("must be <= {}, got {}", limit, v))
+                } else {
+                    Ok(())
+                }
+            }
+            ScalarType::U8 => {
+                let v = unsafe { *field_ptr.get::<u8>() } as i64;
+                if v > limit {
+                    Err(format!("must be <= {}, got {}", limit, v))
+                } else {
+                    Ok(())
+                }
+            }
+            ScalarType::U16 => {
+                let v = unsafe { *field_ptr.get::<u16>() } as i64;
+                if v > limit {
+                    Err(format!("must be <= {}, got {}", limit, v))
+                } else {
+                    Ok(())
+                }
+            }
+            ScalarType::U32 => {
+                let v = unsafe { *field_ptr.get::<u32>() } as i64;
+                if v > limit {
+                    Err(format!("must be <= {}, got {}", limit, v))
+                } else {
+                    Ok(())
+                }
+            }
+            ScalarType::U64 => {
+                let v = unsafe { *field_ptr.get::<u64>() };
+                // Check if v exceeds limit: either v > i64::MAX (always fails for positive limit)
+                // or v fits in i64 and exceeds limit
+                if v > i64::MAX as u64 || (v as i64) > limit {
+                    Err(format!("must be <= {}, got {}", limit, v))
+                } else {
+                    Ok(())
+                }
+            }
+            _ => Ok(()), // Non-numeric type - should not happen if TypePlan is built correctly
+        }
+    }
+
+    /// Get string from field pointer using precomputed scalar type.
+    ///
+    /// # Safety
+    /// The field_ptr must point to valid, initialized memory of the type indicated by scalar_type.
+    /// The returned reference is valid as long as the underlying memory is valid.
+    #[allow(unsafe_code)]
+    unsafe fn get_string<'a>(field_ptr: facet_core::PtrConst, scalar_type: ScalarType) -> &'a str {
+        match scalar_type {
+            ScalarType::String => {
+                let s: &alloc::string::String = unsafe { field_ptr.get() };
+                s.as_str()
+            }
+            ScalarType::Str => {
+                let s: &&str = unsafe { field_ptr.get() };
+                s
+            }
+            ScalarType::CowStr => {
+                let s: &alloc::borrow::Cow<'_, str> = unsafe { field_ptr.get() };
+                s.as_ref()
+            }
+            _ => "", // Should not happen if TypePlan is built correctly
+        }
+    }
+
+    /// Get length of string field using precomputed scalar type.
+    #[allow(unsafe_code)]
+    fn get_string_length(field_ptr: facet_core::PtrConst, scalar_type: ScalarType) -> usize {
+        unsafe { Self::get_string(field_ptr, scalar_type) }.len()
+    }
+
+    /// Simple email validation (no regex dependency).
+    fn is_valid_email(s: &str) -> bool {
+        // Basic check: has exactly one @, something before and after, and a dot after @
+        let at_pos = s.find('@');
+        if let Some(at) = at_pos {
+            if at == 0 || at == s.len() - 1 {
+                return false;
+            }
+            let domain = &s[at + 1..];
+            domain.contains('.') && !domain.starts_with('.') && !domain.ends_with('.')
+        } else {
+            false
+        }
+    }
+
+    /// Simple URL validation (no regex dependency).
+    fn is_valid_url(s: &str) -> bool {
+        s.starts_with("http://") || s.starts_with("https://")
+    }
+
+    /// Pattern matching - requires regex feature.
+    #[cfg(feature = "regex")]
+    fn matches_pattern(s: &str, pattern: &str) -> bool {
+        regex::Regex::new(pattern)
+            .map(|re| re.is_match(s))
+            .unwrap_or(false)
+    }
+
+    #[cfg(not(feature = "regex"))]
+    fn matches_pattern(_s: &str, _pattern: &str) -> bool {
+        // Without regex feature, pattern matching always fails
+        // This should be caught at compile time by not enabling the feature
+        false
+    }
 }
 
 /// Kinds of validators with their precomputed data.
-#[derive(Debug, Clone)]
+///
+/// Each variant stores not just the constraint but also the `ScalarType` needed
+/// to read the value. This is determined at TypePlan build time, eliminating
+/// runtime type detection during validation.
+#[derive(Debug, Clone, Copy)]
 pub enum ValidatorKind {
     /// Custom validator function
     Custom(ValidatorFn),
     /// Minimum value (for numeric types)
-    Min(i64),
+    Min {
+        /// The minimum allowed value
+        limit: i64,
+        /// How to read the value from memory
+        scalar_type: ScalarType,
+    },
     /// Maximum value (for numeric types)
-    Max(i64),
-    /// Minimum length (for strings/collections)
-    MinLength(usize),
-    /// Maximum length (for strings/collections)
-    MaxLength(usize),
+    Max {
+        /// The maximum allowed value
+        limit: i64,
+        /// How to read the value from memory
+        scalar_type: ScalarType,
+    },
+    /// Minimum length (for strings)
+    MinLength {
+        /// The minimum allowed length
+        limit: usize,
+        /// How to read the string from memory
+        scalar_type: ScalarType,
+    },
+    /// Maximum length (for strings)
+    MaxLength {
+        /// The maximum allowed length
+        limit: usize,
+        /// How to read the string from memory
+        scalar_type: ScalarType,
+    },
     /// Must be valid email
-    Email,
+    Email {
+        /// How to read the string from memory
+        scalar_type: ScalarType,
+    },
     /// Must be valid URL
-    Url,
+    Url {
+        /// How to read the string from memory
+        scalar_type: ScalarType,
+    },
     /// Must match regex pattern
-    Regex(&'static str),
+    Regex {
+        /// The regex pattern to match
+        pattern: &'static str,
+        /// How to read the string from memory
+        scalar_type: ScalarType,
+    },
     /// Must contain substring
-    Contains(&'static str),
+    Contains {
+        /// The substring to search for
+        needle: &'static str,
+        /// How to read the string from memory
+        scalar_type: ScalarType,
+    },
 }
 
 /// Metadata for a single field (without child plan - that's in the tree).
@@ -370,6 +681,8 @@ pub struct EnumPlan {
     pub variant_lookup: VariantLookup,
     /// Number of variants
     pub num_variants: usize,
+    /// Index of the `#[facet(other)]` variant, if any
+    pub other_variant_idx: Option<usize>,
 }
 
 /// Metadata for a single enum variant.
@@ -383,6 +696,8 @@ pub struct VariantPlanMeta {
     pub fields: Vec<FieldPlanMeta>,
     /// Fast field lookup for this variant
     pub field_lookup: FieldLookup,
+    /// Whether any field in this variant has #[facet(flatten)]
+    pub has_flatten: bool,
     /// Precomputed initialization plans for variant fields - one per field
     pub field_init_plans: Vec<FieldInitPlan>,
 }
@@ -896,7 +1211,7 @@ impl TypePlanBuilder {
                 match &shape.ty {
                     Type::User(UserType::Struct(struct_type)) => {
                         let (struct_plan, field_init_plans) =
-                            self.build_struct_plan(struct_type, parent_id)?;
+                            self.build_struct_plan(shape, struct_type, parent_id)?;
                         return Ok((TypePlanNodeKind::Struct(struct_plan), field_init_plans));
                     }
                     Type::User(UserType::Enum(enum_type)) => {
@@ -934,11 +1249,15 @@ impl TypePlanBuilder {
     /// Build a StructPlan, attaching field children to parent_id.
     fn build_struct_plan(
         &mut self,
+        shape: &'static Shape,
         struct_def: &'static StructType,
         parent_id: NodeId,
     ) -> Result<(StructPlan, Vec<FieldInitPlan>), AllocError> {
         let mut fields = Vec::with_capacity(struct_def.fields.len());
         let mut field_init_plans = Vec::new();
+
+        // Check if the container struct has #[facet(default)]
+        let container_has_default = shape.is(Characteristic::Default);
 
         for (index, field) in struct_def.fields.iter().enumerate() {
             // Build the type plan node for this field first
@@ -951,11 +1270,17 @@ impl TypePlanBuilder {
             fields.push(field_meta);
 
             // Build the field initialization plan
-            field_init_plans.push(Self::build_field_init_plan(index, field));
+            field_init_plans.push(Self::build_field_init_plan(
+                index,
+                field,
+                container_has_default,
+            ));
         }
 
         let has_flatten = fields.iter().any(|f| f.is_flattened);
         let field_lookup = FieldLookup::new(&fields);
+        // Precompute deny_unknown_fields from shape attributes (avoids runtime attribute scanning)
+        let deny_unknown_fields = shape.has_deny_unknown_fields_attr();
 
         Ok((
             StructPlan {
@@ -963,20 +1288,26 @@ impl TypePlanBuilder {
                 fields,
                 field_lookup,
                 has_flatten,
+                deny_unknown_fields,
             },
             field_init_plans,
         ))
     }
 
     /// Build a FieldInitPlan for a field. Every field gets a plan.
-    fn build_field_init_plan(index: usize, field: &'static Field) -> FieldInitPlan {
+    fn build_field_init_plan(
+        index: usize,
+        field: &'static Field,
+        container_has_default: bool,
+    ) -> FieldInitPlan {
         let validators = Self::extract_validators(field);
-        let fill_rule = Self::determine_fill_rule(field);
+        let fill_rule = Self::determine_fill_rule(field, container_has_default);
 
         FieldInitPlan {
             index,
             offset: field.offset,
             name: field.name,
+            field_shape: field.shape(),
             fill_rule,
             validators,
         }
@@ -984,7 +1315,7 @@ impl TypePlanBuilder {
 
     /// Determine how to fill a field that wasn't set.
     /// Every field is either Defaultable or Required.
-    fn determine_fill_rule(field: &'static Field) -> FillRule {
+    fn determine_fill_rule(field: &'static Field, container_has_default: bool) -> FillRule {
         let field_shape = field.shape();
 
         // Check for explicit default on the field (#[facet(default)] or #[facet(default = expr)])
@@ -1008,6 +1339,20 @@ impl TypePlanBuilder {
             return FillRule::Defaultable(FieldDefault::FromTrait(field_shape));
         }
 
+        // Empty structs/tuples (like `()`) are trivially defaultable
+        if let Type::User(UserType::Struct(struct_type)) = field_shape.ty
+            && struct_type.fields.is_empty()
+            && field_shape.is(Characteristic::Default)
+        {
+            return FillRule::Defaultable(FieldDefault::FromTrait(field_shape));
+        }
+
+        // If container has #[facet(default)] and the field's type implements Default,
+        // use the type's Default impl
+        if container_has_default && field_shape.is(Characteristic::Default) {
+            return FillRule::Defaultable(FieldDefault::FromTrait(field_shape));
+        }
+
         // Field is required - must be set during deserialization
         // Note: For skipped fields without Default, this will cause an error
         // at deserialization time (which is correct - it's a logic error)
@@ -1017,6 +1362,9 @@ impl TypePlanBuilder {
     /// Extract validators from field attributes.
     fn extract_validators(field: &'static Field) -> Vec<PrecomputedValidator> {
         let mut validators = Vec::new();
+        let field_shape = field.shape();
+        // Precompute scalar type once - used by validators that need it
+        let scalar_type = field_shape.scalar_type();
 
         for attr in field.attributes.iter() {
             if attr.ns != Some("validate") {
@@ -1030,42 +1378,69 @@ impl TypePlanBuilder {
                     ValidatorKind::Custom(validator_fn)
                 }
                 "min" => {
-                    let min_val = attr
+                    let limit = *attr
                         .get_as::<i64>()
                         .expect("validate::min attribute must contain i64");
-                    ValidatorKind::Min(*min_val)
+                    // For numeric validators, scalar_type must be a numeric type
+                    let scalar_type =
+                        scalar_type.expect("validate::min requires numeric field type");
+                    ValidatorKind::Min { limit, scalar_type }
                 }
                 "max" => {
-                    let max_val = attr
+                    let limit = *attr
                         .get_as::<i64>()
                         .expect("validate::max attribute must contain i64");
-                    ValidatorKind::Max(*max_val)
+                    let scalar_type =
+                        scalar_type.expect("validate::max requires numeric field type");
+                    ValidatorKind::Max { limit, scalar_type }
                 }
                 "min_length" => {
-                    let min_len = attr
+                    let limit = *attr
                         .get_as::<usize>()
                         .expect("validate::min_length attribute must contain usize");
-                    ValidatorKind::MinLength(*min_len)
+                    let scalar_type =
+                        scalar_type.expect("validate::min_length requires string field type");
+                    ValidatorKind::MinLength { limit, scalar_type }
                 }
                 "max_length" => {
-                    let max_len = attr
+                    let limit = *attr
                         .get_as::<usize>()
                         .expect("validate::max_length attribute must contain usize");
-                    ValidatorKind::MaxLength(*max_len)
+                    let scalar_type =
+                        scalar_type.expect("validate::max_length requires string field type");
+                    ValidatorKind::MaxLength { limit, scalar_type }
                 }
-                "email" => ValidatorKind::Email,
-                "url" => ValidatorKind::Url,
+                "email" => {
+                    let scalar_type =
+                        scalar_type.expect("validate::email requires string field type");
+                    ValidatorKind::Email { scalar_type }
+                }
+                "url" => {
+                    let scalar_type =
+                        scalar_type.expect("validate::url requires string field type");
+                    ValidatorKind::Url { scalar_type }
+                }
                 "regex" => {
-                    let pattern = attr
+                    let pattern = *attr
                         .get_as::<&'static str>()
                         .expect("validate::regex attribute must contain &'static str");
-                    ValidatorKind::Regex(pattern)
+                    let scalar_type =
+                        scalar_type.expect("validate::regex requires string field type");
+                    ValidatorKind::Regex {
+                        pattern,
+                        scalar_type,
+                    }
                 }
                 "contains" => {
-                    let needle = attr
+                    let needle = *attr
                         .get_as::<&'static str>()
                         .expect("validate::contains attribute must contain &'static str");
-                    ValidatorKind::Contains(needle)
+                    let scalar_type =
+                        scalar_type.expect("validate::contains requires string field type");
+                    ValidatorKind::Contains {
+                        needle,
+                        scalar_type,
+                    }
                 }
                 _ => continue, // Unknown validator, skip
             };
@@ -1098,17 +1473,19 @@ impl TypePlanBuilder {
                 let field_meta = FieldPlanMeta::new(field, child_id);
                 variant_fields.push(field_meta);
 
-                // Build the field initialization plan
-                field_init_plans.push(Self::build_field_init_plan(index, field));
+                // Build the field initialization plan (enums don't have container-level default)
+                field_init_plans.push(Self::build_field_init_plan(index, field, false));
             }
 
             let field_lookup = FieldLookup::new(&variant_fields);
+            let has_flatten = variant_fields.iter().any(|f| f.is_flattened);
 
             variants.push(VariantPlanMeta {
                 variant,
-                name: variant.name,
+                name: variant.effective_name(),
                 fields: variant_fields,
                 field_lookup,
+                has_flatten,
                 field_init_plans,
             });
         }
@@ -1116,11 +1493,15 @@ impl TypePlanBuilder {
         let variant_lookup = VariantLookup::new(&variants);
         let num_variants = variants.len();
 
+        // Find the index of the #[facet(other)] variant, if any
+        let other_variant_idx = variants.iter().position(|v| v.variant.is_other());
+
         Ok(EnumPlan {
             enum_def,
             variants,
             variant_lookup,
             num_variants,
+            other_variant_idx,
         })
     }
 

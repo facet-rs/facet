@@ -1187,10 +1187,9 @@ impl Frame {
                     let first_missing_idx = (0..num_fields).find(|&idx| !data.get(idx));
                     if let Some(missing_idx) = first_missing_idx {
                         let field_name = variant.data.fields[missing_idx].name;
-                        Err(ReflectErrorKind::UninitializedEnumField {
+                        Err(ReflectErrorKind::UninitializedField {
                             shape: self.allocated.shape(),
                             field_name,
-                            variant_name: variant.name,
                         })
                     } else {
                         Err(ReflectErrorKind::UninitializedValue {
@@ -1292,22 +1291,42 @@ impl Frame {
         plans: &[FieldInitPlan],
         num_fields: usize,
     ) -> Result<(), ReflectErrorKind> {
+        // With lazy tracker initialization, structs start with Tracker::Scalar.
+        // If is_init is true with Scalar, the struct was set wholesale - nothing to do.
+        // If is_init is false, we need to upgrade to Tracker::Struct to track fields.
+        if !self.is_init
+            && matches!(self.tracker, Tracker::Scalar)
+            && matches!(self.allocated.shape().ty, Type::User(UserType::Struct(_)))
+        {
+            // Try container-level default first
+            let data_mut = unsafe { self.data.assume_init() };
+            if unsafe { self.allocated.shape().call_default_in_place(data_mut) }.is_some() {
+                self.is_init = true;
+                return Ok(());
+            }
+            // Upgrade to Tracker::Struct for field-by-field tracking
+            self.tracker = Tracker::Struct {
+                iset: ISet::new(num_fields),
+                current_child: None,
+            };
+        }
+
         // Get the iset based on tracker type
         let iset = match &mut self.tracker {
             Tracker::Struct { iset, .. } => iset,
             Tracker::Enum { data, .. } => data,
+            // Scalar with is_init=true means struct was set wholesale - all fields initialized
+            Tracker::Scalar if self.is_init => return Ok(()),
             // Other tracker types don't use field_init_plans
             _ => return Ok(()),
         };
 
-        // Fast path: if all fields are already set, nothing to do.
-        // This handles the common case where deserialization set all fields.
-        if iset.all_set(num_fields) {
-            return Ok(());
-        }
+        // Fast path: if all fields are already set, no defaults needed.
+        // But validators still need to run.
+        let all_fields_set = iset.all_set(num_fields);
 
         for plan in plans {
-            if !iset.get(plan.index) {
+            if !all_fields_set && !iset.get(plan.index) {
                 // Field not set - handle according to fill rule
                 match &plan.fill_rule {
                     FillRule::Defaultable(default) => {
@@ -1331,8 +1350,6 @@ impl Frame {
                         if success {
                             iset.set(plan.index);
                         } else {
-                            // Default function not available - this shouldn't happen
-                            // if TypePlan was built correctly, but handle gracefully
                             return Err(ReflectErrorKind::UninitializedField {
                                 shape: self.allocated.shape(),
                                 field_name: plan.name,
@@ -1340,7 +1357,6 @@ impl Frame {
                         }
                     }
                     FillRule::Required => {
-                        // Field is required but not set - error
                         return Err(ReflectErrorKind::UninitializedField {
                             shape: self.allocated.shape(),
                             field_name: plan.name,
@@ -1353,7 +1369,7 @@ impl Frame {
             if !plan.validators.is_empty() {
                 let field_ptr = unsafe { self.data.field_init(plan.offset) };
                 for validator in &plan.validators {
-                    validator.run(field_ptr, plan.name, self.allocated.shape())?;
+                    validator.run(field_ptr.into(), plan.name, self.allocated.shape())?;
                 }
             }
         }

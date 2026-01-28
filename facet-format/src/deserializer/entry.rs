@@ -345,22 +345,8 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         &mut self,
         wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
-        // Get struct fields for lookup
-        let struct_def = match &wip.shape().ty {
-            Type::User(UserType::Struct(def)) => def,
-            _ => {
-                return Err(DeserializeErrorKind::UnexpectedToken {
-                    expected: "struct",
-                    got: format!("{:?}", wip.shape().ty).into(),
-                }
-                .with_span(self.last_span));
-            }
-        };
-
-        // Check if we have any flattened fields
-        let has_flatten = struct_def.fields.iter().any(|f| f.is_flattened());
-
-        if has_flatten {
+        let struct_plan = wip.struct_plan().unwrap();
+        if struct_plan.has_flatten {
             self.deserialize_struct_with_flatten(wip)
         } else {
             self.deserialize_struct_simple(wip)

@@ -582,7 +582,7 @@ fn deserialize_struct<'p>(value: &Value, partial: Partial<'p>) -> Result<Partial
         }
     };
 
-    let deny_unknown_fields = partial.shape().has_deny_unknown_fields_attr();
+    let deny_unknown_fields = partial.struct_plan().unwrap().deny_unknown_fields;
 
     // Check if we have any flattened fields
     let has_flattened = struct_def.fields.iter().any(|f| f.is_flattened());

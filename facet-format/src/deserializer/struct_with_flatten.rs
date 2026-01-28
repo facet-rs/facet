@@ -29,7 +29,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             wip.shape().type_identifier
         );
 
-        let deny_unknown_fields = wip.shape().has_deny_unknown_fields_attr();
+        let deny_unknown_fields = wip.struct_plan().unwrap().deny_unknown_fields;
         let struct_type_has_default = wip.shape().is(Characteristic::Default);
 
         // Peek at the next event first to handle EOF and null gracefully

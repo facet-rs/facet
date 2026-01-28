@@ -96,7 +96,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 },
             ));
         }
-        let deny_unknown_fields = wip.shape().has_deny_unknown_fields_attr();
+        let deny_unknown_fields = wip.struct_plan().unwrap().deny_unknown_fields;
 
         let mut ordered_field_index = 0usize;
 
@@ -137,18 +137,14 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
                     // Look up field by name/alias using precomputed TypePlan lookup
                     if let Some(idx) = lookup_field(&wip, struct_def, key_name) {
-                        let field = &struct_def.fields[idx];
                         trace!(
                             idx,
-                            field_name = field.name,
+                            field_name = struct_def.fields[idx].name,
                             "deserialize_struct_simple: matched field"
                         );
 
                         wip = wip.begin_nth_field(idx)?;
                         wip = self.deserialize_into(wip)?;
-
-                        // Run validation on the field value before finalizing
-                        self.run_field_validators(field, &wip)?;
 
                         let _guard = SpanGuard::new(self.last_span);
                         wip = wip.end()?;
