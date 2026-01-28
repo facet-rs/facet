@@ -8,8 +8,8 @@
 
 use alloc::vec::Vec;
 use facet_core::{
-    Characteristic, ConstTypeId, Def, EnumType, Field, ProxyDef, SequenceType, Shape, StructType,
-    Type, UserType, Variant,
+    Characteristic, ConstTypeId, Def, DefaultInPlaceFn, DefaultSource, EnumType, Field, ProxyDef,
+    SequenceType, Shape, StructType, Type, UserType, ValidatorFn, Variant,
 };
 use hashbrown::HashMap;
 use indextree::Arena;
@@ -44,6 +44,12 @@ pub struct TypePlanNode {
     pub has_default: bool,
     /// Precomputed proxy for this shape (format-specific or generic)
     pub proxy: Option<&'static ProxyDef>,
+    /// Precomputed field initialization plans - one entry per field.
+    /// Every field is either Required or Defaultable.
+    /// For structs: populated with all fields.
+    /// For enums: empty (use `EnumPlan.variants[idx].field_init_plans` instead).
+    /// For other types: empty.
+    pub field_init_plans: Vec<FieldInitPlan>,
 }
 
 /// Precomputed deserialization strategy with all data needed to execute it.
@@ -217,8 +223,119 @@ pub struct StructPlan {
     pub field_lookup: FieldLookup,
     /// Whether any field has #[facet(flatten)]
     pub has_flatten: bool,
-    /// Number of fields
-    pub num_fields: usize,
+}
+
+/// Precomputed plan for initializing/validating a single field.
+///
+/// This combines what was previously separate logic in `fill_defaults` and
+/// `require_full_initialization` into a single data structure that can be
+/// processed in one pass.
+#[derive(Debug, Clone)]
+pub struct FieldInitPlan {
+    /// Field index in the struct (for ISet tracking)
+    pub index: usize,
+    /// Field offset in bytes from struct base (for calculating field pointer)
+    pub offset: usize,
+    /// Field name (for error messages)
+    pub name: &'static str,
+    /// How to handle this field if not set during deserialization
+    pub fill_rule: FillRule,
+    /// Validators to run after the field is set (precomputed from attributes)
+    pub validators: Vec<PrecomputedValidator>,
+}
+
+/// How to fill a field that wasn't set during deserialization.
+#[derive(Debug, Clone)]
+pub enum FillRule {
+    /// Field has a default - call this function if not set.
+    /// The function writes the default value to an uninitialized pointer.
+    Defaultable(FieldDefault),
+    /// Field is required - error if not set.
+    Required,
+}
+
+/// Source of default value for a field.
+#[derive(Debug, Clone, Copy)]
+pub enum FieldDefault {
+    /// Use a custom default function (from `#[facet(default = expr)]`)
+    Custom(DefaultInPlaceFn),
+    /// Use the type's Default trait (via shape.call_default_in_place)
+    /// We store the shape so we can call its default_in_place
+    FromTrait(&'static Shape),
+}
+
+/// A precomputed validator extracted from field attributes.
+#[derive(Debug, Clone)]
+pub struct PrecomputedValidator {
+    /// The validator kind with any associated data
+    pub kind: ValidatorKind,
+}
+
+impl PrecomputedValidator {
+    /// Run this validator on an initialized field value.
+    ///
+    /// # Safety
+    /// `field_ptr` must point to initialized memory of the correct type.
+    #[allow(unsafe_code)]
+    pub fn run(
+        &self,
+        field_ptr: facet_core::PtrMut,
+        field_name: &'static str,
+        container_shape: &'static Shape,
+    ) -> Result<(), crate::ReflectErrorKind> {
+        use crate::ReflectErrorKind;
+
+        let result: Result<(), alloc::string::String> = match &self.kind {
+            ValidatorKind::Custom(validator_fn) => {
+                // SAFETY: caller guarantees field_ptr points to valid data
+                let ptr_const = facet_core::PtrConst::new(field_ptr.as_byte_ptr());
+                unsafe { validator_fn(ptr_const) }
+            }
+            // For now, the built-in validators need access to the Partial to read typed values.
+            // We'll implement these later or keep them in the deserializer for now.
+            ValidatorKind::Min(_)
+            | ValidatorKind::Max(_)
+            | ValidatorKind::MinLength(_)
+            | ValidatorKind::MaxLength(_)
+            | ValidatorKind::Email
+            | ValidatorKind::Url
+            | ValidatorKind::Regex(_)
+            | ValidatorKind::Contains(_) => {
+                // These validators need type-aware reading which requires more infrastructure.
+                // For now, return Ok - the deserializer's run_field_validators handles these.
+                return Ok(());
+            }
+        };
+
+        result.map_err(|message| ReflectErrorKind::ValidationFailed {
+            shape: container_shape,
+            field_name,
+            message,
+        })
+    }
+}
+
+/// Kinds of validators with their precomputed data.
+#[derive(Debug, Clone)]
+pub enum ValidatorKind {
+    /// Custom validator function
+    Custom(ValidatorFn),
+    /// Minimum value (for numeric types)
+    Min(i64),
+    /// Maximum value (for numeric types)
+    Max(i64),
+    /// Minimum length (for strings/collections)
+    MinLength(usize),
+    /// Maximum length (for strings/collections)
+    MaxLength(usize),
+    /// Must be valid email
+    Email,
+    /// Must be valid URL
+    Url,
+    /// Must match regex pattern
+    Regex(&'static str),
+    /// Must contain substring
+    Contains(&'static str),
 }
 
 /// Metadata for a single field (without child plan - that's in the tree).
@@ -238,6 +355,8 @@ pub struct FieldPlanMeta {
     pub is_required: bool,
     /// Whether this field is flattened
     pub is_flattened: bool,
+    /// NodeId of this field's type plan in the arena
+    pub type_node: NodeId,
 }
 
 /// Precomputed plan for enum deserialization.
@@ -264,8 +383,8 @@ pub struct VariantPlanMeta {
     pub fields: Vec<FieldPlanMeta>,
     /// Fast field lookup for this variant
     pub field_lookup: FieldLookup,
-    /// Number of fields in this variant
-    pub num_fields: usize,
+    /// Precomputed initialization plans for variant fields - one per field
+    pub field_init_plans: Vec<FieldInitPlan>,
 }
 
 /// Fast lookup from field name to field index.
@@ -508,6 +627,7 @@ impl TypePlanBuilder {
                 },
                 has_default: shape.is(Characteristic::Default),
                 proxy: effective_proxy,
+                field_init_plans: Vec::new(),
             };
             return Ok(self.arena.new_node(backref_node));
         }
@@ -520,6 +640,7 @@ impl TypePlanBuilder {
             strategy: DeserStrategy::Scalar, // Placeholder, will be replaced
             has_default: shape.is(Characteristic::Default),
             proxy: effective_proxy,
+            field_init_plans: Vec::new(), // Placeholder, will be replaced for structs
         };
         let node_id = self.arena.new_node(placeholder);
 
@@ -541,7 +662,7 @@ impl TypePlanBuilder {
 
         // Build the kind for the original shape (not proxy) - this is used for
         // non-proxy operations on the type
-        let kind = self.build_kind(shape, node_id)?;
+        let (kind, field_init_plans) = self.build_kind(shape, node_id)?;
 
         // Compute the deserialization strategy
         let strategy = self.compute_strategy(
@@ -553,10 +674,11 @@ impl TypePlanBuilder {
             node_id,
         )?;
 
-        // Update the node with the real kind and strategy
+        // Update the node with the real kind, strategy, and field init plans
         let node = self.arena.get_mut(node_id).unwrap().get_mut();
         node.kind = kind;
         node.strategy = strategy;
+        node.field_init_plans = field_init_plans;
 
         // Remove from building set - we're done with this type
         // This ensures only ancestors are tracked, not all visited types
@@ -697,13 +819,14 @@ impl TypePlanBuilder {
     }
 
     /// Build the TypePlanNodeKind for a shape, attaching children to parent_id.
+    /// Returns (kind, field_init_plans) - plans is non-empty only for structs.
     fn build_kind(
         &mut self,
         shape: &'static Shape,
         parent_id: NodeId,
-    ) -> Result<TypePlanNodeKind, AllocError> {
+    ) -> Result<(TypePlanNodeKind, Vec<FieldInitPlan>), AllocError> {
         // Check shape.def first - this tells us the semantic meaning of the type
-        Ok(match &shape.def {
+        let kind = match &shape.def {
             Def::Scalar => {
                 // For scalar types with shape.inner (like NonZero<T>), build a child node
                 // for the inner type. This enables proper TypePlan navigation when
@@ -772,7 +895,9 @@ impl TypePlanBuilder {
                 // Check Type for struct/enum/slice - these have Def::Undefined but meaningful ty
                 match &shape.ty {
                     Type::User(UserType::Struct(struct_type)) => {
-                        TypePlanNodeKind::Struct(self.build_struct_plan(struct_type, parent_id)?)
+                        let (struct_plan, field_init_plans) =
+                            self.build_struct_plan(struct_type, parent_id)?;
+                        return Ok((TypePlanNodeKind::Struct(struct_plan), field_init_plans));
                     }
                     Type::User(UserType::Enum(enum_type)) => {
                         TypePlanNodeKind::Enum(self.build_enum_plan(enum_type, parent_id)?)
@@ -801,7 +926,9 @@ impl TypePlanBuilder {
                     }
                 }
             }
-        })
+        };
+        // For non-struct types, return empty field_init_plans
+        Ok((kind, Vec::new()))
     }
 
     /// Build a StructPlan, attaching field children to parent_id.
@@ -809,30 +936,144 @@ impl TypePlanBuilder {
         &mut self,
         struct_def: &'static StructType,
         parent_id: NodeId,
-    ) -> Result<StructPlan, AllocError> {
+    ) -> Result<(StructPlan, Vec<FieldInitPlan>), AllocError> {
         let mut fields = Vec::with_capacity(struct_def.fields.len());
+        let mut field_init_plans = Vec::new();
 
-        for field in struct_def.fields.iter() {
-            let field_meta = FieldPlanMeta::from_field(field);
-            fields.push(field_meta);
-
-            // Check for field-level proxy (takes precedence over type-level proxy)
+        for (index, field) in struct_def.fields.iter().enumerate() {
+            // Build the type plan node for this field first
             let field_proxy = field.effective_proxy(self.format_namespace);
             let child_id = self.build_node_with_proxy(field.shape(), field_proxy)?;
             parent_id.append(child_id, &mut self.arena);
+
+            // Now create field metadata with the NodeId
+            let field_meta = FieldPlanMeta::new(field, child_id);
+            fields.push(field_meta);
+
+            // Build the field initialization plan
+            field_init_plans.push(Self::build_field_init_plan(index, field));
         }
 
         let has_flatten = fields.iter().any(|f| f.is_flattened);
         let field_lookup = FieldLookup::new(&fields);
-        let num_fields = fields.len();
 
-        Ok(StructPlan {
-            struct_def,
-            fields,
-            field_lookup,
-            has_flatten,
-            num_fields,
-        })
+        Ok((
+            StructPlan {
+                struct_def,
+                fields,
+                field_lookup,
+                has_flatten,
+            },
+            field_init_plans,
+        ))
+    }
+
+    /// Build a FieldInitPlan for a field. Every field gets a plan.
+    fn build_field_init_plan(index: usize, field: &'static Field) -> FieldInitPlan {
+        let validators = Self::extract_validators(field);
+        let fill_rule = Self::determine_fill_rule(field);
+
+        FieldInitPlan {
+            index,
+            offset: field.offset,
+            name: field.name,
+            fill_rule,
+            validators,
+        }
+    }
+
+    /// Determine how to fill a field that wasn't set.
+    /// Every field is either Defaultable or Required.
+    fn determine_fill_rule(field: &'static Field) -> FillRule {
+        let field_shape = field.shape();
+
+        // Check for explicit default on the field (#[facet(default)] or #[facet(default = expr)])
+        if let Some(default_source) = field.default_source() {
+            let field_default = match default_source {
+                DefaultSource::Custom(f) => FieldDefault::Custom(*f),
+                DefaultSource::FromTrait => FieldDefault::FromTrait(field_shape),
+            };
+            return FillRule::Defaultable(field_default);
+        }
+
+        // Option<T> without explicit default implicitly defaults to None
+        let is_option = matches!(field_shape.def, Def::Option(_));
+        if is_option && field_shape.is(Characteristic::Default) {
+            return FillRule::Defaultable(FieldDefault::FromTrait(field_shape));
+        }
+
+        // Skipped fields MUST have a default (they're never deserialized)
+        // If the type implements Default, use that
+        if field.should_skip_deserializing() && field_shape.is(Characteristic::Default) {
+            return FillRule::Defaultable(FieldDefault::FromTrait(field_shape));
+        }
+
+        // Field is required - must be set during deserialization
+        // Note: For skipped fields without Default, this will cause an error
+        // at deserialization time (which is correct - it's a logic error)
+        FillRule::Required
+    }
+
+    /// Extract validators from field attributes.
+    fn extract_validators(field: &'static Field) -> Vec<PrecomputedValidator> {
+        let mut validators = Vec::new();
+
+        for attr in field.attributes.iter() {
+            if attr.ns != Some("validate") {
+                continue;
+            }
+
+            let kind = match attr.key {
+                "custom" => {
+                    // SAFETY: validate::custom attribute stores a ValidatorFn
+                    let validator_fn = unsafe { *attr.data.ptr().get::<ValidatorFn>() };
+                    ValidatorKind::Custom(validator_fn)
+                }
+                "min" => {
+                    let min_val = attr
+                        .get_as::<i64>()
+                        .expect("validate::min attribute must contain i64");
+                    ValidatorKind::Min(*min_val)
+                }
+                "max" => {
+                    let max_val = attr
+                        .get_as::<i64>()
+                        .expect("validate::max attribute must contain i64");
+                    ValidatorKind::Max(*max_val)
+                }
+                "min_length" => {
+                    let min_len = attr
+                        .get_as::<usize>()
+                        .expect("validate::min_length attribute must contain usize");
+                    ValidatorKind::MinLength(*min_len)
+                }
+                "max_length" => {
+                    let max_len = attr
+                        .get_as::<usize>()
+                        .expect("validate::max_length attribute must contain usize");
+                    ValidatorKind::MaxLength(*max_len)
+                }
+                "email" => ValidatorKind::Email,
+                "url" => ValidatorKind::Url,
+                "regex" => {
+                    let pattern = attr
+                        .get_as::<&'static str>()
+                        .expect("validate::regex attribute must contain &'static str");
+                    ValidatorKind::Regex(pattern)
+                }
+                "contains" => {
+                    let needle = attr
+                        .get_as::<&'static str>()
+                        .expect("validate::contains attribute must contain &'static str");
+                    ValidatorKind::Contains(needle)
+                }
+                _ => continue, // Unknown validator, skip
+            };
+
+            validators.push(PrecomputedValidator { kind });
+        }
+
+        validators
     }
 
     /// Build an EnumPlan, attaching variant field children appropriately.
@@ -845,26 +1086,30 @@ impl TypePlanBuilder {
 
         for variant in enum_def.variants.iter() {
             let mut variant_fields = Vec::with_capacity(variant.data.fields.len());
+            let mut field_init_plans = Vec::new();
 
-            for field in variant.data.fields.iter() {
-                let field_meta = FieldPlanMeta::from_field(field);
-                variant_fields.push(field_meta);
-
-                // Check for field-level proxy (takes precedence over type-level proxy)
+            for (index, field) in variant.data.fields.iter().enumerate() {
+                // Build the type plan node for this field first
                 let field_proxy = field.effective_proxy(self.format_namespace);
                 let child_id = self.build_node_with_proxy(field.shape(), field_proxy)?;
                 parent_id.append(child_id, &mut self.arena);
+
+                // Now create field metadata with the NodeId
+                let field_meta = FieldPlanMeta::new(field, child_id);
+                variant_fields.push(field_meta);
+
+                // Build the field initialization plan
+                field_init_plans.push(Self::build_field_init_plan(index, field));
             }
 
             let field_lookup = FieldLookup::new(&variant_fields);
-            let num_fields = variant_fields.len();
 
             variants.push(VariantPlanMeta {
                 variant,
                 name: variant.name,
                 fields: variant_fields,
                 field_lookup,
-                num_fields,
+                field_init_plans,
             });
         }
 
@@ -888,8 +1133,8 @@ impl TypePlanBuilder {
 }
 
 impl FieldPlanMeta {
-    /// Build field metadata from a Field.
-    fn from_field(field: &'static Field) -> Self {
+    /// Build field metadata from a Field and its type plan NodeId.
+    fn new(field: &'static Field, type_node: NodeId) -> Self {
         let name = field.name;
         let effective_name = field.effective_name();
         let alias = field.alias;
@@ -911,6 +1156,7 @@ impl FieldPlanMeta {
             has_default,
             is_required,
             is_flattened,
+            type_node,
         }
     }
 }
@@ -991,14 +1237,14 @@ impl TypePlan {
     pub fn struct_field_node(&self, parent: NodeId, idx: usize) -> Option<NodeId> {
         let resolved = self.resolve_backref(parent)?;
         let node = self.get(resolved)?;
-        if !matches!(node.kind, TypePlanNodeKind::Struct(_)) {
-            return None;
-        }
-        self.nth_child(resolved, idx)
+        let struct_plan = match &node.kind {
+            TypePlanNodeKind::Struct(p) => p,
+            _ => return None,
+        };
+        Some(struct_plan.fields.get(idx)?.type_node)
     }
 
     /// Get the child NodeId for an enum variant's field.
-    /// For enums, children are laid out as: [variant0_field0, variant0_field1, ..., variant1_field0, ...]
     /// Follows BackRef nodes for recursive types.
     #[inline]
     pub fn enum_variant_field_node(
@@ -1013,15 +1259,8 @@ impl TypePlan {
             TypePlanNodeKind::Enum(p) => p,
             _ => return None,
         };
-
-        // Calculate the child offset
-        let mut offset = 0;
-        for i in 0..variant_idx {
-            offset += enum_plan.variants.get(i)?.num_fields;
-        }
-        offset += field_idx;
-
-        self.nth_child(resolved, offset)
+        let variant = enum_plan.variants.get(variant_idx)?;
+        Some(variant.fields.get(field_idx)?.type_node)
     }
 
     /// Get the child NodeId for list/array items (first child).
@@ -1204,7 +1443,7 @@ mod tests {
 
         match &root.kind {
             TypePlanNodeKind::Struct(struct_plan) => {
-                assert_eq!(struct_plan.num_fields, 3);
+                assert_eq!(struct_plan.fields.len(), 3);
                 assert!(!struct_plan.has_flatten);
 
                 // Check field lookup
@@ -1261,13 +1500,13 @@ mod tests {
                 assert_eq!(enum_plan.variant_lookup.find("Unknown"), None);
 
                 // Unit variant has no fields
-                assert_eq!(enum_plan.variants[0].num_fields, 0);
+                assert_eq!(enum_plan.variants[0].fields.len(), 0);
 
                 // Tuple variant has 1 field
-                assert_eq!(enum_plan.variants[1].num_fields, 1);
+                assert_eq!(enum_plan.variants[1].fields.len(), 1);
 
                 // Struct variant has 1 field
-                assert_eq!(enum_plan.variants[2].num_fields, 1);
+                assert_eq!(enum_plan.variants[2].fields.len(), 1);
                 assert_eq!(enum_plan.variants[2].field_lookup.find("value"), Some(0));
             }
             other => panic!("Expected Enum, got {:?}", other),
@@ -1300,7 +1539,7 @@ mod tests {
 
         match &root.kind {
             TypePlanNodeKind::Struct(struct_plan) => {
-                assert_eq!(struct_plan.num_fields, 2);
+                assert_eq!(struct_plan.fields.len(), 2);
                 assert_eq!(struct_plan.fields[0].name, "value");
                 assert_eq!(struct_plan.fields[1].name, "next");
 

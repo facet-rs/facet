@@ -1,7 +1,7 @@
 use facet_path::Path;
 
 use super::*;
-use crate::typeplan::DeserStrategy;
+use crate::typeplan::{DeserStrategy, TypePlanNodeKind};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Misc.
@@ -719,31 +719,77 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         };
 
         if requires_full_init {
-            // Fill defaults before checking full initialization
-            // This handles structs/enums that have fields with #[facet(default)] or
-            // fields whose types implement Default - they should be auto-filled.
-            if let Some(frame) = self.frames_mut().last_mut() {
+            // Try the optimized path using precomputed FieldInitPlan
+            // Extract frame info first (borrows only self.mode)
+            let frame_info = self.mode.stack().last().map(|frame| {
+                let variant_idx = match &frame.tracker {
+                    Tracker::Enum { variant_idx, .. } => Some(*variant_idx),
+                    _ => None,
+                };
+                (frame.type_plan, variant_idx)
+            });
+
+            // Look up plans from root_plan (separate borrow from mode)
+            let plans_info = frame_info.and_then(|(type_plan, variant_idx)| {
+                self.root_plan.get(type_plan).and_then(|plan_node| {
+                    match &plan_node.kind {
+                        TypePlanNodeKind::Struct(_) => {
+                            // For structs, field_init_plans is on the node directly
+                            let plans = &plan_node.field_init_plans[..];
+                            Some(plans)
+                        }
+                        TypePlanNodeKind::Enum(enum_plan) => variant_idx.and_then(|idx| {
+                            enum_plan
+                                .variants
+                                .get(idx)
+                                .map(|v| v.field_init_plans.as_slice())
+                        }),
+                        _ => None,
+                    }
+                })
+            });
+
+            if let Some(plans) = plans_info {
+                // Now mutably borrow mode.stack to get the frame
+                // (root_plan borrow of `plans` is still active but that's fine -
+                // mode and root_plan are separate fields)
+                let frame = self.mode.stack_mut().last_mut().unwrap();
                 crate::trace!(
-                    "end(): Filling defaults before full init check for {}, tracker={:?}",
+                    "end(): Using optimized fill_and_require_fields for {}, tracker={:?}",
                     frame.allocated.shape(),
                     frame.tracker.kind()
                 );
-                frame.fill_defaults().map_err(|e| self.err(e))?;
-            }
+                frame
+                    .fill_and_require_fields(plans, plans.len())
+                    .map_err(|e| self.err(e))?;
+            } else {
+                // Fall back to the old path if optimized path wasn't available
+                // Fill defaults before checking full initialization
+                // This handles structs/enums that have fields with #[facet(default)] or
+                // fields whose types implement Default - they should be auto-filled.
+                if let Some(frame) = self.frames_mut().last_mut() {
+                    crate::trace!(
+                        "end(): Filling defaults before full init check for {}, tracker={:?}",
+                        frame.allocated.shape(),
+                        frame.tracker.kind()
+                    );
+                    frame.fill_defaults().map_err(|e| self.err(e))?;
+                }
 
-            let frame = self.frames().last().unwrap();
-            crate::trace!(
-                "end(): Checking full init for {}, tracker={:?}, is_init={}",
-                frame.allocated.shape(),
-                frame.tracker.kind(),
-                frame.is_init
-            );
-            let result = frame.require_full_initialization();
-            crate::trace!(
-                "end(): require_full_initialization result: {:?}",
-                result.is_ok()
-            );
-            result.map_err(|e| self.err(e))?
+                let frame = self.frames().last().unwrap();
+                crate::trace!(
+                    "end(): Checking full init for {}, tracker={:?}, is_init={}",
+                    frame.allocated.shape(),
+                    frame.tracker.kind(),
+                    frame.is_init
+                );
+                let result = frame.require_full_initialization();
+                crate::trace!(
+                    "end(): require_full_initialization result: {:?}",
+                    result.is_ok()
+                );
+                result.map_err(|e| self.err(e))?
+            }
         }
 
         // Pop the frame and save its data pointer for SmartPointer handling
