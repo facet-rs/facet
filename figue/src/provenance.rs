@@ -40,8 +40,6 @@ use std::vec::Vec;
 use camino::Utf8PathBuf;
 use facet::Facet;
 
-
-
 /// Information about a loaded config file.
 ///
 /// This is reference-counted so it can be shared across all values
@@ -307,7 +305,6 @@ impl FileResolution {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -376,5 +373,4 @@ mod tests {
         assert!(display.contains("CLI"));
         assert!(display.contains("env"));
     }
-
 }

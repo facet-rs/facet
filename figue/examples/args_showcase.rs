@@ -229,13 +229,8 @@ fn main() {
 // =============================================================================
 
 fn showcase_simple_parsing(runner: &mut ShowcaseRunner) {
-    let result = args::from_slice::<SimpleArgs>(&[
-        "-v",
-        "-j",
-        "4",
-        "input.txt",
-        "output.txt",
-    ]).into_result();
+    let result =
+        args::from_slice::<SimpleArgs>(&["-v", "-j", "4", "input.txt", "output.txt"]).into_result();
     runner
         .scenario("Simple Arguments")
         .description("Parse a struct with flags, options, and positional arguments.")
@@ -279,7 +274,8 @@ fn showcase_subcommand_parsing(runner: &mut ShowcaseRunner) {
         "--branch",
         "main",
         "https://github.com/user/repo",
-    ]).into_result();
+    ])
+    .into_result();
     runner
         .scenario("Subcommands")
         .description("Parse a CLI with subcommands, each with their own arguments.")
@@ -298,7 +294,8 @@ fn showcase_nested_subcommands(runner: &mut ShowcaseRunner) {
         "add",
         "origin",
         "https://github.com/user/repo",
-    ]).into_result();
+    ])
+    .into_result();
     runner
         .scenario("Nested Subcommands")
         .description("Parse deeply nested subcommands like `git remote add`.")
