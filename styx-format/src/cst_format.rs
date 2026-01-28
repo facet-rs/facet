@@ -172,16 +172,24 @@ impl CstFormatter {
                             // - if previous entry was schema declaration
                             // - if previous entry had doc comments
                             // - if previous entry is a block (issue #28)
-                            let had_blank_line = consecutive_newlines >= 2;
-                            let prev_was_schema =
-                                entry_index == 1 && is_schema_declaration(&entries[0]);
-                            let prev_had_doc = entry_index > 0
-                                && entries[entry_index - 1].doc_comments().next().is_some();
-                            let prev_is_block =
-                                entry_index > 0 && is_block_entry(&entries[entry_index - 1]);
+                            // BUT NOT if we just wrote a doc comment (consecutive doc comments
+                            // should stay together without blank lines)
+                            if !just_wrote_doc_comment {
+                                let had_blank_line = consecutive_newlines >= 2;
+                                let prev_was_schema =
+                                    entry_index == 1 && is_schema_declaration(&entries[0]);
+                                let prev_had_doc = entry_index > 0
+                                    && entries[entry_index - 1].doc_comments().next().is_some();
+                                let prev_is_block =
+                                    entry_index > 0 && is_block_entry(&entries[entry_index - 1]);
 
-                            if had_blank_line || prev_was_schema || prev_had_doc || prev_is_block {
-                                self.write_newline();
+                                if had_blank_line
+                                    || prev_was_schema
+                                    || prev_had_doc
+                                    || prev_is_block
+                                {
+                                    self.write_newline();
+                                }
                             }
                         }
                         self.write(token.text());
@@ -2218,5 +2226,90 @@ mod proptests {
             }
         }
         comments
+    }
+}
+
+#[cfg(test)]
+mod consecutive_doc_comment_tests {
+    use super::*;
+
+    fn format(source: &str) -> String {
+        format_source(source, FormatOptions::default())
+    }
+
+    #[test]
+    fn test_consecutive_doc_comments_no_blank_line() {
+        // Bug: consecutive doc comments get a blank line inserted between them
+        let input = r#"/// First line of doc
+/// Second line of doc
+entry value
+"#;
+        let output = format(input);
+        // The two doc comments should stay together without a blank line
+        assert!(
+            !output.contains("/// First line of doc\n\n/// Second line of doc"),
+            "Consecutive doc comments should not have a blank line between them!\nOutput:\n{}",
+            output
+        );
+        // They should be on consecutive lines
+        assert!(
+            output.contains("/// First line of doc\n/// Second line of doc"),
+            "Consecutive doc comments should be on consecutive lines!\nOutput:\n{}",
+            output
+        );
+    }
+
+    #[test]
+    fn test_consecutive_doc_comments_after_block_entry() {
+        // Bug: after a block entry, consecutive doc comments get a blank line inserted between them
+        let input = r#"/// Create something
+CreateThing @insert{
+    params {name @string}
+    into things
+    values {name $name}
+}
+
+/// First line of doc for next entry
+/// Second line of doc for next entry
+NextEntry @query{
+    from things
+    select {id}
+}
+"#;
+        let output = format(input);
+        // The two doc comments should stay together without a blank line
+        assert!(
+            !output.contains(
+                "/// First line of doc for next entry\n\n/// Second line of doc for next entry"
+            ),
+            "Consecutive doc comments should not have a blank line between them!\nOutput:\n{}",
+            output
+        );
+        // They should be on consecutive lines
+        assert!(
+            output.contains(
+                "/// First line of doc for next entry\n/// Second line of doc for next entry"
+            ),
+            "Consecutive doc comments should be on consecutive lines!\nOutput:\n{}",
+            output
+        );
+    }
+
+    #[test]
+    fn test_consecutive_doc_comments_after_line_comment() {
+        // Bug: after a line comment, consecutive doc comments get a blank line inserted between them
+        let input = r#"// Section header
+
+/// First line of doc
+/// Second line of doc
+entry value
+"#;
+        let output = format(input);
+        // The two doc comments should stay together without a blank line
+        assert!(
+            !output.contains("/// First line of doc\n\n/// Second line of doc"),
+            "Consecutive doc comments should not have a blank line between them!\nOutput:\n{}",
+            output
+        );
     }
 }
