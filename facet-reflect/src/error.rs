@@ -118,16 +118,6 @@ pub enum ReflectErrorKind {
         field_name: &'static str,
     },
 
-    /// A field in an enum variant was not initialized during build
-    UninitializedEnumField {
-        /// The enum shape
-        shape: &'static Shape,
-        /// The name of the field that wasn't initialized
-        field_name: &'static str,
-        /// The name of the variant containing the field
-        variant_name: &'static str,
-    },
-
     /// A scalar value was not initialized during build
     UninitializedValue {
         /// The scalar shape
@@ -327,18 +317,6 @@ impl core::fmt::Display for ReflectErrorKind {
                 write!(
                     f,
                     "Field '{shape}::{field_name}' was not initialized. \
-                    If you need to leave fields partially initialized and come back later, \
-                    use deferred mode (begin_deferred/finish_deferred)"
-                )
-            }
-            ReflectErrorKind::UninitializedEnumField {
-                shape,
-                field_name,
-                variant_name,
-            } => {
-                write!(
-                    f,
-                    "Field '{shape}::{field_name}' in variant '{variant_name}' was not initialized. \
                     If you need to leave fields partially initialized and come back later, \
                     use deferred mode (begin_deferred/finish_deferred)"
                 )

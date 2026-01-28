@@ -508,9 +508,9 @@ impl PrecomputedValidator {
             }
             ScalarType::U64 => {
                 let v = unsafe { *field_ptr.get::<u64>() };
-                if v > i64::MAX as u64 {
-                    Err(format!("must be <= {}, got {}", limit, v))
-                } else if (v as i64) > limit {
+                // Check if v exceeds limit: either v > i64::MAX (always fails for positive limit)
+                // or v fits in i64 and exceeds limit
+                if v > i64::MAX as u64 || (v as i64) > limit {
                     Err(format!("must be <= {}, got {}", limit, v))
                 } else {
                     Ok(())
@@ -534,7 +534,7 @@ impl PrecomputedValidator {
             }
             ScalarType::Str => {
                 let s: &&str = unsafe { field_ptr.get() };
-                *s
+                s
             }
             ScalarType::CowStr => {
                 let s: &alloc::borrow::Cow<'_, str> = unsafe { field_ptr.get() };
@@ -595,32 +595,56 @@ impl PrecomputedValidator {
 pub enum ValidatorKind {
     /// Custom validator function
     Custom(ValidatorFn),
-    /// Minimum value (for numeric types) - scalar_type tells us how to read the value
-    Min { limit: i64, scalar_type: ScalarType },
-    /// Maximum value (for numeric types) - scalar_type tells us how to read the value
-    Max { limit: i64, scalar_type: ScalarType },
-    /// Minimum length (for strings) - scalar_type tells us how to read the string
+    /// Minimum value (for numeric types)
+    Min {
+        /// The minimum allowed value
+        limit: i64,
+        /// How to read the value from memory
+        scalar_type: ScalarType,
+    },
+    /// Maximum value (for numeric types)
+    Max {
+        /// The maximum allowed value
+        limit: i64,
+        /// How to read the value from memory
+        scalar_type: ScalarType,
+    },
+    /// Minimum length (for strings)
     MinLength {
+        /// The minimum allowed length
         limit: usize,
+        /// How to read the string from memory
         scalar_type: ScalarType,
     },
-    /// Maximum length (for strings) - scalar_type tells us how to read the string
+    /// Maximum length (for strings)
     MaxLength {
+        /// The maximum allowed length
         limit: usize,
+        /// How to read the string from memory
         scalar_type: ScalarType,
     },
-    /// Must be valid email - scalar_type tells us how to read the string
-    Email { scalar_type: ScalarType },
-    /// Must be valid URL - scalar_type tells us how to read the string
-    Url { scalar_type: ScalarType },
-    /// Must match regex pattern - scalar_type tells us how to read the string
+    /// Must be valid email
+    Email {
+        /// How to read the string from memory
+        scalar_type: ScalarType,
+    },
+    /// Must be valid URL
+    Url {
+        /// How to read the string from memory
+        scalar_type: ScalarType,
+    },
+    /// Must match regex pattern
     Regex {
+        /// The regex pattern to match
         pattern: &'static str,
+        /// How to read the string from memory
         scalar_type: ScalarType,
     },
-    /// Must contain substring - scalar_type tells us how to read the string
+    /// Must contain substring
     Contains {
+        /// The substring to search for
         needle: &'static str,
+        /// How to read the string from memory
         scalar_type: ScalarType,
     },
 }
@@ -1232,6 +1256,9 @@ impl TypePlanBuilder {
         let mut fields = Vec::with_capacity(struct_def.fields.len());
         let mut field_init_plans = Vec::new();
 
+        // Check if the container struct has #[facet(default)]
+        let container_has_default = shape.is(Characteristic::Default);
+
         for (index, field) in struct_def.fields.iter().enumerate() {
             // Build the type plan node for this field first
             let field_proxy = field.effective_proxy(self.format_namespace);
@@ -1243,7 +1270,11 @@ impl TypePlanBuilder {
             fields.push(field_meta);
 
             // Build the field initialization plan
-            field_init_plans.push(Self::build_field_init_plan(index, field));
+            field_init_plans.push(Self::build_field_init_plan(
+                index,
+                field,
+                container_has_default,
+            ));
         }
 
         let has_flatten = fields.iter().any(|f| f.is_flattened);
@@ -1264,9 +1295,13 @@ impl TypePlanBuilder {
     }
 
     /// Build a FieldInitPlan for a field. Every field gets a plan.
-    fn build_field_init_plan(index: usize, field: &'static Field) -> FieldInitPlan {
+    fn build_field_init_plan(
+        index: usize,
+        field: &'static Field,
+        container_has_default: bool,
+    ) -> FieldInitPlan {
         let validators = Self::extract_validators(field);
-        let fill_rule = Self::determine_fill_rule(field);
+        let fill_rule = Self::determine_fill_rule(field, container_has_default);
 
         FieldInitPlan {
             index,
@@ -1280,7 +1315,7 @@ impl TypePlanBuilder {
 
     /// Determine how to fill a field that wasn't set.
     /// Every field is either Defaultable or Required.
-    fn determine_fill_rule(field: &'static Field) -> FillRule {
+    fn determine_fill_rule(field: &'static Field, container_has_default: bool) -> FillRule {
         let field_shape = field.shape();
 
         // Check for explicit default on the field (#[facet(default)] or #[facet(default = expr)])
@@ -1301,6 +1336,20 @@ impl TypePlanBuilder {
         // Skipped fields MUST have a default (they're never deserialized)
         // If the type implements Default, use that
         if field.should_skip_deserializing() && field_shape.is(Characteristic::Default) {
+            return FillRule::Defaultable(FieldDefault::FromTrait(field_shape));
+        }
+
+        // Empty structs/tuples (like `()`) are trivially defaultable
+        if let Type::User(UserType::Struct(struct_type)) = field_shape.ty
+            && struct_type.fields.is_empty()
+            && field_shape.is(Characteristic::Default)
+        {
+            return FillRule::Defaultable(FieldDefault::FromTrait(field_shape));
+        }
+
+        // If container has #[facet(default)] and the field's type implements Default,
+        // use the type's Default impl
+        if container_has_default && field_shape.is(Characteristic::Default) {
             return FillRule::Defaultable(FieldDefault::FromTrait(field_shape));
         }
 
@@ -1424,8 +1473,8 @@ impl TypePlanBuilder {
                 let field_meta = FieldPlanMeta::new(field, child_id);
                 variant_fields.push(field_meta);
 
-                // Build the field initialization plan
-                field_init_plans.push(Self::build_field_init_plan(index, field));
+                // Build the field initialization plan (enums don't have container-level default)
+                field_init_plans.push(Self::build_field_init_plan(index, field, false));
             }
 
             let field_lookup = FieldLookup::new(&variant_fields);

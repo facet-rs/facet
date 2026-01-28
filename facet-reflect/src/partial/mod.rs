@@ -555,18 +555,29 @@ impl Frame {
         ownership: FrameOwnership,
         type_plan: typeplan::NodeId,
     ) -> Self {
-        // For empty structs (structs with 0 fields), start as initialized since there's nothing to initialize
-        // This includes empty tuples () which are zero-sized types with no fields to initialize
-        let is_init = matches!(
-            allocated.shape().ty,
-            Type::User(UserType::Struct(struct_type)) if struct_type.fields.is_empty()
-        );
+        // Initialize tracker based on shape type
+        let (tracker, is_init) = match allocated.shape().ty {
+            Type::User(UserType::Struct(struct_type)) => {
+                // For empty structs, start as initialized since there's nothing to initialize
+                let is_init = struct_type.fields.is_empty();
+                (
+                    Tracker::Struct {
+                        iset: ISet::new(struct_type.fields.len()),
+                        current_child: None,
+                    },
+                    is_init,
+                )
+            }
+            // Enums start as Scalar until a variant is selected
+            // Other types also start as Scalar
+            _ => (Tracker::Scalar, false),
+        };
 
         Self {
             data,
             allocated,
             is_init,
-            tracker: Tracker::Scalar,
+            tracker,
             ownership,
             using_custom_deserialization: false,
             shape_level_proxy: None,
@@ -629,7 +640,10 @@ impl Frame {
             Tracker::Struct { iset, .. } => {
                 // Drop initialized struct fields
                 if let Type::User(UserType::Struct(struct_type)) = self.allocated.shape().ty {
-                    if iset.all_set(struct_type.fields.len()) {
+                    let num_fields = struct_type.fields.len();
+                    if iset.all_set(num_fields) || (self.is_init && iset.none_set(num_fields)) {
+                        // Either all fields tracked as set, OR the struct was set wholesale
+                        // (is_init true with empty iset means it was set via set() not field-by-field)
                         unsafe {
                             self.allocated
                                 .shape()
@@ -1149,7 +1163,10 @@ impl Frame {
             Tracker::Struct { iset, .. } => {
                 match self.allocated.shape().ty {
                     Type::User(UserType::Struct(struct_type)) => {
-                        if iset.all_set(struct_type.fields.len()) {
+                        let num_fields = struct_type.fields.len();
+                        // Struct is fully init if all fields are set in iset, OR if it was set
+                        // wholesale (is_init true with empty iset, e.g. via custom deserialization)
+                        if iset.all_set(num_fields) || (self.is_init && iset.none_set(num_fields)) {
                             Ok(())
                         } else {
                             // Find index of the first bit not set
@@ -1187,10 +1204,9 @@ impl Frame {
                     let first_missing_idx = (0..num_fields).find(|&idx| !data.get(idx));
                     if let Some(missing_idx) = first_missing_idx {
                         let field_name = variant.data.fields[missing_idx].name;
-                        Err(ReflectErrorKind::UninitializedEnumField {
+                        Err(ReflectErrorKind::UninitializedField {
                             shape: self.allocated.shape(),
                             field_name,
-                            variant_name: variant.name,
                         })
                     } else {
                         Err(ReflectErrorKind::UninitializedValue {
@@ -1300,9 +1316,13 @@ impl Frame {
             _ => return Ok(()),
         };
 
+        // Fast path: if is_init is true but iset is empty, the struct was set wholesale
+        // (e.g., via custom deserialization or set()). All fields are initialized.
+        let set_wholesale = self.is_init && iset.none_set(num_fields);
+
         // Fast path for defaults: if all fields are already set, no defaults needed.
         // But validators still need to run.
-        let all_fields_set = iset.all_set(num_fields);
+        let all_fields_set = set_wholesale || iset.all_set(num_fields);
 
         for plan in plans {
             if !all_fields_set && !iset.get(plan.index) {
@@ -1329,8 +1349,6 @@ impl Frame {
                         if success {
                             iset.set(plan.index);
                         } else {
-                            // Default function not available - this shouldn't happen
-                            // if TypePlan was built correctly, but handle gracefully
                             return Err(ReflectErrorKind::UninitializedField {
                                 shape: self.allocated.shape(),
                                 field_name: plan.name,
@@ -1338,7 +1356,6 @@ impl Frame {
                         }
                     }
                     FillRule::Required => {
-                        // Field is required but not set - error
                         return Err(ReflectErrorKind::UninitializedField {
                             shape: self.allocated.shape(),
                             field_name: plan.name,

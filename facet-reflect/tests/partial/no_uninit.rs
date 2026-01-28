@@ -59,9 +59,9 @@ fn enum_uninit() {
     assert!(
         matches!(
             result,
-            Err(ref err) if matches!(err.kind, ReflectErrorKind::UninitializedEnumField { .. })
+            Err(ref err) if matches!(err.kind, ReflectErrorKind::UninitializedField { .. })
         ),
-        "Expected UninitializedEnumField, got {result:?}"
+        "Expected UninitializedField, got {result:?}"
     );
 }
 
