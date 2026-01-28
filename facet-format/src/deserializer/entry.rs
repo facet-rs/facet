@@ -1081,15 +1081,22 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             }
         }
 
-        // From here on, we need an actual key name
-        let key = key.ok_or_else(|| DeserializeError {
-            span: Some(self.last_span),
-            path: Some(wip.path()),
-            kind: DeserializeErrorKind::UnexpectedToken {
-                expected: "named key",
-                got: "unit key".into(),
-            },
-        })?;
+        // From here on, we need an actual key name.
+        // For tagged keys (e.g., @schema in Styx), use the tag (with @ prefix) as the key.
+        let key = key
+            .or_else(|| {
+                tag.as_ref()
+                    .filter(|t| !t.is_empty())
+                    .map(|t| Cow::Owned(format!("@{}", t)))
+            })
+            .ok_or_else(|| DeserializeError {
+                span: Some(self.last_span),
+                path: Some(wip.path()),
+                kind: DeserializeErrorKind::UnexpectedToken {
+                    expected: "named key",
+                    got: "unit key".into(),
+                },
+            })?;
 
         // For transparent types (like UserId(String)), we need to use begin_inner
         // to set the inner value. But NOT for pointer types like &str or Cow<str>
