@@ -1,13 +1,13 @@
 ---
 source: crates/styx-tree/src/diagnostic.rs
-expression: rendered
+expression: stripped
 ---
-[31mError:[0m mixed separators in object
-   [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m test.styx:2:6 [38;5;246m][0m
-   [38;5;246m│[0m
- [38;5;246m2 │[0m [38;5;249m [0m[38;5;249m [0m[38;5;249ma[0m[38;5;249m [0m[38;5;249m1[0m[31m,[0m
- [38;5;240m  │[0m      [31m┬[0m  
- [38;5;240m  │[0m      [31m╰[0m[31m─[0m[31m─[0m mixing commas and newlines
- [38;5;240m  │[0m 
- [38;5;240m  │[0m [38;5;115mHelp[0m: use either commas or newlines to separate entries, not both
-[38;5;246m───╯[0m
+Error: mixed separators in object
+   ╭─[ test.styx:2:6 ]
+   │
+ 2 │   a 1,
+   │      ┬  
+   │      ╰── mixing commas and newlines
+   │ 
+   │ Help: use either commas or newlines to separate entries, not both
+───╯

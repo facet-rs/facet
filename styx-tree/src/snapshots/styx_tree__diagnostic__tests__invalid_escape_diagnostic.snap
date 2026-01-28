@@ -1,13 +1,13 @@
 ---
 source: crates/styx-tree/src/diagnostic.rs
-expression: rendered
+expression: stripped
 ---
-[31mError:[0m invalid escape sequence '\q'
-   [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m test.styx:1:12 [38;5;246m][0m
-   [38;5;246m│[0m
- [38;5;246m1 │[0m [38;5;249mn[0m[38;5;249ma[0m[38;5;249mm[0m[38;5;249me[0m[38;5;249m [0m[38;5;249m"[0m[38;5;249mh[0m[38;5;249me[0m[38;5;249ml[0m[38;5;249ml[0m[38;5;249mo[0m[31m\[0m[31mq[0m[38;5;249mw[0m[38;5;249mo[0m[38;5;249mr[0m[38;5;249ml[0m[38;5;249md[0m[38;5;249m"[0m
- [38;5;240m  │[0m            [31m─[0m[31m┬[0m  
- [38;5;240m  │[0m             [31m╰[0m[31m─[0m[31m─[0m invalid escape
- [38;5;240m  │[0m 
- [38;5;240m  │[0m [38;5;115mHelp[0m: valid escapes are: \\, \", \n, \r, \t, \uXXXX, \u{X...}
-[38;5;246m───╯[0m
+Error: invalid escape sequence '\q'
+   ╭─[ test.styx:1:12 ]
+   │
+ 1 │ name "hello\qworld"
+   │            ─┬  
+   │             ╰── invalid escape
+   │ 
+   │ Help: valid escapes are: \\, \", \n, \r, \t, \uXXXX, \u{X...}
+───╯

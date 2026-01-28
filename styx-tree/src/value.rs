@@ -604,6 +604,7 @@ mod tests {
 
     /// Test that Value can roundtrip through JSON via Facet.
     #[test]
+    #[cfg(feature = "facet")]
     fn test_value_json_roundtrip() {
         // Build a complicated Value
         let value = Value {
@@ -717,6 +718,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "facet")]
     fn test_value_postcard_roundtrip() {
         // Simple scalar
         let v = Value::scalar("hello");

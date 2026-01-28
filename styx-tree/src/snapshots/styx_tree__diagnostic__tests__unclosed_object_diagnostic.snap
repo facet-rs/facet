@@ -1,13 +1,13 @@
 ---
 source: crates/styx-tree/src/diagnostic.rs
-expression: rendered
+expression: stripped
 ---
-[31mError:[0m unclosed object
-   [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m test.styx:1:8 [38;5;246m][0m
-   [38;5;246m│[0m
- [38;5;246m1 │[0m [38;5;249ms[0m[38;5;249me[0m[38;5;249mr[0m[38;5;249mv[0m[38;5;249me[0m[38;5;249mr[0m[38;5;249m [0m[31m{[0m
- [38;5;240m  │[0m        [31m┬[0m  
- [38;5;240m  │[0m        [31m╰[0m[31m─[0m[31m─[0m object opened here
- [38;5;240m  │[0m 
- [38;5;240m  │[0m [38;5;115mHelp[0m: add a closing '}'
-[38;5;246m───╯[0m
+Error: unclosed object
+   ╭─[ test.styx:1:8 ]
+   │
+ 1 │ server {
+   │        ┬  
+   │        ╰── object opened here
+   │ 
+   │ Help: add a closing '}'
+───╯
