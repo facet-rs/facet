@@ -356,9 +356,9 @@ tests (
             GoodQuery @query{
                 from product
                 params {
-                    handle TEXT
+                    h TEXT
                 }
-                where {deleted_at @null, handle $handle}
+                where {deleted_at @null, handle $h}
                 select {id}
             }
             STYX
@@ -462,8 +462,8 @@ tests (
         input <<STYX
             GoodQuery @query{
                 from product
-                params {handle @string}
-                where {deleted_at @null, handle $handle}
+                params {h @string}
+                where {deleted_at @null, handle $h}
                 select {id}
             }
             STYX
@@ -477,8 +477,8 @@ tests (
         input <<STYX
             GoodQuery @query{
                 from product
-                params {id @int}
-                where {deleted_at @null, id $id}
+                params {i @int}
+                where {deleted_at @null, id $i}
                 select {id}
             }
             STYX
@@ -492,8 +492,8 @@ tests (
         input <<STYX
             BadQuery @query{
                 from product
-                params {handle @int}
-                where {deleted_at @null, handle $handle}
+                params {h @int}
+                where {deleted_at @null, handle $h}
                 select {id}
             }
             STYX
@@ -508,8 +508,8 @@ tests (
         input <<STYX
             BadQuery @query{
                 from product
-                params {id @string}
-                where {deleted_at @null, id $id}
+                params {i @string}
+                where {deleted_at @null, id $i}
                 select {id}
             }
             STYX
@@ -772,6 +772,22 @@ tests (
                 into product
                 params {handle @string}
                 values {handle $handle}
+            }
+            STYX
+        diagnostics {
+            count 1
+            has ({message "can be shortened" code "redundant-param"})
+        }
+    }
+
+    {
+        name "lint: redundant param reference in where"
+        input <<STYX
+            QueryById @query{
+                from product
+                params {id @int}
+                where {deleted_at @null, id $id}
+                select {handle}
             }
             STYX
         diagnostics {

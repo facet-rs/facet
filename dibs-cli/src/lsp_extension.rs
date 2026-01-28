@@ -613,7 +613,7 @@ impl DibsExtension {
                 // Lint: redundant param references like `column $column` -> just `column`
                 for entry in &obj.entries {
                     let key = entry.key.as_str().unwrap_or("");
-                    if matches!(key, "values" | "set") {
+                    if matches!(key, "values" | "set" | "where") {
                         for redundant in Self::find_redundant_param_refs(&entry.value) {
                             diagnostics.push(Diagnostic {
                                 range: self
@@ -1245,9 +1245,13 @@ impl DibsExtension {
                         continue;
                     }
 
-                    // Skip if there's already a value (explicit type annotation like "id: BIGINT")
-                    if entry.value.as_str().is_some() {
-                        continue;
+                    // Skip if there's an explicit type annotation like "credential_id: BYTEA"
+                    // But don't skip parameter references like "user_id $user_id"
+                    if let Some(val_str) = entry.value.as_str() {
+                        // Parameter references start with $, don't skip those
+                        if !val_str.starts_with('$') {
+                            continue;
+                        }
                     }
 
                     // Find the column in the table
