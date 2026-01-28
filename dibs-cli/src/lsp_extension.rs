@@ -627,7 +627,7 @@ impl DibsExtension {
                                 ),
                                 source: Some("dibs".to_string()),
                                 code: Some("redundant-param".to_string()),
-                                data: None,
+                                data: Some(styx_tree::Value::scalar(&redundant.name)),
                             });
                         }
                     }
@@ -652,7 +652,7 @@ impl DibsExtension {
                                             ),
                                             source: Some("dibs".to_string()),
                                             code: Some("redundant-param".to_string()),
-                                            data: None,
+                                            data: Some(styx_tree::Value::scalar(&redundant.name)),
                                         });
                                     }
                                 }
@@ -1673,9 +1673,8 @@ impl StyxLspExtension for DibsExtension {
         // Offer quick fixes for diagnostics at this range
         for diag in &params.diagnostics {
             if diag.code.as_deref() == Some("redundant-param") {
-                // Extract the column name from the message
-                // Message format: "'col $col' can be shortened to just 'col' (implicit @param)"
-                if let Some(name) = diag.message.split('\'').nth(3) {
+                // Get the column name from diagnostic data
+                if let Some(name) = diag.data.as_ref().and_then(|v| v.as_str()) {
                     actions.push(CodeAction {
                         title: format!("Shorten to '{}'", name),
                         kind: Some(CodeActionKind::QuickFix),
