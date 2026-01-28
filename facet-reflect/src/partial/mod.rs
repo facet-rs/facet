@@ -377,7 +377,9 @@ pub(crate) struct Frame {
     /// This is navigated in parallel with the value - when we begin_nth_field,
     /// the new frame gets the NodeId for that field's child plan.
     /// The TypePlan arena is owned by Partial and lives as long as the Partial.
-    pub(crate) type_plan: Option<typeplan::NodeId>,
+    /// Always present - TypePlan is built for what we actually deserialize into
+    /// (including proxies).
+    pub(crate) type_plan: typeplan::NodeId,
 }
 
 #[derive(Debug)]
@@ -550,7 +552,7 @@ impl Frame {
         data: PtrUninit,
         allocated: AllocatedShape,
         ownership: FrameOwnership,
-        type_plan: Option<typeplan::NodeId>,
+        type_plan: typeplan::NodeId,
     ) -> Self {
         // For empty structs (structs with 0 fields), start as initialized since there's nothing to initialize
         // This includes empty tuples () which are zero-sized types with no fields to initialize

@@ -161,7 +161,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         frame: &mut Frame,
         struct_type: StructType,
         idx: usize,
-        child_plan: Option<crate::typeplan::NodeId>,
+        child_plan: crate::typeplan::NodeId,
     ) -> Result<Frame, ReflectErrorKind> {
         if idx >= struct_type.fields.len() {
             return Err(ReflectErrorKind::OperationFailed {
@@ -229,7 +229,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         frame: &mut Frame,
         array_type: ArrayType,
         idx: usize,
-        child_plan: Option<crate::typeplan::NodeId>,
+        child_plan: crate::typeplan::NodeId,
     ) -> Result<Frame, ReflectErrorKind> {
         if idx >= array_type.n {
             return Err(ReflectErrorKind::OperationFailed {
@@ -307,7 +307,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         frame: &mut Frame,
         variant: &'static Variant,
         idx: usize,
-        child_plan: Option<crate::typeplan::NodeId>,
+        child_plan: crate::typeplan::NodeId,
     ) -> Result<Frame, ReflectErrorKind> {
         if idx >= variant.data.fields.len() {
             return Err(ReflectErrorKind::OperationFailed {

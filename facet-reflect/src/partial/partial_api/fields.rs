@@ -10,7 +10,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
     /// then this returns `None` for sure.
     pub fn field_index(&self, field_name: &str) -> Option<usize> {
         let frame = self.frames().last()?;
-        let node_id = frame.type_plan?;
+        let node_id = frame.type_plan;
 
         // For structs: use StructPlan's field_lookup
         if let Some(struct_plan) = self.root_plan.as_struct_plan(node_id) {
@@ -180,8 +180,10 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             Type::User(user_type) => match user_type {
                 UserType::Struct(struct_type) => {
                     // Compute child NodeId before mutable borrow
-                    let child_plan =
-                        parent_node.and_then(|pn| self.root_plan.struct_field_node(pn, idx));
+                    let child_plan = self
+                        .root_plan
+                        .struct_field_node(parent_node, idx)
+                        .expect("TypePlan must have struct field node");
                     let frame = self.frames_mut().last_mut().unwrap();
                     Self::begin_nth_struct_field(frame, struct_type, idx, child_plan)
                         .map_err(|e| self.err(e))?
@@ -203,9 +205,10 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                         }
                     };
                     // Compute child NodeId using stored variant_idx (O(1) lookup, not O(n) search)
-                    let child_plan = parent_node.and_then(|pn| {
-                        self.root_plan.enum_variant_field_node(pn, variant_idx, idx)
-                    });
+                    let child_plan = self
+                        .root_plan
+                        .enum_variant_field_node(parent_node, variant_idx, idx)
+                        .expect("TypePlan must have enum variant field node");
                     let frame = self.frames_mut().last_mut().unwrap();
                     Self::begin_nth_enum_field(frame, variant, idx, child_plan)
                         .map_err(|e| self.err(e))?
@@ -226,7 +229,10 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             Type::Sequence(sequence_type) => match sequence_type {
                 SequenceType::Array(array_type) => {
                     // Compute child NodeId before mutable borrow
-                    let child_plan = parent_node.and_then(|pn| self.root_plan.list_item_node(pn));
+                    let child_plan = self
+                        .root_plan
+                        .list_item_node(parent_node)
+                        .expect("TypePlan must have array item node");
                     let frame = self.frames_mut().last_mut().unwrap();
                     Self::begin_nth_array_element(frame, array_type, idx, child_plan)
                         .map_err(|e| self.err(e))?

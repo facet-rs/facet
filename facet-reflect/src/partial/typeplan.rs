@@ -358,19 +358,40 @@ impl TypePlanBuilder {
 
     /// Build a node for a shape, returning its NodeId.
     /// Handles cycles by returning BackRef when we detect recursion.
+    ///
+    /// We build the plan for what we're actually deserializing into:
+    /// - If there's a proxy, use proxy.shape
+    /// - If there's a builder_shape, use that (e.g., Bytes builds from Vec<u8>)
+    /// - If there's an inner with try_from, use inner (e.g., Arc<str> from String)
+    /// - Otherwise, use the shape itself
     fn build_node(&mut self, shape: &'static Shape) -> NodeId {
         let type_id = shape.id;
 
         // Precompute proxy for this shape using format namespace
         let proxy = shape.effective_proxy(self.format_namespace);
 
+        // Determine what shape we're actually deserializing into
+        // Priority: proxy > builder_shape > inner (with try_from) > shape itself
+        let build_shape = proxy
+            .map(|p| p.shape)
+            .or(shape.builder_shape)
+            .or_else(|| {
+                if shape.vtable.has_try_from() {
+                    shape.inner
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(shape);
+
         // Check if we're already building this type (cycle detected)
+        // Use the original type_id for cycle detection
         if let Some(&existing_id) = self.building.get(&type_id) {
             // Create a BackRef node pointing to the existing node
             let backref_node = TypePlanNode {
-                shape,
+                shape: build_shape,
                 kind: TypePlanNodeKind::BackRef(existing_id),
-                has_default: shape.is(Characteristic::Default),
+                has_default: build_shape.is(Characteristic::Default),
                 proxy,
             };
             return self.arena.new_node(backref_node);
@@ -378,9 +399,9 @@ impl TypePlanBuilder {
 
         // Create placeholder node first so children can reference it
         let placeholder = TypePlanNode {
-            shape,
+            shape: build_shape,
             kind: TypePlanNodeKind::Unknown, // Will be replaced
-            has_default: shape.is(Characteristic::Default),
+            has_default: build_shape.is(Characteristic::Default),
             proxy,
         };
         let node_id = self.arena.new_node(placeholder);
@@ -388,8 +409,8 @@ impl TypePlanBuilder {
         // Mark this type as being built
         self.building.insert(type_id, node_id);
 
-        // Build the actual kind and children
-        let kind = self.build_kind(shape, node_id);
+        // Build the actual kind and children from the build_shape (proxy or original)
+        let kind = self.build_kind(build_shape, node_id);
 
         // Update the node with the real kind
         self.arena.get_mut(node_id).unwrap().get_mut().kind = kind;
@@ -493,8 +514,15 @@ impl TypePlanBuilder {
             let field_meta = FieldPlanMeta::from_field(field);
             fields.push(field_meta);
 
+            // Check for field-level proxy first, then fall back to field's shape
+            // (which may have its own type-level proxy, handled in build_node)
+            let field_shape = field
+                .effective_proxy(self.format_namespace)
+                .map(|p| p.shape)
+                .unwrap_or_else(|| field.shape());
+
             // Build child plan for this field and attach to parent
-            let child_id = self.build_node(field.shape());
+            let child_id = self.build_node(field_shape);
             parent_id.append(child_id, &mut self.arena);
         }
 
@@ -522,8 +550,14 @@ impl TypePlanBuilder {
                 let field_meta = FieldPlanMeta::from_field(field);
                 variant_fields.push(field_meta);
 
+                // Check for field-level proxy first, then fall back to field's shape
+                let field_shape = field
+                    .effective_proxy(self.format_namespace)
+                    .map(|p| p.shape)
+                    .unwrap_or_else(|| field.shape());
+
                 // Build child plan for this field and attach to parent
-                let child_id = self.build_node(field.shape());
+                let child_id = self.build_node(field_shape);
                 parent_id.append(child_id, &mut self.arena);
             }
 

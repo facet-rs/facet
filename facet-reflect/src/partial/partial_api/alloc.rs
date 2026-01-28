@@ -203,7 +203,6 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
         // Build the TypePlan once for the entire deserialization
         let root_plan = Box::new(TypePlan::build_for_format(shape, format_namespace));
-        let root_node = Some(root_plan.root());
 
         // Preallocate a couple of frames for nested structures
         let mut stack = Vec::with_capacity(4);
@@ -211,7 +210,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             ptr,
             AllocatedShape::new(shape, allocated_size),
             FrameOwnership::External,
-            root_node,
+            root_plan.root(),
         ));
 
         Ok(Partial {
@@ -244,7 +243,6 @@ fn alloc_shape_inner<'facet, const BORROW: bool>(
     // Build the TypePlan once for the entire deserialization
     // Pass format_namespace to enable format-specific proxy resolution
     let root_plan = Box::new(TypePlan::build_for_format(shape, format_namespace));
-    let root_node = Some(root_plan.root());
 
     // Preallocate a couple of frames. The cost of allocating 4 frames is
     // basically identical to allocating 1 frame, so for every type that
@@ -254,7 +252,7 @@ fn alloc_shape_inner<'facet, const BORROW: bool>(
         data,
         AllocatedShape::new(shape, allocated_size),
         FrameOwnership::Owned,
-        root_node,
+        root_plan.root(),
     ));
 
     Ok(Partial {

@@ -14,7 +14,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
     pub fn init_map(mut self) -> Result<Self, ReflectError> {
         // Get shape upfront to avoid borrow conflicts
         let shape = self.frames().last().unwrap().allocated.shape();
-        let frame = self.frames_mut().last_mut().unwrap();
+        let frame = self.mode.stack_mut().last_mut().unwrap();
 
         // Check tracker state before initializing
         match &frame.tracker {
@@ -99,7 +99,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
 
                 // Initialize the map with default capacity (0)
                 // Need to re-borrow frame after the early returns above
-                let frame = self.frames_mut().last_mut().unwrap();
+                let frame = self.mode.stack_mut().last_mut().unwrap();
                 unsafe {
                     init_fn(frame.data, 0);
                 }
@@ -113,7 +113,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             Def::DynamicValue(dyn_def) => {
                 // Initialize as a dynamic object
                 // Need to re-borrow frame after the early returns above
-                let frame = self.frames_mut().last_mut().unwrap();
+                let frame = self.mode.stack_mut().last_mut().unwrap();
                 unsafe {
                     (dyn_def.vtable.begin_object)(frame.data);
                 }
@@ -141,9 +141,11 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
     /// (or the key should be initialized somehow) and `end()` should be called
     /// to pop the frame.
     pub fn begin_key(mut self) -> Result<Self, ReflectError> {
-        // Get shape upfront to avoid borrow conflicts
-        let shape = self.frames().last().unwrap().allocated.shape();
-        let frame = self.frames_mut().last_mut().unwrap();
+        // Get shape and type_plan upfront to avoid borrow conflicts
+        let frame = self.frames().last().unwrap();
+        let shape = frame.allocated.shape();
+        let parent_type_plan = frame.type_plan;
+        let frame = self.mode.stack_mut().last_mut().unwrap();
 
         // Check that we have a Map in Idle state
         let map_def = match (&shape.def, &frame.tracker) {
@@ -221,10 +223,11 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
 
         // Push a new frame for the key
         // Get child type plan NodeId for map keys
-        let child_plan = frame
-            .type_plan
-            .and_then(|pn| self.root_plan.map_key_node(pn));
-        self.frames_mut().push(Frame::new(
+        let child_plan = self
+            .root_plan
+            .map_key_node(parent_type_plan)
+            .expect("TypePlan must have map key node");
+        self.mode.stack_mut().push(Frame::new(
             PtrUninit::new(key_ptr_raw.as_ptr()),
             AllocatedShape::new(key_shape, key_layout.size()),
             FrameOwnership::TrackedBuffer,
@@ -237,9 +240,11 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
     /// Pushes a frame for the map value
     /// Must be called after the key has been set and popped
     pub fn begin_value(mut self) -> Result<Self, ReflectError> {
-        // Get shape upfront to avoid borrow conflicts
-        let shape = self.frames().last().unwrap().allocated.shape();
-        let frame = self.frames_mut().last_mut().unwrap();
+        // Get shape and type_plan upfront to avoid borrow conflicts
+        let frame = self.frames().last().unwrap();
+        let shape = frame.allocated.shape();
+        let parent_type_plan = frame.type_plan;
+        let frame = self.mode.stack_mut().last_mut().unwrap();
 
         // Check that we have a Map in PushingValue state with no value_ptr yet
         let (map_def, key_ptr) = match (&shape.def, &frame.tracker) {
@@ -317,10 +322,11 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
 
         // Push a new frame for the value
         // Get child type plan NodeId for map values
-        let child_plan = frame
-            .type_plan
-            .and_then(|pn| self.root_plan.map_value_node(pn));
-        self.frames_mut().push(Frame::new(
+        let child_plan = self
+            .root_plan
+            .map_value_node(parent_type_plan)
+            .expect("TypePlan must have map value node");
+        self.mode.stack_mut().push(Frame::new(
             value_ptr,
             AllocatedShape::new(value_shape, value_layout.size()),
             FrameOwnership::TrackedBuffer,
@@ -341,9 +347,11 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
     pub fn begin_object_entry(mut self, key: &str) -> Result<Self, ReflectError> {
         crate::trace!("begin_object_entry({key:?})");
 
-        // Get shape upfront to avoid borrow conflicts
-        let shape = self.frames().last().unwrap().allocated.shape();
-        let frame = self.frames_mut().last_mut().unwrap();
+        // Get shape and type_plan upfront to avoid borrow conflicts
+        let frame = self.frames().last().unwrap();
+        let shape = frame.allocated.shape();
+        let parent_type_plan = frame.type_plan;
+        let frame = self.mode.stack_mut().last_mut().unwrap();
 
         // Check that we have a DynamicValue in Object state with Idle insert_state
         let dyn_def = match (&shape.def, &frame.tracker) {
@@ -404,7 +412,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     .expect("value must be sized")
                     .size();
                 // For DynamicValue, use the same type plan (self-recursive)
-                let child_plan = frame.type_plan;
+                let child_plan = parent_type_plan;
                 let mut new_frame = Frame::new(
                     existing_ptr.as_uninit(),
                     AllocatedShape::new(value_shape, value_size),
@@ -418,7 +426,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 // So we set Scalar tracker and let init_map/init_list handle the conversion.
                 // init_list will convert Scalar->List if shape is Def::List, or handle DynamicValue directly.
                 new_frame.tracker = Tracker::Scalar;
-                self.frames_mut().push(new_frame);
+                self.mode.stack_mut().push(new_frame);
                 return Ok(self);
             }
         }
@@ -456,8 +464,8 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
 
         // Push a new frame for the value
         // For DynamicValue, use the same type plan (self-recursive)
-        let child_plan = frame.type_plan;
-        self.frames_mut().push(Frame::new(
+        let child_plan = parent_type_plan;
+        self.mode.stack_mut().push(Frame::new(
             PtrUninit::new(value_ptr.as_ptr()),
             AllocatedShape::new(value_shape, value_layout.size()),
             FrameOwnership::Owned,

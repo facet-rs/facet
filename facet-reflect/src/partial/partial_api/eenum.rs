@@ -19,8 +19,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// This searches by effective name (respecting `#[facet(rename = "...")]` attributes).
     pub fn find_variant(&self, variant_name: &str) -> Option<(usize, &'static Variant)> {
         let frame = self.frames().last()?;
-        let node_id = frame.type_plan?;
-        let enum_plan = self.root_plan.as_enum_plan(node_id)?;
+        let enum_plan = self.root_plan.as_enum_plan(frame.type_plan)?;
         let idx = enum_plan.variant_lookup.find(variant_name)?;
         Some((idx, enum_plan.variants[idx].variant))
     }

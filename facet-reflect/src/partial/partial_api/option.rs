@@ -100,9 +100,9 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         }
 
         // Set tracker to indicate we're building the inner value
-        // Copy the type_plan pointer before dropping the mutable borrow
+        // Copy the type_plan (Copy) before dropping the mutable borrow
         let parent_type_plan = {
-            let frame = self.frames_mut().last_mut().unwrap();
+            let frame = self.mode.stack_mut().last_mut().unwrap();
             frame.tracker = Tracker::Option {
                 building_inner: true,
             };
@@ -160,7 +160,10 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         // Create a new frame for the inner value
         // For re-entry, we use ManagedElsewhere ownership since the Option frame owns the memory
         // Get child type plan NodeId for Option inner
-        let child_plan = parent_type_plan.and_then(|pn| self.root_plan.option_inner_node(pn));
+        let child_plan = self
+            .root_plan
+            .option_inner_node(parent_type_plan)
+            .expect("TypePlan must have option inner node");
         let mut inner_frame = Frame::new(
             inner_data,
             AllocatedShape::new(inner_shape, inner_layout.size()),
@@ -178,7 +181,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             inner_frame.is_init = true;
         }
 
-        self.frames_mut().push(inner_frame);
+        self.mode.stack_mut().push(inner_frame);
 
         Ok(self)
     }
@@ -187,8 +190,9 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
     pub fn begin_inner(mut self) -> Result<Self, ReflectError> {
         // Get the inner shape and check for try_from
         // Priority: builder_shape (for immutable collections) > inner (for variance/transparent wrappers)
-        let (inner_shape, has_try_from, parent_shape, is_option) = {
+        let (inner_shape, has_try_from, parent_shape, is_option, parent_type_plan) = {
             let frame = self.frames().last().unwrap();
+            let type_plan = frame.type_plan;
             // Check builder_shape first (immutable collections like Bytes, Arc<[T]>)
             if let Some(builder_shape) = frame.allocated.shape().builder_shape {
                 let has_try_from = frame.allocated.shape().vtable.has_try_from();
@@ -198,6 +202,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     has_try_from,
                     frame.allocated.shape(),
                     is_option,
+                    type_plan,
                 )
             } else if let Some(inner_shape) = frame.allocated.shape().inner {
                 let has_try_from = frame.allocated.shape().vtable.has_try_from();
@@ -207,9 +212,10 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     has_try_from,
                     frame.allocated.shape(),
                     is_option,
+                    type_plan,
                 )
             } else {
-                (None, false, frame.allocated.shape(), false)
+                (None, false, frame.allocated.shape(), false, type_plan)
             }
         };
 
@@ -254,12 +260,12 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 trace!(
                     "begin_inner: Creating frame for inner type {inner_shape} (parent is {parent_shape})"
                 );
-                // Conversion frames use a different shape than the parent, so no precomputed plan applies
-                self.frames_mut().push(Frame::new(
+                // TypePlan already builds for the inner/builder shape, so reuse parent's type_plan
+                self.mode.stack_mut().push(Frame::new(
                     inner_data,
                     AllocatedShape::new(inner_shape, inner_layout.size()),
                     FrameOwnership::Owned,
-                    None,
+                    parent_type_plan,
                 ));
 
                 Ok(self)
@@ -300,18 +306,21 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     .expect("must be sized")
                     .size();
 
+                // TypePlan already builds for proxy shapes at the field level,
+                // so the current frame's type_plan represents the proxy structure
+                let parent_type_plan = self.frames().last().unwrap().type_plan;
+
                 trace!(
                     "begin_custom_deserialization: Creating frame for deserialization type {source_shape}"
                 );
-                // Custom deserialization uses proxy shape, no precomputed plan applies
                 let mut new_frame = Frame::new(
                     source_data,
                     AllocatedShape::new(source_shape, source_size),
                     FrameOwnership::Owned,
-                    None,
+                    parent_type_plan,
                 );
                 new_frame.using_custom_deserialization = true;
-                self.frames_mut().push(new_frame);
+                self.mode.stack_mut().push(new_frame);
 
                 Ok(self)
             } else {
@@ -377,20 +386,23 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             .expect("must be sized")
             .size();
 
+        // TypePlan already builds for proxy shapes at the container level,
+        // so the current frame's type_plan represents the proxy structure
+        let parent_type_plan = self.frames().last().unwrap().type_plan;
+
         trace!(
             "begin_custom_deserialization_from_shape_with_format: Creating frame for deserialization type {source_shape}"
         );
-        // Custom deserialization uses proxy shape, no precomputed plan applies
         let mut new_frame = Frame::new(
             source_data,
             AllocatedShape::new(source_shape, source_size),
             FrameOwnership::Owned,
-            None,
+            parent_type_plan,
         );
         new_frame.using_custom_deserialization = true;
         // Store the target shape's proxy in the frame so end() can use it for conversion
         new_frame.shape_level_proxy = Some(proxy_def);
-        self.frames_mut().push(new_frame);
+        self.mode.stack_mut().push(new_frame);
 
         Ok((self, true))
     }
@@ -433,22 +445,25 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     .expect("must be sized")
                     .size();
 
+                // TypePlan already builds for proxy shapes at the field level,
+                // so the current frame's type_plan represents the proxy structure
+                let parent_type_plan = self.frames().last().unwrap().type_plan;
+
                 trace!(
                     "begin_custom_deserialization_with_format: Creating frame for deserialization type {source_shape}"
                 );
-                // Custom deserialization uses proxy shape, no precomputed plan applies
                 let mut new_frame = Frame::new(
                     source_data,
                     AllocatedShape::new(source_shape, source_size),
                     FrameOwnership::Owned,
-                    None,
+                    parent_type_plan,
                 );
                 new_frame.using_custom_deserialization = true;
                 // Store the proxy def so end() can use the correct convert_in function
                 // This is important for format-specific proxies where field.proxy() would
                 // return the wrong proxy.
                 new_frame.shape_level_proxy = Some(proxy_def);
-                self.frames_mut().push(new_frame);
+                self.mode.stack_mut().push(new_frame);
 
                 Ok(self)
             } else {
