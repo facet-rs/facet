@@ -29,6 +29,8 @@ tarpaulin-report.html
 # Profiling
 *.mm_profdata
 perf.data*
+heaptrack.*.zst
+heaptrack.*.gz
 
 # Rustc output
 rust_out
