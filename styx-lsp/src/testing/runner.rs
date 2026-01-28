@@ -370,9 +370,33 @@ fn check_inlay_hints(
 
     // Check 'has' expectations
     for exp in &expected.has {
-        let found = hints.iter().any(|h| h.label == exp.label);
+        let found = hints.iter().any(|h| {
+            if h.label != exp.label {
+                return false;
+            }
+            // Check line if specified (convert from 1-indexed to 0-indexed)
+            if let Some(line) = exp.line
+                && h.position.line != line - 1
+            {
+                return false;
+            }
+            true
+        });
         if !found {
-            errors.push(format!("expected inlay hint '{}' not found", exp.label));
+            if let Some(line) = exp.line {
+                // Show actual positions for debugging
+                let actual_positions: Vec<_> = hints
+                    .iter()
+                    .filter(|h| h.label == exp.label)
+                    .map(|h| h.position.line + 1) // Convert back to 1-indexed for display
+                    .collect();
+                errors.push(format!(
+                    "expected inlay hint '{}' at line {}, found at lines {:?}",
+                    exp.label, line, actual_positions
+                ));
+            } else {
+                errors.push(format!("expected inlay hint '{}' not found", exp.label));
+            }
         }
     }
 }
