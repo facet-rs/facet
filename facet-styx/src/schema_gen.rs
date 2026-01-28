@@ -629,6 +629,12 @@ impl SchemaGenerator {
     fn enum_to_schema(&mut self, enum_type: &facet_core::EnumType) -> Schema {
         use facet_core::StructKind;
 
+        // If any variant has #[facet(other)], this enum accepts any tag,
+        // so emit @any instead of trying to enumerate variants
+        if enum_type.variants.iter().any(|v| v.is_other()) {
+            return Schema::Any;
+        }
+
         let mut variants: HashMap<Documented<String>, Schema> = HashMap::new();
 
         for variant in enum_type.variants {
@@ -1259,6 +1265,54 @@ mod tests {
             parsed.schema.contains_key(&Some("Item".to_string())),
             "schema should have Item type definition. Keys: {:?}",
             parsed.schema.keys().collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_enum_with_facet_other_becomes_any() {
+        /// An enum that accepts any tag via #[facet(other)].
+        #[derive(Facet)]
+        #[facet(rename_all = "lowercase")]
+        #[repr(u8)]
+        #[allow(dead_code)]
+        enum ValueExpr {
+            /// Default value (@default).
+            Default,
+            /// Everything else: functions and bare scalars.
+            #[facet(other)]
+            Other {
+                #[facet(tag)]
+                tag: Option<String>,
+                #[facet(content)]
+                content: Option<String>,
+            },
+        }
+
+        #[derive(Facet)]
+        #[allow(dead_code)]
+        struct Config {
+            value: ValueExpr,
+        }
+
+        let schema = schema_from_type::<Config>();
+        tracing::debug!("Generated schema:\n{schema}");
+
+        // The ValueExpr type should be @any because of #[facet(other)]
+        assert!(
+            schema.contains("ValueExpr @any"),
+            "enum with #[facet(other)] should become @any. Got:\n{}",
+            schema
+        );
+        // Should NOT have an enum definition with "other" as a variant
+        assert!(
+            !schema.contains("@enum"),
+            "should not emit @enum for type with #[facet(other)]. Got:\n{}",
+            schema
+        );
+        assert!(
+            !schema.contains("other"),
+            "should not contain 'other' as a variant name. Got:\n{}",
+            schema
         );
     }
 }

@@ -98,6 +98,7 @@ impl StyxLanguageServer {
     }
 
     /// Publish diagnostics for a document
+    #[allow(clippy::too_many_arguments)]
     async fn publish_diagnostics(
         &self,
         uri: Url,
@@ -4279,7 +4280,7 @@ schema {
 
         // Create a fake server to call compute_diagnostics
         // We need to verify that parse errors are converted to LSP diagnostics
-        let uri = tower_lsp::lsp_types::Url::parse("file:///test.styx").unwrap();
+        let _uri = tower_lsp::lsp_types::Url::parse("file:///test.styx").unwrap();
 
         // Note: styx_tree::parse fails on this input, so tree is None
         let tree = styx_tree::parse(content).ok();

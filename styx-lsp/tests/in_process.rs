@@ -113,11 +113,11 @@ async fn test_cst_error_reported_as_diagnostic() {
     loop {
         tokio::select! {
             Some(notification) = rx.recv() => {
-                if notification.method() == "textDocument/publishDiagnostics" {
-                    if let Some(params) = notification.params() {
-                        if params.get("uri").and_then(|u| u.as_str()) == Some("file:///cst_error.styx") {
-                            if let Some(diagnostics) = params.get("diagnostics").and_then(|d| d.as_array()) {
-                                if !diagnostics.is_empty() {
+                if notification.method() == "textDocument/publishDiagnostics"
+                    && let Some(params) = notification.params()
+                        && params.get("uri").and_then(|u| u.as_str()) == Some("file:///cst_error.styx") {
+                            if let Some(diagnostics) = params.get("diagnostics").and_then(|d| d.as_array())
+                                && !diagnostics.is_empty() {
                                     found_diagnostics = true;
                                     diagnostic_message = diagnostics[0]
                                         .get("message")
@@ -125,11 +125,8 @@ async fn test_cst_error_reported_as_diagnostic() {
                                         .unwrap_or("")
                                         .to_string();
                                 }
-                            }
                             break;
                         }
-                    }
-                }
             }
             _ = &mut timeout => {
                 break;
@@ -233,9 +230,9 @@ async fn test_diagnostics_published_for_parse_error() {
     loop {
         tokio::select! {
             Some(notification) = rx.recv() => {
-                if notification.method() == "textDocument/publishDiagnostics" {
-                    if let Some(params) = notification.params() {
-                        if params.get("uri").and_then(|u| u.as_str()) == Some("file:///test.styx") {
+                if notification.method() == "textDocument/publishDiagnostics"
+                    && let Some(params) = notification.params()
+                        && params.get("uri").and_then(|u| u.as_str()) == Some("file:///test.styx") {
                             if let Some(diagnostics) = params.get("diagnostics").and_then(|d| d.as_array()) {
                                 diagnostic_count = diagnostics.len();
                                 found_diagnostics = true;
@@ -249,8 +246,6 @@ async fn test_diagnostics_published_for_parse_error() {
                             }
                             break;
                         }
-                    }
-                }
             }
             _ = &mut timeout => {
                 break;
@@ -328,17 +323,15 @@ async fn test_no_diagnostics_for_valid_document() {
     loop {
         tokio::select! {
             Some(notification) = rx.recv() => {
-                if notification.method() == "textDocument/publishDiagnostics" {
-                    if let Some(params) = notification.params() {
-                        if params.get("uri").and_then(|u| u.as_str()) == Some("file:///valid.styx") {
+                if notification.method() == "textDocument/publishDiagnostics"
+                    && let Some(params) = notification.params()
+                        && params.get("uri").and_then(|u| u.as_str()) == Some("file:///valid.styx") {
                             found_our_doc = true;
                             if let Some(diagnostics) = params.get("diagnostics").and_then(|d| d.as_array()) {
                                 diagnostic_count = diagnostics.len();
                             }
                             break;
                         }
-                    }
-                }
             }
             _ = &mut timeout => {
                 break;
