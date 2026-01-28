@@ -275,9 +275,8 @@ port 8080"#;
     }
 
     #[test]
-    fn test_schema_directive_in_config_value() {
-        // When parsing into figue's ConfigValue, tagged keys like @schema
-        // should be preserved as "@schema" string keys
+    fn test_schema_directive_skipped_in_config_value() {
+        // @schema at top level should be skipped even when parsing into ConfigValue
         use figue::ConfigValue;
 
         let input = r#"@schema {id crate:dibs@1, cli dibs}
@@ -288,11 +287,11 @@ db {
 "#;
         let result: ConfigValue = from_str(input).unwrap();
 
-        // Verify we got an object with the expected keys
+        // Verify @schema was skipped, only db remains
         if let ConfigValue::Object(obj) = result {
             assert!(
-                obj.value.contains_key("@schema"),
-                "Expected '@schema' key, got: {:?}",
+                !obj.value.contains_key("@schema"),
+                "Expected '@schema' to be skipped, got: {:?}",
                 obj.value.keys().collect::<Vec<_>>()
             );
             assert!(

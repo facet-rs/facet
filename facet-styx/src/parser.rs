@@ -598,6 +598,18 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
 
                             // @name with space after = tagged key with tag name
                             let tag_name_str = name_token.text;
+
+                            // Skip @schema at the implicit root level - it's metadata, not data
+                            if tag_name_str == "schema"
+                                && self.stack.last()
+                                    == Some(&ContextState::Object { implicit: true })
+                            {
+                                self.expecting_value = true;
+                                self.skip_value()?;
+                                self.pending_doc.clear();
+                                return self.next_event();
+                            }
+
                             // Still store "@name" as pending_key for error reporting
                             self.pending_key = Some(Cow::Owned(format!("@{}", tag_name_str)));
                             self.expecting_value = true;
