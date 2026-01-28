@@ -1,4 +1,4 @@
-use facet_core::Def;
+use facet_core::{Def, Facet};
 use facet_reflect::Partial;
 
 use crate::{
@@ -24,7 +24,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             // Cow<str> - handle specially to preserve borrowing
             if let Def::Pointer(ptr_def) = shape.def
                 && let Some(pointee) = ptr_def.pointee()
-                && pointee.type_identifier == "str"
+                && *pointee == *str::SHAPE
             {
                 // Hint to non-self-describing parsers that a string is expected
                 self.parser.hint_scalar_type(ScalarTypeHint::String);
@@ -50,7 +50,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             if let Def::Pointer(ptr_def) = shape.def
                 && let Some(pointee) = ptr_def.pointee()
                 && let Def::Slice(slice_def) = pointee.def
-                && slice_def.t.type_identifier == "u8"
+                && *slice_def.t == *u8::SHAPE
             {
                 // Hint to non-self-describing parsers that bytes are expected
                 self.parser.hint_scalar_type(ScalarTypeHint::Bytes);
@@ -81,9 +81,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         // &str - handle specially for zero-copy borrowing
         if let Def::Pointer(ptr_def) = shape.def
             && matches!(ptr_def.known, Some(KnownPointer::SharedReference))
-            && ptr_def
-                .pointee()
-                .is_some_and(|p| p.type_identifier == "str")
+            && ptr_def.pointee().is_some_and(|p| *p == *str::SHAPE)
         {
             // Hint to non-self-describing parsers that a string is expected
             self.parser.hint_scalar_type(ScalarTypeHint::String);
@@ -109,7 +107,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             && matches!(ptr_def.known, Some(KnownPointer::SharedReference))
             && let Some(pointee) = ptr_def.pointee()
             && let Def::Slice(slice_def) = pointee.def
-            && slice_def.t.type_identifier == "u8"
+            && *slice_def.t == *u8::SHAPE
         {
             // Hint to non-self-describing parsers that bytes are expected
             self.parser.hint_scalar_type(ScalarTypeHint::Bytes);

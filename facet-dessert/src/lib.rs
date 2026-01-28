@@ -10,7 +10,7 @@ extern crate alloc;
 
 use std::borrow::Cow;
 
-use facet_core::{Def, KnownPointer, Type, UserType};
+use facet_core::{Def, Facet, KnownPointer, Type, UserType};
 use facet_reflect::{Partial, ReflectError, ReflectErrorKind, Span};
 
 /// Result of checking if a pointer type needs special handling.
@@ -71,10 +71,7 @@ pub fn begin_pointer<'input, const BORROW: bool>(
 
     // All string pointers (Cow<str>, &str, Arc<str>, Box<str>, Rc<str>) - handle as scalar
     // set_string_value handles begin_smart_ptr internally for Arc/Box/Rc
-    if ptr_def
-        .pointee()
-        .is_some_and(|p| p.type_identifier == "str")
-    {
+    if ptr_def.pointee().is_some_and(|p| *p == *str::SHAPE) {
         return Ok((wip, PointerAction::HandleAsScalar));
     }
 
@@ -219,9 +216,7 @@ fn set_string_value_inner<'input, const BORROW: bool>(
 
     if let Def::Pointer(ptr_def) = shape.def
         && matches!(ptr_def.known, Some(KnownPointer::SharedReference))
-        && ptr_def
-            .pointee()
-            .is_some_and(|p| p.type_identifier == "str")
+        && ptr_def.pointee().is_some_and(|p| *p == *str::SHAPE)
     {
         if !BORROW {
             return Err(DessertError::CannotBorrow {
@@ -243,9 +238,7 @@ fn set_string_value_inner<'input, const BORROW: bool>(
 
     if let Def::Pointer(ptr_def) = shape.def
         && matches!(ptr_def.known, Some(KnownPointer::Cow))
-        && ptr_def
-            .pointee()
-            .is_some_and(|p| p.type_identifier == "str")
+        && ptr_def.pointee().is_some_and(|p| *p == *str::SHAPE)
     {
         wip = wip.set(s).map_err(&reflect_err)?;
         return Ok(wip);
@@ -257,9 +250,7 @@ fn set_string_value_inner<'input, const BORROW: bool>(
             ptr_def.known,
             Some(KnownPointer::Arc | KnownPointer::Box | KnownPointer::Rc)
         )
-        && ptr_def
-            .pointee()
-            .is_some_and(|p| p.type_identifier == "str")
+        && ptr_def.pointee().is_some_and(|p| *p == *str::SHAPE)
     {
         wip = wip.begin_smart_ptr().map_err(&reflect_err)?;
         wip = wip.set(s.into_owned()).map_err(&reflect_err)?;
@@ -284,7 +275,7 @@ pub fn set_bytes_value<'input, const BORROW: bool>(
 
     let reflect_err = |e: ReflectError| DessertError::Reflect { error: e, span };
 
-    let is_byte_slice = |pointee: &facet_core::Shape| matches!(pointee.def, Def::Slice(slice_def) if slice_def.t.type_identifier == "u8");
+    let is_byte_slice = |pointee: &facet_core::Shape| matches!(pointee.def, Def::Slice(slice_def) if *slice_def.t == *u8::SHAPE);
 
     if let Def::Pointer(ptr_def) = shape.def
         && matches!(ptr_def.known, Some(KnownPointer::SharedReference))
