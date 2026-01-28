@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use facet_core::{Def, Shape, StructKind, Type, UserType};
+use facet_core::{Def, Facet, ScalarType, Shape, StructKind, Type, UserType};
 use facet_reflect::{Partial, typeplan::DeserStrategy};
 
 use crate::{
@@ -21,7 +21,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         let _guard = SpanGuard::new(self.last_span);
         let shape = wip.shape();
         trace!(
-            shape_name = shape.type_identifier,
+            shape_name = %shape,
             "deserialize_into: starting"
         );
 
@@ -89,9 +89,10 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                     .end()?)
             }
 
-            Some(DeserStrategy::Scalar) => {
+            Some(DeserStrategy::Scalar { scalar_type }) => {
+                let scalar_type = *scalar_type; // Copy before moving wip
                 trace!("deserialize_into: dispatching to deserialize_scalar");
-                self.deserialize_scalar(wip)
+                self.deserialize_scalar(wip, scalar_type)
             }
 
             Some(DeserStrategy::Struct) => {
@@ -247,7 +248,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         // Handle Option
         if let Def::Option(opt_def) = &hint_shape.def {
-            self.parser.hint_option();
+            if self.is_non_self_describing() {
+                self.parser.hint_option();
+            }
             let event = self.expect_peek("value for option")?;
             // Treat both Null and Unit as None
             // Unit is used by Styx for tags without payload (e.g., @string vs @string{...})
@@ -317,7 +320,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         let _guard = SpanGuard::new(self.last_span);
 
         // Hint to non-self-describing parsers that an Option is expected
-        self.parser.hint_option();
+        if self.is_non_self_describing() {
+            self.parser.hint_option();
+        }
 
         let event = self.expect_peek("value for option")?;
 
@@ -387,7 +392,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
         // Hint to non-self-describing parsers how many fields to expect
         // Tuples are like positional structs, so we use hint_struct_fields
-        self.parser.hint_struct_fields(field_count);
+        if self.is_non_self_describing() {
+            self.parser.hint_struct_fields(field_count);
+        }
 
         // Special case: unit type () can accept Scalar(Unit) or Scalar(Null) directly
         // This enables patterns like styx bare identifiers: { id, name } -> IndexMap<String, ()>
@@ -575,11 +582,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         // Check if this is a Vec<u8> - if so, try the optimized byte sequence path
         // We specifically check for Vec (not Bytes, BytesMut, or other list-like types)
         // because those types may have different builder patterns
-        let is_byte_vec = wip.shape().type_identifier == "Vec"
-            && matches!(
-                &wip.shape().def,
-                Def::List(list_def) if list_def.t.type_identifier == "u8"
-            );
+        let is_byte_vec = *wip.shape() == *<Vec<u8>>::SHAPE;
 
         if is_byte_vec && self.parser.hint_byte_sequence() {
             // Parser supports bulk byte reading - expect Scalar(Bytes(...))
@@ -603,7 +606,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
         // Fallback: element-by-element deserialization
         // Hint to non-self-describing parsers that a sequence is expected
-        self.parser.hint_sequence();
+        if self.is_non_self_describing() {
+            self.parser.hint_sequence();
+        }
 
         let event = self.expect_event("value")?;
         trace!(?event, "deserialize_list: got container start event");
@@ -684,7 +689,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
         // Hint to non-self-describing parsers that a fixed-size array is expected
         // (unlike hint_sequence, this doesn't read a length prefix)
-        self.parser.hint_array(array_len);
+        if self.is_non_self_describing() {
+            self.parser.hint_array(array_len);
+        }
 
         let event = self.expect_event("value")?;
 
@@ -745,7 +752,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         let _guard = SpanGuard::new(self.last_span);
 
         // Hint to non-self-describing parsers that a sequence is expected
-        self.parser.hint_sequence();
+        if self.is_non_self_describing() {
+            self.parser.hint_sequence();
+        }
 
         let event = self.expect_event("value")?;
 
@@ -802,7 +811,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         let _guard = SpanGuard::new(self.last_span);
 
         // For non-self-describing formats, hint that a map is expected
-        self.parser.hint_map();
+        if self.is_non_self_describing() {
+            self.parser.hint_map();
+        }
 
         let event = self.expect_event("value")?;
 
@@ -902,47 +913,36 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     pub(crate) fn deserialize_scalar(
         &mut self,
         mut wip: Partial<'input, BORROW>,
+        scalar_type: Option<ScalarType>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
-        // Hint to non-self-describing parsers what scalar type is expected
-        let shape = wip.shape();
+        // Only hint for non-self-describing formats (e.g., postcard)
+        // Self-describing formats like JSON already know the types
+        if self.is_non_self_describing() {
+            let shape = wip.shape();
 
-        // First, try hint_opaque_scalar for types that may have format-specific
-        // binary representations (e.g., UUID as 16 raw bytes in postcard)
-        let opaque_handled = match shape.type_identifier {
-            // Standard primitives are never opaque
-            "bool" | "u8" | "u16" | "u32" | "u64" | "u128" | "usize" | "i8" | "i16" | "i32"
-            | "i64" | "i128" | "isize" | "f32" | "f64" | "String" | "&str" | "char" => false,
-            // For all other scalar types, ask the parser if it handles them specially
-            _ => self.parser.hint_opaque_scalar(shape.type_identifier, shape),
-        };
-
-        // If the parser didn't handle the opaque type, fall back to standard hints
-        if !opaque_handled {
-            let hint = match shape.type_identifier {
-                "bool" => Some(ScalarTypeHint::Bool),
-                "u8" => Some(ScalarTypeHint::U8),
-                "u16" => Some(ScalarTypeHint::U16),
-                "u32" => Some(ScalarTypeHint::U32),
-                "u64" => Some(ScalarTypeHint::U64),
-                "u128" => Some(ScalarTypeHint::U128),
-                "usize" => Some(ScalarTypeHint::Usize),
-                "i8" => Some(ScalarTypeHint::I8),
-                "i16" => Some(ScalarTypeHint::I16),
-                "i32" => Some(ScalarTypeHint::I32),
-                "i64" => Some(ScalarTypeHint::I64),
-                "i128" => Some(ScalarTypeHint::I128),
-                "isize" => Some(ScalarTypeHint::Isize),
-                "f32" => Some(ScalarTypeHint::F32),
-                "f64" => Some(ScalarTypeHint::F64),
-                "String" | "&str" => Some(ScalarTypeHint::String),
-                "char" => Some(ScalarTypeHint::Char),
-                // For unknown scalar types, check if they implement FromStr
-                // (e.g., camino::Utf8PathBuf, types not handled by hint_opaque_scalar)
-                _ if shape.is_from_str() => Some(ScalarTypeHint::String),
-                _ => None,
+            // First, try hint_opaque_scalar for types that may have format-specific
+            // binary representations (e.g., UUID as 16 raw bytes in postcard)
+            let opaque_handled = if scalar_type.is_some() {
+                // Standard primitives are never opaque
+                false
+            } else {
+                // For all other scalar types, ask the parser if it handles them specially
+                self.parser.hint_opaque_scalar(shape.type_identifier, shape)
             };
-            if let Some(hint) = hint {
-                self.parser.hint_scalar_type(hint);
+
+            // If the parser didn't handle the opaque type, fall back to standard hints
+            if !opaque_handled {
+                let hint = scalar_type_to_hint(scalar_type).or_else(|| {
+                    // For unknown scalar types, check if they implement FromStr
+                    if shape.is_from_str() {
+                        Some(ScalarTypeHint::String)
+                    } else {
+                        None
+                    }
+                });
+                if let Some(hint) = hint {
+                    self.parser.hint_scalar_type(hint);
+                }
             }
         }
 
@@ -1141,5 +1141,34 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             Err(MapKeyTerminalResult::NeedsSetString { wip, s }) => self.set_string_value(wip, s),
             Err(MapKeyTerminalResult::Error(e)) => Err(e),
         }
+    }
+}
+
+/// Convert a ScalarType to a ScalarTypeHint for non-self-describing parsers.
+///
+/// Returns None for types that don't have a direct hint mapping (Unit, CowStr,
+/// network addresses, ConstTypeId).
+#[inline]
+fn scalar_type_to_hint(scalar_type: Option<ScalarType>) -> Option<ScalarTypeHint> {
+    match scalar_type? {
+        ScalarType::Bool => Some(ScalarTypeHint::Bool),
+        ScalarType::U8 => Some(ScalarTypeHint::U8),
+        ScalarType::U16 => Some(ScalarTypeHint::U16),
+        ScalarType::U32 => Some(ScalarTypeHint::U32),
+        ScalarType::U64 => Some(ScalarTypeHint::U64),
+        ScalarType::U128 => Some(ScalarTypeHint::U128),
+        ScalarType::USize => Some(ScalarTypeHint::Usize),
+        ScalarType::I8 => Some(ScalarTypeHint::I8),
+        ScalarType::I16 => Some(ScalarTypeHint::I16),
+        ScalarType::I32 => Some(ScalarTypeHint::I32),
+        ScalarType::I64 => Some(ScalarTypeHint::I64),
+        ScalarType::I128 => Some(ScalarTypeHint::I128),
+        ScalarType::ISize => Some(ScalarTypeHint::Isize),
+        ScalarType::F32 => Some(ScalarTypeHint::F32),
+        ScalarType::F64 => Some(ScalarTypeHint::F64),
+        ScalarType::Char => Some(ScalarTypeHint::Char),
+        ScalarType::Str | ScalarType::String => Some(ScalarTypeHint::String),
+        // Types that need special handling or FromStr fallback
+        _ => None,
     }
 }

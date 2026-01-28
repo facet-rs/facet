@@ -12,8 +12,8 @@ use alloc::vec::Vec;
 use core::fmt::Write;
 
 use facet_core::{
-    Attr, Def, EnumRepr, EnumType, Field, PointerType, Shape, StructKind, StructType, Type,
-    UserType, Variant,
+    Attr, ConstTypeId, Def, EnumRepr, EnumType, Field, PointerType, Shape, StructKind, StructType,
+    Type, UserType, Variant,
 };
 use owo_colors::OwoColorize;
 
@@ -248,12 +248,12 @@ pub fn format_shape_colored_into_with_config(
     output: &mut String,
     config: &ShapeFormatConfig,
 ) -> core::fmt::Result {
-    let mut printed: BTreeSet<&'static str> = BTreeSet::new();
+    let mut printed: BTreeSet<ConstTypeId> = BTreeSet::new();
     let mut queue: Vec<&Shape> = Vec::new();
     queue.push(shape);
 
     while let Some(current) = queue.pop() {
-        if !printed.insert(current.type_identifier) {
+        if !printed.insert(current.id) {
             continue;
         }
 
@@ -264,7 +264,7 @@ pub fn format_shape_colored_into_with_config(
 
         match current.def {
             Def::Map(_) | Def::List(_) | Def::Option(_) | Def::Array(_) => {
-                printed.remove(current.type_identifier);
+                printed.remove(&current.id);
                 continue;
             }
             _ => {}
@@ -283,11 +283,11 @@ pub fn format_shape_colored_into_with_config(
                     }
                 }
                 UserType::Union(_) | UserType::Opaque => {
-                    printed.remove(current.type_identifier);
+                    printed.remove(&current.id);
                 }
             },
             _ => {
-                printed.remove(current.type_identifier);
+                printed.remove(&current.id);
             }
         }
     }
@@ -780,7 +780,7 @@ impl<'a> SpanTrackingContext<'a> {
 /// Format a Shape with span tracking
 fn format_shape_into_with_spans(shape: &Shape, ctx: &mut SpanTrackingContext) -> core::fmt::Result {
     // Track which types we've already printed to avoid duplicates
-    let mut printed: BTreeSet<&'static str> = BTreeSet::new();
+    let mut printed: BTreeSet<ConstTypeId> = BTreeSet::new();
     // Queue of types to print
     let mut queue: Vec<&Shape> = Vec::new();
 
@@ -789,7 +789,7 @@ fn format_shape_into_with_spans(shape: &Shape, ctx: &mut SpanTrackingContext) ->
 
     while let Some(current) = queue.pop() {
         // Skip if we've already printed this type
-        if !printed.insert(current.type_identifier) {
+        if !printed.insert(current.id) {
             continue;
         }
 
@@ -804,7 +804,7 @@ fn format_shape_into_with_spans(shape: &Shape, ctx: &mut SpanTrackingContext) ->
         match current.def {
             Def::Map(_) | Def::List(_) | Def::Option(_) | Def::Array(_) => {
                 // Don't print container types as definitions, they're inline
-                printed.remove(current.type_identifier);
+                printed.remove(&current.id);
                 continue;
             }
             _ => {}
@@ -836,12 +836,12 @@ fn format_shape_into_with_spans(shape: &Shape, ctx: &mut SpanTrackingContext) ->
                 UserType::Union(_) | UserType::Opaque => {
                     // For union/opaque types, just show the type identifier
                     // Don't actually print anything since we can't expand them
-                    printed.remove(current.type_identifier);
+                    printed.remove(&current.id);
                 }
             },
             _ => {
                 // For non-user types (primitives, pointers, etc.), don't print
-                printed.remove(current.type_identifier);
+                printed.remove(&current.id);
             }
         }
     }

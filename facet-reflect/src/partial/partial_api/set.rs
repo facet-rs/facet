@@ -188,7 +188,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             }
             Type::Primitive(PrimitiveType::Textual(_)) => {
                 // char or str - for char, convert to string
-                if src_shape.type_identifier == "char" {
+                if *src_shape == *char::SHAPE {
                     let c = unsafe { *(src_value.as_byte_ptr() as *const char) };
                     let mut buf = [0u8; 4];
                     let s = c.encode_utf8(&mut buf);
@@ -221,7 +221,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 }
 
                 // Handle String type (not a primitive but common)
-                if src_shape.type_identifier == "String" {
+                if *src_shape == *::alloc::string::String::SHAPE {
                     let s: &::alloc::string::String =
                         unsafe { &*(src_value.as_byte_ptr() as *const ::alloc::string::String) };
                     unsafe { (vtable.set_str)(fr.data, s.as_str()) };

@@ -54,7 +54,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         };
 
         // Hint to non-self-describing parsers how many fields to expect
-        self.parser.hint_struct_fields(struct_def.fields.len());
+        if self.is_non_self_describing() {
+            self.parser.hint_struct_fields(struct_def.fields.len());
+        }
 
         let struct_type_has_default = wip.shape().is(Characteristic::Default);
 

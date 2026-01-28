@@ -26,7 +26,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
         trace!(
             "deserialize_struct_with_flatten: starting shape={}",
-            wip.shape().type_identifier
+            wip.shape()
         );
 
         let deny_unknown_fields = wip.struct_plan().unwrap().deny_unknown_fields;
