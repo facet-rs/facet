@@ -48,7 +48,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 .end()?);
         }
 
-        // Check for metadata containers (like Spanned<T>, Documented<T>)
+        // Check for metadata containers (like `Spanned<T>`, `Documented<T>`)
         // These require field-by-field handling that can't be precomputed
         if shape.is_metadata_container() {
             return self.deserialize_metadata_container(wip);
@@ -178,7 +178,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         }
     }
 
-    /// Deserialize a metadata container (like Spanned<T>, Documented<T>).
+    /// Deserialize a metadata container (like `Spanned<T>`, `Documented<T>`).
     ///
     /// These require special handling - the value field gets the data,
     /// metadata fields are populated from parser state.
@@ -1041,7 +1041,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
         trace!(shape_name = %shape, shape_def = ?shape.def, ?key, ?doc, ?tag, "deserialize_map_key");
 
-        // Handle metadata containers (like Documented<T> or ObjectKey): populate metadata and recurse into value
+        // Handle metadata containers (like `Documented<T>` or `ObjectKey`): populate metadata and recurse into value
         if shape.is_metadata_container() {
             trace!("deserialize_map_key: metadata container detected");
 
