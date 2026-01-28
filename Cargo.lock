@@ -1290,6 +1290,7 @@ dependencies = [
  "indextree",
  "insta",
  "proptest",
+ "regex",
  "tempfile",
  "tracing",
  "ulid",

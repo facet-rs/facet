@@ -113,6 +113,17 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         self.root_plan.as_enum_plan(frame.type_plan)
     }
 
+    /// Returns the precomputed field initialization plans for the current frame.
+    ///
+    /// This provides access to precomputed validators and default handling without
+    /// runtime attribute scanning.
+    #[inline]
+    pub fn field_init_plans(&self) -> &[crate::typeplan::FieldInitPlan] {
+        let frame = self.frames().last().unwrap();
+        let plan_node = self.root_plan.get(frame.type_plan).unwrap();
+        &plan_node.field_init_plans
+    }
+
     /// Returns the precomputed TypePlanNode for the current frame.
     ///
     /// This provides access to the precomputed deserialization strategy and

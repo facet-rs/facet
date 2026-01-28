@@ -138,12 +138,15 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 }
             };
 
+            // Use precomputed lookups from EnumPlan
+            let enum_plan = wip.enum_plan().unwrap();
+
             // For string scalars, first try to match as a unit variant name
             if let ScalarValue::Str(variant_name) = scalar {
-                let matched_variant = find_variant_by_display_name(enum_def, variant_name);
-
-                if let Some(matched_name) = matched_variant {
+                // Use VariantLookup for fast lookup
+                if let Some(matched_idx) = enum_plan.variant_lookup.find(variant_name) {
                     // Found a matching unit variant
+                    let matched_name = enum_def.variants[matched_idx].effective_name();
                     let actual_variant =
                         cow_redirect_variant_name::<BORROW>(enum_def, matched_name);
                     self.expect_event("value")?;
@@ -152,8 +155,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 }
             }
 
-            // No matching variant - check for #[facet(other)] fallback
-            if let Some(other_variant) = enum_def.variants.iter().find(|v| v.is_other()) {
+            // No matching variant - check for #[facet(other)] fallback using precomputed index
+            if let Some(other_idx) = enum_plan.other_variant_idx {
+                let other_variant = &enum_def.variants[other_idx];
                 let has_tag_field = other_variant.data.fields.iter().any(|f| f.is_variant_tag());
                 let has_content_field = other_variant
                     .data
@@ -216,43 +220,41 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 }
             };
 
+            // Use precomputed lookups from EnumPlan
+            let enum_plan = wip.enum_plan().unwrap();
+
             let (variant_name, is_using_other_fallback) = match tag_name {
                 Some(name) => {
-                    let by_display = find_variant_by_display_name(enum_def, name);
-                    let is_fallback = by_display.is_none();
-                    let variant = by_display
-                        .or_else(|| {
-                            enum_def
-                                .variants
-                                .iter()
-                                .find(|v| v.is_other())
-                                .map(|v| v.effective_name())
-                        })
-                        .ok_or_else(|| DeserializeError {
-                            span: Some(self.last_span),
-                            path: Some(wip.path()),
-                            kind: DeserializeErrorKind::UnexpectedToken {
-                                expected: "known enum variant",
-                                got: format!("@{}", name).into(),
-                            },
+                    // Use VariantLookup for fast lookup
+                    let found_idx = enum_plan.variant_lookup.find(name);
+                    let is_fallback = found_idx.is_none();
+                    let variant_idx =
+                        found_idx.or(enum_plan.other_variant_idx).ok_or_else(|| {
+                            DeserializeError {
+                                span: Some(self.last_span),
+                                path: Some(wip.path()),
+                                kind: DeserializeErrorKind::UnexpectedToken {
+                                    expected: "known enum variant",
+                                    got: format!("@{}", name).into(),
+                                },
+                            }
                         })?;
-                    (variant, is_fallback)
+                    (enum_def.variants[variant_idx].effective_name(), is_fallback)
                 }
                 None => {
-                    let variant = enum_def
-                        .variants
-                        .iter()
-                        .find(|v| v.is_other())
-                        .map(|v| v.effective_name())
-                        .ok_or_else(|| DeserializeError {
-                            span: Some(self.last_span),
-                            path: Some(wip.path()),
-                            kind: DeserializeErrorKind::UnexpectedToken {
-                                expected: "#[facet(other)] fallback variant for unit tag",
-                                got: "@".into(),
-                            },
-                        })?;
-                    (variant, true)
+                    // Use precomputed other_variant_idx
+                    let variant_idx =
+                        enum_plan
+                            .other_variant_idx
+                            .ok_or_else(|| DeserializeError {
+                                span: Some(self.last_span),
+                                path: Some(wip.path()),
+                                kind: DeserializeErrorKind::UnexpectedToken {
+                                    expected: "#[facet(other)] fallback variant for unit tag",
+                                    got: "@".into(),
+                                },
+                            })?;
+                    (enum_def.variants[variant_idx].effective_name(), true)
                 }
             };
 
@@ -319,24 +321,22 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 ));
             }
         };
-        let is_using_other_fallback =
-            find_variant_by_display_name(enum_def, &field_key_name).is_none();
-        let variant_name = find_variant_by_display_name(enum_def, &field_key_name)
-            .or_else(|| {
-                enum_def
-                    .variants
-                    .iter()
-                    .find(|v| v.is_other())
-                    .map(|v| v.effective_name())
-            })
-            .ok_or_else(|| DeserializeError {
-                span: Some(self.last_span),
-                path: Some(wip.path()),
-                kind: DeserializeErrorKind::UnexpectedToken {
-                    expected: "known enum variant",
-                    got: field_key_name.to_string().into(),
-                },
-            })?;
+        // Use precomputed lookups from EnumPlan
+        let enum_plan = wip.enum_plan().unwrap();
+        let found_idx = enum_plan.variant_lookup.find(&field_key_name);
+        let is_using_other_fallback = found_idx.is_none();
+        let variant_idx =
+            found_idx
+                .or(enum_plan.other_variant_idx)
+                .ok_or_else(|| DeserializeError {
+                    span: Some(self.last_span),
+                    path: Some(wip.path()),
+                    kind: DeserializeErrorKind::UnexpectedToken {
+                        expected: "known enum variant",
+                        got: field_key_name.to_string().into(),
+                    },
+                })?;
+        let variant_name = enum_def.variants[variant_idx].effective_name();
 
         let actual_variant = cow_redirect_variant_name::<BORROW>(enum_def, variant_name);
         wip = wip.select_variant_named(actual_variant)?;
@@ -461,8 +461,8 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             return Ok(wip);
         }
 
-        // Check if variant has any flattened fields
-        let has_flatten = variant_fields.iter().any(|f| f.is_flattened());
+        // Use precomputed has_flatten from VariantPlanMeta
+        let has_flatten = wip.selected_variant_plan().unwrap().has_flatten;
 
         // Track currently open path segments for flatten handling: (field_name, is_option)
         let mut open_segments: Vec<(&str, bool)> = Vec::new();
@@ -534,13 +534,10 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                             self.skip_value()?;
                         }
                     } else {
-                        // Simple case: direct field lookup by name/alias
-                        let field_info = variant_fields
-                            .iter()
-                            .enumerate()
-                            .find(|(_, f)| field_matches(f, key_name));
+                        // Simple case: direct field lookup using precomputed FieldLookup
+                        let variant_plan = wip.selected_variant_plan().unwrap();
 
-                        if let Some((idx, _field)) = field_info {
+                        if let Some(idx) = variant_plan.field_lookup.find(key_name) {
                             wip = wip
                                 .begin_nth_field(idx)?
                                 .with(|w| self.deserialize_into(w))?
@@ -948,13 +945,10 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                         }
                     };
 
-                    // Look up field in variant's fields by name/alias
-                    let field_info = variant_fields
-                        .iter()
-                        .enumerate()
-                        .find(|(_, f)| field_matches(f, key_name));
+                    // Look up field using precomputed FieldLookup
+                    let variant_plan = wip.selected_variant_plan().unwrap();
 
-                    if let Some((idx, _field)) = field_info {
+                    if let Some(idx) = variant_plan.field_lookup.find(key_name) {
                         wip = wip
                             .begin_nth_field(idx)?
                             .with(|w| self.deserialize_into(w))?
@@ -1250,8 +1244,8 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                     });
                 }
 
-                // Check if variant has any flattened fields
-                let has_flatten = variant_fields.iter().any(|f| f.is_flattened());
+                // Use precomputed has_flatten from VariantPlanMeta
+                let has_flatten = wip.selected_variant_plan().unwrap().has_flatten;
 
                 // Enter deferred mode for flatten handling
                 let already_deferred = wip.is_deferred();
@@ -1333,12 +1327,10 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                                     self.skip_value()?;
                                 }
                             } else {
-                                let field_info = variant_fields
-                                    .iter()
-                                    .enumerate()
-                                    .find(|(_, f)| field_matches(f, key_name));
+                                // Use precomputed FieldLookup for direct field matching
+                                let variant_plan = wip.selected_variant_plan().unwrap();
 
-                                if let Some((idx, _field)) = field_info {
+                                if let Some(idx) = variant_plan.field_lookup.find(key_name) {
                                     wip = wip
                                         .begin_nth_field(idx)?
                                         .with(|w| self.deserialize_into(w))?
@@ -1729,26 +1721,6 @@ fn find_field_path(fields: &'static [Field], key: &str) -> Option<Vec<&'static s
         }
     }
     None
-}
-
-/// Check if a field matches a given name (by name or alias).
-fn field_matches(field: &Field, name: &str) -> bool {
-    field.effective_name() == name || field.alias.iter().any(|alias| *alias == name)
-}
-
-/// Find a variant by its display name (checking rename attributes).
-/// Returns the effective name to use with `select_variant_named`.
-fn find_variant_by_display_name<'a>(
-    enum_def: &'a facet_core::EnumType,
-    display_name: &str,
-) -> Option<&'a str> {
-    enum_def.variants.iter().find_map(|v| {
-        if v.effective_name() == display_name {
-            Some(v.effective_name())
-        } else {
-            None
-        }
-    })
 }
 
 /// For cow-like enums, redirect from "Borrowed" to "Owned" variant when borrowing is disabled.

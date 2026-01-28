@@ -10,11 +10,6 @@ use crate::{
     ScalarTypeHint, ScalarValue, SpanGuard,
 };
 
-/// Helper to get variant display name (used by deserialize_enum_dynamic_inner)
-fn get_variant_display_name(variant: &'static facet_core::Variant) -> &'static str {
-    variant.effective_name()
-}
-
 impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BORROW> {
     /// Deserialize any value into a DynamicValue type (e.g., facet_value::Value).
     ///
@@ -265,19 +260,16 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 //
                 // These differ when using #[facet(other)] to catch unknown variants.
 
+                // Use precomputed lookups from EnumPlan
+                let enum_plan = wip.enum_plan().unwrap();
+
                 // Find variant by display name (respecting rename) or fall back to #[facet(other)]
                 let (variant, is_using_other_fallback) = match input_tag {
                     Some(tag) => {
-                        let is_fallback = !enum_def
-                            .variants
-                            .iter()
-                            .any(|v| get_variant_display_name(v) == tag);
-                        let variant = enum_def
-                            .variants
-                            .iter()
-                            .find(|v| get_variant_display_name(v) == tag)
-                            .or_else(|| enum_def.variants.iter().find(|v| v.is_other()))
-                            .ok_or_else(|| {
+                        let found_idx = enum_plan.variant_lookup.find(tag);
+                        let is_fallback = found_idx.is_none();
+                        let variant_idx =
+                            found_idx.or(enum_plan.other_variant_idx).ok_or_else(|| {
                                 self.mk_err(
                                     &wip,
                                     DeserializeErrorKind::UnknownVariant {
@@ -286,25 +278,19 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                                     },
                                 )
                             })?;
-                        (variant, is_fallback)
+                        (&enum_def.variants[variant_idx], is_fallback)
                     }
                     None => {
                         // Unit tag - must use #[facet(other)] fallback
-                        let variant =
-                            enum_def
-                                .variants
-                                .iter()
-                                .find(|v| v.is_other())
-                                .ok_or_else(|| {
-                                    self.mk_err(
-                                        &wip,
-                                        DeserializeErrorKind::Unsupported {
-                                            message: "unit tag requires #[facet(other)] fallback"
-                                                .into(),
-                                        },
-                                    )
-                                })?;
-                        (variant, true)
+                        let variant_idx = enum_plan.other_variant_idx.ok_or_else(|| {
+                            self.mk_err(
+                                &wip,
+                                DeserializeErrorKind::Unsupported {
+                                    message: "unit tag requires #[facet(other)] fallback".into(),
+                                },
+                            )
+                        })?;
+                        (&enum_def.variants[variant_idx], true)
                     }
                 };
 

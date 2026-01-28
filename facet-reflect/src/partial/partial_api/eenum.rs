@@ -14,6 +14,20 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         }
     }
 
+    /// Get the currently selected variant's plan metadata.
+    ///
+    /// Returns the VariantPlanMeta for the selected variant, which contains precomputed
+    /// information like `has_flatten` and `field_lookup` for fast field lookups.
+    pub fn selected_variant_plan(&self) -> Option<&crate::typeplan::VariantPlanMeta> {
+        let frame = self.frames().last()?;
+        let enum_plan = self.root_plan.as_enum_plan(frame.type_plan)?;
+
+        match &frame.tracker {
+            Tracker::Enum { variant_idx, .. } => enum_plan.variants.get(*variant_idx),
+            _ => None,
+        }
+    }
+
     /// Find a variant by name in the current enum.
     ///
     /// This searches by effective name (respecting `#[facet(rename = "...")]` attributes).
@@ -64,17 +78,16 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         let frame = self.frames().last().unwrap();
         let enum_type = frame.get_enum_type().map_err(|e| self.err(e))?;
         let shape = frame.allocated.shape();
-        let Some((variant_idx, variant)) = enum_type
-            .variants
-            .iter()
-            .enumerate()
-            .find(|(_, v)| v.effective_name() == variant_name)
-        else {
-            return Err(self.err(ReflectErrorKind::OperationFailed {
+
+        // Use precomputed VariantLookup for fast lookup
+        let enum_plan = self.root_plan.as_enum_plan(frame.type_plan).unwrap();
+        let variant_idx = enum_plan.variant_lookup.find(variant_name).ok_or_else(|| {
+            self.err(ReflectErrorKind::OperationFailed {
                 shape,
                 operation: "No variant found with the given name",
-            }));
-        };
+            })
+        })?;
+        let variant = &enum_type.variants[variant_idx];
 
         self.select_variant_internal(&enum_type, variant, variant_idx)?;
         Ok(self)

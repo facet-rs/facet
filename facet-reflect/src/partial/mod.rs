@@ -1300,14 +1300,12 @@ impl Frame {
             _ => return Ok(()),
         };
 
-        // Fast path: if all fields are already set, nothing to do.
-        // This handles the common case where deserialization set all fields.
-        if iset.all_set(num_fields) {
-            return Ok(());
-        }
+        // Fast path for defaults: if all fields are already set, no defaults needed.
+        // But validators still need to run.
+        let all_fields_set = iset.all_set(num_fields);
 
         for plan in plans {
-            if !iset.get(plan.index) {
+            if !all_fields_set && !iset.get(plan.index) {
                 // Field not set - handle according to fill rule
                 match &plan.fill_rule {
                     FillRule::Defaultable(default) => {
@@ -1353,7 +1351,7 @@ impl Frame {
             if !plan.validators.is_empty() {
                 let field_ptr = unsafe { self.data.field_init(plan.offset) };
                 for validator in &plan.validators {
-                    validator.run(field_ptr, plan.name, self.allocated.shape())?;
+                    validator.run(field_ptr.into(), plan.name, self.allocated.shape())?;
                 }
             }
         }

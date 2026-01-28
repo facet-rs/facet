@@ -6,16 +6,56 @@ use super::*;
 impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// Builds the value, consuming the Partial.
     pub fn build(mut self) -> Result<HeapValue<'facet, BORROW>, ReflectError> {
+        use crate::typeplan::TypePlanNodeKind;
+
         if self.frames().len() != 1 {
             return Err(self.err(ReflectErrorKind::InvariantViolation {
                 invariant: "Partial::build() expects a single frame — call end() until that's the case",
             }));
         }
 
-        {
-            let frame = self.frames_mut().last_mut().unwrap();
+        // Try the optimized path using precomputed FieldInitPlan (includes validators)
+        // Extract frame info first (borrows only self.mode)
+        let frame_info = self.mode.stack().last().map(|frame| {
+            let variant_idx = match &frame.tracker {
+                Tracker::Enum { variant_idx, .. } => Some(*variant_idx),
+                _ => None,
+            };
+            (frame.type_plan, variant_idx)
+        });
 
-            // Fill in defaults for any unset fields before checking initialization
+        // Look up plans from root_plan (separate borrow from mode)
+        let plans_info = frame_info.and_then(|(type_plan, variant_idx)| {
+            self.root_plan
+                .get(type_plan)
+                .and_then(|plan_node| match &plan_node.kind {
+                    TypePlanNodeKind::Struct(_) => Some(&plan_node.field_init_plans[..]),
+                    TypePlanNodeKind::Enum(enum_plan) => variant_idx.and_then(|idx| {
+                        enum_plan
+                            .variants
+                            .get(idx)
+                            .map(|v| v.field_init_plans.as_slice())
+                    }),
+                    _ => None,
+                })
+        });
+
+        if let Some(plans) = plans_info {
+            // Now mutably borrow mode.stack to get the frame
+            // (root_plan borrow of `plans` is still active but that's fine -
+            // mode and root_plan are separate fields)
+            let frame = self.mode.stack_mut().last_mut().unwrap();
+            crate::trace!(
+                "build(): Using optimized fill_and_require_fields for {}, tracker={:?}",
+                frame.allocated.shape(),
+                frame.tracker.kind()
+            );
+            frame
+                .fill_and_require_fields(plans, plans.len())
+                .map_err(|e| self.err(e))?;
+        } else {
+            // Fall back to the old path if optimized path wasn't available
+            let frame = self.frames_mut().last_mut().unwrap();
             crate::trace!(
                 "build(): calling fill_defaults for {}, tracker={:?}, is_init={}",
                 frame.allocated.shape(),
@@ -30,25 +70,21 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 frame.tracker.kind(),
                 frame.is_init
             );
+
+            let frame = self.frames().last().unwrap();
+            crate::trace!(
+                "build(): calling require_full_initialization, tracker={:?}",
+                frame.tracker.kind()
+            );
+            let result = frame.require_full_initialization();
+            crate::trace!(
+                "build(): require_full_initialization result: {:?}",
+                result.is_ok()
+            );
+            result.map_err(|e| self.err(e))?
         }
 
         let frame = self.frames_mut().pop().unwrap();
-
-        // Check initialization before proceeding
-        crate::trace!(
-            "build(): calling require_full_initialization, tracker={:?}",
-            frame.tracker.kind()
-        );
-        let init_result = frame.require_full_initialization();
-        crate::trace!(
-            "build(): require_full_initialization returned {:?}",
-            init_result.is_ok()
-        );
-        if let Err(e) = init_result {
-            // Put the frame back so Drop can handle cleanup properly
-            self.frames_mut().push(frame);
-            return Err(self.err(e));
-        }
 
         // Check invariants if present
         // Safety: The value is fully initialized at this point (we just checked with require_full_initialization)
@@ -137,16 +173,56 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// let value = unsafe { slot.assume_init() };
     /// ```
     pub fn finish_in_place(mut self) -> Result<(), ReflectError> {
+        use crate::typeplan::TypePlanNodeKind;
+
         if self.frames().len() != 1 {
             return Err(self.err(ReflectErrorKind::InvariantViolation {
                 invariant: "Partial::finish_in_place() expects a single frame — call end() until that's the case",
             }));
         }
 
-        {
-            let frame = self.frames_mut().last_mut().unwrap();
+        // Try the optimized path using precomputed FieldInitPlan (includes validators)
+        // Extract frame info first (borrows only self.mode)
+        let frame_info = self.mode.stack().last().map(|frame| {
+            let variant_idx = match &frame.tracker {
+                Tracker::Enum { variant_idx, .. } => Some(*variant_idx),
+                _ => None,
+            };
+            (frame.type_plan, variant_idx)
+        });
 
-            // Fill in defaults for any unset fields before checking initialization
+        // Look up plans from root_plan (separate borrow from mode)
+        let plans_info = frame_info.and_then(|(type_plan, variant_idx)| {
+            self.root_plan
+                .get(type_plan)
+                .and_then(|plan_node| match &plan_node.kind {
+                    TypePlanNodeKind::Struct(_) => Some(&plan_node.field_init_plans[..]),
+                    TypePlanNodeKind::Enum(enum_plan) => variant_idx.and_then(|idx| {
+                        enum_plan
+                            .variants
+                            .get(idx)
+                            .map(|v| v.field_init_plans.as_slice())
+                    }),
+                    _ => None,
+                })
+        });
+
+        if let Some(plans) = plans_info {
+            // Now mutably borrow mode.stack to get the frame
+            // (root_plan borrow of `plans` is still active but that's fine -
+            // mode and root_plan are separate fields)
+            let frame = self.mode.stack_mut().last_mut().unwrap();
+            crate::trace!(
+                "finish_in_place(): Using optimized fill_and_require_fields for {}, tracker={:?}",
+                frame.allocated.shape(),
+                frame.tracker.kind()
+            );
+            frame
+                .fill_and_require_fields(plans, plans.len())
+                .map_err(|e| self.err(e))?;
+        } else {
+            // Fall back to the old path if optimized path wasn't available
+            let frame = self.frames_mut().last_mut().unwrap();
             crate::trace!(
                 "finish_in_place(): calling fill_defaults for {}, tracker={:?}, is_init={}",
                 frame.allocated.shape(),
@@ -161,25 +237,21 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 frame.tracker.kind(),
                 frame.is_init
             );
+
+            let frame = self.frames().last().unwrap();
+            crate::trace!(
+                "finish_in_place(): calling require_full_initialization, tracker={:?}",
+                frame.tracker.kind()
+            );
+            let result = frame.require_full_initialization();
+            crate::trace!(
+                "finish_in_place(): require_full_initialization result: {:?}",
+                result.is_ok()
+            );
+            result.map_err(|e| self.err(e))?
         }
 
         let frame = self.frames_mut().pop().unwrap();
-
-        // Check initialization before proceeding
-        crate::trace!(
-            "finish_in_place(): calling require_full_initialization, tracker={:?}",
-            frame.tracker.kind()
-        );
-        let init_result = frame.require_full_initialization();
-        crate::trace!(
-            "finish_in_place(): require_full_initialization returned {:?}",
-            init_result.is_ok()
-        );
-        if let Err(e) = init_result {
-            // Put the frame back so Drop can handle cleanup properly
-            self.frames_mut().push(frame);
-            return Err(self.err(e));
-        }
 
         // Check invariants if present
         // Safety: The value is fully initialized at this point (we just checked with require_full_initialization)
