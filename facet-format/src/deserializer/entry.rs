@@ -379,10 +379,6 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             _ => 0, // Unit type or unknown - will be handled below
         };
 
-        // Hint to non-self-describing parsers how many fields to expect
-        // Tuples are like positional structs, so we use hint_struct_fields
-        self.parser.hint_struct_fields(field_count);
-
         // Special case: transparent newtypes (marked with #[facet(transparent)] or
         // #[repr(transparent)]) can accept values directly without a sequence wrapper.
         // This enables patterns like:
@@ -390,6 +386,11 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         //   struct Wrapper(i32);
         //   toml: "value = 42"  ->  Wrapper(42)
         // Plain tuple structs without the transparent attribute use array syntax.
+        //
+        // IMPORTANT: This check must come BEFORE hint_struct_fields() because transparent
+        // newtypes don't consume struct events - they deserialize the inner value directly.
+        // If we hint struct fields first, non-self-describing parsers will expect to emit
+        // StructStart, causing "unexpected token: got struct start" errors.
         if field_count == 1 && wip.shape().is_transparent() {
             // Unwrap into field 0 and deserialize directly
             return Ok(wip
@@ -397,6 +398,10 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 .with(|w| self.deserialize_into(w))?
                 .end()?);
         }
+
+        // Hint to non-self-describing parsers how many fields to expect
+        // Tuples are like positional structs, so we use hint_struct_fields
+        self.parser.hint_struct_fields(field_count);
 
         // Special case: unit type () can accept Scalar(Unit) or Scalar(Null) directly
         // This enables patterns like styx bare identifiers: { id, name } -> IndexMap<String, ()>

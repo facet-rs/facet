@@ -88,21 +88,6 @@ changelog_path = "CHANGELOG.md"
 
 # Utilities
 [[package]]
-name = "facet-diff-core"
-version_group = "facet"
-changelog_path = "CHANGELOG.md"
-
-[[package]]
-name = "facet-diff"
-version_group = "facet"
-changelog_path = "CHANGELOG.md"
-
-[[package]]
-name = "facet-assert"
-version_group = "facet"
-changelog_path = "CHANGELOG.md"
-
-[[package]]
 name = "facet-value"
 version_group = "facet"
 changelog_path = "CHANGELOG.md"
@@ -191,11 +176,6 @@ changelog_path = "CHANGELOG.md"
 # ============================================================================
 # Dev-only packages - excluded from releases
 # ============================================================================
-
-[[package]]
-name = "xtask"
-release = false
-publish = false
 
 [[package]]
 name = "facet-showcase"
