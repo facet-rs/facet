@@ -260,12 +260,18 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 trace!(
                     "begin_inner: Creating frame for inner type {inner_shape} (parent is {parent_shape})"
                 );
-                // TypePlan already builds for the inner/builder shape, so reuse parent's type_plan
+                // Navigate to the inner type's TypePlan node for correct strategy lookup.
+                // If the TypePlan has a child node for the inner type, use it; otherwise
+                // fall back to the parent's node (which may result in incorrect strategy).
+                let inner_type_plan = self
+                    .root_plan
+                    .inner_node(parent_type_plan)
+                    .unwrap_or(parent_type_plan);
                 self.mode.stack_mut().push(Frame::new(
                     inner_data,
                     AllocatedShape::new(inner_shape, inner_layout.size()),
                     FrameOwnership::Owned,
-                    parent_type_plan,
+                    inner_type_plan,
                 ));
 
                 Ok(self)

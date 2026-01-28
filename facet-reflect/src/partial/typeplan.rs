@@ -36,10 +36,51 @@ pub struct TypePlanNode {
     pub shape: &'static Shape,
     /// What kind of type this is and how to deserialize it
     pub kind: TypePlanNodeKind,
+    /// Precomputed deserialization strategy - tells facet-format exactly what to do
+    pub strategy: DeserStrategy,
     /// Whether this type has a Default implementation
     pub has_default: bool,
     /// Precomputed proxy for this shape (format-specific or generic)
     pub proxy: Option<&'static ProxyDef>,
+}
+
+/// Precomputed deserialization strategy.
+///
+/// This tells facet-format exactly how to deserialize a value without
+/// needing to inspect Shape/Def/vtable at runtime. Computed once at
+/// TypePlan build time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeserStrategy {
+    /// Has container-level proxy - call begin_custom_deserialization_from_shape
+    Proxy,
+    /// Smart pointer (Box, Arc, Rc) - call deserialize_pointer
+    Pointer,
+    /// Transparent wrapper with try_from - call begin_inner, deserialize, convert
+    TransparentConvert,
+    /// Scalar with FromStr - call deserialize_scalar
+    Scalar,
+    /// Named struct - call deserialize_struct
+    Struct,
+    /// Tuple or tuple struct - call deserialize_tuple
+    Tuple,
+    /// Enum - call deserialize_enum
+    Enum,
+    /// `Option<T>` - handle None/Some
+    Option,
+    /// `Result<T, E>` - handle Ok/Err
+    Result,
+    /// List (Vec, VecDeque, etc.) - call deserialize_list
+    List,
+    /// Map (HashMap, BTreeMap, etc.) - call deserialize_map
+    Map,
+    /// Set (HashSet, BTreeSet, etc.) - call deserialize_set
+    Set,
+    /// Fixed-size array [T; N] - call deserialize_array
+    Array,
+    /// BackRef to recursive type - follow the reference
+    BackRef,
+    /// Unknown - fall back to runtime dispatch (shouldn't happen)
+    Unknown,
 }
 
 /// The specific kind of type and its deserialization strategy.
@@ -403,6 +444,7 @@ impl TypePlanBuilder {
             let backref_node = TypePlanNode {
                 shape, // Original shape (conversion target)
                 kind: TypePlanNodeKind::BackRef(existing_id),
+                strategy: DeserStrategy::BackRef,
                 has_default: shape.is(Characteristic::Default),
                 proxy,
             };
@@ -411,8 +453,9 @@ impl TypePlanBuilder {
 
         // Create placeholder node first so children can reference it
         let placeholder = TypePlanNode {
-            shape,                           // Original shape (conversion target)
-            kind: TypePlanNodeKind::Unknown, // Will be replaced
+            shape,                            // Original shape (conversion target)
+            kind: TypePlanNodeKind::Unknown,  // Will be replaced
+            strategy: DeserStrategy::Unknown, // Will be replaced
             has_default: shape.is(Characteristic::Default),
             proxy,
         };
@@ -424,8 +467,13 @@ impl TypePlanBuilder {
         // Build the kind and children from navigation_shape (proxy if present)
         let kind = self.build_kind(navigation_shape, node_id);
 
-        // Update the node with the real kind
-        self.arena.get_mut(node_id).unwrap().get_mut().kind = kind;
+        // Compute the deserialization strategy based on original shape and proxy
+        let strategy = self.compute_strategy(shape, &kind, proxy);
+
+        // Update the node with the real kind and strategy
+        let node = self.arena.get_mut(node_id).unwrap().get_mut();
+        node.kind = kind;
+        node.strategy = strategy;
 
         // Remove from building set - we're done with this type
         // This ensures only ancestors are tracked, not all visited types
@@ -434,11 +482,111 @@ impl TypePlanBuilder {
         node_id
     }
 
+    /// Compute the deserialization strategy based on shape, kind, and proxy.
+    ///
+    /// This mirrors the dispatch logic in facet-format's `deserialize_into` but
+    /// computes it once at TypePlan build time instead of at every deserialization.
+    fn compute_strategy(
+        &self,
+        shape: &'static Shape,
+        kind: &TypePlanNodeKind,
+        proxy: Option<&'static ProxyDef>,
+    ) -> DeserStrategy {
+        // Priority 1: If there's a container-level proxy, use Proxy strategy
+        // This handles #[facet(proxy = ...)] or #[facet(json::proxy = ...)]
+        if proxy.is_some() {
+            return DeserStrategy::Proxy;
+        }
+
+        // Priority 2: Smart pointers (Box, Arc, Rc) get Pointer strategy
+        if matches!(kind, TypePlanNodeKind::Pointer) {
+            return DeserStrategy::Pointer;
+        }
+
+        // Priority 3: Types with .inner and try_from (like NonZero<T>)
+        // These have def: Scalar but need to deserialize via begin_inner + conversion.
+        // Collections have .inner for variance but shouldn't use this path.
+        // OrderedFloat has .inner but NO try_from - it uses FromStr directly.
+        if shape.inner.is_some()
+            && shape.vtable.has_try_from()
+            && !matches!(
+                &shape.def,
+                Def::List(_) | Def::Map(_) | Def::Set(_) | Def::Array(_)
+            )
+        {
+            return DeserStrategy::TransparentConvert;
+        }
+
+        // Priority 4: Transparent wrappers with try_from (TypePlanNodeKind::Transparent)
+        // This is a fallback for types that `build_kind` identified as Transparent
+        if matches!(kind, TypePlanNodeKind::Transparent) && shape.vtable.has_try_from() {
+            return DeserStrategy::TransparentConvert;
+        }
+
+        // Priority 5: Scalars with FromStr capability
+        // Important: Check this BEFORE tuple structs because types like OrderedFloat
+        // have def: Scalar but ty: Struct(Tuple)
+        if matches!(&shape.def, Def::Scalar) && shape.vtable.has_parse() {
+            return DeserStrategy::Scalar;
+        }
+
+        // Priority 6: Match on the kind for everything else
+        match kind {
+            TypePlanNodeKind::Scalar => {
+                // For Scalar kind without FromStr, check if it's actually a tuple struct
+                // (like empty tuple `()` which has def: Scalar but ty: Struct(Tuple))
+                if let Type::User(UserType::Struct(struct_def)) = &shape.ty {
+                    use facet_core::StructKind;
+                    match struct_def.kind {
+                        StructKind::Tuple | StructKind::TupleStruct => {
+                            return DeserStrategy::Tuple;
+                        }
+                        _ => {}
+                    }
+                }
+                // Real scalars without FromStr
+                DeserStrategy::Scalar
+            }
+            TypePlanNodeKind::Struct(struct_plan) => {
+                // Distinguish between named structs and tuple structs
+                use facet_core::StructKind;
+                match struct_plan.struct_def.kind {
+                    StructKind::Tuple | StructKind::TupleStruct => DeserStrategy::Tuple,
+                    StructKind::Struct | StructKind::Unit => DeserStrategy::Struct,
+                }
+            }
+            TypePlanNodeKind::Enum(_) => DeserStrategy::Enum,
+            TypePlanNodeKind::Option => DeserStrategy::Option,
+            TypePlanNodeKind::Result => DeserStrategy::Result,
+            TypePlanNodeKind::List | TypePlanNodeKind::Slice => DeserStrategy::List,
+            TypePlanNodeKind::Map => DeserStrategy::Map,
+            TypePlanNodeKind::Set => DeserStrategy::Set,
+            TypePlanNodeKind::Array { .. } => DeserStrategy::Array,
+            TypePlanNodeKind::Pointer => DeserStrategy::Pointer, // Already handled above, but for completeness
+            TypePlanNodeKind::Transparent => {
+                // Transparent without try_from - this type relies on inner deserialization
+                // The deserializer should recurse into the inner type
+                DeserStrategy::Unknown
+            }
+            TypePlanNodeKind::BackRef(_) => DeserStrategy::BackRef,
+            TypePlanNodeKind::Unknown => DeserStrategy::Unknown,
+        }
+    }
+
     /// Build the TypePlanNodeKind for a shape, attaching children to parent_id.
     fn build_kind(&mut self, shape: &'static Shape, parent_id: NodeId) -> TypePlanNodeKind {
         // Check shape.def first - this tells us the semantic meaning of the type
         match &shape.def {
-            Def::Scalar => TypePlanNodeKind::Scalar,
+            Def::Scalar => {
+                // For scalar types with shape.inner (like NonZero<T>), build a child node
+                // for the inner type. This enables proper TypePlan navigation when
+                // begin_inner() is called for transparent wrapper deserialization.
+                if let Some(inner_shape) = shape.inner {
+                    let inner_id = self.build_node(inner_shape);
+                    parent_id.append(inner_id, &mut self.arena);
+                }
+                TypePlanNodeKind::Scalar
+            }
 
             Def::Option(opt_def) => {
                 let inner_id = self.build_node(opt_def.t());
@@ -818,6 +966,21 @@ impl TypePlan {
         match &node.kind {
             TypePlanNodeKind::Transparent => self.first_child(parent),
             _ => None,
+        }
+    }
+
+    /// Get the child NodeId for shape.inner navigation (used by begin_inner).
+    ///
+    /// This works for both Transparent nodes and Scalar nodes that have an inner
+    /// type (like `NonZero<T>`). Returns the first child if present.
+    #[inline]
+    pub fn inner_node(&self, parent: NodeId) -> Option<NodeId> {
+        let node = self.get(parent)?;
+        // Check if the node has shape.inner - if so, the first child is the inner node
+        if node.shape.inner.is_some() {
+            self.first_child(parent)
+        } else {
+            None
         }
     }
 

@@ -112,6 +112,37 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         self.root_plan.as_enum_plan(frame.type_plan)
     }
 
+    /// Returns the precomputed TypePlanNode for the current frame.
+    ///
+    /// This provides access to the precomputed deserialization strategy and
+    /// other metadata computed at Partial allocation time.
+    ///
+    /// Returns `None` if:
+    /// - The Partial is not active
+    /// - There are no frames
+    #[inline]
+    pub fn plan_node(&self) -> Option<&crate::typeplan::TypePlanNode> {
+        if self.state != PartialState::Active {
+            return None;
+        }
+        let frame = self.frames().last()?;
+        self.root_plan.get(frame.type_plan)
+    }
+
+    /// Returns the precomputed deserialization strategy for the current frame.
+    ///
+    /// This tells facet-format exactly how to deserialize the current type without
+    /// runtime inspection of Shape/Def/vtable. The strategy is computed once at
+    /// TypePlan build time.
+    ///
+    /// Returns `None` if:
+    /// - The Partial is not active
+    /// - There are no frames
+    #[inline]
+    pub fn deser_strategy(&self) -> Option<crate::typeplan::DeserStrategy> {
+        self.plan_node().map(|node| node.strategy)
+    }
+
     /// Returns true if the current frame is building a smart pointer slice (Arc<\[T\]>, Rc<\[T\]>, Box<\[T\]>).
     ///
     /// This is used by deserializers to determine if they should deserialize as a list
