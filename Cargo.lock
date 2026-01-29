@@ -1129,6 +1129,7 @@ name = "facet-json"
 version = "0.43.2"
 dependencies = [
  "axum-core",
+ "bumpalo",
  "compact_str",
  "divan",
  "facet",

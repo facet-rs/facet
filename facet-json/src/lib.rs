@@ -76,6 +76,8 @@ pub use serializer::{
 // Re-export DeserializeError for convenience
 pub use facet_format::DeserializeError;
 
+use bumpalo::Bump;
+
 /// Deserialize a value from a JSON string into an owned type.
 ///
 /// This is the recommended default for most use cases. The input does not need
@@ -108,9 +110,10 @@ where
     T: facet_core::Facet<'static>,
 {
     use facet_format::FormatDeserializer;
+    let bump = Bump::new();
     // TRUSTED_UTF8 = true: input came from &str, so it's valid UTF-8
     let mut parser = JsonParser::<true>::new(input.as_bytes());
-    let mut de = FormatDeserializer::new_owned(&mut parser);
+    let mut de = FormatDeserializer::new_owned(&bump, &mut parser);
     de.deserialize_root()
 }
 
@@ -146,8 +149,9 @@ where
     T: facet_core::Facet<'static>,
 {
     use facet_format::FormatDeserializer;
+    let bump = Bump::new();
     let mut parser = JsonParser::<false>::new(input);
-    let mut de = FormatDeserializer::new_owned(&mut parser);
+    let mut de = FormatDeserializer::new_owned(&bump, &mut parser);
     de.deserialize_root()
 }
 
@@ -183,9 +187,10 @@ where
     'input: 'facet,
 {
     use facet_format::FormatDeserializer;
+    let bump = Bump::new();
     // TRUSTED_UTF8 = true: input came from &str, so it's valid UTF-8
     let mut parser = JsonParser::<true>::new(input.as_bytes());
-    let mut de = FormatDeserializer::new(&mut parser);
+    let mut de = FormatDeserializer::new(&bump, &mut parser);
     de.deserialize_root()
 }
 
@@ -221,8 +226,9 @@ where
     'input: 'facet,
 {
     use facet_format::FormatDeserializer;
+    let bump = Bump::new();
     let mut parser = JsonParser::<false>::new(input);
-    let mut de = FormatDeserializer::new(&mut parser);
+    let mut de = FormatDeserializer::new(&bump, &mut parser);
     de.deserialize_root()
 }
 
@@ -240,6 +246,7 @@ where
 /// use facet::Facet;
 /// use facet_json::from_str_into;
 /// use facet_reflect::Partial;
+/// use bumpalo::Bump;
 ///
 /// #[derive(Facet, Debug, PartialEq)]
 /// struct Person {
@@ -247,32 +254,34 @@ where
 ///     age: u32,
 /// }
 ///
+/// let bump = Bump::new();
 /// let json = r#"{"name": "Alice", "age": 30}"#;
-/// let partial = Partial::alloc_owned::<Person>().unwrap();
-/// let partial = from_str_into(json, partial).unwrap();
+/// let partial = Partial::alloc_owned::<Person>(&bump).unwrap();
+/// let partial = from_str_into(&bump, json, partial).unwrap();
 /// let value = partial.build().unwrap();
 /// let person: Person = value.materialize().unwrap();
 /// assert_eq!(person.name, "Alice");
 /// assert_eq!(person.age, 30);
 /// ```
-pub fn from_str_into<'facet>(
+pub fn from_str_into<'facet, 'bump>(
+    bump: &'bump Bump,
     input: &str,
-    partial: facet_reflect::Partial<'facet, false>,
-) -> Result<facet_reflect::Partial<'facet, false>, DeserializeError> {
+    partial: facet_reflect::Partial<'facet, 'bump, false>,
+) -> Result<facet_reflect::Partial<'facet, 'bump, false>, DeserializeError> {
     use facet_format::FormatDeserializer;
     // TRUSTED_UTF8 = true: input came from &str, so it's valid UTF-8
     let mut parser = JsonParser::<true>::new(input.as_bytes());
-    let mut de = FormatDeserializer::new_owned(&mut parser);
+    let mut de = FormatDeserializer::new_owned(bump, &mut parser);
 
-    // SAFETY: The deserializer expects Partial<'input, false> where 'input is the
+    // SAFETY: The deserializer expects Partial<'input, 'bump, false> where 'input is the
     // lifetime of the JSON bytes. Since BORROW=false, no data is borrowed from the
     // input, so the actual 'facet lifetime of the Partial is independent of 'input.
     // We transmute to satisfy the type system, then transmute back after deserialization.
     #[allow(unsafe_code)]
-    let partial: facet_reflect::Partial<'_, false> = unsafe {
+    let partial: facet_reflect::Partial<'_, 'bump, false> = unsafe {
         core::mem::transmute::<
-            facet_reflect::Partial<'facet, false>,
-            facet_reflect::Partial<'_, false>,
+            facet_reflect::Partial<'facet, 'bump, false>,
+            facet_reflect::Partial<'_, 'bump, false>,
         >(partial)
     };
 
@@ -280,10 +289,10 @@ pub fn from_str_into<'facet>(
 
     // SAFETY: Same reasoning - no borrowed data since BORROW=false.
     #[allow(unsafe_code)]
-    let partial: facet_reflect::Partial<'facet, false> = unsafe {
+    let partial: facet_reflect::Partial<'facet, 'bump, false> = unsafe {
         core::mem::transmute::<
-            facet_reflect::Partial<'_, false>,
-            facet_reflect::Partial<'facet, false>,
+            facet_reflect::Partial<'_, 'bump, false>,
+            facet_reflect::Partial<'facet, 'bump, false>,
         >(partial)
     };
 
@@ -304,6 +313,7 @@ pub fn from_str_into<'facet>(
 /// use facet::Facet;
 /// use facet_json::from_slice_into;
 /// use facet_reflect::Partial;
+/// use bumpalo::Bump;
 ///
 /// #[derive(Facet, Debug, PartialEq)]
 /// struct Point {
@@ -311,31 +321,33 @@ pub fn from_str_into<'facet>(
 ///     y: i32,
 /// }
 ///
+/// let bump = Bump::new();
 /// let json = br#"{"x": 10, "y": 20}"#;
-/// let partial = Partial::alloc_owned::<Point>().unwrap();
-/// let partial = from_slice_into(json, partial).unwrap();
+/// let partial = Partial::alloc_owned::<Point>(&bump).unwrap();
+/// let partial = from_slice_into(&bump, json, partial).unwrap();
 /// let value = partial.build().unwrap();
 /// let point: Point = value.materialize().unwrap();
 /// assert_eq!(point.x, 10);
 /// assert_eq!(point.y, 20);
 /// ```
-pub fn from_slice_into<'facet>(
+pub fn from_slice_into<'facet, 'bump>(
+    bump: &'bump Bump,
     input: &[u8],
-    partial: facet_reflect::Partial<'facet, false>,
-) -> Result<facet_reflect::Partial<'facet, false>, DeserializeError> {
+    partial: facet_reflect::Partial<'facet, 'bump, false>,
+) -> Result<facet_reflect::Partial<'facet, 'bump, false>, DeserializeError> {
     use facet_format::FormatDeserializer;
     let mut parser = JsonParser::<false>::new(input);
-    let mut de = FormatDeserializer::new_owned(&mut parser);
+    let mut de = FormatDeserializer::new_owned(bump, &mut parser);
 
-    // SAFETY: The deserializer expects Partial<'input, false> where 'input is the
+    // SAFETY: The deserializer expects Partial<'input, 'bump, false> where 'input is the
     // lifetime of the JSON bytes. Since BORROW=false, no data is borrowed from the
     // input, so the actual 'facet lifetime of the Partial is independent of 'input.
     // We transmute to satisfy the type system, then transmute back after deserialization.
     #[allow(unsafe_code)]
-    let partial: facet_reflect::Partial<'_, false> = unsafe {
+    let partial: facet_reflect::Partial<'_, 'bump, false> = unsafe {
         core::mem::transmute::<
-            facet_reflect::Partial<'facet, false>,
-            facet_reflect::Partial<'_, false>,
+            facet_reflect::Partial<'facet, 'bump, false>,
+            facet_reflect::Partial<'_, 'bump, false>,
         >(partial)
     };
 
@@ -343,10 +355,10 @@ pub fn from_slice_into<'facet>(
 
     // SAFETY: Same reasoning - no borrowed data since BORROW=false.
     #[allow(unsafe_code)]
-    let partial: facet_reflect::Partial<'facet, false> = unsafe {
+    let partial: facet_reflect::Partial<'facet, 'bump, false> = unsafe {
         core::mem::transmute::<
-            facet_reflect::Partial<'_, false>,
-            facet_reflect::Partial<'facet, false>,
+            facet_reflect::Partial<'_, 'bump, false>,
+            facet_reflect::Partial<'facet, 'bump, false>,
         >(partial)
     };
 
@@ -367,6 +379,7 @@ pub fn from_slice_into<'facet>(
 /// use facet::Facet;
 /// use facet_json::from_str_into_borrowed;
 /// use facet_reflect::Partial;
+/// use bumpalo::Bump;
 ///
 /// #[derive(Facet, Debug, PartialEq)]
 /// struct Person<'a> {
@@ -374,25 +387,27 @@ pub fn from_slice_into<'facet>(
 ///     age: u32,
 /// }
 ///
+/// let bump = Bump::new();
 /// let json = r#"{"name": "Alice", "age": 30}"#;
-/// let partial = Partial::alloc::<Person>().unwrap();
-/// let partial = from_str_into_borrowed(json, partial).unwrap();
+/// let partial = Partial::alloc::<Person>(&bump).unwrap();
+/// let partial = from_str_into_borrowed(&bump, json, partial).unwrap();
 /// let value = partial.build().unwrap();
 /// let person: Person = value.materialize().unwrap();
 /// assert_eq!(person.name, "Alice");
 /// assert_eq!(person.age, 30);
 /// ```
-pub fn from_str_into_borrowed<'input, 'facet>(
+pub fn from_str_into_borrowed<'input, 'facet, 'bump>(
+    bump: &'bump Bump,
     input: &'input str,
-    partial: facet_reflect::Partial<'facet, true>,
-) -> Result<facet_reflect::Partial<'facet, true>, DeserializeError>
+    partial: facet_reflect::Partial<'facet, 'bump, true>,
+) -> Result<facet_reflect::Partial<'facet, 'bump, true>, DeserializeError>
 where
     'input: 'facet,
 {
     use facet_format::FormatDeserializer;
     // TRUSTED_UTF8 = true: input came from &str, so it's valid UTF-8
     let mut parser = JsonParser::<true>::new(input.as_bytes());
-    let mut de = FormatDeserializer::new(&mut parser);
+    let mut de = FormatDeserializer::new(bump, &mut parser);
     de.deserialize_into(partial)
 }
 
@@ -410,6 +425,7 @@ where
 /// use facet::Facet;
 /// use facet_json::from_slice_into_borrowed;
 /// use facet_reflect::Partial;
+/// use bumpalo::Bump;
 ///
 /// #[derive(Facet, Debug, PartialEq)]
 /// struct Point<'a> {
@@ -418,22 +434,24 @@ where
 ///     y: i32,
 /// }
 ///
+/// let bump = Bump::new();
 /// let json = br#"{"label": "origin", "x": 0, "y": 0}"#;
-/// let partial = Partial::alloc::<Point>().unwrap();
-/// let partial = from_slice_into_borrowed(json, partial).unwrap();
+/// let partial = Partial::alloc::<Point>(&bump).unwrap();
+/// let partial = from_slice_into_borrowed(&bump, json, partial).unwrap();
 /// let value = partial.build().unwrap();
 /// let point: Point = value.materialize().unwrap();
 /// assert_eq!(point.label, "origin");
 /// ```
-pub fn from_slice_into_borrowed<'input, 'facet>(
+pub fn from_slice_into_borrowed<'input, 'facet, 'bump>(
+    bump: &'bump Bump,
     input: &'input [u8],
-    partial: facet_reflect::Partial<'facet, true>,
-) -> Result<facet_reflect::Partial<'facet, true>, DeserializeError>
+    partial: facet_reflect::Partial<'facet, 'bump, true>,
+) -> Result<facet_reflect::Partial<'facet, 'bump, true>, DeserializeError>
 where
     'input: 'facet,
 {
     use facet_format::FormatDeserializer;
     let mut parser = JsonParser::<false>::new(input);
-    let mut de = FormatDeserializer::new(&mut parser);
+    let mut de = FormatDeserializer::new(bump, &mut parser);
     de.deserialize_into(partial)
 }
