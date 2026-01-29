@@ -141,7 +141,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             {
                 // Check if we have a stored frame for this path (re-entry)
                 if let Some(mut stored_frame) = stored_frames.remove(&check_path) {
-                    trace!("begin_nth_field: Restoring stored frame for path {check_path:?}");
+                    trace!("begin_nth_field: Restoring stored frame for path {check_path}");
 
                     // Update parent's current_child tracking
                     let frame = stack.last_mut().unwrap();

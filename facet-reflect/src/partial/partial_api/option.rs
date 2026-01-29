@@ -90,7 +90,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             {
                 // Check if we have a stored frame for this path (re-entry case)
                 if let Some(mut stored_frame) = stored_frames.remove(&check_path) {
-                    trace!("begin_some: Restoring stored frame for path {check_path:?}");
+                    trace!("begin_some: Restoring stored frame for path {check_path}");
 
                     // Update tracker to indicate we're building the inner value
                     let frame = stack.last_mut().unwrap();

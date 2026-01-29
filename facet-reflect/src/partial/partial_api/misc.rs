@@ -321,9 +321,13 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         paths.sort_by_key(|b| core::cmp::Reverse(b.len()));
 
         trace!(
-            "finish_deferred: Processing {} stored frames in order: {:?}",
+            "finish_deferred: Processing {} stored frames in order: [{}]",
             paths.len(),
             paths
+                .iter()
+                .map(|p| p.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
         );
 
         // Process each stored frame from deepest to shallowest
@@ -331,7 +335,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             let mut frame = stored_frames.remove(&path).unwrap();
 
             trace!(
-                "finish_deferred: Processing frame at {:?}, shape {}, tracker {:?}",
+                "finish_deferred: Processing frame at {}, shape {}, tracker {:?}",
                 path,
                 frame.allocated.shape(),
                 frame.tracker.kind()
@@ -1093,65 +1097,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 && !has_option_parent_in_movable;
 
             if should_store {
-                // Compute the "field-only" path for storage by finding all Field steps
-                // from PARENT frames only. The frame being ended shouldn't contribute to
-                // its own path (its current_child points to ITS children, not to itself).
-                //
-                // Note: We include ALL frames in the path computation (including those
-                // before start_depth) because they contain navigation info. The start_depth
-                // only determines which frames we STORE, not which frames contribute to paths.
-                //
-                // Get the root shape for the Path from the first frame
-                let root_shape = self
-                    .frames()
-                    .first()
-                    .map(|f| f.allocated.shape())
-                    .unwrap_or_else(|| <() as facet_core::Facet>::SHAPE);
-
-                let mut field_path = facet_path::Path::new(root_shape);
-                let frames_len = self.frames().len();
-                // Iterate over all frames EXCEPT the last one (the one being ended)
-                for (frame_idx, frame) in self.frames().iter().enumerate() {
-                    // Skip the frame being ended
-                    if frame_idx == frames_len - 1 {
-                        continue;
-                    }
-                    // Extract navigation steps from frames
-                    // This MUST match derive_path() for consistency
-                    match &frame.tracker {
-                        Tracker::Struct {
-                            current_child: Some(idx),
-                            ..
-                        } => {
-                            field_path.push(PathStep::Field(*idx as u32));
-                        }
-                        Tracker::Enum {
-                            current_child: Some(idx),
-                            ..
-                        } => {
-                            field_path.push(PathStep::Field(*idx as u32));
-                        }
-                        Tracker::List {
-                            current_child: Some(idx),
-                        } => {
-                            field_path.push(PathStep::Index(*idx as u32));
-                        }
-                        Tracker::Array {
-                            current_child: Some(idx),
-                            ..
-                        } => {
-                            field_path.push(PathStep::Index(*idx as u32));
-                        }
-                        Tracker::Option {
-                            building_inner: true,
-                        } => {
-                            // Option with building_inner contributes OptionSome to path
-                            field_path.push(PathStep::OptionSome);
-                        }
-                        _ => {}
-                    }
-                }
-
+                let field_path = self.path();
                 if !field_path.is_empty() {
                     Some(field_path)
                 } else {
@@ -1170,7 +1116,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         // If we determined this frame should be stored for deferred re-entry, do it now
         if let Some(storage_path) = deferred_storage_info {
             trace!(
-                "end(): Storing frame for deferred path {:?}, shape {}",
+                "end(): Storing frame for deferred path {}, shape {}",
                 storage_path,
                 popped_frame.allocated.shape()
             );

@@ -2575,3 +2575,50 @@ fn deferred_option_struct_deeply_nested_interleaved() -> Result<(), IPanic> {
 
     Ok(())
 }
+
+#[test]
+fn deferred_option_string_crash() -> Result<(), IPanic> {
+    #[derive(Facet, Debug)]
+    struct Inner {
+        a: Option<String>,
+        b: Option<String>,
+    }
+
+    #[derive(Facet, Debug)]
+    #[repr(u8)]
+    enum Node {
+        Inner(Inner),
+    }
+
+    #[derive(Facet, Debug)]
+    struct Outer {
+        children: Vec<Node>,
+    }
+
+    let mut p = Partial::alloc::<Outer>()?;
+    p = p.begin_deferred()?;
+
+    p = p.begin_field("children")?;
+    p = p.init_list()?;
+    p = p.begin_list_item()?;
+    p = p.select_variant_named("Inner")?;
+
+    p = p.begin_field("a")?;
+    p = p.begin_some()?;
+    p = p.set("hello".to_string())?;
+    p = p.end()?;
+    p = p.end()?;
+
+    p = p.begin_field("b")?;
+    p = p.begin_some()?;
+    p = p.set("world".to_string())?;
+    p = p.end()?;
+    p = p.end()?;
+
+    p = p.end()?; // end Inner enum variant
+    p = p.end()?; // end Vec
+
+    p = p.finish_deferred()?;
+    let _ = p.build()?;
+    Ok(())
+}
