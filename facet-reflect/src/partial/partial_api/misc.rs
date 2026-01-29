@@ -169,13 +169,9 @@ impl<'facet, 'bump, const BORROW: bool> Partial<'facet, 'bump, BORROW> {
     #[inline]
     pub fn deser_strategy(&self) -> Option<&'bump DeserStrategy<'bump>> {
         let node = self.plan_node()?;
-
-        // If this is a BackRef, follow the reference to get the actual strategy
-        if let DeserStrategy::BackRef { target } = &node.strategy {
-            return Some(&target.strategy);
-        }
-
-        Some(&node.strategy)
+        // Resolve BackRef if needed - resolve_backref returns the node unchanged if not a BackRef
+        let resolved = self.root_plan.resolve_backref(node);
+        Some(&resolved.strategy)
     }
 
     /// Returns true if the current frame is building a smart pointer slice (Arc<\[T\]>, Rc<\[T\]>, Box<\[T\]>).
