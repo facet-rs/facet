@@ -101,7 +101,7 @@ doc-tests-ci *args:
 
 miri *args:
     #!/usr/bin/env -S bash -euo pipefail
-    export RUSTUP_TOOLCHAIN=nightly-2025-12-09
+    export RUSTUP_TOOLCHAIN=nightly-2026-01-28
     export MIRIFLAGS="-Zmiri-strict-provenance -Zmiri-env-forward=NEXTEST"
     rustup toolchain install "${RUSTUP_TOOLCHAIN}"
     rustup "+${RUSTUP_TOOLCHAIN}" component add miri rust-src
