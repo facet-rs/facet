@@ -4,8 +4,8 @@ use core::cmp::Ordering;
 
 use crate::{
     Def, EnumRepr, EnumType, Facet, FieldBuilder, HashProxy, OptionDef, OptionVTable, OxPtrConst,
-    OxPtrMut, OxRef, PtrConst, Repr, Shape, ShapeBuilder, Type, TypeOpsIndirect, TypeParam,
-    UserType, VTableIndirect, Variance, VarianceDep, VarianceDesc, VariantBuilder,
+    OxPtrMut, OxPtrUninit, OxRef, PtrConst, Repr, Shape, ShapeBuilder, Type, TypeOpsIndirect,
+    TypeParam, UserType, VTableIndirect, Variance, VarianceDep, VarianceDesc, VariantBuilder,
 };
 
 /// Extract the OptionDef from a shape, returns None if not an Option
@@ -164,9 +164,8 @@ unsafe fn option_drop_inner(ptr: crate::PtrMut, def: &OptionDef) {
 }
 
 /// Default for `Option<T>` - always None (no `T::Default` requirement)
-unsafe fn option_default<T>(ox: OxPtrMut) {
-    let ptr = ox.ptr();
-    unsafe { ptr.as_uninit().put(Option::<T>::None) };
+unsafe fn option_default<T>(ox: OxPtrUninit) {
+    unsafe { ox.put(Option::<T>::None) };
 }
 
 /// Check if `Option<T>` is Some

@@ -310,7 +310,7 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
         let format_ns = self.parser.format_namespace();
 
         let plan = TypePlan::<T>::build_for_format(format_ns)?;
-        // SAFETY: partial_owned produces Partial<'static, 'plan, false>, but deserialize_into
+        // SAFETY: partial_owned produces Partial<'static, false>, but deserialize_into
         // expects 'input. Since BORROW=false means we never borrow from input anyway,
         // this is safe.
         #[allow(unsafe_code)]
@@ -353,7 +353,7 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
         let format_ns = self.parser.format_namespace();
 
         let plan = TypePlan::<T>::build_for_format(format_ns)?;
-        // SAFETY: partial_owned produces Partial<'static, 'plan, false>, but deserialize_into
+        // SAFETY: partial_owned produces Partial<'static, false>, but deserialize_into
         // expects 'input. Since BORROW=false means we never borrow from input anyway,
         // this is safe.
         #[allow(unsafe_code)]
@@ -394,7 +394,7 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
         let format_ns = self.parser.format_namespace();
 
         let plan = TypePlan::<T>::build_for_format(format_ns)?;
-        // SAFETY: partial_owned produces Partial<'static, 'plan, false>, but deserialize_into
+        // SAFETY: partial_owned produces Partial<'static, false>, but deserialize_into
         // expects 'input. Since BORROW=false means we never borrow from input anyway,
         // this is safe.
         #[allow(unsafe_code)]

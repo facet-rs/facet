@@ -12,7 +12,9 @@
 //! - Allows reusing the plan across multiple deserializations
 //! - Uses 32-bit indices for compact representation
 
+use alloc::sync::Arc;
 use alloc::vec::Vec;
+
 use facet_core::{
     Characteristic, ConstTypeId, Def, DefaultInPlaceFn, DefaultSource, EnumType, Field, ProxyDef,
     ScalarType, SequenceType, Shape, StructType, Type, UserType, ValidatorFn, Variant,
@@ -47,7 +49,7 @@ pub type ValidatorRange = SliceRange<PrecomputedValidator>;
 #[derive(Debug)]
 pub struct TypePlan<T: ?Sized> {
     /// The actual plan data (type-erased internally)
-    core: TypePlanCore,
+    core: Arc<TypePlanCore>,
     /// Phantom type parameter for compile-time type safety
     _marker: core::marker::PhantomData<fn() -> T>,
 }
@@ -1637,7 +1639,7 @@ impl<'facet, T: facet_core::Facet<'facet> + ?Sized> TypePlan<T> {
     pub fn build_for_format(format_namespace: Option<&'static str>) -> Result<Self, AllocError> {
         let mut builder = TypePlanBuilder::new(format_namespace);
         let root = builder.build_node(T::SHAPE)?;
-        let core = builder.finish(root);
+        let core = Arc::new(builder.finish(root));
 
         Ok(TypePlan {
             core,
@@ -1647,8 +1649,8 @@ impl<'facet, T: facet_core::Facet<'facet> + ?Sized> TypePlan<T> {
 
     /// Get a reference to the internal core.
     #[inline]
-    pub fn core(&self) -> &TypePlanCore {
-        &self.core
+    pub fn core(&self) -> Arc<TypePlanCore> {
+        self.core.clone()
     }
 
     /// Get the root node.
@@ -2076,6 +2078,19 @@ impl TypePlanCore {
             }
         } else {
             None
+        }
+    }
+
+    pub(crate) fn empty() -> TypePlanCore {
+        TypePlanCore {
+            nodes: Arena::new(),
+            fields: Arena::new(),
+            variants: Arena::new(),
+            validators: Arena::new(),
+            field_entries: Arena::new(),
+            buckets: Arena::new(),
+            node_lookup: Vec::new(),
+            root: NodeId::new(0),
         }
     }
 }

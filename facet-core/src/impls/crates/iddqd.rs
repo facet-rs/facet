@@ -18,8 +18,8 @@ use iddqd::{BiHashItem, BiHashMap, IdHashItem, IdHashMap, TriHashItem, TriHashMa
 use iddqd::{IdOrdItem, IdOrdMap};
 
 use crate::{
-    Def, Facet, IterVTable, OxPtrMut, PtrConst, PtrMut, PtrUninit, SetDef, SetVTable, Shape,
-    ShapeBuilder, Type, TypeNameFn, TypeNameOpts, TypeOpsIndirect, TypeParam, UserType,
+    Def, Facet, IterVTable, OxPtrMut, OxPtrUninit, PtrConst, PtrMut, PtrUninit, SetDef, SetVTable,
+    Shape, ShapeBuilder, Type, TypeNameFn, TypeNameOpts, TypeOpsIndirect, TypeParam, UserType,
 };
 
 // =============================================================================
@@ -35,7 +35,12 @@ unsafe fn id_hash_map_init_in_place_with_capacity<
     uninit: PtrUninit,
     capacity: usize,
 ) -> PtrMut {
-    unsafe { uninit.put(IdHashMap::<T, S>::with_capacity_and_hasher(capacity, S::default())) }
+    unsafe {
+        uninit.put(IdHashMap::<T, S>::with_capacity_and_hasher(
+            capacity,
+            S::default(),
+        ))
+    }
 }
 
 unsafe fn id_hash_map_insert<T: IdHashItem, S: Clone + BuildHasher>(
@@ -81,7 +86,7 @@ unsafe fn id_hash_map_iter_next<T: IdHashItem + 'static>(iter_ptr: PtrMut) -> Op
 unsafe fn id_hash_map_iter_dealloc<T: IdHashItem + 'static>(iter_ptr: PtrMut) {
     unsafe {
         drop(Box::from_raw(
-            iter_ptr.as_ptr::<IdHashMapIterator<'_, T>>() as *mut IdHashMapIterator<'_, T>,
+            iter_ptr.as_ptr::<IdHashMapIterator<'_, T>>() as *mut IdHashMapIterator<'_, T>
         ));
     }
 }
@@ -92,8 +97,8 @@ unsafe fn id_hash_map_drop<T: IdHashItem, S>(ox: OxPtrMut) {
     }
 }
 
-unsafe fn id_hash_map_default<T: IdHashItem, S: Clone + Default + BuildHasher>(ox: OxPtrMut) {
-    unsafe { ox.ptr().as_uninit().put(IdHashMap::<T, S>::default()) };
+unsafe fn id_hash_map_default<T: IdHashItem, S: Clone + Default + BuildHasher>(ox: OxPtrUninit) {
+    unsafe { ox.put(IdHashMap::<T, S>::default()) };
 }
 
 unsafe impl<'a, T, S> Facet<'a> for IdHashMap<T, S>
@@ -153,14 +158,16 @@ where
                 shape: T::SHAPE,
             }])
             .inner(T::SHAPE)
-            .type_ops_indirect(&const {
-                TypeOpsIndirect {
-                    drop_in_place: id_hash_map_drop::<T, S>,
-                    default_in_place: Some(id_hash_map_default::<T, S>),
-                    clone_into: None,
-                    is_truthy: None,
-                }
-            })
+            .type_ops_indirect(
+                &const {
+                    TypeOpsIndirect {
+                        drop_in_place: id_hash_map_drop::<T, S>,
+                        default_in_place: Some(id_hash_map_default::<T, S>),
+                        clone_into: None,
+                        is_truthy: None,
+                    }
+                },
+            )
             .build()
     };
 }
@@ -222,7 +229,7 @@ unsafe fn id_ord_map_iter_next<T: IdOrdItem + 'static>(iter_ptr: PtrMut) -> Opti
 unsafe fn id_ord_map_iter_dealloc<T: IdOrdItem + 'static>(iter_ptr: PtrMut) {
     unsafe {
         drop(Box::from_raw(
-            iter_ptr.as_ptr::<IdOrdMapIterator<'_, T>>() as *mut IdOrdMapIterator<'_, T>,
+            iter_ptr.as_ptr::<IdOrdMapIterator<'_, T>>() as *mut IdOrdMapIterator<'_, T>
         ));
     }
 }
@@ -235,8 +242,8 @@ unsafe fn id_ord_map_drop<T: IdOrdItem>(ox: OxPtrMut) {
 }
 
 #[cfg(feature = "std")]
-unsafe fn id_ord_map_default<T: IdOrdItem>(ox: OxPtrMut) {
-    unsafe { ox.ptr().as_uninit().put(IdOrdMap::<T>::new()) };
+unsafe fn id_ord_map_default<T: IdOrdItem>(ox: OxPtrUninit) {
+    unsafe { ox.put(IdOrdMap::<T>::new()) };
 }
 
 #[cfg(feature = "std")]
@@ -293,14 +300,16 @@ where
                 shape: T::SHAPE,
             }])
             .inner(T::SHAPE)
-            .type_ops_indirect(&const {
-                TypeOpsIndirect {
-                    drop_in_place: id_ord_map_drop::<T>,
-                    default_in_place: Some(id_ord_map_default::<T>),
-                    clone_into: None,
-                    is_truthy: None,
-                }
-            })
+            .type_ops_indirect(
+                &const {
+                    TypeOpsIndirect {
+                        drop_in_place: id_ord_map_drop::<T>,
+                        default_in_place: Some(id_ord_map_default::<T>),
+                        clone_into: None,
+                        is_truthy: None,
+                    }
+                },
+            )
             .build()
     };
 }
@@ -311,11 +320,19 @@ where
 
 type BiHashMapIterator<'mem, T> = iddqd::bi_hash_map::Iter<'mem, T>;
 
-unsafe fn bi_hash_map_init_in_place_with_capacity<T: BiHashItem, S: Clone + Default + BuildHasher>(
+unsafe fn bi_hash_map_init_in_place_with_capacity<
+    T: BiHashItem,
+    S: Clone + Default + BuildHasher,
+>(
     uninit: PtrUninit,
     capacity: usize,
 ) -> PtrMut {
-    unsafe { uninit.put(BiHashMap::<T, S>::with_capacity_and_hasher(capacity, S::default())) }
+    unsafe {
+        uninit.put(BiHashMap::<T, S>::with_capacity_and_hasher(
+            capacity,
+            S::default(),
+        ))
+    }
 }
 
 unsafe fn bi_hash_map_insert<T: BiHashItem, S: Clone + BuildHasher>(
@@ -362,7 +379,7 @@ unsafe fn bi_hash_map_iter_next<T: BiHashItem + 'static>(iter_ptr: PtrMut) -> Op
 unsafe fn bi_hash_map_iter_dealloc<T: BiHashItem + 'static>(iter_ptr: PtrMut) {
     unsafe {
         drop(Box::from_raw(
-            iter_ptr.as_ptr::<BiHashMapIterator<'_, T>>() as *mut BiHashMapIterator<'_, T>,
+            iter_ptr.as_ptr::<BiHashMapIterator<'_, T>>() as *mut BiHashMapIterator<'_, T>
         ));
     }
 }
@@ -373,8 +390,8 @@ unsafe fn bi_hash_map_drop<T: BiHashItem, S>(ox: OxPtrMut) {
     }
 }
 
-unsafe fn bi_hash_map_default<T: BiHashItem, S: Clone + Default + BuildHasher>(ox: OxPtrMut) {
-    unsafe { ox.ptr().as_uninit().put(BiHashMap::<T, S>::default()) };
+unsafe fn bi_hash_map_default<T: BiHashItem, S: Clone + Default + BuildHasher>(ox: OxPtrUninit) {
+    unsafe { ox.put(BiHashMap::<T, S>::default()) };
 }
 
 unsafe impl<'a, T, S> Facet<'a> for BiHashMap<T, S>
@@ -434,14 +451,16 @@ where
                 shape: T::SHAPE,
             }])
             .inner(T::SHAPE)
-            .type_ops_indirect(&const {
-                TypeOpsIndirect {
-                    drop_in_place: bi_hash_map_drop::<T, S>,
-                    default_in_place: Some(bi_hash_map_default::<T, S>),
-                    clone_into: None,
-                    is_truthy: None,
-                }
-            })
+            .type_ops_indirect(
+                &const {
+                    TypeOpsIndirect {
+                        drop_in_place: bi_hash_map_drop::<T, S>,
+                        default_in_place: Some(bi_hash_map_default::<T, S>),
+                        clone_into: None,
+                        is_truthy: None,
+                    }
+                },
+            )
             .build()
     };
 }
@@ -459,7 +478,12 @@ unsafe fn tri_hash_map_init_in_place_with_capacity<
     uninit: PtrUninit,
     capacity: usize,
 ) -> PtrMut {
-    unsafe { uninit.put(TriHashMap::<T, S>::with_capacity_and_hasher(capacity, S::default())) }
+    unsafe {
+        uninit.put(TriHashMap::<T, S>::with_capacity_and_hasher(
+            capacity,
+            S::default(),
+        ))
+    }
 }
 
 unsafe fn tri_hash_map_insert<T: TriHashItem, S: Clone + BuildHasher>(
@@ -518,8 +542,8 @@ unsafe fn tri_hash_map_drop<T: TriHashItem, S>(ox: OxPtrMut) {
     }
 }
 
-unsafe fn tri_hash_map_default<T: TriHashItem, S: Clone + Default + BuildHasher>(ox: OxPtrMut) {
-    unsafe { ox.ptr().as_uninit().put(TriHashMap::<T, S>::default()) };
+unsafe fn tri_hash_map_default<T: TriHashItem, S: Clone + Default + BuildHasher>(ox: OxPtrUninit) {
+    unsafe { ox.put(TriHashMap::<T, S>::default()) };
 }
 
 unsafe impl<'a, T, S> Facet<'a> for TriHashMap<T, S>
@@ -579,14 +603,16 @@ where
                 shape: T::SHAPE,
             }])
             .inner(T::SHAPE)
-            .type_ops_indirect(&const {
-                TypeOpsIndirect {
-                    drop_in_place: tri_hash_map_drop::<T, S>,
-                    default_in_place: Some(tri_hash_map_default::<T, S>),
-                    clone_into: None,
-                    is_truthy: None,
-                }
-            })
+            .type_ops_indirect(
+                &const {
+                    TypeOpsIndirect {
+                        drop_in_place: tri_hash_map_drop::<T, S>,
+                        default_in_place: Some(tri_hash_map_default::<T, S>),
+                        clone_into: None,
+                        is_truthy: None,
+                    }
+                },
+            )
             .build()
     };
 }

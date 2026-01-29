@@ -1,13 +1,13 @@
 use crate::{
-    Def, Facet, HashProxy, OxPtrConst, OxPtrMut, Repr, Shape, ShapeBuilder, StructKind, StructType,
-    Type, TypeOpsIndirect, UserType, VTableIndirect,
+    Def, Facet, HashProxy, OxPtrConst, OxPtrMut, OxPtrUninit, Repr, Shape, ShapeBuilder,
+    StructKind, StructType, Type, TypeOpsIndirect, UserType, VTableIndirect,
 };
 
 const unsafe fn phantom_drop(_ptr: OxPtrMut) {
     // PhantomData is zero-sized, nothing to drop
 }
 
-const unsafe fn phantom_default(_dst: OxPtrMut) {
+const unsafe fn phantom_default(_dst: OxPtrUninit) {
     // PhantomData is zero-sized, nothing to write
 }
 

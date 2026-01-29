@@ -109,7 +109,7 @@
 //! - Properly handling drop semantics for partially initialized values
 //! - Supporting both owned and borrowed values through lifetime parameters
 
-use alloc::{collections::BTreeMap, vec::Vec};
+use alloc::{collections::BTreeMap, sync::Arc, vec::Vec};
 
 mod arena;
 mod iset;
@@ -117,9 +117,8 @@ pub(crate) mod typeplan;
 pub use typeplan::{DeserStrategy, TypePlan};
 
 mod partial_api;
-pub use partial_api::alloc::{PartialBuilder, PartialBuilderOwned};
 
-use crate::{ReflectErrorKind, TrackerKind, trace};
+use crate::{ReflectErrorKind, TrackerKind, trace, typeplan::TypePlanCore};
 use facet_path::{Path, PathStep};
 
 use core::marker::PhantomData;
@@ -214,20 +213,17 @@ impl FrameMode {
 /// an error is returned: in other words, if you navigate down to a field,
 /// you have to fully initialize it one go. You can't go back up and back down
 /// to it again.
-///
-/// The `'plan` lifetime ties this to a `TypePlan` that owns its allocations.
-/// The plan is built once and reused for multiple deserializations.
-pub struct Partial<'facet, 'plan, const BORROW: bool = true> {
+pub struct Partial<'facet, const BORROW: bool = true> {
     /// Frame management mode (strict or deferred) and associated state.
     mode: FrameMode,
 
     /// current state of the Partial
     state: PartialState,
 
-    /// Reference to the precomputed deserialization plan for the root type.
+    /// Precomputed deserialization plan for the root type.
     /// Built once at allocation time, navigated in parallel with value construction.
     /// Each Frame holds a NodeId (index) into this plan's arenas.
-    root_plan: &'plan typeplan::TypePlanCore,
+    root_plan: Arc<TypePlanCore>,
 
     /// PhantomData marker for the 'facet lifetime.
     /// This is covariant in 'facet, which is safe because 'facet represents
@@ -933,8 +929,7 @@ impl Frame {
         {
             // If no fields were visited and the container has a default, use it
             // SAFETY: We're about to initialize the entire struct with its default value
-            let data_mut = unsafe { self.data.assume_init() };
-            if unsafe { self.allocated.shape().call_default_in_place(data_mut) }.is_some() {
+            if unsafe { self.allocated.shape().call_default_in_place(self.data) }.is_some() {
                 self.is_init = true;
                 return Ok(());
             }
@@ -957,8 +952,7 @@ impl Frame {
                     let no_fields_set = (0..struct_type.fields.len()).all(|i| !iset.get(i));
                     if no_fields_set {
                         // SAFETY: We're about to initialize the entire struct with its default value
-                        let data_mut = unsafe { self.data.assume_init() };
-                        if unsafe { self.allocated.shape().call_default_in_place(data_mut) }
+                        if unsafe { self.allocated.shape().call_default_in_place(self.data) }
                             .is_some()
                         {
                             self.tracker = Tracker::Scalar;
@@ -1067,9 +1061,8 @@ impl Frame {
                     return true;
                 }
                 DefaultSource::FromTrait => {
-                    // Use the type's Default trait - needs PtrMut
-                    let field_ptr_mut = unsafe { field_ptr.assume_init() };
-                    if unsafe { field.shape().call_default_in_place(field_ptr_mut) }.is_some() {
+                    // Use the type's Default trait
+                    if unsafe { field.shape().call_default_in_place(field_ptr) }.is_some() {
                         return true;
                     }
                 }
@@ -1080,8 +1073,7 @@ impl Frame {
         // use the type's Default impl. This allows `#[facet(default)]` on a struct to
         // mean "use Default for any missing fields whose types implement Default".
         if container_has_default {
-            let field_ptr_mut = unsafe { field_ptr.assume_init() };
-            if unsafe { field.shape().call_default_in_place(field_ptr_mut) }.is_some() {
+            if unsafe { field.shape().call_default_in_place(field_ptr) }.is_some() {
                 return true;
             }
         }
@@ -1089,16 +1081,14 @@ impl Frame {
         // Special case: Option<T> always defaults to None, even without explicit #[facet(default)]
         // This is because Option is fundamentally "optional" - if not set, it should be None
         if matches!(field.shape().def, Def::Option(_)) {
-            let field_ptr_mut = unsafe { field_ptr.assume_init() };
-            if unsafe { field.shape().call_default_in_place(field_ptr_mut) }.is_some() {
+            if unsafe { field.shape().call_default_in_place(field_ptr) }.is_some() {
                 return true;
             }
         }
 
         // Special case: () unit type always defaults to ()
         if field.shape().is_type::<()>() {
-            let field_ptr_mut = unsafe { field_ptr.assume_init() };
-            if unsafe { field.shape().call_default_in_place(field_ptr_mut) }.is_some() {
+            if unsafe { field.shape().call_default_in_place(field_ptr) }.is_some() {
                 return true;
             }
         }
@@ -1107,8 +1097,7 @@ impl Frame {
         // These types have obvious "zero values" and it's almost always what you want
         // when deserializing data where the collection is simply absent.
         if matches!(field.shape().def, Def::List(_) | Def::Map(_) | Def::Set(_)) {
-            let field_ptr_mut = unsafe { field_ptr.assume_init() };
-            if unsafe { field.shape().call_default_in_place(field_ptr_mut) }.is_some() {
+            if unsafe { field.shape().call_default_in_place(field_ptr) }.is_some() {
                 return true;
             }
         }
@@ -1290,7 +1279,7 @@ impl Frame {
         &mut self,
         plans: &[FieldInitPlan],
         num_fields: usize,
-        type_plan_core: &typeplan::TypePlanCore,
+        type_plan_core: &TypePlanCore,
     ) -> Result<(), ReflectErrorKind> {
         // With lazy tracker initialization, structs start with Tracker::Scalar.
         // If is_init is true with Scalar, the struct was set wholesale - nothing to do.
@@ -1300,8 +1289,7 @@ impl Frame {
             && matches!(self.allocated.shape().ty, Type::User(UserType::Struct(_)))
         {
             // Try container-level default first
-            let data_mut = unsafe { self.data.assume_init() };
-            if unsafe { self.allocated.shape().call_default_in_place(data_mut) }.is_some() {
+            if unsafe { self.allocated.shape().call_default_in_place(self.data) }.is_some() {
                 self.is_init = true;
                 return Ok(());
             }
@@ -1342,9 +1330,8 @@ impl Frame {
                                 true
                             }
                             FieldDefault::FromTrait(shape) => {
-                                // SAFETY: call_default_in_place writes to the pointer
-                                let field_ptr_mut = PtrMut::new(field_ptr.as_mut_byte_ptr());
-                                unsafe { shape.call_default_in_place(field_ptr_mut) }.is_some()
+                                // SAFETY: call_default_in_place writes to uninitialized memory
+                                unsafe { shape.call_default_in_place(field_ptr) }.is_some()
                             }
                         };
 
@@ -1425,7 +1412,7 @@ impl Frame {
 
 // Convenience methods on Partial for accessing FrameMode internals.
 // These help minimize changes to the rest of the codebase during the refactor.
-impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
+impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// Get a reference to the frame stack.
     #[inline]
     pub(crate) const fn frames(&self) -> &Vec<Frame> {
@@ -1516,7 +1503,7 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
     }
 }
 
-impl<'facet, 'plan, const BORROW: bool> Drop for Partial<'facet, 'plan, BORROW> {
+impl<'facet, const BORROW: bool> Drop for Partial<'facet, BORROW> {
     fn drop(&mut self) {
         trace!("🧹 Partial is being dropped");
 

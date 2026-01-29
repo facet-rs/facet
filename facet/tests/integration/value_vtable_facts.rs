@@ -191,7 +191,7 @@ where
         .unwrap_or(false)
         && {
             let ptr = BoxPtrUninit::new_sized::<T>();
-            let result = unsafe { shape.call_default_in_place(ptr.ptr.assume_init()) };
+            let result = unsafe { shape.call_default_in_place(ptr.ptr) };
             if result.is_some() {
                 // Drop the allocated value
                 let _ = unsafe { ptr.assume_init() };
@@ -307,7 +307,7 @@ where
         facts.insert(Fact::Default);
 
         let ptr = BoxPtrUninit::new_sized::<T>();
-        unsafe { shape.call_default_in_place(ptr.ptr.assume_init()) };
+        unsafe { shape.call_default_in_place(ptr.ptr) };
         let ptr = unsafe { ptr.assume_init() };
         let debug = unsafe { debug(shape, ptr.ptr.as_const()) };
         eprintln!(

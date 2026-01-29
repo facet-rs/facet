@@ -4,7 +4,7 @@ use facet_core::{Def, DynDateTimeKind, NumericType, PrimitiveType, Type};
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // `Set` and set helpers
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
+impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// Sets a value wholesale into the current frame.
     ///
     /// If the current frame was already initialized, the previous value is
@@ -348,12 +348,12 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
         // SAFETY: `call_default_in_place` fully initializes the passed pointer.
         unsafe {
             self.set_from_function(move |ptr| {
-                shape.call_default_in_place(ptr.assume_init()).ok_or(
-                    ReflectErrorKind::OperationFailed {
+                shape
+                    .call_default_in_place(ptr)
+                    .ok_or(ReflectErrorKind::OperationFailed {
                         shape,
                         operation: "type does not implement Default",
-                    },
-                )
+                    })
             })
         }
     }

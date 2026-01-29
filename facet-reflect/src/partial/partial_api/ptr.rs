@@ -4,7 +4,7 @@ use crate::AllocatedShape;
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Smart pointers
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-impl<const BORROW: bool> Partial<'_, '_, BORROW> {
+impl<const BORROW: bool> Partial<'_, BORROW> {
     /// Pushes a frame to initialize the inner value of a smart pointer (`Box<T>`, `Arc<T>`, etc.)
     pub fn begin_smart_ptr(mut self) -> Result<Self, ReflectError> {
         crate::trace!("begin_smart_ptr()");

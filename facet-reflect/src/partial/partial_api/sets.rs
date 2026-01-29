@@ -4,7 +4,7 @@ use crate::AllocatedShape;
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Sets
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-impl<const BORROW: bool> Partial<'_, '_, BORROW> {
+impl<const BORROW: bool> Partial<'_, BORROW> {
     /// Initializes a set (HashSet, BTreeSet, etc.) if it hasn't been initialized before.
     /// This is a prerequisite to `begin_set_item`/`set`/`end` or the shorthand `insert`.
     ///

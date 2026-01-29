@@ -4,8 +4,8 @@ use std::collections::HashSet;
 use crate::{PtrConst, PtrMut, PtrUninit};
 
 use crate::{
-    Def, Facet, HashProxy, IterVTable, OxPtrConst, OxPtrMut, OxRef, SetDef, SetVTable, Shape,
-    ShapeBuilder, Type, TypeNameFn, TypeNameOpts, TypeOpsIndirect, TypeParam, UserType,
+    Def, Facet, HashProxy, IterVTable, OxPtrConst, OxPtrMut, OxPtrUninit, OxRef, SetDef, SetVTable,
+    Shape, ShapeBuilder, Type, TypeNameFn, TypeNameOpts, TypeOpsIndirect, TypeParam, UserType,
     VTableIndirect, Variance, VarianceDep, VarianceDesc,
 };
 
@@ -193,8 +193,8 @@ unsafe fn hashset_drop<T: 'static, S: 'static>(ox: OxPtrMut) {
 }
 
 /// Default for HashSet<T, S>
-unsafe fn hashset_default<T: 'static, S: Default + BuildHasher + 'static>(ox: OxPtrMut) {
-    unsafe { ox.ptr().as_uninit().put(HashSet::<T, S>::default()) };
+unsafe fn hashset_default<T: 'static, S: Default + BuildHasher + 'static>(ox: OxPtrUninit) {
+    unsafe { ox.put(HashSet::<T, S>::default()) };
 }
 
 unsafe impl<'a, T, S> Facet<'a> for HashSet<T, S>

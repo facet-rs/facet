@@ -4,7 +4,7 @@ use facet_path::PathStep;
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Field selection
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-impl<const BORROW: bool> Partial<'_, '_, BORROW> {
+impl<const BORROW: bool> Partial<'_, BORROW> {
     /// Find the index of a field by name in the current struct
     ///
     /// If the current frame isn't a struct or an enum (with a selected variant)

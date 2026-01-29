@@ -184,9 +184,9 @@ pub mod 𝟋 {
     }
 
     /// Returns a default_in_place function pointer for TypeOpsIndirect.
-    pub const fn 𝟋indirect_default_for<T: Default>() -> unsafe fn(crate::OxPtrMut) {
-        unsafe fn default_in_place<T: Default>(ox: crate::OxPtrMut) {
-            unsafe { ox.ptr().as_uninit().put(T::default()) };
+    pub const fn 𝟋indirect_default_for<T: Default>() -> unsafe fn(crate::OxPtrUninit) {
+        unsafe fn default_in_place<T: Default>(ox: crate::OxPtrUninit) {
+            unsafe { ox.put(T::default()) };
         }
         default_in_place::<T>
     }

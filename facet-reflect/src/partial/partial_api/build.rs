@@ -3,7 +3,7 @@ use super::*;
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Build
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
+impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// Builds the value, consuming the Partial.
     pub fn build(mut self) -> Result<HeapValue<'facet, BORROW>, ReflectError> {
         use crate::typeplan::TypePlanNodeKind;

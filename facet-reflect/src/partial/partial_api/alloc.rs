@@ -1,110 +1,12 @@
 use super::*;
-use crate::{AllocError, AllocatedShape, typeplan::TypePlan};
+use crate::typeplan::{TypePlan, TypePlanCore, TypePlanNode};
+use crate::{AllocError, AllocatedShape, partial::arena::Idx};
 use ::alloc::collections::BTreeMap;
+use ::alloc::sync::Arc;
 use ::alloc::vec;
 use core::marker::PhantomData;
 
-////////////////////////////////////////////////////////////////////////////////////////////////////
-// Builder for closure-based allocation with nice ergonomics
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-/// Builder for creating a borrowing Partial with closure-based allocation.
-///
-/// Created via [`Partial::of::<T>()`]. This captures the type parameter,
-/// allowing the `scope` method to infer all other type parameters.
-///
-/// # Example
-///
-/// ```ignore
-/// let result = Partial::of::<Person>().scope(|p| {
-///     p.set_field("name", "Alice")?
-///      .set_field("age", 30u32)?
-///      .build()?
-///      .materialize()
-/// })?;
-/// ```
-#[allow(clippy::type_complexity)]
-pub struct PartialBuilder<'facet, T: ?Sized> {
-    _marker: PhantomData<(&'facet (), fn() -> T)>,
-}
-
-impl<T: Facet<'static>> PartialBuilder<'static, T> {
-    /// Execute a closure with a freshly allocated Partial.
-    ///
-    /// The TypePlan is built and owned internally. The closure can return
-    /// any error type that `AllocError` can convert into.
-    pub fn scope<R, E, F>(self, f: F) -> Result<R, E>
-    where
-        E: From<AllocError>,
-        F: for<'plan> FnOnce(Partial<'static, 'plan, true>) -> Result<R, E>,
-    {
-        let plan = TypePlan::<T>::build()?;
-        let partial = plan.partial()?;
-        f(partial)
-    }
-}
-
-/// Builder for creating an owned Partial with closure-based allocation.
-///
-/// Created via [`Partial::of_owned::<T>()`]. This captures the type parameter,
-/// allowing the `scope` method to infer all other type parameters.
-///
-/// # Example
-///
-/// ```ignore
-/// let result = Partial::of_owned::<Person>().scope(|p| {
-///     p.set_field("name", "Alice".to_string())?
-///      .set_field("age", 30u32)?
-///      .build()?
-///      .materialize()
-/// })?;
-/// ```
-pub struct PartialBuilderOwned<T: ?Sized> {
-    _marker: PhantomData<fn() -> T>,
-}
-
-impl<T: Facet<'static>> PartialBuilderOwned<T> {
-    /// Execute a closure with a freshly allocated owned Partial.
-    ///
-    /// The TypePlan is built and owned internally. The closure can return
-    /// any error type that `AllocError` can convert into.
-    pub fn scope<R, E, F>(self, f: F) -> Result<R, E>
-    where
-        E: From<AllocError>,
-        F: for<'plan> FnOnce(Partial<'static, 'plan, false>) -> Result<R, E>,
-    {
-        let plan = TypePlan::<T>::build()?;
-        let partial = plan.partial_owned()?;
-        f(partial)
-    }
-}
-
-impl<'plan> Partial<'static, 'plan, true> {
-    /// Create a builder for closure-based Partial allocation (borrowing).
-    ///
-    /// This captures the type parameter `T`, allowing the `scope` method
-    /// to infer all other type parameters automatically.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let person = Partial::of::<Person>().scope(|p| {
-    ///     p.set_field("name", "Alice")?
-    ///      .set_field("age", 30u32)?
-    ///      .build()?
-    ///      .materialize()
-    /// })?;
-    /// ```
-    ///
-    /// This is more ergonomic than `Partial::alloc` when you don't need
-    /// to manage the bump allocator yourself.
-    #[inline]
-    pub fn of<T: Facet<'static>>() -> PartialBuilder<'static, T> {
-        PartialBuilder {
-            _marker: PhantomData,
-        }
-    }
-
+impl Partial<'static, true> {
     /// Create a new borrowing Partial for the given type.
     ///
     /// This allocates memory for a value of type `T` and returns a `Partial`
@@ -121,29 +23,7 @@ impl<'plan> Partial<'static, 'plan, true> {
     }
 }
 
-impl<'plan> Partial<'static, 'plan, false> {
-    /// Create a builder for closure-based Partial allocation (owned).
-    ///
-    /// This captures the type parameter `T`, allowing the `scope` method
-    /// to infer all other type parameters automatically.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let person = Partial::of_owned::<Person>().scope(|p| {
-    ///     p.set_field("name", "Alice".to_string())?
-    ///      .set_field("age", 30u32)?
-    ///      .build()?
-    ///      .materialize()
-    /// })?;
-    /// ```
-    #[inline]
-    pub fn of_owned<T: Facet<'static>>() -> PartialBuilderOwned<T> {
-        PartialBuilderOwned {
-            _marker: PhantomData,
-        }
-    }
-
+impl Partial<'static, false> {
     /// Create a new owned Partial for the given type.
     ///
     /// This allocates memory for a value of type `T` and returns a `Partial`
@@ -164,7 +44,7 @@ impl<'plan> Partial<'static, 'plan, false> {
 // Partial::from_raw - direct initialization from external memory
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
+impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// Creates a new Partial pointing to caller-provided memory.
     ///
     /// This is a low-level API that lets the caller:
@@ -189,11 +69,11 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
     /// let mut slot = MaybeUninit::<MyStruct>::uninit();
     /// let data = PtrUninit::new(slot.as_mut_ptr().cast());
     ///
-    /// // Build the TypePlan (can be reused)
+    /// // Build the TypePlan (can be reused via Arc)
     /// let plan = TypePlan::<MyStruct>::build()?;
     ///
     /// // Create Partial pointing to our stack memory
-    /// let partial = unsafe { Partial::from_raw(data, plan.core(), plan.core().root_id())? };
+    /// let partial = unsafe { Partial::from_raw(data, plan.arc_core(), plan.core().root_id())? };
     ///
     /// // Initialize fields...
     /// let partial = partial.set_field("name", "test")?.set_field("value", 42)?;
@@ -213,7 +93,7 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
     ///   but memory is NOT deallocated (caller must handle the memory)
     pub unsafe fn from_raw(
         data: PtrUninit,
-        plan: &'plan crate::typeplan::TypePlanCore,
+        plan: Arc<TypePlanCore>,
         type_plan_id: crate::typeplan::NodeId,
     ) -> Result<Self, AllocError> {
         let shape = plan.node(type_plan_id).shape;
@@ -249,7 +129,7 @@ impl<'a, T: Facet<'a> + ?Sized> TypePlan<T> {
     /// The Partial borrows from this TypePlan and can be used to deserialize
     /// values that may borrow from the input.
     #[inline]
-    pub fn partial<'facet>(&self) -> Result<Partial<'facet, '_, true>, AllocError> {
+    pub fn partial<'facet>(&self) -> Result<Partial<'facet, true>, AllocError> {
         create_partial_internal::<true>(self.core(), self.core().root_id())
     }
 
@@ -258,36 +138,16 @@ impl<'a, T: Facet<'a> + ?Sized> TypePlan<T> {
     /// The Partial borrows from this TypePlan. The deserialized value will be
     /// fully owned ('static lifetime for borrowed data).
     #[inline]
-    pub fn partial_owned(&self) -> Result<Partial<'static, '_, false>, AllocError> {
+    pub fn partial_owned(&self) -> Result<Partial<'static, false>, AllocError> {
         create_partial_internal::<false>(self.core(), self.core().root_id())
-    }
-
-    /// Create a Partial for a specific node in the plan.
-    ///
-    /// This is useful for deserializing nested types or proxy types.
-    #[inline]
-    pub fn partial_for_node<'facet>(
-        &self,
-        node_id: crate::typeplan::NodeId,
-    ) -> Result<Partial<'facet, '_, true>, AllocError> {
-        create_partial_internal::<true>(self.core(), node_id)
-    }
-
-    /// Create an owned Partial for a specific node in the plan.
-    #[inline]
-    pub fn partial_owned_for_node(
-        &self,
-        node_id: crate::typeplan::NodeId,
-    ) -> Result<Partial<'static, '_, false>, AllocError> {
-        create_partial_internal::<false>(self.core(), node_id)
     }
 }
 
 /// Internal helper to create a Partial from plan and node.
-fn create_partial_internal<'facet, 'plan, const BORROW: bool>(
-    plan: &'plan crate::typeplan::TypePlanCore,
-    type_plan_id: crate::typeplan::NodeId,
-) -> Result<Partial<'facet, 'plan, BORROW>, AllocError> {
+fn create_partial_internal<'facet, const BORROW: bool>(
+    plan: Arc<TypePlanCore>,
+    type_plan_id: Idx<TypePlanNode>,
+) -> Result<Partial<'facet, BORROW>, AllocError> {
     let node = plan.node(type_plan_id);
     let shape = node.shape;
     let layout = shape.layout.sized_layout().map_err(|_| AllocError {
@@ -340,7 +200,7 @@ unsafe fn alloc_layout(layout: core::alloc::Layout) -> Result<PtrUninit, AllocEr
 // Deferred mode entry points
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
+impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// Enter deferred mode for the current frame.
     ///
     /// In deferred mode, frames can be stored when popped via `end()` and restored
@@ -367,6 +227,8 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
         let mut this = ManuallyDrop::new(self);
         // Take the stack from the mode
         let stack = core::mem::take(this.frames_mut());
+        let mut root_plan = Arc::new(TypePlanCore::empty());
+        std::mem::swap(&mut root_plan, &mut this.root_plan);
 
         Self {
             mode: FrameMode::Deferred {
@@ -375,7 +237,7 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
                 stored_frames: BTreeMap::new(),
             },
             state: this.state,
-            root_plan: this.root_plan,
+            root_plan,
             _marker: PhantomData,
         }
     }

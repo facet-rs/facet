@@ -6,7 +6,7 @@ use crate::typeplan::{DeserStrategy, TypePlanNodeKind};
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Misc.
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
+impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// Applies a closure to this Partial, enabling chaining with operations that
     /// take ownership and return `Result<Self, E>`.
     ///
@@ -87,7 +87,7 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
     /// This provides access to the arena-based type plan data, useful for
     /// resolving field lookups and accessing precomputed metadata.
     #[inline]
-    pub fn type_plan_core(&self) -> &'plan crate::typeplan::TypePlanCore {
+    pub fn type_plan_core(&self) -> &crate::typeplan::TypePlanCore {
         self.root_plan
     }
 
@@ -99,7 +99,7 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
     /// - The current frame has no TypePlan (e.g., custom deserialization frames)
     /// - The current type is not a struct
     #[inline]
-    pub fn struct_plan(&self) -> Option<&'plan crate::typeplan::StructPlan> {
+    pub fn struct_plan(&self) -> Option<&crate::typeplan::StructPlan> {
         if self.state != PartialState::Active {
             return None;
         }
@@ -114,7 +114,7 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
     /// - The Partial is not active
     /// - The current type is not an enum
     #[inline]
-    pub fn enum_plan(&self) -> Option<&'plan crate::typeplan::EnumPlan> {
+    pub fn enum_plan(&self) -> Option<&crate::typeplan::EnumPlan> {
         if self.state != PartialState::Active {
             return None;
         }
@@ -129,7 +129,7 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
     ///
     /// Returns `None` if the current type is not a struct or enum variant.
     #[inline]
-    pub fn field_plans(&self) -> Option<&'plan [crate::typeplan::FieldPlan]> {
+    pub fn field_plans(&self) -> Option<&[crate::typeplan::FieldPlan]> {
         use crate::typeplan::TypePlanNodeKind;
         let frame = self.frames().last().unwrap();
         let node = self.root_plan.node(frame.type_plan);
@@ -161,7 +161,7 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
     /// - The Partial is not active
     /// - There are no frames
     #[inline]
-    pub fn plan_node(&self) -> Option<&'plan crate::typeplan::TypePlanNode> {
+    pub fn plan_node(&self) -> Option<&crate::typeplan::TypePlanNode> {
         if self.state != PartialState::Active {
             return None;
         }
@@ -196,7 +196,7 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
     /// - The Partial is not active
     /// - There are no frames
     #[inline]
-    pub fn deser_strategy(&self) -> Option<&'plan DeserStrategy> {
+    pub fn deser_strategy(&self) -> Option<&DeserStrategy> {
         let node = self.plan_node()?;
         // Resolve BackRef if needed - resolve_backref returns the node unchanged if not a BackRef
         let resolved = self.root_plan.resolve_backref(node);

@@ -5,7 +5,7 @@ use facet_path::PathStep;
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Option / inner
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-impl<const BORROW: bool> Partial<'_, '_, BORROW> {
+impl<const BORROW: bool> Partial<'_, BORROW> {
     /// Begin building the Some variant of an Option
     pub fn begin_some(mut self) -> Result<Self, ReflectError> {
         // Verify we're working with an Option and get the def

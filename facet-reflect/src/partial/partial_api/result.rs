@@ -4,7 +4,7 @@ use crate::AllocatedShape;
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Result
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-impl<const BORROW: bool> Partial<'_, '_, BORROW> {
+impl<const BORROW: bool> Partial<'_, BORROW> {
     /// Begin building the Ok variant of a Result
     pub fn begin_ok(mut self) -> Result<Self, ReflectError> {
         // Verify we're working with a Result and get the def

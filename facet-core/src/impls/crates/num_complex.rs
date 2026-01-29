@@ -68,15 +68,15 @@ unsafe fn debug<'facet, T: Facet<'facet>>(
 }
 
 // Named function for default_in_place
-unsafe fn default_in_place<'facet, T: Facet<'facet>>(target: crate::OxPtrMut) {
+unsafe fn default_in_place<'facet, T: Facet<'facet>>(target: crate::OxPtrUninit) {
     unsafe {
         let complex_ptr = target.ptr().as_mut_byte_ptr() as *mut Complex<T>;
 
         // Initialize `re` field
-        let re_ptr = PtrMut::new(core::ptr::addr_of_mut!((*complex_ptr).re) as *mut u8);
+        let re_ptr = PtrUninit::new(core::ptr::addr_of_mut!((*complex_ptr).re) as *mut u8);
         if let Some(()) = T::SHAPE.call_default_in_place(re_ptr) {
             // Initialize `im` field
-            let im_ptr = PtrMut::new(core::ptr::addr_of_mut!((*complex_ptr).im) as *mut u8);
+            let im_ptr = PtrUninit::new(core::ptr::addr_of_mut!((*complex_ptr).im) as *mut u8);
             let _ = T::SHAPE.call_default_in_place(im_ptr);
         }
     }

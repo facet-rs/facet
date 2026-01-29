@@ -4,7 +4,7 @@ use crate::AllocatedShape;
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Lists
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-impl<const BORROW: bool> Partial<'_, '_, BORROW> {
+impl<const BORROW: bool> Partial<'_, BORROW> {
     /// Initializes a list (Vec, etc.) if it hasn't been initialized before.
     /// This is a prerequisite to `begin_push_item`/`set`/`end` or the shorthand
     /// `push`.

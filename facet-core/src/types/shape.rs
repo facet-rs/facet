@@ -929,7 +929,7 @@ impl Shape {
     /// # Safety
     /// `ptr` must point to uninitialized memory suitable for this shape's type.
     #[inline]
-    pub unsafe fn call_default_in_place(&'static self, ptr: crate::PtrMut) -> Option<()> {
+    pub unsafe fn call_default_in_place(&'static self, ptr: crate::PtrUninit) -> Option<()> {
         match self.type_ops? {
             TypeOps::Direct(ops) => {
                 let default_fn = ops.default_in_place?;
@@ -937,7 +937,7 @@ impl Shape {
             }
             TypeOps::Indirect(ops) => {
                 let default_fn = ops.default_in_place?;
-                let ox = crate::OxPtrMut::new(ptr, self);
+                let ox = crate::OxPtrUninit::new(ptr, self);
                 unsafe { default_fn(ox) };
             }
         }
