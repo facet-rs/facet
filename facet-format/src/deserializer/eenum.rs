@@ -1565,7 +1565,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         Ok(wip)
     }
 
-    fn deserialize_enum_untagged<'bump>(
+    fn deserialize_enum_untagged(
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
@@ -1745,7 +1745,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     /// `#[facet(tag)]` field, while the payload is deserialized into the `#[facet(content)]` field.
     ///
     /// `captured_tag` is `None` for unit tags (bare `@` in Styx).
-    pub(crate) fn deserialize_other_variant_with_captured_tag<'bump>(
+    pub(crate) fn deserialize_other_variant_with_captured_tag(
         &mut self,
         mut wip: Partial<'input, BORROW>,
         captured_tag: Option<&'input str>,

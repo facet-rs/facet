@@ -744,7 +744,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     }
 
     /// Make an error using the last span, the current path of the given wip.
-    fn mk_err<'bump>(
+    fn mk_err(
         &self,
         wip: &Partial<'input, BORROW>,
         kind: DeserializeErrorKind,

@@ -542,7 +542,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         Ok(wip)
     }
 
-    pub(crate) fn deserialize_map_dynamic<'bump>(
+    pub(crate) fn deserialize_map_dynamic(
         &mut self,
         mut wip: Partial<'input, BORROW>,
         key_shape: &'static Shape,

@@ -1164,7 +1164,6 @@ name = "facet-json"
 version = "0.43.2"
 dependencies = [
  "axum-core",
- "bumpalo",
  "compact_str",
  "divan",
  "facet",
@@ -1250,7 +1249,6 @@ name = "facet-msgpack"
 version = "0.43.2"
 dependencies = [
  "axum-core",
- "bumpalo",
  "divan",
  "facet",
  "facet-core",
@@ -1282,7 +1280,6 @@ name = "facet-postcard"
 version = "0.43.2"
 dependencies = [
  "axum-core",
- "bumpalo",
  "bytes",
  "bytestring",
  "camino",

@@ -1,14 +1,6 @@
 //! Arena-based allocation with typed 32-bit indices.
 //!
-//! This module provides arena infrastructure for the TypePlan system, replacing
-//! bumpalo's 64-bit pointer references with 32-bit indices for better memory efficiency.
-//!
-//! # Memory Savings
-//!
-//! | Type | Before (bumpalo) | After (arena) |
-//! |------|------------------|---------------|
-//! | Node reference | 8 bytes | 4 bytes |
-//! | Slice reference | 16 bytes | 8 bytes |
+//! This module provides arena infrastructure for the TypePlan system.
 
 use alloc::vec::Vec;
 use core::marker::PhantomData;

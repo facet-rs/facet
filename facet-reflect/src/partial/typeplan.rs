@@ -3,10 +3,6 @@
 //! Instead of repeatedly inspecting Shape/Def at runtime during deserialization,
 //! we build a plan tree once that encodes all the decisions we'll make.
 //!
-//! All allocations use arena-based storage with 32-bit indices instead of 64-bit
-//! pointers, providing the same cache locality benefits as bumpalo while halving
-//! the size of references.
-//!
 //! This design:
 //! - Avoids self-referential structs (TypePlan owns its arenas)
 //! - Allows reusing the plan across multiple deserializations

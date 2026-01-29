@@ -280,10 +280,10 @@ pub fn from_value<T: Facet<'static>>(value: Value) -> Result<T> {
 }
 
 /// Internal deserializer that reads from a Value and writes to a Partial.
-fn deserialize_value_into<'facet, 'bump>(
+fn deserialize_value_into<'facet>(
     value: &Value,
-    partial: Partial<'facet, 'bump, false>,
-) -> Result<Partial<'facet, 'bump, false>> {
+    partial: Partial<'facet, false>,
+) -> Result<Partial<'facet, false>> {
     let mut partial = partial;
     let shape = partial.shape();
 
@@ -362,10 +362,10 @@ fn deserialize_value_into<'facet, 'bump>(
 }
 
 /// Deserialize a scalar value (primitives, strings).
-fn deserialize_scalar<'facet, 'bump>(
+fn deserialize_scalar<'facet>(
     value: &Value,
-    partial: Partial<'facet, 'bump, false>,
-) -> Result<Partial<'facet, 'bump, false>> {
+    partial: Partial<'facet, false>,
+) -> Result<Partial<'facet, false>> {
     let mut partial = partial;
     let shape = partial.shape();
 
@@ -426,11 +426,11 @@ fn deserialize_scalar<'facet, 'bump>(
 }
 
 /// Set a numeric value with appropriate type conversion.
-fn set_number<'facet, 'bump>(
+fn set_number<'facet>(
     num: &VNumber,
-    partial: Partial<'facet, 'bump, false>,
+    partial: Partial<'facet, false>,
     shape: &Shape,
-) -> Result<Partial<'facet, 'bump, false>> {
+) -> Result<Partial<'facet, false>> {
     use facet_core::{NumericType, PrimitiveType, ShapeLayout};
 
     let mut partial = partial;
@@ -579,10 +579,10 @@ fn set_number<'facet, 'bump>(
 }
 
 /// Deserialize a struct from a Value::Object.
-fn deserialize_struct<'facet, 'bump>(
+fn deserialize_struct<'facet>(
     value: &Value,
-    partial: Partial<'facet, 'bump, false>,
-) -> Result<Partial<'facet, 'bump, false>> {
+    partial: Partial<'facet, false>,
+) -> Result<Partial<'facet, false>> {
     let mut partial = partial;
     let obj = value.as_object().ok_or_else(|| {
         ValueError::new(ValueErrorKind::TypeMismatch {
@@ -665,12 +665,12 @@ fn deserialize_struct<'facet, 'bump>(
 }
 
 /// Deserialize a struct that has flattened fields.
-fn deserialize_struct_with_flatten<'facet, 'bump>(
+fn deserialize_struct_with_flatten<'facet>(
     obj: &crate::VObject,
-    mut partial: Partial<'facet, 'bump, false>,
+    mut partial: Partial<'facet, false>,
     struct_def: &'static facet_core::StructType,
     deny_unknown_fields: bool,
-) -> Result<Partial<'facet, 'bump, false>> {
+) -> Result<Partial<'facet, false>> {
     use alloc::collections::BTreeMap;
 
     let num_fields = struct_def.fields.len();
@@ -784,10 +784,10 @@ fn deserialize_struct_with_flatten<'facet, 'bump>(
 }
 
 /// Deserialize a tuple from a Value::Array.
-fn deserialize_tuple<'facet, 'bump>(
+fn deserialize_tuple<'facet>(
     value: &Value,
-    partial: Partial<'facet, 'bump, false>,
-) -> Result<Partial<'facet, 'bump, false>> {
+    partial: Partial<'facet, false>,
+) -> Result<Partial<'facet, false>> {
     let mut partial = partial;
     let arr = value.as_array().ok_or_else(|| {
         ValueError::new(ValueErrorKind::TypeMismatch {
@@ -821,10 +821,10 @@ fn deserialize_tuple<'facet, 'bump>(
 }
 
 /// Deserialize an enum from a Value.
-fn deserialize_enum<'facet, 'bump>(
+fn deserialize_enum<'facet>(
     value: &Value,
-    partial: Partial<'facet, 'bump, false>,
-) -> Result<Partial<'facet, 'bump, false>> {
+    partial: Partial<'facet, false>,
+) -> Result<Partial<'facet, false>> {
     let shape = partial.shape();
 
     // Check for numeric enums first (like #[repr(u8)] enums)
@@ -861,10 +861,10 @@ fn deserialize_enum<'facet, 'bump>(
 /// Accepts:
 /// - Number values (i64/u64)
 /// - String values that can be parsed as i64
-fn deserialize_numeric_enum<'facet, 'bump>(
+fn deserialize_numeric_enum<'facet>(
     value: &Value,
-    mut partial: Partial<'facet, 'bump, false>,
-) -> Result<Partial<'facet, 'bump, false>> {
+    mut partial: Partial<'facet, false>,
+) -> Result<Partial<'facet, false>> {
     let discriminant = match value.value_type() {
         ValueType::Number => {
             let num = value.as_number().unwrap();
@@ -900,10 +900,10 @@ fn deserialize_numeric_enum<'facet, 'bump>(
 }
 
 /// Deserialize an externally tagged enum: {"VariantName": data} or "VariantName"
-fn deserialize_externally_tagged_enum<'facet, 'bump>(
+fn deserialize_externally_tagged_enum<'facet>(
     value: &Value,
-    mut partial: Partial<'facet, 'bump, false>,
-) -> Result<Partial<'facet, 'bump, false>> {
+    mut partial: Partial<'facet, false>,
+) -> Result<Partial<'facet, false>> {
     match value.value_type() {
         // String = unit variant
         ValueType::String => {
@@ -941,11 +941,11 @@ fn deserialize_externally_tagged_enum<'facet, 'bump>(
 }
 
 /// Deserialize an internally tagged enum: {"type": "Circle", "radius": 5.0}
-fn deserialize_internally_tagged_enum<'facet, 'bump>(
+fn deserialize_internally_tagged_enum<'facet>(
     value: &Value,
-    mut partial: Partial<'facet, 'bump, false>,
+    mut partial: Partial<'facet, false>,
     tag_key: &str,
-) -> Result<Partial<'facet, 'bump, false>> {
+) -> Result<Partial<'facet, false>> {
     let obj = value.as_object().ok_or_else(|| {
         ValueError::new(ValueErrorKind::TypeMismatch {
             expected: "object for internally tagged enum",
@@ -1001,12 +1001,12 @@ fn deserialize_internally_tagged_enum<'facet, 'bump>(
 }
 
 /// Deserialize an adjacently tagged enum: {"t": "Message", "c": "hello"}
-fn deserialize_adjacently_tagged_enum<'facet, 'bump>(
+fn deserialize_adjacently_tagged_enum<'facet>(
     value: &Value,
-    mut partial: Partial<'facet, 'bump, false>,
+    mut partial: Partial<'facet, false>,
     tag_key: &str,
     content_key: &str,
-) -> Result<Partial<'facet, 'bump, false>> {
+) -> Result<Partial<'facet, false>> {
     let obj = value.as_object().ok_or_else(|| {
         ValueError::new(ValueErrorKind::TypeMismatch {
             expected: "object for adjacently tagged enum",
@@ -1055,10 +1055,10 @@ fn deserialize_adjacently_tagged_enum<'facet, 'bump>(
     }
 }
 
-fn deserialize_untagged_enum<'facet, 'bump>(
+fn deserialize_untagged_enum<'facet>(
     value: &Value,
-    partial: Partial<'facet, 'bump, false>,
-) -> Result<Partial<'facet, 'bump, false>> {
+    partial: Partial<'facet, false>,
+) -> Result<Partial<'facet, false>> {
     let mut partial = partial;
     let shape = partial.shape();
     let enum_type = match &shape.ty {

@@ -77,8 +77,6 @@ pub use serializer::{
 // Re-export DeserializeError for convenience
 pub use facet_format::DeserializeError;
 
-use bumpalo::Bump;
-
 /// Deserialize a value from a JSON string into an owned type.
 ///
 /// This is the recommended default for most use cases. The input does not need

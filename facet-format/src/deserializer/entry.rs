@@ -195,7 +195,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     ///
     /// These require special handling - the value field gets the data,
     /// metadata fields are populated from parser state.
-    fn deserialize_metadata_container<'bump>(
+    fn deserialize_metadata_container(
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
@@ -244,7 +244,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     ///
     /// This walks `hint_shape` for control flow and parser hints, but builds
     /// into the `wip` Partial (which should be a DynamicValue like `Value`).
-    pub fn deserialize_into_with_shape<'bump>(
+    pub fn deserialize_into_with_shape(
         &mut self,
         wip: Partial<'input, BORROW>,
         hint_shape: &'static Shape,
@@ -253,7 +253,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     }
 
     /// Internal recursive deserialization using hint_shape for dispatch.
-    pub(crate) fn deserialize_value_recursive<'bump>(
+    pub(crate) fn deserialize_value_recursive(
         &mut self,
         mut wip: Partial<'input, BORROW>,
         hint_shape: &'static Shape,
@@ -325,7 +325,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         }
     }
 
-    pub(crate) fn deserialize_option<'bump>(
+    pub(crate) fn deserialize_option(
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
@@ -358,7 +358,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         Ok(wip)
     }
 
-    pub(crate) fn deserialize_struct<'bump>(
+    pub(crate) fn deserialize_struct(
         &mut self,
         wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
@@ -370,7 +370,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         }
     }
 
-    pub(crate) fn deserialize_tuple<'bump>(
+    pub(crate) fn deserialize_tuple(
         &mut self,
         mut wip: Partial<'input, BORROW>,
         field_count: usize,
@@ -581,7 +581,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         Ok(evidence)
     }
 
-    pub(crate) fn deserialize_list<'bump>(
+    pub(crate) fn deserialize_list(
         &mut self,
         mut wip: Partial<'input, BORROW>,
         is_byte_vec: bool,
@@ -676,7 +676,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         Ok(wip)
     }
 
-    pub(crate) fn deserialize_array<'bump>(
+    pub(crate) fn deserialize_array(
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
@@ -751,7 +751,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         Ok(wip)
     }
 
-    pub(crate) fn deserialize_set<'bump>(
+    pub(crate) fn deserialize_set(
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
@@ -810,7 +810,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         Ok(wip)
     }
 
-    pub(crate) fn deserialize_map<'bump>(
+    pub(crate) fn deserialize_map(
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
@@ -916,7 +916,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         Ok(wip)
     }
 
-    pub(crate) fn deserialize_scalar<'bump>(
+    pub(crate) fn deserialize_scalar(
         &mut self,
         mut wip: Partial<'input, BORROW>,
         scalar_type: Option<ScalarType>,
@@ -1026,7 +1026,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     ///
     /// The `tag` parameter is for formats like Styx where keys can be type patterns (e.g., `@string`).
     /// When present, it indicates the key was a tag rather than a bare identifier.
-    pub(crate) fn deserialize_map_key<'bump>(
+    pub(crate) fn deserialize_map_key(
         &mut self,
         mut wip: Partial<'input, BORROW>,
         key: Option<Cow<'input, str>>,

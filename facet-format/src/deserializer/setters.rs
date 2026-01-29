@@ -282,7 +282,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     ///
     /// This is a thin wrapper around `set_scalar_inner` that handles the
     /// string/bytes delegation cases and converts error types.
-    pub(crate) fn set_scalar<'bump>(
+    pub(crate) fn set_scalar(
         &mut self,
         wip: Partial<'input, BORROW>,
         scalar: ScalarValue<'input>,
@@ -296,7 +296,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     }
 
     /// Set a string value, handling `&str`, `Cow<str>`, and `String` appropriately.
-    pub(crate) fn set_string_value<'bump>(
+    pub(crate) fn set_string_value(
         &mut self,
         wip: Partial<'input, BORROW>,
         s: Cow<'input, str>,
@@ -324,7 +324,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     ///
     /// This handles `&[u8]`, `Cow<[u8]>`, and `Vec<u8>` appropriately based on
     /// whether borrowing is enabled and whether the data is borrowed or owned.
-    pub(crate) fn set_bytes_value<'bump>(
+    pub(crate) fn set_bytes_value(
         &mut self,
         wip: Partial<'input, BORROW>,
         b: Cow<'input, [u8]>,
