@@ -232,7 +232,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     #[inline]
     pub fn current_path(&self) -> Option<facet_path::Path> {
         if self.is_deferred() {
-            Some(self.derive_path())
+            Some(self.path())
         } else {
             None
         }
@@ -1098,6 +1098,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
             if should_store {
                 let field_path = self.path();
+                trace!("path() returned steps: {:?}", field_path.steps);
                 if !field_path.is_empty() {
                     Some(field_path)
                 } else {
@@ -1966,94 +1967,6 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         }
 
         Ok(self)
-    }
-
-    /// Returns a path representing the current traversal in the builder.
-    ///
-    /// The returned [`facet_path::Path`] can be formatted as a human-readable string
-    /// using [`Path::format_with_shape()`](facet_path::Path::format_with_shape),
-    /// e.g., `fieldName[index].subfield`.
-    pub fn path(&self) -> Path {
-        use facet_path::PathStep;
-
-        let root_shape = self
-            .frames()
-            .first()
-            .expect("Partial must have at least one frame")
-            .allocated
-            .shape();
-        let mut path = Path::new(root_shape);
-
-        for frame in self.frames().iter() {
-            match frame.allocated.shape().ty {
-                Type::User(user_type) => match user_type {
-                    UserType::Struct(_struct_type) => {
-                        // Add field step if we're currently in a field
-                        if let Tracker::Struct {
-                            current_child: Some(idx),
-                            ..
-                        } = &frame.tracker
-                        {
-                            path.push(PathStep::Field(*idx as u32));
-                        }
-                    }
-                    UserType::Enum(enum_type) => {
-                        // Add variant and optional field step
-                        if let Tracker::Enum {
-                            variant,
-                            current_child,
-                            ..
-                        } = &frame.tracker
-                        {
-                            // Find the variant index by comparing pointers
-                            if let Some(variant_idx) = enum_type
-                                .variants
-                                .iter()
-                                .position(|v| core::ptr::eq(v, *variant))
-                            {
-                                path.push(PathStep::Variant(variant_idx as u32));
-                            }
-                            if let Some(idx) = *current_child {
-                                path.push(PathStep::Field(idx as u32));
-                            }
-                        }
-                    }
-                    UserType::Union(_) => {
-                        // No structural path steps for unions
-                    }
-                    UserType::Opaque => {
-                        // Opaque types might be lists (e.g., Vec<T>)
-                        if let Tracker::List {
-                            current_child: Some(idx),
-                        } = &frame.tracker
-                        {
-                            path.push(PathStep::Index(*idx as u32));
-                        }
-                    }
-                },
-                Type::Sequence(facet_core::SequenceType::Array(_array_def)) => {
-                    // Add index step if we're currently in an element
-                    if let Tracker::Array {
-                        current_child: Some(idx),
-                        ..
-                    } = &frame.tracker
-                    {
-                        path.push(PathStep::Index(*idx as u32));
-                    }
-                }
-                Type::Sequence(_) => {
-                    // Other sequence types (Slice, etc.) - no index tracking
-                }
-                Type::Pointer(_) => {
-                    path.push(PathStep::Deref);
-                }
-                _ => {
-                    // No structural path for scalars, etc.
-                }
-            }
-        }
-
-        path
     }
 
     /// Returns the root shape for path formatting.

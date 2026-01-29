@@ -1442,12 +1442,16 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// Compute the navigation path for deferred mode storage and lookup.
     /// The returned `Path` is anchored to the root shape for proper type context.
     ///
+    /// Returns a path representing the current traversal in the builder.
+    ///
+    /// The returned [`facet_path::Path`] can be formatted as a human-readable string
+    /// using [`Path::format_with_shape()`](facet_path::Path::format_with_shape),
+    /// e.g., `fieldName[index].subfield`.
+    ///
     /// This extracts Field steps from struct/enum frames and Index steps from
     /// array/list frames. Option wrappers, smart pointers (Box, Rc, etc.), and
     /// other transparent types don't add path steps.
-    ///
-    /// This MUST match the storage path computation in end() for consistency.
-    pub(crate) fn derive_path(&self) -> Path {
+    pub fn path(&self) -> Path {
         // Get the root shape from the first frame
         let root_shape = self
             .frames()
@@ -1471,10 +1475,16 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     path.push(PathStep::Field(*idx as u32));
                 }
                 Tracker::Enum {
-                    current_child: Some(idx),
+                    variant_idx,
+                    current_child,
                     ..
                 } => {
-                    path.push(PathStep::Field(*idx as u32));
+                    // Always push the variant step for enums
+                    path.push(PathStep::Variant(*variant_idx as u32));
+                    // Then push the field step if we're inside a field
+                    if let Some(idx) = current_child {
+                        path.push(PathStep::Field(*idx as u32));
+                    }
                 }
                 Tracker::List {
                     current_child: Some(idx),

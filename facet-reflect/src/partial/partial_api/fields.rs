@@ -95,7 +95,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         if let FrameMode::Deferred { stored_frames, .. } = &self.mode {
             // Construct the full path for this field by deriving current path
             // and appending the field step
-            let mut check_path = self.derive_path();
+            let mut check_path = self.path();
             check_path.push(PathStep::Field(index as u32));
 
             // Check if this path exists in stored frames
@@ -130,7 +130,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         // Handle deferred mode path tracking (rare path - only for partial deserialization)
         if self.is_deferred() {
             // Derive the current path and construct what the path WOULD be after entering this field
-            let mut check_path = self.derive_path();
+            let mut check_path = self.path();
             check_path.push(PathStep::Field(idx as u32));
 
             if let FrameMode::Deferred {
@@ -148,7 +148,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     frame.tracker.set_current_child(idx);
 
                     // Clear the restored frame's current_child - we haven't entered any of its
-                    // children yet in this new traversal. Without this, derive_path() would
+                    // children yet in this new traversal. Without this, path() would
                     // include stale navigation state and compute incorrect paths.
                     stored_frame.tracker.clear_current_child();
 
@@ -156,7 +156,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     // is stored, it may have building_inner=true (if we were inside begin_some).
                     // When restored via begin_field, we're re-entering the Option container
                     // itself, not its inner value - so building_inner should be false.
-                    // Without this, derive_path() would include an extra OptionSome step,
+                    // Without this, path() would include an extra OptionSome step,
                     // causing path mismatches when we call begin_some() to find the stored
                     // inner frame.
                     if matches!(stored_frame.tracker, Tracker::Option { .. }) {

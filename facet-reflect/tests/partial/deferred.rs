@@ -2578,44 +2578,78 @@ fn deferred_option_struct_deeply_nested_interleaved() -> Result<(), IPanic> {
 
 #[test]
 fn deferred_option_string_crash() -> Result<(), IPanic> {
+    // Minimal repro: enum with tuple variant containing struct with Option fields
+    // Only set ONE field via proxy, leave the rest as None (should default)
+
+    // Proxy type that converts from String
+    #[derive(Facet)]
+    struct PathDataProxy(String);
+
+    impl TryFrom<PathDataProxy> for PathData {
+        type Error = std::convert::Infallible;
+        fn try_from(proxy: PathDataProxy) -> Result<Self, Self::Error> {
+            Ok(PathData { commands: proxy.0 })
+        }
+    }
+
+    impl From<PathDataProxy> for Option<PathData> {
+        fn from(proxy: PathDataProxy) -> Self {
+            Some(PathData { commands: proxy.0 })
+        }
+    }
+
+    impl TryFrom<&Option<PathData>> for PathDataProxy {
+        type Error = std::convert::Infallible;
+        fn try_from(v: &Option<PathData>) -> Result<Self, Self::Error> {
+            Ok(PathDataProxy(
+                v.as_ref().map(|d| d.commands.clone()).unwrap_or_default(),
+            ))
+        }
+    }
+
     #[derive(Facet, Debug)]
-    struct Inner {
-        a: Option<String>,
-        b: Option<String>,
+    struct PathData {
+        commands: String,
+    }
+
+    #[derive(Facet, Debug)]
+    struct Path {
+        #[facet(proxy = PathDataProxy)]
+        d: Option<PathData>,
+        fill: Option<String>,
     }
 
     #[derive(Facet, Debug)]
     #[repr(u8)]
-    enum Node {
-        Inner(Inner),
+    enum SvgNode {
+        Path(Path),
     }
 
     #[derive(Facet, Debug)]
-    struct Outer {
-        children: Vec<Node>,
+    struct Svg {
+        children: Vec<SvgNode>,
     }
 
-    let mut p = Partial::alloc::<Outer>()?;
+    let mut p = Partial::alloc::<Svg>()?;
     p = p.begin_deferred()?;
 
-    p = p.begin_field("children")?;
+    // children
+    p = p.begin_nth_field(0)?;
     p = p.init_list()?;
     p = p.begin_list_item()?;
-    p = p.select_variant_named("Inner")?;
+    p = p.select_variant_named("Path")?;
+    p = p.begin_nth_field(0)?; // enter Path tuple field
 
-    p = p.begin_field("a")?;
-    p = p.begin_some()?;
-    p = p.set("hello".to_string())?;
-    p = p.end()?;
-    p = p.end()?;
+    // Set Path.d via proxy
+    p = p.begin_nth_field(0)?;
+    p = p.begin_custom_deserialization()?;
+    p = p.set(PathDataProxy("M 0 0".to_string()))?;
+    p = p.end()?; // end proxy -> converts to Option<PathData>
 
-    p = p.begin_field("b")?;
-    p = p.begin_some()?;
-    p = p.set("world".to_string())?;
-    p = p.end()?;
-    p = p.end()?;
+    // Don't set fill - it should default to None
 
-    p = p.end()?; // end Inner enum variant
+    p = p.end()?; // end Path struct
+    p = p.end()?; // end SvgNode variant
     p = p.end()?; // end Vec
 
     p = p.finish_deferred()?;
