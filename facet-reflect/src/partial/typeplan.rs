@@ -1647,7 +1647,7 @@ impl<'plan> FieldPlan<'plan> {
     }
 }
 
-impl<'plan, T: facet_core::Facet<'plan> + ?Sized> TypePlan<'plan, T> {
+impl<'facet, 'plan, T: facet_core::Facet<'facet> + ?Sized> TypePlan<'plan, T> {
     /// Build a TypePlan for type `T`, allocating from the provided bump allocator.
     ///
     /// The type parameter provides compile-time safety: you cannot accidentally
@@ -1918,7 +1918,10 @@ impl<'plan> TypePlanCore<'plan> {
     /// Get the StructPlan if a node is a struct type.
     /// Follows BackRef nodes for recursive types.
     #[inline]
-    pub fn as_struct_plan(&self, node: &'plan TypePlanNode<'plan>) -> Option<&StructPlan<'plan>> {
+    pub fn as_struct_plan(
+        &self,
+        node: &'plan TypePlanNode<'plan>,
+    ) -> Option<&'plan StructPlan<'plan>> {
         let resolved = self.resolve_backref(node);
         match &resolved.kind {
             TypePlanNodeKind::Struct(plan) => Some(plan),
@@ -1929,7 +1932,7 @@ impl<'plan> TypePlanCore<'plan> {
     /// Get the EnumPlan if a node is an enum type.
     /// Follows BackRef nodes for recursive types.
     #[inline]
-    pub fn as_enum_plan(&self, node: &'plan TypePlanNode<'plan>) -> Option<&EnumPlan<'plan>> {
+    pub fn as_enum_plan(&self, node: &'plan TypePlanNode<'plan>) -> Option<&'plan EnumPlan<'plan>> {
         let resolved = self.resolve_backref(node);
         match &resolved.kind {
             TypePlanNodeKind::Enum(plan) => Some(plan),

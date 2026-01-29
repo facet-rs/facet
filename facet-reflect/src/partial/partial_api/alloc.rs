@@ -27,7 +27,6 @@ impl<'plan, T: ?Sized> TypePlan<'plan, T> {
     pub fn partial<'facet>(&self) -> Result<Partial<'facet, 'plan, true>, AllocError>
     where
         T: Facet<'facet>,
-        'plan: 'facet,
     {
         let shape = T::SHAPE;
         let plan = self.core();
@@ -47,13 +46,12 @@ impl<'plan, T: ?Sized> TypePlan<'plan, T> {
             plan.root(),
         ));
 
-        let partial: Partial<'facet, 'plan, true> = Partial {
+        Ok(Partial {
             mode: FrameMode::Strict { stack },
             state: PartialState::Active,
             root_plan: plan,
-            _marker: PhantomData::<&'facet ()>,
-        };
-        Ok(partial)
+            _marker: PhantomData,
+        })
     }
 
     /// Allocates a new owned [Partial] using this TypePlan.
