@@ -371,7 +371,7 @@ tests (
             STYX
         diagnostics {
             count 1
-            has ({message "without 'limit'" code "offset-without-limit"})
+            has ({message "without 'limit'", code "offset-without-limit"})
         }
     }
 
@@ -387,7 +387,7 @@ tests (
             STYX
         diagnostics {
             count 1
-            has ({message "without 'order-by'" code "limit-without-order-by"})
+            has ({message "without 'order-by'", code "limit-without-order-by"})
         }
     }
 
@@ -403,7 +403,7 @@ tests (
             STYX
         diagnostics {
             count 1
-            has ({message "without 'order-by'" code "first-without-order-by"})
+            has ({message "without 'order-by'", code "first-without-order-by"})
         }
     }
 
@@ -432,7 +432,7 @@ tests (
             }
             STYX
         diagnostics {
-            has ({message "without 'where'" code "mutation-without-where"})
+            has ({message "without 'where'", code "mutation-without-where"})
         }
     }
 
@@ -444,7 +444,7 @@ tests (
             }
             STYX
         diagnostics {
-            has ({message "without 'where'" code "mutation-without-where"})
+            has ({message "without 'where'", code "mutation-without-where"})
         }
     }
 
@@ -476,7 +476,7 @@ tests (
             STYX
         diagnostics {
             count 1
-            has ({message "never used" code "unused-param"})
+            has ({message "never used", code "unused-param"})
         }
     }
 
@@ -507,7 +507,7 @@ tests (
             STYX
         diagnostics {
             count 1
-            has ({message "doesn't filter 'deleted_at'" code "missing-deleted-at-filter"})
+            has ({message "doesn't filter 'deleted_at'", code "missing-deleted-at-filter"})
         }
     }
 
@@ -535,7 +535,7 @@ tests (
             STYX
         diagnostics {
             count 1
-            has ({message "consider soft delete" code "hard-delete-on-soft-delete-table"})
+            has ({message "consider soft delete", code "hard-delete-on-soft-delete-table"})
         }
     }
 
@@ -557,7 +557,7 @@ tests (
             STYX
         diagnostics {
             count 1
-            has ({message "@rel without 'order-by'" code "rel-first-without-order-by"})
+            has ({message "@rel without 'order-by'", code "rel-first-without-order-by"})
         }
     }
 
@@ -629,7 +629,7 @@ tests (
             STYX
         diagnostics {
             count 1
-            has ({message "type mismatch" code "param-type-mismatch"})
+            has ({message "type mismatch", code "param-type-mismatch"})
         }
     }
 
@@ -645,7 +645,7 @@ tests (
             STYX
         diagnostics {
             count 1
-            has ({message "type mismatch" code "param-type-mismatch"})
+            has ({message "type mismatch", code "param-type-mismatch"})
         }
     }
 
@@ -661,7 +661,7 @@ tests (
             STYX
         diagnostics {
             count 1
-            has ({message "type mismatch" code "param-type-mismatch"})
+            has ({message "type mismatch", code "param-type-mismatch"})
         }
     }
 
@@ -718,7 +718,7 @@ tests (
             STYX
         diagnostics {
             count 1
-            has ({message "type mismatch" code "literal-type-mismatch"})
+            has ({message "type mismatch", code "literal-type-mismatch"})
         }
     }
 
@@ -733,7 +733,7 @@ tests (
             STYX
         diagnostics {
             count 1
-            has ({message "type mismatch" code "literal-type-mismatch"})
+            has ({message "type mismatch", code "literal-type-mismatch"})
         }
     }
 
@@ -748,7 +748,7 @@ tests (
             STYX
         diagnostics {
             count 1
-            has ({message "type mismatch" code "literal-type-mismatch"})
+            has ({message "type mismatch", code "literal-type-mismatch"})
         }
     }
 
@@ -813,7 +813,7 @@ tests (
             STYX
         diagnostics {
             count 1
-            has ({message "no FK relationship" code "no-fk-relationship"})
+            has ({message "no FK relationship", code "no-fk-relationship"})
         }
     }
 
@@ -833,7 +833,7 @@ tests (
             STYX
         diagnostics {
             count 1
-            has ({message "no FK relationship" code "no-fk-relationship"})
+            has ({message "no FK relationship", code "no-fk-relationship"})
         }
     }
 
@@ -855,7 +855,7 @@ tests (
             STYX
         diagnostics {
             count 1
-            has ({message "large offset" code "large-offset"})
+            has ({message "large offset", code "large-offset"})
         }
     }
 
@@ -887,7 +887,7 @@ tests (
             STYX
         diagnostics {
             count 1
-            has ({message "empty select" code "empty-select"})
+            has ({message "empty select", code "empty-select"})
         }
     }
 
@@ -906,7 +906,7 @@ tests (
             STYX
         diagnostics {
             count 1
-            has ({message "can be shortened" code "redundant-param"})
+            has ({message "can be shortened", code "redundant-param"})
         }
     }
 
@@ -925,8 +925,8 @@ tests (
         diagnostics {
             count 2
             has (
-                {message "handle $handle" code "redundant-param" line 5}
-                {message "status $status" code "redundant-param" line 6}
+                {message "handle $handle", code "redundant-param", line 5}
+                {message "status $status", code "redundant-param", line 6}
             )
         }
     }
@@ -1085,7 +1085,7 @@ tests (
             STYX
         diagnostics {
             count 1
-            has ({message "can be shortened" code "redundant-param"})
+            has ({message "can be shortened", code "redundant-param"})
         }
     }
 
@@ -1122,8 +1122,8 @@ tests (
         diagnostics {
             count 3
             has (
-                {message "handle $handle" code "redundant-param"}
-                {message "status $status" code "redundant-param"}
+                {message "handle $handle", code "redundant-param"}
+                {message "status $status", code "redundant-param"}
             )
         }
     }
