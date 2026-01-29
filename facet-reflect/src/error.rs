@@ -293,7 +293,7 @@ pub enum ReflectErrorKind {
 
 impl core::fmt::Display for ReflectError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{} at {:?}", self.kind, self.path)
+        write!(f, "{} at {}", self.kind, self.path)
     }
 }
 

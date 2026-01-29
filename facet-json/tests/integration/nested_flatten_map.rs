@@ -1,6 +1,5 @@
 #![forbid(unsafe_code)]
 
-use bumpalo::Bump;
 use facet::Facet;
 use facet_format::FormatDeserializer;
 use facet_json::JsonParser;
@@ -26,7 +25,6 @@ struct Outer {
 fn nested_flatten_map_captures_unknown_fields() {
     let input = br#"{"known_field":"hello","unknown1":"value1","unknown2":"value2"}"#;
 
-    let bump = Bump::new();
     let mut parser = JsonParser::<false>::new(input);
     let mut de = FormatDeserializer::new_owned(&mut parser);
     let value: Outer = de
@@ -57,7 +55,6 @@ fn nested_flatten_map_captures_unknown_fields() {
 fn nested_flatten_map_empty_if_no_unknown() {
     let input = br#"{"known_field":"hello"}"#;
 
-    let bump = Bump::new();
     let mut parser = JsonParser::<false>::new(input);
     let mut de = FormatDeserializer::new_owned(&mut parser);
     let value: Outer = de

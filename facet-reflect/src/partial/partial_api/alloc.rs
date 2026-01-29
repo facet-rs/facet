@@ -172,7 +172,7 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
     /// - Avoid the heap allocation that [Partial::alloc] does
     /// - Use MaybeUninit on the stack for the final value
     ///
-    /// # Safety requirements
+    /// # Safety
     ///
     /// The caller MUST ensure:
     /// - `data` points to properly aligned, writable memory of at least `shape.layout.size()` bytes
@@ -207,7 +207,7 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
     ///
     /// # Memory ownership
     ///
-    /// The returned Partial has [FrameOwnership::External], which means:
+    /// The returned Partial has external ownership, which means:
     /// - On successful `build()`: memory ownership transfers to the returned HeapValue
     /// - On drop without `build()`: partially initialized memory is dropped in place,
     ///   but memory is NOT deallocated (caller must handle the memory)

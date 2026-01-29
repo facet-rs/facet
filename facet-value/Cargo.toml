@@ -20,7 +20,6 @@ alloc = ["facet-core/alloc", "facet-reflect/alloc", "dep:facet-reflect", "dep:fa
 bolero-inline-tests = ["alloc"]
 
 [dependencies]
-bumpalo = "3"
 facet-core = { path = "../facet-core", version = "0.43.2", default-features = false }
 facet-format = { path = "../facet-format", version = "0.43.2", optional = true }
 facet-reflect = { path = "../facet-reflect", version = "0.43.2", default-features = false, optional = true }

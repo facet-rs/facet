@@ -1,6 +1,5 @@
 #![forbid(unsafe_code)]
 
-use bumpalo::Bump;
 use facet::Facet;
 use facet_format::FormatDeserializer;
 use facet_json::JsonParser;
@@ -22,7 +21,6 @@ struct FlattenOuter {
 fn flatten_default_field_missing_format_deserializer() {
     let input = br#"{"foo":1}"#;
 
-    let bump = Bump::new();
     let mut parser = JsonParser::<false>::new(input);
     let mut de = FormatDeserializer::new_owned(&mut parser);
     let value: FlattenOuter = de

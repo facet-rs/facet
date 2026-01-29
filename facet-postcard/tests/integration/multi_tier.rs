@@ -25,7 +25,6 @@ mod tier_helpers {
     where
         T: Facet<'de>,
     {
-        let bump = bumpalo::Bump::new();
         let mut parser = PostcardParser::new(input);
         let mut de = FormatDeserializer::new(&mut parser);
         de.deserialize()

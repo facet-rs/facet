@@ -120,7 +120,7 @@ mod partial_api;
 pub use partial_api::alloc::{PartialBuilder, PartialBuilderOwned};
 
 use crate::{ReflectErrorKind, TrackerKind, trace};
-use facet_path::PathStep;
+use facet_path::{Path, PathStep};
 
 use core::marker::PhantomData;
 
@@ -166,7 +166,8 @@ enum FrameMode {
 
         /// Frames saved when popped, keyed by their path (derived from frame stack).
         /// When we re-enter a path, we restore the stored frame.
-        stored_frames: BTreeMap<Vec<PathStep>, Frame>,
+        /// Uses the full `Path` type which includes the root shape for proper type anchoring.
+        stored_frames: BTreeMap<Path, Frame>,
     },
 }
 
@@ -1449,17 +1450,28 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
         self.mode.start_depth()
     }
 
-    /// Derive the path steps from the current frame stack (relative to start_depth).
+    /// Derive the path from the current frame stack.
     ///
     /// Compute the navigation path for deferred mode storage and lookup.
+    /// The returned `Path` is anchored to the root shape for proper type context.
     ///
     /// This extracts Field steps from struct/enum frames and Index steps from
     /// array/list frames. Option wrappers, smart pointers (Box, Rc, etc.), and
     /// other transparent types don't add path steps.
     ///
     /// This MUST match the storage path computation in end() for consistency.
-    pub(crate) fn derive_path_steps(&self) -> Vec<PathStep> {
-        let mut steps = Vec::new();
+    pub(crate) fn derive_path(&self) -> Path {
+        // Get the root shape from the first frame
+        let root_shape = self
+            .frames()
+            .first()
+            .map(|f| f.allocated.shape())
+            .unwrap_or_else(|| {
+                // Fallback to unit type shape if no frames (shouldn't happen in practice)
+                <() as facet_core::Facet>::SHAPE
+            });
+
+        let mut path = Path::new(root_shape);
 
         // Walk ALL frames, extracting navigation steps
         // This matches the storage path computation in end()
@@ -1469,32 +1481,38 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
                     current_child: Some(idx),
                     ..
                 } => {
-                    steps.push(PathStep::Field(*idx as u32));
+                    path.push(PathStep::Field(*idx as u32));
                 }
                 Tracker::Enum {
                     current_child: Some(idx),
                     ..
                 } => {
-                    steps.push(PathStep::Field(*idx as u32));
+                    path.push(PathStep::Field(*idx as u32));
                 }
                 Tracker::List {
                     current_child: Some(idx),
                 } => {
-                    steps.push(PathStep::Index(*idx as u32));
+                    path.push(PathStep::Index(*idx as u32));
                 }
                 Tracker::Array {
                     current_child: Some(idx),
                     ..
                 } => {
-                    steps.push(PathStep::Index(*idx as u32));
+                    path.push(PathStep::Index(*idx as u32));
                 }
-                // Other tracker types (Option, SmartPointer, Map, etc.)
+                Tracker::Option {
+                    building_inner: true,
+                } => {
+                    // Option with building_inner contributes OptionSome to path
+                    path.push(PathStep::OptionSome);
+                }
+                // Other tracker types (SmartPointer, Map, etc.)
                 // don't contribute to the storage path - they're transparent wrappers
                 _ => {}
             }
         }
 
-        steps
+        path
     }
 }
 
@@ -1513,11 +1531,38 @@ impl<'facet, 'plan, const BORROW: bool> Drop for Partial<'facet, 'plan, BORROW> 
             // IMPORTANT: Process in deepest-first order so children are dropped before parents.
             // Child frames have data pointers into parent memory, so parents must stay valid
             // until all their children are cleaned up.
+            //
+            // CRITICAL: Before dropping a child frame, we must mark the parent's field as
+            // uninitialized. Otherwise, when we later drop the parent, it will try to drop
+            // that field again, causing a double-free.
             let mut stored_frames = core::mem::take(stored_frames);
             let mut paths: Vec<_> = stored_frames.keys().cloned().collect();
-            paths.sort_by_key(|p| core::cmp::Reverse(p.len()));
+            // Sort by path depth (number of steps), deepest first
+            paths.sort_by_key(|p| core::cmp::Reverse(p.steps.len()));
             for path in paths {
                 if let Some(mut frame) = stored_frames.remove(&path) {
+                    // Before dropping this frame, mark the parent's field as uninitialized
+                    // so the parent won't try to drop it again.
+                    if let Some(PathStep::Field(field_idx)) = path.steps.last() {
+                        let field_idx = *field_idx as usize;
+                        // Construct parent path
+                        let parent_path = Path {
+                            shape: path.shape,
+                            steps: path.steps[..path.steps.len() - 1].to_vec(),
+                        };
+                        // Find and update the parent frame
+                        if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
+                            match &mut parent_frame.tracker {
+                                Tracker::Struct { iset, .. } => {
+                                    iset.unset(field_idx);
+                                }
+                                Tracker::Enum { data, .. } => {
+                                    data.unset(field_idx);
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
                     frame.deinit();
                     frame.dealloc();
                 }

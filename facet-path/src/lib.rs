@@ -48,6 +48,41 @@ pub struct Path {
     pub steps: Vec<PathStep>,
 }
 
+impl PartialEq for Path {
+    fn eq(&self, other: &Self) -> bool {
+        // Compare shapes by pointer address (they're static references)
+        core::ptr::eq(self.shape, other.shape) && self.steps == other.steps
+    }
+}
+
+impl Eq for Path {}
+
+impl PartialOrd for Path {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Path {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        // Compare shapes by pointer address first, then by steps
+        let shape_cmp =
+            (self.shape as *const Shape as usize).cmp(&(other.shape as *const Shape as usize));
+        if shape_cmp != core::cmp::Ordering::Equal {
+            return shape_cmp;
+        }
+        self.steps.cmp(&other.steps)
+    }
+}
+
+impl core::hash::Hash for Path {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        // Hash the shape pointer address
+        (self.shape as *const Shape as usize).hash(state);
+        self.steps.hash(state);
+    }
+}
+
 impl Path {
     /// Create a new empty path.
     pub const fn new(shape: &'static Shape) -> Self {

@@ -21,7 +21,6 @@ default = []
 axum = ["dep:axum-core", "dep:http", "dep:http-body-util"]
 
 [dependencies]
-bumpalo = "3"
 
 # Axum integration (optional)
 axum-core = { version = "0.5", default-features = false, optional = true }

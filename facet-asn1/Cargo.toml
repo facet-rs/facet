@@ -22,7 +22,6 @@ iddqd = ["facet/iddqd"]
 yoke = ["facet/yoke", "facet-format-suite/yoke"]
 
 [dependencies]
-bumpalo = { workspace = true }
 facet-core = { path = "../facet-core", version = "0.43.2", default-features = false, features = ["alloc"] }
 facet-format = { path = "../facet-format", version = "0.43.2", default-features = false }
 facet-reflect = { path = "../facet-reflect", version = "0.43.2", default-features = false, features = ["alloc"] }

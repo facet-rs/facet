@@ -23,9 +23,7 @@ impl FormatSuite for Asn1Slice {
     where
         T: Facet<'static> + core::fmt::Debug,
     {
-        use bumpalo::Bump;
         use facet_format::FormatDeserializer;
-        let bump = Bump::new();
         let mut parser = Asn1Parser::new(input);
         let mut de = FormatDeserializer::new_owned(&mut parser);
         de.deserialize_root::<T>()

@@ -71,7 +71,7 @@ impl<const BORROW: bool> Partial<'_, '_, BORROW> {
         // The path for the inner value includes OptionSome to distinguish it from the Option itself.
         if self.is_deferred() {
             // Derive the current path and construct what the path WOULD be after entering Some
-            let mut check_path = self.derive_path_steps();
+            let mut check_path = self.derive_path();
             check_path.push(PathStep::OptionSome);
 
             if let FrameMode::Deferred {
@@ -81,7 +81,7 @@ impl<const BORROW: bool> Partial<'_, '_, BORROW> {
             } = &mut self.mode
             {
                 // Check if we have a stored frame for this path (re-entry case)
-                if let Some(stored_frame) = stored_frames.remove(&check_path) {
+                if let Some(mut stored_frame) = stored_frames.remove(&check_path) {
                     trace!("begin_some: Restoring stored frame for path {check_path:?}");
 
                     // Update tracker to indicate we're building the inner value
@@ -89,6 +89,11 @@ impl<const BORROW: bool> Partial<'_, '_, BORROW> {
                     frame.tracker = Tracker::Option {
                         building_inner: true,
                     };
+
+                    // Clear the restored frame's current_child - we haven't entered any of its
+                    // children yet in this new traversal. Without this, derive_path() would
+                    // include stale navigation state and compute incorrect paths.
+                    stored_frame.tracker.clear_current_child();
 
                     stack.push(stored_frame);
                     return Ok(self);

@@ -160,6 +160,7 @@ impl<T> SliceRange<T> {
 /// This provides the same memory locality benefits as bump allocation
 /// while using 32-bit indices instead of 64-bit pointers.
 #[derive(Debug)]
+#[allow(dead_code)] // Some methods reserved for future use
 pub struct Arena<T> {
     data: Vec<T>,
 }
@@ -170,6 +171,7 @@ impl<T> Default for Arena<T> {
     }
 }
 
+#[allow(dead_code)] // Some methods reserved for future use
 impl<T> Arena<T> {
     /// Create a new empty arena.
     #[inline]
