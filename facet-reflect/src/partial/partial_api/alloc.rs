@@ -11,15 +11,9 @@ impl Partial<'static, true> {
     ///
     /// This allocates memory for a value of type `T` and returns a `Partial`
     /// that can be used to initialize it incrementally.
-    ///
-    /// Use `.of::<T>().scope(...)` for closure-based allocation with better ergonomics.
     #[inline]
     pub fn alloc<T: Facet<'static>>() -> Result<Self, AllocError> {
-        // This is a convenience method that builds the plan internally.
-        // For repeated deserialization, build the plan once and call partial() directly.
-        // Note: This leaks the TypePlan, so it's only suitable for one-off usage.
-        let plan = Box::leak(Box::new(TypePlan::<T>::build()?));
-        plan.partial()
+        TypePlan::<T>::build()?.partial()
     }
 }
 
@@ -28,15 +22,9 @@ impl Partial<'static, false> {
     ///
     /// This allocates memory for a value of type `T` and returns a `Partial`
     /// that can be used to initialize it incrementally.
-    ///
-    /// Use `.of_owned::<T>().scope(...)` for closure-based allocation with better ergonomics.
     #[inline]
     pub fn alloc_owned<T: Facet<'static>>() -> Result<Self, AllocError> {
-        // This is a convenience method that builds the plan internally.
-        // For repeated deserialization, build the plan once and call partial_owned() directly.
-        // Note: This leaks the TypePlan, so it's only suitable for one-off usage.
-        let plan = Box::leak(Box::new(TypePlan::<T>::build()?));
-        plan.partial_owned()
+        TypePlan::<T>::build()?.partial_owned()
     }
 }
 

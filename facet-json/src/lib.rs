@@ -241,7 +241,6 @@ where
 /// use facet::Facet;
 /// use facet_json::from_str_into;
 /// use facet_reflect::Partial;
-/// use bumpalo::Bump;
 ///
 /// #[derive(Facet, Debug, PartialEq)]
 /// struct Person {
@@ -249,10 +248,9 @@ where
 ///     age: u32,
 /// }
 ///
-/// let bump = Bump::new();
 /// let json = r#"{"name": "Alice", "age": 30}"#;
-/// let partial = Partial::alloc_owned::<Person>(&bump).unwrap();
-/// let partial = from_str_into(&bump, json, partial).unwrap();
+/// let partial = Partial::alloc_owned::<Person>().unwrap();
+/// let partial = from_str_into(json, partial).unwrap();
 /// let value = partial.build().unwrap();
 /// let person: Person = value.materialize().unwrap();
 /// assert_eq!(person.name, "Alice");
@@ -299,7 +297,6 @@ pub fn from_str_into<'facet>(
 /// use facet::Facet;
 /// use facet_json::from_slice_into;
 /// use facet_reflect::Partial;
-/// use bumpalo::Bump;
 ///
 /// #[derive(Facet, Debug, PartialEq)]
 /// struct Point {
@@ -307,10 +304,9 @@ pub fn from_str_into<'facet>(
 ///     y: i32,
 /// }
 ///
-/// let bump = Bump::new();
 /// let json = br#"{"x": 10, "y": 20}"#;
-/// let partial = Partial::alloc_owned::<Point>(&bump).unwrap();
-/// let partial = from_slice_into(&bump, json, partial).unwrap();
+/// let partial = Partial::alloc_owned::<Point>().unwrap();
+/// let partial = from_slice_into(json, partial).unwrap();
 /// let value = partial.build().unwrap();
 /// let point: Point = value.materialize().unwrap();
 /// assert_eq!(point.x, 10);
@@ -356,7 +352,6 @@ pub fn from_slice_into<'facet>(
 /// use facet::Facet;
 /// use facet_json::from_str_into_borrowed;
 /// use facet_reflect::Partial;
-/// use bumpalo::Bump;
 ///
 /// #[derive(Facet, Debug, PartialEq)]
 /// struct Person<'a> {
@@ -364,10 +359,9 @@ pub fn from_slice_into<'facet>(
 ///     age: u32,
 /// }
 ///
-/// let bump = Bump::new();
 /// let json = r#"{"name": "Alice", "age": 30}"#;
-/// let partial = Partial::alloc::<Person>(&bump).unwrap();
-/// let partial = from_str_into_borrowed(&bump, json, partial).unwrap();
+/// let partial = Partial::alloc::<Person>().unwrap();
+/// let partial = from_str_into_borrowed(json, partial).unwrap();
 /// let value = partial.build().unwrap();
 /// let person: Person = value.materialize().unwrap();
 /// assert_eq!(person.name, "Alice");
@@ -401,7 +395,6 @@ where
 /// use facet::Facet;
 /// use facet_json::from_slice_into_borrowed;
 /// use facet_reflect::Partial;
-/// use bumpalo::Bump;
 ///
 /// #[derive(Facet, Debug, PartialEq)]
 /// struct Point<'a> {
@@ -410,10 +403,9 @@ where
 ///     y: i32,
 /// }
 ///
-/// let bump = Bump::new();
 /// let json = br#"{"label": "origin", "x": 0, "y": 0}"#;
-/// let partial = Partial::alloc::<Point>(&bump).unwrap();
-/// let partial = from_slice_into_borrowed(&bump, json, partial).unwrap();
+/// let partial = Partial::alloc::<Point>().unwrap();
+/// let partial = from_slice_into_borrowed(json, partial).unwrap();
 /// let value = partial.build().unwrap();
 /// let point: Point = value.materialize().unwrap();
 /// assert_eq!(point.label, "origin");
