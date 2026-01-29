@@ -3,6 +3,21 @@
 version = 4
 
 [[package]]
+name = "aho-corasick"
+version = "1.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ddd31a130427c27518df266943a5308ed92d4b226cc639f5a8f1002816174301"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
+name = "allocator-api2"
+version = "0.2.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
+
+[[package]]
 name = "arbitrary"
 version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -60,7 +75,7 @@ checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
 name = "facet"
-version = "0.42.0"
+version = "0.43.2"
 dependencies = [
  "autocfg",
  "facet-core",
@@ -69,33 +84,25 @@ dependencies = [
 
 [[package]]
 name = "facet-core"
-version = "0.42.0"
+version = "0.43.2"
 dependencies = [
  "autocfg",
  "const-fnv1a-hash",
+ "iddqd",
  "impls",
 ]
 
 [[package]]
 name = "facet-dessert"
-version = "0.42.0"
+version = "0.43.2"
 dependencies = [
  "facet-core",
- "facet-reflect",
-]
-
-[[package]]
-name = "facet-dom"
-version = "0.42.0"
-dependencies = [
- "facet-core",
- "facet-dessert",
  "facet-reflect",
 ]
 
 [[package]]
 name = "facet-format"
-version = "0.42.0"
+version = "0.43.2"
 dependencies = [
  "facet-core",
  "facet-dessert",
@@ -105,28 +112,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "facet-html"
-version = "0.42.0"
-dependencies = [
- "facet",
- "facet-core",
- "facet-format",
- "facet-reflect",
- "facet-xml",
- "html5gum",
-]
-
-[[package]]
-name = "facet-html-dom"
-version = "0.42.0"
-dependencies = [
- "facet",
- "facet-html",
-]
-
-[[package]]
 name = "facet-macro-parse"
-version = "0.42.0"
+version = "0.43.2"
 dependencies = [
  "facet-macro-types",
  "proc-macro2",
@@ -135,7 +122,7 @@ dependencies = [
 
 [[package]]
 name = "facet-macro-types"
-version = "0.42.0"
+version = "0.43.2"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -144,14 +131,14 @@ dependencies = [
 
 [[package]]
 name = "facet-macros"
-version = "0.42.0"
+version = "0.43.2"
 dependencies = [
  "facet-macros-impl",
 ]
 
 [[package]]
 name = "facet-macros-impl"
-version = "0.42.0"
+version = "0.43.2"
 dependencies = [
  "facet-macro-parse",
  "facet-macro-types",
@@ -163,16 +150,20 @@ dependencies = [
 
 [[package]]
 name = "facet-path"
-version = "0.42.0"
+version = "0.43.2"
 dependencies = [
  "facet-core",
 ]
 
 [[package]]
 name = "facet-reflect"
-version = "0.42.0"
+version = "0.43.2"
 dependencies = [
  "facet-core",
+ "facet-path",
+ "hashbrown",
+ "regex",
+ "smallvec",
 ]
 
 [[package]]
@@ -181,8 +172,6 @@ version = "0.0.0"
 dependencies = [
  "arbitrary",
  "facet",
- "facet-html",
- "facet-html-dom",
  "facet-reflect",
  "facet-value",
  "libfuzzer-sys",
@@ -190,7 +179,7 @@ dependencies = [
 
 [[package]]
 name = "facet-solver"
-version = "0.42.0"
+version = "0.43.2"
 dependencies = [
  "facet-core",
  "facet-reflect",
@@ -198,22 +187,12 @@ dependencies = [
 
 [[package]]
 name = "facet-value"
-version = "0.42.0"
+version = "0.43.2"
 dependencies = [
  "facet-core",
+ "facet-format",
  "facet-reflect",
  "indexmap",
-]
-
-[[package]]
-name = "facet-xml"
-version = "0.42.0"
-dependencies = [
- "facet",
- "facet-core",
- "facet-dom",
- "facet-reflect",
- "quick-xml",
 ]
 
 [[package]]
@@ -221,6 +200,12 @@ name = "find-msvc-tools"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a3076410a55c90011c298b04d0cfa770b00fa04e1e3c97d3f6c9de105a03844"
+
+[[package]]
+name = "foldhash"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 
 [[package]]
 name = "getrandom"
@@ -239,14 +224,23 @@ name = "hashbrown"
 version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
+dependencies = [
+ "allocator-api2",
+ "equivalent",
+ "foldhash",
+]
 
 [[package]]
-name = "html5gum"
-version = "0.8.3"
+name = "iddqd"
+version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12d29324a6ba370667998f63c6dd2b2511e2297f07e827f69026684907adc3b5"
+checksum = "6b215e67ed1d1a4b1702acd787c487d16e4c977c5dcbcc4587bdb5ea26b6ce06"
 dependencies = [
- "jetscii",
+ "allocator-api2",
+ "equivalent",
+ "foldhash",
+ "hashbrown",
+ "rustc-hash",
 ]
 
 [[package]]
@@ -264,12 +258,6 @@ dependencies = [
  "equivalent",
  "hashbrown",
 ]
-
-[[package]]
-name = "jetscii"
-version = "0.5.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "47f142fe24a9c9944451e8349de0a56af5f3e7226dc46f3ed4d4ecc0b85af75e"
 
 [[package]]
 name = "jobserver"
@@ -319,15 +307,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "quick-xml"
-version = "0.38.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b66c2058c55a409d601666cffe35f04333cf1013010882cec174a7467cd4e21c"
-dependencies = [
- "memchr",
-]
-
-[[package]]
 name = "quote"
 version = "1.0.42"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -343,6 +322,35 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f"
 
 [[package]]
+name = "regex"
+version = "1.12.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "843bc0191f75f3e22651ae5f1e72939ab2f72a4bc30fa80a066bd66edefc24d4"
+dependencies = [
+ "aho-corasick",
+ "memchr",
+ "regex-automata",
+ "regex-syntax",
+]
+
+[[package]]
+name = "regex-automata"
+version = "0.4.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5276caf25ac86c8d810222b3dbb938e512c55c6831a10f3e6ed1c93b84041f1c"
+dependencies = [
+ "aho-corasick",
+ "memchr",
+ "regex-syntax",
+]
+
+[[package]]
+name = "regex-syntax"
+version = "0.8.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7a2d987857b319362043e95f5353c0535c1f58eec5336fdfcf626430af7def58"
+
+[[package]]
 name = "rustc-hash"
 version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -353,6 +361,12 @@ name = "shlex"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
+
+[[package]]
+name = "smallvec"
+version = "2.0.0-alpha.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef784004ca8777809dcdad6ac37629f0a97caee4c685fcea805278d81dd8b857"
 
 [[package]]
 name = "strsim"

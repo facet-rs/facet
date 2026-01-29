@@ -574,6 +574,14 @@ impl Frame {
     ///
     /// After this call, `is_init` will be false and `tracker` will be [Tracker::Scalar].
     fn deinit(&mut self) {
+        crate::trace!(
+            "deinit() called: shape={}, tracker={:?}, is_init={}, ownership={:?}",
+            self.allocated.shape(),
+            self.tracker.kind(),
+            self.is_init,
+            self.ownership
+        );
+
         // For BorrowedInPlace frames, we must NOT drop. These point into existing
         // collection entries (Value objects, Option inners) where the parent has no
         // per-entry tracking. Dropping here would cause double-free when parent drops.
@@ -624,7 +632,14 @@ impl Frame {
             Tracker::Struct { iset, .. } => {
                 // Drop initialized struct fields
                 if let Type::User(UserType::Struct(struct_type)) = self.allocated.shape().ty {
+                    crate::trace!(
+                        "deinit (Struct): shape={}, iset={:?}, num_fields={}",
+                        self.allocated.shape(),
+                        iset,
+                        struct_type.fields.len()
+                    );
                     if iset.all_set(struct_type.fields.len()) {
+                        crate::trace!("deinit (Struct): all fields set, dropping whole struct");
                         unsafe {
                             self.allocated
                                 .shape()
@@ -633,9 +648,21 @@ impl Frame {
                     } else {
                         for (idx, field) in struct_type.fields.iter().enumerate() {
                             if iset.get(idx) {
+                                crate::trace!(
+                                    "deinit (Struct): dropping field {} '{}' of type {}",
+                                    idx,
+                                    field.name,
+                                    field.shape()
+                                );
                                 // This field was initialized, drop it
                                 let field_ptr = unsafe { self.data.field_init(field.offset) };
                                 unsafe { field.shape().call_drop_in_place(field_ptr) };
+                            } else {
+                                crate::trace!(
+                                    "deinit (Struct): skipping uninitialized field {} '{}'",
+                                    idx,
+                                    field.name
+                                );
                             }
                         }
                     }
@@ -976,6 +1003,12 @@ impl Frame {
                             Self::try_init_field_default(field, field_ptr, container_has_default)
                         } {
                             // Mark field as initialized
+                            crate::trace!(
+                                "fill_defaults (struct): setting iset[{}] for field '{}' in {}",
+                                idx,
+                                field.name,
+                                self.allocated.shape()
+                            );
                             iset.set(idx);
                         } else if field.has_default() {
                             // Field has #[facet(default)] but we couldn't find a default function.
@@ -1012,6 +1045,12 @@ impl Frame {
                         Self::try_init_field_default(field, field_ptr, container_has_default)
                     } {
                         // Mark field as initialized
+                        crate::trace!(
+                            "fill_defaults (enum): setting data[{}] for field '{}' in variant {}",
+                            idx,
+                            field.name,
+                            variant.name
+                        );
                         data.set(idx);
                     } else if field.has_default() {
                         // Field has #[facet(default)] but we couldn't find a default function.
@@ -1333,6 +1372,12 @@ impl Frame {
                         };
 
                         if success {
+                            crate::trace!(
+                                "fill_and_require_fields: setting iset[{}] for field '{}' in {}",
+                                plan.index,
+                                plan.name,
+                                self.allocated.shape()
+                            );
                             iset.set(plan.index);
                         } else {
                             return Err(ReflectErrorKind::UninitializedField {
