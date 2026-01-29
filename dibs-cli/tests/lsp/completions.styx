@@ -119,6 +119,136 @@ tests (
     }
 
     {
+        name "inlay hints in order-by block"
+        input <<STYX
+            AllProducts @query{
+                from product
+                where {deleted_at @null}
+                order-by {
+                    id asc
+                    created_at desc
+                }
+                select {id}
+            }
+            STYX
+        inlay_hints {
+            count 4
+            has (
+                {label ": TIMESTAMPTZ" line 3}
+                {label ": BIGINT" line 5}
+                {label ": TIMESTAMPTZ" line 6}
+                {label ": BIGINT" line 8}
+            )
+        }
+    }
+
+    {
+        name "inlay hints in where block"
+        input <<STYX
+            ProductById @query{
+                from product
+                where {
+                    deleted_at @null
+                    active true
+                    id 123
+                }
+                select {handle}
+            }
+            STYX
+        inlay_hints {
+            count 4
+            has (
+                {label ": TIMESTAMPTZ" line 4}
+                {label ": BOOLEAN" line 5}
+                {label ": BIGINT" line 6}
+                {label ": TEXT" line 8}
+            )
+        }
+    }
+
+    {
+        name "inlay hints in insert values block"
+        input <<STYX
+            CreateProduct @insert{
+                into product
+                values {
+                    handle
+                    active
+                    status
+                }
+            }
+            STYX
+        inlay_hints {
+            count 3
+            has (
+                {label ": TEXT" line 4}
+                {label ": BOOLEAN" line 5}
+                {label ": TEXT" line 6}
+            )
+        }
+    }
+
+    {
+        name "inlay hints in update set block"
+        input <<STYX
+            UpdateProduct @update{
+                table product
+                set {
+                    handle
+                    active
+                }
+                where {id 1}
+            }
+            STYX
+        inlay_hints {
+            count 3
+            has (
+                {label ": TEXT" line 4}
+                {label ": BOOLEAN" line 5}
+                {label ": BIGINT" line 7}
+            )
+        }
+    }
+
+    {
+        name "inlay hints skip explicit type annotations"
+        input <<STYX
+            CreateProduct @insert{
+                into product
+                params {new_handle @string}
+                values {
+                    handle TEXT
+                    active BOOLEAN
+                }
+            }
+            STYX
+        inlay_hints {
+            count 0
+        }
+    }
+
+    {
+        name "inlay hints show for param references"
+        input <<STYX
+            CreateProduct @insert{
+                into product
+                params {h @string}
+                values {
+                    handle $h
+                    active true
+                }
+            }
+            STYX
+        inlay_hints {
+            count 2
+            has (
+                {label ": TEXT" line 5}
+                {label ": BOOLEAN" line 6}
+            )
+        }
+    }
+
+    {
         name "hover on table shows columns"
         input <<STYX
             AllProducts @query{

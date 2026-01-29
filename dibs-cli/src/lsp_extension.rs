@@ -1248,10 +1248,15 @@ impl DibsExtension {
                     // - Literal values like "true", "false", numbers, quoted strings
                     if let Some(val_str) = entry.value.as_str() {
                         // Check if it looks like an explicit SQL type annotation (bare uppercase)
+                        // Must start with a letter (to exclude numeric literals like "123")
                         let is_type_annotation = val_str
                             .chars()
-                            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
-                        if is_type_annotation && !val_str.is_empty() {
+                            .next()
+                            .is_some_and(|c| c.is_ascii_uppercase())
+                            && val_str
+                                .chars()
+                                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+                        if is_type_annotation {
                             // Looks like BYTEA, INT, TEXT, etc. - skip
                             continue;
                         }
