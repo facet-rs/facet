@@ -1,6 +1,7 @@
 mod compile_tests;
 mod cycle;
 mod derive;
+mod derive_hashmap_key_bounds;
 mod derive_with_extension_attrs;
 mod empty;
 mod enums;
