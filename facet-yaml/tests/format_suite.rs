@@ -29,7 +29,7 @@ impl FormatSuite for YamlSlice {
         let bump = Bump::new();
         let input_str = std::str::from_utf8(input).expect("input should be valid UTF-8");
         let mut parser = YamlParser::new(input_str);
-        let mut de = FormatDeserializer::new_owned(&bump, &mut parser);
+        let mut de = FormatDeserializer::new_owned(&mut parser);
         de.deserialize_root::<T>()
     }
 

@@ -11,16 +11,14 @@ use crate::{
     SpanGuard,
 };
 
-impl<'parser, 'input, 'bump, const BORROW: bool>
-    FormatDeserializer<'parser, 'input, 'bump, BORROW>
-{
+impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BORROW> {
     /// Deserialize a struct with flattened fields using facet-solver.
     ///
     /// This uses the solver's Schema/Resolution to handle arbitrarily nested
     /// flatten structures by looking up the full path for each field.
     /// It also handles flattened enums by using probing to collect keys first,
     /// then using the Solver to disambiguate between resolutions.
-    pub(crate) fn deserialize_struct_with_flatten(
+    pub(crate) fn deserialize_struct_with_flatten<'bump>(
         &mut self,
         mut wip: Partial<'input, 'bump, BORROW>,
     ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
@@ -289,7 +287,7 @@ impl<'parser, 'input, 'bump, const BORROW: bool>
     }
 
     /// Helper for inserting a key-value pair into a catch-all map field.
-    fn insert_into_catch_all_map(
+    fn insert_into_catch_all_map<'bump>(
         &mut self,
         nav: &mut PathNavigator<'input, 'bump, BORROW>,
         catch_all_info: &FieldInfo,
@@ -341,7 +339,7 @@ impl<'parser, 'input, 'bump, const BORROW: bool>
     }
 
     /// Helper for initializing an empty catch-all field (no parser calls).
-    fn initialize_empty_catch_all(
+    fn initialize_empty_catch_all<'bump>(
         &self,
         mut wip: Partial<'input, 'bump, BORROW>,
         catch_all_info: &FieldInfo,

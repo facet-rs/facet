@@ -42,8 +42,6 @@ pub use serializer::{
 // Re-export DeserializeError for convenience
 pub use facet_format::DeserializeError;
 
-use bumpalo::Bump;
-
 #[cfg(feature = "axum")]
 pub use axum::{Toml, TomlRejection};
 
@@ -83,9 +81,8 @@ where
     T: facet_core::Facet<'static>,
 {
     use facet_format::FormatDeserializer;
-    let bump = Bump::new();
     let mut parser = TomlParser::new(input)?;
-    let mut de = FormatDeserializer::new_owned(&bump, &mut parser);
+    let mut de = FormatDeserializer::new_owned(&mut parser);
     // TOML requires deferred mode to handle table reopening
     de.deserialize_deferred()
 }
@@ -170,9 +167,8 @@ where
     'input: 'facet,
 {
     use facet_format::FormatDeserializer;
-    let bump = Bump::new();
     let mut parser = TomlParser::new(input)?;
-    let mut de = FormatDeserializer::new(&bump, &mut parser);
+    let mut de = FormatDeserializer::new(&mut parser);
     // TOML requires deferred mode to handle table reopening
     de.deserialize_deferred()
 }

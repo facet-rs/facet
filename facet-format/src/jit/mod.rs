@@ -620,7 +620,7 @@ where
 
     // Fall back to reflection-based deserialization
     let bump = Bump::new();
-    FormatDeserializer::new(&bump, &mut parser).deserialize()
+    FormatDeserializer::new(&mut parser).deserialize()
 }
 
 // =============================================================================
@@ -877,5 +877,5 @@ where
 
     // Fall back to reflection-based deserialization
     let bump = Bump::new();
-    FormatDeserializer::new(&bump, &mut parser).deserialize()
+    FormatDeserializer::new(&mut parser).deserialize()
 }

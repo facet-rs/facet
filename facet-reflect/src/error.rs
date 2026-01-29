@@ -467,3 +467,15 @@ impl core::fmt::Debug for ReflectErrorKind {
 
 impl core::error::Error for ReflectError {}
 impl core::error::Error for ReflectErrorKind {}
+
+impl From<AllocError> for ReflectError {
+    fn from(e: AllocError) -> Self {
+        ReflectError {
+            path: Path::new(e.shape),
+            kind: ReflectErrorKind::OperationFailed {
+                shape: e.shape,
+                operation: e.operation,
+            },
+        }
+    }
+}

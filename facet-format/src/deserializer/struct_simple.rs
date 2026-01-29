@@ -31,11 +31,9 @@ fn lookup_field<const BORROW: bool>(
         .map(|(i, _)| i)
 }
 
-impl<'parser, 'input, 'bump, const BORROW: bool>
-    FormatDeserializer<'parser, 'input, 'bump, BORROW>
-{
+impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BORROW> {
     /// Deserialize a struct without flattened fields (simple case).
-    pub(crate) fn deserialize_struct_simple(
+    pub(crate) fn deserialize_struct_simple<'bump>(
         &mut self,
         mut wip: Partial<'input, 'bump, BORROW>,
     ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {

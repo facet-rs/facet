@@ -27,7 +27,7 @@ mod tier_helpers {
     {
         let bump = bumpalo::Bump::new();
         let mut parser = PostcardParser::new(input);
-        let mut de = FormatDeserializer::new(&bump, &mut parser);
+        let mut de = FormatDeserializer::new(&mut parser);
         de.deserialize()
     }
 

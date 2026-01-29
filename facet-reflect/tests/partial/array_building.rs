@@ -139,7 +139,9 @@ fn test_nested_array_building() -> Result<(), IPanic> {
         matrix: [[i32; 2]; 3], // 3x2 matrix
     }
 
-    let mut partial: Partial<'_> = Partial::alloc::<NestedArrays>()?;
+    let bump = Bump::new();
+    let plan = TypePlan::<NestedArrays>::build(&bump)?;
+    let mut partial = plan.partial()?;
     println!("Allocated NestedArrays");
 
     partial = partial.set_field("name", "test matrix".to_string())?;
@@ -205,20 +207,23 @@ macro_rules! assert_snapshot {
 
 #[test]
 fn array_init() -> Result<(), IPanic> {
-    let hv = Partial::alloc::<[u32; 3]>()?
-        // Initialize in order
-        .set_nth_field(0, 42u32)?
-        .set_nth_field(1, 43u32)?
-        .set_nth_field(2, 44u32)?
-        .build()?
-        .materialize::<[u32; 3]>()?;
-    assert_eq!(hv, [42, 43, 44]);
-    Ok(())
+    Partial::of::<[u32; 3]>().scope(|p| {
+        let hv = p
+            // Initialize in order
+            .set_nth_field(0, 42u32)?
+            .set_nth_field(1, 43u32)?
+            .set_nth_field(2, 44u32)?
+            .build()?
+            .materialize::<[u32; 3]>()?;
+        assert_eq!(hv, [42, 43, 44]);
+        Ok(())
+    })
 }
 
 #[test]
 fn array_init_out_of_order() -> Result<(), IPanic> {
-    let hv = Partial::alloc::<[u32; 3]>()?
+    let bump = Bump::new();
+    let hv = Partial::alloc::<[u32; 3]>(&bump)?
         // Initialize out of order
         .set_nth_field(2, 44u32)?
         .set_nth_field(0, 42u32)?
@@ -232,8 +237,9 @@ fn array_init_out_of_order() -> Result<(), IPanic> {
 #[test]
 fn array_partial_init() -> Result<(), IPanic> {
     // Should fail to build
+    let bump = Bump::new();
     assert_snapshot!(
-        Partial::alloc::<[u32; 3]>()?
+        Partial::alloc::<[u32; 3]>(&bump)?
             // Initialize only two elements
             .set_nth_field(0, 42u32)?
             .set_nth_field(2, 44u32)?
@@ -263,8 +269,9 @@ fn drop_array_partially_initialized() -> Result<(), IPanic> {
 
     DROP_COUNT.store(0, Ordering::SeqCst);
 
+    let bump = Bump::new();
     {
-        let mut partial: Partial<'_> = Partial::alloc::<[NoisyDrop; 4]>()?;
+        let mut partial = Partial::alloc::<[NoisyDrop; 4]>(&bump)?;
 
         // Initialize elements 0 and 2
         partial = partial.set_nth_field(0, NoisyDrop { value: 10 })?;
@@ -300,7 +307,8 @@ fn array_element_set_twice() -> Result<(), IPanic> {
 
     DROP_COUNT.store(0, Ordering::SeqCst);
 
-    let array = Partial::alloc::<[DropTracker; 3]>()?
+    let bump = Bump::new();
+    let array = Partial::alloc::<[DropTracker; 3]>(&bump)?
         // Set element 0
         .set_nth_field(0, DropTracker { id: 1 })?
         // Set element 0 again - drops old value

@@ -105,9 +105,8 @@ where
     T: facet_core::Facet<'static>,
 {
     use facet_format::FormatDeserializer;
-    let bump = Bump::new();
     let mut parser = PostcardParser::new(input);
-    let mut de = FormatDeserializer::new_owned(&bump, &mut parser);
+    let mut de = FormatDeserializer::new_owned(&mut parser);
     de.deserialize()
 }
 
@@ -144,9 +143,8 @@ where
     'input: 'facet,
 {
     use facet_format::FormatDeserializer;
-    let bump = Bump::new();
     let mut parser = PostcardParser::new(input);
-    let mut de = FormatDeserializer::new(&bump, &mut parser);
+    let mut de = FormatDeserializer::new(&mut parser);
     de.deserialize()
 }
 
@@ -183,13 +181,13 @@ where
 /// assert_eq!(point.y, 20);
 /// ```
 pub fn from_slice_into<'facet, 'bump>(
-    bump: &'bump Bump,
+    _bump: &'bump Bump,
     input: &[u8],
     partial: facet_reflect::Partial<'facet, 'bump, false>,
 ) -> Result<facet_reflect::Partial<'facet, 'bump, false>, DeserializeError> {
     use facet_format::FormatDeserializer;
     let mut parser = PostcardParser::new(input);
-    let mut de = FormatDeserializer::new_owned(bump, &mut parser);
+    let mut de = FormatDeserializer::new_owned(&mut parser);
 
     // SAFETY: The deserializer expects Partial<'input, 'bump, false> where 'input is the
     // lifetime of the postcard bytes. Since BORROW=false, no data is borrowed from the
@@ -250,7 +248,7 @@ pub fn from_slice_into<'facet, 'bump>(
 /// assert_eq!(msg.data, &[0xAB, 0xCD, 0xEF]);
 /// ```
 pub fn from_slice_into_borrowed<'input, 'facet, 'bump>(
-    bump: &'bump Bump,
+    _bump: &'bump Bump,
     input: &'input [u8],
     partial: facet_reflect::Partial<'facet, 'bump, true>,
 ) -> Result<facet_reflect::Partial<'facet, 'bump, true>, DeserializeError>
@@ -259,6 +257,6 @@ where
 {
     use facet_format::FormatDeserializer;
     let mut parser = PostcardParser::new(input);
-    let mut de = FormatDeserializer::new(bump, &mut parser);
+    let mut de = FormatDeserializer::new(&mut parser);
     de.deserialize_into(partial)
 }

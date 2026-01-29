@@ -115,6 +115,7 @@ mod iset;
 pub mod typeplan;
 
 mod partial_api;
+pub use partial_api::alloc::{PartialBuilder, PartialBuilderOwned};
 
 use crate::{KeyPath, ReflectErrorKind, TrackerKind, trace};
 

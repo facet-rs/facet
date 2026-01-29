@@ -30,8 +30,6 @@ pub use serializer::{CsvSerializeError, CsvSerializer, to_string, to_vec, to_wri
 // Re-export DeserializeError for convenience
 pub use facet_format::DeserializeError;
 
-use bumpalo::Bump;
-
 /// Deserialize a value from a CSV string into an owned type.
 ///
 /// Note: This parses a single CSV row (not including the header).
@@ -59,9 +57,8 @@ where
     T: facet_core::Facet<'static>,
 {
     use facet_format::FormatDeserializer;
-    let bump = Bump::new();
     let mut parser = CsvParser::new(input);
-    let mut de = FormatDeserializer::new_owned(&bump, &mut parser);
+    let mut de = FormatDeserializer::new_owned(&mut parser);
     de.deserialize_root()
 }
 
@@ -90,9 +87,8 @@ where
     'input: 'facet,
 {
     use facet_format::FormatDeserializer;
-    let bump = Bump::new();
     let mut parser = CsvParser::new(input);
-    let mut de = FormatDeserializer::new(&bump, &mut parser);
+    let mut de = FormatDeserializer::new(&mut parser);
     de.deserialize_root()
 }
 

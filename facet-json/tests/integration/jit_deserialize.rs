@@ -322,7 +322,7 @@ fn test_cursor_coherency_after_tier1_struct() {
     // Parse the entire Vec<SimpleStruct> using the standard deserializer
     // This exercises cursor coherency internally as it parses each struct
     let bump = bumpalo::Bump::new();
-    let result: Vec<SimpleStruct> = FormatDeserializer::new(&bump, &mut parser).deserialize().unwrap();
+    let result: Vec<SimpleStruct> = FormatDeserializer::new(&mut parser).deserialize().unwrap();
 
     assert_eq!(result.len(), 2);
     assert_eq!(result[0].name, "Alice");
@@ -343,7 +343,7 @@ fn test_cursor_coherency_struct_then_more() {
     let mut parser = JsonParser::<false>::new(json);
 
     let bump = bumpalo::Bump::new();
-    let result: Vec<Vec<i64>> = FormatDeserializer::new(&bump, &mut parser).deserialize().unwrap();
+    let result: Vec<Vec<i64>> = FormatDeserializer::new(&mut parser).deserialize().unwrap();
 
     assert_eq!(result, vec![vec![1, 2], vec![3, 4, 5], vec![6]]);
 }
@@ -366,7 +366,7 @@ fn test_cursor_coherency_tier2_vec() {
     let mut parser = JsonParser::<false>::new(json);
 
     let bump = bumpalo::Bump::new();
-    let result: WithVec = FormatDeserializer::new(&bump, &mut parser).deserialize().unwrap();
+    let result: WithVec = FormatDeserializer::new(&mut parser).deserialize().unwrap();
 
     assert_eq!(result.numbers, vec![1, 2, 3]);
     assert_eq!(result.name, "test");
@@ -388,7 +388,7 @@ fn test_cursor_coherency_tier2_vec_bool_in_struct() {
     let mut parser = JsonParser::<false>::new(json);
 
     let bump = bumpalo::Bump::new();
-    let result: FlagsAndName = FormatDeserializer::new(&bump, &mut parser).deserialize().unwrap();
+    let result: FlagsAndName = FormatDeserializer::new(&mut parser).deserialize().unwrap();
 
     assert_eq!(result.flags, vec![true, false, true]);
     assert_eq!(result.label, "test");
@@ -411,7 +411,7 @@ fn test_cursor_coherency_multiple_vecs() {
     let mut parser = JsonParser::<false>::new(json);
 
     let bump = bumpalo::Bump::new();
-    let result: MultiVec = FormatDeserializer::new(&bump, &mut parser).deserialize().unwrap();
+    let result: MultiVec = FormatDeserializer::new(&mut parser).deserialize().unwrap();
 
     assert_eq!(result.bools, vec![true, false]);
     assert_eq!(result.nums, vec![1, 2, 3]);
@@ -434,7 +434,7 @@ fn test_cursor_coherency_empty_arrays() {
     let mut parser = JsonParser::<false>::new(json);
 
     let bump = bumpalo::Bump::new();
-    let result: WithEmpty = FormatDeserializer::new(&bump, &mut parser).deserialize().unwrap();
+    let result: WithEmpty = FormatDeserializer::new(&mut parser).deserialize().unwrap();
 
     assert_eq!(result.empty, Vec::<i64>::new());
     assert_eq!(result.name, "test");
@@ -457,7 +457,7 @@ fn test_cursor_coherency_nested_mixed() {
     let mut parser = JsonParser::<false>::new(json);
 
     let bump = bumpalo::Bump::new();
-    let result: Vec<Item> = FormatDeserializer::new(&bump, &mut parser).deserialize().unwrap();
+    let result: Vec<Item> = FormatDeserializer::new(&mut parser).deserialize().unwrap();
 
     assert_eq!(result.len(), 2);
     assert_eq!(result[0].id, 1);

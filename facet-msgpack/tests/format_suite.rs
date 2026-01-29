@@ -27,7 +27,7 @@ impl FormatSuite for MsgPackSlice {
         use facet_format::FormatDeserializer;
         let bump = Bump::new();
         let mut parser = MsgPackParser::new(input);
-        let mut de = FormatDeserializer::new_owned(&bump, &mut parser);
+        let mut de = FormatDeserializer::new_owned(&mut parser);
         de.deserialize_root::<T>()
     }
 

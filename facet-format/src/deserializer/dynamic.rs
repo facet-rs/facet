@@ -10,14 +10,12 @@ use crate::{
     ScalarTypeHint, ScalarValue, SpanGuard,
 };
 
-impl<'parser, 'input, 'bump, const BORROW: bool>
-    FormatDeserializer<'parser, 'input, 'bump, BORROW>
-{
+impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BORROW> {
     /// Deserialize any value into a DynamicValue type (e.g., facet_value::Value).
     ///
     /// This handles all value types by inspecting the parse events and calling
     /// the appropriate methods on the Partial, which delegates to the DynamicValue vtable.
-    pub(crate) fn deserialize_dynamic_value(
+    pub(crate) fn deserialize_dynamic_value<'bump>(
         &mut self,
         mut wip: Partial<'input, 'bump, BORROW>,
     ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
@@ -111,7 +109,7 @@ impl<'parser, 'input, 'bump, const BORROW: bool>
         Ok(wip)
     }
 
-    pub(crate) fn deserialize_struct_dynamic(
+    pub(crate) fn deserialize_struct_dynamic<'bump>(
         &mut self,
         mut wip: Partial<'input, 'bump, BORROW>,
         fields: &'static [facet_core::Field],
@@ -168,7 +166,7 @@ impl<'parser, 'input, 'bump, const BORROW: bool>
         Ok(wip)
     }
 
-    pub(crate) fn deserialize_tuple_dynamic(
+    pub(crate) fn deserialize_tuple_dynamic<'bump>(
         &mut self,
         mut wip: Partial<'input, 'bump, BORROW>,
         fields: &'static [facet_core::Field],
@@ -229,7 +227,7 @@ impl<'parser, 'input, 'bump, const BORROW: bool>
         Ok(wip)
     }
 
-    pub(crate) fn deserialize_enum_dynamic(
+    pub(crate) fn deserialize_enum_dynamic<'bump>(
         &mut self,
         mut wip: Partial<'input, 'bump, BORROW>,
         enum_def: &'static facet_core::EnumType,
@@ -370,7 +368,7 @@ impl<'parser, 'input, 'bump, const BORROW: bool>
         Ok(wip)
     }
 
-    pub(crate) fn deserialize_scalar_dynamic(
+    pub(crate) fn deserialize_scalar_dynamic<'bump>(
         &mut self,
         mut wip: Partial<'input, 'bump, BORROW>,
         hint_shape: &'static Shape,
@@ -458,7 +456,7 @@ impl<'parser, 'input, 'bump, const BORROW: bool>
         Ok(wip)
     }
 
-    pub(crate) fn deserialize_list_dynamic(
+    pub(crate) fn deserialize_list_dynamic<'bump>(
         &mut self,
         mut wip: Partial<'input, 'bump, BORROW>,
         element_shape: &'static Shape,
@@ -499,7 +497,7 @@ impl<'parser, 'input, 'bump, const BORROW: bool>
         Ok(wip)
     }
 
-    pub(crate) fn deserialize_array_dynamic(
+    pub(crate) fn deserialize_array_dynamic<'bump>(
         &mut self,
         mut wip: Partial<'input, 'bump, BORROW>,
         element_shape: &'static Shape,
@@ -544,7 +542,7 @@ impl<'parser, 'input, 'bump, const BORROW: bool>
         Ok(wip)
     }
 
-    pub(crate) fn deserialize_map_dynamic(
+    pub(crate) fn deserialize_map_dynamic<'bump>(
         &mut self,
         mut wip: Partial<'input, 'bump, BORROW>,
         key_shape: &'static Shape,

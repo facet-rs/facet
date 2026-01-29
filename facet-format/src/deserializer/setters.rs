@@ -279,14 +279,12 @@ pub(crate) fn deserialize_map_key_terminal_inner<'input, 'bump, const BORROW: bo
     Err(MapKeyTerminalResult::NeedsSetString { wip, s: key })
 }
 
-impl<'parser, 'input, 'bump, const BORROW: bool>
-    FormatDeserializer<'parser, 'input, 'bump, BORROW>
-{
+impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BORROW> {
     /// Set a scalar value into a `Partial`, handling type coercion.
     ///
     /// This is a thin wrapper around `set_scalar_inner` that handles the
     /// string/bytes delegation cases and converts error types.
-    pub(crate) fn set_scalar(
+    pub(crate) fn set_scalar<'bump>(
         &mut self,
         wip: Partial<'input, 'bump, BORROW>,
         scalar: ScalarValue<'input>,
@@ -300,7 +298,7 @@ impl<'parser, 'input, 'bump, const BORROW: bool>
     }
 
     /// Set a string value, handling `&str`, `Cow<str>`, and `String` appropriately.
-    pub(crate) fn set_string_value(
+    pub(crate) fn set_string_value<'bump>(
         &mut self,
         wip: Partial<'input, 'bump, BORROW>,
         s: Cow<'input, str>,
@@ -328,7 +326,7 @@ impl<'parser, 'input, 'bump, const BORROW: bool>
     ///
     /// This handles `&[u8]`, `Cow<[u8]>`, and `Vec<u8>` appropriately based on
     /// whether borrowing is enabled and whether the data is borrowed or owned.
-    pub(crate) fn set_bytes_value(
+    pub(crate) fn set_bytes_value<'bump>(
         &mut self,
         wip: Partial<'input, 'bump, BORROW>,
         b: Cow<'input, [u8]>,

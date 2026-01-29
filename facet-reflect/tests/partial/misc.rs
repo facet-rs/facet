@@ -23,7 +23,8 @@ struct Inner {
 
 #[test]
 fn wip_nested() -> Result<(), IPanic> {
-    let mut partial: Partial<'_> = Partial::alloc::<Outer>()?;
+    let bump = Bump::new();
+    let mut partial = Partial::alloc::<Outer>(&bump)?;
     partial = partial.begin_field("name")?;
     partial = partial.set(String::from("Hello, world!"))?;
     partial = partial.end()?;
@@ -57,7 +58,8 @@ fn readme_sample() -> Result<(), IPanic> {
         bar: String,
     }
 
-    let mut partial: Partial<'_> = Partial::alloc::<FooBar>()?;
+    let bump = Bump::new();
+    let mut partial = Partial::alloc::<FooBar>(&bump)?;
     partial = partial.begin_field("foo")?;
     partial = partial.set(42u64)?;
     partial = partial.end()?;
@@ -82,14 +84,16 @@ enum SimpleEnum {
 
 #[test]
 fn wip_unit_enum() -> Result<(), IPanic> {
+    let bump = Bump::new();
+
     // Test unit variant A
-    let mut partial: Partial<'_> = Partial::alloc::<SimpleEnum>()?;
+    let mut partial = Partial::alloc::<SimpleEnum>(&bump)?;
     partial = partial.select_variant_named("A")?;
     let a = partial.build()?.materialize::<SimpleEnum>()?;
     assert_eq!(a, SimpleEnum::A);
 
     // Test unit variant B
-    let mut partial: Partial<'_> = Partial::alloc::<SimpleEnum>()?;
+    let mut partial = Partial::alloc::<SimpleEnum>(&bump)?;
     partial = partial.select_variant(1)?; // B is at index 1
     let b = partial.build()?.materialize::<SimpleEnum>()?;
     assert_eq!(b, SimpleEnum::B);
@@ -108,14 +112,16 @@ enum EnumWithData {
 
 #[test]
 fn wip_enum_with_data() -> Result<(), IPanic> {
+    let bump = Bump::new();
+
     // Test empty variant
-    let mut partial: Partial<'_> = Partial::alloc::<EnumWithData>()?;
+    let mut partial = Partial::alloc::<EnumWithData>(&bump)?;
     partial = partial.select_variant_named("Empty")?;
     let empty = partial.build()?.materialize::<EnumWithData>()?;
     assert_eq!(empty, EnumWithData::Empty);
 
     // Test single-field tuple variant
-    let mut partial: Partial<'_> = Partial::alloc::<EnumWithData>()?;
+    let mut partial = Partial::alloc::<EnumWithData>(&bump)?;
     partial = partial.select_variant_named("Single")?;
     partial = partial.begin_nth_field(0)?; // Access the first field
     partial = partial.set(42)?;
@@ -124,7 +130,7 @@ fn wip_enum_with_data() -> Result<(), IPanic> {
     assert_eq!(single, EnumWithData::Single(42));
 
     // Test multi-field tuple variant
-    let mut partial: Partial<'_> = Partial::alloc::<EnumWithData>()?;
+    let mut partial = Partial::alloc::<EnumWithData>(&bump)?;
     partial = partial.select_variant_named("Tuple")?;
     partial = partial.begin_nth_field(0)?;
     partial = partial.set(42)?;
@@ -136,7 +142,7 @@ fn wip_enum_with_data() -> Result<(), IPanic> {
     assert_eq!(tuple, EnumWithData::Tuple(42, String::from("Hello")));
 
     // Test struct variant
-    let mut partial: Partial<'_> = Partial::alloc::<EnumWithData>()?;
+    let mut partial = Partial::alloc::<EnumWithData>(&bump)?;
     partial = partial.select_variant_named("Struct")?;
     partial = partial.begin_field("x")?;
     partial = partial.set(42)?;
@@ -167,14 +173,16 @@ enum EnumWithDataReprC {
 
 #[test]
 fn wip_enum_with_data_repr_c() -> Result<(), IPanic> {
+    let bump = Bump::new();
+
     // Test empty variant
-    let mut partial: Partial<'_> = Partial::alloc::<EnumWithDataReprC>()?;
+    let mut partial = Partial::alloc::<EnumWithDataReprC>(&bump)?;
     partial = partial.select_variant_named("Empty")?;
     let empty = partial.build()?.materialize::<EnumWithDataReprC>()?;
     assert_eq!(empty, EnumWithDataReprC::Empty);
 
     // Test single-field tuple variant
-    let mut partial: Partial<'_> = Partial::alloc::<EnumWithDataReprC>()?;
+    let mut partial = Partial::alloc::<EnumWithDataReprC>(&bump)?;
     partial = partial.select_variant_named("Single")?;
     partial = partial.begin_nth_field(0)?; // Access the first field
     partial = partial.set(42)?;
@@ -183,7 +191,7 @@ fn wip_enum_with_data_repr_c() -> Result<(), IPanic> {
     assert_eq!(single, EnumWithDataReprC::Single(42));
 
     // Test multi-field tuple variant
-    let mut partial: Partial<'_> = Partial::alloc::<EnumWithDataReprC>()?;
+    let mut partial = Partial::alloc::<EnumWithDataReprC>(&bump)?;
     partial = partial.select_variant_named("Tuple")?;
     partial = partial.begin_nth_field(0)?;
     partial = partial.set(42)?;
@@ -195,7 +203,7 @@ fn wip_enum_with_data_repr_c() -> Result<(), IPanic> {
     assert_eq!(tuple, EnumWithDataReprC::Tuple(42, String::from("Hello")));
 
     // Test struct variant
-    let mut partial: Partial<'_> = Partial::alloc::<EnumWithDataReprC>()?;
+    let mut partial = Partial::alloc::<EnumWithDataReprC>(&bump)?;
     partial = partial.select_variant_named("Struct")?;
     partial = partial.begin_field("x")?;
     partial = partial.set(42)?;
@@ -226,14 +234,16 @@ enum EnumWithDataReprCI16 {
 
 #[test]
 fn wip_enum_with_data_repr_c_i16() -> Result<(), IPanic> {
+    let bump = Bump::new();
+
     // Test empty variant
-    let mut partial: Partial<'_> = Partial::alloc::<EnumWithDataReprCI16>()?;
+    let mut partial = Partial::alloc::<EnumWithDataReprCI16>(&bump)?;
     partial = partial.select_variant_named("Empty")?;
     let empty = partial.build()?.materialize::<EnumWithDataReprCI16>()?;
     assert_eq!(empty, EnumWithDataReprCI16::Empty);
 
     // Test single-field tuple variant
-    let mut partial: Partial<'_> = Partial::alloc::<EnumWithDataReprCI16>()?;
+    let mut partial = Partial::alloc::<EnumWithDataReprCI16>(&bump)?;
     partial = partial.select_variant_named("Single")?;
     partial = partial.begin_nth_field(0)?; // Access the first field
     partial = partial.set(42)?;
@@ -242,7 +252,7 @@ fn wip_enum_with_data_repr_c_i16() -> Result<(), IPanic> {
     assert_eq!(single, EnumWithDataReprCI16::Single(42));
 
     // Test multi-field tuple variant
-    let mut partial: Partial<'_> = Partial::alloc::<EnumWithDataReprCI16>()?;
+    let mut partial = Partial::alloc::<EnumWithDataReprCI16>(&bump)?;
     partial = partial.select_variant_named("Tuple")?;
     partial = partial.begin_nth_field(0)?;
     partial = partial.set(42)?;
@@ -257,7 +267,7 @@ fn wip_enum_with_data_repr_c_i16() -> Result<(), IPanic> {
     );
 
     // Test struct variant
-    let mut partial: Partial<'_> = Partial::alloc::<EnumWithDataReprCI16>()?;
+    let mut partial = Partial::alloc::<EnumWithDataReprCI16>(&bump)?;
     partial = partial.select_variant_named("Struct")?;
     partial = partial.begin_field("x")?;
     partial = partial.set(42)?;
@@ -332,8 +342,8 @@ fn test_enum_reprs() -> Result<(), IPanic> {
     assert_eq!(size_of::<ReprCU8>(), 6);
     assert_eq!(field_offsets::<ReprCU8>(), [2, 4]);
 
-    fn build<T: Facet<'static>>() -> Result<T, IPanic> {
-        let mut partial: Partial<'_> = Partial::alloc::<T>()?;
+    fn build<T: Facet<'static>>(bump: &Bump) -> Result<T, IPanic> {
+        let mut partial = Partial::alloc::<T>(bump)?;
         partial = partial.select_variant(0)?;
         partial = partial.begin_nth_field(0)?;
         partial = partial.set(1u8)?;
@@ -345,10 +355,11 @@ fn test_enum_reprs() -> Result<(), IPanic> {
         Ok(v)
     }
 
-    let v1: ReprU8 = build()?;
+    let bump = Bump::new();
+    let v1: ReprU8 = build(&bump)?;
     assert_eq!(v1, ReprU8::A(1, 2));
 
-    let v2: ReprCU8 = build()?;
+    let v2: ReprCU8 = build(&bump)?;
     assert_eq!(v2, ReprCU8::A(1, 2));
 
     Ok(())
@@ -356,24 +367,26 @@ fn test_enum_reprs() -> Result<(), IPanic> {
 
 #[test]
 fn wip_enum_error_cases() -> Result<(), IPanic> {
+    let bump = Bump::new();
+
     // Test error: trying to access a field without selecting a variant
-    let partial: Partial<'_> = Partial::alloc::<EnumWithData>()?;
+    let partial = Partial::alloc::<EnumWithData>(&bump)?;
     let result = partial.begin_field("x");
     assert!(result.is_err());
 
     // Test error: trying to select a non-existent variant
-    let partial: Partial<'_> = Partial::alloc::<EnumWithData>()?;
+    let partial = Partial::alloc::<EnumWithData>(&bump)?;
     let result = partial.select_variant_named("NonExistent");
     assert!(result.is_err());
 
     // Test error: trying to access a non-existent field in a variant
-    let mut partial: Partial<'_> = Partial::alloc::<EnumWithData>()?;
+    let mut partial = Partial::alloc::<EnumWithData>(&bump)?;
     partial = partial.select_variant_named("Struct")?;
     let result = partial.begin_field("non_existent");
     assert!(result.is_err());
 
     // Test error: trying to build without initializing all fields
-    let mut partial: Partial<'_> = Partial::alloc::<EnumWithData>()?;
+    let mut partial = Partial::alloc::<EnumWithData>(&bump)?;
     partial = partial.select_variant_named("Struct")?;
     partial = partial.begin_field("x")?;
     partial = partial.set(42)?;
@@ -389,8 +402,10 @@ fn wip_enum_error_cases() -> Result<(), IPanic> {
 
 #[test]
 fn wip_switch_enum_variant() -> Result<(), IPanic> {
+    let bump = Bump::new();
+
     // Test switching variants
-    let mut partial: Partial<'_> = Partial::alloc::<EnumWithData>()?;
+    let mut partial = Partial::alloc::<EnumWithData>(&bump)?;
     partial = partial.select_variant_named("Single")?;
     partial = partial.begin_nth_field(0)?;
     partial = partial.set(42)?;
@@ -413,8 +428,10 @@ fn wip_switch_enum_variant() -> Result<(), IPanic> {
 
 #[test]
 fn wip_empty_list() -> Result<(), IPanic> {
+    let bump = Bump::new();
+
     // Create an empty list by setting an empty vec
-    let mut partial = Partial::alloc::<Vec<i32>>()?;
+    let mut partial = Partial::alloc::<Vec<i32>>(&bump)?;
     partial = partial.set(Vec::<i32>::new())?;
     let empty_list = partial.build()?.materialize::<Vec<i32>>()?;
 
@@ -426,8 +443,10 @@ fn wip_empty_list() -> Result<(), IPanic> {
 
 #[test]
 fn wip_list_push() -> Result<(), IPanic> {
+    let bump = Bump::new();
+
     // Build a vector by pushing elements one by one
-    let mut partial = Partial::alloc::<Vec<i32>>()?;
+    let mut partial = Partial::alloc::<Vec<i32>>(&bump)?;
     partial = partial.init_list()?;
     partial = partial.begin_list_item()?;
     partial = partial.set(10)?;
@@ -448,8 +467,10 @@ fn wip_list_push() -> Result<(), IPanic> {
 
 #[test]
 fn wip_list_string() -> Result<(), IPanic> {
+    let bump = Bump::new();
+
     // Build a vector of strings
-    let mut partial = Partial::alloc::<Vec<String>>()?;
+    let mut partial = Partial::alloc::<Vec<String>>(&bump)?;
     partial = partial.init_list()?;
     partial = partial.begin_list_item()?;
     partial = partial.set("hello".to_string())?;
@@ -472,8 +493,10 @@ struct WithList {
 
 #[test]
 fn wip_struct_with_list() -> Result<(), IPanic> {
+    let bump = Bump::new();
+
     // Create a struct that contains a list
-    let mut partial: Partial<'_> = Partial::alloc::<WithList>()?;
+    let mut partial = Partial::alloc::<WithList>(&bump)?;
     partial = partial.begin_field("name")?;
     partial = partial.set("test list".to_string())?;
     partial = partial.end()?;
@@ -504,18 +527,20 @@ fn wip_struct_with_list() -> Result<(), IPanic> {
 
 #[test]
 fn wip_list_error_cases() -> Result<(), IPanic> {
+    let bump = Bump::new();
+
     // Test error: trying to init_list_item on a non-list type
-    let partial: Partial<'_> = Partial::alloc::<i32>()?;
+    let partial = Partial::alloc::<i32>(&bump)?;
     let result = partial.begin_list_item();
     assert!(result.is_err());
 
     // Test error: trying to init_list on non-list type
-    let partial: Partial<'_> = Partial::alloc::<String>()?;
+    let partial = Partial::alloc::<String>(&bump)?;
     let result = partial.init_list();
     assert!(result.is_err());
 
     // Test error: trying to use list API on non-list type
-    let partial: Partial<'_> = Partial::alloc::<i32>()?;
+    let partial = Partial::alloc::<i32>(&bump)?;
     let result = partial.init_list();
     assert!(result.is_err());
 
@@ -535,7 +560,8 @@ fn wip_opaque_arc() -> Result<(), IPanic> {
         inner: Handle,
     }
 
-    let mut partial: Partial<'_> = Partial::alloc::<Container>()?;
+    let bump = Bump::new();
+    let mut partial = Partial::alloc::<Container>(&bump)?;
     partial = partial.begin_field("inner")?;
     partial = partial.set(Handle(std::sync::Arc::new(NotDerivingFacet(35))))?;
     partial = partial.end()?;
@@ -548,8 +574,10 @@ fn wip_opaque_arc() -> Result<(), IPanic> {
 
 #[test]
 fn wip_put_option_explicit_some() -> Result<(), IPanic> {
+    let bump = Bump::new();
+
     // Test explicit Some
-    let mut partial = Partial::alloc::<Option<u64>>()?;
+    let mut partial = Partial::alloc::<Option<u64>>(&bump)?;
     partial = partial.set(Some(42u64))?;
     let result = partial.build()?.materialize::<Option<u64>>()?;
 
@@ -560,7 +588,9 @@ fn wip_put_option_explicit_some() -> Result<(), IPanic> {
 
 #[test]
 fn wip_put_option_explicit_none() -> Result<(), IPanic> {
-    let mut partial = Partial::alloc::<Option<u64>>()?;
+    let bump = Bump::new();
+
+    let mut partial = Partial::alloc::<Option<u64>>(&bump)?;
     partial = partial.set(None::<u64>)?;
     let result = partial.build()?.materialize::<Option<u64>>()?;
 
@@ -571,8 +601,10 @@ fn wip_put_option_explicit_none() -> Result<(), IPanic> {
 
 #[test]
 fn wip_put_option_implicit_some() -> Result<(), IPanic> {
+    let bump = Bump::new();
+
     // Note: implicit conversion removed in new API, must use explicit Some
-    let mut partial = Partial::alloc::<Option<u64>>()?;
+    let mut partial = Partial::alloc::<Option<u64>>(&bump)?;
     partial = partial.set(Some(42u64))?;
     let result = partial.build()?.materialize::<Option<u64>>()?;
 
@@ -583,8 +615,10 @@ fn wip_put_option_implicit_some() -> Result<(), IPanic> {
 
 #[test]
 fn wip_parse_option() -> Result<(), IPanic> {
+    let bump = Bump::new();
+
     // parse() replaced with set() with parsed value
-    let mut partial = Partial::alloc::<Option<f64>>()?;
+    let mut partial = Partial::alloc::<Option<f64>>(&bump)?;
     partial = partial.set(Some(8.13))?;
     let result = partial.build()?.materialize::<Option<f64>>()?;
 
@@ -605,7 +639,8 @@ fn wip_fn_ptr() -> Result<(), IPanic> {
         1113
     }
 
-    let mut partial: Partial<'_> = Partial::alloc::<Foo>()?;
+    let bump = Bump::new();
+    let mut partial = Partial::alloc::<Foo>(&bump)?;
     partial = partial.begin_field("foo")?;
     partial = partial.set(f as fn() -> i32)?;
     partial = partial.end()?;
@@ -613,7 +648,7 @@ fn wip_fn_ptr() -> Result<(), IPanic> {
 
     assert_eq!((result.foo)(), 1113);
 
-    let mut partial: Partial<'_> = Partial::alloc::<Foo>()?;
+    let mut partial = Partial::alloc::<Foo>(&bump)?;
     partial = partial.begin_field("foo")?;
     assert!(partial.set((|| 0.0) as fn() -> f32).is_err());
 
@@ -629,7 +664,8 @@ fn gh_354_leak_1() -> Result<(), IPanic> {
     }
 
     fn leak1() -> Result<(), ReflectError> {
-        let bump = Bump::new(); let mut partial: Partial<'_, '_> = Partial::alloc::<Foo>(&bump).unwrap();
+        let bump = Bump::new();
+        let mut partial: Partial<'_, '_> = Partial::alloc::<Foo>(&bump).unwrap();
         partial = partial.begin_field("a")?;
         partial = partial.set(String::from("Hello, World!"))?;
         partial = partial.end()?;
@@ -650,7 +686,8 @@ fn gh_354_leak_2() -> Result<(), IPanic> {
     }
 
     fn leak2() -> Result<(), ReflectError> {
-        let bump = Bump::new(); let mut partial: Partial<'_, '_> = Partial::alloc::<Foo>(&bump).unwrap();
+        let bump = Bump::new();
+        let mut partial: Partial<'_, '_> = Partial::alloc::<Foo>(&bump).unwrap();
         partial = partial.begin_field("a")?;
         partial = partial.set(String::from("Hello, World!"))?;
         partial = partial.end()?;
@@ -766,7 +803,8 @@ fn frame_count() -> Result<(), IPanic> {
         s: f64,
     }
 
-    let mut p = Partial::alloc::<S>()?;
+    let bump = Bump::new();
+    let mut p = Partial::alloc::<S>(&bump)?;
     assert_eq!(p.frame_count(), 1);
     p = p.begin_field("s")?;
     assert_eq!(p.frame_count(), 2);
@@ -782,7 +820,8 @@ fn frame_count() -> Result<(), IPanic> {
 
 #[test]
 fn too_many_end() -> Result<(), IPanic> {
-    let p = Partial::alloc::<u32>()?;
+    let bump = Bump::new();
+    let p = Partial::alloc::<u32>(&bump)?;
     let err = match p.end() {
         Ok(_) => panic!("expected error"),
         Err(e) => e,
@@ -794,9 +833,10 @@ fn too_many_end() -> Result<(), IPanic> {
 
 #[test]
 fn set_shape_wrong_shape() -> Result<(), IPanic> {
+    let bump = Bump::new();
     let s = String::from("I am a String");
 
-    let p = Partial::alloc::<u32>()?;
+    let p = Partial::alloc::<u32>(&bump)?;
     let err = match p.set(s) {
         Ok(_) => panic!("expected error"),
         Err(e) => e,
@@ -808,7 +848,8 @@ fn set_shape_wrong_shape() -> Result<(), IPanic> {
 
 #[test]
 fn alloc_shape_unsized() -> Result<(), IPanic> {
-    match Partial::alloc::<str>() {
+    let bump = Bump::new();
+    match Partial::alloc::<str>(&bump) {
         Ok(_) => unreachable!(),
         Err(err) => assert_snapshot!(err),
     }
@@ -817,7 +858,8 @@ fn alloc_shape_unsized() -> Result<(), IPanic> {
 
 #[test]
 fn f64_init() -> Result<(), IPanic> {
-    let hv = Partial::alloc::<f64>()?
+    let bump = Bump::new();
+    let hv = Partial::alloc::<f64>(&bump)?
         .set::<f64>(6.241)?
         .build()?
         .materialize::<f64>()?;
@@ -833,7 +875,8 @@ fn struct_fully_uninit() -> Result<(), IPanic> {
         bar: bool,
     }
 
-    assert_snapshot!(Partial::alloc::<FooBar>()?.build().unwrap_err());
+    let bump = Bump::new();
+    assert_snapshot!(Partial::alloc::<FooBar>(&bump)?.build().unwrap_err());
     Ok(())
 }
 
@@ -845,7 +888,8 @@ fn struct_partially_uninit() -> Result<(), IPanic> {
         bar: bool,
     }
 
-    let partial: Partial<'_> = Partial::alloc::<FooBar>()?;
+    let bump = Bump::new();
+    let partial = Partial::alloc::<FooBar>(&bump)?;
     assert_snapshot!(partial.set_field("foo", 42_u64)?.build().unwrap_err());
     Ok(())
 }

@@ -176,14 +176,8 @@ pub const DEFAULT_EVENT_BUFFER_SIZE: usize = 512;
 /// The lifetime `'parser` is the lifetime of the parser itself, which may be shorter
 /// than `'input` (e.g., for streaming parsers that produce owned data but contain
 /// references to internal state).
-///
-/// The lifetime `'bump` is the lifetime of the bump allocator used for TypePlan and
-/// other internal allocations during deserialization.
-pub struct FormatDeserializer<'parser, 'input, 'bump, const BORROW: bool> {
+pub struct FormatDeserializer<'parser, 'input, const BORROW: bool> {
     parser: &'parser mut dyn FormatParser<'input>,
-
-    /// Bump allocator for TypePlan and internal allocations.
-    bump: &'bump Bump,
 
     /// The span of the most recently consumed event (for error reporting).
     last_span: Span,
@@ -205,22 +199,20 @@ pub struct FormatDeserializer<'parser, 'input, 'bump, const BORROW: bool> {
     _marker: PhantomData<&'input ()>,
 }
 
-impl<'parser, 'input, 'bump> FormatDeserializer<'parser, 'input, 'bump, true> {
+impl<'parser, 'input> FormatDeserializer<'parser, 'input, true> {
     /// Create a new deserializer that can borrow strings from input.
-    pub fn new(bump: &'bump Bump, parser: &'parser mut dyn FormatParser<'input>) -> Self {
-        Self::with_buffer_capacity(bump, parser, DEFAULT_EVENT_BUFFER_SIZE)
+    pub fn new(parser: &'parser mut dyn FormatParser<'input>) -> Self {
+        Self::with_buffer_capacity(parser, DEFAULT_EVENT_BUFFER_SIZE)
     }
 
     /// Create a new deserializer with a custom buffer capacity.
     pub fn with_buffer_capacity(
-        bump: &'bump Bump,
         parser: &'parser mut dyn FormatParser<'input>,
         buffer_capacity: usize,
     ) -> Self {
         let is_non_self_describing = !parser.is_self_describing();
         Self {
             parser,
-            bump,
             last_span: Span { offset: 0, len: 0 },
             event_buffer: VecDeque::with_capacity(buffer_capacity),
             buffer_capacity,
@@ -231,22 +223,20 @@ impl<'parser, 'input, 'bump> FormatDeserializer<'parser, 'input, 'bump, true> {
     }
 }
 
-impl<'parser, 'input, 'bump> FormatDeserializer<'parser, 'input, 'bump, false> {
+impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
     /// Create a new deserializer that produces owned strings.
-    pub fn new_owned(bump: &'bump Bump, parser: &'parser mut dyn FormatParser<'input>) -> Self {
-        Self::with_buffer_capacity_owned(bump, parser, DEFAULT_EVENT_BUFFER_SIZE)
+    pub fn new_owned(parser: &'parser mut dyn FormatParser<'input>) -> Self {
+        Self::with_buffer_capacity_owned(parser, DEFAULT_EVENT_BUFFER_SIZE)
     }
 
     /// Create a new deserializer with a custom buffer capacity.
     pub fn with_buffer_capacity_owned(
-        bump: &'bump Bump,
         parser: &'parser mut dyn FormatParser<'input>,
         buffer_capacity: usize,
     ) -> Self {
         let is_non_self_describing = !parser.is_self_describing();
         Self {
             parser,
-            bump,
             last_span: Span { offset: 0, len: 0 },
             event_buffer: VecDeque::with_capacity(buffer_capacity),
             buffer_capacity,
@@ -257,28 +247,27 @@ impl<'parser, 'input, 'bump> FormatDeserializer<'parser, 'input, 'bump, false> {
     }
 }
 
-impl<'parser, 'input, 'bump, const BORROW: bool>
-    FormatDeserializer<'parser, 'input, 'bump, BORROW>
-{
+impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BORROW> {
     /// Borrow the inner parser mutably.
     pub fn parser_mut(&mut self) -> &mut dyn FormatParser<'input> {
         self.parser
     }
 }
 
-impl<'parser, 'input, 'bump> FormatDeserializer<'parser, 'input, 'bump, true> {
+impl<'parser, 'input> FormatDeserializer<'parser, 'input, true> {
     /// Deserialize the next value in the stream into `T`, allowing borrowed strings.
     pub fn deserialize<T>(&mut self) -> Result<T, DeserializeError>
     where
         T: Facet<'input>,
     {
-        let plan = TypePlan::<T>::build(self.bump)?;
-        let wip: Partial<'input, 'bump, true> = plan.partial()?;
+        let bump = Bump::new();
+        let plan = TypePlan::<T>::build(&bump)?;
+        let wip = plan.partial()?;
         let partial = self.deserialize_into(wip)?;
         // SpanGuard must cover build() and materialize() which can fail with ReflectError.
         // Created AFTER deserialize_into so last_span points to the final token.
         let _guard = SpanGuard::new(self.last_span);
-        let heap_value: HeapValue<'input, true> = partial.build()?;
+        let heap_value = partial.build()?;
         Ok(heap_value.materialize::<T>()?)
     }
 
@@ -299,8 +288,9 @@ impl<'parser, 'input, 'bump> FormatDeserializer<'parser, 'input, 'bump, true> {
     where
         T: Facet<'input>,
     {
-        let plan = TypePlan::<T>::build(self.bump)?;
-        let wip: Partial<'input, 'bump, true> = plan.partial()?;
+        let bump = Bump::new();
+        let plan = TypePlan::<T>::build(&bump)?;
+        let wip = plan.partial()?;
         let wip = wip.begin_deferred()?;
         let partial = self.deserialize_into(wip)?;
 
@@ -308,12 +298,12 @@ impl<'parser, 'input, 'bump> FormatDeserializer<'parser, 'input, 'bump, true> {
         // Created AFTER deserialize_into so last_span points to the final token.
         let _guard = SpanGuard::new(self.last_span);
         let partial = partial.finish_deferred()?;
-        let heap_value: HeapValue<'input, true> = partial.build()?;
+        let heap_value = partial.build()?;
         Ok(heap_value.materialize::<T>()?)
     }
 }
 
-impl<'parser, 'input, 'bump> FormatDeserializer<'parser, 'input, 'bump, false> {
+impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
     /// Deserialize the next value in the stream into `T`, using owned strings.
     pub fn deserialize<T>(&mut self) -> Result<T, DeserializeError>
     where
@@ -322,30 +312,26 @@ impl<'parser, 'input, 'bump> FormatDeserializer<'parser, 'input, 'bump, false> {
         // Get format namespace for format-specific proxy resolution in TypePlan
         let format_ns = self.parser.format_namespace();
 
-        let plan = TypePlan::<T>::build_for_format(self.bump, format_ns)?;
-        // SAFETY: partial_owned produces Partial<'static, 'bump, false>, but our deserializer
+        let bump = Bump::new();
+        let plan = TypePlan::<T>::build_for_format(&bump, format_ns)?;
+        // SAFETY: partial_owned produces Partial<'static, 'bump, false>, but deserialize_into
         // expects 'input. Since BORROW=false means we never borrow from input anyway,
-        // this is safe. We also transmute the HeapValue back to 'static before materializing.
+        // this is safe.
         #[allow(unsafe_code)]
-        let wip: Partial<'input, 'bump, false> = unsafe {
-            core::mem::transmute::<Partial<'static, 'bump, false>, Partial<'input, 'bump, false>>(
-                plan.partial_owned()?,
-            )
-        };
+        let wip: Partial<'input, '_, false> =
+            unsafe { core::mem::transmute(plan.partial_owned()?) };
 
         let partial = self.deserialize_into(wip)?;
 
         // SpanGuard must cover build() and materialize() which can fail with ReflectError.
         // Created AFTER deserialize_into so last_span points to the final token.
         let _guard = SpanGuard::new(self.last_span);
-        let heap_value: HeapValue<'input, false> = partial.build()?;
+        let heap_value = partial.build()?;
 
         // SAFETY: HeapValue<'input, false> contains no borrowed data because BORROW=false.
         // The transmute only changes the phantom lifetime marker.
         #[allow(unsafe_code)]
-        let heap_value: HeapValue<'static, false> = unsafe {
-            core::mem::transmute::<HeapValue<'input, false>, HeapValue<'static, false>>(heap_value)
-        };
+        let heap_value: HeapValue<'static, false> = unsafe { core::mem::transmute(heap_value) };
 
         Ok(heap_value.materialize::<T>()?)
     }
@@ -370,16 +356,14 @@ impl<'parser, 'input, 'bump> FormatDeserializer<'parser, 'input, 'bump, false> {
         // Get format namespace for format-specific proxy resolution in TypePlan
         let format_ns = self.parser.format_namespace();
 
-        let plan = TypePlan::<T>::build_for_format(self.bump, format_ns)?;
-        // SAFETY: partial_owned produces Partial<'static, 'bump, false>, but our deserializer
+        let bump = Bump::new();
+        let plan = TypePlan::<T>::build_for_format(&bump, format_ns)?;
+        // SAFETY: partial_owned produces Partial<'static, 'bump, false>, but deserialize_into
         // expects 'input. Since BORROW=false means we never borrow from input anyway,
-        // this is safe. We also transmute the HeapValue back to 'static before materializing.
+        // this is safe.
         #[allow(unsafe_code)]
-        let wip: Partial<'input, 'bump, false> = unsafe {
-            core::mem::transmute::<Partial<'static, 'bump, false>, Partial<'input, 'bump, false>>(
-                plan.partial_owned()?,
-            )
-        };
+        let wip: Partial<'input, '_, false> =
+            unsafe { core::mem::transmute(plan.partial_owned()?) };
         let wip = wip.begin_deferred()?;
         let partial = self.deserialize_into(wip)?;
 
@@ -387,14 +371,12 @@ impl<'parser, 'input, 'bump> FormatDeserializer<'parser, 'input, 'bump, false> {
         // Created AFTER deserialize_into so last_span points to the final token.
         let _guard = SpanGuard::new(self.last_span);
         let partial = partial.finish_deferred()?;
-        let heap_value: HeapValue<'input, false> = partial.build()?;
+        let heap_value = partial.build()?;
 
         // SAFETY: HeapValue<'input, false> contains no borrowed data because BORROW=false.
         // The transmute only changes the phantom lifetime marker.
         #[allow(unsafe_code)]
-        let heap_value: HeapValue<'static, false> = unsafe {
-            core::mem::transmute::<HeapValue<'input, false>, HeapValue<'static, false>>(heap_value)
-        };
+        let heap_value: HeapValue<'static, false> = unsafe { core::mem::transmute(heap_value) };
 
         Ok(heap_value.materialize::<T>()?)
     }
@@ -416,33 +398,32 @@ impl<'parser, 'input, 'bump> FormatDeserializer<'parser, 'input, 'bump, false> {
         // Get format namespace for format-specific proxy resolution in TypePlan
         let format_ns = self.parser.format_namespace();
 
-        let plan = TypePlan::<T>::build_for_format(self.bump, format_ns)?;
+        let bump = Bump::new();
+        let plan = TypePlan::<T>::build_for_format(&bump, format_ns)?;
+        // SAFETY: partial_owned produces Partial<'static, 'bump, false>, but deserialize_into
+        // expects 'input. Since BORROW=false means we never borrow from input anyway,
+        // this is safe.
         #[allow(unsafe_code)]
-        let wip: Partial<'input, 'bump, false> = unsafe {
-            core::mem::transmute::<Partial<'static, 'bump, false>, Partial<'input, 'bump, false>>(
-                plan.partial_owned()?,
-            )
-        };
+        let wip: Partial<'input, '_, false> =
+            unsafe { core::mem::transmute(plan.partial_owned()?) };
 
         let partial = self.deserialize_into_with_shape(wip, source_shape)?;
 
         // SpanGuard must cover build() and materialize() which can fail with ReflectError.
         // Created AFTER deserialize_into so last_span points to the final token.
         let _guard = SpanGuard::new(self.last_span);
-        let heap_value: HeapValue<'input, false> = partial.build()?;
+        let heap_value = partial.build()?;
 
+        // SAFETY: HeapValue<'input, false> contains no borrowed data because BORROW=false.
+        // The transmute only changes the phantom lifetime marker.
         #[allow(unsafe_code)]
-        let heap_value: HeapValue<'static, false> = unsafe {
-            core::mem::transmute::<HeapValue<'input, false>, HeapValue<'static, false>>(heap_value)
-        };
+        let heap_value: HeapValue<'static, false> = unsafe { core::mem::transmute(heap_value) };
 
         Ok(heap_value.materialize::<T>()?)
     }
 }
 
-impl<'parser, 'input, 'bump, const BORROW: bool>
-    FormatDeserializer<'parser, 'input, 'bump, BORROW>
-{
+impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BORROW> {
     /// Refill the event buffer from the parser.
     #[inline]
     fn refill_buffer(&mut self) -> Result<(), ParseError> {
@@ -772,7 +753,7 @@ impl<'parser, 'input, 'bump, const BORROW: bool>
     }
 
     /// Make an error using the last span, the current path of the given wip.
-    fn mk_err(
+    fn mk_err<'bump>(
         &self,
         wip: &Partial<'input, 'bump, BORROW>,
         kind: DeserializeErrorKind,

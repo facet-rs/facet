@@ -17,7 +17,7 @@ use facet_core::{
     PtrMut, PtrUninit, SequenceType, Shape, StructType, Type, UserType, Variant,
 };
 
-mod alloc;
+pub(crate) mod alloc;
 mod build;
 mod eenum;
 mod fields;

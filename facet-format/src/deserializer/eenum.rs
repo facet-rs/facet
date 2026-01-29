@@ -10,10 +10,8 @@ use crate::{
     deserializer::scalar_matches::scalar_matches_shape,
 };
 
-impl<'parser, 'input, 'bump, const BORROW: bool>
-    FormatDeserializer<'parser, 'input, 'bump, BORROW>
-{
-    pub(crate) fn deserialize_enum(
+impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BORROW> {
+    pub(crate) fn deserialize_enum<'bump>(
         &mut self,
         wip: Partial<'input, 'bump, BORROW>,
     ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
@@ -72,7 +70,7 @@ impl<'parser, 'input, 'bump, const BORROW: bool>
         self.deserialize_enum_externally_tagged(wip)
     }
 
-    fn deserialize_numeric_enum(
+    fn deserialize_numeric_enum<'bump>(
         &mut self,
         mut wip: Partial<'input, 'bump, BORROW>,
     ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
@@ -117,7 +115,7 @@ impl<'parser, 'input, 'bump, const BORROW: bool>
         }
     }
 
-    fn deserialize_enum_externally_tagged(
+    fn deserialize_enum_externally_tagged<'bump>(
         &mut self,
         mut wip: Partial<'input, 'bump, BORROW>,
     ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
@@ -377,7 +375,7 @@ impl<'parser, 'input, 'bump, const BORROW: bool>
         Ok(wip)
     }
 
-    fn deserialize_enum_internally_tagged(
+    fn deserialize_enum_internally_tagged<'bump>(
         &mut self,
         mut wip: Partial<'input, 'bump, BORROW>,
         tag_key: &'static str,
@@ -699,7 +697,7 @@ impl<'parser, 'input, 'bump, const BORROW: bool>
     /// The parser emits the enum as `{variant_name: content}` where content depends
     /// on the variant kind. The parser auto-handles struct/tuple variants by pushing
     /// appropriate state, so we just consume the events it produces.
-    pub(crate) fn deserialize_enum_as_struct(
+    pub(crate) fn deserialize_enum_as_struct<'bump>(
         &mut self,
         mut wip: Partial<'input, 'bump, BORROW>,
         enum_def: &'static facet_core::EnumType,
@@ -890,7 +888,7 @@ impl<'parser, 'input, 'bump, const BORROW: bool>
         Ok(wip)
     }
 
-    pub(crate) fn deserialize_result_as_enum(
+    pub(crate) fn deserialize_result_as_enum<'bump>(
         &mut self,
         mut wip: Partial<'input, 'bump, BORROW>,
     ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
@@ -990,7 +988,7 @@ impl<'parser, 'input, 'bump, const BORROW: bool>
 
     /// Deserialize the struct fields of a variant.
     /// Expects the variant to already be selected.
-    pub(crate) fn deserialize_variant_struct_fields(
+    pub(crate) fn deserialize_variant_struct_fields<'bump>(
         &mut self,
         mut wip: Partial<'input, 'bump, BORROW>,
     ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
@@ -1122,7 +1120,7 @@ impl<'parser, 'input, 'bump, const BORROW: bool>
         Ok(wip)
     }
 
-    fn deserialize_enum_adjacently_tagged(
+    fn deserialize_enum_adjacently_tagged<'bump>(
         &mut self,
         mut wip: Partial<'input, 'bump, BORROW>,
         tag_key: &'static str,
@@ -1237,7 +1235,7 @@ impl<'parser, 'input, 'bump, const BORROW: bool>
     }
 
     /// Deserialize the content of an already-selected enum variant.
-    pub(crate) fn deserialize_enum_variant_content(
+    pub(crate) fn deserialize_enum_variant_content<'bump>(
         &mut self,
         mut wip: Partial<'input, 'bump, BORROW>,
     ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
@@ -1537,7 +1535,7 @@ impl<'parser, 'input, 'bump, const BORROW: bool>
     /// purely an implementation detail for memory management.
     ///
     /// This always selects the "Owned" variant since we need to own the deserialized data.
-    fn deserialize_cow_enum(
+    fn deserialize_cow_enum<'bump>(
         &mut self,
         mut wip: Partial<'input, 'bump, BORROW>,
     ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
@@ -1555,7 +1553,7 @@ impl<'parser, 'input, 'bump, const BORROW: bool>
         Ok(wip)
     }
 
-    fn deserialize_enum_untagged(
+    fn deserialize_enum_untagged<'bump>(
         &mut self,
         mut wip: Partial<'input, 'bump, BORROW>,
     ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
@@ -1735,7 +1733,7 @@ impl<'parser, 'input, 'bump, const BORROW: bool>
     /// `#[facet(tag)]` field, while the payload is deserialized into the `#[facet(content)]` field.
     ///
     /// `captured_tag` is `None` for unit tags (bare `@` in Styx).
-    pub(crate) fn deserialize_other_variant_with_captured_tag(
+    pub(crate) fn deserialize_other_variant_with_captured_tag<'bump>(
         &mut self,
         mut wip: Partial<'input, 'bump, BORROW>,
         captured_tag: Option<&'input str>,

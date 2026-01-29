@@ -23,7 +23,7 @@ fn test_internally_tagged_out_of_order() {
     let json = br#"{"radius": 5.0, "type": "Circle"}"#;
     let bump = Bump::new();
     let mut parser = JsonParser::<false>::new(json);
-    let mut de = FormatDeserializer::new_owned(&bump, &mut parser);
+    let mut de = FormatDeserializer::new_owned(&mut parser);
     let result: InternallyTagged = de.deserialize_root().expect("should deserialize");
     assert_eq!(result, InternallyTagged::Circle { radius: 5.0 });
 }
@@ -34,7 +34,7 @@ fn test_adjacently_tagged_out_of_order() {
     let json = br#"{"c": "hello", "t": "Message"}"#;
     let bump = Bump::new();
     let mut parser = JsonParser::<false>::new(json);
-    let mut de = FormatDeserializer::new_owned(&bump, &mut parser);
+    let mut de = FormatDeserializer::new_owned(&mut parser);
     let result: AdjacentlyTagged = de.deserialize_root().expect("should deserialize");
     assert_eq!(result, AdjacentlyTagged::Message("hello".into()));
 }

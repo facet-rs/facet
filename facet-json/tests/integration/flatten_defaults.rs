@@ -24,7 +24,7 @@ fn flatten_default_field_missing_format_deserializer() {
 
     let bump = Bump::new();
     let mut parser = JsonParser::<false>::new(input);
-    let mut de = FormatDeserializer::new_owned(&bump, &mut parser);
+    let mut de = FormatDeserializer::new_owned(&mut parser);
     let value: FlattenOuter = de
         .deserialize_root()
         .expect("format deserializer should fill defaults inside flatten");

@@ -28,7 +28,7 @@ fn nested_flatten_map_captures_unknown_fields() {
 
     let bump = Bump::new();
     let mut parser = JsonParser::<false>::new(input);
-    let mut de = FormatDeserializer::new_owned(&bump, &mut parser);
+    let mut de = FormatDeserializer::new_owned(&mut parser);
     let value: Outer = de
         .deserialize_root()
         .expect("should deserialize with nested flatten map");
@@ -59,7 +59,7 @@ fn nested_flatten_map_empty_if_no_unknown() {
 
     let bump = Bump::new();
     let mut parser = JsonParser::<false>::new(input);
-    let mut de = FormatDeserializer::new_owned(&bump, &mut parser);
+    let mut de = FormatDeserializer::new_owned(&mut parser);
     let value: Outer = de
         .deserialize_root()
         .expect("should deserialize with no unknown fields");
