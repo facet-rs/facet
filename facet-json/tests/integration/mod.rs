@@ -13,6 +13,7 @@ mod issue_1904;
 mod jit_deserialize;
 mod nan_infinity;
 mod nested_flatten_map;
+mod nested_internal_tagging;
 mod opaque_proxy_enum;
 mod opaque_proxy_struct;
 mod option_enum_test;

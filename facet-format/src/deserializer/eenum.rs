@@ -463,6 +463,121 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             return Ok(wip);
         }
 
+        // Check if this is a single-field tuple variant containing an internally-tagged enum
+        // In this case, the inner enum's fields are flattened into the outer object
+        if matches!(
+            variant.data.kind,
+            StructKind::TupleStruct | StructKind::Tuple
+        ) && variant_fields.len() == 1
+        {
+            let inner_shape = variant_fields[0].shape();
+            if let Some(inner_tag_key) = inner_shape.get_tag_attr()
+                && inner_shape.get_content_attr().is_none()
+            {
+                // Find the inner tag value in evidence
+                let inner_variant_name = find_tag_value(&evidence, inner_tag_key)
+                    .ok_or_else(|| {
+                        self.mk_err(
+                            &wip,
+                            DeserializeErrorKind::MissingField {
+                                field: inner_tag_key,
+                                container_shape: inner_shape,
+                            },
+                        )
+                    })?
+                    .to_string();
+
+                // Begin the tuple field (field 0)
+                wip = wip.begin_nth_field(0)?;
+
+                // Select the inner variant
+                wip = wip.select_variant_named(&inner_variant_name)?;
+
+                // Get the inner variant info
+                let inner_variant = wip.selected_variant().ok_or_else(|| DeserializeError {
+                    span: Some(self.last_span),
+                    path: Some(wip.path()),
+                    kind: DeserializeErrorKind::UnexpectedToken {
+                        expected: "selected inner variant",
+                        got: "no variant selected".into(),
+                    },
+                })?;
+
+                let inner_variant_fields = inner_variant.data.fields;
+
+                // Process all fields for the inner enum
+                loop {
+                    let event = self.expect_event("value")?;
+                    match event.kind {
+                        ParseEventKind::StructEnd => break,
+                        ParseEventKind::FieldKey(key) => {
+                            let key_name = match key.name() {
+                                Some(name) => name.as_ref(),
+                                None => {
+                                    self.skip_value()?;
+                                    continue;
+                                }
+                            };
+
+                            // Skip outer and inner tag fields
+                            if key_name == tag_key || key_name == inner_tag_key {
+                                self.skip_value()?;
+                                continue;
+                            }
+
+                            // Look up field in the inner variant
+                            let inner_variant_plan = wip.selected_variant_plan().unwrap();
+                            if let Some(idx) = inner_variant_plan.field_lookup.find(key_name) {
+                                wip = wip
+                                    .begin_nth_field(idx)?
+                                    .with(|w| self.deserialize_into(w))?
+                                    .end()?;
+                            } else {
+                                // Unknown field - skip
+                                self.skip_value()?;
+                            }
+                        }
+                        other => {
+                            return Err(DeserializeError {
+                                span: Some(self.last_span),
+                                path: Some(wip.path()),
+                                kind: DeserializeErrorKind::UnexpectedToken {
+                                    expected: "field key or struct end",
+                                    got: other.kind_name().into(),
+                                },
+                            });
+                        }
+                    }
+                }
+
+                // Apply defaults for missing inner fields
+                for (idx, field) in inner_variant_fields.iter().enumerate() {
+                    if wip.is_field_set(idx)? {
+                        continue;
+                    }
+
+                    let field_has_default = field.has_default();
+                    let field_type_has_default = field.shape().is(Characteristic::Default);
+                    let field_is_option = matches!(field.shape().def, Def::Option(_));
+
+                    if field_has_default || field_type_has_default {
+                        wip = wip.set_nth_field_to_default(idx)?;
+                    } else if field_is_option {
+                        wip = wip.begin_nth_field(idx)?.set_default()?.end()?;
+                    } else if field.should_skip_deserializing() {
+                        wip = wip.set_nth_field_to_default(idx)?;
+                    }
+                    // Note: don't error on missing required fields here - let the outer
+                    // build() call handle that with proper error messages
+                }
+
+                // End the tuple field
+                wip = wip.end()?;
+
+                return Ok(wip);
+            }
+        }
+
         // Use precomputed has_flatten from VariantPlanMeta
         let has_flatten = wip.selected_variant_plan().unwrap().has_flatten;
 
