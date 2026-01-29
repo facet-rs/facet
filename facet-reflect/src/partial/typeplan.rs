@@ -42,12 +42,6 @@ pub struct TypePlanNode {
     pub has_default: bool,
     /// Precomputed proxy for this shape (format-specific or generic)
     pub proxy: Option<&'static ProxyDef>,
-    /// Precomputed field initialization plans - one entry per field.
-    /// Every field is either Required or Defaultable.
-    /// For structs: populated with all fields.
-    /// For enums: empty (use `EnumPlan.variants[idx].field_init_plans` instead).
-    /// For other types: empty.
-    pub field_init_plans: Vec<FieldInitPlan>,
 }
 
 /// Precomputed deserialization strategy with all data needed to execute it.
@@ -231,9 +225,9 @@ pub enum TypePlanNodeKind {
 pub struct StructPlan {
     /// Reference to the struct type definition
     pub struct_def: &'static StructType,
-    /// Plans for each field, indexed by field position
-    /// (child NodeIds are stored in indextree, these are metadata only)
-    pub fields: Vec<FieldPlanMeta>,
+    /// Complete plans for each field, indexed by field position.
+    /// Combines matching metadata with initialization/validation info.
+    pub fields: Vec<FieldPlan>,
     /// Fast field lookup by name
     pub field_lookup: FieldLookup,
     /// Whether any field has #[facet(flatten)]
@@ -242,19 +236,31 @@ pub struct StructPlan {
     pub deny_unknown_fields: bool,
 }
 
-/// Precomputed plan for initializing/validating a single field.
+/// Complete precomputed plan for a single field.
 ///
-/// This combines what was previously separate logic in `fill_defaults` and
-/// `require_full_initialization` into a single data structure that can be
-/// processed in one pass.
+/// Combines field matching metadata (name, aliases, type node) with
+/// initialization/validation info (fill rule, validators, offset).
 #[derive(Debug, Clone)]
-pub struct FieldInitPlan {
+pub struct FieldPlan {
+    // --- Metadata for matching/lookup ---
+    /// Reference to the field definition
+    pub field: &'static Field,
+    /// Field name (for path tracking and error messages)
+    pub name: &'static str,
+    /// The name to match in input (considers rename)
+    pub effective_name: &'static str,
+    /// Alias if any
+    pub alias: Option<&'static str>,
+    /// Whether this field is flattened
+    pub is_flattened: bool,
+    /// NodeId of this field's type plan in the arena
+    pub type_node: NodeId,
+
+    // --- Initialization/validation ---
     /// Field index in the struct (for ISet tracking)
     pub index: usize,
     /// Field offset in bytes from struct base (for calculating field pointer)
     pub offset: usize,
-    /// Field name (for error messages)
-    pub name: &'static str,
     /// The field's type shape (for reading values during validation)
     pub field_shape: &'static Shape,
     /// How to handle this field if not set during deserialization
@@ -263,6 +269,23 @@ pub struct FieldInitPlan {
     /// Most fields have 0-2 validators, so we inline up to 2.
     pub validators: SmallVec<PrecomputedValidator, 2>,
 }
+
+impl FieldPlan {
+    /// Returns true if this field has a default value.
+    #[inline]
+    pub fn has_default(&self) -> bool {
+        matches!(self.fill_rule, FillRule::Defaultable(_))
+    }
+
+    /// Returns true if this field is required (no default, not Option).
+    #[inline]
+    pub fn is_required(&self) -> bool {
+        matches!(self.fill_rule, FillRule::Required)
+    }
+}
+
+/// Type alias for backwards compatibility with code expecting FieldInitPlan.
+pub type FieldInitPlan = FieldPlan;
 
 /// How to fill a field that wasn't set during deserialization.
 #[derive(Debug, Clone)]
@@ -665,33 +688,12 @@ pub enum ValidatorKind {
     },
 }
 
-/// Metadata for a single field (without child plan - that's in the tree).
-#[derive(Debug, Clone)]
-pub struct FieldPlanMeta {
-    /// Reference to the field definition
-    pub field: &'static Field,
-    /// Field name (for path tracking in deferred mode)
-    pub name: &'static str,
-    /// The name to match in input (considers rename)
-    pub effective_name: &'static str,
-    /// Alias if any
-    pub alias: Option<&'static str>,
-    /// Whether this field has a default value
-    pub has_default: bool,
-    /// Whether this field is required (no default, not Option)
-    pub is_required: bool,
-    /// Whether this field is flattened
-    pub is_flattened: bool,
-    /// NodeId of this field's type plan in the arena
-    pub type_node: NodeId,
-}
-
 /// Precomputed plan for enum deserialization.
 #[derive(Debug)]
 pub struct EnumPlan {
     /// Reference to the enum type definition
     pub enum_def: &'static EnumType,
-    /// Plans for each variant (metadata only, child NodeIds in tree)
+    /// Plans for each variant
     pub variants: Vec<VariantPlanMeta>,
     /// Fast variant lookup by name
     pub variant_lookup: VariantLookup,
@@ -708,14 +710,12 @@ pub struct VariantPlanMeta {
     pub variant: &'static Variant,
     /// Variant name
     pub name: &'static str,
-    /// Field metadata for this variant
-    pub fields: Vec<FieldPlanMeta>,
+    /// Complete field plans for this variant
+    pub fields: Vec<FieldPlan>,
     /// Fast field lookup for this variant
     pub field_lookup: FieldLookup,
     /// Whether any field in this variant has #[facet(flatten)]
     pub has_flatten: bool,
-    /// Precomputed initialization plans for variant fields - one per field
-    pub field_init_plans: Vec<FieldInitPlan>,
 }
 
 /// Fast lookup from field name to field index.
@@ -779,20 +779,20 @@ fn compute_prefix(name: &str, prefix_len: usize) -> u64 {
 }
 
 impl FieldLookup {
-    /// Create a new field lookup from field metadata.
-    pub fn new(fields: &[FieldPlanMeta]) -> Self {
+    /// Create a new field lookup from field plans.
+    pub fn new(fields: &[FieldPlan]) -> Self {
         let mut entries = Vec::with_capacity(fields.len() * 2); // room for aliases
 
-        for (index, field_meta) in fields.iter().enumerate() {
+        for (index, field_plan) in fields.iter().enumerate() {
             // Add primary name
             entries.push(FieldLookupEntry {
-                name: field_meta.effective_name,
+                name: field_plan.effective_name,
                 index,
                 is_alias: false,
             });
 
             // Add alias if present
-            if let Some(alias) = field_meta.alias {
+            if let Some(alias) = field_plan.alias {
                 entries.push(FieldLookupEntry {
                     name: alias,
                     index,
@@ -1032,7 +1032,6 @@ impl TypePlanBuilder {
                 },
                 has_default: shape.is(Characteristic::Default),
                 proxy: effective_proxy,
-                field_init_plans: Vec::new(),
             };
             return Ok(self.arena.alloc(backref_node));
         }
@@ -1048,7 +1047,6 @@ impl TypePlanBuilder {
             }, // Placeholder, will be replaced
             has_default: shape.is(Characteristic::Default),
             proxy: effective_proxy,
-            field_init_plans: Vec::new(), // Placeholder, will be replaced for structs
         };
         let node_id = self.arena.alloc(placeholder);
 
@@ -1068,7 +1066,7 @@ impl TypePlanBuilder {
 
         // Build the kind for the original shape (not proxy) - this is used for
         // non-proxy operations on the type
-        let (kind, field_init_plans, children) = self.build_kind(shape)?;
+        let (kind, children) = self.build_kind(shape)?;
 
         // Compute the deserialization strategy
         let strategy = self.compute_strategy(
@@ -1080,11 +1078,10 @@ impl TypePlanBuilder {
             &children,
         )?;
 
-        // Update the node with the real kind, strategy, and field init plans
+        // Update the node with the real kind and strategy
         let node = self.arena.get_mut(node_id);
         node.kind = kind;
         node.strategy = strategy;
-        node.field_init_plans = field_init_plans;
 
         // Remove from building set - we're done with this type
         // This ensures only ancestors are tracked, not all visited types
@@ -1244,13 +1241,11 @@ impl TypePlanBuilder {
         })
     }
 
-    /// Build the TypePlanNodeKind for a shape, attaching children to parent_id.
-    /// Returns (kind, field_init_plans) - plans is non-empty only for structs.
-    /// Build the kind for a shape and return child NodeIds for compute_strategy.
+    /// Build the TypePlanNodeKind for a shape and return child NodeIds for compute_strategy.
     fn build_kind(
         &mut self,
         shape: &'static Shape,
-    ) -> Result<(TypePlanNodeKind, Vec<FieldInitPlan>, Vec<NodeId>), AllocError> {
+    ) -> Result<(TypePlanNodeKind, Vec<NodeId>), AllocError> {
         let mut children = Vec::new();
 
         // Check shape.def first - this tells us the semantic meaning of the type
@@ -1313,14 +1308,9 @@ impl TypePlanBuilder {
                 // Check Type for struct/enum/slice - these have Def::Undefined but meaningful ty
                 match &shape.ty {
                     Type::User(UserType::Struct(struct_type)) => {
-                        let (struct_plan, field_init_plans) =
-                            self.build_struct_plan(shape, struct_type)?;
-                        // Struct fields store their NodeIds in FieldPlanMeta, no children needed
-                        return Ok((
-                            TypePlanNodeKind::Struct(struct_plan),
-                            field_init_plans,
-                            Vec::new(),
-                        ));
+                        let struct_plan = self.build_struct_plan(shape, struct_type)?;
+                        // Struct fields store their NodeIds in FieldPlan, no children needed
+                        return Ok((TypePlanNodeKind::Struct(struct_plan), Vec::new()));
                     }
                     Type::User(UserType::Enum(enum_type)) => {
                         // Enum variants store their NodeIds in VariantPlanMeta, no children needed
@@ -1349,18 +1339,16 @@ impl TypePlanBuilder {
                 }
             }
         };
-        // For non-struct types, return empty field_init_plans
-        Ok((kind, Vec::new(), children))
+        Ok((kind, children))
     }
 
-    /// Build a StructPlan. Field NodeIds are stored in FieldPlanMeta.
+    /// Build a StructPlan with all field plans.
     fn build_struct_plan(
         &mut self,
         shape: &'static Shape,
         struct_def: &'static StructType,
-    ) -> Result<(StructPlan, Vec<FieldInitPlan>), AllocError> {
+    ) -> Result<StructPlan, AllocError> {
         let mut fields = Vec::with_capacity(struct_def.fields.len());
-        let mut field_init_plans = Vec::with_capacity(struct_def.fields.len());
 
         // Check if the container struct has #[facet(default)]
         let container_has_default = shape.is(Characteristic::Default);
@@ -1370,15 +1358,13 @@ impl TypePlanBuilder {
             let field_proxy = field.effective_proxy(self.format_namespace);
             let child_id = self.build_node_with_proxy(field.shape(), field_proxy)?;
 
-            // Store NodeId in field metadata
-            let field_meta = FieldPlanMeta::new(field, child_id);
-            fields.push(field_meta);
+            // Build validators and fill rule
+            let validators = Self::extract_validators(field);
+            let fill_rule = Self::determine_fill_rule(field, container_has_default);
 
-            // Build the field initialization plan
-            field_init_plans.push(Self::build_field_init_plan(
-                index,
-                field,
-                container_has_default,
+            // Create unified field plan
+            fields.push(FieldPlan::new(
+                index, field, child_id, fill_rule, validators,
             ));
         }
 
@@ -1387,35 +1373,13 @@ impl TypePlanBuilder {
         // Precompute deny_unknown_fields from shape attributes (avoids runtime attribute scanning)
         let deny_unknown_fields = shape.has_deny_unknown_fields_attr();
 
-        Ok((
-            StructPlan {
-                struct_def,
-                fields,
-                field_lookup,
-                has_flatten,
-                deny_unknown_fields,
-            },
-            field_init_plans,
-        ))
-    }
-
-    /// Build a FieldInitPlan for a field. Every field gets a plan.
-    fn build_field_init_plan(
-        index: usize,
-        field: &'static Field,
-        container_has_default: bool,
-    ) -> FieldInitPlan {
-        let validators = Self::extract_validators(field);
-        let fill_rule = Self::determine_fill_rule(field, container_has_default);
-
-        FieldInitPlan {
-            index,
-            offset: field.offset,
-            name: field.name,
-            field_shape: field.shape(),
-            fill_rule,
-            validators,
-        }
+        Ok(StructPlan {
+            struct_def,
+            fields,
+            field_lookup,
+            has_flatten,
+            deny_unknown_fields,
+        })
     }
 
     /// Determine how to fill a field that wasn't set.
@@ -1556,38 +1520,37 @@ impl TypePlanBuilder {
         validators
     }
 
-    /// Build an EnumPlan, attaching variant field children appropriately.
-    /// Build an EnumPlan. Field NodeIds are stored in VariantPlanMeta.
+    /// Build an EnumPlan with all field plans for each variant.
     fn build_enum_plan(&mut self, enum_def: &'static EnumType) -> Result<EnumPlan, AllocError> {
         let mut variants = Vec::with_capacity(enum_def.variants.len());
 
         for variant in enum_def.variants.iter() {
-            let mut variant_fields = Vec::with_capacity(variant.data.fields.len());
-            let mut field_init_plans = Vec::with_capacity(variant.data.fields.len());
+            let mut fields = Vec::with_capacity(variant.data.fields.len());
 
             for (index, field) in variant.data.fields.iter().enumerate() {
                 // Build the type plan node for this field
                 let field_proxy = field.effective_proxy(self.format_namespace);
                 let child_id = self.build_node_with_proxy(field.shape(), field_proxy)?;
 
-                // Now create field metadata with the NodeId
-                let field_meta = FieldPlanMeta::new(field, child_id);
-                variant_fields.push(field_meta);
+                // Build validators and fill rule (enums don't have container-level default)
+                let validators = Self::extract_validators(field);
+                let fill_rule = Self::determine_fill_rule(field, false);
 
-                // Build the field initialization plan (enums don't have container-level default)
-                field_init_plans.push(Self::build_field_init_plan(index, field, false));
+                // Create unified field plan
+                fields.push(FieldPlan::new(
+                    index, field, child_id, fill_rule, validators,
+                ));
             }
 
-            let field_lookup = FieldLookup::new(&variant_fields);
-            let has_flatten = variant_fields.iter().any(|f| f.is_flattened);
+            let field_lookup = FieldLookup::new(&fields);
+            let has_flatten = fields.iter().any(|f| f.is_flattened);
 
             variants.push(VariantPlanMeta {
                 variant,
                 name: variant.effective_name(),
-                fields: variant_fields,
+                fields,
                 field_lookup,
                 has_flatten,
-                field_init_plans,
             });
         }
 
@@ -1614,31 +1577,34 @@ impl TypePlanBuilder {
     }
 }
 
-impl FieldPlanMeta {
-    /// Build field metadata from a Field and its type plan NodeId.
-    fn new(field: &'static Field, type_node: NodeId) -> Self {
+impl FieldPlan {
+    /// Build a complete field plan from a Field, its type plan NodeId, and initialization info.
+    fn new(
+        index: usize,
+        field: &'static Field,
+        type_node: NodeId,
+        fill_rule: FillRule,
+        validators: SmallVec<PrecomputedValidator, 2>,
+    ) -> Self {
         let name = field.name;
         let effective_name = field.effective_name();
         let alias = field.alias;
-        let has_default = field.has_default();
         let is_flattened = field.is_flattened();
 
-        // A field is required if:
-        // - It has no default
-        // - It's not an Option type
-        // - It's not flattened (flattened fields are handled specially)
-        let is_option = matches!(field.shape().def, Def::Option(_));
-        let is_required = !has_default && !is_option && !is_flattened;
-
-        FieldPlanMeta {
+        FieldPlan {
+            // Metadata for matching/lookup
             field,
             name,
             effective_name,
             alias,
-            has_default,
-            is_required,
             is_flattened,
             type_node,
+            // Initialization/validation
+            index,
+            offset: field.offset,
+            field_shape: field.shape(),
+            fill_rule,
+            validators,
         }
     }
 }
@@ -1909,13 +1875,13 @@ mod tests {
 
                 // Check field metadata
                 assert_eq!(struct_plan.fields[0].name, "name");
-                assert!(struct_plan.fields[0].is_required);
+                assert!(struct_plan.fields[0].is_required());
 
                 assert_eq!(struct_plan.fields[1].name, "age");
-                assert!(struct_plan.fields[1].is_required);
+                assert!(struct_plan.fields[1].is_required());
 
                 assert_eq!(struct_plan.fields[2].name, "email");
-                assert!(!struct_plan.fields[2].is_required); // Option has implicit default
+                assert!(!struct_plan.fields[2].is_required()); // Option has implicit default
 
                 // Check child plan for Option field (field index 2 = third child)
                 let email_child = plan.struct_field_node(plan.root(), 2).unwrap();

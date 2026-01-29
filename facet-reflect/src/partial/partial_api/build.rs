@@ -28,13 +28,9 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         let plans_info = frame_info.and_then(|(type_plan, variant_idx)| {
             let plan_node = self.root_plan.get(type_plan);
             match &plan_node.kind {
-                TypePlanNodeKind::Struct(_) => Some(&plan_node.field_init_plans[..]),
-                TypePlanNodeKind::Enum(enum_plan) => variant_idx.and_then(|idx| {
-                    enum_plan
-                        .variants
-                        .get(idx)
-                        .map(|v| v.field_init_plans.as_slice())
-                }),
+                TypePlanNodeKind::Struct(struct_plan) => Some(struct_plan.fields.as_slice()),
+                TypePlanNodeKind::Enum(enum_plan) => variant_idx
+                    .and_then(|idx| enum_plan.variants.get(idx).map(|v| v.fields.as_slice())),
                 _ => None,
             }
         });
@@ -194,13 +190,9 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         let plans_info = frame_info.and_then(|(type_plan, variant_idx)| {
             let plan_node = self.root_plan.get(type_plan);
             match &plan_node.kind {
-                TypePlanNodeKind::Struct(_) => Some(&plan_node.field_init_plans[..]),
-                TypePlanNodeKind::Enum(enum_plan) => variant_idx.and_then(|idx| {
-                    enum_plan
-                        .variants
-                        .get(idx)
-                        .map(|v| v.field_init_plans.as_slice())
-                }),
+                TypePlanNodeKind::Struct(struct_plan) => Some(struct_plan.fields.as_slice()),
+                TypePlanNodeKind::Enum(enum_plan) => variant_idx
+                    .and_then(|idx| enum_plan.variants.get(idx).map(|v| v.fields.as_slice())),
                 _ => None,
             }
         });
