@@ -781,6 +781,169 @@ tests (
     }
 
     {
+        name "lint: redundant param diagnostic appears on correct line"
+        input <<STYX
+            InsertProduct @insert{
+                into product
+                params {handle @string, status @string}
+                values {
+                    handle $handle
+                    status $status
+                }
+            }
+            STYX
+        diagnostics {
+            count 2
+            has (
+                {message "handle $handle" code "redundant-param" line 5}
+                {message "status $status" code "redundant-param" line 6}
+            )
+        }
+    }
+
+    // ========================================================================
+    // Code Action Tests
+    // ========================================================================
+
+    {
+        name "code action: shorten redundant param"
+        input <<STYX
+            InsertProduct @insert{
+                into product
+                params {handle @string}
+                values {handle $han|dle}
+            }
+            STYX
+        code_actions {
+            count 1
+            has ({title "Shorten to" kind "quickfix" preferred true})
+        }
+    }
+
+    {
+        name "code action: no actions for valid code"
+        input <<STYX
+            GoodQuery @query{
+                from product
+                params {h @string}
+                where {deleted_at @null, handle $h|}
+                select {id}
+            }
+            STYX
+        code_actions {
+            empty true
+        }
+    }
+
+    {
+        name "code action: no actions when cursor not on diagnostic (negative test)"
+        expect_fail true
+        input <<STYX
+            InsertProduct @insert{
+                into product
+                params {handle @string|}
+                values {handle $handle}
+            }
+            STYX
+        code_actions {
+            has ({title "Shorten"})
+        }
+    }
+
+    // ========================================================================
+    // Inlay Hint Position Tests
+    // ========================================================================
+
+    {
+        name "inlay hints appear at correct column positions"
+        input <<STYX
+            AllProducts @query{
+                from product
+                select {
+                    id
+                    handle
+                }
+            }
+            STYX
+        inlay_hints {
+            count 2
+            has (
+                {label ": BIGINT" line 4 col 22}
+                {label ": TEXT" line 5 col 26}
+            )
+        }
+    }
+
+    {
+        name "inlay hint: wrong column is detected (negative test)"
+        expect_fail true
+        input <<STYX
+            AllProducts @query{
+                from product
+                select {
+                    id
+                }
+            }
+            STYX
+        inlay_hints {
+            has ({label ": BIGINT" line 4 col 999})
+        }
+    }
+
+    // ========================================================================
+    // Span Marker Tests (diagnostic range verification)
+    // ========================================================================
+
+    {
+        name "span marker: unknown table has correct span"
+        input <<STYX
+            BadQuery @query{
+                from nonexistent
+                     ^^^^^^^^^^^ "Unknown table"
+            }
+            STYX
+    }
+
+    {
+        name "span marker: unknown column has correct span"
+        input <<STYX
+            BadQuery @query{
+                from product
+                where {deleted_at @null}
+                select {
+                    id
+                    bad_column
+                    ^^^^^^^^^^ "Unknown column"
+                }
+            }
+            STYX
+    }
+
+    {
+        name "span marker: wrong span is detected (negative test)"
+        expect_fail true
+        input <<STYX
+            BadQuery @query{
+                from nonexistent
+            ^ "Unknown table"
+            }
+            STYX
+        diagnostics {count 1}
+    }
+
+    {
+        name "span marker: wrong message is detected (negative test)"
+        expect_fail true
+        input <<STYX
+            BadQuery @query{
+                from nonexistent
+                     ^^^^^^^^^^^ "THIS MESSAGE DOES NOT EXIST"
+            }
+            STYX
+        diagnostics {count 1}
+    }
+
+    {
         name "lint: redundant param reference in where"
         input <<STYX
             QueryById @query{

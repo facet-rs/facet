@@ -187,7 +187,7 @@ impl DibsExtension {
         }
     }
 
-    /// Convert a styx span to an LSP range using proper line numbers.
+    /// Convert a styx span to an LSP range using proper line numbers (via host RPC).
     async fn span_to_range(&self, document_uri: &str, span: &styx_tree::Span) -> Range {
         let start = self.offset_to_position(document_uri, span.start).await;
         let end = self.offset_to_position(document_uri, span.end).await;
@@ -1241,10 +1241,18 @@ impl DibsExtension {
                     }
 
                     // Skip if there's an explicit type annotation like "credential_id: BYTEA"
-                    // But don't skip parameter references like "user_id $user_id"
+                    // Type annotations are bare uppercase words (SQL types).
+                    // Don't skip:
+                    // - Parameter references like "user_id $user_id"
+                    // - Sort directions like "currency_code asc" in order-by
+                    // - Literal values like "true", "false", numbers, quoted strings
                     if let Some(val_str) = entry.value.as_str() {
-                        // Parameter references start with $, don't skip those
-                        if !val_str.starts_with('$') {
+                        // Check if it looks like an explicit SQL type annotation (bare uppercase)
+                        let is_type_annotation = val_str
+                            .chars()
+                            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+                        if is_type_annotation && !val_str.is_empty() {
+                            // Looks like BYTEA, INT, TEXT, etc. - skip
                             continue;
                         }
                     }
