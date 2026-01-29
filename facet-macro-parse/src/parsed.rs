@@ -87,18 +87,6 @@ pub enum AttrKey {
 }
 
 impl AttrKey {
-    /// Returns the key as a string
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            AttrKey::Ident(ident) => {
-                // Leak the string to get a static lifetime - this is fine for attribute keys
-                // which are typically small and few in number
-                Box::leak(ident.to_string().into_boxed_str())
-            }
-            AttrKey::Where(_) => "where",
-        }
-    }
-
     /// Returns the span of the key
     pub fn span(&self) -> Span {
         match self {
