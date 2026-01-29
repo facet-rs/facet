@@ -3,7 +3,7 @@ use super::*;
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Enum variant selection
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-impl<'facet, 'bump, const BORROW: bool> Partial<'facet, 'bump, BORROW> {
+impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
     /// Get the currently selected variant for an enum
     pub fn selected_variant(&self) -> Option<Variant> {
         let frame = self.frames().last()?;
@@ -18,7 +18,7 @@ impl<'facet, 'bump, const BORROW: bool> Partial<'facet, 'bump, BORROW> {
     ///
     /// Returns the VariantPlanMeta for the selected variant, which contains precomputed
     /// information like `has_flatten` and `field_lookup` for fast field lookups.
-    pub fn selected_variant_plan(&self) -> Option<&'bump crate::typeplan::VariantPlanMeta<'bump>> {
+    pub fn selected_variant_plan(&self) -> Option<&'plan crate::typeplan::VariantPlanMeta<'plan>> {
         let frame = self.frames().last()?;
         let enum_plan = self.root_plan.as_enum_plan(frame.type_plan)?;
 

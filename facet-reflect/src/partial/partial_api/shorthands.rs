@@ -3,7 +3,7 @@ use super::*;
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Shorthands
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-impl<'facet, 'bump, const BORROW: bool> Partial<'facet, 'bump, BORROW> {
+impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
     /// Convenience shortcut: sets the field at index `idx` directly to value, popping after.
     ///
     /// Works on structs, enums (after selecting a variant) and arrays.

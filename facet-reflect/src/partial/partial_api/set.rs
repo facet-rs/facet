@@ -4,7 +4,7 @@ use facet_core::{Def, DynDateTimeKind, NumericType, PrimitiveType, Type};
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // `Set` and set helpers
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-impl<'facet, 'bump, const BORROW: bool> Partial<'facet, 'bump, BORROW> {
+impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
     /// Sets a value wholesale into the current frame.
     ///
     /// If the current frame was already initialized, the previous value is

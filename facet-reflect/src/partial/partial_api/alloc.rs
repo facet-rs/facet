@@ -1,307 +1,240 @@
 use super::*;
-use crate::{AllocError, AllocatedShape, typeplan};
-use bumpalo::Bump;
+use crate::{
+    AllocError, AllocatedShape,
+    typeplan::{TypePlan, TypePlanCore},
+};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-// Allocation, constructors etc.
+// Allocation using TypePlan
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-/// Allocate a Partial that can borrow from input with lifetime 'facet.
-/// This is the default mode - use this when deserializing from a buffer that outlives the result.
-impl<'facet, 'bump> Partial<'facet, 'bump, true> {
-    /// Allocates a new [Partial] instance on the heap, with the given shape and type.
+impl<'plan, T: ?Sized> TypePlan<'plan, T> {
+    /// Allocates a new borrowing [Partial] using this TypePlan.
     ///
-    /// This creates a borrowing Partial that can hold references with lifetime 'facet.
-    /// The `bump` allocator is used for internal allocations (TypePlan, etc.) and must
-    /// outlive the Partial.
-    pub fn alloc<T>(bump: &'bump Bump) -> Result<Self, AllocError>
-    where
-        T: Facet<'facet> + ?Sized,
-    {
-        // SAFETY: T::SHAPE comes from the Facet implementation for T,
-        // which is an unsafe trait requiring accurate shape descriptions.
-        unsafe { Self::alloc_shape(bump, T::SHAPE) }
-    }
-
-    /// Allocates a new [Partial] instance on the heap, with the given shape.
-    ///
-    /// This creates a borrowing Partial that can hold references with lifetime 'facet.
-    ///
-    /// # Safety
-    ///
-    /// The caller must ensure that `shape` accurately describes the memory layout
-    /// and invariants of any type `T` that will be materialized from this `Partial`.
-    ///
-    /// In particular:
-    /// - `shape.id` must match `TypeId::of::<T>()`
-    /// - `shape.layout` must match `Layout::of::<T>()`
-    /// - `shape.ty` and `shape.def` must accurately describe T's structure
-    /// - All vtable operations must be valid for type T
-    ///
-    /// Violating these requirements may cause undefined behavior when accessing
-    /// fields, materializing values, or calling vtable methods.
-    ///
-    /// **Safe alternative**: Use [`Partial::alloc::<T>()`](Self::alloc) which gets the shape
-    /// from `T::SHAPE` (guaranteed safe by `unsafe impl Facet for T`).
-    pub unsafe fn alloc_shape(
-        bump: &'bump Bump,
-        shape: &'static Shape,
-    ) -> Result<Self, AllocError> {
-        alloc_shape_inner(bump, shape, None)
-    }
-
-    /// Allocates with format-specific proxy resolution.
-    ///
-    /// The `format_namespace` (e.g., "json", "xml") is used to resolve
-    /// format-specific proxies in the TypePlan.
-    pub fn alloc_for_format<T>(
-        bump: &'bump Bump,
-        format_namespace: &'static str,
-    ) -> Result<Self, AllocError>
-    where
-        T: Facet<'facet> + ?Sized,
-    {
-        unsafe { Self::alloc_shape_for_format(bump, T::SHAPE, format_namespace) }
-    }
-
-    /// Allocates with format-specific proxy resolution from a shape.
-    ///
-    /// # Safety
-    /// Same requirements as `alloc_shape`.
-    pub unsafe fn alloc_shape_for_format(
-        bump: &'bump Bump,
-        shape: &'static Shape,
-        format_namespace: &'static str,
-    ) -> Result<Self, AllocError> {
-        alloc_shape_inner(bump, shape, Some(format_namespace))
-    }
-}
-
-/// Allocate a Partial that cannot borrow - all data must be owned.
-/// Use this when deserializing from a temporary buffer (e.g., HTTP request body).
-impl<'bump> Partial<'static, 'bump, false> {
-    /// Allocates a new [Partial] instance on the heap, with the given shape and type.
-    ///
-    /// This creates an owned Partial that cannot hold borrowed references.
-    /// Use this when the input buffer is temporary and won't outlive the result.
-    pub fn alloc_owned<T>(bump: &'bump Bump) -> Result<Self, AllocError>
-    where
-        T: Facet<'static> + ?Sized,
-    {
-        // SAFETY: T::SHAPE comes from the Facet implementation for T,
-        // which is an unsafe trait requiring accurate shape descriptions.
-        unsafe { Self::alloc_shape_owned(bump, T::SHAPE) }
-    }
-
-    /// Allocates a new [Partial] instance on the heap, with the given shape.
-    ///
-    /// This creates an owned Partial that cannot hold borrowed references.
-    ///
-    /// # Safety
-    ///
-    /// The caller must ensure that `shape` accurately describes the memory layout
-    /// and invariants of any type `T` that will be materialized from this `Partial`.
-    ///
-    /// In particular:
-    /// - `shape.id` must match `TypeId::of::<T>()`
-    /// - `shape.layout` must match `Layout::of::<T>()`
-    /// - `shape.ty` and `shape.def` must accurately describe T's structure
-    /// - All vtable operations must be valid for type T
-    ///
-    /// Violating these requirements may cause undefined behavior when accessing
-    /// fields, materializing values, or calling vtable methods.
-    ///
-    /// **Safe alternative**: Use [`Partial::alloc_owned::<T>()`](Self::alloc_owned) which gets the shape
-    /// from `T::SHAPE` (guaranteed safe by `unsafe impl Facet for T`).
-    pub unsafe fn alloc_shape_owned(
-        bump: &'bump Bump,
-        shape: &'static Shape,
-    ) -> Result<Self, AllocError> {
-        alloc_shape_inner(bump, shape, None)
-    }
-
-    /// Allocates with format-specific proxy resolution (owned variant).
-    pub fn alloc_owned_for_format<T>(
-        bump: &'bump Bump,
-        format_namespace: &'static str,
-    ) -> Result<Self, AllocError>
-    where
-        T: Facet<'static> + ?Sized,
-    {
-        unsafe { Self::alloc_shape_owned_for_format(bump, T::SHAPE, format_namespace) }
-    }
-
-    /// Allocates with optional format-specific proxy resolution (owned variant).
-    ///
-    /// If `format_namespace` is `Some("json")`, format-specific proxies like
-    /// `#[facet(json::proxy = ...)]` will be included in the TypePlan.
-    ///
-    /// # Safety
-    /// This is safe because `T::SHAPE` comes from the Facet implementation for T,
-    /// which is an unsafe trait requiring accurate shape descriptions.
-    pub fn alloc_owned_for_format_opt<T>(
-        bump: &'bump Bump,
-        format_namespace: Option<&'static str>,
-    ) -> Result<Self, AllocError>
-    where
-        T: Facet<'static> + ?Sized,
-    {
-        // SAFETY: T::SHAPE comes from the Facet implementation for T.
-        alloc_shape_inner(bump, T::SHAPE, format_namespace)
-    }
-
-    /// Allocates with format-specific proxy resolution from a shape (owned variant).
-    ///
-    /// # Safety
-    /// Same requirements as `alloc_shape_owned`.
-    pub unsafe fn alloc_shape_owned_for_format(
-        bump: &'bump Bump,
-        shape: &'static Shape,
-        format_namespace: &'static str,
-    ) -> Result<Self, AllocError> {
-        alloc_shape_inner(bump, shape, Some(format_namespace))
-    }
-}
-
-/// Create a Partial that writes into externally-owned memory (e.g., caller's stack).
-/// This enables stack-friendly deserialization without heap allocation.
-impl<'facet, 'bump, const BORROW: bool> Partial<'facet, 'bump, BORROW> {
-    /// Creates a [Partial] that writes into caller-provided memory.
-    ///
-    /// This is useful for stack-friendly deserialization where you want to avoid
-    /// heap allocation. The caller provides a `MaybeUninit<T>` and this Partial
-    /// will deserialize directly into that memory.
-    ///
-    /// After successful deserialization, call [`finish_in_place`](Self::finish_in_place)
-    /// to validate the value is fully initialized. On success, the caller can safely
-    /// call `MaybeUninit::assume_init()`.
-    ///
-    /// # Safety
-    ///
-    /// The caller must ensure:
-    /// - `ptr` points to valid, properly aligned memory for the type described by `shape`
-    /// - The memory has at least `shape.layout.size()` bytes available
-    /// - The memory is not accessed (read or written) through any other pointer while
-    ///   the Partial exists, except through this Partial's methods
-    /// - If deserialization fails (returns Err) or panics, the memory must not be
-    ///   assumed to contain a valid value - it may be partially initialized
-    /// - The memory must remain valid for the lifetime of the Partial
+    /// This creates a Partial that can hold references with lifetime 'facet.
+    /// The Partial will use this TypePlan for deserialization.
     ///
     /// # Example
     ///
     /// ```ignore
-    /// use std::mem::MaybeUninit;
-    /// use facet_core::{Facet, PtrUninit};
-    /// use facet_reflect::Partial;
     /// use bumpalo::Bump;
+    /// use facet_reflect::TypePlan;
     ///
     /// let bump = Bump::new();
-    /// let mut slot = MaybeUninit::<MyStruct>::uninit();
-    /// let ptr = PtrUninit::new(slot.as_mut_ptr().cast());
-    ///
-    /// let partial = unsafe { Partial::from_raw(&bump, ptr, MyStruct::SHAPE)? };
-    /// // ... deserialize into partial ...
-    /// partial.finish_in_place()?;
-    ///
-    /// // Now safe to assume initialized
-    /// let value = unsafe { slot.assume_init() };
+    /// let plan = TypePlan::<MyStruct>::build(&bump)?;
+    /// let partial = plan.partial()?;
     /// ```
-    pub unsafe fn from_raw(
-        bump: &'bump Bump,
-        ptr: PtrUninit,
-        shape: &'static Shape,
-    ) -> Result<Self, AllocError> {
-        // SAFETY: Caller must uphold same requirements as from_raw_for_format
-        unsafe { Self::from_raw_for_format(bump, ptr, shape, None) }
-    }
+    pub fn partial<'facet>(&self) -> Result<Partial<'facet, 'plan, true>, AllocError>
+    where
+        T: Facet<'facet>,
+        'plan: 'facet,
+    {
+        let shape = T::SHAPE;
+        let plan = self.core();
 
-    /// Creates a [Partial] with format-specific proxy resolution that writes into
-    /// caller-provided memory.
-    ///
-    /// # Safety
-    /// Same requirements as `from_raw`.
-    pub unsafe fn from_raw_for_format(
-        bump: &'bump Bump,
-        ptr: PtrUninit,
-        shape: &'static Shape,
-        format_namespace: Option<&'static str>,
-    ) -> Result<Self, AllocError> {
-        crate::trace!(
-            "from_raw({:p}, {:?}), with layout {:?}",
-            ptr.as_mut_byte_ptr(),
+        let data = shape.allocate().map_err(|_| AllocError {
             shape,
-            shape.layout.sized_layout()
-        );
+            operation: "partial: allocation failed",
+        })?;
 
-        // Verify the shape is sized
-        let allocated_size = shape
-            .layout
-            .sized_layout()
-            .map_err(|_| AllocError {
-                shape,
-                operation: "from_raw: shape is unsized",
-            })?
-            .size();
+        let allocated_size = shape.layout.sized_layout().expect("must be sized").size();
 
-        // Build the TypePlan once for the entire deserialization
-        let root_plan = typeplan::build_for_format(bump, shape, format_namespace)?;
-
-        // Preallocate a couple of frames for nested structures
         let mut stack = Vec::with_capacity(4);
         stack.push(Frame::new(
-            ptr,
+            data,
             AllocatedShape::new(shape, allocated_size),
-            FrameOwnership::External,
-            root_plan.root(),
+            FrameOwnership::Owned,
+            plan.root(),
         ));
 
-        Ok(Partial {
+        let partial: Partial<'facet, 'plan, true> = Partial {
             mode: FrameMode::Strict { stack },
             state: PartialState::Active,
-            root_plan,
-            invariant: PhantomData,
-        })
+            root_plan: plan,
+            _marker: PhantomData::<&'facet ()>,
+        };
+        Ok(partial)
+    }
+
+    /// Allocates a new owned [Partial] using this TypePlan.
+    ///
+    /// This creates a Partial that cannot hold borrowed references.
+    /// Use this when the input buffer is temporary and won't outlive the result.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use bumpalo::Bump;
+    /// use facet_reflect::TypePlan;
+    ///
+    /// let bump = Bump::new();
+    /// let plan = TypePlan::<MyStruct>::build(&bump)?;
+    /// let partial = plan.partial_owned()?;
+    /// ```
+    pub fn partial_owned(&self) -> Result<Partial<'static, 'plan, false>, AllocError>
+    where
+        T: Facet<'static>,
+    {
+        alloc_impl(self.core(), T::SHAPE)
+    }
+
+    /// Creates a [Partial] that writes into caller-provided memory.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure:
+    /// - `ptr` points to valid, properly aligned memory for type T
+    /// - The memory has at least `T::SHAPE.layout.size()` bytes available
+    /// - The memory is not accessed through any other pointer while the Partial exists
+    /// - If deserialization fails, the memory may be partially initialized
+    pub unsafe fn partial_in_place<'facet>(
+        &self,
+        ptr: PtrUninit,
+    ) -> Result<Partial<'facet, 'plan, true>, AllocError>
+    where
+        T: Facet<'facet>,
+    {
+        // SAFETY: Caller upholds requirements
+        unsafe { from_raw_impl(self.core(), ptr, T::SHAPE) }
+    }
+
+    /// Creates an owned [Partial] that writes into caller-provided memory.
+    ///
+    /// # Safety
+    /// Same requirements as `partial_in_place`.
+    pub unsafe fn partial_in_place_owned(
+        &self,
+        ptr: PtrUninit,
+    ) -> Result<Partial<'static, 'plan, false>, AllocError>
+    where
+        T: Facet<'static>,
+    {
+        // SAFETY: Caller upholds requirements
+        unsafe { from_raw_impl(self.core(), ptr, T::SHAPE) }
     }
 }
 
-fn alloc_shape_inner<'facet, 'bump, const BORROW: bool>(
-    bump: &'bump Bump,
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Legacy alloc methods for backwards compatibility
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+impl<'facet, 'plan> Partial<'facet, 'plan, true> {
+    /// Allocates a new [Partial] using a TypePlanCore.
+    ///
+    /// # Safety
+    /// The caller must ensure `shape` matches the plan's type.
+    pub fn alloc_shape(
+        plan: TypePlanCore<'plan>,
+        shape: &'static Shape,
+    ) -> Result<Self, AllocError> {
+        alloc_impl(plan, shape)
+    }
+}
+
+impl<'plan> Partial<'static, 'plan, false> {
+    /// Allocates an owned [Partial] using a TypePlanCore.
+    ///
+    /// # Safety
+    /// The caller must ensure `shape` matches the plan's type.
+    pub fn alloc_shape_owned(
+        plan: TypePlanCore<'plan>,
+        shape: &'static Shape,
+    ) -> Result<Self, AllocError> {
+        alloc_impl(plan, shape)
+    }
+}
+
+impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
+    /// Creates a [Partial] that writes into caller-provided memory.
+    ///
+    /// # Safety
+    /// - `ptr` must point to valid memory for the shape
+    /// - `plan` must have been built from `shape`
+    pub unsafe fn from_raw_shape(
+        plan: TypePlanCore<'plan>,
+        ptr: PtrUninit,
+        shape: &'static Shape,
+    ) -> Result<Self, AllocError> {
+        // SAFETY: Caller upholds requirements
+        unsafe { from_raw_impl(plan, ptr, shape) }
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Internal implementation
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// Internal helper to allocate a Partial from a TypePlanCore and shape.
+fn alloc_impl<'facet, 'plan, const BORROW: bool>(
+    plan: TypePlanCore<'plan>,
     shape: &'static Shape,
-    format_namespace: Option<&'static str>,
-) -> Result<Partial<'facet, 'bump, BORROW>, AllocError> {
+) -> Result<Partial<'facet, 'plan, BORROW>, AllocError> {
     crate::trace!(
-        "alloc_shape({:?}), with layout {:?}",
+        "alloc_impl({:?}), with layout {:?}",
         shape,
         shape.layout.sized_layout()
     );
 
     let data = shape.allocate().map_err(|_| AllocError {
         shape,
-        operation: "alloc_shape: allocation failed",
+        operation: "alloc_impl: allocation failed",
     })?;
 
-    // Get the actual allocated size
     let allocated_size = shape.layout.sized_layout().expect("must be sized").size();
 
-    // Build the TypePlan once for the entire deserialization
-    // Pass format_namespace to enable format-specific proxy resolution
-    let root_plan = typeplan::build_for_format(bump, shape, format_namespace)?;
-
-    // Preallocate a couple of frames. The cost of allocating 4 frames is
-    // basically identical to allocating 1 frame, so for every type that
-    // has at least 1 level of nesting, this saves at least one guaranteed reallocation.
     let mut stack = Vec::with_capacity(4);
     stack.push(Frame::new(
         data,
         AllocatedShape::new(shape, allocated_size),
         FrameOwnership::Owned,
-        root_plan.root(),
+        plan.root(),
     ));
 
     Ok(Partial {
         mode: FrameMode::Strict { stack },
         state: PartialState::Active,
-        root_plan,
-        invariant: PhantomData,
+        root_plan: plan,
+        _marker: PhantomData,
+    })
+}
+
+/// Internal helper to create a Partial from raw pointer.
+///
+/// # Safety
+/// Same requirements as `Partial::from_raw_shape`.
+unsafe fn from_raw_impl<'facet, 'plan, const BORROW: bool>(
+    plan: TypePlanCore<'plan>,
+    ptr: PtrUninit,
+    shape: &'static Shape,
+) -> Result<Partial<'facet, 'plan, BORROW>, AllocError> {
+    crate::trace!(
+        "from_raw_impl({:p}, {:?}), with layout {:?}",
+        ptr.as_mut_byte_ptr(),
+        shape,
+        shape.layout.sized_layout()
+    );
+
+    let allocated_size = shape
+        .layout
+        .sized_layout()
+        .map_err(|_| AllocError {
+            shape,
+            operation: "from_raw_impl: shape is unsized",
+        })?
+        .size();
+
+    let mut stack = Vec::with_capacity(4);
+    stack.push(Frame::new(
+        ptr,
+        AllocatedShape::new(shape, allocated_size),
+        FrameOwnership::External,
+        plan.root(),
+    ));
+
+    Ok(Partial {
+        mode: FrameMode::Strict { stack },
+        state: PartialState::Active,
+        root_plan: plan,
+        _marker: PhantomData,
     })
 }

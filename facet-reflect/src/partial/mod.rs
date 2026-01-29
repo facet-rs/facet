@@ -144,17 +144,17 @@ enum PartialState {
 /// In `Strict` mode, frames must be fully initialized before being popped.
 /// In `Deferred` mode, frames can be stored when popped and restored on re-entry,
 /// with final validation happening in `finish_deferred()`.
-enum FrameMode<'bump> {
+enum FrameMode<'plan> {
     /// Strict mode: frames must be fully initialized before popping.
     Strict {
         /// Stack of frames for nested initialization.
-        stack: Vec<Frame<'bump>>,
+        stack: Vec<Frame<'plan>>,
     },
 
     /// Deferred mode: frames are stored when popped, can be re-entered.
     Deferred {
         /// Stack of frames for nested initialization.
-        stack: Vec<Frame<'bump>>,
+        stack: Vec<Frame<'plan>>,
 
         /// The frame depth when deferred mode was started.
         /// Path calculations are relative to this depth.
@@ -168,20 +168,20 @@ enum FrameMode<'bump> {
         /// Frames saved when popped, keyed by their path.
         /// When we re-enter a path, we restore the stored frame.
         // TODO: Consider using path indices instead of cloned KeyPaths as keys.
-        stored_frames: BTreeMap<KeyPath, Frame<'bump>>,
+        stored_frames: BTreeMap<KeyPath, Frame<'plan>>,
     },
 }
 
-impl<'bump> FrameMode<'bump> {
+impl<'plan> FrameMode<'plan> {
     /// Get a reference to the frame stack.
-    const fn stack(&self) -> &Vec<Frame<'bump>> {
+    const fn stack(&self) -> &Vec<Frame<'plan>> {
         match self {
             FrameMode::Strict { stack } | FrameMode::Deferred { stack, .. } => stack,
         }
     }
 
     /// Get a mutable reference to the frame stack.
-    const fn stack_mut(&mut self) -> &mut Vec<Frame<'bump>> {
+    const fn stack_mut(&mut self) -> &mut Vec<Frame<'plan>> {
         match self {
             FrameMode::Strict { stack } | FrameMode::Deferred { stack, .. } => stack,
         }
@@ -224,11 +224,11 @@ impl<'bump> FrameMode<'bump> {
 /// you have to fully initialize it one go. You can't go back up and back down
 /// to it again.
 ///
-/// The `'bump` lifetime ties this to an externally-owned `Bump` allocator,
-/// which is used for the TypePlan and can be used for other temporary allocations.
-pub struct Partial<'facet, 'bump, const BORROW: bool = true> {
+/// The `'plan` lifetime ties this to an externally-owned `TypePlan` (via bump allocator),
+/// which is built once and reused for multiple deserializations.
+pub struct Partial<'facet, 'plan, const BORROW: bool = true> {
     /// Frame management mode (strict or deferred) and associated state.
-    mode: FrameMode<'bump>,
+    mode: FrameMode<'plan>,
 
     /// current state of the Partial
     state: PartialState,
@@ -236,9 +236,15 @@ pub struct Partial<'facet, 'bump, const BORROW: bool = true> {
     /// Precomputed deserialization plan for the root type.
     /// Built once at allocation time, navigated in parallel with value construction.
     /// Each Frame holds a reference into this tree.
-    root_plan: &'bump typeplan::TypePlan<'bump>,
+    /// TypePlanCore is Copy (two references), so we store it by value.
+    root_plan: typeplan::TypePlanCore<'plan>,
 
-    invariant: PhantomData<fn(&'facet ()) -> &'facet ()>,
+    /// PhantomData marker for the 'facet lifetime.
+    /// This is covariant in 'facet, which is safe because 'facet represents
+    /// the lifetime of borrowed data FROM the input (deserialization source).
+    /// A Partial<'long, ...> can be safely treated as Partial<'short, ...>
+    /// because it only needs borrowed data to live at least as long as 'short.
+    _marker: PhantomData<&'facet ()>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -354,7 +360,7 @@ impl AllocatedShape {
 /// it keeps track of whether a variant was selected, which fields are initialized,
 /// etc. and is able to drop & deinitialize
 #[must_use]
-pub(crate) struct Frame<'bump> {
+pub(crate) struct Frame<'plan> {
     /// Address of the value being initialized
     pub(crate) data: PtrUninit,
 
@@ -383,7 +389,7 @@ pub(crate) struct Frame<'bump> {
     /// The TypePlan is allocated in a Bump owned externally by the caller.
     /// Always present - TypePlan is built for what we actually deserialize into
     /// (including proxies).
-    pub(crate) type_plan: &'bump typeplan::TypePlanNode<'bump>,
+    pub(crate) type_plan: &'plan typeplan::TypePlanNode<'plan>,
 }
 
 #[derive(Debug)]
@@ -551,12 +557,12 @@ impl Tracker {
     }
 }
 
-impl<'bump> Frame<'bump> {
+impl<'plan> Frame<'plan> {
     fn new(
         data: PtrUninit,
         allocated: AllocatedShape,
         ownership: FrameOwnership,
-        type_plan: &'bump typeplan::TypePlanNode<'bump>,
+        type_plan: &'plan typeplan::TypePlanNode<'plan>,
     ) -> Self {
         // For empty structs (structs with 0 fields), start as initialized since there's nothing to initialize
         // This includes empty tuples () which are zero-sized types with no fields to initialize
@@ -1427,16 +1433,16 @@ impl<'bump> Frame<'bump> {
 
 // Convenience methods on Partial for accessing FrameMode internals.
 // These help minimize changes to the rest of the codebase during the refactor.
-impl<'facet, 'bump, const BORROW: bool> Partial<'facet, 'bump, BORROW> {
+impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
     /// Get a reference to the frame stack.
     #[inline]
-    pub(crate) const fn frames(&self) -> &Vec<Frame<'bump>> {
+    pub(crate) const fn frames(&self) -> &Vec<Frame<'plan>> {
         self.mode.stack()
     }
 
     /// Get a mutable reference to the frame stack.
     #[inline]
-    pub(crate) const fn frames_mut(&mut self) -> &mut Vec<Frame<'bump>> {
+    pub(crate) const fn frames_mut(&mut self) -> &mut Vec<Frame<'plan>> {
         self.mode.stack_mut()
     }
 
@@ -1459,7 +1465,7 @@ impl<'facet, 'bump, const BORROW: bool> Partial<'facet, 'bump, BORROW> {
     }
 }
 
-impl<'facet, 'bump, const BORROW: bool> Drop for Partial<'facet, 'bump, BORROW> {
+impl<'facet, 'plan, const BORROW: bool> Drop for Partial<'facet, 'plan, BORROW> {
     fn drop(&mut self) {
         trace!("🧹 Partial is being dropped");
 

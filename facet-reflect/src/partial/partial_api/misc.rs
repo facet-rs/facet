@@ -6,7 +6,7 @@ use crate::typeplan::{DeserStrategy, TypePlanNodeKind};
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Misc.
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-impl<'facet, 'bump, const BORROW: bool> Partial<'facet, 'bump, BORROW> {
+impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
     /// Applies a closure to this Partial, enabling chaining with operations that
     /// take ownership and return `Result<Self, E>`.
     ///
@@ -90,7 +90,7 @@ impl<'facet, 'bump, const BORROW: bool> Partial<'facet, 'bump, BORROW> {
     /// - The current frame has no TypePlan (e.g., custom deserialization frames)
     /// - The current type is not a struct
     #[inline]
-    pub fn struct_plan(&self) -> Option<&'bump crate::typeplan::StructPlan<'bump>> {
+    pub fn struct_plan(&self) -> Option<&'plan crate::typeplan::StructPlan<'plan>> {
         if self.state != PartialState::Active {
             return None;
         }
@@ -105,7 +105,7 @@ impl<'facet, 'bump, const BORROW: bool> Partial<'facet, 'bump, BORROW> {
     /// - The Partial is not active
     /// - The current type is not an enum
     #[inline]
-    pub fn enum_plan(&self) -> Option<&'bump crate::typeplan::EnumPlan<'bump>> {
+    pub fn enum_plan(&self) -> Option<&'plan crate::typeplan::EnumPlan<'plan>> {
         if self.state != PartialState::Active {
             return None;
         }
@@ -120,7 +120,7 @@ impl<'facet, 'bump, const BORROW: bool> Partial<'facet, 'bump, BORROW> {
     ///
     /// Returns `None` if the current type is not a struct or enum variant.
     #[inline]
-    pub fn field_plans(&self) -> Option<&'bump [crate::typeplan::FieldPlan<'bump>]> {
+    pub fn field_plans(&self) -> Option<&'plan [crate::typeplan::FieldPlan<'plan>]> {
         use crate::typeplan::TypePlanNodeKind;
         let frame = self.frames().last().unwrap();
         match &frame.type_plan.kind {
@@ -146,7 +146,7 @@ impl<'facet, 'bump, const BORROW: bool> Partial<'facet, 'bump, BORROW> {
     /// - The Partial is not active
     /// - There are no frames
     #[inline]
-    pub fn plan_node(&self) -> Option<&'bump crate::typeplan::TypePlanNode<'bump>> {
+    pub fn plan_node(&self) -> Option<&'plan crate::typeplan::TypePlanNode<'plan>> {
         if self.state != PartialState::Active {
             return None;
         }
@@ -167,7 +167,7 @@ impl<'facet, 'bump, const BORROW: bool> Partial<'facet, 'bump, BORROW> {
     /// - The Partial is not active
     /// - There are no frames
     #[inline]
-    pub fn deser_strategy(&self) -> Option<&'bump DeserStrategy<'bump>> {
+    pub fn deser_strategy(&self) -> Option<&'plan DeserStrategy<'plan>> {
         let node = self.plan_node()?;
         // Resolve BackRef if needed - resolve_backref returns the node unchanged if not a BackRef
         let resolved = self.root_plan.resolve_backref(node);
