@@ -11,7 +11,7 @@ use crate::{
 };
 
 impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BORROW> {
-    pub(crate) fn deserialize_enum<'bump>(
+    pub(crate) fn deserialize_enum(
         &mut self,
         wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
@@ -70,7 +70,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         self.deserialize_enum_externally_tagged(wip)
     }
 
-    fn deserialize_numeric_enum<'bump>(
+    fn deserialize_numeric_enum(
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
@@ -115,7 +115,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         }
     }
 
-    fn deserialize_enum_externally_tagged<'bump>(
+    fn deserialize_enum_externally_tagged(
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
@@ -375,7 +375,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         Ok(wip)
     }
 
-    fn deserialize_enum_internally_tagged<'bump>(
+    fn deserialize_enum_internally_tagged(
         &mut self,
         mut wip: Partial<'input, BORROW>,
         tag_key: &'static str,
@@ -703,7 +703,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     /// The parser emits the enum as `{variant_name: content}` where content depends
     /// on the variant kind. The parser auto-handles struct/tuple variants by pushing
     /// appropriate state, so we just consume the events it produces.
-    pub(crate) fn deserialize_enum_as_struct<'bump>(
+    pub(crate) fn deserialize_enum_as_struct(
         &mut self,
         mut wip: Partial<'input, BORROW>,
         enum_def: &'static facet_core::EnumType,
@@ -894,7 +894,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         Ok(wip)
     }
 
-    pub(crate) fn deserialize_result_as_enum<'bump>(
+    pub(crate) fn deserialize_result_as_enum(
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
@@ -994,7 +994,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
     /// Deserialize the struct fields of a variant.
     /// Expects the variant to already be selected.
-    pub(crate) fn deserialize_variant_struct_fields<'bump>(
+    pub(crate) fn deserialize_variant_struct_fields(
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
@@ -1129,7 +1129,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         Ok(wip)
     }
 
-    fn deserialize_enum_adjacently_tagged<'bump>(
+    fn deserialize_enum_adjacently_tagged(
         &mut self,
         mut wip: Partial<'input, BORROW>,
         tag_key: &'static str,
@@ -1244,7 +1244,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     }
 
     /// Deserialize the content of an already-selected enum variant.
-    pub(crate) fn deserialize_enum_variant_content<'bump>(
+    pub(crate) fn deserialize_enum_variant_content(
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
@@ -1547,7 +1547,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     /// purely an implementation detail for memory management.
     ///
     /// This always selects the "Owned" variant since we need to own the deserialized data.
-    fn deserialize_cow_enum<'bump>(
+    fn deserialize_cow_enum(
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {

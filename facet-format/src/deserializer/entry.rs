@@ -14,7 +14,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     /// Uses the precomputed `DeserStrategy` from TypePlan for fast dispatch.
     /// The strategy is computed once at Partial allocation time, eliminating
     /// repeated runtime inspection of Shape/Def/vtable during deserialization.
-    pub fn deserialize_into<'bump>(
+    pub fn deserialize_into(
         &mut self,
         wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
