@@ -1143,6 +1143,33 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
             }
         }
 
+        // Initialize any list/set element fields that were never started as empty
+        // (e.g., Vec<Point> with no matching <point> elements should be empty, not uninitialized)
+        // Collect to Vec first to avoid borrowing conflict with self.started_seqs
+        let uninitialized_lists: Vec<_> = self
+            .field_map
+            .list_set_element_fields()
+            .filter(|(idx, info)| {
+                // Skip fields that were already started
+                if self.started_seqs.contains_key(idx) {
+                    return false;
+                }
+                // Skip fields with field-level proxy (treated as scalars)
+                let format_ns = self.dom_deser.parser.format_namespace();
+                info.field.effective_proxy(format_ns).is_none()
+            })
+            .map(|(idx, info)| (idx, info.field.name, info.is_set))
+            .collect();
+
+        for (idx, field_name, is_set) in uninitialized_lists {
+            trace!(idx, field_name, "initializing empty element list");
+            if is_set {
+                wip = wip.begin_nth_field(idx)?.init_set()?.end()?;
+            } else {
+                wip = wip.begin_nth_field(idx)?.init_list()?.end()?;
+            }
+        }
+
         // Finalize all elements fields
         // First, close all open elements lists
         for &idx in self.started_elements_lists.iter().collect::<Vec<_>>() {
@@ -1161,6 +1188,14 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
             let idx = info.idx;
             if !self.started_elements_lists.contains(&idx) {
                 trace!(idx, field_name = %info.field.name, "initializing empty elements list");
+                wip = wip.begin_nth_field(idx)?.init_list()?.end()?;
+            }
+        }
+        // Also handle catch_all_elements_field (xml::elements with item type having xml::tag)
+        if let Some(info) = &self.field_map.catch_all_elements_field {
+            let idx = info.idx;
+            if !self.started_elements_lists.contains(&idx) {
+                trace!(idx, field_name = %info.field.name, "initializing empty catch-all elements list");
                 wip = wip.begin_nth_field(idx)?.init_list()?.end()?;
             }
         }
