@@ -15,6 +15,7 @@ use crate::{DeserializeError, DeserializeErrorKind, FormatDeserializer, ScalarVa
 ///
 /// Note: `ScalarValue::Str` and `ScalarValue::Bytes` cases delegate to `facet_dessert`
 /// for string/bytes handling.
+#[allow(clippy::result_large_err)]
 pub(crate) fn set_scalar_inner<'input, const BORROW: bool>(
     mut wip: Partial<'input, BORROW>,
     scalar: ScalarValue<'input>,
@@ -215,6 +216,7 @@ impl<'input, const BORROW: bool> From<facet_reflect::ReflectError>
 /// - Enum types: use `select_variant_named`
 /// - Numeric types: parse the string key as a number
 /// - String types: delegate to `set_string_value` (returns `NeedsSetString`)
+#[allow(clippy::result_large_err)]
 pub(crate) fn deserialize_map_key_terminal_inner<'input, const BORROW: bool>(
     mut wip: Partial<'input, BORROW>,
     key: Cow<'input, str>,

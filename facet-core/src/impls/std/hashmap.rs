@@ -112,8 +112,8 @@ unsafe fn hashmap_drop<K, V, S>(ox: crate::OxPtrMut) {
     }
 }
 
-unsafe fn hashmap_default<K, V, S: Default + BuildHasher>(ox: crate::OxPtrMut) {
-    unsafe { ox.ptr().as_uninit().put(HashMap::<K, V, S>::default()) };
+unsafe fn hashmap_default<K, V, S: Default + BuildHasher>(ox: crate::OxPtrUninit) {
+    unsafe { ox.put(HashMap::<K, V, S>::default()) };
 }
 
 unsafe fn hashmap_is_truthy<K, V>(ptr: PtrConst) -> bool {

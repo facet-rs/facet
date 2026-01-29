@@ -1,0 +1,7 @@
+# Clippy configuration for the facet workspace
+
+disallowed-methods = [
+    # Box::leak hides lifetime problems instead of solving them.
+    # Use LazyLock, static variables, or restructure code to avoid needing 'static.
+    { path = "std::boxed::Box::leak", reason = "Box::leak is always a bug in this codebase - use LazyLock or restructure code instead" },
+]

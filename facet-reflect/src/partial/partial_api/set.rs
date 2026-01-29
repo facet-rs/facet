@@ -348,12 +348,12 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         // SAFETY: `call_default_in_place` fully initializes the passed pointer.
         unsafe {
             self.set_from_function(move |ptr| {
-                shape.call_default_in_place(ptr.assume_init()).ok_or(
-                    ReflectErrorKind::OperationFailed {
+                shape
+                    .call_default_in_place(ptr)
+                    .ok_or(ReflectErrorKind::OperationFailed {
                         shape,
                         operation: "type does not implement Default",
-                    },
-                )
+                    })
             })
         }
     }

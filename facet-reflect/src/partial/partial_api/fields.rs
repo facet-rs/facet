@@ -1,4 +1,5 @@
 use super::*;
+use facet_path::PathStep;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Field selection
@@ -13,19 +14,19 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         let node_id = frame.type_plan;
 
         // For structs: use StructPlan's field_lookup
-        if let Some(struct_plan) = self.root_plan.as_struct_plan(node_id) {
-            return struct_plan.field_lookup.find(field_name);
+        if let Some(struct_plan) = self.root_plan.struct_plan_by_id(node_id) {
+            return struct_plan.field_lookup.find(field_name, &self.root_plan);
         }
 
         // For enums with selected variant: use variant's field_lookup
-        if let Some(enum_plan) = self.root_plan.as_enum_plan(node_id)
+        if let Some(enum_plan) = self.root_plan.enum_plan_by_id(node_id)
             && let Tracker::Enum { variant_idx, .. } = &frame.tracker
         {
-            return enum_plan
-                .variants
+            let variants = self.root_plan.variants(enum_plan.variants);
+            return variants
                 .get(*variant_idx)?
                 .field_lookup
-                .find(field_name);
+                .find(field_name, &self.root_plan);
         }
 
         None
@@ -91,22 +92,15 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         // In deferred mode, also check if there's a stored frame for this field.
         // The ISet won't be updated when frames are stored, so we need to check
         // stored_frames directly to know if a value exists.
-        if let FrameMode::Deferred {
-            current_path,
-            stored_frames,
-            ..
-        } = &self.mode
-        {
-            // Get field name from index
-            if let Some(field_name) = self.get_field_name_for_path(index) {
-                // Construct the full path for this field
-                let mut check_path = current_path.clone();
-                check_path.push(field_name);
+        if let FrameMode::Deferred { stored_frames, .. } = &self.mode {
+            // Construct the full path for this field by deriving current path
+            // and appending the field step
+            let mut check_path = self.derive_path();
+            check_path.push(PathStep::Field(index as u32));
 
-                // Check if this path exists in stored frames
-                if stored_frames.contains_key(&check_path) {
-                    return Ok(true);
-                }
+            // Check if this path exists in stored frames
+            if stored_frames.contains_key(&check_path) {
+                return Ok(true);
             }
         }
 
@@ -135,38 +129,44 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
     pub fn begin_nth_field(mut self, idx: usize) -> Result<Self, ReflectError> {
         // Handle deferred mode path tracking (rare path - only for partial deserialization)
         if self.is_deferred() {
-            // Get field name for path tracking
-            let field_name = self.get_field_name_for_path(idx);
+            // Derive the current path and construct what the path WOULD be after entering this field
+            let mut check_path = self.derive_path();
+            check_path.push(PathStep::Field(idx as u32));
 
             if let FrameMode::Deferred {
                 stack,
-                start_depth,
-                current_path,
                 stored_frames,
                 ..
             } = &mut self.mode
             {
-                // Only track path if we're at the expected navigable depth
-                // Path should have (frames.len() - start_depth) entries before we add this field
-                let relative_depth = stack.len() - *start_depth;
-                let should_track = current_path.len() == relative_depth;
+                // Check if we have a stored frame for this path (re-entry)
+                if let Some(mut stored_frame) = stored_frames.remove(&check_path) {
+                    trace!("begin_nth_field: Restoring stored frame for path {check_path:?}");
 
-                if let Some(name) = field_name
-                    && should_track
-                {
-                    current_path.push(name);
+                    // Update parent's current_child tracking
+                    let frame = stack.last_mut().unwrap();
+                    frame.tracker.set_current_child(idx);
 
-                    // Check if we have a stored frame for this path
-                    if let Some(stored_frame) = stored_frames.remove(current_path) {
-                        trace!("begin_nth_field: Restoring stored frame for path {current_path:?}");
+                    // Clear the restored frame's current_child - we haven't entered any of its
+                    // children yet in this new traversal. Without this, derive_path() would
+                    // include stale navigation state and compute incorrect paths.
+                    stored_frame.tracker.clear_current_child();
 
-                        // Update parent's current_child tracking
-                        let frame = stack.last_mut().unwrap();
-                        frame.tracker.set_current_child(idx);
-
-                        stack.push(stored_frame);
-                        return Ok(self);
+                    // For Option frames, reset building_inner to false. When an Option frame
+                    // is stored, it may have building_inner=true (if we were inside begin_some).
+                    // When restored via begin_field, we're re-entering the Option container
+                    // itself, not its inner value - so building_inner should be false.
+                    // Without this, derive_path() would include an extra OptionSome step,
+                    // causing path mismatches when we call begin_some() to find the stored
+                    // inner frame.
+                    if matches!(stored_frame.tracker, Tracker::Option { .. }) {
+                        stored_frame.tracker = Tracker::Option {
+                            building_inner: false,
+                        };
                     }
+
+                    stack.push(stored_frame);
+                    return Ok(self);
                 }
             }
         }
@@ -180,12 +180,12 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             Type::User(user_type) => match user_type {
                 UserType::Struct(struct_type) => {
                     // Compute child NodeId before mutable borrow
-                    let child_plan = self
+                    let child_plan_id = self
                         .root_plan
-                        .struct_field_node(parent_node, idx)
+                        .struct_field_node_id(parent_node, idx)
                         .expect("TypePlan must have struct field node");
                     let frame = self.frames_mut().last_mut().unwrap();
-                    Self::begin_nth_struct_field(frame, struct_type, idx, child_plan)
+                    Self::begin_nth_struct_field(frame, struct_type, idx, child_plan_id)
                         .map_err(|e| self.err(e))?
                 }
                 UserType::Enum(_) => {
@@ -205,12 +205,12 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                         }
                     };
                     // Compute child NodeId using stored variant_idx (O(1) lookup, not O(n) search)
-                    let child_plan = self
+                    let child_plan_id = self
                         .root_plan
-                        .enum_variant_field_node(parent_node, variant_idx, idx)
+                        .enum_variant_field_node_id(parent_node, variant_idx, idx)
                         .expect("TypePlan must have enum variant field node");
                     let frame = self.frames_mut().last_mut().unwrap();
-                    Self::begin_nth_enum_field(frame, variant, idx, child_plan)
+                    Self::begin_nth_enum_field(frame, variant, idx, child_plan_id)
                         .map_err(|e| self.err(e))?
                 }
                 UserType::Union(_) => {
@@ -229,12 +229,12 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             Type::Sequence(sequence_type) => match sequence_type {
                 SequenceType::Array(array_type) => {
                     // Compute child NodeId before mutable borrow
-                    let child_plan = self
+                    let child_plan_id = self
                         .root_plan
-                        .list_item_node(parent_node)
+                        .list_item_node_id(parent_node)
                         .expect("TypePlan must have array item node");
                     let frame = self.frames_mut().last_mut().unwrap();
-                    Self::begin_nth_array_element(frame, array_type, idx, child_plan)
+                    Self::begin_nth_array_element(frame, array_type, idx, child_plan_id)
                         .map_err(|e| self.err(e))?
                 }
                 SequenceType::Slice(_) => {
@@ -254,25 +254,6 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
 
         self.frames_mut().push(next_frame);
         Ok(self)
-    }
-
-    /// Get the field name for path tracking (used in deferred mode)
-    fn get_field_name_for_path(&self, idx: usize) -> Option<&'static str> {
-        let frame = self.frames().last()?;
-        match frame.allocated.shape().ty {
-            Type::User(UserType::Struct(struct_type)) => {
-                struct_type.fields.get(idx).map(|f| f.name)
-            }
-            Type::User(UserType::Enum(_)) => {
-                if let Tracker::Enum { variant, .. } = &frame.tracker {
-                    variant.data.fields.get(idx).map(|f| f.name)
-                } else {
-                    None
-                }
-            }
-            // For arrays, we could use index as string, but for now return None
-            _ => None,
-        }
     }
 
     /// Sets the given field to its default value, preferring:

@@ -1,7 +1,7 @@
 use crate::{
-    Def, Facet, KnownPointer, OxPtrConst, OxPtrMut, PointerDef, PointerFlags, PointerVTable,
-    PtrConst, Shape, ShapeBuilder, Type, TypeNameFn, TypeNameOpts, TypeOpsIndirect, TypeParam,
-    UserType, VTableIndirect,
+    Def, Facet, KnownPointer, OxPtrConst, OxPtrMut, OxPtrUninit, PointerDef, PointerFlags,
+    PointerVTable, PtrConst, Shape, ShapeBuilder, Type, TypeNameFn, TypeNameOpts, TypeOpsIndirect,
+    TypeParam, UserType, VTableIndirect,
 };
 use crate::{PtrMut, PtrUninit};
 use alloc::borrow::Cow;
@@ -205,7 +205,7 @@ where
             ///
             /// # Safety
             /// dst must be valid for writes
-            unsafe fn default_in_place<T: ?Sized + ToOwned + 'static>(dst: OxPtrMut)
+            unsafe fn default_in_place<T: ?Sized + ToOwned + 'static>(dst: OxPtrUninit)
             where
                 T::Owned: Facet<'static> + 'static,
             {
@@ -229,7 +229,7 @@ where
                     return;
                 }
 
-                let owned_uninit = crate::PtrMut::new(owned_ptr);
+                let owned_uninit = crate::PtrUninit::new(owned_ptr);
                 if unsafe { owned_shape.call_default_in_place(owned_uninit) }.is_none() {
                     // Default not supported, deallocate and return
                     unsafe { alloc::alloc::dealloc(owned_ptr, owned_layout) };
@@ -242,11 +242,8 @@ where
                     unsafe { core::ptr::read(owned_ptr as *const T::Owned) };
                 unsafe { alloc::alloc::dealloc(owned_ptr, owned_layout) };
 
-                // IMPORTANT: `default_in_place` must be valid for writes to potentially-uninitialized
-                // destination memory. Do not create `&mut Cow` here (that would assume initialization).
-                let out: *mut Cow<'static, T> =
-                    unsafe { dst.ptr().as_ptr::<Cow<'static, T>>() as *mut Cow<'static, T> };
-                unsafe { core::ptr::write(out, Cow::Owned(owned_value)) };
+                // Write the Cow::Owned to uninitialized memory
+                unsafe { dst.put(Cow::<'static, T>::Owned(owned_value)) };
             }
 
             unsafe fn truthy<'facet, T>(ptr: PtrConst) -> bool

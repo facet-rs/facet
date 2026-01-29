@@ -33,14 +33,19 @@ http = { workspace = true, optional = true }
 http-body-util = { version = "0.1", default-features = false, optional = true }
 
 [dev-dependencies]
+divan = { workspace = true }
 facet = { path = "../facet", features = ["doc", "net", "iddqd"] }
 facet-format = { path = "../facet-format", features = ["jit", "net", "tracing"] }
 facet-format-suite = { path = "../facet-format-suite", features = ["third-party", "net"] }
+facet-json-classics = { path = "../facet-json-classics" }
 facet-value = { path = "../facet-value" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 facet-reflect = { path = "../facet-reflect", features = ["tracing"] }
 libtest-mimic = "0.8.1"
 indoc = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = "0.8"
 
 [features]
 default = []
@@ -60,6 +65,10 @@ yoke = ["facet/yoke", "facet-format-suite/yoke"]
 
 [[test]]
 name = "format_suite"
+harness = false
+
+[[bench]]
+name = "classics"
 harness = false
 
 [lints]

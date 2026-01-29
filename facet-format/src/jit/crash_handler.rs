@@ -51,11 +51,26 @@ pub fn install_crash_handler() {
     }
 
     unsafe {
-        libc::signal(libc::SIGSEGV, crash_handler as libc::sighandler_t);
-        libc::signal(libc::SIGABRT, crash_handler as libc::sighandler_t);
-        libc::signal(libc::SIGBUS, crash_handler as libc::sighandler_t);
-        libc::signal(libc::SIGILL, crash_handler as libc::sighandler_t);
-        libc::signal(libc::SIGTRAP, crash_handler as libc::sighandler_t);
+        libc::signal(
+            libc::SIGSEGV,
+            crash_handler as *const () as libc::sighandler_t,
+        );
+        libc::signal(
+            libc::SIGABRT,
+            crash_handler as *const () as libc::sighandler_t,
+        );
+        libc::signal(
+            libc::SIGBUS,
+            crash_handler as *const () as libc::sighandler_t,
+        );
+        libc::signal(
+            libc::SIGILL,
+            crash_handler as *const () as libc::sighandler_t,
+        );
+        libc::signal(
+            libc::SIGTRAP,
+            crash_handler as *const () as libc::sighandler_t,
+        );
     }
 
     jit_debug!("Crash handler installed (catches SIGSEGV, SIGABRT, SIGBUS, SIGILL, SIGTRAP)");

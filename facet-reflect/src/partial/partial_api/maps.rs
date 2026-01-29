@@ -223,15 +223,15 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
 
         // Push a new frame for the key
         // Get child type plan NodeId for map keys
-        let child_plan = self
+        let child_plan_id = self
             .root_plan
-            .map_key_node(parent_type_plan)
+            .map_key_node_id(parent_type_plan)
             .expect("TypePlan must have map key node");
         self.mode.stack_mut().push(Frame::new(
             PtrUninit::new(key_ptr_raw.as_ptr()),
             AllocatedShape::new(key_shape, key_layout.size()),
             FrameOwnership::TrackedBuffer,
-            child_plan,
+            child_plan_id,
         ));
 
         Ok(self)
@@ -322,15 +322,15 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
 
         // Push a new frame for the value
         // Get child type plan NodeId for map values
-        let child_plan = self
+        let child_plan_id = self
             .root_plan
-            .map_value_node(parent_type_plan)
+            .map_value_node_id(parent_type_plan)
             .expect("TypePlan must have map value node");
         self.mode.stack_mut().push(Frame::new(
             value_ptr,
             AllocatedShape::new(value_shape, value_layout.size()),
             FrameOwnership::TrackedBuffer,
-            child_plan,
+            child_plan_id,
         ));
 
         Ok(self)

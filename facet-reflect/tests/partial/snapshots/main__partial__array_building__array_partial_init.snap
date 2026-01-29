@@ -1,5 +1,6 @@
 ---
 source: facet-reflect/tests/partial/array_building.rs
+assertion_line: 232
 expression: "Partial::alloc::<[u32; 3]>()? .set_nth_field(0, 42u32)?\n.set_nth_field(2, 44u32)? .build().unwrap_err()"
 ---
-Value '[u32; 3]' was not initialized. If you need to leave values partially initialized and come back later, use deferred mode (begin_deferred/finish_deferred) at Path { shape: Shape { type_identifier: "[T; N]", type_params: «(T: u32)», inner: Shape { type_identifier: "u32", ty: Primitive(Numeric(Integer { signed: false })), layout: Sized(«4 align 4»), def: Scalar, .. }, ty: Sequence(Array(«[u32; 3]»)), layout: Sized(«12 align 4»), def: Array<u32; 3>, .. }, steps: [] }
+Value '[u32; 3]' was not initialized. If you need to leave values partially initialized and come back later, use deferred mode (begin_deferred/finish_deferred) at <root>

@@ -1285,7 +1285,7 @@ pub struct TypeOpsIndirect {
     ///
     /// # Safety
     /// The pointer must point to uninitialized memory of sufficient size and alignment.
-    pub default_in_place: Option<unsafe fn(OxPtrMut)>,
+    pub default_in_place: Option<unsafe fn(OxPtrUninit)>,
 
     /// Clone a value into uninitialized memory.
     ///

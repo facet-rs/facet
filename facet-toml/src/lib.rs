@@ -220,3 +220,33 @@ where
     })?;
     from_str_borrowed(s)
 }
+
+#[cfg(test)]
+mod nested_option_test {
+    use super::*;
+    use facet::Facet;
+    use facet_testhelpers::test;
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Inner {
+        required: u64,
+        optional: Option<u64>,
+    }
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Outer {
+        inner: Option<Box<Inner>>,
+    }
+
+    #[test]
+    fn nested_struct_option_defaults() {
+        // Inner struct is present but missing the optional field
+        let toml = r#"
+[inner]
+required = 42
+"#;
+        let result: Outer = from_str(toml).unwrap();
+        assert_eq!(result.inner.as_ref().unwrap().required, 42);
+        assert_eq!(result.inner.as_ref().unwrap().optional, None);
+    }
+}

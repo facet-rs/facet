@@ -5,9 +5,9 @@ use alloc::rc::{Rc, Weak};
 use alloc::vec::Vec;
 
 use crate::{
-    Def, Facet, KnownPointer, OxPtrConst, OxPtrMut, PointerDef, PointerFlags, PointerVTable,
-    PtrConst, PtrMut, PtrUninit, Shape, ShapeBuilder, SliceBuilderVTable, Type, TypeNameOpts,
-    TypeOpsIndirect, UserType, VTableIndirect, Variance, VarianceDep, VarianceDesc,
+    Def, Facet, KnownPointer, OxPtrConst, OxPtrMut, OxPtrUninit, PointerDef, PointerFlags,
+    PointerVTable, PtrConst, PtrMut, PtrUninit, Shape, ShapeBuilder, SliceBuilderVTable, Type,
+    TypeNameOpts, TypeOpsIndirect, UserType, VTableIndirect, Variance, VarianceDep, VarianceDesc,
 };
 
 //////////////////////////////////////////////////////////////////////
@@ -440,10 +440,8 @@ unsafe fn weak_drop<T>(ox: OxPtrMut) {
 }
 
 /// Default function for `Weak<T>`
-unsafe fn weak_default<T>(ox: OxPtrMut) {
-    unsafe {
-        (ox.ptr().as_ptr::<Weak<T>>() as *mut Weak<T>).write(Weak::<T>::new());
-    }
+unsafe fn weak_default<T>(ox: OxPtrUninit) {
+    unsafe { ox.put(Weak::<T>::new()) };
 }
 
 /// Clone function for `Weak<T>`

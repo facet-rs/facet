@@ -1,11 +1,10 @@
-use facet::Facet;
 use facet_reflect::Partial;
 
 #[test]
 fn test_empty_tuple_always_initialized() {
     // Empty tuple should always be considered initialized
     // SAFETY: Shape comes from trusted Facet impl
-    let partial = unsafe { Partial::alloc_shape(<()>::SHAPE) }.unwrap();
+    let partial = Partial::alloc::<()>().unwrap();
 
     // Check the shape
     let shape = partial.shape();
@@ -22,7 +21,7 @@ fn test_empty_tuple_always_initialized() {
 fn test_nested_empty_tuple_field_check() {
     // (()) - tuple with one field that is ()
     // SAFETY: Shape comes from trusted Facet impl
-    let mut partial = unsafe { Partial::alloc_shape(<((),)>::SHAPE) }.unwrap();
+    let mut partial = Partial::alloc::<((),)>().unwrap();
 
     // Check if field 0 is initialized - this should be true!
     let field_0_initialized = partial.is_field_set(0).unwrap();
@@ -54,7 +53,7 @@ fn test_nested_empty_tuple_field_check() {
 fn test_double_empty_tuple() {
     // ((), ()) - tuple with two fields, both empty tuples
     // SAFETY: Shape comes from trusted Facet impl
-    let mut partial = unsafe { Partial::alloc_shape(<((), ())>::SHAPE) }.unwrap();
+    let mut partial = Partial::alloc::<((), ())>().unwrap();
 
     // Check if fields are initialized
     let field_0_initialized = partial.is_field_set(0).unwrap();
@@ -83,7 +82,7 @@ fn test_double_empty_tuple() {
 fn test_deeply_nested_empty_tuple() {
     // (((),),) - deeply nested
     // SAFETY: Shape comes from trusted Facet impl
-    let mut partial = unsafe { Partial::alloc_shape(<(((),),)>::SHAPE) }.unwrap();
+    let mut partial = Partial::alloc::<(((),),)>().unwrap();
 
     // Check if field 0 is initialized
     let field_0_initialized = partial.is_field_set(0).unwrap();
@@ -115,7 +114,7 @@ fn test_is_field_set_for_nested_empty_tuples() {
 
     // (((),),) - field 0 is ((),) which contains only empty tuples
     // SAFETY: Shape comes from trusted Facet impl
-    let partial = unsafe { Partial::alloc_shape(<(((),),)>::SHAPE) }.unwrap();
+    let partial = Partial::alloc::<(((),),)>().unwrap();
     let field_0_initialized = partial.is_field_set(0).unwrap();
     println!("Is field 0 of (((),),) initialized? {field_0_initialized}");
     assert!(
@@ -125,7 +124,7 @@ fn test_is_field_set_for_nested_empty_tuples() {
 
     // ((((),),),) - even deeper nesting
     // SAFETY: Shape comes from trusted Facet impl
-    let partial = unsafe { Partial::alloc_shape(<((((),),),)>::SHAPE) }.unwrap();
+    let partial = Partial::alloc::<((((),),),)>().unwrap();
     let field_0_initialized = partial.is_field_set(0).unwrap();
     println!("Is field 0 of ((((),),),) initialized? {field_0_initialized}");
     assert!(
@@ -135,7 +134,7 @@ fn test_is_field_set_for_nested_empty_tuples() {
 
     // ((), (), ()) - multiple empty tuple fields
     // SAFETY: Shape comes from trusted Facet impl
-    let partial = unsafe { Partial::alloc_shape(<((), (), ())>::SHAPE) }.unwrap();
+    let partial = Partial::alloc::<((), (), ())>().unwrap();
     let field_0_initialized = partial.is_field_set(0).unwrap();
     let field_1_initialized = partial.is_field_set(1).unwrap();
     let field_2_initialized = partial.is_field_set(2).unwrap();
@@ -149,7 +148,7 @@ fn test_is_field_set_for_nested_empty_tuples() {
 
     // (((), ()), ()) - mixed nesting
     // SAFETY: Shape comes from trusted Facet impl
-    let partial = unsafe { Partial::alloc_shape(<(((), ()), ())>::SHAPE) }.unwrap();
+    let partial = Partial::alloc::<(((), ()), ())>().unwrap();
     let field_0_initialized = partial.is_field_set(0).unwrap();
     let field_1_initialized = partial.is_field_set(1).unwrap();
     println!("Field 0 of (((), ()), ()) initialized? {field_0_initialized}");
@@ -170,14 +169,14 @@ fn test_building_nested_empty_tuples_without_navigation() {
 
     // ((),) - now works without navigation because fill_defaults handles ()
     // SAFETY: Shape comes from trusted Facet impl
-    let partial = unsafe { Partial::alloc_shape(<((),)>::SHAPE) }.unwrap();
+    let partial = Partial::alloc::<((),)>().unwrap();
     let built = partial.build().unwrap();
     let value: ((),) = built.materialize().unwrap();
     assert_eq!(value, ((),));
 
     // Navigation also works
     // SAFETY: Shape comes from trusted Facet impl
-    let mut partial = unsafe { Partial::alloc_shape(<((),)>::SHAPE) }.unwrap();
+    let mut partial = Partial::alloc::<((),)>().unwrap();
     partial = partial.begin_nth_field(0).unwrap();
     partial = partial.end().unwrap();
     let built = partial.build().unwrap();

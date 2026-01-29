@@ -4159,6 +4159,10 @@ fn emit_error_case_showcase<S: FormatSuite>(
 }
 
 fn highlight_payload(language: &str, input: &[u8]) -> Option<String> {
+    // Skip highlighting under Miri - tree-sitter does lots of unsafe FFI
+    if cfg!(miri) {
+        return None;
+    }
     let source = core::str::from_utf8(input).ok()?;
     let mut highlighter = Highlighter::new();
     highlighter.highlight(language, source).ok()

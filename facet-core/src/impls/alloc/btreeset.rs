@@ -4,8 +4,9 @@ use alloc::collections::BTreeSet;
 use crate::{PtrConst, PtrMut, PtrUninit};
 
 use crate::{
-    Def, Facet, IterVTable, OxPtrMut, SetDef, SetVTable, Shape, ShapeBuilder, TypeNameFn,
-    TypeNameOpts, TypeOpsIndirect, TypeParam, VTableIndirect, Variance, VarianceDep, VarianceDesc,
+    Def, Facet, IterVTable, OxPtrMut, OxPtrUninit, SetDef, SetVTable, Shape, ShapeBuilder,
+    TypeNameFn, TypeNameOpts, TypeOpsIndirect, TypeParam, VTableIndirect, Variance, VarianceDep,
+    VarianceDesc,
 };
 
 type BTreeSetIterator<'mem, T> = alloc::collections::btree_set::Iter<'mem, T>;
@@ -71,8 +72,8 @@ unsafe fn btreeset_drop<T>(ox: OxPtrMut) {
 }
 
 /// Default implementation for `BTreeSet<T>`
-unsafe fn btreeset_default<T>(ox: OxPtrMut) {
-    unsafe { ox.ptr().as_uninit().put(BTreeSet::<T>::new()) };
+unsafe fn btreeset_default<T>(ox: OxPtrUninit) {
+    unsafe { ox.put(BTreeSet::<T>::new()) };
 }
 
 unsafe impl<'a, T> Facet<'a> for BTreeSet<T>

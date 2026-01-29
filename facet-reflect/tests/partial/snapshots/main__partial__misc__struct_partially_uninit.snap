@@ -1,5 +1,6 @@
 ---
 source: facet-reflect/tests/partial/misc.rs
+assertion_line: 842
 expression: "partial.set_field(\"foo\", 42_u64)?.build().unwrap_err()"
 ---
-Field 'FooBar::bar' was not initialized. If you need to leave fields partially initialized and come back later, use deferred mode (begin_deferred/finish_deferred) at Path { shape: Shape { type_identifier: "FooBar", ty: User(Struct(«kind: Struct, fields: (foo, bar)»)), layout: Sized(«16 align 8»), .. }, steps: [] }
+Field 'FooBar::bar' was not initialized. If you need to leave fields partially initialized and come back later, use deferred mode (begin_deferred/finish_deferred) at <root>

@@ -1,5 +1,6 @@
 ---
 source: facet-reflect/tests/partial/misc.rs
+assertion_line: 744
 expression: "Partial::alloc::<f64>()?.build().unwrap_err()"
 ---
-Value 'f64' was not initialized. If you need to leave values partially initialized and come back later, use deferred mode (begin_deferred/finish_deferred) at Path { shape: Shape { type_identifier: "f64", ty: Primitive(Numeric(Float)), layout: Sized(«8 align 8»), def: Scalar, .. }, steps: [] }
+Value 'f64' was not initialized. If you need to leave values partially initialized and come back later, use deferred mode (begin_deferred/finish_deferred) at <root>

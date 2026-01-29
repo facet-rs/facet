@@ -6,9 +6,9 @@ use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 
 use crate::{
-    Def, Facet, KnownPointer, OxPtrConst, OxPtrMut, PointerDef, PointerFlags, PointerVTable,
-    PtrConst, PtrMut, PtrUninit, ShapeBuilder, SliceBuilderVTable, Type, TypeNameOpts,
-    TypeOpsIndirect, UserType, VTableIndirect, Variance, VarianceDep, VarianceDesc,
+    Def, Facet, KnownPointer, OxPtrConst, OxPtrMut, OxPtrUninit, PointerDef, PointerFlags,
+    PointerVTable, PtrConst, PtrMut, PtrUninit, ShapeBuilder, SliceBuilderVTable, Type,
+    TypeNameOpts, TypeOpsIndirect, UserType, VTableIndirect, Variance, VarianceDep, VarianceDesc,
 };
 
 // Helper functions to create type_name formatters
@@ -158,9 +158,9 @@ unsafe fn weak_clone<T: Clone>(src: OxPtrConst, dst: OxPtrMut) {
 }
 
 // Default functions for Weak
-unsafe fn weak_default<T>(target: OxPtrMut) {
+unsafe fn weak_default<T>(target: OxPtrUninit) {
     unsafe {
-        (target.ptr().as_ptr::<Weak<T>>() as *mut Weak<T>).write(Weak::<T>::new());
+        target.put(Weak::<T>::new());
     }
 }
 

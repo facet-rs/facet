@@ -1,5 +1,6 @@
 ---
 source: facet-reflect/tests/partial/pointer.rs
+assertion_line: 118
 expression: _err
 ---
-Invariant violation: Partial::build() expects a single frame — call end() until that's the case at Path { shape: Shape { type_identifier: "Arc", type_params: «(T: str)», ty: User(Opaque), layout: Sized(«16 align 8»), def: SmartPointer<str>, .. }, steps: [] }
+Invariant violation: Partial::build() expects a single frame — call end() until that's the case at <root>

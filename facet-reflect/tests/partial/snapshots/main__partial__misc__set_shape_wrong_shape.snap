@@ -1,5 +1,6 @@
 ---
 source: facet-reflect/tests/partial/misc.rs
+assertion_line: 802
 expression: err
 ---
-Wrong shape: expected u32, but got String at Path { shape: Shape { type_identifier: "u32", ty: Primitive(Numeric(Integer { signed: false })), layout: Sized(«4 align 4»), def: Scalar, .. }, steps: [] }
+Wrong shape: expected u32, but got String at <root>

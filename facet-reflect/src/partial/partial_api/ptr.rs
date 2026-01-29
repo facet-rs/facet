@@ -67,15 +67,15 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
 
             // Push a new frame for the inner value
             // Get child type plan NodeId for smart pointer pointee
-            let child_plan = self
+            let child_plan_id = self
                 .root_plan
-                .pointer_pointee_node(parent_type_plan)
+                .pointer_inner_node_id(parent_type_plan)
                 .expect("TypePlan should have pointee node for sized pointer");
             self.mode.stack_mut().push(Frame::new(
                 PtrUninit::new(inner_ptr.as_ptr()),
                 AllocatedShape::new(pointee_shape, inner_layout.size()),
                 FrameOwnership::Owned,
-                child_plan,
+                child_plan_id,
             ));
         } else {
             // pointee is unsized, we only support a handful of cases there
@@ -96,15 +96,15 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 };
                 let string_size = string_layout.size();
                 // For Arc<str> -> String conversion, TypePlan builds for the conversion source (String)
-                let child_plan = self
+                let child_plan_id = self
                     .root_plan
-                    .pointer_pointee_node(parent_type_plan)
+                    .pointer_inner_node_id(parent_type_plan)
                     .expect("TypePlan should have pointee node for str->String conversion");
                 let new_frame = Frame::new(
                     PtrUninit::new(string_ptr.as_ptr()),
                     AllocatedShape::new(String::SHAPE, string_size),
                     FrameOwnership::Owned,
-                    child_plan,
+                    child_plan_id,
                 );
                 // Frame::new already sets tracker = Scalar and is_init = false
                 self.mode.stack_mut().push(new_frame);

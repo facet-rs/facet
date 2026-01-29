@@ -54,6 +54,18 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         // All checks passed, now we can safely make changes
         let fr = self.frames_mut().last_mut().unwrap();
 
+        // Check if we're re-selecting the same variant - preserve the ISet if so.
+        // This is important for internally-tagged enums where variant fields might be
+        // deserialized before the tag field arrives in the JSON stream.
+        let existing_data = match &fr.tracker {
+            Tracker::Enum {
+                variant_idx: existing_idx,
+                data,
+                ..
+            } if *existing_idx == variant_idx => Some(data.clone()),
+            _ => None,
+        };
+
         // Write the discriminant to memory
         unsafe {
             match enum_type.enum_repr {
@@ -101,11 +113,13 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             }
         }
 
-        // Update tracker to track the variant
+        // Update tracker to track the variant.
+        // Preserve existing ISet if re-selecting the same variant (for internally-tagged enums
+        // where fields may arrive before the tag).
         fr.tracker = Tracker::Enum {
             variant,
             variant_idx,
-            data: ISet::new(variant.data.fields.len()),
+            data: existing_data.unwrap_or_else(|| ISet::new(variant.data.fields.len())),
             current_child: None,
         };
 
@@ -161,7 +175,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         frame: &mut Frame,
         struct_type: StructType,
         idx: usize,
-        child_plan: crate::typeplan::NodeId,
+        child_plan_id: crate::typeplan::NodeId,
     ) -> Result<Frame, ReflectErrorKind> {
         if idx >= struct_type.fields.len() {
             return Err(ReflectErrorKind::OperationFailed {
@@ -212,7 +226,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             field_ptr,
             AllocatedShape::new(field_shape, field_size),
             FrameOwnership::Field { field_idx: idx },
-            child_plan,
+            child_plan_id,
         );
         if was_field_init {
             unsafe {
@@ -229,7 +243,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         frame: &mut Frame,
         array_type: ArrayType,
         idx: usize,
-        child_plan: crate::typeplan::NodeId,
+        child_plan_id: crate::typeplan::NodeId,
     ) -> Result<Frame, ReflectErrorKind> {
         if idx >= array_type.n {
             return Err(ReflectErrorKind::OperationFailed {
@@ -288,7 +302,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     element_data,
                     AllocatedShape::new(array_type.t, element_layout.size()),
                     FrameOwnership::Field { field_idx: idx },
-                    child_plan,
+                    child_plan_id,
                 );
                 if was_field_init {
                     // safety: `iset` said it was initialized already
@@ -307,7 +321,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         frame: &mut Frame,
         variant: &'static Variant,
         idx: usize,
-        child_plan: crate::typeplan::NodeId,
+        child_plan_id: crate::typeplan::NodeId,
     ) -> Result<Frame, ReflectErrorKind> {
         if idx >= variant.data.fields.len() {
             return Err(ReflectErrorKind::OperationFailed {
@@ -352,7 +366,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             field_ptr,
             AllocatedShape::new(field_shape, field_size),
             FrameOwnership::Field { field_idx: idx },
-            child_plan,
+            child_plan_id,
         );
         if was_field_init {
             // SAFETY: `ISet` told us the field was initialized

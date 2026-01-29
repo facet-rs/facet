@@ -50,6 +50,7 @@ members = [
   "facet-dessert",
   "facet-format",
   "facet-json",
+  "facet-json-classics",
   "facet-postcard",
   "facet-msgpack",
   "facet-toml",
@@ -122,6 +123,10 @@ libtest-mimic = "^0.8.1"
 # See: https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html
 [workspace.lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(facet_no_doc)"] }
+
+[workspace.lints.clippy]
+# Box::leak is always a bug in this codebase - it hides lifetime problems instead of solving them
+disallowed_methods = "deny"
 
 # Profiling profile - release optimizations with line tables for callgrind/perf
 [profile.profiling]

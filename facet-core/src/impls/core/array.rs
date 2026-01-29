@@ -3,9 +3,9 @@
 use core::{cmp::Ordering, fmt};
 
 use crate::{
-    ArrayDef, ArrayVTable, Def, Facet, HashProxy, OxPtrConst, OxPtrMut, OxRef, PtrConst, PtrMut,
-    Shape, ShapeBuilder, Type, TypeNameOpts, TypeOpsIndirect, TypeParam, VTableIndirect, Variance,
-    VarianceDep, VarianceDesc,
+    ArrayDef, ArrayVTable, Def, Facet, HashProxy, OxPtrConst, OxPtrMut, OxPtrUninit, OxRef,
+    PtrConst, PtrMut, PtrUninit, Shape, ShapeBuilder, Type, TypeNameOpts, TypeOpsIndirect,
+    TypeParam, VTableIndirect, Variance, VarianceDep, VarianceDesc,
 };
 
 /// Extract the ArrayDef from a shape, returns None if not an array
@@ -161,14 +161,14 @@ unsafe fn array_drop(ox: OxPtrMut) {
 }
 
 /// Default for [T; N] - default-initializes each element
-unsafe fn array_default(ox: OxPtrMut) {
+unsafe fn array_default(ox: OxPtrUninit) {
     let shape = ox.shape();
     let Some(def) = get_array_def(shape) else {
         return;
     };
     let ptr = ox.ptr();
 
-    let slice_ptr = unsafe { (def.vtable.as_mut_ptr)(ptr) };
+    let slice_ptr = unsafe { (def.vtable.as_mut_ptr)(ptr.assume_init()) };
     let Some(stride) = def
         .t
         .layout
@@ -180,7 +180,8 @@ unsafe fn array_default(ox: OxPtrMut) {
     };
 
     for i in 0..def.n {
-        let elem_ptr = unsafe { PtrMut::new((slice_ptr.as_byte_ptr() as *mut u8).add(i * stride)) };
+        let elem_ptr =
+            unsafe { PtrUninit::new((slice_ptr.as_byte_ptr() as *mut u8).add(i * stride)) };
         if unsafe { def.t.call_default_in_place(elem_ptr) }.is_none() {
             return;
         }

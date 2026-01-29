@@ -1,9 +1,9 @@
 use alloc::{boxed::Box, collections::BTreeMap};
 
 use crate::{
-    Def, Facet, IterVTable, MapDef, MapVTable, OxPtrMut, PtrConst, PtrMut, PtrUninit, Shape,
-    ShapeBuilder, TypeNameFn, TypeNameOpts, TypeOpsIndirect, TypeParam, VTableIndirect, Variance,
-    VarianceDep, VarianceDesc,
+    Def, Facet, IterVTable, MapDef, MapVTable, OxPtrMut, OxPtrUninit, PtrConst, PtrMut, PtrUninit,
+    Shape, ShapeBuilder, TypeNameFn, TypeNameOpts, TypeOpsIndirect, TypeParam, VTableIndirect,
+    Variance, VarianceDep, VarianceDesc,
 };
 
 type BTreeMapIterator<'mem, K, V> = alloc::collections::btree_map::Iter<'mem, K, V>;
@@ -118,8 +118,8 @@ unsafe fn btreemap_drop<K: 'static, V: 'static>(ox: OxPtrMut) {
 }
 
 /// Default for BTreeMap<K, V>
-unsafe fn btreemap_default<K: 'static, V: 'static>(ox: OxPtrMut) {
-    unsafe { ox.ptr().as_uninit().put(BTreeMap::<K, V>::new()) };
+unsafe fn btreemap_default<K: 'static, V: 'static>(ox: OxPtrUninit) {
+    unsafe { ox.put(BTreeMap::<K, V>::new()) };
 }
 
 // TODO: Debug, Hash, PartialEq, Eq, PartialOrd, Ord, for BTreeMap, BTreeSet

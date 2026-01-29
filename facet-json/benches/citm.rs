@@ -1,16 +1,9 @@
 //! Benchmark parsing citm_catalog.json from nativejson-benchmark.
-//!
-//! Run with:
-//!   CITM_CATALOG_PATH=/path/to/citm_catalog.json cargo bench -p facet-json --bench citm
-//!
-//! Download the file from:
-//!   https://github.com/miloyip/nativejson-benchmark/blob/master/data/citm_catalog.json
 
 use divan::{Bencher, black_box};
 use facet::Facet;
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::sync::LazyLock;
 
 fn main() {
     divan::main();
@@ -95,21 +88,9 @@ struct Area {
 // Data loading
 // =============================================================================
 
-static JSON_DATA: LazyLock<Vec<u8>> = LazyLock::new(|| {
-    let path = std::env::var("CITM_CATALOG_PATH").unwrap_or_else(|_| {
-        // Default: look in parent of workspace root (facet-json is inside facet workspace)
-        concat!(env!("CARGO_MANIFEST_DIR"), "/../../citm_catalog.json").to_string()
-    });
-    std::fs::read(&path).unwrap_or_else(|e| {
-        panic!(
-            "Failed to read {path}: {e}\n\
-             Download from: https://github.com/miloyip/nativejson-benchmark/blob/master/data/citm_catalog.json"
-        )
-    })
-});
-
-static JSON_STR: LazyLock<String> =
-    LazyLock::new(|| String::from_utf8(JSON_DATA.clone()).expect("JSON should be valid UTF-8"));
+fn json_str() -> &'static str {
+    &facet_json_classics::CITM_CATALOG
+}
 
 // =============================================================================
 // Benchmarks
@@ -117,17 +98,16 @@ static JSON_STR: LazyLock<String> =
 
 #[divan::bench]
 fn serde_json(bencher: Bencher) {
-    let data = &*JSON_DATA;
+    let data = json_str();
     bencher.bench(|| {
-        let result: CitmCatalog = black_box(serde_json::from_slice(black_box(data)).unwrap());
+        let result: CitmCatalog = black_box(serde_json::from_str(black_box(data)).unwrap());
         black_box(result)
     });
 }
 
-/// facet-json using from_str (input is &str, skips redundant UTF-8 validation)
 #[divan::bench]
 fn facet_json(bencher: Bencher) {
-    let data = &*JSON_STR;
+    let data = json_str();
     bencher.bench(|| {
         let result: CitmCatalog = black_box(facet_json::from_str(black_box(data)).unwrap());
         black_box(result)

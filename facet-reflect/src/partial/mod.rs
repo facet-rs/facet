@@ -109,15 +109,17 @@
 //! - Properly handling drop semantics for partially initialized values
 //! - Supporting both owned and borrowed values through lifetime parameters
 
-use alloc::{collections::BTreeMap, vec::Vec};
+use alloc::{collections::BTreeMap, sync::Arc, vec::Vec};
 
 mod arena;
 mod iset;
-pub mod typeplan;
+pub(crate) mod typeplan;
+pub use typeplan::{DeserStrategy, TypePlan};
 
 mod partial_api;
 
-use crate::{KeyPath, ReflectErrorKind, TrackerKind, trace};
+use crate::{ReflectErrorKind, TrackerKind, trace, typeplan::TypePlanCore};
+use facet_path::{Path, PathStep};
 
 use core::marker::PhantomData;
 
@@ -125,7 +127,7 @@ mod heap_value;
 pub use heap_value::*;
 
 use facet_core::{
-    Def, EnumType, Field, PtrMut, PtrUninit, Shape, SliceBuilderVTable, Type, UserType, Variant,
+    Def, EnumType, Field, PtrUninit, Shape, SliceBuilderVTable, Type, UserType, Variant,
 };
 use iset::ISet;
 use typeplan::{FieldDefault, FieldInitPlan, FillRule};
@@ -161,15 +163,10 @@ enum FrameMode {
         /// Path calculations are relative to this depth.
         start_depth: usize,
 
-        /// Current path as we navigate (e.g., ["inner", "x"]).
-        // TODO: Intern key paths to avoid repeated allocations. The Resolution
-        // already knows all possible paths, so we could use indices into that.
-        current_path: KeyPath,
-
-        /// Frames saved when popped, keyed by their path.
+        /// Frames saved when popped, keyed by their path (derived from frame stack).
         /// When we re-enter a path, we restore the stored frame.
-        // TODO: Consider using path indices instead of cloned KeyPaths as keys.
-        stored_frames: BTreeMap<KeyPath, Frame>,
+        /// Uses the full `Path` type which includes the root shape for proper type anchoring.
+        stored_frames: BTreeMap<Path, Frame>,
     },
 }
 
@@ -200,14 +197,6 @@ impl FrameMode {
             FrameMode::Strict { .. } => None,
         }
     }
-
-    /// Get the current path if in deferred mode.
-    const fn current_path(&self) -> Option<&KeyPath> {
-        match self {
-            FrameMode::Deferred { current_path, .. } => Some(current_path),
-            FrameMode::Strict { .. } => None,
-        }
-    }
 }
 
 /// A type-erased, heap-allocated, partially-initialized value.
@@ -233,10 +222,15 @@ pub struct Partial<'facet, const BORROW: bool = true> {
 
     /// Precomputed deserialization plan for the root type.
     /// Built once at allocation time, navigated in parallel with value construction.
-    /// Each Frame holds a pointer into this tree.
-    root_plan: alloc::boxed::Box<typeplan::TypePlan>,
+    /// Each Frame holds a NodeId (index) into this plan's arenas.
+    root_plan: Arc<TypePlanCore>,
 
-    invariant: PhantomData<fn(&'facet ()) -> &'facet ()>,
+    /// PhantomData marker for the 'facet lifetime.
+    /// This is covariant in 'facet, which is safe because 'facet represents
+    /// the lifetime of borrowed data FROM the input (deserialization source).
+    /// A Partial<'long, ...> can be safely treated as Partial<'short, ...>
+    /// because it only needs borrowed data to live at least as long as 'short.
+    _marker: PhantomData<&'facet ()>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -375,10 +369,10 @@ pub(crate) struct Frame {
     /// Used during custom deserialization to convert from proxy type to target type.
     pub(crate) shape_level_proxy: Option<&'static facet_core::ProxyDef>,
 
-    /// NodeId into the precomputed TypePlan for this frame's type.
+    /// Index of the precomputed TypePlan node for this frame's type.
     /// This is navigated in parallel with the value - when we begin_nth_field,
-    /// the new frame gets the NodeId for that field's child plan.
-    /// The TypePlan arena is owned by Partial and lives as long as the Partial.
+    /// the new frame gets the index for that field's child plan node.
+    /// Use `plan.node(type_plan)` to get the actual `&TypePlanNode`.
     /// Always present - TypePlan is built for what we actually deserialize into
     /// (including proxies).
     pub(crate) type_plan: typeplan::NodeId,
@@ -935,8 +929,7 @@ impl Frame {
         {
             // If no fields were visited and the container has a default, use it
             // SAFETY: We're about to initialize the entire struct with its default value
-            let data_mut = unsafe { self.data.assume_init() };
-            if unsafe { self.allocated.shape().call_default_in_place(data_mut) }.is_some() {
+            if unsafe { self.allocated.shape().call_default_in_place(self.data) }.is_some() {
                 self.is_init = true;
                 return Ok(());
             }
@@ -959,8 +952,7 @@ impl Frame {
                     let no_fields_set = (0..struct_type.fields.len()).all(|i| !iset.get(i));
                     if no_fields_set {
                         // SAFETY: We're about to initialize the entire struct with its default value
-                        let data_mut = unsafe { self.data.assume_init() };
-                        if unsafe { self.allocated.shape().call_default_in_place(data_mut) }
+                        if unsafe { self.allocated.shape().call_default_in_place(self.data) }
                             .is_some()
                         {
                             self.tracker = Tracker::Scalar;
@@ -1069,9 +1061,8 @@ impl Frame {
                     return true;
                 }
                 DefaultSource::FromTrait => {
-                    // Use the type's Default trait - needs PtrMut
-                    let field_ptr_mut = unsafe { field_ptr.assume_init() };
-                    if unsafe { field.shape().call_default_in_place(field_ptr_mut) }.is_some() {
+                    // Use the type's Default trait
+                    if unsafe { field.shape().call_default_in_place(field_ptr) }.is_some() {
                         return true;
                     }
                 }
@@ -1081,38 +1072,34 @@ impl Frame {
         // If container has #[facet(default)] and the field's type implements Default,
         // use the type's Default impl. This allows `#[facet(default)]` on a struct to
         // mean "use Default for any missing fields whose types implement Default".
-        if container_has_default {
-            let field_ptr_mut = unsafe { field_ptr.assume_init() };
-            if unsafe { field.shape().call_default_in_place(field_ptr_mut) }.is_some() {
-                return true;
-            }
+        if container_has_default
+            && unsafe { field.shape().call_default_in_place(field_ptr) }.is_some()
+        {
+            return true;
         }
 
         // Special case: Option<T> always defaults to None, even without explicit #[facet(default)]
         // This is because Option is fundamentally "optional" - if not set, it should be None
-        if matches!(field.shape().def, Def::Option(_)) {
-            let field_ptr_mut = unsafe { field_ptr.assume_init() };
-            if unsafe { field.shape().call_default_in_place(field_ptr_mut) }.is_some() {
-                return true;
-            }
+        if matches!(field.shape().def, Def::Option(_))
+            && unsafe { field.shape().call_default_in_place(field_ptr) }.is_some()
+        {
+            return true;
         }
 
         // Special case: () unit type always defaults to ()
-        if field.shape().is_type::<()>() {
-            let field_ptr_mut = unsafe { field_ptr.assume_init() };
-            if unsafe { field.shape().call_default_in_place(field_ptr_mut) }.is_some() {
-                return true;
-            }
+        if field.shape().is_type::<()>()
+            && unsafe { field.shape().call_default_in_place(field_ptr) }.is_some()
+        {
+            return true;
         }
 
         // Special case: Collection types (Vec, HashMap, HashSet, etc.) default to empty
         // These types have obvious "zero values" and it's almost always what you want
         // when deserializing data where the collection is simply absent.
-        if matches!(field.shape().def, Def::List(_) | Def::Map(_) | Def::Set(_)) {
-            let field_ptr_mut = unsafe { field_ptr.assume_init() };
-            if unsafe { field.shape().call_default_in_place(field_ptr_mut) }.is_some() {
-                return true;
-            }
+        if matches!(field.shape().def, Def::List(_) | Def::Map(_) | Def::Set(_))
+            && unsafe { field.shape().call_default_in_place(field_ptr) }.is_some()
+        {
+            return true;
         }
 
         false
@@ -1282,6 +1269,7 @@ impl Frame {
     /// # Arguments
     /// * `plans` - Precomputed field initialization plans from TypePlan
     /// * `num_fields` - Total number of fields (from StructPlan/VariantPlanMeta)
+    /// * `type_plan_core` - Reference to the TypePlanCore for resolving validators
     ///
     /// # Returns
     /// `Ok(())` if all required fields are set (or filled with defaults), or an error
@@ -1291,6 +1279,7 @@ impl Frame {
         &mut self,
         plans: &[FieldInitPlan],
         num_fields: usize,
+        type_plan_core: &TypePlanCore,
     ) -> Result<(), ReflectErrorKind> {
         // With lazy tracker initialization, structs start with Tracker::Scalar.
         // If is_init is true with Scalar, the struct was set wholesale - nothing to do.
@@ -1300,8 +1289,7 @@ impl Frame {
             && matches!(self.allocated.shape().ty, Type::User(UserType::Struct(_)))
         {
             // Try container-level default first
-            let data_mut = unsafe { self.data.assume_init() };
-            if unsafe { self.allocated.shape().call_default_in_place(data_mut) }.is_some() {
+            if unsafe { self.allocated.shape().call_default_in_place(self.data) }.is_some() {
                 self.is_init = true;
                 return Ok(());
             }
@@ -1342,9 +1330,8 @@ impl Frame {
                                 true
                             }
                             FieldDefault::FromTrait(shape) => {
-                                // SAFETY: call_default_in_place writes to the pointer
-                                let field_ptr_mut = PtrMut::new(field_ptr.as_mut_byte_ptr());
-                                unsafe { shape.call_default_in_place(field_ptr_mut) }.is_some()
+                                // SAFETY: call_default_in_place writes to uninitialized memory
+                                unsafe { shape.call_default_in_place(field_ptr) }.is_some()
                             }
                         };
 
@@ -1369,7 +1356,7 @@ impl Frame {
             // Run validators on the (now initialized) field
             if !plan.validators.is_empty() {
                 let field_ptr = unsafe { self.data.field_init(plan.offset) };
-                for validator in &plan.validators {
+                for validator in type_plan_core.validators(plan.validators) {
                     validator.run(field_ptr.into(), plan.name, self.allocated.shape())?;
                 }
             }
@@ -1434,7 +1421,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
     /// Get a mutable reference to the frame stack.
     #[inline]
-    pub(crate) const fn frames_mut(&mut self) -> &mut Vec<Frame> {
+    pub(crate) fn frames_mut(&mut self) -> &mut Vec<Frame> {
         self.mode.stack_mut()
     }
 
@@ -1450,10 +1437,69 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         self.mode.start_depth()
     }
 
-    /// Get the current path if in deferred mode.
-    #[inline]
-    pub(crate) const fn current_path(&self) -> Option<&KeyPath> {
-        self.mode.current_path()
+    /// Derive the path from the current frame stack.
+    ///
+    /// Compute the navigation path for deferred mode storage and lookup.
+    /// The returned `Path` is anchored to the root shape for proper type context.
+    ///
+    /// This extracts Field steps from struct/enum frames and Index steps from
+    /// array/list frames. Option wrappers, smart pointers (Box, Rc, etc.), and
+    /// other transparent types don't add path steps.
+    ///
+    /// This MUST match the storage path computation in end() for consistency.
+    pub(crate) fn derive_path(&self) -> Path {
+        // Get the root shape from the first frame
+        let root_shape = self
+            .frames()
+            .first()
+            .map(|f| f.allocated.shape())
+            .unwrap_or_else(|| {
+                // Fallback to unit type shape if no frames (shouldn't happen in practice)
+                <() as facet_core::Facet>::SHAPE
+            });
+
+        let mut path = Path::new(root_shape);
+
+        // Walk ALL frames, extracting navigation steps
+        // This matches the storage path computation in end()
+        for frame in self.frames().iter() {
+            match &frame.tracker {
+                Tracker::Struct {
+                    current_child: Some(idx),
+                    ..
+                } => {
+                    path.push(PathStep::Field(*idx as u32));
+                }
+                Tracker::Enum {
+                    current_child: Some(idx),
+                    ..
+                } => {
+                    path.push(PathStep::Field(*idx as u32));
+                }
+                Tracker::List {
+                    current_child: Some(idx),
+                } => {
+                    path.push(PathStep::Index(*idx as u32));
+                }
+                Tracker::Array {
+                    current_child: Some(idx),
+                    ..
+                } => {
+                    path.push(PathStep::Index(*idx as u32));
+                }
+                Tracker::Option {
+                    building_inner: true,
+                } => {
+                    // Option with building_inner contributes OptionSome to path
+                    path.push(PathStep::OptionSome);
+                }
+                // Other tracker types (SmartPointer, Map, etc.)
+                // don't contribute to the storage path - they're transparent wrappers
+                _ => {}
+            }
+        }
+
+        path
     }
 }
 
@@ -1467,16 +1513,70 @@ impl<'facet, const BORROW: bool> Drop for Partial<'facet, BORROW> {
         // - No double-free possible by construction
 
         // 1. Clean up stored frames from deferred state
-        if let FrameMode::Deferred { stored_frames, .. } = &mut self.mode {
+        if let FrameMode::Deferred {
+            stored_frames,
+            stack,
+            ..
+        } = &mut self.mode
+        {
             // Stored frames have ownership of their data (parent's iset was cleared).
             // IMPORTANT: Process in deepest-first order so children are dropped before parents.
             // Child frames have data pointers into parent memory, so parents must stay valid
             // until all their children are cleaned up.
+            //
+            // CRITICAL: Before dropping a child frame, we must mark the parent's field as
+            // uninitialized. Otherwise, when we later drop the parent, it will try to drop
+            // that field again, causing a double-free.
             let mut stored_frames = core::mem::take(stored_frames);
             let mut paths: Vec<_> = stored_frames.keys().cloned().collect();
-            paths.sort_by_key(|p| core::cmp::Reverse(p.len()));
+            // Sort by path depth (number of steps), deepest first
+            paths.sort_by_key(|p| core::cmp::Reverse(p.steps.len()));
             for path in paths {
                 if let Some(mut frame) = stored_frames.remove(&path) {
+                    // Before dropping this frame, mark the parent's field as uninitialized
+                    // so the parent won't try to drop it again.
+                    if let Some(PathStep::Field(field_idx)) = path.steps.last() {
+                        let field_idx = *field_idx as usize;
+                        // Construct parent path
+                        let parent_path = Path {
+                            shape: path.shape,
+                            steps: path.steps[..path.steps.len() - 1].to_vec(),
+                        };
+                        // Find and update the parent frame - check BOTH stored_frames AND the stack
+                        let parent_found_in_stored =
+                            if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
+                                match &mut parent_frame.tracker {
+                                    Tracker::Struct { iset, .. } => {
+                                        iset.unset(field_idx);
+                                    }
+                                    Tracker::Enum { data, .. } => {
+                                        data.unset(field_idx);
+                                    }
+                                    _ => {}
+                                }
+                                true
+                            } else {
+                                false
+                            };
+
+                        // If parent not in stored_frames, check the stack.
+                        // For stored frames at depth 1 (e.g., [Field(1)]), the parent is
+                        // on the stack. We need to find it and unset its bit.
+                        if !parent_found_in_stored && parent_path.steps.is_empty() {
+                            // Parent is the root frame on the stack
+                            if let Some(root_frame) = stack.first_mut() {
+                                match &mut root_frame.tracker {
+                                    Tracker::Struct { iset, .. } => {
+                                        iset.unset(field_idx);
+                                    }
+                                    Tracker::Enum { data, .. } => {
+                                        data.unset(field_idx);
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
                     frame.deinit();
                     frame.dealloc();
                 }
@@ -1484,6 +1584,8 @@ impl<'facet, const BORROW: bool> Drop for Partial<'facet, BORROW> {
         }
 
         // 2. Pop and deinit stack frames
+        // CRITICAL: Before deiniting a child frame, we must mark the parent's field as
+        // uninitialized. Otherwise, the parent will try to drop the field again.
         loop {
             let stack = self.mode.stack_mut();
             if stack.is_empty() {
@@ -1491,6 +1593,26 @@ impl<'facet, const BORROW: bool> Drop for Partial<'facet, BORROW> {
             }
 
             let mut frame = stack.pop().unwrap();
+
+            // If this frame has Field ownership, mark the parent's bit as unset
+            // so the parent won't try to drop it again.
+            if let FrameOwnership::Field { field_idx } = frame.ownership
+                && let Some(parent_frame) = stack.last_mut()
+            {
+                match &mut parent_frame.tracker {
+                    Tracker::Struct { iset, .. } => {
+                        iset.unset(field_idx);
+                    }
+                    Tracker::Enum { data, .. } => {
+                        data.unset(field_idx);
+                    }
+                    Tracker::Array { iset, .. } => {
+                        iset.unset(field_idx);
+                    }
+                    _ => {}
+                }
+            }
+
             frame.deinit();
             frame.dealloc();
         }
@@ -1516,7 +1638,10 @@ mod size_tests {
             "Option<&'static facet_core::ProxyDef>: {} bytes",
             size_of::<Option<&'static facet_core::ProxyDef>>()
         );
-        eprintln!("typeplan::NodeId: {} bytes", size_of::<typeplan::NodeId>());
+        eprintln!(
+            "TypePlanNode: {} bytes",
+            size_of::<typeplan::TypePlanNode>()
+        );
         eprintln!("Vec<Frame>: {} bytes", size_of::<Vec<Frame>>());
         eprintln!("MapInsertState: {} bytes", size_of::<MapInsertState>());
         eprintln!(

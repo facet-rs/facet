@@ -80,6 +80,22 @@ jobs:
           export CI=true
           just miri
 
+  miri-json:
+    runs-on: depot-ubuntu-24.04-64
+
+    container:
+      image: ghcr.io/facet-rs/facet-ci:latest-miri-amd64
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: ✨ Run miri for facet-json
+        shell: bash
+        run: |
+          export CI=true
+          just miri-json
+
   valgrind:
     runs-on: depot-ubuntu-24.04-32
 

@@ -1,16 +1,9 @@
-//! Benchmark parsing twitter.json from simdjson.
-//!
-//! Run with:
-//!   TWITTER_PATH=/path/to/twitter.json cargo bench -p facet-json --bench twitter
-//!
-//! Download the file from:
-//!   https://raw.githubusercontent.com/simdjson/simdjson/master/jsonexamples/twitter.json
+//! Benchmark parsing twitter.json from nativejson-benchmark.
 
 use divan::{Bencher, black_box};
 use facet::Facet;
 use serde::Deserialize;
 use std::borrow::Cow;
-use std::sync::LazyLock;
 
 fn main() {
     divan::main();
@@ -442,18 +435,9 @@ struct MediaOwned {
 // Data loading
 // =============================================================================
 
-static JSON_STR: LazyLock<String> = LazyLock::new(|| {
-    let path = std::env::var("TWITTER_PATH").unwrap_or_else(|_| {
-        // Default: look in parent of workspace root
-        concat!(env!("CARGO_MANIFEST_DIR"), "/../../twitter.json").to_string()
-    });
-    std::fs::read_to_string(&path).unwrap_or_else(|e| {
-        panic!(
-            "Failed to read {path}: {e}\n\
-             Download from: https://raw.githubusercontent.com/simdjson/simdjson/master/jsonexamples/twitter.json"
-        )
-    })
-});
+fn json_str() -> &'static str {
+    &facet_json_classics::TWITTER
+}
 
 // =============================================================================
 // Benchmarks
@@ -461,7 +445,7 @@ static JSON_STR: LazyLock<String> = LazyLock::new(|| {
 
 #[divan::bench]
 fn serde_json(bencher: Bencher) {
-    let data = &*JSON_STR;
+    let data = json_str();
     bencher.bench(|| {
         let result: TwitterOwned = black_box(serde_json::from_str(black_box(data)).unwrap());
         black_box(result)
@@ -470,7 +454,7 @@ fn serde_json(bencher: Bencher) {
 
 #[divan::bench]
 fn facet_json(bencher: Bencher) {
-    let data = &*JSON_STR;
+    let data = json_str();
     bencher.bench(|| {
         let result: Twitter = black_box(facet_json::from_str_borrowed(black_box(data)).unwrap());
         black_box(result)

@@ -101,11 +101,20 @@ doc-tests-ci *args:
 
 miri *args:
     #!/usr/bin/env -S bash -euo pipefail
-    export RUSTUP_TOOLCHAIN=nightly-2025-12-09
+    export RUSTUP_TOOLCHAIN=nightly-2026-01-28
     export MIRIFLAGS="-Zmiri-strict-provenance -Zmiri-env-forward=NEXTEST"
     rustup toolchain install "${RUSTUP_TOOLCHAIN}"
     rustup "+${RUSTUP_TOOLCHAIN}" component add miri rust-src
     cargo "+${RUSTUP_TOOLCHAIN}" miri nextest run --target-dir target/miri -p facet-reflect -p facet-core -p facet-value {{ args }}
+
+miri-json *args:
+    #!/usr/bin/env -S bash -euo pipefail
+    export RUSTUP_TOOLCHAIN=nightly-2026-01-28
+    export MIRIFLAGS="-Zmiri-strict-provenance -Zmiri-env-forward=NEXTEST"
+    rustup toolchain install "${RUSTUP_TOOLCHAIN}"
+    rustup "+${RUSTUP_TOOLCHAIN}" component add miri rust-src
+    # Exclude jit tests (Cranelift) and tendril tests (integer-to-pointer casts)
+    cargo "+${RUSTUP_TOOLCHAIN}" miri nextest run --target-dir target/miri -p facet-json -E 'not test(/jit/) and not test(/tendril/)' {{ args }}
 
 miri-ci *args:
     #!/usr/bin/env -S bash -euxo pipefail

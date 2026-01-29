@@ -8,8 +8,8 @@ use indexmap::IndexMap;
 use crate::{PtrConst, PtrMut, PtrUninit};
 
 use crate::{
-    Def, Facet, IterVTable, MapDef, MapVTable, OxPtrMut, Shape, ShapeBuilder, Type, TypeNameFn,
-    TypeNameOpts, TypeOpsIndirect, TypeParam, UserType,
+    Def, Facet, IterVTable, MapDef, MapVTable, OxPtrMut, OxPtrUninit, Shape, ShapeBuilder, Type,
+    TypeNameFn, TypeNameOpts, TypeOpsIndirect, TypeParam, UserType,
 };
 
 type IndexMapIterator<'mem, K, V> = indexmap::map::Iter<'mem, K, V>;
@@ -96,8 +96,8 @@ unsafe fn indexmap_drop<K, V, S>(target: OxPtrMut) {
     }
 }
 
-unsafe fn indexmap_default<K, V, S: Default + BuildHasher>(ox: OxPtrMut) {
-    unsafe { ox.ptr().as_uninit().put(IndexMap::<K, V, S>::default()) };
+unsafe fn indexmap_default<K, V, S: Default + BuildHasher>(ox: OxPtrUninit) {
+    unsafe { ox.put(IndexMap::<K, V, S>::default()) };
 }
 
 /// Build an IndexMap from a contiguous slice of (K, V) pairs.

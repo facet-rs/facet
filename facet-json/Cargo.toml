@@ -38,6 +38,7 @@ mime = { version = "0.3", optional = true }
 
 [dev-dependencies]
 compact_str = { workspace = true }
+facet-json-classics = { path = "../facet-json-classics" }
 divan = { workspace = true }
 facet = { path = "../facet", features = ["doc", "net", "compact_str", "smol_str", "iddqd", "tendril"] }
 serde = { workspace = true }
@@ -57,11 +58,19 @@ name = "format_suite"
 harness = false
 
 [[bench]]
+name = "canada"
+harness = false
+
+[[bench]]
 name = "citm"
 harness = false
 
 [[bench]]
 name = "twitter"
+harness = false
+
+[[bench]]
+name = "typeplan_reuse"
 harness = false
 
 [[example]]

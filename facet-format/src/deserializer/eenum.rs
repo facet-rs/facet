@@ -527,7 +527,10 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
                             // Look up field in the inner variant
                             let inner_variant_plan = wip.selected_variant_plan().unwrap();
-                            if let Some(idx) = inner_variant_plan.field_lookup.find(key_name) {
+                            if let Some(idx) = inner_variant_plan
+                                .field_lookup
+                                .find(key_name, wip.type_plan_core())
+                            {
                                 wip = wip
                                     .begin_nth_field(idx)?
                                     .with(|w| self.deserialize_into(w))?
@@ -654,7 +657,10 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                         // Simple case: direct field lookup using precomputed FieldLookup
                         let variant_plan = wip.selected_variant_plan().unwrap();
 
-                        if let Some(idx) = variant_plan.field_lookup.find(key_name) {
+                        if let Some(idx) = variant_plan
+                            .field_lookup
+                            .find(key_name, wip.type_plan_core())
+                        {
                             wip = wip
                                 .begin_nth_field(idx)?
                                 .with(|w| self.deserialize_into(w))?
@@ -1067,7 +1073,10 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                     // Look up field using precomputed FieldLookup
                     let variant_plan = wip.selected_variant_plan().unwrap();
 
-                    if let Some(idx) = variant_plan.field_lookup.find(key_name) {
+                    if let Some(idx) = variant_plan
+                        .field_lookup
+                        .find(key_name, wip.type_plan_core())
+                    {
                         wip = wip
                             .begin_nth_field(idx)?
                             .with(|w| self.deserialize_into(w))?
@@ -1449,7 +1458,10 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                                 // Use precomputed FieldLookup for direct field matching
                                 let variant_plan = wip.selected_variant_plan().unwrap();
 
-                                if let Some(idx) = variant_plan.field_lookup.find(key_name) {
+                                if let Some(idx) = variant_plan
+                                    .field_lookup
+                                    .find(key_name, wip.type_plan_core())
+                                {
                                     wip = wip
                                         .begin_nth_field(idx)?
                                         .with(|w| self.deserialize_into(w))?

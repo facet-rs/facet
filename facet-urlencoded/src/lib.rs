@@ -2,7 +2,7 @@
 #![doc = include_str!("../README.md")]
 
 use facet_core::{Def, Facet, Type, UserType};
-use facet_reflect::{AllocError, Partial, ReflectError, ShapeMismatchError};
+use facet_reflect::{AllocError, Partial, ReflectError, ShapeMismatchError, TypePlan};
 use log::*;
 
 #[cfg(test)]
@@ -81,7 +81,8 @@ pub use self::axum::{FormRejection, QueryRejection};
 pub fn from_str<'input: 'facet, 'facet, T: Facet<'facet>>(
     urlencoded: &'input str,
 ) -> Result<T, UrlEncodedError> {
-    let partial = Partial::alloc::<T>()?;
+    let plan = TypePlan::<T>::build()?;
+    let partial = plan.partial()?;
     let partial = from_str_value(partial, urlencoded)?;
     let result: T = partial.build()?.materialize()?;
     Ok(result)
@@ -110,7 +111,8 @@ pub fn from_str<'input: 'facet, 'facet, T: Facet<'facet>>(
 /// assert_eq!(params, SearchParams { query: "rust".to_string(), page: 1 });
 /// ```
 pub fn from_str_owned<T: Facet<'static>>(urlencoded: &str) -> Result<T, UrlEncodedError> {
-    let partial = Partial::alloc::<T>()?;
+    let plan = TypePlan::<T>::build()?;
+    let partial = plan.partial_owned()?;
     let partial = from_str_value(partial, urlencoded)?;
     let result: T = partial.build()?.materialize()?;
     Ok(result)
@@ -119,10 +121,10 @@ pub fn from_str_owned<T: Facet<'static>>(urlencoded: &str) -> Result<T, UrlEncod
 /// Deserializes a URL encoded form data string into an heap-allocated value.
 ///
 /// This is the lower-level function that works with `Partial` directly.
-fn from_str_value<'mem>(
-    mut wip: Partial<'mem>,
+fn from_str_value<'facet, const BORROW: bool>(
+    mut wip: Partial<'facet, BORROW>,
     urlencoded: &str,
-) -> Result<Partial<'mem>, UrlEncodedError> {
+) -> Result<Partial<'facet, BORROW>, UrlEncodedError> {
     trace!("Starting URL encoded form data deserialization");
 
     // Parse the URL encoded string into key-value pairs
@@ -218,10 +220,10 @@ impl NestedValues {
 }
 
 /// Deserialize a value recursively using the nested values
-fn deserialize_value<'mem>(
-    mut wip: Partial<'mem>,
+fn deserialize_value<'facet, const BORROW: bool>(
+    mut wip: Partial<'facet, BORROW>,
     values: &NestedValues,
-) -> Result<Partial<'mem>, UrlEncodedError> {
+) -> Result<Partial<'facet, BORROW>, UrlEncodedError> {
     let shape = wip.shape();
     match shape.ty {
         Type::User(UserType::Struct(_)) => {
@@ -264,11 +266,11 @@ fn deserialize_value<'mem>(
 }
 
 /// Helper function to deserialize a scalar field
-fn deserialize_scalar_field<'mem>(
+fn deserialize_scalar_field<'facet, const BORROW: bool>(
     key: &str,
     value: &str,
-    mut wip: Partial<'mem>,
-) -> Result<Partial<'mem>, UrlEncodedError> {
+    mut wip: Partial<'facet, BORROW>,
+) -> Result<Partial<'facet, BORROW>, UrlEncodedError> {
     match wip.shape().def {
         Def::Scalar => {
             if wip.shape().is_type::<String>() {
@@ -300,11 +302,11 @@ fn deserialize_scalar_field<'mem>(
 }
 
 /// Helper function to deserialize a nested field
-fn deserialize_nested_field<'mem>(
+fn deserialize_nested_field<'facet, const BORROW: bool>(
     key: &str,
     nested_values: &NestedValues,
-    mut wip: Partial<'mem>,
-) -> Result<Partial<'mem>, UrlEncodedError> {
+    mut wip: Partial<'facet, BORROW>,
+) -> Result<Partial<'facet, BORROW>, UrlEncodedError> {
     let shape = wip.shape();
     match shape.ty {
         Type::User(UserType::Struct(_)) => {

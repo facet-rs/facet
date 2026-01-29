@@ -293,7 +293,7 @@ pub enum ReflectErrorKind {
 
 impl core::fmt::Display for ReflectError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{} at {:?}", self.kind, self.path)
+        write!(f, "{} at {}", self.kind, self.path)
     }
 }
 
@@ -467,3 +467,15 @@ impl core::fmt::Debug for ReflectErrorKind {
 
 impl core::error::Error for ReflectError {}
 impl core::error::Error for ReflectErrorKind {}
+
+impl From<AllocError> for ReflectError {
+    fn from(e: AllocError) -> Self {
+        ReflectError {
+            path: Path::new(e.shape),
+            kind: ReflectErrorKind::OperationFailed {
+                shape: e.shape,
+                operation: e.operation,
+            },
+        }
+    }
+}

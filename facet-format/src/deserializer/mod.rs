@@ -128,7 +128,7 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 use facet_core::{Facet, Shape};
-use facet_reflect::{HeapValue, Partial, Span};
+use facet_reflect::{HeapValue, Partial, Span, TypePlan};
 use facet_solver::{KeyResult, Schema, Solver};
 
 use crate::{FormatParser, ParseEvent};
@@ -259,12 +259,13 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, true> {
     where
         T: Facet<'input>,
     {
-        let wip: Partial<'input, true> = Partial::alloc::<T>()?;
+        let plan = TypePlan::<T>::build()?;
+        let wip = plan.partial()?;
         let partial = self.deserialize_into(wip)?;
         // SpanGuard must cover build() and materialize() which can fail with ReflectError.
         // Created AFTER deserialize_into so last_span points to the final token.
         let _guard = SpanGuard::new(self.last_span);
-        let heap_value: HeapValue<'input, true> = partial.build()?;
+        let heap_value = partial.build()?;
         Ok(heap_value.materialize::<T>()?)
     }
 
@@ -285,7 +286,8 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, true> {
     where
         T: Facet<'input>,
     {
-        let wip: Partial<'input, true> = Partial::alloc::<T>()?;
+        let plan = TypePlan::<T>::build()?;
+        let wip = plan.partial()?;
         let wip = wip.begin_deferred()?;
         let partial = self.deserialize_into(wip)?;
 
@@ -293,7 +295,7 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, true> {
         // Created AFTER deserialize_into so last_span points to the final token.
         let _guard = SpanGuard::new(self.last_span);
         let partial = partial.finish_deferred()?;
-        let heap_value: HeapValue<'input, true> = partial.build()?;
+        let heap_value = partial.build()?;
         Ok(heap_value.materialize::<T>()?)
     }
 }
@@ -304,32 +306,24 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
     where
         T: Facet<'static>,
     {
-        // Get format namespace for format-specific proxy resolution in TypePlan
-        let format_ns = self.parser.format_namespace();
-
-        // SAFETY: alloc_owned produces Partial<'static, false>, but our deserializer
+        let plan = TypePlan::<T>::build()?;
+        // SAFETY: partial_owned produces Partial<'static, false>, but deserialize_into
         // expects 'input. Since BORROW=false means we never borrow from input anyway,
-        // this is safe. We also transmute the HeapValue back to 'static before materializing.
+        // this is safe.
         #[allow(unsafe_code)]
-        let wip: Partial<'input, false> = unsafe {
-            core::mem::transmute::<Partial<'static, false>, Partial<'input, false>>(
-                Partial::alloc_owned_for_format_opt::<T>(format_ns)?,
-            )
-        };
+        let wip: Partial<'input, false> = unsafe { core::mem::transmute(plan.partial_owned()?) };
 
         let partial = self.deserialize_into(wip)?;
 
         // SpanGuard must cover build() and materialize() which can fail with ReflectError.
         // Created AFTER deserialize_into so last_span points to the final token.
         let _guard = SpanGuard::new(self.last_span);
-        let heap_value: HeapValue<'input, false> = partial.build()?;
+        let heap_value = partial.build()?;
 
         // SAFETY: HeapValue<'input, false> contains no borrowed data because BORROW=false.
         // The transmute only changes the phantom lifetime marker.
         #[allow(unsafe_code)]
-        let heap_value: HeapValue<'static, false> = unsafe {
-            core::mem::transmute::<HeapValue<'input, false>, HeapValue<'static, false>>(heap_value)
-        };
+        let heap_value: HeapValue<'static, false> = unsafe { core::mem::transmute(heap_value) };
 
         Ok(heap_value.materialize::<T>()?)
     }
@@ -351,18 +345,12 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
     where
         T: Facet<'static>,
     {
-        // Get format namespace for format-specific proxy resolution in TypePlan
-        let format_ns = self.parser.format_namespace();
-
-        // SAFETY: alloc_owned produces Partial<'static, false>, but our deserializer
+        let plan = TypePlan::<T>::build()?;
+        // SAFETY: partial_owned produces Partial<'static, false>, but deserialize_into
         // expects 'input. Since BORROW=false means we never borrow from input anyway,
-        // this is safe. We also transmute the HeapValue back to 'static before materializing.
+        // this is safe.
         #[allow(unsafe_code)]
-        let wip: Partial<'input, false> = unsafe {
-            core::mem::transmute::<Partial<'static, false>, Partial<'input, false>>(
-                Partial::alloc_owned_for_format_opt::<T>(format_ns)?,
-            )
-        };
+        let wip: Partial<'input, false> = unsafe { core::mem::transmute(plan.partial_owned()?) };
         let wip = wip.begin_deferred()?;
         let partial = self.deserialize_into(wip)?;
 
@@ -370,14 +358,12 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
         // Created AFTER deserialize_into so last_span points to the final token.
         let _guard = SpanGuard::new(self.last_span);
         let partial = partial.finish_deferred()?;
-        let heap_value: HeapValue<'input, false> = partial.build()?;
+        let heap_value = partial.build()?;
 
         // SAFETY: HeapValue<'input, false> contains no borrowed data because BORROW=false.
         // The transmute only changes the phantom lifetime marker.
         #[allow(unsafe_code)]
-        let heap_value: HeapValue<'static, false> = unsafe {
-            core::mem::transmute::<HeapValue<'input, false>, HeapValue<'static, false>>(heap_value)
-        };
+        let heap_value: HeapValue<'static, false> = unsafe { core::mem::transmute(heap_value) };
 
         Ok(heap_value.materialize::<T>()?)
     }
@@ -396,27 +382,24 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
     where
         T: Facet<'static>,
     {
-        // Get format namespace for format-specific proxy resolution in TypePlan
-        let format_ns = self.parser.format_namespace();
-
+        let plan = TypePlan::<T>::build()?;
+        // SAFETY: partial_owned produces Partial<'static, false>, but deserialize_into
+        // expects 'input. Since BORROW=false means we never borrow from input anyway,
+        // this is safe.
         #[allow(unsafe_code)]
-        let wip: Partial<'input, false> = unsafe {
-            core::mem::transmute::<Partial<'static, false>, Partial<'input, false>>(
-                Partial::alloc_owned_for_format_opt::<T>(format_ns)?,
-            )
-        };
+        let wip: Partial<'input, false> = unsafe { core::mem::transmute(plan.partial_owned()?) };
 
         let partial = self.deserialize_into_with_shape(wip, source_shape)?;
 
         // SpanGuard must cover build() and materialize() which can fail with ReflectError.
         // Created AFTER deserialize_into so last_span points to the final token.
         let _guard = SpanGuard::new(self.last_span);
-        let heap_value: HeapValue<'input, false> = partial.build()?;
+        let heap_value = partial.build()?;
 
+        // SAFETY: HeapValue<'input, false> contains no borrowed data because BORROW=false.
+        // The transmute only changes the phantom lifetime marker.
         #[allow(unsafe_code)]
-        let heap_value: HeapValue<'static, false> = unsafe {
-            core::mem::transmute::<HeapValue<'input, false>, HeapValue<'static, false>>(heap_value)
-        };
+        let heap_value: HeapValue<'static, false> = unsafe { core::mem::transmute(heap_value) };
 
         Ok(heap_value.materialize::<T>()?)
     }
