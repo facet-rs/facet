@@ -1289,6 +1289,7 @@ dependencies = [
 name = "facet-reflect"
 version = "0.43.2"
 dependencies = [
+ "bumpalo",
  "camino",
  "eyre",
  "facet",
