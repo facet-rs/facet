@@ -869,13 +869,40 @@ where
     ///
     /// # Type Handling
     ///
-    /// Delegates to `facet_dessert::set_string_value` which handles parsing the string
-    /// into the appropriate scalar type (String, &str, integers, floats, bools, etc.).
+    /// For enums, matches the string against variant names using lowerCamelCase conversion
+    /// (matching the serialization behavior). For other types, delegates to
+    /// `facet_dessert::set_string_value` which handles parsing the string into the
+    /// appropriate scalar type (String, &str, integers, floats, bools, etc.).
     pub(crate) fn set_string_value(
         &mut self,
-        wip: Partial<'de, BORROW>,
+        mut wip: Partial<'de, BORROW>,
         value: Cow<'de, str>,
     ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
+        // Handle enums specially - match variant names with lowerCamelCase conversion
+        if let Type::User(UserType::Enum(enum_def)) = &wip.shape().ty {
+            // Find matching variant
+            for (idx, variant) in enum_def.variants.iter().enumerate() {
+                // Only unit variants can be deserialized from a plain string
+                if variant.data.kind != StructKind::Unit {
+                    continue;
+                }
+
+                // Compute the expected string for this variant (same logic as serialization)
+                let variant_str: Cow<'_, str> = if variant.rename.is_some() {
+                    Cow::Borrowed(variant.effective_name())
+                } else {
+                    to_element_name(variant.name)
+                };
+
+                if value == variant_str {
+                    wip = wip.select_nth_variant(idx)?;
+                    return Ok(wip);
+                }
+            }
+
+            // No match found - fall through to facet_dessert which will give a proper error
+        }
+
         Ok(facet_dessert::set_string_value(
             wip,
             value,

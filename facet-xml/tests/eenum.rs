@@ -205,6 +205,77 @@ fn enum_as_attribute_value_with_option() {
 }
 
 // ============================================================================
+// Enum attribute roundtrip tests (issue #17)
+// ============================================================================
+
+#[test]
+fn enum_as_attribute_value_roundtrip() {
+    // Issue #17: enums as attribute values should serialize to variant name
+
+    #[derive(Debug, Clone, Copy, PartialEq, Facet)]
+    #[repr(C)]
+    enum Status {
+        #[facet(rename = "active")]
+        Active,
+        #[facet(rename = "inactive")]
+        Inactive,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Facet)]
+    #[facet(rename = "Item")]
+    struct Item {
+        #[facet(xml::attribute)]
+        id: u32,
+        #[facet(xml::attribute)]
+        status: Status,
+    }
+
+    let item = Item {
+        id: 42,
+        status: Status::Active,
+    };
+
+    let xml = facet_xml::to_string(&item).unwrap();
+    assert!(xml.contains(r#"status="active""#), "xml was: {}", xml);
+
+    // Roundtrip
+    let parsed: Item = facet_xml::from_str(&xml).unwrap();
+    assert_eq!(parsed.id, 42);
+    assert_eq!(parsed.status, Status::Active);
+}
+
+#[test]
+fn enum_as_attribute_without_rename() {
+    // Test that enums without rename use lowerCamelCase and roundtrip correctly
+
+    #[derive(Debug, Clone, Copy, PartialEq, Facet)]
+    #[repr(C)]
+    enum MyStatus {
+        IsActive,
+        IsInactive,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Facet)]
+    #[facet(rename = "Item")]
+    struct Item {
+        #[facet(xml::attribute)]
+        status: MyStatus,
+    }
+
+    let item = Item {
+        status: MyStatus::IsActive,
+    };
+
+    let xml = facet_xml::to_string(&item).unwrap();
+    // The variant name is converted to lowerCamelCase
+    assert!(xml.contains(r#"status="isActive""#), "xml was: {}", xml);
+
+    // Roundtrip works because deserializer also uses lowerCamelCase matching
+    let parsed: Item = facet_xml::from_str(&xml).unwrap();
+    assert_eq!(parsed.status, MyStatus::IsActive);
+}
+
+// ============================================================================
 // Enum variant fields with xml::attribute (issue #1855)
 // ============================================================================
 

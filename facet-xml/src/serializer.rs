@@ -39,6 +39,22 @@ fn write_scalar_value(
             write!(out, "{}", value)?;
             return Ok(true);
         }
+
+        // Handle enums - unit variants serialize to their variant name
+        if let Ok(enum_) = value.into_enum()
+            && let Ok(variant) = enum_.active_variant()
+            && variant.data.kind == facet_core::StructKind::Unit
+        {
+            // Use effective_name() if there's a rename, otherwise convert to lowerCamelCase
+            let variant_name = if variant.rename.is_some() {
+                Cow::Borrowed(variant.effective_name())
+            } else {
+                facet_dom::naming::to_element_name(variant.name)
+            };
+            out.write_all(variant_name.as_bytes())?;
+            return Ok(true);
+        }
+
         return Ok(false);
     };
 
