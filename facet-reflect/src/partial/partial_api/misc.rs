@@ -1128,16 +1128,9 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 ..
             } = &mut self.mode
             {
-                // Mark the field as initialized in the parent frame.
-                // This is important because the parent might validate before
-                // finish_deferred runs (e.g., parent is an array element that
-                // isn't stored). Without this, the parent's validation would
-                // fail with "missing field".
-                if let FrameOwnership::Field { field_idx } = popped_frame.ownership
-                    && let Some(parent_frame) = stack.last_mut()
-                {
-                    Self::mark_field_initialized_by_index(parent_frame, field_idx);
-                }
+                // Don't mark the field as initialized yet - that happens in finish_deferred
+                // after validation. Marking it now would be a lie since the frame may not
+                // be fully initialized.
 
                 stored_frames.insert(storage_path, popped_frame);
 

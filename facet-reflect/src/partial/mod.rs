@@ -775,11 +775,8 @@ impl Frame {
                 }
             }
             Tracker::Option { building_inner } => {
-                // If we're building the inner value, it will be handled by the Option vtable
-                // No special cleanup needed here as the Option will either be properly
-                // initialized or remain uninitialized
-                if !building_inner {
-                    // Option is fully initialized, drop it normally
+                // Only drop if fully initialized (not still building inner value)
+                if !building_inner && self.is_init {
                     unsafe {
                         self.allocated
                             .shape()

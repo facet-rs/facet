@@ -2579,44 +2579,12 @@ fn deferred_option_struct_deeply_nested_interleaved() -> Result<(), IPanic> {
 #[test]
 fn deferred_option_string_crash() -> Result<(), IPanic> {
     // Minimal repro: enum with tuple variant containing struct with Option fields
-    // Only set ONE field via proxy, leave the rest as None (should default)
-
-    // Proxy type that converts from String
-    #[derive(Facet)]
-    struct PathDataProxy(String);
-
-    impl TryFrom<PathDataProxy> for PathData {
-        type Error = std::convert::Infallible;
-        fn try_from(proxy: PathDataProxy) -> Result<Self, Self::Error> {
-            Ok(PathData { commands: proxy.0 })
-        }
-    }
-
-    impl From<PathDataProxy> for Option<PathData> {
-        fn from(proxy: PathDataProxy) -> Self {
-            Some(PathData { commands: proxy.0 })
-        }
-    }
-
-    impl TryFrom<&Option<PathData>> for PathDataProxy {
-        type Error = std::convert::Infallible;
-        fn try_from(v: &Option<PathData>) -> Result<Self, Self::Error> {
-            Ok(PathDataProxy(
-                v.as_ref().map(|d| d.commands.clone()).unwrap_or_default(),
-            ))
-        }
-    }
-
-    #[derive(Facet, Debug)]
-    struct PathData {
-        commands: String,
-    }
+    // Set ONE field, leave the other unset (should default to None)
 
     #[derive(Facet, Debug)]
     struct Path {
-        #[facet(proxy = PathDataProxy)]
-        d: Option<PathData>,
-        fill: Option<String>,
+        d: Option<String>,
+        stroke: Option<String>,
     }
 
     #[derive(Facet, Debug)]
@@ -2640,17 +2608,18 @@ fn deferred_option_string_crash() -> Result<(), IPanic> {
     p = p.select_variant_named("Path")?;
     p = p.begin_nth_field(0)?; // enter Path tuple field
 
-    // Set Path.d via proxy
+    // Set Path.d
     p = p.begin_nth_field(0)?;
-    p = p.begin_custom_deserialization()?;
-    p = p.set(PathDataProxy("M 0 0".to_string()))?;
-    p = p.end()?; // end proxy -> converts to Option<PathData>
+    p = p.begin_some()?;
+    p = p.set("M10,10L50,50".to_string())?;
+    p = p.end()?; // end Some
+    p = p.end()?; // end d field
 
-    // Don't set fill - it should default to None
+    // DON'T set Path.stroke - it should default to None
 
-    p = p.end()?; // end Path struct
-    p = p.end()?; // end SvgNode variant
-    p = p.end()?; // end Vec
+    p = p.end()?; // end Path struct (which is the tuple field of SvgNode::Path)
+    p = p.end()?; // end list item (the SvgNode enum)
+    p = p.end()?; // end Vec (children field)
 
     p = p.finish_deferred()?;
     let _ = p.build()?;
