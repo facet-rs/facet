@@ -3,6 +3,7 @@
 //! This module provides deserialization from postcard bytes into a `Value` using only
 //! a `&'static Shape` at runtime, without requiring a concrete Rust type.
 
+use bumpalo::Bump;
 use facet_core::Shape;
 use facet_format::{DeserializeError, FormatDeserializer};
 use facet_value::Value;
@@ -36,8 +37,9 @@ pub fn from_slice_with_shape(
     input: &[u8],
     source_shape: &'static Shape,
 ) -> Result<Value, DeserializeError> {
+    let bump = Bump::new();
     let mut parser = PostcardParser::new(input);
-    let mut de = FormatDeserializer::new_owned(&mut parser);
+    let mut de = FormatDeserializer::new_owned(&bump, &mut parser);
     de.deserialize_with_shape(source_shape)
 }
 

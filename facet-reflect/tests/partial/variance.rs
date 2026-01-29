@@ -1,4 +1,6 @@
 #![allow(clippy::needless_lifetimes)]
+
+use bumpalo::Bump;
 use facet::Facet;
 use facet_reflect::Partial;
 use facet_testhelpers::test;

@@ -1,6 +1,6 @@
 use super::*;
-use crate::{AllocError, AllocatedShape, typeplan::TypePlan};
-use ::alloc::boxed::Box;
+use crate::{AllocError, AllocatedShape, typeplan};
+use bumpalo::Bump;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Allocation, constructors etc.
@@ -8,17 +8,19 @@ use ::alloc::boxed::Box;
 
 /// Allocate a Partial that can borrow from input with lifetime 'facet.
 /// This is the default mode - use this when deserializing from a buffer that outlives the result.
-impl<'facet> Partial<'facet, true> {
+impl<'facet, 'bump> Partial<'facet, 'bump, true> {
     /// Allocates a new [Partial] instance on the heap, with the given shape and type.
     ///
     /// This creates a borrowing Partial that can hold references with lifetime 'facet.
-    pub fn alloc<T>() -> Result<Self, AllocError>
+    /// The `bump` allocator is used for internal allocations (TypePlan, etc.) and must
+    /// outlive the Partial.
+    pub fn alloc<T>(bump: &'bump Bump) -> Result<Self, AllocError>
     where
         T: Facet<'facet> + ?Sized,
     {
         // SAFETY: T::SHAPE comes from the Facet implementation for T,
         // which is an unsafe trait requiring accurate shape descriptions.
-        unsafe { Self::alloc_shape(T::SHAPE) }
+        unsafe { Self::alloc_shape(bump, T::SHAPE) }
     }
 
     /// Allocates a new [Partial] instance on the heap, with the given shape.
@@ -41,19 +43,25 @@ impl<'facet> Partial<'facet, true> {
     ///
     /// **Safe alternative**: Use [`Partial::alloc::<T>()`](Self::alloc) which gets the shape
     /// from `T::SHAPE` (guaranteed safe by `unsafe impl Facet for T`).
-    pub unsafe fn alloc_shape(shape: &'static Shape) -> Result<Self, AllocError> {
-        alloc_shape_inner(shape, None)
+    pub unsafe fn alloc_shape(
+        bump: &'bump Bump,
+        shape: &'static Shape,
+    ) -> Result<Self, AllocError> {
+        alloc_shape_inner(bump, shape, None)
     }
 
     /// Allocates with format-specific proxy resolution.
     ///
     /// The `format_namespace` (e.g., "json", "xml") is used to resolve
     /// format-specific proxies in the TypePlan.
-    pub fn alloc_for_format<T>(format_namespace: &'static str) -> Result<Self, AllocError>
+    pub fn alloc_for_format<T>(
+        bump: &'bump Bump,
+        format_namespace: &'static str,
+    ) -> Result<Self, AllocError>
     where
         T: Facet<'facet> + ?Sized,
     {
-        unsafe { Self::alloc_shape_for_format(T::SHAPE, format_namespace) }
+        unsafe { Self::alloc_shape_for_format(bump, T::SHAPE, format_namespace) }
     }
 
     /// Allocates with format-specific proxy resolution from a shape.
@@ -61,27 +69,28 @@ impl<'facet> Partial<'facet, true> {
     /// # Safety
     /// Same requirements as `alloc_shape`.
     pub unsafe fn alloc_shape_for_format(
+        bump: &'bump Bump,
         shape: &'static Shape,
         format_namespace: &'static str,
     ) -> Result<Self, AllocError> {
-        alloc_shape_inner(shape, Some(format_namespace))
+        alloc_shape_inner(bump, shape, Some(format_namespace))
     }
 }
 
 /// Allocate a Partial that cannot borrow - all data must be owned.
 /// Use this when deserializing from a temporary buffer (e.g., HTTP request body).
-impl Partial<'static, false> {
+impl<'bump> Partial<'static, 'bump, false> {
     /// Allocates a new [Partial] instance on the heap, with the given shape and type.
     ///
     /// This creates an owned Partial that cannot hold borrowed references.
     /// Use this when the input buffer is temporary and won't outlive the result.
-    pub fn alloc_owned<T>() -> Result<Self, AllocError>
+    pub fn alloc_owned<T>(bump: &'bump Bump) -> Result<Self, AllocError>
     where
         T: Facet<'static> + ?Sized,
     {
         // SAFETY: T::SHAPE comes from the Facet implementation for T,
         // which is an unsafe trait requiring accurate shape descriptions.
-        unsafe { Self::alloc_shape_owned(T::SHAPE) }
+        unsafe { Self::alloc_shape_owned(bump, T::SHAPE) }
     }
 
     /// Allocates a new [Partial] instance on the heap, with the given shape.
@@ -104,16 +113,22 @@ impl Partial<'static, false> {
     ///
     /// **Safe alternative**: Use [`Partial::alloc_owned::<T>()`](Self::alloc_owned) which gets the shape
     /// from `T::SHAPE` (guaranteed safe by `unsafe impl Facet for T`).
-    pub unsafe fn alloc_shape_owned(shape: &'static Shape) -> Result<Self, AllocError> {
-        alloc_shape_inner(shape, None)
+    pub unsafe fn alloc_shape_owned(
+        bump: &'bump Bump,
+        shape: &'static Shape,
+    ) -> Result<Self, AllocError> {
+        alloc_shape_inner(bump, shape, None)
     }
 
     /// Allocates with format-specific proxy resolution (owned variant).
-    pub fn alloc_owned_for_format<T>(format_namespace: &'static str) -> Result<Self, AllocError>
+    pub fn alloc_owned_for_format<T>(
+        bump: &'bump Bump,
+        format_namespace: &'static str,
+    ) -> Result<Self, AllocError>
     where
         T: Facet<'static> + ?Sized,
     {
-        unsafe { Self::alloc_shape_owned_for_format(T::SHAPE, format_namespace) }
+        unsafe { Self::alloc_shape_owned_for_format(bump, T::SHAPE, format_namespace) }
     }
 
     /// Allocates with optional format-specific proxy resolution (owned variant).
@@ -125,13 +140,14 @@ impl Partial<'static, false> {
     /// This is safe because `T::SHAPE` comes from the Facet implementation for T,
     /// which is an unsafe trait requiring accurate shape descriptions.
     pub fn alloc_owned_for_format_opt<T>(
+        bump: &'bump Bump,
         format_namespace: Option<&'static str>,
     ) -> Result<Self, AllocError>
     where
         T: Facet<'static> + ?Sized,
     {
         // SAFETY: T::SHAPE comes from the Facet implementation for T.
-        alloc_shape_inner(T::SHAPE, format_namespace)
+        alloc_shape_inner(bump, T::SHAPE, format_namespace)
     }
 
     /// Allocates with format-specific proxy resolution from a shape (owned variant).
@@ -139,16 +155,17 @@ impl Partial<'static, false> {
     /// # Safety
     /// Same requirements as `alloc_shape_owned`.
     pub unsafe fn alloc_shape_owned_for_format(
+        bump: &'bump Bump,
         shape: &'static Shape,
         format_namespace: &'static str,
     ) -> Result<Self, AllocError> {
-        alloc_shape_inner(shape, Some(format_namespace))
+        alloc_shape_inner(bump, shape, Some(format_namespace))
     }
 }
 
 /// Create a Partial that writes into externally-owned memory (e.g., caller's stack).
 /// This enables stack-friendly deserialization without heap allocation.
-impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
+impl<'facet, 'bump, const BORROW: bool> Partial<'facet, 'bump, BORROW> {
     /// Creates a [Partial] that writes into caller-provided memory.
     ///
     /// This is useful for stack-friendly deserialization where you want to avoid
@@ -176,20 +193,26 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// use std::mem::MaybeUninit;
     /// use facet_core::{Facet, PtrUninit};
     /// use facet_reflect::Partial;
+    /// use bumpalo::Bump;
     ///
+    /// let bump = Bump::new();
     /// let mut slot = MaybeUninit::<MyStruct>::uninit();
     /// let ptr = PtrUninit::new(slot.as_mut_ptr().cast());
     ///
-    /// let partial = unsafe { Partial::from_raw(ptr, MyStruct::SHAPE)? };
+    /// let partial = unsafe { Partial::from_raw(&bump, ptr, MyStruct::SHAPE)? };
     /// // ... deserialize into partial ...
     /// partial.finish_in_place()?;
     ///
     /// // Now safe to assume initialized
     /// let value = unsafe { slot.assume_init() };
     /// ```
-    pub unsafe fn from_raw(ptr: PtrUninit, shape: &'static Shape) -> Result<Self, AllocError> {
+    pub unsafe fn from_raw(
+        bump: &'bump Bump,
+        ptr: PtrUninit,
+        shape: &'static Shape,
+    ) -> Result<Self, AllocError> {
         // SAFETY: Caller must uphold same requirements as from_raw_for_format
-        unsafe { Self::from_raw_for_format(ptr, shape, None) }
+        unsafe { Self::from_raw_for_format(bump, ptr, shape, None) }
     }
 
     /// Creates a [Partial] with format-specific proxy resolution that writes into
@@ -198,6 +221,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// # Safety
     /// Same requirements as `from_raw`.
     pub unsafe fn from_raw_for_format(
+        bump: &'bump Bump,
         ptr: PtrUninit,
         shape: &'static Shape,
         format_namespace: Option<&'static str>,
@@ -220,7 +244,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             .size();
 
         // Build the TypePlan once for the entire deserialization
-        let root_plan = Box::new(TypePlan::build_for_format(shape, format_namespace)?);
+        let root_plan = typeplan::build_for_format(bump, shape, format_namespace)?;
 
         // Preallocate a couple of frames for nested structures
         let mut stack = Vec::with_capacity(4);
@@ -240,10 +264,11 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     }
 }
 
-fn alloc_shape_inner<'facet, const BORROW: bool>(
+fn alloc_shape_inner<'facet, 'bump, const BORROW: bool>(
+    bump: &'bump Bump,
     shape: &'static Shape,
     format_namespace: Option<&'static str>,
-) -> Result<Partial<'facet, BORROW>, AllocError> {
+) -> Result<Partial<'facet, 'bump, BORROW>, AllocError> {
     crate::trace!(
         "alloc_shape({:?}), with layout {:?}",
         shape,
@@ -260,7 +285,7 @@ fn alloc_shape_inner<'facet, const BORROW: bool>(
 
     // Build the TypePlan once for the entire deserialization
     // Pass format_namespace to enable format-specific proxy resolution
-    let root_plan = Box::new(TypePlan::build_for_format(shape, format_namespace)?);
+    let root_plan = typeplan::build_for_format(bump, shape, format_namespace)?;
 
     // Preallocate a couple of frames. The cost of allocating 4 frames is
     // basically identical to allocating 1 frame, so for every type that

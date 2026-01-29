@@ -16,6 +16,7 @@ homepage = "https://facet.rs"
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
+bumpalo = { workspace = true }
 facet-core = { path = "../facet-core", version = "0.43.2", default-features = false }
 facet-format = { path = "../facet-format", version = "0.43.2" }
 facet-path = { path = "../facet-path", version = "0.43.2", default-features = false, features = ["alloc"] }

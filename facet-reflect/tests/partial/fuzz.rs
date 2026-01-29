@@ -11,6 +11,7 @@
 // because the value is consumed by `.build()` - this is expected behavior
 #![allow(unused_assignments)]
 
+use bumpalo::Bump;
 use facet::Facet;
 use facet_reflect::Partial;
 use proptest::prelude::*;
@@ -354,7 +355,7 @@ proptest! {
         values_u32 in prop::collection::vec(any::<u32>(), 10),
         values_str in prop::collection::vec("[a-z]{0,5}", 10),
     ) {
-        let mut partial: Partial<'_> = Partial::alloc::<SimpleStruct>().unwrap();
+        let bump = Bump::new(); let mut partial: Partial<'_, '_> = Partial::alloc::<SimpleStruct>(&bump).unwrap();
         let mut u32_idx = 0;
         let mut str_idx = 0;
 
@@ -407,7 +408,7 @@ proptest! {
         ),
         values in prop::collection::vec(any::<u32>(), 20),
     ) {
-        let mut partial: Partial<'_> = Partial::alloc::<WithList>().unwrap();
+        let bump = Bump::new(); let mut partial: Partial<'_, '_> = Partial::alloc::<WithList>(&bump).unwrap();
         let mut idx = 0;
 
         for op in ops {
@@ -460,7 +461,7 @@ proptest! {
         keys in prop::collection::vec("[a-z]{1,5}", 10),
         values in prop::collection::vec(any::<u32>(), 10),
     ) {
-        let mut partial: Partial<'_> = Partial::alloc::<WithMap>().unwrap();
+        let bump = Bump::new(); let mut partial: Partial<'_, '_> = Partial::alloc::<WithMap>(&bump).unwrap();
         let mut key_idx = 0;
         let mut val_idx = 0;
 
@@ -504,7 +505,7 @@ proptest! {
 #[::core::prelude::v1::test]
 fn wip_fuzz_drop_after_partial_init() {
     // Start building, set some fields, drop without finishing
-    let partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
+    let bump = Bump::new(); let partial: Partial<'_, '_> = Partial::alloc::<FuzzTarget>(&bump).unwrap();
     let partial = partial.set_field("name", String::from("test")).ok();
     if let Some(partial) = partial {
         let _ = partial.set_field("count", 42u32);
@@ -515,7 +516,7 @@ fn wip_fuzz_drop_after_partial_init() {
 #[::core::prelude::v1::test]
 fn wip_fuzz_drop_mid_nested() {
     // Navigate into nested struct, set a field, drop
-    let partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
+    let bump = Bump::new(); let partial: Partial<'_, '_> = Partial::alloc::<FuzzTarget>(&bump).unwrap();
     let partial = partial.begin_field("nested").ok();
     if let Some(partial) = partial {
         let _ = partial.set_field("x", 10i32);
@@ -526,7 +527,7 @@ fn wip_fuzz_drop_mid_nested() {
 #[::core::prelude::v1::test]
 fn wip_fuzz_drop_mid_list() {
     // Start building a list, add some items, drop
-    let partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
+    let bump = Bump::new(); let partial: Partial<'_, '_> = Partial::alloc::<FuzzTarget>(&bump).unwrap();
     if let Ok(partial) = partial.begin_field("items")
         && let Ok(partial) = partial.init_list()
         && let Ok(partial) = partial.push(String::from("item1"))
@@ -539,7 +540,7 @@ fn wip_fuzz_drop_mid_list() {
 #[::core::prelude::v1::test]
 fn wip_fuzz_drop_mid_map() {
     // Start building a map, add a key, drop before value
-    let partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
+    let bump = Bump::new(); let partial: Partial<'_, '_> = Partial::alloc::<FuzzTarget>(&bump).unwrap();
     if let Ok(partial) = partial.begin_field("mapping")
         && let Ok(partial) = partial.init_map()
         && let Ok(partial) = partial.begin_key()
@@ -557,30 +558,30 @@ fn wip_fuzz_invalid_ops_sequence() {
     // Try a bunch of invalid operations - should all return errors, not panic
 
     // Try to end when there's nothing to end
-    let partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
+    let bump = Bump::new(); let partial: Partial<'_, '_> = Partial::alloc::<FuzzTarget>(&bump).unwrap();
     assert!(partial.end().is_err());
 
     // Try to init_list on a struct
-    let partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
+    let bump = Bump::new(); let partial: Partial<'_, '_> = Partial::alloc::<FuzzTarget>(&bump).unwrap();
     assert!(partial.init_list().is_err());
 
     // Try to set a value on a struct (need to select field first)
-    let partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
+    let bump = Bump::new(); let partial: Partial<'_, '_> = Partial::alloc::<FuzzTarget>(&bump).unwrap();
     assert!(partial.set(42u32).is_err());
 
     // Try invalid field name
-    let partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
+    let bump = Bump::new(); let partial: Partial<'_, '_> = Partial::alloc::<FuzzTarget>(&bump).unwrap();
     assert!(partial.begin_field("nonexistent").is_err());
 
     // Try to build incomplete struct
-    let partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
+    let bump = Bump::new(); let partial: Partial<'_, '_> = Partial::alloc::<FuzzTarget>(&bump).unwrap();
     assert!(partial.build().is_err());
 }
 
 #[::core::prelude::v1::test]
 fn wip_fuzz_deferred_drop_without_finish() {
     // Enter deferred mode, do some work, drop without finish_deferred
-    let partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
+    let bump = Bump::new(); let partial: Partial<'_, '_> = Partial::alloc::<FuzzTarget>(&bump).unwrap();
     let mut partial = partial.begin_deferred().unwrap();
 
     partial = partial
@@ -596,7 +597,7 @@ fn wip_fuzz_deferred_drop_without_finish() {
 #[::core::prelude::v1::test]
 fn wip_fuzz_deferred_interleaved_fields() {
     // Test the re-entry pattern that deferred mode is designed for
-    let partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
+    let bump = Bump::new(); let partial: Partial<'_, '_> = Partial::alloc::<FuzzTarget>(&bump).unwrap();
     let mut partial = partial.begin_deferred().unwrap();
 
     // First visit to nested
@@ -621,7 +622,7 @@ fn wip_fuzz_deferred_interleaved_fields() {
 #[::core::prelude::v1::test]
 fn wip_fuzz_deferred_double_begin() {
     // Calling begin_deferred twice should return an error on the second call
-    let partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
+    let bump = Bump::new(); let partial: Partial<'_, '_> = Partial::alloc::<FuzzTarget>(&bump).unwrap();
 
     let partial = partial.begin_deferred().unwrap();
     assert!(partial.begin_deferred().is_err()); // Second call should error (partial consumed)
@@ -633,7 +634,7 @@ fn wip_fuzz_deferred_double_begin() {
 #[::core::prelude::v1::test]
 fn wip_fuzz_deferred_finish_without_begin() {
     // Calling finish_deferred without begin_deferred
-    let partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
+    let bump = Bump::new(); let partial: Partial<'_, '_> = Partial::alloc::<FuzzTarget>(&bump).unwrap();
     let result = partial.finish_deferred();
     // Should return an error, not panic
     assert!(result.is_err());
@@ -643,7 +644,7 @@ fn wip_fuzz_deferred_finish_without_begin() {
 /// Operations: BeginField(Name), SetString("aaaaaaaaaaaa")
 #[::core::prelude::v1::test]
 fn wip_fuzz_begin_field_set_string_drop() {
-    let partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
+    let bump = Bump::new(); let partial: Partial<'_, '_> = Partial::alloc::<FuzzTarget>(&bump).unwrap();
     // BeginField(Name)
     if let Ok(partial) = partial.begin_field("name") {
         // SetString("aaaaaaaaaaaa")
@@ -654,7 +655,7 @@ fn wip_fuzz_begin_field_set_string_drop() {
 
 #[::core::prelude::v1::test]
 fn wip_fuzz_reg_test_1() {
-    let mut partial: Partial<'_> = Partial::alloc::<facet_value::Value>().unwrap();
+    let bump = Bump::new(); let mut partial: Partial<'_, '_> = Partial::alloc::<facet_value::Value>(&bump).unwrap();
     partial = partial.init_map().unwrap();
     partial = partial.begin_object_entry("foo").unwrap();
     partial = partial.init_map().unwrap();
@@ -665,7 +666,7 @@ fn wip_fuzz_reg_test_1() {
 
 #[::core::prelude::v1::test]
 fn wip_fuzz_reg_test_2() {
-    let mut partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
+    let bump = Bump::new(); let mut partial: Partial<'_, '_> = Partial::alloc::<FuzzTarget>(&bump).unwrap();
     partial = partial.begin_field("mapping").unwrap();
     partial = partial.init_map().unwrap();
     partial = partial.begin_key().unwrap();
@@ -674,7 +675,7 @@ fn wip_fuzz_reg_test_2() {
 
 #[::core::prelude::v1::test]
 fn wip_fuzz_reg_test_3() {
-    let mut partial: Partial<'_> = Partial::alloc::<facet_value::Value>().unwrap();
+    let bump = Bump::new(); let mut partial: Partial<'_, '_> = Partial::alloc::<facet_value::Value>(&bump).unwrap();
     partial = partial.init_map().unwrap();
     partial = partial.begin_object_entry("").unwrap();
     partial = partial.init_map().unwrap();
@@ -687,7 +688,7 @@ fn wip_fuzz_reg_test_3() {
 
 #[::core::prelude::v1::test]
 fn wip_fuzz_reg_test_4() {
-    let mut partial: Partial<'_> = Partial::alloc::<facet_value::Value>().unwrap();
+    let bump = Bump::new(); let mut partial: Partial<'_, '_> = Partial::alloc::<facet_value::Value>(&bump).unwrap();
     partial = partial.set(522133289i32).unwrap();
     partial = partial.init_map().unwrap();
     partial = partial.begin_object_entry("").unwrap();
@@ -700,7 +701,7 @@ fn wip_fuzz_reg_test_4() {
 
 #[::core::prelude::v1::test]
 fn wip_fuzz_reg_test_5() {
-    let mut partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
+    let bump = Bump::new(); let mut partial: Partial<'_, '_> = Partial::alloc::<FuzzTarget>(&bump).unwrap();
     partial = partial.begin_field("mapping").unwrap();
     partial = partial.init_map().unwrap();
     partial = partial.begin_key().unwrap();
@@ -710,7 +711,7 @@ fn wip_fuzz_reg_test_5() {
 
 #[::core::prelude::v1::test]
 fn wip_fuzz_reg_test_6() {
-    let mut partial: Partial<'_> = Partial::alloc::<facet_value::Value>().unwrap();
+    let bump = Bump::new(); let mut partial: Partial<'_, '_> = Partial::alloc::<facet_value::Value>(&bump).unwrap();
     partial = partial.init_map().unwrap();
     partial = partial.begin_object_entry("").unwrap();
     partial = partial.set_default().unwrap();

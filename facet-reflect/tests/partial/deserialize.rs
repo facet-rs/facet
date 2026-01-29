@@ -1,3 +1,4 @@
+use bumpalo::Bump;
 use facet_testhelpers::{IPanic, test};
 
 use facet::{Facet, Opaque};

@@ -996,6 +996,7 @@ dependencies = [
 name = "facet-asn1"
 version = "0.43.2"
 dependencies = [
+ "bumpalo",
  "facet",
  "facet-core",
  "facet-format",
@@ -1043,6 +1044,7 @@ dependencies = [
 name = "facet-csv"
 version = "0.43.2"
 dependencies = [
+ "bumpalo",
  "facet",
  "facet-core",
  "facet-format",
@@ -1078,6 +1080,7 @@ name = "facet-format"
 version = "0.43.2"
 dependencies = [
  "ariadne",
+ "bumpalo",
  "cranelift",
  "cranelift-jit",
  "cranelift-module",
@@ -1128,6 +1131,7 @@ name = "facet-json"
 version = "0.43.2"
 dependencies = [
  "axum-core",
+ "bumpalo",
  "compact_str",
  "divan",
  "facet",
@@ -1205,6 +1209,7 @@ name = "facet-msgpack"
 version = "0.43.2"
 dependencies = [
  "axum-core",
+ "bumpalo",
  "divan",
  "facet",
  "facet-core",
@@ -1234,6 +1239,7 @@ name = "facet-postcard"
 version = "0.43.2"
 dependencies = [
  "axum-core",
+ "bumpalo",
  "bytes",
  "bytestring",
  "camino",
@@ -1289,6 +1295,7 @@ dependencies = [
 name = "facet-reflect"
 version = "0.43.2"
 dependencies = [
+ "bumpalo",
  "camino",
  "eyre",
  "facet",
@@ -1372,6 +1379,7 @@ name = "facet-toml"
 version = "0.43.2"
 dependencies = [
  "axum-core",
+ "bumpalo",
  "facet",
  "facet-core",
  "facet-format",
@@ -1404,6 +1412,7 @@ name = "facet-urlencoded"
 version = "0.43.2"
 dependencies = [
  "axum-core",
+ "bumpalo",
  "facet",
  "facet-core",
  "facet-reflect",
@@ -1429,6 +1438,7 @@ name = "facet-value"
 version = "0.43.2"
 dependencies = [
  "bolero",
+ "bumpalo",
  "divan",
  "facet",
  "facet-core",
@@ -1444,6 +1454,7 @@ dependencies = [
 name = "facet-xdr"
 version = "0.43.2"
 dependencies = [
+ "bumpalo",
  "facet",
  "facet-core",
  "facet-format",
@@ -1456,6 +1467,7 @@ name = "facet-yaml"
 version = "0.43.2"
 dependencies = [
  "axum-core",
+ "bumpalo",
  "datatest-stable",
  "facet",
  "facet-core",

@@ -1,3 +1,4 @@
+use bumpalo::Bump;
 use facet::Facet;
 use facet_reflect::Partial;
 use facet_testhelpers::{IPanic, test};
