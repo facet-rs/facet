@@ -1078,6 +1078,7 @@ name = "facet-format"
 version = "0.43.2"
 dependencies = [
  "ariadne",
+ "bumpalo",
  "cranelift",
  "cranelift-jit",
  "cranelift-module",

@@ -10,11 +10,13 @@ use crate::{
     deserializer::scalar_matches::scalar_matches_shape,
 };
 
-impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BORROW> {
+impl<'parser, 'input, 'bump, const BORROW: bool>
+    FormatDeserializer<'parser, 'input, 'bump, BORROW>
+{
     pub(crate) fn deserialize_enum(
         &mut self,
-        wip: Partial<'input, BORROW>,
-    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        wip: Partial<'input, 'bump, BORROW>,
+    ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
         let shape = wip.shape();
 
@@ -72,8 +74,8 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
     fn deserialize_numeric_enum(
         &mut self,
-        mut wip: Partial<'input, BORROW>,
-    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        mut wip: Partial<'input, 'bump, BORROW>,
+    ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
         let event = self.peek_event_opt()?;
 
@@ -117,8 +119,8 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
     fn deserialize_enum_externally_tagged(
         &mut self,
-        mut wip: Partial<'input, BORROW>,
-    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        mut wip: Partial<'input, 'bump, BORROW>,
+    ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
         trace!("deserialize_enum_externally_tagged called");
         let event = self.expect_peek("value")?;
@@ -377,9 +379,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
     fn deserialize_enum_internally_tagged(
         &mut self,
-        mut wip: Partial<'input, BORROW>,
+        mut wip: Partial<'input, 'bump, BORROW>,
         tag_key: &'static str,
-    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+    ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
 
         // Step 1: Probe to find the tag value (handles out-of-order fields)
@@ -699,9 +701,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     /// appropriate state, so we just consume the events it produces.
     pub(crate) fn deserialize_enum_as_struct(
         &mut self,
-        mut wip: Partial<'input, BORROW>,
+        mut wip: Partial<'input, 'bump, BORROW>,
         enum_def: &'static facet_core::EnumType,
-    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+    ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
 
         // Get the variant name from FieldKey
@@ -890,8 +892,8 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
     pub(crate) fn deserialize_result_as_enum(
         &mut self,
-        mut wip: Partial<'input, BORROW>,
-    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        mut wip: Partial<'input, 'bump, BORROW>,
+    ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
 
         // Hint to non-self-describing parsers that a Result enum is expected
@@ -990,8 +992,8 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     /// Expects the variant to already be selected.
     pub(crate) fn deserialize_variant_struct_fields(
         &mut self,
-        mut wip: Partial<'input, BORROW>,
-    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        mut wip: Partial<'input, 'bump, BORROW>,
+    ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
 
         let variant = wip.selected_variant().ok_or_else(|| DeserializeError {
@@ -1122,10 +1124,10 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
     fn deserialize_enum_adjacently_tagged(
         &mut self,
-        mut wip: Partial<'input, BORROW>,
+        mut wip: Partial<'input, 'bump, BORROW>,
         tag_key: &'static str,
         content_key: &'static str,
-    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+    ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
 
         // Step 1: Probe to find the tag value (handles out-of-order fields)
@@ -1237,8 +1239,8 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     /// Deserialize the content of an already-selected enum variant.
     pub(crate) fn deserialize_enum_variant_content(
         &mut self,
-        mut wip: Partial<'input, BORROW>,
-    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        mut wip: Partial<'input, 'bump, BORROW>,
+    ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
 
         // Get the selected variant's info
@@ -1537,8 +1539,8 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     /// This always selects the "Owned" variant since we need to own the deserialized data.
     fn deserialize_cow_enum(
         &mut self,
-        mut wip: Partial<'input, BORROW>,
-    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        mut wip: Partial<'input, 'bump, BORROW>,
+    ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
 
         // Always use Owned variant - we need to own the deserialized data
@@ -1555,8 +1557,8 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
     fn deserialize_enum_untagged(
         &mut self,
-        mut wip: Partial<'input, BORROW>,
-    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        mut wip: Partial<'input, 'bump, BORROW>,
+    ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
 
         let shape = wip.shape();
@@ -1735,9 +1737,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     /// `captured_tag` is `None` for unit tags (bare `@` in Styx).
     pub(crate) fn deserialize_other_variant_with_captured_tag(
         &mut self,
-        mut wip: Partial<'input, BORROW>,
+        mut wip: Partial<'input, 'bump, BORROW>,
         captured_tag: Option<&'input str>,
-    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+    ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
 
         let variant = wip.selected_variant().ok_or_else(|| DeserializeError {

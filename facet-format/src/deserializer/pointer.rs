@@ -6,11 +6,13 @@ use crate::{
     ScalarValue, SpanGuard,
 };
 
-impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BORROW> {
+impl<'parser, 'input, 'bump, const BORROW: bool>
+    FormatDeserializer<'parser, 'input, 'bump, BORROW>
+{
     pub(crate) fn deserialize_pointer(
         &mut self,
-        mut wip: Partial<'input, BORROW>,
-    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        mut wip: Partial<'input, 'bump, BORROW>,
+    ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
         use facet_core::KnownPointer;
 
         let shape = wip.shape();
