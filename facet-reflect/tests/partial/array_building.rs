@@ -2,6 +2,7 @@
 // because the value is consumed by `.build()` - this is expected behavior
 #![allow(unused_assignments)]
 
+use bumpalo::Bump;
 use facet::Facet;
 use facet_reflect::{Partial, ReflectErrorKind};
 use facet_testhelpers::{IPanic, test};

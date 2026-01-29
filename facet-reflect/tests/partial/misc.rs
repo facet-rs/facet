@@ -2,6 +2,7 @@
 // because the value is consumed by `.build()` - this is expected behavior
 #![allow(unused_assignments)]
 
+use bumpalo::Bump;
 use facet_testhelpers::{IPanic, test};
 use std::mem::{MaybeUninit, size_of};
 
@@ -628,7 +629,7 @@ fn gh_354_leak_1() -> Result<(), IPanic> {
     }
 
     fn leak1() -> Result<(), ReflectError> {
-        let mut partial: Partial<'_> = Partial::alloc::<Foo>().unwrap();
+        let bump = Bump::new(); let mut partial: Partial<'_, '_> = Partial::alloc::<Foo>(&bump).unwrap();
         partial = partial.begin_field("a")?;
         partial = partial.set(String::from("Hello, World!"))?;
         partial = partial.end()?;
@@ -649,7 +650,7 @@ fn gh_354_leak_2() -> Result<(), IPanic> {
     }
 
     fn leak2() -> Result<(), ReflectError> {
-        let mut partial: Partial<'_> = Partial::alloc::<Foo>().unwrap();
+        let bump = Bump::new(); let mut partial: Partial<'_, '_> = Partial::alloc::<Foo>(&bump).unwrap();
         partial = partial.begin_field("a")?;
         partial = partial.set(String::from("Hello, World!"))?;
         partial = partial.end()?;
@@ -741,7 +742,8 @@ macro_rules! assert_snapshot {
 
 #[test]
 fn f64_uninit() -> Result<(), IPanic> {
-    assert_snapshot!(Partial::alloc::<f64>()?.build().unwrap_err());
+    let bump = Bump::new();
+    assert_snapshot!(Partial::alloc::<f64>(&bump)?.build().unwrap_err());
     Ok(())
 }
 

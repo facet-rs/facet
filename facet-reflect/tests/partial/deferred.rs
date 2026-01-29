@@ -2,6 +2,7 @@
 // because the value is consumed by `.build()` - this is expected behavior
 #![allow(unused_assignments)]
 
+use bumpalo::Bump;
 use facet::Facet;
 use facet_reflect::Partial;
 use facet_testhelpers::{IPanic, test};
@@ -1791,7 +1792,7 @@ fn wip_deferred_drop_without_finish_simple() {
     }
 
     {
-        let mut partial: Partial<'_> = Partial::alloc::<Simple>().unwrap();
+        let bump = Bump::new(); let mut partial: Partial<'_, '_> = Partial::alloc::<Simple>(&bump).unwrap();
         partial = partial.begin_deferred().unwrap();
 
         partial = partial
@@ -1821,7 +1822,7 @@ fn wip_deferred_drop_without_finish_nested() {
     }
 
     {
-        let mut partial: Partial<'_> = Partial::alloc::<Outer>().unwrap();
+        let bump = Bump::new(); let mut partial: Partial<'_, '_> = Partial::alloc::<Outer>(&bump).unwrap();
         partial = partial.begin_deferred().unwrap();
 
         partial = partial
@@ -1849,7 +1850,7 @@ fn wip_deferred_drop_without_finish_collections() {
     }
 
     {
-        let mut partial: Partial<'_> = Partial::alloc::<WithCollections>().unwrap();
+        let bump = Bump::new(); let mut partial: Partial<'_, '_> = Partial::alloc::<WithCollections>(&bump).unwrap();
         partial = partial.begin_deferred().unwrap();
 
         partial = partial.begin_field("strings").unwrap();
@@ -1888,7 +1889,7 @@ fn wip_deferred_drop_mid_field() {
     }
 
     {
-        let mut partial: Partial<'_> = Partial::alloc::<Outer>().unwrap();
+        let bump = Bump::new(); let mut partial: Partial<'_, '_> = Partial::alloc::<Outer>(&bump).unwrap();
         partial = partial.begin_deferred().unwrap();
 
         partial = partial.begin_field("inner").unwrap();
@@ -2116,7 +2117,7 @@ fn wip_deferred_drop_with_stored_frames() {
     }
 
     {
-        let mut partial: Partial<'_> = Partial::alloc::<L1>().unwrap();
+        let bump = Bump::new(); let mut partial: Partial<'_, '_> = Partial::alloc::<L1>(&bump).unwrap();
         partial = partial.begin_deferred().unwrap();
 
         // Go deep
