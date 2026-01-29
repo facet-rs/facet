@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.44.0](https://github.com/facet-rs/facet/compare/facet-core-v0.43.2...facet-core-v0.44.0) - 2026-01-29
+
+### Added
+
+- *(facet-args)* layered config with provenance tracking and beautiful config dump ([#1907](https://github.com/facet-rs/facet/pull/1907))
+- *(facet)* add #[facet(cow)] attribute for cow-like enum semantics ([#1898](https://github.com/facet-rs/facet/pull/1898))
+
+### Fixed
+
+- *(facet)* make cow enums serialize/deserialize transparently ([#1901](https://github.com/facet-rs/facet/pull/1901))
+- remove unnecessary `T: 'static` bound from Vec impl ([#1894](https://github.com/facet-rs/facet/pull/1894))
+
+### Other
+
+- eliminate type_identifier usage ([#1965](https://github.com/facet-rs/facet/pull/1965))
+- Re-enable specialization-based auto-detection as default ([#1919](https://github.com/facet-rs/facet/pull/1919))
+- Add Facet implementations for jiff::civil::Date and jiff::civil::Time ([#1911](https://github.com/facet-rs/facet/pull/1911))
+
 ## [0.43.2](https://github.com/facet-rs/facet/compare/facet-core-v0.43.1...facet-core-v0.43.2) - 2026-01-23
 
 ### Added

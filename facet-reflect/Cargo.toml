@@ -1,6 +1,6 @@
 [package]
 name = "facet-reflect"
-version = "0.43.2"
+version = "0.44.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -53,8 +53,8 @@ fn-ptr = [
 
 [dependencies]
 camino = { workspace = true, optional = true }
-facet-core = { path = "../facet-core", version = "0.43.2", default-features = false }
-facet-path = { version = "0.43.2", path = "../facet-path", default-features = false }
+facet-core = { path = "../facet-core", version = "0.44.0", default-features = false }
+facet-path = { version = "0.44.0", path = "../facet-path", default-features = false }
 hashbrown = "0.16"
 smallvec = "2.0.0-alpha.12"
 regex = { version = "1", default-features = false, features = ["std"], optional = true }
