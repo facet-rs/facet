@@ -6,29 +6,16 @@ use ::alloc::sync::Arc;
 use ::alloc::vec;
 use core::marker::PhantomData;
 
-impl Partial<'static, true> {
+impl<'facet> Partial<'facet, true> {
     /// Create a new borrowing Partial for the given type.
     ///
     /// This allocates memory for a value of type `T` and returns a `Partial`
     /// that can be used to initialize it incrementally.
     #[inline]
-    pub fn alloc<T: Facet<'static>>() -> Result<Self, AllocError> {
+    pub fn alloc<T: Facet<'facet>>() -> Result<Self, AllocError> {
         TypePlan::<T>::build()?.partial()
     }
-}
 
-impl Partial<'static, false> {
-    /// Create a new owned Partial for the given type.
-    ///
-    /// This allocates memory for a value of type `T` and returns a `Partial`
-    /// that can be used to initialize it incrementally.
-    #[inline]
-    pub fn alloc_owned<T: Facet<'static>>() -> Result<Self, AllocError> {
-        TypePlan::<T>::build()?.partial_owned()
-    }
-}
-
-impl<'facet> Partial<'facet, true> {
     /// Create a new borrowing Partial from a shape.
     ///
     /// This allocates memory for a value described by the shape and returns a `Partial`
@@ -45,6 +32,17 @@ impl<'facet> Partial<'facet, true> {
         let plan = unsafe { TypePlanCore::from_shape(shape)? };
         let root_id = plan.root_id();
         create_partial_internal::<true>(plan, root_id)
+    }
+}
+
+impl Partial<'static, false> {
+    /// Create a new owned Partial for the given type.
+    ///
+    /// This allocates memory for a value of type `T` and returns a `Partial`
+    /// that can be used to initialize it incrementally.
+    #[inline]
+    pub fn alloc_owned<T: Facet<'static>>() -> Result<Self, AllocError> {
+        TypePlan::<T>::build()?.partial_owned()
     }
 }
 
