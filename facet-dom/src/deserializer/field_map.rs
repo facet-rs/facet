@@ -660,6 +660,22 @@ impl StructFieldMap {
     pub fn is_tuple(&self) -> bool {
         self.tuple_fields.is_some()
     }
+
+    /// Returns unique list/set element field indices that need default initialization
+    /// when no matching child elements are found.
+    ///
+    /// Returns an iterator over `(field_idx, FieldInfo)` for all element fields that
+    /// are list or set types (excluding those with field-level proxies which are treated as scalars).
+    pub fn list_set_element_fields(&self) -> impl Iterator<Item = (usize, &FieldInfo)> {
+        // Collect unique field indices (a field may be registered under multiple names)
+        let mut seen = std::collections::HashSet::new();
+        self.element_fields
+            .values()
+            .flatten()
+            .filter(|info| info.is_list || info.is_set)
+            .filter(move |info| seen.insert(info.idx))
+            .map(|info| (info.idx, info))
+    }
 }
 
 /// Check if a flattened field is an enum type.
