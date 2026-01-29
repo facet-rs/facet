@@ -1407,6 +1407,7 @@ name = "facet-urlencoded"
 version = "0.43.2"
 dependencies = [
  "axum-core",
+ "bumpalo",
  "facet",
  "facet-core",
  "facet-reflect",
