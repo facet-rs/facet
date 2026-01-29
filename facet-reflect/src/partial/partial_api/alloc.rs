@@ -28,6 +28,26 @@ impl Partial<'static, false> {
     }
 }
 
+impl<'facet> Partial<'facet, true> {
+    /// Create a new borrowing Partial from a shape.
+    ///
+    /// This allocates memory for a value described by the shape and returns a `Partial`
+    /// that can be used to initialize it incrementally.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that the shape is valid and corresponds to a real type.
+    /// Using an incorrect or maliciously crafted shape can lead to undefined behavior
+    /// when materializing values.
+    #[inline]
+    pub unsafe fn alloc_shape(shape: &'static facet_core::Shape) -> Result<Self, AllocError> {
+        // SAFETY: caller guarantees shape is valid
+        let plan = unsafe { TypePlanCore::from_shape(shape)? };
+        let root_id = plan.root_id();
+        create_partial_internal::<true>(plan, root_id)
+    }
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Partial::from_raw - direct initialization from external memory
 ////////////////////////////////////////////////////////////////////////////////////////////////////

@@ -1657,6 +1657,34 @@ impl<'facet, T: facet_core::Facet<'facet> + ?Sized> TypePlan<T> {
 }
 
 impl TypePlanCore {
+    /// Build a TypePlanCore directly from a shape.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that the shape is valid and corresponds to a real type.
+    /// Using an incorrect or maliciously crafted shape can lead to undefined behavior
+    /// when materializing values.
+    pub unsafe fn from_shape(shape: &'static Shape) -> Result<Arc<Self>, AllocError> {
+        // SAFETY: caller guarantees shape is valid
+        unsafe { Self::from_shape_for_format(shape, None) }
+    }
+
+    /// Build a TypePlanCore from a shape with format-specific proxy resolution.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that the shape is valid and corresponds to a real type.
+    /// Using an incorrect or maliciously crafted shape can lead to undefined behavior
+    /// when materializing values.
+    pub unsafe fn from_shape_for_format(
+        shape: &'static Shape,
+        format_namespace: Option<&'static str>,
+    ) -> Result<Arc<Self>, AllocError> {
+        let mut builder = TypePlanBuilder::new(format_namespace);
+        let root = builder.build_node(shape)?;
+        Ok(Arc::new(builder.finish(root)))
+    }
+
     /// Get the root node.
     #[inline]
     pub fn root(&self) -> &TypePlanNode {

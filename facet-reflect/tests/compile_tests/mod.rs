@@ -170,7 +170,7 @@ facet-reflect = {{ path = {:?} }}
 fn test_partial_poke_lifetime_error() {
     let test = CompilationTest {
         name: "poke_lifetime_error",
-        source: include_str!("partial/compile_tests/lifetimes.rs"),
+        source: include_str!("fixtures/lifetimes.rs"),
         expected_errors: &["error[E0597]: `s` does not live long enough"],
     };
 
@@ -182,8 +182,9 @@ fn test_partial_poke_lifetime_error() {
 fn test_partial_covariant_growing() {
     let test = CompilationTest {
         name: "covariant_growing",
-        source: include_str!("partial/compile_tests/covariant_growing.rs"),
-        expected_errors: &["error[E0521]: borrowed data escapes outside of function"],
+        source: include_str!("fixtures/partial_covariant_growing.rs"),
+        // Either E0521 or "lifetime may not live long enough" depending on Rust version
+        expected_errors: &["lifetime may not live long enough"],
     };
 
     run_compilation_test(&test);
@@ -194,8 +195,9 @@ fn test_partial_covariant_growing() {
 fn test_partial_invariant_growing() {
     let test = CompilationTest {
         name: "invariant_growing",
-        source: include_str!("partial/compile_tests/invariant_growing.rs"),
-        expected_errors: &["error[E0521]: borrowed data escapes outside of function"],
+        source: include_str!("fixtures/partial_invariant_growing.rs"),
+        // Either E0521 or "lifetime may not live long enough" depending on Rust version
+        expected_errors: &["lifetime may not live long enough"],
     };
 
     run_compilation_test(&test);
@@ -206,7 +208,7 @@ fn test_partial_invariant_growing() {
 fn test_partial_contravariant_shrinking() {
     let test = CompilationTest {
         name: "contravariant_shrinking",
-        source: include_str!("partial/compile_tests/contravariant_shrinking.rs"),
+        source: include_str!("fixtures/partial_contravariant_shrinking.rs"),
         expected_errors: &["error[E0521]: borrowed data escapes outside of function"],
     };
 
@@ -218,7 +220,7 @@ fn test_partial_contravariant_shrinking() {
 fn test_partial_invariant_shrinking() {
     let test = CompilationTest {
         name: "invariant_shrinking",
-        source: include_str!("partial/compile_tests/invariant_shrinking.rs"),
+        source: include_str!("fixtures/partial_invariant_shrinking.rs"),
         expected_errors: &["error[E0521]: borrowed data escapes outside of function"],
     };
 
@@ -230,7 +232,7 @@ fn test_partial_invariant_shrinking() {
 fn test_peek_covariant_growing() {
     let test = CompilationTest {
         name: "covariant_growing",
-        source: include_str!("peek/compile_tests/covariant_growing.rs"),
+        source: include_str!("fixtures/peek_covariant_growing.rs"),
         expected_errors: &["error[E0521]: borrowed data escapes outside of function"],
     };
 
@@ -242,7 +244,7 @@ fn test_peek_covariant_growing() {
 fn test_peek_invariant_growing() {
     let test = CompilationTest {
         name: "invariant_growing",
-        source: include_str!("peek/compile_tests/invariant_growing.rs"),
+        source: include_str!("fixtures/peek_invariant_growing.rs"),
         expected_errors: &["error[E0521]: borrowed data escapes outside of function"],
     };
 
@@ -254,7 +256,7 @@ fn test_peek_invariant_growing() {
 fn test_peek_contravariant_shrinking() {
     let test = CompilationTest {
         name: "contravariant_shrinking",
-        source: include_str!("peek/compile_tests/contravariant_shrinking.rs"),
+        source: include_str!("fixtures/peek_contravariant_shrinking.rs"),
         // Depending on Rust version / platform, error can be either:
         // - E0521 (borrowed data escapes) - the original invariance error
         // - E0515 (cannot return value referencing temporary) - covariant error
@@ -270,7 +272,7 @@ fn test_peek_contravariant_shrinking() {
 fn test_peek_invariant_shrinking() {
     let test = CompilationTest {
         name: "invariant_shrinking",
-        source: include_str!("peek/compile_tests/invariant_shrinking.rs"),
+        source: include_str!("fixtures/peek_invariant_shrinking.rs"),
         expected_errors: &["error[E0521]: borrowed data escapes outside of function"],
     };
 
@@ -282,7 +284,7 @@ fn test_peek_invariant_shrinking() {
 fn test_peek_owned_dropped_before_ref() {
     let test = CompilationTest {
         name: "owned_dropped_before_ref",
-        source: include_str!("peek/compile_tests/owned_dropped_before_ref.rs"),
+        source: include_str!("fixtures/owned_dropped_before_ref.rs"),
         expected_errors: &["error[E0505]: cannot move out of `owned` because it is borrowed"],
     };
 
@@ -301,7 +303,7 @@ fn test_peek_owned_dropped_before_ref() {
 fn test_peek_fn_ptr_ub_exploit() {
     let test = CompilationTest {
         name: "fn_ptr_ub_exploit",
-        source: include_str!("peek/compile_tests/fn_ptr_ub_exploit.rs"),
+        source: include_str!("fixtures/fn_ptr_ub_exploit.rs"),
         expected_errors: &["error[E0521]: borrowed data escapes outside of function"],
     };
 
@@ -321,7 +323,7 @@ fn test_peek_fn_ptr_ub_exploit() {
 fn test_oxref_unsound_from_raw_ptr() {
     let test = CompilationTest {
         name: "oxref_unsound_from_raw_ptr",
-        source: include_str!("oxref/compile_tests/oxref_unsound_from_raw_ptr.rs"),
+        source: include_str!("fixtures/oxref_unsound_from_raw_ptr.rs"),
         expected_errors: &["call to unsafe function `OxRef::<'a>::new` is unsafe"],
     };
 
@@ -337,7 +339,7 @@ fn test_oxref_unsound_from_raw_ptr() {
 fn test_poke_opaque_insufficient_lifetime() {
     let test = CompilationTest {
         name: "opaque_insufficient_lifetime",
-        source: include_str!("poke/compile_tests/opaque_insufficient_lifetime.rs"),
+        source: include_str!("fixtures/opaque_insufficient_lifetime.rs"),
         expected_errors: &["does not live long enough"],
     };
 
@@ -350,7 +352,7 @@ fn test_poke_opaque_insufficient_lifetime() {
 fn test_poke_opaque_borrowed_non_facet() {
     let test = CompilationTest {
         name: "opaque_borrowed_non_facet",
-        source: include_str!("poke/compile_tests/opaque_borrowed_non_facet.rs"),
+        source: include_str!("fixtures/opaque_borrowed_non_facet.rs"),
         expected_errors: &["lifetime may not live long enough"],
     };
 
@@ -370,7 +372,7 @@ fn test_poke_opaque_borrowed_non_facet() {
 fn test_partial_untrusted_shape() {
     let test = CompilationTest {
         name: "untrusted_shape",
-        source: include_str!("partial/compile_tests/untrusted_shape.rs"),
+        source: include_str!("fixtures/untrusted_shape.rs"),
         expected_errors: &["call to unsafe function"],
     };
 
@@ -390,7 +392,7 @@ fn test_partial_untrusted_shape() {
 fn test_attr_non_sync_data() {
     let test = CompilationTest {
         name: "attr_non_sync_data",
-        source: include_str!("attr/compile_tests/non_sync_data.rs"),
+        source: include_str!("fixtures/non_sync_data.rs"),
         expected_errors: &["Rc<i32>` cannot be shared between threads safely"],
     };
 
@@ -413,7 +415,7 @@ fn test_attr_non_sync_data() {
 fn test_peek_untrusted_vtable() {
     let test = CompilationTest {
         name: "peek_untrusted_vtable",
-        source: include_str!("peek/compile_tests/untrusted_vtable.rs"),
+        source: include_str!("fixtures/untrusted_vtable.rs"),
         expected_errors: &["call to unsafe function"],
     };
 
