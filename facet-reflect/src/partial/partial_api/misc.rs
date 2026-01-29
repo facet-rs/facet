@@ -819,21 +819,29 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
             );
 
             // IMPORTANT: Don't store Field frames whose data lives inside an INTERMEDIATE
-            // Owned frame's memory. When that Owned frame is later moved (e.g., by
-            // complete_option_frame()), the Field frame's pointer becomes invalid.
+            // Owned or TrackedBuffer frame's memory. When that frame is later moved (e.g., by
+            // complete_option_frame() or map insert), the Field frame's pointer becomes invalid.
+            //
+            // - Owned frames: Option's inner struct gets moved when init_some() is called
+            // - TrackedBuffer frames: Map value buffers get moved/deallocated when map insert happens
             //
             // The ROOT frame (index 0) is also Owned, but it won't be moved - only
-            // intermediate Owned frames (Option's inner struct, etc.) will be moved.
-            // So we skip index 0 when checking for Owned ancestors.
-            let inside_owned_allocation =
+            // intermediate Owned/TrackedBuffer frames will be moved.
+            // So we skip index 0 when checking for ancestors.
+            let inside_movable_allocation =
                 if matches!(current_frame.ownership, FrameOwnership::Field { .. }) {
-                    // Skip index 0 (root) and current frame, check remaining for Owned
+                    // Skip index 0 (root) and current frame, check remaining for Owned/TrackedBuffer
                     let frames = self.frames();
                     frames
                         .iter()
                         .enumerate()
                         .filter(|(idx, _)| *idx != 0 && *idx != frames.len() - 1) // Skip root and current
-                        .any(|(_, f)| matches!(f.ownership, FrameOwnership::Owned))
+                        .any(|(_, f)| {
+                            matches!(
+                                f.ownership,
+                                FrameOwnership::Owned | FrameOwnership::TrackedBuffer
+                            )
+                        })
                 } else {
                     false
                 };
@@ -850,11 +858,47 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
                     false
                 };
 
+            // IMPORTANT: Don't store Owned frames (Option inner values) if the Option parent
+            // is inside a movable allocation. The Option parent won't be stored (see above),
+            // so if we store the inner value, finish_deferred won't be able to find the Option
+            // frame to call complete_option_frame on. Instead, let the Option completion happen
+            // immediately in end().
+            let has_option_parent_in_movable =
+                if matches!(current_frame.ownership, FrameOwnership::Owned) {
+                    let frames = self.frames();
+                    if frames.len() >= 2
+                        && matches!(
+                            frames[frames.len() - 2].tracker,
+                            Tracker::Option {
+                                building_inner: true
+                            }
+                        )
+                    {
+                        // Check if the Option parent is inside a movable allocation
+                        // (skip root at index 0 and the two frames at the end - Option and current)
+                        frames
+                            .iter()
+                            .enumerate()
+                            .filter(|(idx, _)| *idx != 0 && *idx < frames.len() - 2)
+                            .any(|(_, f)| {
+                                matches!(
+                                    f.ownership,
+                                    FrameOwnership::Owned | FrameOwnership::TrackedBuffer
+                                )
+                            })
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+
             // This must match the should_store logic below
             let will_be_stored = is_reentrant_type
                 && storable_ownership
-                && !inside_owned_allocation
-                && !has_smart_pointer_parent;
+                && !inside_movable_allocation
+                && !has_smart_pointer_parent
+                && !has_option_parent_in_movable;
 
             // If this frame will be stored, defer validation to finish_deferred().
             // Otherwise validate now.
@@ -956,21 +1000,29 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
             );
 
             // IMPORTANT: Don't store Field frames whose data lives inside an INTERMEDIATE
-            // Owned frame's memory. When that Owned frame is later moved (e.g., by
-            // complete_option_frame()), the Field frame's pointer becomes invalid.
+            // Owned or TrackedBuffer frame's memory. When that frame is later moved (e.g., by
+            // complete_option_frame() or map insert), the Field frame's pointer becomes invalid.
+            //
+            // - Owned frames: Option's inner struct gets moved when init_some() is called
+            // - TrackedBuffer frames: Map value buffers get moved/deallocated when map insert happens
             //
             // The ROOT frame (index 0) is also Owned, but it won't be moved - only
-            // intermediate Owned frames (Option's inner struct, etc.) will be moved.
-            // So we skip index 0 when checking for Owned ancestors.
-            let inside_owned_allocation =
+            // intermediate Owned/TrackedBuffer frames will be moved.
+            // So we skip index 0 when checking for ancestors.
+            let inside_movable_allocation =
                 if matches!(current_frame.ownership, FrameOwnership::Field { .. }) {
-                    // Skip index 0 (root) and current frame, check remaining for Owned
+                    // Skip index 0 (root) and current frame, check remaining for Owned/TrackedBuffer
                     let frames = self.frames();
                     frames
                         .iter()
                         .enumerate()
                         .filter(|(idx, _)| *idx != 0 && *idx != frames.len() - 1) // Skip root and current
-                        .any(|(_, f)| matches!(f.ownership, FrameOwnership::Owned))
+                        .any(|(_, f)| {
+                            matches!(
+                                f.ownership,
+                                FrameOwnership::Owned | FrameOwnership::TrackedBuffer
+                            )
+                        })
                 } else {
                     false
                 };
@@ -988,10 +1040,46 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
                     false
                 };
 
+            // IMPORTANT: Don't store Owned frames (Option inner values) if the Option parent
+            // is inside a movable allocation. The Option parent won't be stored (see above),
+            // so if we store the inner value, finish_deferred won't be able to find the Option
+            // frame to call complete_option_frame on. Instead, let the Option completion happen
+            // immediately in end().
+            let has_option_parent_in_movable =
+                if matches!(current_frame.ownership, FrameOwnership::Owned) {
+                    let frames = self.frames();
+                    if frames.len() >= 2
+                        && matches!(
+                            frames[frames.len() - 2].tracker,
+                            Tracker::Option {
+                                building_inner: true
+                            }
+                        )
+                    {
+                        // Check if the Option parent is inside a movable allocation
+                        // (skip root at index 0 and the two frames at the end - Option and current)
+                        frames
+                            .iter()
+                            .enumerate()
+                            .filter(|(idx, _)| *idx != 0 && *idx < frames.len() - 2)
+                            .any(|(_, f)| {
+                                matches!(
+                                    f.ownership,
+                                    FrameOwnership::Owned | FrameOwnership::TrackedBuffer
+                                )
+                            })
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+
             let should_store = is_reentrant_type
                 && storable_ownership
-                && !inside_owned_allocation
-                && !has_smart_pointer_parent;
+                && !inside_movable_allocation
+                && !has_smart_pointer_parent
+                && !has_option_parent_in_movable;
 
             if should_store {
                 // Compute the "field-only" path for storage by finding all Field steps
