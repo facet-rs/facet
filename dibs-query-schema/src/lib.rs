@@ -16,15 +16,19 @@ pub struct QueryFile(pub IndexMap<Documented<String>, Decl>);
 
 /// A declaration in a query file.
 #[derive(Debug, Facet)]
-#[facet(rename_all = "lowercase")]
+#[facet(rename_all = "kebab-case")]
 #[repr(u8)]
 pub enum Decl {
     /// A SELECT query declaration.
     Query(Query),
     /// An INSERT declaration.
     Insert(Insert),
+    /// A bulk INSERT declaration (insert multiple rows).
+    InsertMany(InsertMany),
     /// An UPSERT declaration.
     Upsert(Upsert),
+    /// A bulk UPSERT declaration (upsert multiple rows).
+    UpsertMany(UpsertMany),
     /// An UPDATE declaration.
     Update(Update),
     /// A DELETE declaration.
@@ -235,6 +239,64 @@ pub struct Insert {
 #[derive(Debug, Facet)]
 pub struct Upsert {
     /// Query parameters.
+    pub params: Option<Params>,
+    /// Target table.
+    pub into: String,
+    /// ON CONFLICT clause.
+    #[facet(rename = "on-conflict")]
+    pub on_conflict: OnConflict,
+    /// Values to insert (column -> value expression).
+    pub values: Values,
+    /// Columns to return.
+    pub returning: Option<Returning>,
+}
+
+/// A bulk INSERT declaration (insert multiple rows with a single query).
+///
+/// Uses PostgreSQL's UNNEST to insert multiple rows efficiently with constant SQL.
+///
+/// Example:
+/// ```styx
+/// BulkCreateProducts @insert-many{
+///   params {handle @string, status @string}
+///   into products
+///   values {handle, status, created_at @now}
+///   returning {id, handle, status}
+/// }
+/// ```
+#[derive(Debug, Facet)]
+pub struct InsertMany {
+    /// Query parameters - each becomes an array parameter.
+    pub params: Option<Params>,
+    /// Target table.
+    pub into: String,
+    /// Values to insert (column -> value expression).
+    /// Params become UNNEST columns, other expressions are applied to each row.
+    pub values: Values,
+    /// Columns to return.
+    pub returning: Option<Returning>,
+}
+
+/// A bulk UPSERT declaration (upsert multiple rows with a single query).
+///
+/// Uses PostgreSQL's UNNEST with ON CONFLICT for efficient bulk upserts.
+///
+/// Example:
+/// ```styx
+/// BulkUpsertProducts @upsert-many{
+///   params {handle @string, status @string}
+///   into products
+///   on-conflict {
+///     target {handle}
+///     update {status, updated_at @now}
+///   }
+///   values {handle, status, created_at @now}
+///   returning {id, handle, status}
+/// }
+/// ```
+#[derive(Debug, Facet)]
+pub struct UpsertMany {
+    /// Query parameters - each becomes an array parameter.
     pub params: Option<Params>,
     /// Target table.
     pub into: String,

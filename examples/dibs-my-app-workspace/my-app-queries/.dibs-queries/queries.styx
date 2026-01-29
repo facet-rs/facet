@@ -206,6 +206,34 @@ UpsertProduct @upsert{
     returning {id, handle, status}
 }
 
+// ============================================================================
+// Bulk Mutations (insert/upsert multiple rows with a single query)
+// ============================================================================
+
+// Bulk insert products - inserts multiple rows using UNNEST
+// Generated function accepts &[BulkCreateProductsParams] slice
+
+BulkCreateProducts @insert-many{
+    params {handle @string, status @string}
+    into product
+    values {handle $handle, status $status, created_at @now}
+    returning {id, handle, status}
+}
+
+// Bulk upsert products - upserts multiple rows using UNNEST + ON CONFLICT
+// Great for syncing data from external sources
+
+BulkUpsertProducts @upsert-many{
+    params {handle @string, status @string}
+    into product
+    on-conflict {
+        target {handle}
+        update {status, updated_at @now}
+    }
+    values {handle $handle, status $status, created_at @now}
+    returning {id, handle, status}
+}
+
 // Update a product by handle
 
 UpdateProductStatus @update{
