@@ -1432,6 +1432,7 @@ name = "facet-value"
 version = "0.43.2"
 dependencies = [
  "bolero",
+ "bumpalo",
  "divan",
  "facet",
  "facet-core",
