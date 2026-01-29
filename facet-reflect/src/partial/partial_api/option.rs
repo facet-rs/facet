@@ -301,67 +301,11 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
 
     /// Begin bulding the source shape for custom deserialization, calling end() for this frame will
     /// call the deserialize_with function provided by the field and set the field using the result.
-    pub fn begin_custom_deserialization(mut self) -> Result<Self, ReflectError> {
-        use crate::typeplan::DeserStrategy;
-
-        let current_frame = self.frames().last().unwrap();
-        let target_shape = current_frame.allocated.shape();
-        trace!("begin_custom_deserialization: target_shape={target_shape}");
-
-        // Get the proxy_node from the DeserStrategy if available
-        let proxy_node = match self.deser_strategy() {
-            Some(DeserStrategy::FieldProxy { proxy_node, .. }) => Some(*proxy_node),
-            _ => None,
-        };
-
-        if let Some(field) = self.parent_field() {
-            trace!("begin_custom_deserialization: field name={}", field.name);
-            if let Some(proxy_def) = field.proxy() {
-                // Get the source shape from the proxy definition
-                let source_shape = proxy_def.shape;
-                let source_data = source_shape.allocate().map_err(|_| {
-                    self.err(ReflectErrorKind::Unsized {
-                        shape: target_shape,
-                        operation: "Not a Sized type",
-                    })
-                })?;
-                let source_size = source_shape
-                    .layout
-                    .sized_layout()
-                    .expect("must be sized")
-                    .size();
-
-                // Use proxy_node from the strategy if available, otherwise fall back to current type_plan.
-                // Using proxy_node is critical to avoid infinite recursion when deser_strategy()
-                // returns FieldProxy.
-                let type_plan_for_frame =
-                    proxy_node.unwrap_or_else(|| self.frames().last().unwrap().type_plan);
-
-                trace!(
-                    "begin_custom_deserialization: Creating frame for deserialization type {source_shape}"
-                );
-                let mut new_frame = Frame::new(
-                    source_data,
-                    AllocatedShape::new(source_shape, source_size),
-                    FrameOwnership::Owned,
-                    type_plan_for_frame,
-                );
-                new_frame.using_custom_deserialization = true;
-                self.mode.stack_mut().push(new_frame);
-
-                Ok(self)
-            } else {
-                Err(self.err(ReflectErrorKind::OperationFailed {
-                    shape: target_shape,
-                    operation: "field does not have a proxy definition",
-                }))
-            }
-        } else {
-            Err(self.err(ReflectErrorKind::OperationFailed {
-                shape: target_shape,
-                operation: "not currently processing a field",
-            }))
-        }
+    ///
+    /// This uses the format-agnostic proxy. For format-specific proxies, use
+    /// `begin_custom_deserialization_with_format`.
+    pub fn begin_custom_deserialization(self) -> Result<Self, ReflectError> {
+        self.begin_custom_deserialization_with_format(None)
     }
 
     /// Begin building the source shape for custom deserialization using container-level proxy.
@@ -397,23 +341,20 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             "begin_custom_deserialization_from_shape_with_format: target_shape={target_shape}, format={format_namespace:?}"
         );
 
-        // Get the proxy_node from the DeserStrategy - this is the TypePlan node for the proxy type
-        let proxy_node = match self.deser_strategy() {
-            Some(DeserStrategy::ContainerProxy { proxy_node, .. }) => *proxy_node,
-            _ => {
-                // No container proxy strategy - check if there's a proxy on the shape
-                // (this can happen if deser_strategy returns something else, but shape has proxy)
-                let Some(proxy_def) = target_shape.effective_proxy(format_namespace) else {
-                    return Ok((self, false));
-                };
-                // Fall back to parent's type_plan if we don't have a proper proxy_node
-                // This is a rare path for backwards compatibility
-                let _ = proxy_def;
-                return Ok((self, false));
-            }
+        // Check that we have a ContainerProxy strategy
+        if !matches!(self.deser_strategy(), Some(DeserStrategy::ContainerProxy)) {
+            return Ok((self, false));
+        }
+
+        // Get the proxy_node from the precomputed proxy nodes, selecting by format
+        let Some(proxy_node) = self
+            .proxy_nodes()
+            .and_then(|p| p.node_for(format_namespace))
+        else {
+            return Ok((self, false));
         };
 
-        // Use effective_proxy for format-aware resolution
+        // Use effective_proxy for format-aware resolution of the actual ProxyDef
         let Some(proxy_def) = target_shape.effective_proxy(format_namespace) else {
             return Ok((self, false));
         };
@@ -471,80 +412,86 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             "begin_custom_deserialization_with_format: target_shape={target_shape}, format={format_namespace:?}"
         );
 
-        // Get the proxy_node from the DeserStrategy - this is the TypePlan node for the proxy type
-        let proxy_node = match self.deser_strategy() {
-            Some(DeserStrategy::FieldProxy { proxy_node, .. }) => *proxy_node,
-            _ => {
-                // No field proxy strategy - fall back to checking the field directly
-                let Some(field) = self.parent_field() else {
-                    return Err(self.err(ReflectErrorKind::OperationFailed {
-                        shape: target_shape,
-                        operation: "not currently processing a field",
-                    }));
-                };
-                if field.effective_proxy(format_namespace).is_none() {
-                    return Err(self.err(ReflectErrorKind::OperationFailed {
-                        shape: target_shape,
-                        operation: "field does not have a proxy",
-                    }));
-                }
-                // Fall back to current type_plan if no FieldProxy strategy
-                self.frames().last().unwrap().type_plan
-            }
-        };
-
-        if let Some(field) = self.parent_field() {
-            trace!(
-                "begin_custom_deserialization_with_format: field name={}",
-                field.name
-            );
-            // Use effective_proxy for format-aware resolution
-            if let Some(proxy_def) = field.effective_proxy(format_namespace) {
-                // Get the source shape from the proxy definition
-                let source_shape = proxy_def.shape;
-                let source_data = source_shape.allocate().map_err(|_| {
-                    self.err(ReflectErrorKind::Unsized {
-                        shape: target_shape,
-                        operation: "Not a Sized type",
-                    })
-                })?;
-                let source_size = source_shape
-                    .layout
-                    .sized_layout()
-                    .expect("must be sized")
-                    .size();
-
-                trace!(
-                    "begin_custom_deserialization_with_format: Creating frame for deserialization type {source_shape}"
-                );
-                // Use proxy_node - the TypePlan child node for the proxy type's structure.
-                // This is critical: using the parent's type_plan would cause deser_strategy()
-                // to return FieldProxy again, causing infinite recursion.
-                let mut new_frame = Frame::new(
-                    source_data,
-                    AllocatedShape::new(source_shape, source_size),
-                    FrameOwnership::Owned,
-                    proxy_node,
-                );
-                new_frame.using_custom_deserialization = true;
-                // Store the proxy def so end() can use the correct convert_in function
-                // This is important for format-specific proxies where field.proxy() would
-                // return the wrong proxy.
-                new_frame.shape_level_proxy = Some(proxy_def);
-                self.mode.stack_mut().push(new_frame);
-
-                Ok(self)
-            } else {
-                Err(self.err(ReflectErrorKind::OperationFailed {
+        // Check that we have a FieldProxy strategy
+        if !matches!(self.deser_strategy(), Some(DeserStrategy::FieldProxy)) {
+            // No field proxy strategy - check the field directly for error message
+            let Some(field) = self.parent_field() else {
+                return Err(self.err(ReflectErrorKind::OperationFailed {
+                    shape: target_shape,
+                    operation: "not currently processing a field",
+                }));
+            };
+            if field.effective_proxy(format_namespace).is_none() {
+                return Err(self.err(ReflectErrorKind::OperationFailed {
                     shape: target_shape,
                     operation: "field does not have a proxy",
-                }))
+                }));
             }
-        } else {
-            Err(self.err(ReflectErrorKind::OperationFailed {
+        }
+
+        // Get the proxy_node from the precomputed proxy nodes, selecting by format
+        let Some(proxy_node) = self
+            .proxy_nodes()
+            .and_then(|p| p.node_for(format_namespace))
+        else {
+            return Err(self.err(ReflectErrorKind::OperationFailed {
+                shape: target_shape,
+                operation: "no proxy node found for format",
+            }));
+        };
+
+        let Some(field) = self.parent_field() else {
+            return Err(self.err(ReflectErrorKind::OperationFailed {
                 shape: target_shape,
                 operation: "not currently processing a field",
-            }))
-        }
+            }));
+        };
+
+        trace!(
+            "begin_custom_deserialization_with_format: field name={}",
+            field.name
+        );
+        // Use effective_proxy for format-aware resolution
+        let Some(proxy_def) = field.effective_proxy(format_namespace) else {
+            return Err(self.err(ReflectErrorKind::OperationFailed {
+                shape: target_shape,
+                operation: "field does not have a proxy",
+            }));
+        };
+
+        // Get the source shape from the proxy definition
+        let source_shape = proxy_def.shape;
+        let source_data = source_shape.allocate().map_err(|_| {
+            self.err(ReflectErrorKind::Unsized {
+                shape: target_shape,
+                operation: "Not a Sized type",
+            })
+        })?;
+        let source_size = source_shape
+            .layout
+            .sized_layout()
+            .expect("must be sized")
+            .size();
+
+        trace!(
+            "begin_custom_deserialization_with_format: Creating frame for deserialization type {source_shape}"
+        );
+        // Use proxy_node - the TypePlan child node for the proxy type's structure.
+        // This is critical: using the parent's type_plan would cause deser_strategy()
+        // to return FieldProxy again, causing infinite recursion.
+        let mut new_frame = Frame::new(
+            source_data,
+            AllocatedShape::new(source_shape, source_size),
+            FrameOwnership::Owned,
+            proxy_node,
+        );
+        new_frame.using_custom_deserialization = true;
+        // Store the proxy def so end() can use the correct convert_in function
+        // This is important for format-specific proxies where field.proxy() would
+        // return the wrong proxy.
+        new_frame.shape_level_proxy = Some(proxy_def);
+        self.mode.stack_mut().push(new_frame);
+
+        Ok(self)
     }
 }

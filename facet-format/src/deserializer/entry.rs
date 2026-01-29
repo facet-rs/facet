@@ -58,7 +58,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         trace!(?strategy, "deserialize_into: using precomputed strategy");
 
         match strategy {
-            Some(DeserStrategy::ContainerProxy { .. }) => {
+            Some(DeserStrategy::ContainerProxy) => {
                 // Container-level proxy - the type itself has #[facet(proxy = X)]
                 let format_ns = self.parser.format_namespace();
                 let (wip, _) =
@@ -66,7 +66,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 Ok(wip.with(|w| self.deserialize_into(w))?.end()?)
             }
 
-            Some(DeserStrategy::FieldProxy { .. }) => {
+            Some(DeserStrategy::FieldProxy) => {
                 // Field-level proxy - the field has #[facet(proxy = X)]
                 let format_ns = self.parser.format_namespace();
                 let wip = wip.begin_custom_deserialization_with_format(format_ns)?;

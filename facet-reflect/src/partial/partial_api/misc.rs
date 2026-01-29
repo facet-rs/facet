@@ -203,6 +203,17 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         Some(&resolved.strategy)
     }
 
+    /// Returns the precomputed proxy nodes for the current frame's type.
+    ///
+    /// These contain TypePlan nodes for all proxies (format-agnostic and format-specific)
+    /// on this type, allowing runtime lookup based on format namespace.
+    #[inline]
+    pub fn proxy_nodes(&self) -> Option<&crate::typeplan::ProxyNodes> {
+        let node = self.plan_node()?;
+        let resolved = self.root_plan.resolve_backref(node);
+        Some(&resolved.proxies)
+    }
+
     /// Returns true if the current frame is building a smart pointer slice (Arc<\[T\]>, Rc<\[T\]>, Box<\[T\]>).
     ///
     /// This is used by deserializers to determine if they should deserialize as a list

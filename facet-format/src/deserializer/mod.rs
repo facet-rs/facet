@@ -306,10 +306,7 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
     where
         T: Facet<'static>,
     {
-        // Get format namespace for format-specific proxy resolution in TypePlan
-        let format_ns = self.parser.format_namespace();
-
-        let plan = TypePlan::<T>::build_for_format(format_ns)?;
+        let plan = TypePlan::<T>::build()?;
         // SAFETY: partial_owned produces Partial<'static, false>, but deserialize_into
         // expects 'input. Since BORROW=false means we never borrow from input anyway,
         // this is safe.
@@ -348,10 +345,7 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
     where
         T: Facet<'static>,
     {
-        // Get format namespace for format-specific proxy resolution in TypePlan
-        let format_ns = self.parser.format_namespace();
-
-        let plan = TypePlan::<T>::build_for_format(format_ns)?;
+        let plan = TypePlan::<T>::build()?;
         // SAFETY: partial_owned produces Partial<'static, false>, but deserialize_into
         // expects 'input. Since BORROW=false means we never borrow from input anyway,
         // this is safe.
@@ -388,10 +382,7 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
     where
         T: Facet<'static>,
     {
-        // Get format namespace for format-specific proxy resolution in TypePlan
-        let format_ns = self.parser.format_namespace();
-
-        let plan = TypePlan::<T>::build_for_format(format_ns)?;
+        let plan = TypePlan::<T>::build()?;
         // SAFETY: partial_owned produces Partial<'static, false>, but deserialize_into
         // expects 'input. Since BORROW=false means we never borrow from input anyway,
         // this is safe.

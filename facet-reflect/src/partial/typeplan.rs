@@ -88,8 +88,87 @@ pub struct TypePlanNode {
     pub strategy: DeserStrategy,
     /// Whether this type has a Default implementation
     pub has_default: bool,
-    /// Precomputed proxy for this shape (format-specific or generic)
-    pub proxy: Option<&'static ProxyDef>,
+    /// Precomputed proxy nodes for this shape.
+    ///
+    /// Contains nodes for all proxies (format-agnostic and format-specific),
+    /// allowing runtime lookup based on the deserializer's format namespace.
+    pub proxies: ProxyNodes,
+}
+
+/// Precomputed proxy node info - stores TypePlan nodes for all proxies on a type/field.
+///
+/// This enables a single TypePlan to work with any format by deferring proxy selection
+/// to runtime while still having precomputed TypePlan nodes for each proxy type.
+#[derive(Debug, Clone, Default)]
+pub struct ProxyNodes {
+    /// Format-agnostic proxy node (from `#[facet(proxy = X)]`)
+    pub generic: Option<NodeId>,
+    /// Format-specific proxy nodes (from `#[facet(json::proxy = X)]` etc.)
+    /// Stored as (format_namespace, node_id) pairs.
+    pub format_specific: SmallVec<(&'static str, NodeId), 2>,
+}
+
+impl ProxyNodes {
+    /// Look up the proxy node for a given format namespace.
+    ///
+    /// Resolution order:
+    /// 1. Format-specific proxy if format is provided and matches
+    /// 2. Format-agnostic proxy as fallback
+    #[inline]
+    pub fn node_for(&self, format: Option<&str>) -> Option<NodeId> {
+        if let Some(fmt) = format {
+            // First try format-specific
+            if let Some((_, node)) = self.format_specific.iter().find(|(f, _)| *f == fmt) {
+                return Some(*node);
+            }
+        }
+        // Fall back to generic
+        self.generic
+    }
+
+    /// Returns true if any proxy exists (generic or format-specific).
+    #[inline]
+    pub fn has_any(&self) -> bool {
+        self.generic.is_some() || !self.format_specific.is_empty()
+    }
+
+    /// Returns true if this is empty (no proxies).
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.generic.is_none() && self.format_specific.is_empty()
+    }
+}
+
+/// Field-level proxy information collected from a Field.
+///
+/// Used during TypePlan building to pass all proxy information for a field.
+#[derive(Debug, Clone)]
+struct FieldProxies {
+    /// Format-agnostic proxy (from `#[facet(proxy = X)]` on the field)
+    generic: Option<&'static ProxyDef>,
+    /// Format-specific proxies (from `#[facet(json::proxy = X)]` etc. on the field)
+    format_specific: SmallVec<(&'static str, &'static ProxyDef), 2>,
+}
+
+impl FieldProxies {
+    /// Collect all proxies from a field.
+    fn from_field(field: &'static Field) -> Option<Self> {
+        let generic = field.proxy();
+        let format_specific: SmallVec<_, 2> = field
+            .format_proxies
+            .iter()
+            .map(|fp| (fp.format, fp.proxy))
+            .collect();
+
+        if generic.is_none() && format_specific.is_empty() {
+            None
+        } else {
+            Some(Self {
+                generic,
+                format_specific,
+            })
+        }
+    }
 }
 
 /// Precomputed deserialization strategy with all data needed to execute it.
@@ -98,24 +177,18 @@ pub struct TypePlanNode {
 /// deserializer can follow the plan without chasing pointers through Shape/vtable.
 #[derive(Debug)]
 pub enum DeserStrategy {
-    /// Container-level proxy: the type itself has `#[facet(proxy = X)]`
-    ContainerProxy {
-        /// The proxy definition containing conversion functions
-        proxy_def: &'static ProxyDef,
-        /// The shape of the proxy type (what we deserialize)
-        proxy_shape: &'static Shape,
-        /// Child node representing the proxy type's structure
-        proxy_node: NodeId,
-    },
-    /// Field-level proxy: the field has `#[facet(proxy = X)]` but the type doesn't
-    FieldProxy {
-        /// The proxy definition containing conversion functions
-        proxy_def: &'static ProxyDef,
-        /// The shape of the proxy type (what we deserialize)
-        proxy_shape: &'static Shape,
-        /// Child node representing the proxy type's structure
-        proxy_node: NodeId,
-    },
+    /// Container-level proxy: the type itself has `#[facet(proxy = X)]` or format-specific proxies.
+    ///
+    /// The actual proxy definition and node are looked up at runtime via:
+    /// - `shape.effective_proxy(format_namespace)` for the ProxyDef
+    /// - `node.proxies.node_for(format_namespace)` for the TypePlan node
+    ContainerProxy,
+    /// Field-level proxy: the field has `#[facet(proxy = X)]` but the type doesn't.
+    ///
+    /// The actual proxy definition and node are looked up at runtime via:
+    /// - `field.effective_proxy(format_namespace)` for the ProxyDef
+    /// - `node.proxies.node_for(format_namespace)` for the TypePlan node (from parent's FieldPlan)
+    FieldProxy,
     /// Smart pointer (Box, Arc, Rc) with known pointee type
     Pointer {
         /// The pointee type's plan
@@ -895,12 +968,10 @@ struct TypePlanBuilder {
     /// Finished nodes, keyed by TypeId.
     /// Added when we FINISH building a node.
     finished: HashMap<ConstTypeId, NodeId>,
-    /// Format namespace for resolving format-specific proxies (e.g., "json", "xml")
-    format_namespace: Option<&'static str>,
 }
 
 impl TypePlanBuilder {
-    fn new(format_namespace: Option<&'static str>) -> Self {
+    fn new() -> Self {
         Self {
             nodes: Arena::new(),
             fields: Arena::new(),
@@ -910,7 +981,6 @@ impl TypePlanBuilder {
             buckets: Arena::new(),
             building: hashbrown::HashSet::new(),
             finished: HashMap::new(),
-            format_namespace,
         }
     }
 
@@ -939,20 +1009,14 @@ impl TypePlanBuilder {
         self.build_node_with_proxy(shape, None)
     }
 
-    /// Build a node for a shape with an optional explicit proxy override.
+    /// Build a node for a shape with an optional explicit field-level proxy.
     /// Used for field-level proxies where the proxy is on the field, not the type.
     fn build_node_with_proxy(
         &mut self,
         shape: &'static Shape,
-        field_proxy: Option<&'static ProxyDef>,
+        field_proxies: Option<FieldProxies>,
     ) -> Result<NodeId, AllocError> {
         let type_id = shape.id;
-
-        // Get container-level proxy (from the type itself)
-        let container_proxy = shape.effective_proxy(self.format_namespace);
-
-        // Field-level proxy takes precedence
-        let effective_proxy = field_proxy.or(container_proxy);
 
         // Check if we're currently building this type (cycle detected)
         if self.building.contains(&type_id) {
@@ -964,7 +1028,7 @@ impl TypePlanBuilder {
                     target_type_id: type_id,
                 },
                 has_default: shape.is(Characteristic::Default),
-                proxy: effective_proxy,
+                proxies: ProxyNodes::default(), // BackRefs resolve to target, proxies come from there
             };
             let idx = self.nodes.alloc(backref_node);
             return Ok(idx);
@@ -973,21 +1037,17 @@ impl TypePlanBuilder {
         // Mark this type as being built (for cycle detection)
         self.building.insert(type_id);
 
-        // Build children first - they may create BackRefs if they hit cycles
-        let proxy_node = if let Some(proxy_def) = effective_proxy {
-            Some(self.build_node(proxy_def.shape)?)
-        } else {
-            None
-        };
+        // Build proxy nodes for ALL proxies (generic + all format-specific)
+        let (proxies, has_container_proxy, has_field_proxy) =
+            self.build_all_proxy_nodes(shape, field_proxies.as_ref())?;
 
         let (kind, children) = self.build_kind(shape)?;
 
         let strategy = self.compute_strategy(
             shape,
             &kind,
-            container_proxy,
-            field_proxy,
-            proxy_node,
+            has_container_proxy,
+            has_field_proxy,
             &children,
         )?;
 
@@ -997,7 +1057,7 @@ impl TypePlanBuilder {
             kind,
             strategy,
             has_default: shape.is(Characteristic::Default),
-            proxy: effective_proxy,
+            proxies,
         };
         let idx = self.nodes.alloc(node);
 
@@ -1008,35 +1068,66 @@ impl TypePlanBuilder {
         Ok(idx)
     }
 
+    /// Build TypePlan nodes for all proxies on a shape/field.
+    ///
+    /// Returns (ProxyNodes, has_container_proxy, has_field_proxy).
+    fn build_all_proxy_nodes(
+        &mut self,
+        shape: &'static Shape,
+        field_proxies: Option<&FieldProxies>,
+    ) -> Result<(ProxyNodes, bool, bool), AllocError> {
+        let mut proxies = ProxyNodes::default();
+
+        // Field-level proxies take precedence over container-level
+        if let Some(fp) = field_proxies {
+            // Build nodes for field-level proxies
+            if let Some(generic_proxy) = fp.generic {
+                proxies.generic = Some(self.build_node(generic_proxy.shape)?);
+            }
+            for &(format, proxy_def) in fp.format_specific.iter() {
+                let node = self.build_node(proxy_def.shape)?;
+                proxies.format_specific.push((format, node));
+            }
+            let has_field_proxy = proxies.has_any();
+            return Ok((proxies, false, has_field_proxy));
+        }
+
+        // Container-level proxies (from the shape itself)
+        // Build generic proxy node
+        if let Some(generic_proxy) = shape.proxy {
+            proxies.generic = Some(self.build_node(generic_proxy.shape)?);
+        }
+
+        // Build format-specific proxy nodes
+        for format_proxy in shape.format_proxies.iter() {
+            let node = self.build_node(format_proxy.proxy.shape)?;
+            proxies.format_specific.push((format_proxy.format, node));
+        }
+
+        let has_container_proxy = proxies.has_any();
+        Ok((proxies, has_container_proxy, false))
+    }
+
     /// Compute the deserialization strategy with all data needed to execute it.
     fn compute_strategy(
         &self,
         shape: &'static Shape,
         kind: &TypePlanNodeKind,
-        proxy: Option<&'static ProxyDef>,
-        explicit_field_proxy: Option<&'static ProxyDef>,
-        proxy_node: Option<NodeId>,
+        has_container_proxy: bool,
+        has_field_proxy: bool,
         children: &[NodeId],
     ) -> Result<DeserStrategy, AllocError> {
         let nth_child = |n: usize| -> NodeId { children[n] };
         let first_child = || children[0];
 
         // Priority 1: Field-level proxy (field has proxy, type doesn't)
-        if let Some(field_proxy) = explicit_field_proxy {
-            return Ok(DeserStrategy::FieldProxy {
-                proxy_def: field_proxy,
-                proxy_shape: field_proxy.shape,
-                proxy_node: proxy_node.expect("field proxy requires proxy_node"),
-            });
+        if has_field_proxy {
+            return Ok(DeserStrategy::FieldProxy);
         }
 
         // Priority 2: Container-level proxy (type itself has proxy)
-        if let Some(container_proxy) = proxy {
-            return Ok(DeserStrategy::ContainerProxy {
-                proxy_def: container_proxy,
-                proxy_shape: container_proxy.shape,
-                proxy_node: proxy_node.expect("container proxy requires proxy_node"),
-            });
+        if has_container_proxy {
+            return Ok(DeserStrategy::ContainerProxy);
         }
 
         // Priority 3: Smart pointers (Box, Arc, Rc)
@@ -1271,8 +1362,8 @@ impl TypePlanBuilder {
 
         for (index, field) in struct_def.fields.iter().enumerate() {
             // Build the type plan node for this field first
-            let field_proxy = field.effective_proxy(self.format_namespace);
-            let child_node = self.build_node_with_proxy(field.shape(), field_proxy)?;
+            let field_proxies = FieldProxies::from_field(field);
+            let child_node = self.build_node_with_proxy(field.shape(), field_proxies)?;
 
             // Build validators and fill rule
             let validators = self.extract_validators(field);
@@ -1548,8 +1639,8 @@ impl TypePlanBuilder {
 
             for (index, field) in variant.data.fields.iter().enumerate() {
                 // Build the type plan node for this field
-                let field_proxy = field.effective_proxy(self.format_namespace);
-                let child_node = self.build_node_with_proxy(field.shape(), field_proxy)?;
+                let field_proxies = FieldProxies::from_field(field);
+                let child_node = self.build_node_with_proxy(field.shape(), field_proxies)?;
 
                 // Build validators and fill rule (enums don't have container-level default)
                 let validators = self.extract_validators(field);
@@ -1625,15 +1716,7 @@ impl<'facet, T: facet_core::Facet<'facet> + ?Sized> TypePlan<T> {
     /// let plan = TypePlan::<MyStruct>::build()?;
     /// ```
     pub fn build() -> Result<Self, AllocError> {
-        Self::build_for_format(None)
-    }
-
-    /// Build a TypePlan with format-specific proxy resolution.
-    ///
-    /// The `format_namespace` (e.g., `Some("json")`, `Some("xml")`) is used to resolve
-    /// format-specific proxies like `#[facet(json::proxy = ...)]`.
-    pub fn build_for_format(format_namespace: Option<&'static str>) -> Result<Self, AllocError> {
-        let mut builder = TypePlanBuilder::new(format_namespace);
+        let mut builder = TypePlanBuilder::new();
         let root = builder.build_node(T::SHAPE)?;
         let core = Arc::new(builder.finish(root));
 
@@ -1641,6 +1724,21 @@ impl<'facet, T: facet_core::Facet<'facet> + ?Sized> TypePlan<T> {
             core,
             _marker: core::marker::PhantomData,
         })
+    }
+
+    /// Build a TypePlan with format-specific proxy resolution.
+    ///
+    /// **Deprecated**: Format namespace is no longer needed at build time.
+    /// TypePlan now stores proxy nodes for all formats, and the format-specific
+    /// proxy is selected at runtime during deserialization.
+    ///
+    /// This method is kept for API compatibility but is equivalent to `build()`.
+    #[deprecated(
+        since = "0.44.0",
+        note = "format namespace no longer needed at build time; use build() instead"
+    )]
+    pub fn build_for_format(_format_namespace: Option<&'static str>) -> Result<Self, AllocError> {
+        Self::build()
     }
 
     /// Get a reference to the internal core.
@@ -1665,22 +1763,7 @@ impl TypePlanCore {
     /// Using an incorrect or maliciously crafted shape can lead to undefined behavior
     /// when materializing values.
     pub unsafe fn from_shape(shape: &'static Shape) -> Result<Arc<Self>, AllocError> {
-        // SAFETY: caller guarantees shape is valid
-        unsafe { Self::from_shape_for_format(shape, None) }
-    }
-
-    /// Build a TypePlanCore from a shape with format-specific proxy resolution.
-    ///
-    /// # Safety
-    ///
-    /// The caller must ensure that the shape is valid and corresponds to a real type.
-    /// Using an incorrect or maliciously crafted shape can lead to undefined behavior
-    /// when materializing values.
-    pub unsafe fn from_shape_for_format(
-        shape: &'static Shape,
-        format_namespace: Option<&'static str>,
-    ) -> Result<Arc<Self>, AllocError> {
-        let mut builder = TypePlanBuilder::new(format_namespace);
+        let mut builder = TypePlanBuilder::new();
         let root = builder.build_node(shape)?;
         Ok(Arc::new(builder.finish(root)))
     }
