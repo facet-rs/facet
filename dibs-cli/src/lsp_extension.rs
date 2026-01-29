@@ -332,7 +332,7 @@ impl DibsExtension {
     ) {
         let schema = self.schema().await;
 
-        // Handle tagged objects (@query, @update, @delete, @insert, @upsert)
+        // Handle tagged objects (@query, @update, @delete, @insert, @upsert, @insert-many, @upsert-many)
         // Note: @rel blocks are handled separately by lint_relation()
         if let Some(tag) = &value.tag {
             let tag_name = tag.name.as_str();
@@ -1135,11 +1135,18 @@ impl DibsExtension {
     ) {
         let schema = self.schema().await;
 
-        // Handle tagged objects (@query, @rel, @insert, @update, @delete, @upsert)
+        // Handle tagged objects (@query, @rel, @insert, @update, @delete, @upsert, @insert-many, @upsert-many)
         if let Some(tag) = &value.tag
             && matches!(
                 tag.name.as_str(),
-                "query" | "rel" | "insert" | "update" | "delete" | "upsert"
+                "query"
+                    | "rel"
+                    | "insert"
+                    | "update"
+                    | "delete"
+                    | "upsert"
+                    | "insert-many"
+                    | "upsert-many"
             )
         {
             if let Some(styx_tree::Payload::Object(obj)) = &value.payload {
@@ -1434,6 +1441,12 @@ impl DibsExtension {
 
     /// Get completions for query structure fields (from, select, where, etc.)
     fn query_field_completions(&self, prefix: &str, is_rel: bool) -> Vec<CompletionItem> {
+        let type_name = if is_rel { "Relation" } else { "Query" };
+        self.schema_type_completions(prefix, type_name)
+    }
+
+    /// Get completions for fields of a specific schema type.
+    fn schema_type_completions(&self, prefix: &str, type_name: &str) -> Vec<CompletionItem> {
         use facet_styx::{Documented, ObjectKey, ObjectSchema, Schema, SchemaFile};
 
         // Generate schema string from the QueryFile type
@@ -1443,8 +1456,6 @@ impl DibsExtension {
         let Ok(schema_file) = facet_styx::from_str::<SchemaFile>(&schema_str) else {
             return Vec::new();
         };
-
-        let type_name = if is_rel { "Relation" } else { "Query" };
 
         let Some(Schema::Object(ObjectSchema(fields))) =
             schema_file.schema.get(&Some(type_name.to_string()))
@@ -1554,6 +1565,10 @@ impl StyxLspExtension for DibsExtension {
             // Inside a @query or @rel block - offer query structure fields
             "@query" => self.query_field_completions(&params.prefix, false),
             "@rel" => self.query_field_completions(&params.prefix, true),
+
+            // Inside bulk operation blocks - offer their specific fields
+            "@insert-many" => self.schema_type_completions(&params.prefix, "InsertMany"),
+            "@upsert-many" => self.schema_type_completions(&params.prefix, "UpsertMany"),
 
             // Table references
             "from" | "into" | "table" | "join" => self.table_completions(&params.prefix).await,

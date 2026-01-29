@@ -1128,4 +1128,152 @@ tests (
         }
     }
 
+    // ========================================================================
+    // Bulk Insert/Upsert Tests (@insert-many, @upsert-many)
+    // ========================================================================
+
+    {
+        name "inlay hints in insert-many values block"
+        input <<STYX
+            BulkCreateProducts @insert-many{
+                params {handle @string, status @string}
+                into product
+                values {
+                    handle $handle
+                    status $status
+                }
+            }
+            STYX
+        inlay_hints {
+            count 2
+            has (
+                {label ": TEXT" line 5}
+                {label ": TEXT" line 6}
+            )
+        }
+    }
+
+    {
+        name "inlay hints in insert-many returning block"
+        input <<STYX
+            BulkCreateProducts @insert-many{
+                params {handle @string, status @string}
+                into product
+                values {handle $handle, status $status}
+                returning {id, handle}
+            }
+            STYX
+        inlay_hints {
+            count 4
+            has (
+                {label ": TEXT" line 4}
+                {label ": TEXT" line 4}
+                {label ": BIGINT" line 5}
+                {label ": TEXT" line 5}
+            )
+        }
+    }
+
+    {
+        name "inlay hints in upsert-many values block"
+        input <<STYX
+            BulkUpsertProducts @upsert-many{
+                params {handle @string, status @string}
+                into product
+                on-conflict {
+                    target {handle}
+                    update {status}
+                }
+                values {
+                    handle $handle
+                    status $status
+                }
+            }
+            STYX
+        inlay_hints {
+            count 4
+            has (
+                {label ": TEXT" line 5}
+                {label ": TEXT" line 6}
+                {label ": TEXT" line 9}
+                {label ": TEXT" line 10}
+            )
+        }
+    }
+
+    {
+        name "lint: redundant param in insert-many values"
+        input <<STYX
+            BulkCreate @insert-many{
+                params {handle @string, status @string}
+                into product
+                values {
+                    handle $handle
+                    status $status
+                }
+            }
+            STYX
+        diagnostics {
+            count 2
+            has (
+                {message "handle $handle", code "redundant-param"}
+                {message "status $status", code "redundant-param"}
+            )
+        }
+    }
+
+    {
+        name "lint: redundant param in upsert-many values"
+        input <<STYX
+            BulkUpsert @upsert-many{
+                params {handle @string, status @string}
+                into product
+                on-conflict {
+                    target {handle}
+                    update {status $status}
+                }
+                values {
+                    handle $handle
+                    status $status
+                }
+            }
+            STYX
+        diagnostics {
+            count 3
+            has (
+                {message "handle $handle", code "redundant-param"}
+                {message "status $status", code "redundant-param"}
+            )
+        }
+    }
+
+    {
+        name "lint: unused param in insert-many"
+        input <<STYX
+            BulkCreate @insert-many{
+                params {handle @string, unused @string}
+                into product
+                values {handle $handle}
+            }
+            STYX
+        diagnostics {
+            has ({message "param 'unused' is declared but never used", code "unused-param"})
+        }
+    }
+
+    {
+        name "lint: unknown table in insert-many"
+        input <<STYX
+            BulkCreate @insert-many{
+                params {handle @string}
+                into nonexistent_table
+                     ^^^^^^^^^^^^^^^^^ "Unknown table"
+                values {handle $handle}
+            }
+            STYX
+        diagnostics {
+            has ({message "Unknown table", code "unknown-table"})
+        }
+    }
+
 )
