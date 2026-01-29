@@ -129,7 +129,7 @@ use std::sync::Arc;
 
 use bumpalo::Bump;
 use facet_core::{Facet, Shape};
-use facet_reflect::{HeapValue, Partial, Span, typeplan::TypePlan};
+use facet_reflect::{HeapValue, Partial, Span, TypePlan};
 use facet_solver::{KeyResult, Schema, Solver};
 
 use crate::{FormatParser, ParseEvent};

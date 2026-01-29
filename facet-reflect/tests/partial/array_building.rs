@@ -4,7 +4,7 @@
 
 use bumpalo::Bump;
 use facet::Facet;
-use facet_reflect::{Partial, ReflectErrorKind, typeplan::TypePlan};
+use facet_reflect::{Partial, ReflectErrorKind, TypePlan};
 use facet_testhelpers::{IPanic, test};
 
 #[test]

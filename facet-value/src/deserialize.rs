@@ -36,7 +36,7 @@ use bumpalo::Bump;
 use facet_core::{
     Def, Facet, NumericType, PrimitiveType, Shape, StructKind, TextualType, Type, UserType, Variant,
 };
-use facet_reflect::{AllocError, Partial, ReflectError, ShapeMismatchError, typeplan::TypePlan};
+use facet_reflect::{AllocError, Partial, ReflectError, ShapeMismatchError, TypePlan};
 
 use crate::{VNumber, Value, ValueType};
 

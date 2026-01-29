@@ -540,7 +540,6 @@ mod format;
 mod format_compiler;
 pub mod helpers;
 
-use bumpalo::Bump;
 use facet_core::{ConstTypeId, Facet};
 
 use crate::{DeserializeError, DeserializeErrorKind, FormatDeserializer, FormatParser};
@@ -619,7 +618,6 @@ where
     }
 
     // Fall back to reflection-based deserialization
-    let bump = Bump::new();
     FormatDeserializer::new(&mut parser).deserialize()
 }
 
@@ -876,6 +874,5 @@ where
     }
 
     // Fall back to reflection-based deserialization
-    let bump = Bump::new();
     FormatDeserializer::new(&mut parser).deserialize()
 }

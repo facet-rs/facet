@@ -3,7 +3,7 @@
 
 use bumpalo::Bump;
 use facet_core::{Def, Facet, Type, UserType};
-use facet_reflect::{AllocError, Partial, ReflectError, ShapeMismatchError, typeplan::TypePlan};
+use facet_reflect::{AllocError, Partial, ReflectError, ShapeMismatchError, TypePlan};
 use log::*;
 
 #[cfg(test)]

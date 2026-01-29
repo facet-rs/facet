@@ -27,6 +27,7 @@ use crate::AllocError;
 /// Build a TypePlanCore for the given shape, allocating from the provided bump.
 ///
 /// This is the internal builder used by both `TypePlan::build` and `Partial::alloc`.
+#[allow(dead_code)]
 pub(crate) fn build_core<'plan>(
     bump: &'plan Bump,
     shape: &'static Shape,

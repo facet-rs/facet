@@ -134,6 +134,7 @@ facet-reflect = { path = "../facet-reflect", version = "0.43.2", optional = true
 static_assertions = { workspace = true, optional = true }
 
 [dev-dependencies]
+bumpalo = "3"
 facet-default = { path = "../facet-default" }
 facet-reflect = { path = "../facet-reflect" }
 facet-showcase = { path = "../facet-showcase" }

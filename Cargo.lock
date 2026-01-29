@@ -979,6 +979,7 @@ name = "facet"
 version = "0.43.2"
 dependencies = [
  "autocfg",
+ "bumpalo",
  "facet-core",
  "facet-default",
  "facet-macros",

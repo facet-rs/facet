@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use facet_core::{Def, ScalarType, Shape, StructKind, Type, UserType};
-use facet_reflect::{Partial, typeplan::DeserStrategy};
+use facet_reflect::{DeserStrategy, Partial};
 
 use crate::{
     ContainerKind, DeserializeError, DeserializeErrorKind, FieldEvidence, FieldLocationHint,

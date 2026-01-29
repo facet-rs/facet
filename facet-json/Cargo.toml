@@ -65,6 +65,10 @@ harness = false
 name = "twitter"
 harness = false
 
+[[bench]]
+name = "typeplan_reuse"
+harness = false
+
 [[example]]
 name = "profile_jit_vec"
 required-features = ["jit"]

@@ -25,6 +25,7 @@ use core::marker::PhantomData;
 ///      .materialize()
 /// })?;
 /// ```
+#[allow(clippy::type_complexity)]
 pub struct PartialBuilder<'facet, T: ?Sized> {
     _marker: PhantomData<(&'facet (), fn() -> T)>,
 }

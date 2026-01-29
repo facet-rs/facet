@@ -1352,12 +1352,15 @@ fn test_rc_weak() {
 #[test]
 #[cfg(feature = "net")]
 fn test_ipv4_addr_parse_from_str() {
+    use bumpalo::Bump;
     use core::net::Ipv4Addr;
     use facet_reflect::Partial;
 
+    let bump = Bump::new();
+
     // Test that Ipv4Addr can be parsed from a string using facet reflection
     // SAFETY: Ipv4Addr::SHAPE comes from the trusted Facet implementation for Ipv4Addr
-    let wip = unsafe { Partial::alloc_shape(Ipv4Addr::SHAPE) }.unwrap();
+    let wip = unsafe { Partial::alloc_shape(&bump, Ipv4Addr::SHAPE) }.unwrap();
 
     // This should work - parse a valid IP address
     let wip = wip
@@ -1369,7 +1372,7 @@ fn test_ipv4_addr_parse_from_str() {
 
     // Test that invalid IP addresses fail to parse
     // SAFETY: Ipv4Addr::SHAPE comes from the trusted Facet implementation for Ipv4Addr
-    let wip2 = unsafe { Partial::alloc_shape(Ipv4Addr::SHAPE) }.unwrap();
+    let wip2 = unsafe { Partial::alloc_shape(&bump, Ipv4Addr::SHAPE) }.unwrap();
     let result2 = wip2.parse_from_str("not.an.ip.address");
     assert!(result2.is_err(), "Should fail to parse invalid IP address");
 

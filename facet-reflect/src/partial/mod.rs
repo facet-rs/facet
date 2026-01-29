@@ -112,7 +112,8 @@
 use alloc::{collections::BTreeMap, vec::Vec};
 
 mod iset;
-pub mod typeplan;
+pub(crate) mod typeplan;
+pub use typeplan::{DeserStrategy, TypePlan};
 
 mod partial_api;
 pub use partial_api::alloc::{PartialBuilder, PartialBuilderOwned};
