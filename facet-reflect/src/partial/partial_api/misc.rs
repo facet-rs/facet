@@ -838,9 +838,23 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
                     false
                 };
 
+            // IMPORTANT: Don't store Owned frames that have a SmartPointer parent.
+            // SmartPointer (Box, Arc, etc.) needs its inner value immediately to create
+            // the smart pointer - it can't wait for finish_deferred.
+            let has_smart_pointer_parent =
+                if matches!(current_frame.ownership, FrameOwnership::Owned) {
+                    let frames = self.frames();
+                    frames.len() >= 2
+                        && matches!(frames[frames.len() - 2].tracker, Tracker::SmartPointer)
+                } else {
+                    false
+                };
+
             // This must match the should_store logic below
-            let will_be_stored =
-                is_reentrant_type && storable_ownership && !inside_owned_allocation;
+            let will_be_stored = is_reentrant_type
+                && storable_ownership
+                && !inside_owned_allocation
+                && !has_smart_pointer_parent;
 
             // If this frame will be stored, defer validation to finish_deferred().
             // Otherwise validate now.
@@ -961,7 +975,23 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
                     false
                 };
 
-            let should_store = is_reentrant_type && storable_ownership && !inside_owned_allocation;
+            // IMPORTANT: Don't store Owned frames that have a SmartPointer parent.
+            // SmartPointer (Box, Arc, etc.) needs its inner value immediately to create
+            // the smart pointer - it can't wait for finish_deferred. This is different
+            // from Option, which has special handling in finish_deferred for OptionSome.
+            let has_smart_pointer_parent =
+                if matches!(current_frame.ownership, FrameOwnership::Owned) {
+                    let frames = self.frames();
+                    frames.len() >= 2
+                        && matches!(frames[frames.len() - 2].tracker, Tracker::SmartPointer)
+                } else {
+                    false
+                };
+
+            let should_store = is_reentrant_type
+                && storable_ownership
+                && !inside_owned_allocation
+                && !has_smart_pointer_parent;
 
             if should_store {
                 // Compute the "field-only" path for storage by finding all Field steps
