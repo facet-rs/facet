@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+use bumpalo::Bump;
 use facet::Facet;
 use facet_format::{DeserializeError, FormatDeserializer};
 use facet_format_suite::{CaseOutcome, CaseSpec, FormatSuite, all_cases};
@@ -25,9 +26,10 @@ impl FormatSuite for YamlSlice {
     where
         T: Facet<'static> + core::fmt::Debug,
     {
+        let bump = Bump::new();
         let input_str = std::str::from_utf8(input).expect("input should be valid UTF-8");
         let mut parser = YamlParser::new(input_str);
-        let mut de = FormatDeserializer::new_owned(&mut parser);
+        let mut de = FormatDeserializer::new_owned(&bump, &mut parser);
         de.deserialize_root::<T>()
     }
 

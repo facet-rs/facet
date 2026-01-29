@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+use bumpalo::Bump;
 use facet::Facet;
 use facet_format::{DeserializeError, FormatDeserializer};
 use facet_format_suite::{CaseOutcome, CaseSpec, FormatSuite, all_cases};
@@ -24,8 +25,9 @@ impl FormatSuite for JsonSlice {
     where
         T: Facet<'static> + core::fmt::Debug,
     {
+        let bump = Bump::new();
         let mut parser = JsonParser::<false>::new(input);
-        let mut de = FormatDeserializer::new_owned(&mut parser);
+        let mut de = FormatDeserializer::new_owned(&bump, &mut parser);
         de.deserialize_root::<T>()
     }
 
