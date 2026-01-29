@@ -291,7 +291,7 @@ impl<'parser, 'input, 'bump, const BORROW: bool>
     /// Helper for inserting a key-value pair into a catch-all map field.
     fn insert_into_catch_all_map(
         &mut self,
-        nav: &mut PathNavigator<'input, BORROW>,
+        nav: &mut PathNavigator<'input, 'bump, BORROW>,
         catch_all_info: &FieldInfo,
         key: &str,
         fields_set: &mut BTreeSet<&'static str>,

@@ -25,7 +25,7 @@ struct OpenSegment {
 /// - Closing segments that are no longer needed
 /// - Opening new segments, handling Options along the way
 /// - Selecting enum variants when required by the resolution
-pub(crate) struct PathNavigator<'input, const BORROW: bool> {
+pub(crate) struct PathNavigator<'input, 'bump, const BORROW: bool> {
     /// The work-in-progress partial. Stored as Option to allow taking ownership temporarily.
     wip: Option<Partial<'input, 'bump, BORROW>>,
     /// Currently open path segments.
@@ -34,7 +34,7 @@ pub(crate) struct PathNavigator<'input, const BORROW: bool> {
     last_span: Span,
 }
 
-impl<'input, const BORROW: bool> PathNavigator<'input, BORROW> {
+impl<'input, 'bump, const BORROW: bool> PathNavigator<'input, 'bump, BORROW> {
     /// Create a new navigator starting at the root of the given partial.
     pub fn new(wip: Partial<'input, 'bump, BORROW>, last_span: Span) -> Self {
         Self {

@@ -13,7 +13,7 @@ use crate::{
 /// this falls back to a linear scan through struct fields.
 #[inline]
 fn lookup_field<const BORROW: bool>(
-    wip: &Partial<'_, BORROW>,
+    wip: &Partial<'_, '_, BORROW>,
     struct_def: &'static StructType,
     name: &str,
 ) -> Option<usize> {
