@@ -1526,7 +1526,12 @@ impl<'facet, 'plan, const BORROW: bool> Drop for Partial<'facet, 'plan, BORROW> 
         // - No double-free possible by construction
 
         // 1. Clean up stored frames from deferred state
-        if let FrameMode::Deferred { stored_frames, .. } = &mut self.mode {
+        if let FrameMode::Deferred {
+            stored_frames,
+            stack,
+            ..
+        } = &mut self.mode
+        {
             // Stored frames have ownership of their data (parent's iset was cleared).
             // IMPORTANT: Process in deepest-first order so children are dropped before parents.
             // Child frames have data pointers into parent memory, so parents must stay valid
@@ -1550,16 +1555,38 @@ impl<'facet, 'plan, const BORROW: bool> Drop for Partial<'facet, 'plan, BORROW> 
                             shape: path.shape,
                             steps: path.steps[..path.steps.len() - 1].to_vec(),
                         };
-                        // Find and update the parent frame
-                        if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
-                            match &mut parent_frame.tracker {
-                                Tracker::Struct { iset, .. } => {
-                                    iset.unset(field_idx);
+                        // Find and update the parent frame - check BOTH stored_frames AND the stack
+                        let parent_found_in_stored =
+                            if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
+                                match &mut parent_frame.tracker {
+                                    Tracker::Struct { iset, .. } => {
+                                        iset.unset(field_idx);
+                                    }
+                                    Tracker::Enum { data, .. } => {
+                                        data.unset(field_idx);
+                                    }
+                                    _ => {}
                                 }
-                                Tracker::Enum { data, .. } => {
-                                    data.unset(field_idx);
+                                true
+                            } else {
+                                false
+                            };
+
+                        // If parent not in stored_frames, check the stack.
+                        // For stored frames at depth 1 (e.g., [Field(1)]), the parent is
+                        // on the stack. We need to find it and unset its bit.
+                        if !parent_found_in_stored && parent_path.steps.is_empty() {
+                            // Parent is the root frame on the stack
+                            if let Some(root_frame) = stack.first_mut() {
+                                match &mut root_frame.tracker {
+                                    Tracker::Struct { iset, .. } => {
+                                        iset.unset(field_idx);
+                                    }
+                                    Tracker::Enum { data, .. } => {
+                                        data.unset(field_idx);
+                                    }
+                                    _ => {}
                                 }
-                                _ => {}
                             }
                         }
                     }
@@ -1570,6 +1597,8 @@ impl<'facet, 'plan, const BORROW: bool> Drop for Partial<'facet, 'plan, BORROW> 
         }
 
         // 2. Pop and deinit stack frames
+        // CRITICAL: Before deiniting a child frame, we must mark the parent's field as
+        // uninitialized. Otherwise, the parent will try to drop the field again.
         loop {
             let stack = self.mode.stack_mut();
             if stack.is_empty() {
@@ -1577,6 +1606,26 @@ impl<'facet, 'plan, const BORROW: bool> Drop for Partial<'facet, 'plan, BORROW> 
             }
 
             let mut frame = stack.pop().unwrap();
+
+            // If this frame has Field ownership, mark the parent's bit as unset
+            // so the parent won't try to drop it again.
+            if let FrameOwnership::Field { field_idx } = frame.ownership
+                && let Some(parent_frame) = stack.last_mut()
+            {
+                match &mut parent_frame.tracker {
+                    Tracker::Struct { iset, .. } => {
+                        iset.unset(field_idx);
+                    }
+                    Tracker::Enum { data, .. } => {
+                        data.unset(field_idx);
+                    }
+                    Tracker::Array { iset, .. } => {
+                        iset.unset(field_idx);
+                    }
+                    _ => {}
+                }
+            }
+
             frame.deinit();
             frame.dealloc();
         }

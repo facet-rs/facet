@@ -328,23 +328,35 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
 
             // Fill in defaults for unset fields that have defaults
             if let Err(e) = frame.fill_defaults() {
+                // Before cleanup, clear the parent's iset bit for the frame that failed.
+                // This prevents the parent from trying to drop this field when Partial is dropped.
+                Self::clear_parent_iset_for_path(
+                    &path,
+                    start_depth,
+                    self.frames_mut(),
+                    &mut stored_frames,
+                );
                 frame.deinit();
                 frame.dealloc();
-                for (_, mut remaining_frame) in stored_frames {
-                    remaining_frame.deinit();
-                    remaining_frame.dealloc();
-                }
+                // Clean up remaining stored frames safely (deepest first, clearing parent isets)
+                Self::cleanup_stored_frames_on_error(stored_frames, start_depth, self.frames_mut());
                 return Err(self.err(e));
             }
 
             // Validate the frame is fully initialized
             if let Err(e) = frame.require_full_initialization() {
+                // Before cleanup, clear the parent's iset bit for the frame that failed.
+                // This prevents the parent from trying to drop this field when Partial is dropped.
+                Self::clear_parent_iset_for_path(
+                    &path,
+                    start_depth,
+                    self.frames_mut(),
+                    &mut stored_frames,
+                );
                 frame.deinit();
                 frame.dealloc();
-                for (_, mut remaining_frame) in stored_frames {
-                    remaining_frame.deinit();
-                    remaining_frame.dealloc();
-                }
+                // Clean up remaining stored frames safely (deepest first, clearing parent isets)
+                Self::cleanup_stored_frames_on_error(stored_frames, start_depth, self.frames_mut());
                 return Err(self.err(e));
             }
 
@@ -487,6 +499,80 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
                     "mark_field_initialized_by_index: no match for tracker {:?}",
                     frame.tracker.kind()
                 );
+            }
+        }
+    }
+
+    /// Clear a parent frame's iset bit for a given path.
+    /// The parent could be on the stack or in stored_frames.
+    fn clear_parent_iset_for_path(
+        path: &Path,
+        start_depth: usize,
+        stack: &mut [Frame],
+        stored_frames: &mut ::alloc::collections::BTreeMap<Path, Frame>,
+    ) {
+        if let Some(&PathStep::Field(field_idx)) = path.steps.last() {
+            let field_idx = field_idx as usize;
+            let parent_path = Path {
+                shape: path.shape,
+                steps: path.steps[..path.steps.len() - 1].to_vec(),
+            };
+
+            // Try stored_frames first
+            if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
+                Self::unset_field_in_tracker(&mut parent_frame.tracker, field_idx);
+            } else if parent_path.steps.is_empty() {
+                // Parent is on the stack at (start_depth - 1)
+                let parent_index = start_depth.saturating_sub(1);
+                if let Some(parent_frame) = stack.get_mut(parent_index) {
+                    Self::unset_field_in_tracker(&mut parent_frame.tracker, field_idx);
+                }
+            } else {
+                // Parent is on the stack at (start_depth + parent_path.steps.len() - 1)
+                let parent_index = start_depth + parent_path.steps.len() - 1;
+                if let Some(parent_frame) = stack.get_mut(parent_index) {
+                    Self::unset_field_in_tracker(&mut parent_frame.tracker, field_idx);
+                }
+            }
+        }
+    }
+
+    /// Helper to unset a field index in a tracker's iset
+    fn unset_field_in_tracker(tracker: &mut Tracker, field_idx: usize) {
+        match tracker {
+            Tracker::Struct { iset, .. } => {
+                iset.unset(field_idx);
+            }
+            Tracker::Enum { data, .. } => {
+                data.unset(field_idx);
+            }
+            Tracker::Array { iset, .. } => {
+                iset.unset(field_idx);
+            }
+            _ => {}
+        }
+    }
+
+    /// Safely clean up stored frames on error in finish_deferred.
+    ///
+    /// This mirrors the cleanup logic in Drop: process frames deepest-first and
+    /// clear parent's iset bits before deiniting children to prevent double-drops.
+    fn cleanup_stored_frames_on_error(
+        mut stored_frames: ::alloc::collections::BTreeMap<Path, Frame>,
+        start_depth: usize,
+        stack: &mut [Frame],
+    ) {
+        // Sort by depth (deepest first) so children are processed before parents
+        let mut paths: Vec<_> = stored_frames.keys().cloned().collect();
+        paths.sort_by_key(|p| core::cmp::Reverse(p.steps.len()));
+
+        for path in paths {
+            if let Some(mut frame) = stored_frames.remove(&path) {
+                // Before dropping this frame, clear the parent's iset bit so the
+                // parent won't try to drop this field again.
+                Self::clear_parent_iset_for_path(&path, start_depth, stack, &mut stored_frames);
+                frame.deinit();
+                frame.dealloc();
             }
         }
     }
@@ -721,16 +807,40 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
                 Type::User(UserType::Struct(_)) | Type::User(UserType::Enum(_))
             ) || matches!(
                 current_frame.allocated.shape().def,
-                Def::List(_) | Def::Map(_) | Def::Set(_) | Def::Array(_)
+                Def::List(_) | Def::Map(_) | Def::Set(_) | Def::Array(_) | Def::Option(_)
             );
-            // Match the should_store logic: Field or Owned ownership is storable
+            // Storable ownership types: Field (direct field access) and Owned (inner values
+            // of Option/SmartPointer). Both can be stored and later processed by finish_deferred.
+            // Key insight: when an Owned frame (like Option's inner struct) is stored, we also
+            // need to store the Option frame so finish_deferred can find it and call init_some.
             let storable_ownership = matches!(
                 current_frame.ownership,
                 FrameOwnership::Field { .. } | FrameOwnership::Owned
             );
 
+            // IMPORTANT: Don't store Field frames whose data lives inside an INTERMEDIATE
+            // Owned frame's memory. When that Owned frame is later moved (e.g., by
+            // complete_option_frame()), the Field frame's pointer becomes invalid.
+            //
+            // The ROOT frame (index 0) is also Owned, but it won't be moved - only
+            // intermediate Owned frames (Option's inner struct, etc.) will be moved.
+            // So we skip index 0 when checking for Owned ancestors.
+            let inside_owned_allocation =
+                if matches!(current_frame.ownership, FrameOwnership::Field { .. }) {
+                    // Skip index 0 (root) and current frame, check remaining for Owned
+                    let frames = self.frames();
+                    frames
+                        .iter()
+                        .enumerate()
+                        .filter(|(idx, _)| *idx != 0 && *idx != frames.len() - 1) // Skip root and current
+                        .any(|(_, f)| matches!(f.ownership, FrameOwnership::Owned))
+                } else {
+                    false
+                };
+
             // This must match the should_store logic below
-            let will_be_stored = is_reentrant_type && storable_ownership;
+            let will_be_stored =
+                is_reentrant_type && storable_ownership && !inside_owned_allocation;
 
             // If this frame will be stored, defer validation to finish_deferred().
             // Otherwise validate now.
@@ -809,35 +919,49 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
         // In deferred mode, check if we should store this frame for potential re-entry.
         // We need to compute the storage path BEFORE popping so we can check it.
         //
-        // We only store STRUCT/ENUM frames that were entered via begin_field.
-        // The storage path is computed from fields only (not Option/Box unwrapping),
-        // so lookups in begin_field will match.
+        // Store frames that can be re-entered in deferred mode.
+        // This includes structs, enums, collections, and Options (which need to be
+        // stored so finish_deferred can find them when processing their inner values).
         let deferred_storage_info = if self.is_deferred() {
             // Check if the current frame is a type that can be re-entered in deferred mode.
-            // This includes structs, enums, and collections (List, Map, Set, Array).
+            // This includes structs, enums, collections (List, Map, Set, Array), and Options.
             let current_frame = self.frames().last().unwrap();
             let is_reentrant_type = matches!(
                 current_frame.allocated.shape().ty,
                 Type::User(UserType::Struct(_)) | Type::User(UserType::Enum(_))
             ) || matches!(
                 current_frame.allocated.shape().def,
-                Def::List(_) | Def::Map(_) | Def::Set(_) | Def::Array(_)
+                Def::List(_) | Def::Map(_) | Def::Set(_) | Def::Array(_) | Def::Option(_)
             );
 
-            // Check if this frame should be stored based on ownership.
-            // We store frames that are:
-            // - Field: direct field access (e.g., struct.field)
-            // - Owned: inner value of Option/SmartPointer (e.g., Option<Struct>)
-            // We DON'T store frames that are:
-            // - BorrowedInPlace: re-entry into existing value (already stored)
-            // - TrackedBuffer: temporary map key/value buffers
-            // - External: externally-owned memory
-            // - ListSlot: direct-fill into Vec buffer
+            // Storable ownership types: Field (direct field access) and Owned (inner values
+            // of Option/SmartPointer). Both can be stored for deferred processing.
             let storable_ownership = matches!(
                 current_frame.ownership,
                 FrameOwnership::Field { .. } | FrameOwnership::Owned
             );
-            let should_store = is_reentrant_type && storable_ownership;
+
+            // IMPORTANT: Don't store Field frames whose data lives inside an INTERMEDIATE
+            // Owned frame's memory. When that Owned frame is later moved (e.g., by
+            // complete_option_frame()), the Field frame's pointer becomes invalid.
+            //
+            // The ROOT frame (index 0) is also Owned, but it won't be moved - only
+            // intermediate Owned frames (Option's inner struct, etc.) will be moved.
+            // So we skip index 0 when checking for Owned ancestors.
+            let inside_owned_allocation =
+                if matches!(current_frame.ownership, FrameOwnership::Field { .. }) {
+                    // Skip index 0 (root) and current frame, check remaining for Owned
+                    let frames = self.frames();
+                    frames
+                        .iter()
+                        .enumerate()
+                        .filter(|(idx, _)| *idx != 0 && *idx != frames.len() - 1) // Skip root and current
+                        .any(|(_, f)| matches!(f.ownership, FrameOwnership::Owned))
+                } else {
+                    false
+                };
+
+            let should_store = is_reentrant_type && storable_ownership && !inside_owned_allocation;
 
             if should_store {
                 // Compute the "field-only" path for storage by finding all Field steps

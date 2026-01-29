@@ -26,10 +26,10 @@ impl<const BORROW: bool> Partial<'_, '_, BORROW> {
         // For Options, also check if tracker is Option{building_inner:false} which means
         // a previous begin_some/end cycle completed.
         //
-        // IMPORTANT: For Option<Vec<T>> and similar accumulator types, we do NOT want to
-        // reinitialize when re-entering, as this would destroy the existing Vec.
-        // This can happen with TOML array-of-tables which emit multiple FieldKey events
-        // for the same field.
+        // IMPORTANT: For certain types, we do NOT want to reinitialize when re-entering,
+        // as this would destroy the existing values:
+        // - Accumulators (Vec, Map, Set, DynamicValue) - can accumulate more values
+        // - Structs/enums in deferred mode - can have more fields set on re-entry
         let needs_reinit = {
             let frame = self.frames().last().unwrap();
 
@@ -38,14 +38,22 @@ impl<const BORROW: bool> Partial<'_, '_, BORROW> {
             // So we check for Scalar tracker + is_init flag.
             if matches!(frame.tracker, Tracker::Scalar) && frame.is_init {
                 // The Option was previously built and completed.
-                // Check if the inner type can accumulate more values (like List, Map, DynamicValue)
+                // Check if the inner type can accumulate more values or be re-entered
                 let inner_shape = option_def.t;
                 let is_accumulator = matches!(
                     inner_shape.def,
                     Def::List(_) | Def::Map(_) | Def::Set(_) | Def::DynamicValue(_)
                 );
 
-                if is_accumulator {
+                // In deferred mode, structs and enums are also reentrant - we can set
+                // more fields on them without reinitializing the whole struct
+                let is_reentrant_in_deferred = self.is_deferred()
+                    && matches!(
+                        inner_shape.ty,
+                        Type::User(UserType::Struct(_)) | Type::User(UserType::Enum(_))
+                    );
+
+                if is_accumulator || is_reentrant_in_deferred {
                     // Don't reinitialize - we'll re-enter the existing inner value below
                     false
                 } else {

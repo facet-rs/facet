@@ -1,5 +1,6 @@
 ---
 source: facet-reflect/tests/partial/tuples.rs
+assertion_line: 121
 expression: partial.build().unwrap_err()
 ---
-Field '(String, String)::1' was not initialized. If you need to leave fields partially initialized and come back later, use deferred mode (begin_deferred/finish_deferred) at Path { shape: Shape { type_identifier: "(…)", ty: User(Struct(«kind: Tuple, fields: 2»)), layout: Sized(«48 align 8»), .. }, steps: [] }
+Field '(String, String)::1' was not initialized. If you need to leave fields partially initialized and come back later, use deferred mode (begin_deferred/finish_deferred) at <root>

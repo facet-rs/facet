@@ -152,6 +152,19 @@ impl<const BORROW: bool> Partial<'_, '_, BORROW> {
                     // include stale navigation state and compute incorrect paths.
                     stored_frame.tracker.clear_current_child();
 
+                    // For Option frames, reset building_inner to false. When an Option frame
+                    // is stored, it may have building_inner=true (if we were inside begin_some).
+                    // When restored via begin_field, we're re-entering the Option container
+                    // itself, not its inner value - so building_inner should be false.
+                    // Without this, derive_path() would include an extra OptionSome step,
+                    // causing path mismatches when we call begin_some() to find the stored
+                    // inner frame.
+                    if matches!(stored_frame.tracker, Tracker::Option { .. }) {
+                        stored_frame.tracker = Tracker::Option {
+                            building_inner: false,
+                        };
+                    }
+
                     stack.push(stored_frame);
                     return Ok(self);
                 }

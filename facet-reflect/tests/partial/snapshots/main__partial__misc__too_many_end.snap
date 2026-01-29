@@ -1,5 +1,6 @@
 ---
 source: facet-reflect/tests/partial/misc.rs
+assertion_line: 788
 expression: err
 ---
-Invariant violation: Partial::end() called with only one frame on the stack at Path { shape: Shape { type_identifier: "u32", ty: Primitive(Numeric(Integer { signed: false })), layout: Sized(«4 align 4»), def: Scalar, .. }, steps: [] }
+Invariant violation: Partial::end() called with only one frame on the stack at <root>
