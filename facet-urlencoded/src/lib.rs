@@ -221,10 +221,10 @@ impl NestedValues {
 }
 
 /// Deserialize a value recursively using the nested values
-fn deserialize_value<'facet, 'bump>(
-    mut wip: Partial<'facet, 'bump, false>,
+fn deserialize_value<'facet, 'bump, const BORROW: bool>(
+    mut wip: Partial<'facet, 'bump, BORROW>,
     values: &NestedValues,
-) -> Result<Partial<'facet, 'bump, false>, UrlEncodedError> {
+) -> Result<Partial<'facet, 'bump, BORROW>, UrlEncodedError> {
     let shape = wip.shape();
     match shape.ty {
         Type::User(UserType::Struct(_)) => {
@@ -267,11 +267,11 @@ fn deserialize_value<'facet, 'bump>(
 }
 
 /// Helper function to deserialize a scalar field
-fn deserialize_scalar_field<'facet, 'bump>(
+fn deserialize_scalar_field<'facet, 'bump, const BORROW: bool>(
     key: &str,
     value: &str,
-    mut wip: Partial<'facet, 'bump, false>,
-) -> Result<Partial<'facet, 'bump, false>, UrlEncodedError> {
+    mut wip: Partial<'facet, 'bump, BORROW>,
+) -> Result<Partial<'facet, 'bump, BORROW>, UrlEncodedError> {
     match wip.shape().def {
         Def::Scalar => {
             if wip.shape().is_type::<String>() {
@@ -303,11 +303,11 @@ fn deserialize_scalar_field<'facet, 'bump>(
 }
 
 /// Helper function to deserialize a nested field
-fn deserialize_nested_field<'facet, 'bump>(
+fn deserialize_nested_field<'facet, 'bump, const BORROW: bool>(
     key: &str,
     nested_values: &NestedValues,
-    mut wip: Partial<'facet, 'bump, false>,
-) -> Result<Partial<'facet, 'bump, false>, UrlEncodedError> {
+    mut wip: Partial<'facet, 'bump, BORROW>,
+) -> Result<Partial<'facet, 'bump, BORROW>, UrlEncodedError> {
     let shape = wip.shape();
     match shape.ty {
         Type::User(UserType::Struct(_)) => {

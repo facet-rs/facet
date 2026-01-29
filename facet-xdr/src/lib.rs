@@ -54,6 +54,8 @@ pub use serializer::{XdrSerializer, to_vec, to_writer};
 // Re-export DeserializeError for convenience
 pub use facet_format::DeserializeError;
 
+use bumpalo::Bump;
+
 /// Deserialize a value from XDR bytes into an owned type.
 ///
 /// This is the recommended default for most use cases.
@@ -78,8 +80,9 @@ where
     T: facet_core::Facet<'static>,
 {
     use facet_format::FormatDeserializer;
+    let bump = Bump::new();
     let mut parser = XdrParser::new(input);
-    let mut de = FormatDeserializer::new_owned(&mut parser);
+    let mut de = FormatDeserializer::new_owned(&bump, &mut parser);
     de.deserialize()
 }
 
@@ -115,7 +118,8 @@ where
     'input: 'facet,
 {
     use facet_format::FormatDeserializer;
+    let bump = Bump::new();
     let mut parser = XdrParser::new(input);
-    let mut de = FormatDeserializer::new(&mut parser);
+    let mut de = FormatDeserializer::new(&bump, &mut parser);
     de.deserialize()
 }
