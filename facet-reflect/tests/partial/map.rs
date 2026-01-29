@@ -1,3 +1,4 @@
+use bumpalo::Bump;
 use facet::Facet;
 use facet_reflect::Partial;
 use facet_testhelpers::{IPanic, test};
@@ -5,7 +6,7 @@ use std::collections::HashMap;
 
 #[test]
 fn wip_map_trivial() {
-    let mut partial = Partial::alloc::<HashMap<String, String>>().unwrap();
+    let bump = Bump::new(); let mut partial = Partial::alloc::<HashMap<String, String>>(&bump).unwrap();
     partial = partial.init_map().unwrap();
 
     partial = partial.begin_key().unwrap();

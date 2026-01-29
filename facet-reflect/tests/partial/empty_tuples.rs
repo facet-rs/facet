@@ -1,3 +1,4 @@
+use bumpalo::Bump;
 use facet::Facet;
 use facet_reflect::Partial;
 
@@ -188,7 +189,7 @@ fn test_building_nested_empty_tuples_without_navigation() {
 #[test]
 fn test_build_vec_of_unit() {
     // This checks that zero-sized Vec allocations are handled properly
-    let mut partial = Partial::alloc::<Vec<()>>().unwrap();
+    let bump = Bump::new(); let mut partial = Partial::alloc::<Vec<()>>(&bump).unwrap();
     partial = partial.init_list().unwrap();
     partial = partial.begin_list_item().unwrap();
     partial = partial.end().unwrap();

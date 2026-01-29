@@ -1,3 +1,4 @@
+use bumpalo::Bump;
 use alloc::collections::BTreeSet;
 use facet::Facet;
 use facet_reflect::Partial;

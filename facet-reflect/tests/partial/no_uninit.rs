@@ -1,3 +1,4 @@
+use bumpalo::Bump;
 use std::{collections::HashMap, sync::Arc};
 
 use facet::Facet;
@@ -18,7 +19,7 @@ fn struct_uninit() {
         foo: u32,
     }
 
-    let partial: Partial<'_> = Partial::alloc::<FooBar>().unwrap();
+    let bump = Bump::new(); let partial: Partial<'_, '_> = Partial::alloc::<FooBar>(&bump).unwrap();
     let result = partial.build();
     assert!(
         matches!(
@@ -39,7 +40,7 @@ fn enum_uninit() {
         Bar { x: u32 },
     }
 
-    let partial: Partial<'_> = Partial::alloc::<FooBar>().unwrap();
+    let bump = Bump::new(); let partial: Partial<'_, '_> = Partial::alloc::<FooBar>(&bump).unwrap();
     let result = partial.build();
     assert!(
         matches!(
@@ -49,11 +50,11 @@ fn enum_uninit() {
         "Expected UninitializedValue, got {result:?}"
     );
 
-    let mut partial: Partial<'_> = Partial::alloc::<FooBar>().unwrap();
+    let bump = Bump::new(); let mut partial: Partial<'_, '_> = Partial::alloc::<FooBar>(&bump).unwrap();
     partial = partial.select_variant_named("Foo").unwrap();
     assert!(partial.build().map(|_| ()).is_ok());
 
-    let mut partial: Partial<'_> = Partial::alloc::<FooBar>().unwrap();
+    let bump = Bump::new(); let mut partial: Partial<'_, '_> = Partial::alloc::<FooBar>(&bump).unwrap();
     partial = partial.select_variant_named("Bar").unwrap();
     let result = partial.build();
     assert!(
@@ -77,7 +78,7 @@ fn list_uninit() {
 
 #[test]
 fn array_uninit() {
-    let partial: Partial<'_> = Partial::alloc::<[f32; 8]>().unwrap();
+    let bump = Bump::new(); let partial: Partial<'_, '_> = Partial::alloc::<[f32; 8]>(&bump).unwrap();
     let res = partial.build();
     assert!(
         matches!(res, Err(ref err) if matches!(err.kind, ReflectErrorKind::UninitializedValue { .. })),
@@ -101,7 +102,7 @@ fn smart_pointer_uninit() {
 }
 
 fn test_uninit<T: Facet<'static>>() {
-    let partial: Partial<'_> = Partial::alloc::<T>().unwrap();
+    let bump = Bump::new(); let partial: Partial<'_, '_> = Partial::alloc::<T>(&bump).unwrap();
     let res = partial.build();
     assert!(
         matches!(res, Err(ref err) if matches!(err.kind, ReflectErrorKind::UninitializedValue { .. })),

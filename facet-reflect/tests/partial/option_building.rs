@@ -1,10 +1,11 @@
+use bumpalo::Bump;
 use facet_reflect::Partial;
 use facet_testhelpers::test;
 
 #[test]
 fn test_option_building_manual() {
     // Test building Option<String> manually step by step
-    let mut wip = Partial::alloc::<Option<String>>().unwrap();
+    let bump = Bump::new(); let mut wip = Partial::alloc::<Option<String>>(&bump).unwrap();
 
     // Check initial state - option starts uninitialized
 
@@ -37,7 +38,7 @@ fn test_option_building_manual() {
 
 #[test]
 fn test_option_building_none() {
-    let mut wip = Partial::alloc::<Option<String>>().unwrap();
+    let bump = Bump::new(); let mut wip = Partial::alloc::<Option<String>>(&bump).unwrap();
 
     // Set to None
     wip = wip.set(None::<String>).unwrap();
@@ -54,7 +55,7 @@ fn test_option_building_none() {
 fn test_option_building_with_begin_some() {
     // This test will likely fail with the current implementation
     // but it shows what we WANT to be able to do
-    let mut wip = Partial::alloc::<Option<String>>().unwrap();
+    let bump = Bump::new(); let mut wip = Partial::alloc::<Option<String>>(&bump).unwrap();
 
     // Try the current begin_some API
     let result = wip.begin_some();
@@ -83,7 +84,7 @@ fn test_option_building_with_begin_some() {
 #[test]
 fn test_option_building_set_default() {
     // Test using set_default to create None
-    let mut wip = Partial::alloc::<Option<String>>().unwrap();
+    let bump = Bump::new(); let mut wip = Partial::alloc::<Option<String>>(&bump).unwrap();
 
     wip = wip.set_default().unwrap();
 
@@ -119,7 +120,7 @@ fn test_option_in_struct() {
         age: Option<u32>,
     }
 
-    let mut wip = Partial::alloc::<TestStruct>().unwrap();
+    let bump = Bump::new(); let mut wip = Partial::alloc::<TestStruct>(&bump).unwrap();
 
     // Build the struct with option fields
     wip = wip.begin_nth_field(0).unwrap(); // name field
@@ -148,7 +149,7 @@ fn test_option_field_manual_building() {
         value: Option<String>,
     }
 
-    let mut wip = Partial::alloc::<TestStruct>().unwrap();
+    let bump = Bump::new(); let mut wip = Partial::alloc::<TestStruct>(&bump).unwrap();
 
     // Navigate to the option field
     wip = wip.begin_nth_field(0).unwrap(); // value field
@@ -167,7 +168,7 @@ fn test_option_field_manual_building() {
 #[test]
 fn explore_option_shape() {
     // Explore the shape of Option<String> to understand its structure
-    let _wip = Partial::alloc::<Option<String>>().unwrap();
+    let bump = Bump::new(); let _wip = Partial::alloc::<Option<String>>(&bump).unwrap();
 
     println!("Option<String> shape: {:?}", _wip.shape());
 

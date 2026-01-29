@@ -1,3 +1,4 @@
+use bumpalo::Bump;
 use facet::Facet;
 use facet_reflect::Partial;
 use facet_testhelpers::test;
@@ -284,5 +285,5 @@ fn wip_struct_testleak13() {
 
 #[test]
 fn wip_struct_testleak14() {
-    let _ = Partial::alloc::<Outer>().unwrap();
+    let bump = Bump::new(); let _ = Partial::alloc::<Outer>(&bump).unwrap();
 }
