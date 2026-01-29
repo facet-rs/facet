@@ -255,6 +255,15 @@ impl DibsExtension {
                 if entry.key.as_str() != Some("params") {
                     self.collect_param_refs_inner(&entry.key, params);
                     self.collect_param_refs_inner(&entry.value, params);
+
+                    // Check for shorthand param references: `column` with no value
+                    // means implicit `column $column`, so the column name is also a param ref
+                    if entry.value.payload.is_none()
+                        && entry.value.tag.is_none()
+                        && let Some(key_name) = entry.key.as_str()
+                    {
+                        params.push(key_name.to_string());
+                    }
                 }
             }
         }

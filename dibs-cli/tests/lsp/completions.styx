@@ -1253,10 +1253,11 @@ tests (
             BulkCreate @insert-many{
                 params {handle @string, unused @string}
                 into product
-                values {handle $handle}
+                values {handle}
             }
             STYX
         diagnostics {
+            count 1
             has ({message "param 'unused' is declared but never used", code "unused-param"})
         }
     }
@@ -1268,10 +1269,11 @@ tests (
                 params {handle @string}
                 into nonexistent_table
                      ^^^^^^^^^^^^^^^^^ "Unknown table"
-                values {handle $handle}
+                values {handle}
             }
             STYX
         diagnostics {
+            count 1
             has ({message "Unknown table", code "unknown-table"})
         }
     }
