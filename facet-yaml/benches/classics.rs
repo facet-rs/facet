@@ -1,19 +1,23 @@
-//! Benchmark parsing citm_catalog.json from nativejson-benchmark.
+//! Benchmark parsing classic JSON benchmarks converted to YAML.
+//!
+//! The JSON fixtures are loaded, parsed, serialized to YAML, then we benchmark
+//! deserializing that YAML data.
 
 use divan::{Bencher, black_box};
 use facet::Facet;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::LazyLock;
 
 fn main() {
     divan::main();
 }
 
 // =============================================================================
-// Types for citm_catalog.json
+// Types for citm_catalog
 // =============================================================================
 
-#[derive(Debug, Deserialize, Facet)]
+#[derive(Debug, Deserialize, Serialize, Facet)]
 #[serde(rename_all = "camelCase")]
 #[facet(rename_all = "camelCase")]
 struct CitmCatalog {
@@ -30,7 +34,7 @@ struct CitmCatalog {
     venue_names: HashMap<String, String>,
 }
 
-#[derive(Debug, Deserialize, Facet)]
+#[derive(Debug, Deserialize, Serialize, Facet)]
 #[serde(rename_all = "camelCase")]
 #[facet(rename_all = "camelCase")]
 struct Event {
@@ -44,7 +48,7 @@ struct Event {
     topic_ids: Vec<u64>,
 }
 
-#[derive(Debug, Deserialize, Facet)]
+#[derive(Debug, Deserialize, Serialize, Facet)]
 #[serde(rename_all = "camelCase")]
 #[facet(rename_all = "camelCase")]
 struct Performance {
@@ -59,7 +63,7 @@ struct Performance {
     venue_code: String,
 }
 
-#[derive(Debug, Deserialize, Facet)]
+#[derive(Debug, Deserialize, Serialize, Facet)]
 #[serde(rename_all = "camelCase")]
 #[facet(rename_all = "camelCase")]
 struct Price {
@@ -68,7 +72,7 @@ struct Price {
     seat_category_id: u64,
 }
 
-#[derive(Debug, Deserialize, Facet)]
+#[derive(Debug, Deserialize, Serialize, Facet)]
 #[serde(rename_all = "camelCase")]
 #[facet(rename_all = "camelCase")]
 struct SeatCategory {
@@ -76,7 +80,7 @@ struct SeatCategory {
     seat_category_id: u64,
 }
 
-#[derive(Debug, Deserialize, Facet)]
+#[derive(Debug, Deserialize, Serialize, Facet)]
 #[serde(rename_all = "camelCase")]
 #[facet(rename_all = "camelCase")]
 struct Area {
@@ -85,31 +89,33 @@ struct Area {
 }
 
 // =============================================================================
-// Data loading
+// Data loading - convert JSON fixtures to YAML
 // =============================================================================
 
-fn json_str() -> &'static str {
-    &facet_json_classics::CITM_CATALOG
-}
+static CITM_YAML: LazyLock<String> = LazyLock::new(|| {
+    let json_str = &*facet_json_classics::CITM_CATALOG;
+    let data: CitmCatalog = serde_json::from_str(json_str).expect("Failed to parse citm JSON");
+    serde_yaml::to_string(&data).expect("Failed to serialize citm to YAML")
+});
 
 // =============================================================================
 // Benchmarks
 // =============================================================================
 
 #[divan::bench]
-fn serde_json(bencher: Bencher) {
-    let data = json_str();
+fn citm_serde_yaml(bencher: Bencher) {
+    let data = &*CITM_YAML;
     bencher.bench(|| {
-        let result: CitmCatalog = black_box(serde_json::from_str(black_box(data)).unwrap());
+        let result: CitmCatalog = black_box(serde_yaml::from_str(black_box(data)).unwrap());
         black_box(result)
     });
 }
 
 #[divan::bench]
-fn facet_json(bencher: Bencher) {
-    let data = json_str();
+fn citm_facet_yaml(bencher: Bencher) {
+    let data = &*CITM_YAML;
     bencher.bench(|| {
-        let result: CitmCatalog = black_box(facet_json::from_str(black_box(data)).unwrap());
+        let result: CitmCatalog = black_box(facet_yaml::from_str(black_box(data)).unwrap());
         black_box(result)
     });
 }

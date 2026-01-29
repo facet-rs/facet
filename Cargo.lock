@@ -38,6 +38,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "alloc-no-stdlib"
+version = "2.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cc7bb162ec39d46ab1ca8c77bf72e890535becd1751bb45f64c597edb4c8c6b3"
+
+[[package]]
+name = "alloc-stdlib"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "94fb8275041c72129eb51b7d0322c29b8387a0386127718b096429201a5d6ece"
+dependencies = [
+ "alloc-no-stdlib",
+]
+
+[[package]]
 name = "allocator-api2"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -438,6 +453,27 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.114",
+]
+
+[[package]]
+name = "brotli"
+version = "7.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cc97b8f16f944bba54f0433f07e30be199b6dc2bd25937444bbad560bcea29bd"
+dependencies = [
+ "alloc-no-stdlib",
+ "alloc-stdlib",
+ "brotli-decompressor",
+]
+
+[[package]]
+name = "brotli-decompressor"
+version = "4.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a334ef7c9e23abf0ce748e8cd309037da93e606ad52eb372e4ce327a0dcfbdfd"
+dependencies = [
+ "alloc-no-stdlib",
+ "alloc-stdlib",
 ]
 
 [[package]]
@@ -1139,6 +1175,7 @@ dependencies = [
  "facet-core",
  "facet-format",
  "facet-format-suite",
+ "facet-json-classics",
  "facet-reflect",
  "facet-testhelpers",
  "http",
@@ -1156,6 +1193,13 @@ dependencies = [
  "tendril",
  "tracing",
  "zmij",
+]
+
+[[package]]
+name = "facet-json-classics"
+version = "0.43.2"
+dependencies = [
+ "brotli",
 ]
 
 [[package]]
@@ -1251,6 +1295,7 @@ dependencies = [
  "facet-core",
  "facet-format",
  "facet-json",
+ "facet-json-classics",
  "facet-path",
  "facet-reflect",
  "facet-testhelpers",
@@ -1262,6 +1307,7 @@ dependencies = [
  "postcard",
  "serde",
  "serde_bytes",
+ "serde_json",
  "smartstring",
  "time",
  "tracing",
@@ -1470,11 +1516,13 @@ dependencies = [
  "axum-core",
  "bumpalo",
  "datatest-stable",
+ "divan",
  "facet",
  "facet-core",
  "facet-default",
  "facet-format",
  "facet-format-suite",
+ "facet-json-classics",
  "facet-reflect",
  "http",
  "http-body-util",
@@ -1482,6 +1530,9 @@ dependencies = [
  "itoa",
  "libtest-mimic",
  "saphyr-parser",
+ "serde",
+ "serde_json",
+ "serde_yaml",
  "zmij",
 ]
 
@@ -2754,6 +2805,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_yaml"
+version = "0.9.34+deprecated"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a8b1a1a2ebf674015cc02edccce75287f1a0130d394307b36743c2f5d504b47"
+dependencies = [
+ "indexmap",
+ "itoa",
+ "ryu",
+ "serde",
+ "unsafe-libyaml",
+]
+
+[[package]]
 name = "sharded-slab"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3180,6 +3244,12 @@ name = "unicode-width"
 version = "0.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7dd6e30e90baa6f72411720665d41d89b9a3d039dc45b8faea1ddd07f617f6af"
+
+[[package]]
+name = "unsafe-libyaml"
+version = "0.2.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
 
 [[package]]
 name = "unsynn"

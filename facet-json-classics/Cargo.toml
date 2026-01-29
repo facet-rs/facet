@@ -1,0 +1,11 @@
+[package]
+name = "facet-json-classics"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+description = "Classic JSON benchmark fixtures (citm, twitter, canada) for facet benchmarks"
+
+[dependencies]
+brotli = "7"

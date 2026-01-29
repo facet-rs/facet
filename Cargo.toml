@@ -50,6 +50,7 @@ members = [
   "facet-dessert",
   "facet-format",
   "facet-json",
+  "facet-json-classics",
   "facet-postcard",
   "facet-msgpack",
   "facet-toml",
