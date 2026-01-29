@@ -314,8 +314,7 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
         // expects 'input. Since BORROW=false means we never borrow from input anyway,
         // this is safe.
         #[allow(unsafe_code)]
-        let wip: Partial<'input, '_, false> =
-            unsafe { core::mem::transmute(plan.partial_owned()?) };
+        let wip: Partial<'input, false> = unsafe { core::mem::transmute(plan.partial_owned()?) };
 
         let partial = self.deserialize_into(wip)?;
 
@@ -357,8 +356,7 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
         // expects 'input. Since BORROW=false means we never borrow from input anyway,
         // this is safe.
         #[allow(unsafe_code)]
-        let wip: Partial<'input, '_, false> =
-            unsafe { core::mem::transmute(plan.partial_owned()?) };
+        let wip: Partial<'input, false> = unsafe { core::mem::transmute(plan.partial_owned()?) };
         let wip = wip.begin_deferred()?;
         let partial = self.deserialize_into(wip)?;
 
@@ -398,8 +396,7 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
         // expects 'input. Since BORROW=false means we never borrow from input anyway,
         // this is safe.
         #[allow(unsafe_code)]
-        let wip: Partial<'input, '_, false> =
-            unsafe { core::mem::transmute(plan.partial_owned()?) };
+        let wip: Partial<'input, false> = unsafe { core::mem::transmute(plan.partial_owned()?) };
 
         let partial = self.deserialize_into_with_shape(wip, source_shape)?;
 
@@ -749,7 +746,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     /// Make an error using the last span, the current path of the given wip.
     fn mk_err<'bump>(
         &self,
-        wip: &Partial<'input, 'bump, BORROW>,
+        wip: &Partial<'input, BORROW>,
         kind: DeserializeErrorKind,
     ) -> DeserializeError {
         DeserializeError {

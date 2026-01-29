@@ -16,10 +16,10 @@ use crate::{DeserializeError, DeserializeErrorKind, FormatDeserializer, ScalarVa
 /// Note: `ScalarValue::Str` and `ScalarValue::Bytes` cases delegate to `facet_dessert`
 /// for string/bytes handling.
 #[allow(clippy::result_large_err)]
-pub(crate) fn set_scalar_inner<'input, 'bump, const BORROW: bool>(
-    mut wip: Partial<'input, 'bump, BORROW>,
+pub(crate) fn set_scalar_inner<'input, const BORROW: bool>(
+    mut wip: Partial<'input, BORROW>,
     scalar: ScalarValue<'input>,
-) -> Result<Partial<'input, 'bump, BORROW>, SetScalarResult<'input, 'bump, BORROW>> {
+) -> Result<Partial<'input, BORROW>, SetScalarResult<'input, BORROW>> {
     let shape = wip.shape();
     let scalar_type = shape.scalar_type();
 
@@ -153,31 +153,29 @@ pub(crate) fn set_scalar_inner<'input, 'bump, const BORROW: bool>(
 }
 
 /// Result of `set_scalar_inner` - either success, an error, or delegation to string/bytes handling.
-pub(crate) enum SetScalarResult<'input, 'bump, const BORROW: bool> {
+pub(crate) enum SetScalarResult<'input, const BORROW: bool> {
     /// Need to call `set_string_value` with these parameters.
     NeedsStringValue {
-        wip: Partial<'input, 'bump, BORROW>,
+        wip: Partial<'input, BORROW>,
         s: Cow<'input, str>,
     },
     /// Need to call `set_bytes_value` with these parameters.
     NeedsBytesValue {
-        wip: Partial<'input, 'bump, BORROW>,
+        wip: Partial<'input, BORROW>,
         b: Cow<'input, [u8]>,
     },
     /// An error occurred.
     Error(DeserializeError),
 }
 
-impl<'input, 'bump, const BORROW: bool> From<DeserializeError>
-    for SetScalarResult<'input, 'bump, BORROW>
-{
+impl<'input, const BORROW: bool> From<DeserializeError> for SetScalarResult<'input, BORROW> {
     fn from(e: DeserializeError) -> Self {
         SetScalarResult::Error(e)
     }
 }
 
-impl<'input, 'bump, const BORROW: bool> From<facet_reflect::ReflectError>
-    for SetScalarResult<'input, 'bump, BORROW>
+impl<'input, const BORROW: bool> From<facet_reflect::ReflectError>
+    for SetScalarResult<'input, BORROW>
 {
     fn from(e: facet_reflect::ReflectError) -> Self {
         SetScalarResult::Error(e.into())
@@ -185,26 +183,24 @@ impl<'input, 'bump, const BORROW: bool> From<facet_reflect::ReflectError>
 }
 
 /// Result of `deserialize_map_key_terminal_inner` - either success or delegation.
-pub(crate) enum MapKeyTerminalResult<'input, 'bump, const BORROW: bool> {
+pub(crate) enum MapKeyTerminalResult<'input, const BORROW: bool> {
     /// Need to call `set_string_value` with these parameters.
     NeedsSetString {
-        wip: Partial<'input, 'bump, BORROW>,
+        wip: Partial<'input, BORROW>,
         s: Cow<'input, str>,
     },
     /// An error occurred.
     Error(DeserializeError),
 }
 
-impl<'input, 'bump, const BORROW: bool> From<DeserializeError>
-    for MapKeyTerminalResult<'input, 'bump, BORROW>
-{
+impl<'input, const BORROW: bool> From<DeserializeError> for MapKeyTerminalResult<'input, BORROW> {
     fn from(e: DeserializeError) -> Self {
         MapKeyTerminalResult::Error(e)
     }
 }
 
-impl<'input, 'bump, const BORROW: bool> From<facet_reflect::ReflectError>
-    for MapKeyTerminalResult<'input, 'bump, BORROW>
+impl<'input, const BORROW: bool> From<facet_reflect::ReflectError>
+    for MapKeyTerminalResult<'input, BORROW>
 {
     fn from(e: facet_reflect::ReflectError) -> Self {
         MapKeyTerminalResult::Error(e.into())
@@ -221,11 +217,11 @@ impl<'input, 'bump, const BORROW: bool> From<facet_reflect::ReflectError>
 /// - Numeric types: parse the string key as a number
 /// - String types: delegate to `set_string_value` (returns `NeedsSetString`)
 #[allow(clippy::result_large_err)]
-pub(crate) fn deserialize_map_key_terminal_inner<'input, 'bump, const BORROW: bool>(
-    mut wip: Partial<'input, 'bump, BORROW>,
+pub(crate) fn deserialize_map_key_terminal_inner<'input, const BORROW: bool>(
+    mut wip: Partial<'input, BORROW>,
     key: Cow<'input, str>,
     span: Span,
-) -> Result<Partial<'input, 'bump, BORROW>, MapKeyTerminalResult<'input, 'bump, BORROW>> {
+) -> Result<Partial<'input, BORROW>, MapKeyTerminalResult<'input, BORROW>> {
     let shape = wip.shape();
 
     // Check if target is an enum - use select_variant_named for unit variants
@@ -288,9 +284,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     /// string/bytes delegation cases and converts error types.
     pub(crate) fn set_scalar<'bump>(
         &mut self,
-        wip: Partial<'input, 'bump, BORROW>,
+        wip: Partial<'input, BORROW>,
         scalar: ScalarValue<'input>,
-    ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         match set_scalar_inner(wip, scalar) {
             Ok(wip) => Ok(wip),
             Err(SetScalarResult::NeedsStringValue { wip, s }) => self.set_string_value(wip, s),
@@ -302,9 +298,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     /// Set a string value, handling `&str`, `Cow<str>`, and `String` appropriately.
     pub(crate) fn set_string_value<'bump>(
         &mut self,
-        wip: Partial<'input, 'bump, BORROW>,
+        wip: Partial<'input, BORROW>,
         s: Cow<'input, str>,
-    ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         facet_dessert::set_string_value(wip, s, Some(self.last_span)).map_err(|e| match e {
             facet_dessert::DessertError::Reflect { error, span } => DeserializeError {
                 span,
@@ -330,9 +326,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     /// whether borrowing is enabled and whether the data is borrowed or owned.
     pub(crate) fn set_bytes_value<'bump>(
         &mut self,
-        wip: Partial<'input, 'bump, BORROW>,
+        wip: Partial<'input, BORROW>,
         b: Cow<'input, [u8]>,
-    ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         facet_dessert::set_bytes_value(wip, b, Some(self.last_span)).map_err(|e| match e {
             facet_dessert::DessertError::Reflect { error, span } => DeserializeError {
                 span,

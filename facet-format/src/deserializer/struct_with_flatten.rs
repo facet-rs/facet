@@ -18,10 +18,10 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     /// flatten structures by looking up the full path for each field.
     /// It also handles flattened enums by using probing to collect keys first,
     /// then using the Solver to disambiguate between resolutions.
-    pub(crate) fn deserialize_struct_with_flatten<'bump>(
+    pub(crate) fn deserialize_struct_with_flatten(
         &mut self,
-        mut wip: Partial<'input, 'bump, BORROW>,
-    ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
+        mut wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         use facet_solver::{Schema, Solver};
 
         trace!(
@@ -287,9 +287,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     }
 
     /// Helper for inserting a key-value pair into a catch-all map field.
-    fn insert_into_catch_all_map<'bump>(
+    fn insert_into_catch_all_map(
         &mut self,
-        nav: &mut PathNavigator<'input, 'bump, BORROW>,
+        nav: &mut PathNavigator<'input, BORROW>,
         catch_all_info: &FieldInfo,
         key: &str,
         fields_set: &mut BTreeSet<&'static str>,
@@ -339,11 +339,11 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     }
 
     /// Helper for initializing an empty catch-all field (no parser calls).
-    fn initialize_empty_catch_all<'bump>(
+    fn initialize_empty_catch_all(
         &self,
-        mut wip: Partial<'input, 'bump, BORROW>,
+        mut wip: Partial<'input, BORROW>,
         catch_all_info: &FieldInfo,
-    ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
         let segments = catch_all_info.path.segments();
 

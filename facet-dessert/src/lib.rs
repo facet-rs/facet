@@ -52,9 +52,9 @@ pub enum PointerAction {
 ///     }
 /// }
 /// ```
-pub fn begin_pointer<'input, 'bump, const BORROW: bool>(
-    mut wip: Partial<'input, 'bump, BORROW>,
-) -> Result<(Partial<'input, 'bump, BORROW>, PointerAction), DessertError> {
+pub fn begin_pointer<'input, const BORROW: bool>(
+    mut wip: Partial<'input, BORROW>,
+) -> Result<(Partial<'input, BORROW>, PointerAction), DessertError> {
     let shape = wip.shape();
     let ptr_def = match &shape.def {
         Def::Pointer(ptr_def) => ptr_def,
@@ -143,11 +143,11 @@ impl From<ReflectError> for DessertError {
 /// 3. Enums - selects variant by name (externally tagged) or by discriminant (numeric)
 /// 4. Transparent structs (newtypes) - recurses into inner type
 /// 5. String types (`&str`, `Cow<str>`, `String`)
-pub fn set_string_value<'input, 'bump, const BORROW: bool>(
-    mut wip: Partial<'input, 'bump, BORROW>,
+pub fn set_string_value<'input, const BORROW: bool>(
+    mut wip: Partial<'input, BORROW>,
     s: Cow<'input, str>,
     span: Option<Span>,
-) -> Result<Partial<'input, 'bump, BORROW>, DessertError> {
+) -> Result<Partial<'input, BORROW>, DessertError> {
     let shape = wip.shape();
 
     if matches!(&shape.def, Def::Option(_)) {
@@ -205,11 +205,11 @@ pub fn set_string_value<'input, 'bump, const BORROW: bool>(
     set_string_value_inner(wip, s, span)
 }
 
-fn set_string_value_inner<'input, 'bump, const BORROW: bool>(
-    mut wip: Partial<'input, 'bump, BORROW>,
+fn set_string_value_inner<'input, const BORROW: bool>(
+    mut wip: Partial<'input, BORROW>,
     s: Cow<'input, str>,
     span: Option<Span>,
-) -> Result<Partial<'input, 'bump, BORROW>, DessertError> {
+) -> Result<Partial<'input, BORROW>, DessertError> {
     let shape = wip.shape();
 
     let reflect_err = |e: ReflectError| DessertError::Reflect { error: e, span };
@@ -266,11 +266,11 @@ fn set_string_value_inner<'input, 'bump, const BORROW: bool>(
 ///
 /// This handles `&[u8]`, `Cow<[u8]>`, and `Vec<u8>` appropriately based on
 /// whether borrowing is enabled and whether the data is borrowed or owned.
-pub fn set_bytes_value<'input, 'bump, const BORROW: bool>(
-    mut wip: Partial<'input, 'bump, BORROW>,
+pub fn set_bytes_value<'input, const BORROW: bool>(
+    mut wip: Partial<'input, BORROW>,
     b: Cow<'input, [u8]>,
     span: Option<Span>,
-) -> Result<Partial<'input, 'bump, BORROW>, DessertError> {
+) -> Result<Partial<'input, BORROW>, DessertError> {
     let shape = wip.shape();
 
     let reflect_err = |e: ReflectError| DessertError::Reflect { error: e, span };

@@ -121,10 +121,10 @@ pub fn from_str_owned<T: Facet<'static>>(urlencoded: &str) -> Result<T, UrlEncod
 /// Deserializes a URL encoded form data string into an heap-allocated value.
 ///
 /// This is the lower-level function that works with `Partial` directly.
-fn from_str_value<'facet, 'bump, const BORROW: bool>(
-    mut wip: Partial<'facet, 'bump, BORROW>,
+fn from_str_value<'facet, const BORROW: bool>(
+    mut wip: Partial<'facet, BORROW>,
     urlencoded: &str,
-) -> Result<Partial<'facet, 'bump, BORROW>, UrlEncodedError> {
+) -> Result<Partial<'facet, BORROW>, UrlEncodedError> {
     trace!("Starting URL encoded form data deserialization");
 
     // Parse the URL encoded string into key-value pairs
@@ -220,10 +220,10 @@ impl NestedValues {
 }
 
 /// Deserialize a value recursively using the nested values
-fn deserialize_value<'facet, 'bump, const BORROW: bool>(
-    mut wip: Partial<'facet, 'bump, BORROW>,
+fn deserialize_value<'facet, const BORROW: bool>(
+    mut wip: Partial<'facet, BORROW>,
     values: &NestedValues,
-) -> Result<Partial<'facet, 'bump, BORROW>, UrlEncodedError> {
+) -> Result<Partial<'facet, BORROW>, UrlEncodedError> {
     let shape = wip.shape();
     match shape.ty {
         Type::User(UserType::Struct(_)) => {
@@ -266,11 +266,11 @@ fn deserialize_value<'facet, 'bump, const BORROW: bool>(
 }
 
 /// Helper function to deserialize a scalar field
-fn deserialize_scalar_field<'facet, 'bump, const BORROW: bool>(
+fn deserialize_scalar_field<'facet, const BORROW: bool>(
     key: &str,
     value: &str,
-    mut wip: Partial<'facet, 'bump, BORROW>,
-) -> Result<Partial<'facet, 'bump, BORROW>, UrlEncodedError> {
+    mut wip: Partial<'facet, BORROW>,
+) -> Result<Partial<'facet, BORROW>, UrlEncodedError> {
     match wip.shape().def {
         Def::Scalar => {
             if wip.shape().is_type::<String>() {
@@ -302,11 +302,11 @@ fn deserialize_scalar_field<'facet, 'bump, const BORROW: bool>(
 }
 
 /// Helper function to deserialize a nested field
-fn deserialize_nested_field<'facet, 'bump, const BORROW: bool>(
+fn deserialize_nested_field<'facet, const BORROW: bool>(
     key: &str,
     nested_values: &NestedValues,
-    mut wip: Partial<'facet, 'bump, BORROW>,
-) -> Result<Partial<'facet, 'bump, BORROW>, UrlEncodedError> {
+    mut wip: Partial<'facet, BORROW>,
+) -> Result<Partial<'facet, BORROW>, UrlEncodedError> {
     let shape = wip.shape();
     match shape.ty {
         Type::User(UserType::Struct(_)) => {

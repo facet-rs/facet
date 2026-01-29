@@ -41,6 +41,7 @@ macro_rules! debug {
 
 #[allow(unused_imports)]
 pub(crate) use debug;
+use facet_reflect::Partial;
 #[allow(unused_imports)]
 pub(crate) use trace;
 
@@ -259,38 +260,29 @@ where
 /// assert_eq!(person.name, "Alice");
 /// assert_eq!(person.age, 30);
 /// ```
-pub fn from_str_into<'facet, 'bump>(
-    _bump: &'bump Bump,
+pub fn from_str_into<'facet>(
     input: &str,
-    partial: facet_reflect::Partial<'facet, 'bump, false>,
-) -> Result<facet_reflect::Partial<'facet, 'bump, false>, DeserializeError> {
+    partial: Partial<'facet, false>,
+) -> Result<Partial<'facet, false>, DeserializeError> {
     use facet_format::FormatDeserializer;
     // TRUSTED_UTF8 = true: input came from &str, so it's valid UTF-8
     let mut parser = JsonParser::<true>::new(input.as_bytes());
     let mut de = FormatDeserializer::new_owned(&mut parser);
 
-    // SAFETY: The deserializer expects Partial<'input, 'bump, false> where 'input is the
+    // SAFETY: The deserializer expects Partial<'input, false> where 'input is the
     // lifetime of the JSON bytes. Since BORROW=false, no data is borrowed from the
     // input, so the actual 'facet lifetime of the Partial is independent of 'input.
     // We transmute to satisfy the type system, then transmute back after deserialization.
     #[allow(unsafe_code)]
-    let partial: facet_reflect::Partial<'_, 'bump, false> = unsafe {
-        core::mem::transmute::<
-            facet_reflect::Partial<'facet, 'bump, false>,
-            facet_reflect::Partial<'_, 'bump, false>,
-        >(partial)
-    };
+    let partial: Partial<'_, false> =
+        unsafe { core::mem::transmute::<Partial<'facet, false>, Partial<'_, false>>(partial) };
 
     let partial = de.deserialize_into(partial)?;
 
     // SAFETY: Same reasoning - no borrowed data since BORROW=false.
     #[allow(unsafe_code)]
-    let partial: facet_reflect::Partial<'facet, 'bump, false> = unsafe {
-        core::mem::transmute::<
-            facet_reflect::Partial<'_, 'bump, false>,
-            facet_reflect::Partial<'facet, 'bump, false>,
-        >(partial)
-    };
+    let partial: Partial<'facet, false> =
+        unsafe { core::mem::transmute::<Partial<'_, false>, Partial<'facet, false>>(partial) };
 
     Ok(partial)
 }
@@ -326,37 +318,28 @@ pub fn from_str_into<'facet, 'bump>(
 /// assert_eq!(point.x, 10);
 /// assert_eq!(point.y, 20);
 /// ```
-pub fn from_slice_into<'facet, 'bump>(
-    _bump: &'bump Bump,
+pub fn from_slice_into<'facet>(
     input: &[u8],
-    partial: facet_reflect::Partial<'facet, 'bump, false>,
-) -> Result<facet_reflect::Partial<'facet, 'bump, false>, DeserializeError> {
+    partial: Partial<'facet, false>,
+) -> Result<Partial<'facet, false>, DeserializeError> {
     use facet_format::FormatDeserializer;
     let mut parser = JsonParser::<false>::new(input);
     let mut de = FormatDeserializer::new_owned(&mut parser);
 
-    // SAFETY: The deserializer expects Partial<'input, 'bump, false> where 'input is the
+    // SAFETY: The deserializer expects Partial<'input, false> where 'input is the
     // lifetime of the JSON bytes. Since BORROW=false, no data is borrowed from the
     // input, so the actual 'facet lifetime of the Partial is independent of 'input.
     // We transmute to satisfy the type system, then transmute back after deserialization.
     #[allow(unsafe_code)]
-    let partial: facet_reflect::Partial<'_, 'bump, false> = unsafe {
-        core::mem::transmute::<
-            facet_reflect::Partial<'facet, 'bump, false>,
-            facet_reflect::Partial<'_, 'bump, false>,
-        >(partial)
-    };
+    let partial: Partial<'_, false> =
+        unsafe { core::mem::transmute::<Partial<'facet, false>, Partial<'_, false>>(partial) };
 
     let partial = de.deserialize_into(partial)?;
 
     // SAFETY: Same reasoning - no borrowed data since BORROW=false.
     #[allow(unsafe_code)]
-    let partial: facet_reflect::Partial<'facet, 'bump, false> = unsafe {
-        core::mem::transmute::<
-            facet_reflect::Partial<'_, 'bump, false>,
-            facet_reflect::Partial<'facet, 'bump, false>,
-        >(partial)
-    };
+    let partial: Partial<'facet, false> =
+        unsafe { core::mem::transmute::<Partial<'_, false>, Partial<'facet, false>>(partial) };
 
     Ok(partial)
 }
@@ -392,11 +375,10 @@ pub fn from_slice_into<'facet, 'bump>(
 /// assert_eq!(person.name, "Alice");
 /// assert_eq!(person.age, 30);
 /// ```
-pub fn from_str_into_borrowed<'input, 'facet, 'bump>(
-    _bump: &'bump Bump,
+pub fn from_str_into_borrowed<'input, 'facet>(
     input: &'input str,
-    partial: facet_reflect::Partial<'facet, 'bump, true>,
-) -> Result<facet_reflect::Partial<'facet, 'bump, true>, DeserializeError>
+    partial: Partial<'facet, true>,
+) -> Result<Partial<'facet, true>, DeserializeError>
 where
     'input: 'facet,
 {
@@ -438,11 +420,10 @@ where
 /// let point: Point = value.materialize().unwrap();
 /// assert_eq!(point.label, "origin");
 /// ```
-pub fn from_slice_into_borrowed<'input, 'facet, 'bump>(
-    _bump: &'bump Bump,
+pub fn from_slice_into_borrowed<'input, 'facet>(
     input: &'input [u8],
-    partial: facet_reflect::Partial<'facet, 'bump, true>,
-) -> Result<facet_reflect::Partial<'facet, 'bump, true>, DeserializeError>
+    partial: Partial<'facet, true>,
+) -> Result<Partial<'facet, true>, DeserializeError>
 where
     'input: 'facet,
 {

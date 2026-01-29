@@ -88,7 +88,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// resolving field lookups and accessing precomputed metadata.
     #[inline]
     pub fn type_plan_core(&self) -> &crate::typeplan::TypePlanCore {
-        self.root_plan
+        &self.root_plan
     }
 
     /// Returns the precomputed StructPlan for the current frame, if available.
@@ -942,7 +942,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     frame.tracker.kind()
                 );
                 frame
-                    .fill_and_require_fields(plans, plans.len(), self.root_plan)
+                    .fill_and_require_fields(plans, plans.len(), &self.root_plan)
                     .map_err(|e| self.err(e))?;
             } else {
                 // Fall back to the old path if optimized path wasn't available

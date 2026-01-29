@@ -127,7 +127,7 @@ mod heap_value;
 pub use heap_value::*;
 
 use facet_core::{
-    Def, EnumType, Field, PtrMut, PtrUninit, Shape, SliceBuilderVTable, Type, UserType, Variant,
+    Def, EnumType, Field, PtrUninit, Shape, SliceBuilderVTable, Type, UserType, Variant,
 };
 use iset::ISet;
 use typeplan::{FieldDefault, FieldInitPlan, FillRule};

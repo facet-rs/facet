@@ -17,8 +17,8 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     /// the appropriate methods on the Partial, which delegates to the DynamicValue vtable.
     pub(crate) fn deserialize_dynamic_value<'bump>(
         &mut self,
-        mut wip: Partial<'input, 'bump, BORROW>,
-    ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
+        mut wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
         if self.is_non_self_describing() {
             self.parser.hint_dynamic_value();
@@ -111,9 +111,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
     pub(crate) fn deserialize_struct_dynamic<'bump>(
         &mut self,
-        mut wip: Partial<'input, 'bump, BORROW>,
+        mut wip: Partial<'input, BORROW>,
         fields: &'static [facet_core::Field],
-    ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
         if self.is_non_self_describing() {
             self.parser.hint_struct_fields(fields.len());
@@ -168,9 +168,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
     pub(crate) fn deserialize_tuple_dynamic<'bump>(
         &mut self,
-        mut wip: Partial<'input, 'bump, BORROW>,
+        mut wip: Partial<'input, BORROW>,
         fields: &'static [facet_core::Field],
-    ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
         if self.is_non_self_describing() {
             self.parser.hint_struct_fields(fields.len());
@@ -229,9 +229,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
     pub(crate) fn deserialize_enum_dynamic<'bump>(
         &mut self,
-        mut wip: Partial<'input, 'bump, BORROW>,
+        mut wip: Partial<'input, BORROW>,
         enum_def: &'static facet_core::EnumType,
-    ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
 
         // Build and send the hint
@@ -370,9 +370,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
     pub(crate) fn deserialize_scalar_dynamic<'bump>(
         &mut self,
-        mut wip: Partial<'input, 'bump, BORROW>,
+        mut wip: Partial<'input, BORROW>,
         hint_shape: &'static Shape,
-    ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
 
         let hint = match hint_shape.scalar_type() {
@@ -458,9 +458,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
     pub(crate) fn deserialize_list_dynamic<'bump>(
         &mut self,
-        mut wip: Partial<'input, 'bump, BORROW>,
+        mut wip: Partial<'input, BORROW>,
         element_shape: &'static Shape,
-    ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
         if self.is_non_self_describing() {
             self.parser.hint_sequence();
@@ -499,10 +499,10 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
     pub(crate) fn deserialize_array_dynamic<'bump>(
         &mut self,
-        mut wip: Partial<'input, 'bump, BORROW>,
+        mut wip: Partial<'input, BORROW>,
         element_shape: &'static Shape,
         len: usize,
-    ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
         if self.is_non_self_describing() {
             self.parser.hint_array(len);
@@ -544,10 +544,10 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
     pub(crate) fn deserialize_map_dynamic<'bump>(
         &mut self,
-        mut wip: Partial<'input, 'bump, BORROW>,
+        mut wip: Partial<'input, BORROW>,
         key_shape: &'static Shape,
         value_shape: &'static Shape,
-    ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
         if self.is_non_self_describing() {
             self.parser.hint_map();

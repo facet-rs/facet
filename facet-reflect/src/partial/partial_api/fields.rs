@@ -15,7 +15,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
 
         // For structs: use StructPlan's field_lookup
         if let Some(struct_plan) = self.root_plan.struct_plan_by_id(node_id) {
-            return struct_plan.field_lookup.find(field_name, self.root_plan);
+            return struct_plan.field_lookup.find(field_name, &self.root_plan);
         }
 
         // For enums with selected variant: use variant's field_lookup
@@ -26,7 +26,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             return variants
                 .get(*variant_idx)?
                 .field_lookup
-                .find(field_name, self.root_plan);
+                .find(field_name, &self.root_plan);
         }
 
         None

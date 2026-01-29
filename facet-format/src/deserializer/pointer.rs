@@ -9,8 +9,8 @@ use crate::{
 impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BORROW> {
     pub(crate) fn deserialize_pointer<'bump>(
         &mut self,
-        mut wip: Partial<'input, 'bump, BORROW>,
-    ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
+        mut wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         use facet_core::KnownPointer;
 
         let shape = wip.shape();

@@ -13,7 +13,7 @@ use crate::{
 /// this falls back to a linear scan through struct fields.
 #[inline]
 fn lookup_field<const BORROW: bool>(
-    wip: &Partial<'_, '_, BORROW>,
+    wip: &Partial<'_, BORROW>,
     struct_def: &'static StructType,
     name: &str,
 ) -> Option<usize> {
@@ -33,10 +33,10 @@ fn lookup_field<const BORROW: bool>(
 
 impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BORROW> {
     /// Deserialize a struct without flattened fields (simple case).
-    pub(crate) fn deserialize_struct_simple<'bump>(
+    pub(crate) fn deserialize_struct_simple(
         &mut self,
-        mut wip: Partial<'input, 'bump, BORROW>,
-    ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
+        mut wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         use facet_core::Characteristic;
 
         // Get struct fields for lookup (needed before hint)
@@ -138,7 +138,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                     };
 
                     // Look up field by name/alias using precomputed TypePlan lookup
-                    if let Some(idx) = lookup_field(&wip, struct_def, key_name) {
+                    if let Some(idx) = lookup_field(&wip, &struct_def, key_name) {
                         trace!(
                             idx,
                             field_name = struct_def.fields[idx].name,

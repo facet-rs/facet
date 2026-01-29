@@ -25,18 +25,18 @@ struct OpenSegment {
 /// - Closing segments that are no longer needed
 /// - Opening new segments, handling Options along the way
 /// - Selecting enum variants when required by the resolution
-pub(crate) struct PathNavigator<'input, 'bump, const BORROW: bool> {
+pub(crate) struct PathNavigator<'input, const BORROW: bool> {
     /// The work-in-progress partial. Stored as Option to allow taking ownership temporarily.
-    wip: Option<Partial<'input, 'bump, BORROW>>,
+    wip: Option<Partial<'input, BORROW>>,
     /// Currently open path segments.
     open_segments: Vec<OpenSegment>,
     /// Last span for error reporting.
     last_span: Span,
 }
 
-impl<'input, 'bump, const BORROW: bool> PathNavigator<'input, 'bump, BORROW> {
+impl<'input, const BORROW: bool> PathNavigator<'input, BORROW> {
     /// Create a new navigator starting at the root of the given partial.
-    pub fn new(wip: Partial<'input, 'bump, BORROW>, last_span: Span) -> Self {
+    pub fn new(wip: Partial<'input, BORROW>, last_span: Span) -> Self {
         Self {
             wip: Some(wip),
             open_segments: Vec::new(),
@@ -50,23 +50,23 @@ impl<'input, 'bump, const BORROW: bool> PathNavigator<'input, 'bump, BORROW> {
     }
 
     /// Get a reference to the wip for inspection.
-    pub fn wip(&self) -> &Partial<'input, 'bump, BORROW> {
+    pub fn wip(&self) -> &Partial<'input, BORROW> {
         self.wip.as_ref().expect("wip taken but not returned")
     }
 
     /// Take the wip for operations that consume it, like deserialize_into.
-    pub fn take_wip(&mut self) -> Partial<'input, 'bump, BORROW> {
+    pub fn take_wip(&mut self) -> Partial<'input, BORROW> {
         self.wip.take().expect("wip taken but not returned")
     }
 
     /// Return the wip after operations that consumed it.
-    pub fn return_wip(&mut self, wip: Partial<'input, 'bump, BORROW>) {
+    pub fn return_wip(&mut self, wip: Partial<'input, BORROW>) {
         assert!(self.wip.is_none(), "wip returned but was not taken");
         self.wip = Some(wip);
     }
 
     /// Consume the navigator and return the wip.
-    pub fn into_wip(mut self) -> Partial<'input, 'bump, BORROW> {
+    pub fn into_wip(mut self) -> Partial<'input, BORROW> {
         self.wip.take().expect("wip taken but not returned")
     }
 

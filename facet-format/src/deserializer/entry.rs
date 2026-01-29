@@ -16,8 +16,8 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     /// repeated runtime inspection of Shape/Def/vtable during deserialization.
     pub fn deserialize_into<'bump>(
         &mut self,
-        wip: Partial<'input, 'bump, BORROW>,
-    ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
+        wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
         let shape = wip.shape();
         trace!(
@@ -197,8 +197,8 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     /// metadata fields are populated from parser state.
     fn deserialize_metadata_container<'bump>(
         &mut self,
-        mut wip: Partial<'input, 'bump, BORROW>,
-    ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
+        mut wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         trace!("deserialize_into: metadata container detected");
         let shape = wip.shape();
 
@@ -246,18 +246,18 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     /// into the `wip` Partial (which should be a DynamicValue like `Value`).
     pub fn deserialize_into_with_shape<'bump>(
         &mut self,
-        wip: Partial<'input, 'bump, BORROW>,
+        wip: Partial<'input, BORROW>,
         hint_shape: &'static Shape,
-    ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         self.deserialize_value_recursive(wip, hint_shape)
     }
 
     /// Internal recursive deserialization using hint_shape for dispatch.
     pub(crate) fn deserialize_value_recursive<'bump>(
         &mut self,
-        mut wip: Partial<'input, 'bump, BORROW>,
+        mut wip: Partial<'input, BORROW>,
         hint_shape: &'static Shape,
-    ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         // Handle Option
         if let Def::Option(opt_def) = &hint_shape.def {
             if self.is_non_self_describing() {
@@ -327,8 +327,8 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
     pub(crate) fn deserialize_option<'bump>(
         &mut self,
-        mut wip: Partial<'input, 'bump, BORROW>,
-    ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
+        mut wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
 
         // Hint to non-self-describing parsers that an Option is expected
@@ -360,8 +360,8 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
     pub(crate) fn deserialize_struct<'bump>(
         &mut self,
-        wip: Partial<'input, 'bump, BORROW>,
-    ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
+        wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         let struct_plan = wip.struct_plan().unwrap();
         if struct_plan.has_flatten {
             self.deserialize_struct_with_flatten(wip)
@@ -372,10 +372,10 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
     pub(crate) fn deserialize_tuple<'bump>(
         &mut self,
-        mut wip: Partial<'input, 'bump, BORROW>,
+        mut wip: Partial<'input, BORROW>,
         field_count: usize,
         is_single_field_transparent: bool,
-    ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
 
         // Special case: transparent newtypes (marked with #[facet(transparent)] or
@@ -583,9 +583,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
     pub(crate) fn deserialize_list<'bump>(
         &mut self,
-        mut wip: Partial<'input, 'bump, BORROW>,
+        mut wip: Partial<'input, BORROW>,
         is_byte_vec: bool,
-    ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         trace!("deserialize_list: starting");
 
         // Try the optimized byte sequence path for Vec<u8>
@@ -678,8 +678,8 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
     pub(crate) fn deserialize_array<'bump>(
         &mut self,
-        mut wip: Partial<'input, 'bump, BORROW>,
-    ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
+        mut wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
         // Get the fixed array length from the type definition
         let array_len = match &wip.shape().def {
@@ -753,8 +753,8 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
     pub(crate) fn deserialize_set<'bump>(
         &mut self,
-        mut wip: Partial<'input, 'bump, BORROW>,
-    ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
+        mut wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
 
         // Hint to non-self-describing parsers that a sequence is expected
@@ -812,8 +812,8 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
     pub(crate) fn deserialize_map<'bump>(
         &mut self,
-        mut wip: Partial<'input, 'bump, BORROW>,
-    ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
+        mut wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
 
         // For non-self-describing formats, hint that a map is expected
@@ -918,10 +918,10 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
     pub(crate) fn deserialize_scalar<'bump>(
         &mut self,
-        mut wip: Partial<'input, 'bump, BORROW>,
+        mut wip: Partial<'input, BORROW>,
         scalar_type: Option<ScalarType>,
         is_from_str: bool,
-    ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         // Only hint for non-self-describing formats (e.g., postcard)
         // Self-describing formats like JSON already know the types
         if self.is_non_self_describing() {
@@ -1028,11 +1028,11 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     /// When present, it indicates the key was a tag rather than a bare identifier.
     pub(crate) fn deserialize_map_key<'bump>(
         &mut self,
-        mut wip: Partial<'input, 'bump, BORROW>,
+        mut wip: Partial<'input, BORROW>,
         key: Option<Cow<'input, str>>,
         doc: Option<Vec<Cow<'input, str>>>,
         tag: Option<Cow<'input, str>>,
-    ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
         let shape = wip.shape();
 
