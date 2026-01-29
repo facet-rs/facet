@@ -4,12 +4,13 @@
 //! we build a plan tree once that encodes all the decisions we'll make.
 //!
 //! All allocations (nodes and slices) use bumpalo for fast bump allocation
-//! and excellent cache locality. The architecture separates ownership:
+//! and excellent cache locality. The caller owns the `Bump` allocator and
+//! passes it to `Partial::alloc`, which builds the `TypePlan` internally.
 //!
-//! - `TypePlanStore` owns the `Bump` allocator
-//! - `TypePlan<'bump>` borrows from it, containing the actual plan data
-//!
-//! This avoids self-referential structs while providing safe lifetime tracking.
+//! This design:
+//! - Avoids self-referential structs (Partial borrows from externally-owned Bump)
+//! - Allows reusing the arena across multiple deserializations
+//! - Enables using the arena for other temporary allocations during deserialization
 
 use alloc::vec::Vec;
 use bumpalo::Bump;
@@ -23,58 +24,27 @@ use smallvec::SmallVec;
 
 use crate::AllocError;
 
-/// Owns the bump allocator and provides access to TypePlans.
+/// Build a TypePlan for the given shape, allocating from the provided bump.
 ///
-/// This is the long-lived owner that should be cached. It owns the memory
-/// from which all TypePlan data is allocated.
-#[derive(Debug)]
-pub struct TypePlanStore {
-    bump: Bump,
+/// Returns a reference to the TypePlan allocated in the bump arena.
+pub fn build<'bump>(
+    bump: &'bump Bump,
+    shape: &'static Shape,
+) -> Result<&'bump TypePlan<'bump>, AllocError> {
+    build_for_format(bump, shape, None)
 }
 
-impl Default for TypePlanStore {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl TypePlanStore {
-    /// Create a new empty store.
-    pub fn new() -> Self {
-        Self { bump: Bump::new() }
-    }
-
-    /// Create a new store with pre-allocated capacity.
-    pub fn with_capacity(capacity: usize) -> Self {
-        Self {
-            bump: Bump::with_capacity(capacity),
-        }
-    }
-
-    /// Build a TypePlan for the given shape, allocating from this store's bump.
-    pub fn build<'bump>(&'bump self, shape: &'static Shape) -> Result<TypePlan<'bump>, AllocError> {
-        Self::build_for_format_in(&self.bump, shape, None)
-    }
-
-    /// Build a TypePlan with format-specific proxy resolution.
-    pub fn build_for_format<'bump>(
-        &'bump self,
-        shape: &'static Shape,
-        format_namespace: Option<&'static str>,
-    ) -> Result<TypePlan<'bump>, AllocError> {
-        Self::build_for_format_in(&self.bump, shape, format_namespace)
-    }
-
-    /// Internal: build into a provided bump allocator.
-    fn build_for_format_in<'bump>(
-        bump: &'bump Bump,
-        shape: &'static Shape,
-        format_namespace: Option<&'static str>,
-    ) -> Result<TypePlan<'bump>, AllocError> {
-        let mut builder = TypePlanBuilder::new(bump, format_namespace);
-        let root = builder.build_node(shape)?;
-        Ok(TypePlan { root })
-    }
+/// Build a TypePlan with format-specific proxy resolution.
+///
+/// Returns a reference to the TypePlan allocated in the bump arena.
+pub fn build_for_format<'bump>(
+    bump: &'bump Bump,
+    shape: &'static Shape,
+    format_namespace: Option<&'static str>,
+) -> Result<&'bump TypePlan<'bump>, AllocError> {
+    let mut builder = TypePlanBuilder::new(bump, format_namespace);
+    let root = builder.build_node(shape)?;
+    Ok(bump.alloc(TypePlan { root }))
 }
 
 /// Precomputed deserialization plan tree for a type.
@@ -1298,7 +1268,7 @@ impl<'bump> TypePlanBuilder<'bump> {
                     operation: "transparent wrapper requires try_from for deserialization",
                 });
             }
-            TypePlanNodeKind::BackRef(target) => DeserStrategy::BackRef { target: *target },
+            TypePlanNodeKind::BackRef(target) => DeserStrategy::BackRef { target },
         })
     }
 
@@ -1714,6 +1684,7 @@ impl<'bump> TypePlan<'bump> {
 
     /// Get the child node for list/array items.
     #[inline]
+    #[allow(clippy::only_used_in_recursion)]
     pub fn list_item_node(
         &self,
         parent: &'bump TypePlanNode<'bump>,
@@ -1722,98 +1693,105 @@ impl<'bump> TypePlan<'bump> {
             DeserStrategy::List { item_node, .. } | DeserStrategy::Array { item_node, .. } => {
                 Some(*item_node)
             }
-            DeserStrategy::BackRef { target } => self.list_item_node(*target),
+            DeserStrategy::BackRef { target } => self.list_item_node(target),
             _ => None,
         }
     }
 
     /// Get the child node for set items.
     #[inline]
+    #[allow(clippy::only_used_in_recursion)]
     pub fn set_item_node(
         &self,
         parent: &'bump TypePlanNode<'bump>,
     ) -> Option<&'bump TypePlanNode<'bump>> {
         match &parent.strategy {
             DeserStrategy::Set { item_node } => Some(*item_node),
-            DeserStrategy::BackRef { target } => self.set_item_node(*target),
+            DeserStrategy::BackRef { target } => self.set_item_node(target),
             _ => None,
         }
     }
 
     /// Get the child node for map keys.
     #[inline]
+    #[allow(clippy::only_used_in_recursion)]
     pub fn map_key_node(
         &self,
         parent: &'bump TypePlanNode<'bump>,
     ) -> Option<&'bump TypePlanNode<'bump>> {
         match &parent.strategy {
             DeserStrategy::Map { key_node, .. } => Some(*key_node),
-            DeserStrategy::BackRef { target } => self.map_key_node(*target),
+            DeserStrategy::BackRef { target } => self.map_key_node(target),
             _ => None,
         }
     }
 
     /// Get the child node for map values.
     #[inline]
+    #[allow(clippy::only_used_in_recursion)]
     pub fn map_value_node(
         &self,
         parent: &'bump TypePlanNode<'bump>,
     ) -> Option<&'bump TypePlanNode<'bump>> {
         match &parent.strategy {
             DeserStrategy::Map { value_node, .. } => Some(*value_node),
-            DeserStrategy::BackRef { target } => self.map_value_node(*target),
+            DeserStrategy::BackRef { target } => self.map_value_node(target),
             _ => None,
         }
     }
 
     /// Get the child node for Option inner type.
     #[inline]
+    #[allow(clippy::only_used_in_recursion)]
     pub fn option_inner_node(
         &self,
         parent: &'bump TypePlanNode<'bump>,
     ) -> Option<&'bump TypePlanNode<'bump>> {
         match &parent.strategy {
             DeserStrategy::Option { some_node } => Some(*some_node),
-            DeserStrategy::BackRef { target } => self.option_inner_node(*target),
+            DeserStrategy::BackRef { target } => self.option_inner_node(target),
             _ => None,
         }
     }
 
     /// Get the child node for Result Ok type.
     #[inline]
+    #[allow(clippy::only_used_in_recursion)]
     pub fn result_ok_node(
         &self,
         parent: &'bump TypePlanNode<'bump>,
     ) -> Option<&'bump TypePlanNode<'bump>> {
         match &parent.strategy {
             DeserStrategy::Result { ok_node, .. } => Some(*ok_node),
-            DeserStrategy::BackRef { target } => self.result_ok_node(*target),
+            DeserStrategy::BackRef { target } => self.result_ok_node(target),
             _ => None,
         }
     }
 
     /// Get the child node for Result Err type.
     #[inline]
+    #[allow(clippy::only_used_in_recursion)]
     pub fn result_err_node(
         &self,
         parent: &'bump TypePlanNode<'bump>,
     ) -> Option<&'bump TypePlanNode<'bump>> {
         match &parent.strategy {
             DeserStrategy::Result { err_node, .. } => Some(*err_node),
-            DeserStrategy::BackRef { target } => self.result_err_node(*target),
+            DeserStrategy::BackRef { target } => self.result_err_node(target),
             _ => None,
         }
     }
 
     /// Get the child node for pointer pointee.
     #[inline]
+    #[allow(clippy::only_used_in_recursion)]
     pub fn pointer_pointee_node(
         &self,
         parent: &'bump TypePlanNode<'bump>,
     ) -> Option<&'bump TypePlanNode<'bump>> {
         match &parent.strategy {
             DeserStrategy::Pointer { pointee_node } => Some(*pointee_node),
-            DeserStrategy::BackRef { target } => self.pointer_pointee_node(*target),
+            DeserStrategy::BackRef { target } => self.pointer_pointee_node(target),
             _ => None,
         }
     }
@@ -1840,7 +1818,7 @@ impl<'bump> TypePlan<'bump> {
     #[inline]
     pub fn resolve_backref(&self, node: &'bump TypePlanNode<'bump>) -> &'bump TypePlanNode<'bump> {
         match &node.kind {
-            TypePlanNodeKind::BackRef(target) => *target,
+            TypePlanNodeKind::BackRef(target) => target,
             _ => node,
         }
     }
@@ -2026,7 +2004,7 @@ mod tests {
                 // This should be a BackRef pointing to the root
                 match &pointee_node.kind {
                     TypePlanNodeKind::BackRef(target) => {
-                        assert_eq!(*target, plan.root());
+                        assert_eq!(target, plan.root());
                     }
                     _ => panic!(
                         "Expected BackRef for recursive type, got {:?}",
