@@ -44,7 +44,9 @@ pub fn build_for_format<'bump>(
 ) -> Result<&'bump TypePlan<'bump>, AllocError> {
     let mut builder = TypePlanBuilder::new(bump, format_namespace);
     let root = builder.build_node(shape)?;
-    Ok(bump.alloc(TypePlan { root }))
+    let node_lookup = builder.into_node_lookup();
+
+    Ok(bump.alloc(TypePlan { root, node_lookup }))
 }
 
 /// Precomputed deserialization plan tree for a type.
@@ -56,6 +58,9 @@ pub fn build_for_format<'bump>(
 pub struct TypePlan<'bump> {
     /// Root node of the plan tree
     root: &'bump TypePlanNode<'bump>,
+    /// Sorted lookup table for resolving BackRef nodes by TypeId.
+    /// Populated during building, uses binary search for O(log n) resolution.
+    node_lookup: &'bump [(ConstTypeId, &'bump TypePlanNode<'bump>)],
 }
 
 /// A node in the TypePlan tree.
@@ -173,10 +178,10 @@ pub enum DeserStrategy<'bump> {
     /// Metadata container (like `Spanned<T>`, `Documented<T>`)
     /// These require special field-by-field handling for metadata population
     MetadataContainer,
-    /// BackRef to recursive type - deser_strategy() resolves this
+    /// BackRef to recursive type - resolved via TypePlan::resolve_backref()
     BackRef {
-        /// The target node this backref points to
-        target: &'bump TypePlanNode<'bump>,
+        /// The TypeId of the target node
+        target_type_id: ConstTypeId,
     },
 }
 
@@ -233,7 +238,8 @@ pub enum TypePlanNodeKind<'bump> {
     Transparent,
 
     /// Back-reference to an ancestor node (for recursive types)
-    BackRef(&'bump TypePlanNode<'bump>),
+    /// Resolved via TypePlan::resolve_backref()
+    BackRef(ConstTypeId),
 }
 
 /// Precomputed plan for struct deserialization.
@@ -850,7 +856,7 @@ impl<'bump> FieldLookup<'bump> {
     }
 
     /// Build lookup structure from entries, allocating from the bump.
-    fn from_entries_in(bump: &'bump Bump, entries: BVec<'bump, FieldLookupEntry>) -> Self {
+    pub fn from_entries_in(bump: &'bump Bump, entries: BVec<'bump, FieldLookupEntry>) -> Self {
         let total_entries = entries.len();
         if total_entries <= LOOKUP_THRESHOLD {
             return FieldLookup::Small(entries.into_iter().collect());
@@ -985,9 +991,12 @@ impl<'bump> VariantLookup<'bump> {
 /// Builder context for TypePlan construction.
 struct TypePlanBuilder<'bump> {
     bump: &'bump Bump,
-    /// Map from TypeId to node reference for cycle detection.
-    /// If a type is in this map, we're currently building it (ancestor on call stack).
-    building: HashMap<ConstTypeId, &'bump TypePlanNode<'bump>>,
+    /// Types we're currently building (for cycle detection).
+    /// Added when we START building a node.
+    building: hashbrown::HashSet<ConstTypeId>,
+    /// Finished nodes, keyed by TypeId.
+    /// Added when we FINISH building a node.
+    finished: HashMap<ConstTypeId, &'bump TypePlanNode<'bump>>,
     /// Format namespace for resolving format-specific proxies (e.g., "json", "xml")
     format_namespace: Option<&'static str>,
 }
@@ -996,9 +1005,18 @@ impl<'bump> TypePlanBuilder<'bump> {
     fn new(bump: &'bump Bump, format_namespace: Option<&'static str>) -> Self {
         Self {
             bump,
-            building: HashMap::new(),
+            building: hashbrown::HashSet::new(),
+            finished: HashMap::new(),
             format_namespace,
         }
+    }
+
+    /// Convert finished map into a sorted slice for TypePlan.
+    /// The HashMap is consumed and its entries are sorted by TypeId for binary search.
+    fn into_node_lookup(self) -> &'bump [(ConstTypeId, &'bump TypePlanNode<'bump>)] {
+        let mut entries: BVec<'bump, _> = BVec::from_iter_in(self.finished, self.bump);
+        entries.sort_by_key(|(id, _)| *id);
+        entries.into_bump_slice()
     }
 
     /// Build a node for a shape, returning a reference to it.
@@ -1038,15 +1056,14 @@ impl<'bump> TypePlanBuilder<'bump> {
         // Field-level proxy takes precedence
         let effective_proxy = field_proxy.or(container_proxy);
 
-        // Check if we're already building this type (cycle detected)
-        // Use the original type_id for cycle detection
-        if let Some(&existing_node) = self.building.get(&type_id) {
-            // Create a BackRef node pointing to the existing node
+        // Check if we're currently building this type (cycle detected)
+        if self.building.contains(&type_id) {
+            // Create a BackRef node with just the TypeId - resolved later via HashMap
             let backref_node = self.bump.alloc(TypePlanNode {
-                shape, // Original shape (conversion target)
-                kind: TypePlanNodeKind::BackRef(existing_node),
+                shape,
+                kind: TypePlanNodeKind::BackRef(type_id),
                 strategy: DeserStrategy::BackRef {
-                    target: existing_node,
+                    target_type_id: type_id,
                 },
                 has_default: shape.is(Characteristic::Default),
                 proxy: effective_proxy,
@@ -1054,49 +1071,18 @@ impl<'bump> TypePlanBuilder<'bump> {
             return Ok(backref_node);
         }
 
-        // Create placeholder node first so children can reference it.
-        // We use Scalar as a dummy strategy - it will be overwritten before we return.
-        //
-        // SAFETY: We use UnsafeCell pattern here because we need to:
-        // 1. Allocate the node so children can reference it
-        // 2. Update the node's kind/strategy after building children
-        // This is safe because:
-        // - The node is only mutated once, before being exposed
-        // - No references to the node's internals exist during mutation
-        let placeholder = self.bump.alloc(core::cell::UnsafeCell::new(TypePlanNode {
-            shape,                          // Original shape (conversion target)
-            kind: TypePlanNodeKind::Scalar, // Placeholder, will be replaced
-            strategy: DeserStrategy::Scalar {
-                scalar_type: None,
-                is_from_str: false,
-            }, // Placeholder, will be replaced
-            has_default: shape.is(Characteristic::Default),
-            proxy: effective_proxy,
-        }));
+        // Mark this type as being built (for cycle detection)
+        self.building.insert(type_id);
 
-        // Get a reference to the node for the building map
-        // SAFETY: We're getting a shared reference; the mutable update happens once below
-        let node_ref: &'bump TypePlanNode<'bump> = unsafe { &*placeholder.get() };
-
-        // Mark this type as being built
-        self.building.insert(type_id, node_ref);
-
-        // If there's a proxy, build a child node for the proxy type FIRST.
-        // This child represents what we actually deserialize.
+        // Build children first - they may create BackRefs if they hit cycles
         let proxy_node = if let Some(proxy_def) = effective_proxy {
-            // Build a node for the proxy type itself (no proxy inheritance)
-            let proxy_shape = proxy_def.shape;
-            // Recursively build the proxy type's node - it will have its own kind/strategy
-            Some(self.build_node(proxy_shape)?)
+            Some(self.build_node(proxy_def.shape)?)
         } else {
             None
         };
 
-        // Build the kind for the original shape (not proxy) - this is used for
-        // non-proxy operations on the type
         let (kind, children) = self.build_kind(shape)?;
 
-        // Compute the deserialization strategy
         let strategy = self.compute_strategy(
             shape,
             &kind,
@@ -1106,19 +1092,20 @@ impl<'bump> TypePlanBuilder<'bump> {
             &children,
         )?;
 
-        // Update the node with the real kind and strategy
-        // SAFETY: No other references to the node's internals exist yet
-        unsafe {
-            let node = &mut *placeholder.get();
-            node.kind = kind;
-            node.strategy = strategy;
-        }
+        // Now allocate the node with final values (no mutation needed!)
+        let node = self.bump.alloc(TypePlanNode {
+            shape,
+            kind,
+            strategy,
+            has_default: shape.is(Characteristic::Default),
+            proxy: effective_proxy,
+        });
 
-        // Remove from building set - we're done with this type
-        // This ensures only ancestors are tracked, not all visited types
+        // Done building - move from building set to finished map
         self.building.remove(&type_id);
+        self.finished.insert(type_id, node);
 
-        Ok(node_ref)
+        Ok(node)
     }
 
     /// Compute the deserialization strategy with all data needed to execute it.
@@ -1268,7 +1255,9 @@ impl<'bump> TypePlanBuilder<'bump> {
                     operation: "transparent wrapper requires try_from for deserialization",
                 });
             }
-            TypePlanNodeKind::BackRef(target) => DeserStrategy::BackRef { target },
+            TypePlanNodeKind::BackRef(type_id) => DeserStrategy::BackRef {
+                target_type_id: *type_id,
+            },
         })
     }
 
@@ -1646,6 +1635,16 @@ impl<'bump> TypePlan<'bump> {
         self.root
     }
 
+    /// Look up a node by TypeId using binary search on the sorted lookup table.
+    #[inline]
+    fn lookup_node(&self, type_id: &ConstTypeId) -> Option<&'bump TypePlanNode<'bump>> {
+        let idx = self
+            .node_lookup
+            .binary_search_by_key(type_id, |(id, _)| *id)
+            .ok()?;
+        Some(self.node_lookup[idx].1)
+    }
+
     // Navigation helpers that return node references
 
     /// Get the child node for a struct field by index.
@@ -1693,7 +1692,10 @@ impl<'bump> TypePlan<'bump> {
             DeserStrategy::List { item_node, .. } | DeserStrategy::Array { item_node, .. } => {
                 Some(*item_node)
             }
-            DeserStrategy::BackRef { target } => self.list_item_node(target),
+            DeserStrategy::BackRef { target_type_id } => {
+                let target = self.lookup_node(target_type_id)?;
+                self.list_item_node(target)
+            }
             _ => None,
         }
     }
@@ -1707,7 +1709,10 @@ impl<'bump> TypePlan<'bump> {
     ) -> Option<&'bump TypePlanNode<'bump>> {
         match &parent.strategy {
             DeserStrategy::Set { item_node } => Some(*item_node),
-            DeserStrategy::BackRef { target } => self.set_item_node(target),
+            DeserStrategy::BackRef { target_type_id } => {
+                let target = self.lookup_node(target_type_id)?;
+                self.set_item_node(target)
+            }
             _ => None,
         }
     }
@@ -1721,7 +1726,10 @@ impl<'bump> TypePlan<'bump> {
     ) -> Option<&'bump TypePlanNode<'bump>> {
         match &parent.strategy {
             DeserStrategy::Map { key_node, .. } => Some(*key_node),
-            DeserStrategy::BackRef { target } => self.map_key_node(target),
+            DeserStrategy::BackRef { target_type_id } => {
+                let target = self.lookup_node(target_type_id)?;
+                self.map_key_node(target)
+            }
             _ => None,
         }
     }
@@ -1735,7 +1743,10 @@ impl<'bump> TypePlan<'bump> {
     ) -> Option<&'bump TypePlanNode<'bump>> {
         match &parent.strategy {
             DeserStrategy::Map { value_node, .. } => Some(*value_node),
-            DeserStrategy::BackRef { target } => self.map_value_node(target),
+            DeserStrategy::BackRef { target_type_id } => {
+                let target = self.lookup_node(target_type_id)?;
+                self.map_value_node(target)
+            }
             _ => None,
         }
     }
@@ -1749,7 +1760,10 @@ impl<'bump> TypePlan<'bump> {
     ) -> Option<&'bump TypePlanNode<'bump>> {
         match &parent.strategy {
             DeserStrategy::Option { some_node } => Some(*some_node),
-            DeserStrategy::BackRef { target } => self.option_inner_node(target),
+            DeserStrategy::BackRef { target_type_id } => {
+                let target = self.lookup_node(target_type_id)?;
+                self.option_inner_node(target)
+            }
             _ => None,
         }
     }
@@ -1763,7 +1777,10 @@ impl<'bump> TypePlan<'bump> {
     ) -> Option<&'bump TypePlanNode<'bump>> {
         match &parent.strategy {
             DeserStrategy::Result { ok_node, .. } => Some(*ok_node),
-            DeserStrategy::BackRef { target } => self.result_ok_node(target),
+            DeserStrategy::BackRef { target_type_id } => {
+                let target = self.lookup_node(target_type_id)?;
+                self.result_ok_node(target)
+            }
             _ => None,
         }
     }
@@ -1777,7 +1794,10 @@ impl<'bump> TypePlan<'bump> {
     ) -> Option<&'bump TypePlanNode<'bump>> {
         match &parent.strategy {
             DeserStrategy::Result { err_node, .. } => Some(*err_node),
-            DeserStrategy::BackRef { target } => self.result_err_node(target),
+            DeserStrategy::BackRef { target_type_id } => {
+                let target = self.lookup_node(target_type_id)?;
+                self.result_err_node(target)
+            }
             _ => None,
         }
     }
@@ -1791,7 +1811,10 @@ impl<'bump> TypePlan<'bump> {
     ) -> Option<&'bump TypePlanNode<'bump>> {
         match &parent.strategy {
             DeserStrategy::Pointer { pointee_node } => Some(*pointee_node),
-            DeserStrategy::BackRef { target } => self.pointer_pointee_node(target),
+            DeserStrategy::BackRef { target_type_id } => {
+                let target = self.lookup_node(target_type_id)?;
+                self.pointer_pointee_node(target)
+            }
             _ => None,
         }
     }
@@ -1818,7 +1841,9 @@ impl<'bump> TypePlan<'bump> {
     #[inline]
     pub fn resolve_backref(&self, node: &'bump TypePlanNode<'bump>) -> &'bump TypePlanNode<'bump> {
         match &node.kind {
-            TypePlanNodeKind::BackRef(target) => target,
+            TypePlanNodeKind::BackRef(type_id) => self
+                .lookup_node(type_id)
+                .expect("BackRef target must exist in node_lookup"),
             _ => node,
         }
     }
@@ -1876,8 +1901,9 @@ mod tests {
 
     #[test]
     fn test_typeplan_struct() {
-        let plan = TypePlan::build(TestStruct::SHAPE).unwrap();
-        let root = plan.get(plan.root());
+        let bump = Bump::new();
+        let plan = build(&bump, TestStruct::SHAPE).unwrap();
+        let root = plan.root();
 
         assert_eq!(root.shape, TestStruct::SHAPE);
         assert!(!root.has_default);
@@ -1904,13 +1930,11 @@ mod tests {
                 assert!(!struct_plan.fields[2].is_required()); // Option has implicit default
 
                 // Check child plan for Option field (field index 2 = third child)
-                let email_child = plan.struct_field_node(plan.root(), 2).unwrap();
-                let email_node = plan.get(email_child);
+                let email_node = plan.struct_field_node(plan.root(), 2).unwrap();
                 match &email_node.kind {
                     TypePlanNodeKind::Option => {
                         // inner should be String (scalar)
-                        let inner = plan.option_inner_node(email_child).unwrap();
-                        let inner_node = plan.get(inner);
+                        let inner_node = plan.option_inner_node(email_node).unwrap();
                         match &inner_node.kind {
                             TypePlanNodeKind::Scalar => {}
                             other => panic!("Expected Scalar for String, got {:?}", other),
@@ -1925,8 +1949,9 @@ mod tests {
 
     #[test]
     fn test_typeplan_enum() {
-        let plan = TypePlan::build(TestEnum::SHAPE).unwrap();
-        let root = plan.get(plan.root());
+        let bump = Bump::new();
+        let plan = build(&bump, TestEnum::SHAPE).unwrap();
+        let root = plan.root();
 
         assert_eq!(root.shape, TestEnum::SHAPE);
 
@@ -1956,13 +1981,13 @@ mod tests {
 
     #[test]
     fn test_typeplan_list() {
-        let plan = TypePlan::build(<Vec<u32> as Facet>::SHAPE).unwrap();
-        let root = plan.get(plan.root());
+        let bump = Bump::new();
+        let plan = build(&bump, <Vec<u32> as Facet>::SHAPE).unwrap();
+        let root = plan.root();
 
         match &root.kind {
             TypePlanNodeKind::List => {
-                let item = plan.list_item_node(plan.root()).unwrap();
-                let item_node = plan.get(item);
+                let item_node = plan.list_item_node(plan.root()).unwrap();
                 match &item_node.kind {
                     TypePlanNodeKind::Scalar => {}
                     other => panic!("Expected Scalar for u32, got {:?}", other),
@@ -1974,9 +1999,10 @@ mod tests {
 
     #[test]
     fn test_typeplan_recursive() {
-        // This should NOT stack overflow - indextree handles the cycle
-        let plan = TypePlan::build(RecursiveStruct::SHAPE).unwrap();
-        let root = plan.get(plan.root());
+        // This should NOT stack overflow - bumpalo handles the cycle
+        let bump = Bump::new();
+        let plan = build(&bump, RecursiveStruct::SHAPE).unwrap();
+        let root = plan.root();
 
         match &root.kind {
             TypePlanNodeKind::Struct(struct_plan) => {
@@ -1986,25 +2012,23 @@ mod tests {
 
                 // The 'next' field is Option<Box<RecursiveStruct>>
                 // Its child plan should eventually contain a BackRef
-                let next_child = plan.struct_field_node(plan.root(), 1).unwrap();
-                let next_node = plan.get(next_child);
+                let next_node = plan.struct_field_node(plan.root(), 1).unwrap();
 
                 // Should be Option
                 assert!(matches!(next_node.kind, TypePlanNodeKind::Option));
 
                 // Inner should be Pointer (Box)
-                let inner = plan.option_inner_node(next_child).unwrap();
-                let inner_node = plan.get(inner);
+                let inner_node = plan.option_inner_node(next_node).unwrap();
                 assert!(matches!(inner_node.kind, TypePlanNodeKind::Pointer));
 
                 // Pointee should be BackRef to root (or a struct with BackRef)
-                let pointee = plan.pointer_pointee_node(inner).unwrap();
-                let pointee_node = plan.get(pointee);
+                let pointee_node = plan.pointer_pointee_node(inner_node).unwrap();
 
                 // This should be a BackRef pointing to the root
                 match &pointee_node.kind {
-                    TypePlanNodeKind::BackRef(target) => {
-                        assert_eq!(target, plan.root());
+                    TypePlanNodeKind::BackRef(type_id) => {
+                        // type_id should match the root's type
+                        assert_eq!(*type_id, plan.root().shape.id);
                     }
                     _ => panic!(
                         "Expected BackRef for recursive type, got {:?}",
@@ -2044,9 +2068,10 @@ mod tests {
 
     #[test]
     fn test_field_lookup_prefix_buckets() {
+        let bump = Bump::new();
         // Create enough entries to trigger PrefixBuckets (>8 entries)
         // Include short names like "id" to test zero-padding
-        let entries = vec![
+        let entries = bumpalo::vec![in &bump;
             FieldLookupEntry {
                 name: "id",
                 index: 0,
@@ -2098,7 +2123,7 @@ mod tests {
                 is_alias: false,
             },
         ];
-        let lookup = FieldLookup::from_entries(entries);
+        let lookup = FieldLookup::from_entries_in(&bump, entries);
 
         // Verify it's using PrefixBuckets
         assert!(matches!(lookup, FieldLookup::PrefixBuckets { .. }));
@@ -2133,13 +2158,14 @@ mod tests {
     fn test_field_lookup_from_struct_type() {
         use facet_core::{Type, UserType};
 
+        let bump = Bump::new();
         // Get struct_def from TestStruct's shape
         let struct_def = match &TestStruct::SHAPE.ty {
             Type::User(UserType::Struct(def)) => def,
             _ => panic!("Expected struct type"),
         };
 
-        let lookup = FieldLookup::from_struct_type(struct_def);
+        let lookup = FieldLookup::from_struct_type_in(&bump, struct_def);
 
         // Should find all fields by their names
         assert_eq!(lookup.find("name"), Some(0));
@@ -2152,13 +2178,14 @@ mod tests {
     fn test_variant_lookup_from_enum_type() {
         use facet_core::{Type, UserType};
 
+        let bump = Bump::new();
         // Get enum_def from TestEnum's shape
         let enum_def = match &TestEnum::SHAPE.ty {
             Type::User(UserType::Enum(def)) => def,
             _ => panic!("Expected enum type"),
         };
 
-        let lookup = VariantLookup::from_enum_type(enum_def);
+        let lookup = VariantLookup::from_enum_type_in(&bump, enum_def);
 
         // Should find all variants by name
         assert_eq!(lookup.find("Unit"), Some(0));

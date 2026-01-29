@@ -1518,7 +1518,10 @@ mod size_tests {
             "Option<&'static facet_core::ProxyDef>: {} bytes",
             size_of::<Option<&'static facet_core::ProxyDef>>()
         );
-        eprintln!("typeplan::NodeId: {} bytes", size_of::<typeplan::NodeId>());
+        eprintln!(
+            "TypePlanNode<'_>: {} bytes",
+            size_of::<typeplan::TypePlanNode<'_>>()
+        );
         eprintln!("Vec<Frame>: {} bytes", size_of::<Vec<Frame>>());
         eprintln!("MapInsertState: {} bytes", size_of::<MapInsertState>());
         eprintln!(

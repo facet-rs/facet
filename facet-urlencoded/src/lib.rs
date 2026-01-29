@@ -122,10 +122,10 @@ pub fn from_str_owned<T: Facet<'static>>(urlencoded: &str) -> Result<T, UrlEncod
 /// Deserializes a URL encoded form data string into an heap-allocated value.
 ///
 /// This is the lower-level function that works with `Partial` directly.
-fn from_str_value<'facet, 'bump>(
-    mut wip: Partial<'facet, 'bump, false>,
+fn from_str_value<'facet, 'bump, const BORROW: bool>(
+    mut wip: Partial<'facet, 'bump, BORROW>,
     urlencoded: &str,
-) -> Result<Partial<'facet, 'bump, false>, UrlEncodedError> {
+) -> Result<Partial<'facet, 'bump, BORROW>, UrlEncodedError> {
     trace!("Starting URL encoded form data deserialization");
 
     // Parse the URL encoded string into key-value pairs
