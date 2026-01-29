@@ -6,7 +6,7 @@ use crate::typeplan::{DeserStrategy, TypePlanNodeKind};
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Misc.
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
+impl<'facet, 'bump, const BORROW: bool> Partial<'facet, 'bump, BORROW> {
     /// Applies a closure to this Partial, enabling chaining with operations that
     /// take ownership and return `Result<Self, E>`.
     ///
@@ -90,7 +90,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// - The current frame has no TypePlan (e.g., custom deserialization frames)
     /// - The current type is not a struct
     #[inline]
-    pub fn struct_plan(&self) -> Option<&crate::typeplan::StructPlan> {
+    pub fn struct_plan(&self) -> Option<&'bump crate::typeplan::StructPlan<'bump>> {
         if self.state != PartialState::Active {
             return None;
         }
@@ -105,7 +105,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// - The Partial is not active
     /// - The current type is not an enum
     #[inline]
-    pub fn enum_plan(&self) -> Option<&crate::typeplan::EnumPlan> {
+    pub fn enum_plan(&self) -> Option<&'bump crate::typeplan::EnumPlan<'bump>> {
         if self.state != PartialState::Active {
             return None;
         }
@@ -120,19 +120,15 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     ///
     /// Returns `None` if the current type is not a struct or enum variant.
     #[inline]
-    pub fn field_plans(&self) -> Option<&[crate::typeplan::FieldPlan]> {
+    pub fn field_plans(&self) -> Option<&'bump [crate::typeplan::FieldPlan<'bump>]> {
         use crate::typeplan::TypePlanNodeKind;
         let frame = self.frames().last().unwrap();
-        let plan_node = self.root_plan.get(frame.type_plan);
-        match &plan_node.kind {
-            TypePlanNodeKind::Struct(struct_plan) => Some(struct_plan.fields.as_slice()),
+        match &frame.type_plan.kind {
+            TypePlanNodeKind::Struct(struct_plan) => Some(struct_plan.fields),
             TypePlanNodeKind::Enum(enum_plan) => {
                 // For enums, we need the variant index from the tracker
                 if let crate::partial::Tracker::Enum { variant_idx, .. } = &frame.tracker {
-                    enum_plan
-                        .variants
-                        .get(*variant_idx)
-                        .map(|v| v.fields.as_slice())
+                    enum_plan.variants.get(*variant_idx).map(|v| v.fields)
                 } else {
                     None
                 }
@@ -150,12 +146,12 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// - The Partial is not active
     /// - There are no frames
     #[inline]
-    pub fn plan_node(&self) -> Option<&crate::typeplan::TypePlanNode> {
+    pub fn plan_node(&self) -> Option<&'bump crate::typeplan::TypePlanNode<'bump>> {
         if self.state != PartialState::Active {
             return None;
         }
         let frame = self.frames().last()?;
-        Some(self.root_plan.get(frame.type_plan))
+        Some(frame.type_plan)
     }
 
     /// Returns the precomputed deserialization strategy for the current frame.
@@ -171,13 +167,12 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// - The Partial is not active
     /// - There are no frames
     #[inline]
-    pub fn deser_strategy(&self) -> Option<&DeserStrategy> {
+    pub fn deser_strategy(&self) -> Option<&'bump DeserStrategy<'bump>> {
         let node = self.plan_node()?;
 
         // If this is a BackRef, follow the reference to get the actual strategy
         if let DeserStrategy::BackRef { target } = &node.strategy {
-            let target_node = self.root_plan.get(*target);
-            return Some(&target_node.strategy);
+            return Some(&target.strategy);
         }
 
         Some(&node.strategy)
@@ -757,16 +752,15 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 (frame.type_plan, variant_idx)
             });
 
-            // Look up plans from root_plan (separate borrow from mode)
-            let plans_info = frame_info.and_then(|(type_plan, variant_idx)| {
-                let plan_node = self.root_plan.get(type_plan);
-                match &plan_node.kind {
-                    TypePlanNodeKind::Struct(struct_plan) => Some(struct_plan.fields.as_slice()),
-                    TypePlanNodeKind::Enum(enum_plan) => variant_idx
-                        .and_then(|idx| enum_plan.variants.get(idx).map(|v| v.fields.as_slice())),
+            // Look up plans from the type plan node (no indirection needed - we have direct references)
+            let plans_info =
+                frame_info.and_then(|(type_plan, variant_idx)| match &type_plan.kind {
+                    TypePlanNodeKind::Struct(struct_plan) => Some(struct_plan.fields),
+                    TypePlanNodeKind::Enum(enum_plan) => {
+                        variant_idx.and_then(|idx| enum_plan.variants.get(idx).map(|v| v.fields))
+                    }
                     _ => None,
-                }
-            });
+                });
 
             if let Some(plans) = plans_info {
                 // Now mutably borrow mode.stack to get the frame

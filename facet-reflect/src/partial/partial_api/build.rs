@@ -3,7 +3,7 @@ use super::*;
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Build
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
+impl<'facet, 'bump, const BORROW: bool> Partial<'facet, 'bump, BORROW> {
     /// Builds the value, consuming the Partial.
     pub fn build(mut self) -> Result<HeapValue<'facet, BORROW>, ReflectError> {
         use crate::typeplan::TypePlanNodeKind;
@@ -24,15 +24,13 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             (frame.type_plan, variant_idx)
         });
 
-        // Look up plans from root_plan (separate borrow from mode)
-        let plans_info = frame_info.and_then(|(type_plan, variant_idx)| {
-            let plan_node = self.root_plan.get(type_plan);
-            match &plan_node.kind {
-                TypePlanNodeKind::Struct(struct_plan) => Some(struct_plan.fields.as_slice()),
-                TypePlanNodeKind::Enum(enum_plan) => variant_idx
-                    .and_then(|idx| enum_plan.variants.get(idx).map(|v| v.fields.as_slice())),
-                _ => None,
+        // Look up plans from the type plan node (no indirection needed - we have direct references)
+        let plans_info = frame_info.and_then(|(type_plan, variant_idx)| match &type_plan.kind {
+            TypePlanNodeKind::Struct(struct_plan) => Some(struct_plan.fields),
+            TypePlanNodeKind::Enum(enum_plan) => {
+                variant_idx.and_then(|idx| enum_plan.variants.get(idx).map(|v| v.fields))
             }
+            _ => None,
         });
 
         if let Some(plans) = plans_info {
@@ -186,15 +184,13 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             (frame.type_plan, variant_idx)
         });
 
-        // Look up plans from root_plan (separate borrow from mode)
-        let plans_info = frame_info.and_then(|(type_plan, variant_idx)| {
-            let plan_node = self.root_plan.get(type_plan);
-            match &plan_node.kind {
-                TypePlanNodeKind::Struct(struct_plan) => Some(struct_plan.fields.as_slice()),
-                TypePlanNodeKind::Enum(enum_plan) => variant_idx
-                    .and_then(|idx| enum_plan.variants.get(idx).map(|v| v.fields.as_slice())),
-                _ => None,
+        // Look up plans from the type plan node (no indirection needed - we have direct references)
+        let plans_info = frame_info.and_then(|(type_plan, variant_idx)| match &type_plan.kind {
+            TypePlanNodeKind::Struct(struct_plan) => Some(struct_plan.fields),
+            TypePlanNodeKind::Enum(enum_plan) => {
+                variant_idx.and_then(|idx| enum_plan.variants.get(idx).map(|v| v.fields))
             }
+            _ => None,
         });
 
         if let Some(plans) = plans_info {
