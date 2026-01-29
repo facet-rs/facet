@@ -50,6 +50,14 @@ impl<T> Arena<T> {
         Self { data: Vec::new() }
     }
 
+    /// Create a new arena with pre-allocated capacity.
+    #[inline]
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            data: Vec::with_capacity(capacity),
+        }
+    }
+
     /// Add a value and return its index.
     #[inline]
     pub fn alloc(&mut self, value: T) -> Idx<T> {

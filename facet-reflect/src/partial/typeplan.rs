@@ -9,6 +9,7 @@ use facet_core::{
     ScalarType, SequenceType, Shape, StructType, Type, UserType, ValidatorFn, Variant,
 };
 use hashbrown::HashMap;
+use smallvec::SmallVec;
 
 use super::arena::{Arena, Idx};
 use crate::AllocError;
@@ -161,6 +162,7 @@ pub enum DeserStrategy {
 /// Children are stored via indextree's parent-child relationships, not inline.
 /// Use the TypePlan methods to navigate to children.
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)] // Struct/Enum variants are intentionally large
 pub enum TypePlanNodeKind {
     /// Scalar types (integers, floats, bool, char, strings)
     Scalar,
@@ -258,7 +260,8 @@ pub struct FieldInitPlan {
     /// How to handle this field if not set during deserialization
     pub fill_rule: FillRule,
     /// Validators to run after the field is set (precomputed from attributes)
-    pub validators: Vec<PrecomputedValidator>,
+    /// Most fields have 0-2 validators, so we inline up to 2.
+    pub validators: SmallVec<PrecomputedValidator, 2>,
 }
 
 /// How to fill a field that wasn't set during deserialization.
@@ -721,9 +724,11 @@ pub struct VariantPlanMeta {
 /// - Small (≤8 fields): linear scan (cache-friendly, no hashing overhead)
 /// - Large (>8 fields): prefix-based dispatch (like JIT) - group by first N bytes
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)] // SmallVec is intentionally inline
 pub enum FieldLookup {
     /// For small structs: just store (name, index) pairs
-    Small(Vec<FieldLookupEntry>),
+    /// Capped at LOOKUP_THRESHOLD (8) entries, so we inline all of them.
+    Small(SmallVec<FieldLookupEntry, 16>),
     /// For larger structs: prefix-based buckets
     /// Entries are grouped by their N-byte prefix, buckets sorted by prefix for binary search
     PrefixBuckets {
@@ -749,9 +754,10 @@ pub struct FieldLookupEntry {
 
 /// Fast lookup from variant name to variant index.
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)] // SmallVec is intentionally inline
 pub enum VariantLookup {
-    /// For small enums: linear scan
-    Small(Vec<(&'static str, usize)>),
+    /// For small enums: linear scan (most enums have ≤8 variants)
+    Small(SmallVec<(&'static str, usize), 8>),
     /// For larger enums: sorted for binary search
     Sorted(Vec<(&'static str, usize)>),
 }
@@ -829,14 +835,15 @@ impl FieldLookup {
 
     /// Build lookup structure from entries.
     fn from_entries(entries: Vec<FieldLookupEntry>) -> Self {
-        if entries.len() <= LOOKUP_THRESHOLD {
-            return FieldLookup::Small(entries);
+        let total_entries = entries.len();
+        if total_entries <= LOOKUP_THRESHOLD {
+            return FieldLookup::Small(entries.into());
         }
 
         // Choose prefix length: 8 bytes if most keys are long, otherwise 4
         // Short keys get zero-padded, which is fine - they'll have unique prefixes
         let long_key_count = entries.iter().filter(|e| e.name.len() >= 8).count();
-        let prefix_len = if long_key_count > entries.len() / 2 {
+        let prefix_len = if long_key_count > total_entries / 2 {
             8
         } else {
             4
@@ -854,7 +861,7 @@ impl FieldLookup {
         let mut bucket_list: Vec<_> = prefix_map.into_iter().collect();
         bucket_list.sort_by_key(|(prefix, _)| *prefix);
 
-        let mut all_entries = Vec::new();
+        let mut all_entries = Vec::with_capacity(total_entries);
         let mut buckets = Vec::with_capacity(bucket_list.len());
 
         for (prefix, bucket_entries) in bucket_list {
@@ -917,7 +924,7 @@ impl VariantLookup {
             .collect();
 
         if entries.len() <= LOOKUP_THRESHOLD {
-            VariantLookup::Small(entries)
+            VariantLookup::Small(entries.into())
         } else {
             entries.sort_by_key(|(name, _)| *name);
             VariantLookup::Sorted(entries)
@@ -937,7 +944,7 @@ impl VariantLookup {
             .collect();
 
         if entries.len() <= LOOKUP_THRESHOLD {
-            VariantLookup::Small(entries)
+            VariantLookup::Small(entries.into())
         } else {
             entries.sort_by_key(|(name, _)| *name);
             VariantLookup::Sorted(entries)
@@ -972,7 +979,8 @@ struct TypePlanBuilder {
 impl TypePlanBuilder {
     fn new(format_namespace: Option<&'static str>) -> Self {
         Self {
-            arena: Arena::new(),
+            // Pre-allocate for typical type trees (64 nodes covers most structs)
+            arena: Arena::with_capacity(64),
             building: HashMap::new(),
             format_namespace,
         }
@@ -1352,7 +1360,7 @@ impl TypePlanBuilder {
         struct_def: &'static StructType,
     ) -> Result<(StructPlan, Vec<FieldInitPlan>), AllocError> {
         let mut fields = Vec::with_capacity(struct_def.fields.len());
-        let mut field_init_plans = Vec::new();
+        let mut field_init_plans = Vec::with_capacity(struct_def.fields.len());
 
         // Check if the container struct has #[facet(default)]
         let container_has_default = shape.is(Characteristic::Default);
@@ -1457,8 +1465,8 @@ impl TypePlanBuilder {
     }
 
     /// Extract validators from field attributes.
-    fn extract_validators(field: &'static Field) -> Vec<PrecomputedValidator> {
-        let mut validators = Vec::new();
+    fn extract_validators(field: &'static Field) -> SmallVec<PrecomputedValidator, 2> {
+        let mut validators = SmallVec::new();
         let field_shape = field.shape();
         // Precompute scalar type once - used by validators that need it
         let scalar_type = field_shape.scalar_type();
@@ -1555,7 +1563,7 @@ impl TypePlanBuilder {
 
         for variant in enum_def.variants.iter() {
             let mut variant_fields = Vec::with_capacity(variant.data.fields.len());
-            let mut field_init_plans = Vec::new();
+            let mut field_init_plans = Vec::with_capacity(variant.data.fields.len());
 
             for (index, field) in variant.data.fields.iter().enumerate() {
                 // Build the type plan node for this field
@@ -2024,7 +2032,7 @@ mod tests {
 
     #[test]
     fn test_field_lookup_small() {
-        let lookup = FieldLookup::Small(vec![
+        let lookup = FieldLookup::Small(smallvec::smallvec![
             FieldLookupEntry {
                 name: "foo",
                 index: 0,
@@ -2127,7 +2135,7 @@ mod tests {
 
     #[test]
     fn test_variant_lookup_small() {
-        let lookup = VariantLookup::Small(vec![("A", 0), ("B", 1), ("C", 2)]);
+        let lookup = VariantLookup::Small(smallvec::smallvec![("A", 0), ("B", 1), ("C", 2)]);
 
         assert_eq!(lookup.find("A"), Some(0));
         assert_eq!(lookup.find("B"), Some(1));
