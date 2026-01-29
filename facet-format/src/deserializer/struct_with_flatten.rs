@@ -11,7 +11,9 @@ use crate::{
     SpanGuard,
 };
 
-impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BORROW> {
+impl<'parser, 'input, 'bump, const BORROW: bool>
+    FormatDeserializer<'parser, 'input, 'bump, BORROW>
+{
     /// Deserialize a struct with flattened fields using facet-solver.
     ///
     /// This uses the solver's Schema/Resolution to handle arbitrarily nested
@@ -20,8 +22,8 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     /// then using the Solver to disambiguate between resolutions.
     pub(crate) fn deserialize_struct_with_flatten(
         &mut self,
-        mut wip: Partial<'input, BORROW>,
-    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        mut wip: Partial<'input, 'bump, BORROW>,
+    ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
         use facet_solver::{Schema, Solver};
 
         trace!(
@@ -341,9 +343,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     /// Helper for initializing an empty catch-all field (no parser calls).
     fn initialize_empty_catch_all(
         &self,
-        mut wip: Partial<'input, BORROW>,
+        mut wip: Partial<'input, 'bump, BORROW>,
         catch_all_info: &FieldInfo,
-    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+    ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
         let segments = catch_all_info.path.segments();
 

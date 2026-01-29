@@ -31,12 +31,14 @@ fn lookup_field<const BORROW: bool>(
         .map(|(i, _)| i)
 }
 
-impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BORROW> {
+impl<'parser, 'input, 'bump, const BORROW: bool>
+    FormatDeserializer<'parser, 'input, 'bump, BORROW>
+{
     /// Deserialize a struct without flattened fields (simple case).
     pub(crate) fn deserialize_struct_simple(
         &mut self,
-        mut wip: Partial<'input, BORROW>,
-    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        mut wip: Partial<'input, 'bump, BORROW>,
+    ) -> Result<Partial<'input, 'bump, BORROW>, DeserializeError> {
         use facet_core::Characteristic;
 
         // Get struct fields for lookup (needed before hint)
