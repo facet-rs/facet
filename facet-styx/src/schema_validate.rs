@@ -1139,6 +1139,7 @@ pub fn validate_as(value: &Value, schema: &SchemaFile, type_name: &str) -> Valid
 #[cfg(test)]
 mod tests {
     use super::*;
+    use styx_testhelpers::{ActualError, assert_annotated_errors, source_without_annotations};
 
     #[test]
     fn test_typed_catchall_validation() {
@@ -1236,5 +1237,64 @@ schema {
             "Unit value should be valid for @optional. Errors: {:?}",
             result.errors
         );
+    }
+
+    fn validation_error_kind_name(kind: &ValidationErrorKind) -> &'static str {
+        match kind {
+            ValidationErrorKind::MissingField { .. } => "MissingField",
+            ValidationErrorKind::UnknownField { .. } => "UnknownField",
+            ValidationErrorKind::TypeMismatch { .. } => "TypeMismatch",
+            ValidationErrorKind::InvalidValue { .. } => "InvalidValue",
+            ValidationErrorKind::UnknownType { .. } => "UnknownType",
+            ValidationErrorKind::InvalidVariant { .. } => "InvalidVariant",
+            ValidationErrorKind::UnionMismatch { .. } => "UnionMismatch",
+            ValidationErrorKind::ExpectedObject => "ExpectedObject",
+            ValidationErrorKind::ExpectedSequence => "ExpectedSequence",
+            ValidationErrorKind::ExpectedScalar => "ExpectedScalar",
+            ValidationErrorKind::ExpectedTagged => "ExpectedTagged",
+            ValidationErrorKind::WrongTag { .. } => "WrongTag",
+            ValidationErrorKind::SchemaError { .. } => "SchemaError",
+        }
+    }
+
+    fn assert_validation_errors(annotated_source: &str, errors: &[ValidationError]) {
+        let actual_errors: Vec<_> = errors
+            .iter()
+            .map(|error| {
+                let span = error
+                    .span
+                    .map(|s| s.start as usize..s.end as usize)
+                    .unwrap_or(0..1);
+                ActualError {
+                    span,
+                    kind: validation_error_kind_name(&error.kind).to_string(),
+                }
+            })
+            .collect();
+
+        assert_annotated_errors(annotated_source, actual_errors);
+    }
+
+    #[test]
+    fn test_validation_unknown_field_span() {
+        let schema_source = r#"meta {id test}
+schema {
+    @ @object{
+        host @string
+    }
+}"#;
+        let schema: SchemaFile = crate::from_str(schema_source).expect("should parse schema");
+
+        let annotated = r#"
+host "ok"
+port 80
+^^^^ UnknownField
+"#;
+        let source = source_without_annotations(annotated);
+        let doc = styx_tree::parse(&source).expect("should parse doc");
+
+        let result = validate(&doc, &schema);
+        assert!(!result.errors.is_empty(), "expected validation errors");
+        assert_validation_errors(annotated, &result.errors);
     }
 }

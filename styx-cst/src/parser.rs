@@ -322,7 +322,7 @@ impl<'src> CstParser<'src> {
 
     /// Parse a single attribute: `key>value`
     ///
-    /// Per spec r[attr.syntax]: "The `>` has no spaces around it."
+    /// Per spec parser[attr.syntax]: "The `>` has no spaces around it."
     fn parse_attribute(&mut self) {
         self.builder.start_node(SyntaxKind::ATTRIBUTE.into());
 
@@ -539,11 +539,50 @@ impl<'src> CstParser<'src> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use styx_testhelpers::{ActualError, assert_annotated_errors, source_without_annotations};
 
     fn parse_ok(source: &str) -> SyntaxNode {
         let parse = parse(source);
         assert!(parse.is_ok(), "parse errors: {:?}", parse.errors());
         parse.syntax()
+    }
+
+    fn assert_parse_errors(annotated_source: &str) {
+        let source = source_without_annotations(annotated_source);
+        let parse = parse(&source);
+        let actual_errors: Vec<_> = parse
+            .errors()
+            .iter()
+            .map(|error| {
+                let start = error.offset as usize;
+                ActualError {
+                    span: start..(start + 1),
+                    kind: cst_error_kind_name(&error.message).to_string(),
+                }
+            })
+            .collect();
+
+        assert_annotated_errors(annotated_source, actual_errors);
+    }
+
+    fn cst_error_kind_name(message: &str) -> &str {
+        if message == "unexpected atom after value (entry has too many atoms)" {
+            "TooManyAtoms"
+        } else if message == "expected `>` immediately after attribute key" {
+            "AttributeMissingGt"
+        } else if message == "no whitespace allowed after `>` in attribute" {
+            "AttributeWhitespace"
+        } else if message.starts_with("unexpected token:") {
+            "UnexpectedToken"
+        } else if message == "unclosed object, expected `}`" {
+            "UnclosedObject"
+        } else if message == "unclosed sequence, expected `)`" {
+            "UnclosedSequence"
+        } else if message == "unterminated heredoc" {
+            "UnterminatedHeredoc"
+        } else {
+            "ParseError"
+        }
     }
 
     #[allow(dead_code)]
@@ -579,6 +618,26 @@ mod tests {
 
         let obj = key.children().next().unwrap();
         assert_eq!(obj.kind(), SyntaxKind::OBJECT);
+    }
+
+    #[test]
+    fn test_parse_error_too_many_atoms_span() {
+        assert_parse_errors(
+            r#"
+{a 1 2}
+     ^ TooManyAtoms
+"#,
+        );
+    }
+
+    #[test]
+    fn test_parse_error_attribute_whitespace_span() {
+        assert_parse_errors(
+            r#"
+id> value
+   ^ AttributeWhitespace
+"#,
+        );
     }
 
     #[test]

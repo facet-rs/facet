@@ -290,6 +290,72 @@ NN | source line
 >   = help: remove the '{ }' to allow multiple top-level entries
 > ```
 
+### Too many atoms in entry
+
+> r[diagnostic.parser.toomany]
+> When an entry contains more than two atoms, the message SHOULD identify
+> the unexpected atom and suggest common fixes like removing whitespace
+> between a tag and its payload.
+>
+> ```
+> error: unexpected atom after value
+>   --> config.styx:1:9
+>   |
+> 1 | key @tag { }
+>   |         ^ unexpected third atom
+>   |
+>   = help: did you mean `@tag{}`? whitespace is not allowed between a tag and its payload
+> ```
+
+### Reopened path
+
+> r[diagnostic.parser.reopened-path]
+> When a path is reopened after being closed by a sibling, the message
+> SHOULD show where the sibling closed the path.
+>
+> ```
+> error: cannot reopen path `foo.bar`
+>   --> config.styx:3:1
+>   |
+> 2 | foo.baz 1
+>   | ------- path was closed when sibling appeared
+> 3 | foo.bar.x 2
+>   | ^^^^^^^^^^^ cannot reopen path
+> ```
+
+### Nesting into terminal value
+
+> r[diagnostic.parser.nest-into-terminal]
+> When attempting to add children to a path that already has a terminal
+> value (scalar, sequence, tag, or unit), the message SHOULD show the
+> terminal value.
+>
+> ```
+> error: cannot nest into `foo`
+>   --> config.styx:2:1
+>   |
+> 1 | foo 1
+>   | --- path has a terminal value
+> 2 | foo.bar 2
+>   | ^^^^^^^ cannot nest into `foo`
+> ```
+
+### Missing whitespace before block
+
+> r[diagnostic.parser.missing-whitespace]
+> When a bare key is followed immediately by `{` or `(` without whitespace,
+> the message SHOULD suggest adding whitespace to distinguish from tag syntax.
+>
+> ```
+> error: missing whitespace before block
+>   --> config.styx:1:6
+>   |
+> 1 | config{}
+>   |       ^ add whitespace before this
+>   |
+>   = help: bare keys must be separated from `{` or `(` by whitespace (to distinguish from tags like `@tag{}`)
+> ```
+
 ## Deserializer errors
 
 ### Invalid value for type

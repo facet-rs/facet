@@ -136,6 +136,60 @@ impl StyxLanguageServer {
             });
         }
 
+        // Try to get diagnostics from extension
+        if let Some(tree) = tree
+            && let Ok(schema_file) = load_document_schema(tree, &uri)
+        {
+            let schema_id = &schema_file.meta.id;
+            if let Some(client) = self.extensions.get_client(schema_id).await {
+                let ext_params = ext::DiagnosticParams {
+                    document_uri: uri.to_string(),
+                    tree: tree.clone(),
+                    content: content.to_string(),
+                };
+
+                match client.diagnostics(ext_params).await {
+                    Ok(ext_diagnostics) => {
+                        tracing::debug!(
+                            count = ext_diagnostics.len(),
+                            "Got diagnostics from extension"
+                        );
+                        for diag in ext_diagnostics {
+                            let severity = match diag.severity {
+                                ext::DiagnosticSeverity::Error => DiagnosticSeverity::ERROR,
+                                ext::DiagnosticSeverity::Warning => DiagnosticSeverity::WARNING,
+                                ext::DiagnosticSeverity::Info => DiagnosticSeverity::INFORMATION,
+                                ext::DiagnosticSeverity::Hint => DiagnosticSeverity::HINT,
+                            };
+                            diagnostics.push(Diagnostic {
+                                range: Range {
+                                    start: Position {
+                                        line: diag.range.start.line,
+                                        character: diag.range.start.character,
+                                    },
+                                    end: Position {
+                                        line: diag.range.end.line,
+                                        character: diag.range.end.character,
+                                    },
+                                },
+                                severity: Some(severity),
+                                code: diag.code.map(NumberOrString::String),
+                                code_description: None,
+                                source: diag.source,
+                                message: diag.message,
+                                related_information: None,
+                                tags: None,
+                                data: diag.data.map(|v| convert_styx_value_to_json(&v)),
+                            });
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Extension diagnostics failed");
+                    }
+                }
+            }
+        }
+
         self.client
             .publish_diagnostics(uri, diagnostics, Some(version))
             .await;
@@ -1099,7 +1153,7 @@ impl LanguageServer for StyxLanguageServer {
         let mut actions = Vec::new();
 
         // Process each diagnostic to generate code actions (quickfixes)
-        for diag in params.context.diagnostics {
+        for diag in &params.context.diagnostics {
             // Handle schema hint diagnostics (add @schema declaration)
             if diag.source.as_deref() == Some("styx-hints") {
                 if let Some(data) = &diag.data
@@ -1229,6 +1283,125 @@ impl LanguageServer for StyxLanguageServer {
                 }));
             }
         }
+
+        // Try to get code actions from extension
+        let docs = self.documents.read().await;
+        if let Some(doc) = docs.get(&uri)
+            && let Some(ref tree) = doc.tree
+            && let Ok(schema_file) = load_document_schema(tree, &uri)
+        {
+            let schema_id = &schema_file.meta.id;
+            if let Some(client) = self.extensions.get_client(schema_id).await {
+                // Convert diagnostics to extension format
+                let ext_diagnostics: Vec<ext::Diagnostic> = params
+                    .context
+                    .diagnostics
+                    .iter()
+                    .map(|d| ext::Diagnostic {
+                        range: ext::Range {
+                            start: ext::Position {
+                                line: d.range.start.line,
+                                character: d.range.start.character,
+                            },
+                            end: ext::Position {
+                                line: d.range.end.line,
+                                character: d.range.end.character,
+                            },
+                        },
+                        severity: match d.severity {
+                            Some(DiagnosticSeverity::ERROR) => ext::DiagnosticSeverity::Error,
+                            Some(DiagnosticSeverity::WARNING) => ext::DiagnosticSeverity::Warning,
+                            Some(DiagnosticSeverity::INFORMATION) => ext::DiagnosticSeverity::Info,
+                            Some(DiagnosticSeverity::HINT) | None => ext::DiagnosticSeverity::Hint,
+                            Some(_) => ext::DiagnosticSeverity::Info,
+                        },
+                        message: d.message.clone(),
+                        source: d.source.clone(),
+                        code: d.code.as_ref().map(|c| match c {
+                            NumberOrString::String(s) => s.clone(),
+                            NumberOrString::Number(n) => n.to_string(),
+                        }),
+                        data: None, // We don't convert JSON back to styx Value
+                    })
+                    .collect();
+
+                let ext_params = ext::CodeActionParams {
+                    document_uri: uri.to_string(),
+                    range: ext::Range {
+                        start: ext::Position {
+                            line: params.range.start.line,
+                            character: params.range.start.character,
+                        },
+                        end: ext::Position {
+                            line: params.range.end.line,
+                            character: params.range.end.character,
+                        },
+                    },
+                    diagnostics: ext_diagnostics,
+                };
+
+                match client.code_actions(ext_params).await {
+                    Ok(ext_actions) => {
+                        tracing::debug!(
+                            count = ext_actions.len(),
+                            "Got code actions from extension"
+                        );
+                        for action in ext_actions {
+                            let kind = action.kind.map(|k| match k {
+                                ext::CodeActionKind::QuickFix => CodeActionKind::QUICKFIX,
+                                ext::CodeActionKind::Refactor => CodeActionKind::REFACTOR,
+                                ext::CodeActionKind::Source => CodeActionKind::SOURCE,
+                            });
+
+                            let edit = action.edit.map(|we| {
+                                let changes: std::collections::HashMap<_, _> = we
+                                    .changes
+                                    .into_iter()
+                                    .map(|doc_edit| {
+                                        let doc_uri = Url::parse(&doc_edit.uri)
+                                            .unwrap_or_else(|_| uri.clone());
+                                        let edits: Vec<TextEdit> = doc_edit
+                                            .edits
+                                            .into_iter()
+                                            .map(|e| TextEdit {
+                                                range: Range {
+                                                    start: Position {
+                                                        line: e.range.start.line,
+                                                        character: e.range.start.character,
+                                                    },
+                                                    end: Position {
+                                                        line: e.range.end.line,
+                                                        character: e.range.end.character,
+                                                    },
+                                                },
+                                                new_text: e.new_text,
+                                            })
+                                            .collect();
+                                        (doc_uri, edits)
+                                    })
+                                    .collect();
+                                WorkspaceEdit {
+                                    changes: Some(changes),
+                                    ..Default::default()
+                                }
+                            });
+
+                            actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                                title: action.title,
+                                kind,
+                                edit,
+                                is_preferred: Some(action.is_preferred),
+                                ..Default::default()
+                            }));
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Extension code actions failed");
+                    }
+                }
+            }
+        }
+        drop(docs);
 
         // Add schema-based refactoring actions
         let docs = self.documents.read().await;
@@ -1610,20 +1783,24 @@ impl LanguageServer for StyxLanguageServer {
     async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
         let uri = params.text_document.uri;
 
-        let docs = self.documents.read().await;
-        let Some(doc) = docs.get(&uri) else {
-            return Ok(None);
-        };
-
-        let Some(tree) = &doc.tree else {
-            return Ok(None);
+        // Clone what we need and drop the lock before any async extension calls
+        // to avoid blocking document updates during the RPC
+        let (tree, content) = {
+            let docs = self.documents.read().await;
+            let Some(doc) = docs.get(&uri) else {
+                return Ok(None);
+            };
+            let Some(tree) = &doc.tree else {
+                return Ok(None);
+            };
+            (tree.clone(), doc.content.clone())
         };
 
         let mut hints = Vec::new();
 
         // Check for schema declaration
-        if let Some(range) = find_schema_declaration_range(tree, &doc.content)
-            && let Ok(schema) = resolve_schema(tree, &uri)
+        if let Some(range) = find_schema_declaration_range(&tree, &content)
+            && let Ok(schema) = resolve_schema(&tree, &uri)
         {
             // Extract meta info from schema
             if let Some(meta) = get_schema_meta(&schema.source) {
@@ -1678,7 +1855,7 @@ impl LanguageServer for StyxLanguageServer {
         }
 
         // Try to get inlay hints from extension
-        if let Ok(schema_file) = load_document_schema(tree, &uri) {
+        if let Ok(schema_file) = load_document_schema(&tree, &uri) {
             let schema_id = &schema_file.meta.id;
             tracing::debug!(%schema_id, "Trying extension for inlay hints");
             if let Some(client) = self.extensions.get_client(schema_id).await {
@@ -2921,6 +3098,34 @@ fn levenshtein(a: &str, b: &str) -> usize {
     }
 
     prev[n]
+}
+
+/// Convert a styx_tree::Value to a serde_json::Value for LSP diagnostic data.
+fn convert_styx_value_to_json(value: &styx_tree::Value) -> serde_json::Value {
+    // Check for scalar
+    if let Some(s) = value.as_str() {
+        return serde_json::Value::String(s.to_string());
+    }
+
+    // Check for object
+    if let Some(styx_tree::Payload::Object(obj)) = &value.payload {
+        let mut map = serde_json::Map::new();
+        for entry in &obj.entries {
+            if let Some(key) = entry.key.as_str() {
+                map.insert(key.to_string(), convert_styx_value_to_json(&entry.value));
+            }
+        }
+        return serde_json::Value::Object(map);
+    }
+
+    // Check for sequence
+    if let Some(styx_tree::Payload::Sequence(seq)) = &value.payload {
+        let arr: Vec<_> = seq.items.iter().map(convert_styx_value_to_json).collect();
+        return serde_json::Value::Array(arr);
+    }
+
+    // Fallback to null
+    serde_json::Value::Null
 }
 
 /// Convert an extension completion item to LSP completion item.

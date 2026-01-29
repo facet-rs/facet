@@ -291,6 +291,8 @@ pub struct DiagnosticParams {
     pub document_uri: String,
     /// The full document tree.
     pub tree: Value,
+    /// The document content (for offset→position conversion).
+    pub content: String,
 }
 
 /// A diagnostic (error, warning, etc.).

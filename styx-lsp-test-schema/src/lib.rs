@@ -47,6 +47,11 @@ pub struct TestCase {
     #[facet(default)]
     pub schema: Option<String>,
 
+    /// If true, the test is expected to fail. Used for negative tests
+    /// that verify the test framework catches errors correctly.
+    #[facet(default)]
+    pub expect_fail: bool,
+
     /// Expected completions at cursor position.
     #[facet(default)]
     pub completions: Option<CompletionExpectations>,
@@ -66,6 +71,10 @@ pub struct TestCase {
     /// Expected definition locations at cursor position.
     #[facet(default)]
     pub definition: Option<DefinitionExpectations>,
+
+    /// Expected code actions at cursor position.
+    #[facet(default)]
+    pub code_actions: Option<CodeActionExpectations>,
 }
 
 /// Expectations for completion results.
@@ -144,6 +153,14 @@ pub struct DiagnosticExpectation {
     /// Expected line number (1-indexed for human readability).
     #[facet(default)]
     pub line: Option<u32>,
+
+    /// Expected start column (0-indexed). Used with span markers.
+    #[facet(default)]
+    pub start_col: Option<u32>,
+
+    /// Expected end column (0-indexed, exclusive). Used with span markers.
+    #[facet(default)]
+    pub end_col: Option<u32>,
 }
 
 /// Expectations for inlay hints.
@@ -167,6 +184,10 @@ pub struct InlayHintExpectation {
     /// Expected line number (1-indexed).
     #[facet(default)]
     pub line: Option<u32>,
+
+    /// Expected column (0-indexed). Used with span markers.
+    #[facet(default)]
+    pub col: Option<u32>,
 }
 
 /// Expectations for definition results.
@@ -195,4 +216,39 @@ pub struct DefinitionExpectation {
     /// Expected URI (substring match).
     #[facet(default)]
     pub uri: Option<String>,
+}
+
+/// Expectations for code actions.
+#[derive(Debug, Clone, Facet)]
+pub struct CodeActionExpectations {
+    /// Expected number of actions (if specified).
+    #[facet(default)]
+    pub count: Option<u32>,
+
+    /// Whether we expect no actions (empty).
+    #[facet(default)]
+    pub empty: bool,
+
+    /// Actions that must be present (by title substring).
+    #[facet(default)]
+    pub has: Vec<CodeActionExpectation>,
+
+    /// Title substrings that must NOT appear in any action.
+    #[facet(default)]
+    pub not_has: Vec<String>,
+}
+
+/// Expectation for a single code action.
+#[derive(Debug, Clone, Facet)]
+pub struct CodeActionExpectation {
+    /// Substring that must appear in the title.
+    pub title: String,
+
+    /// Expected kind (quickfix, refactor, source).
+    #[facet(default)]
+    pub kind: Option<String>,
+
+    /// Whether this should be the preferred action.
+    #[facet(default)]
+    pub preferred: Option<bool>,
 }

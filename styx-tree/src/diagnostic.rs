@@ -80,6 +80,7 @@ impl ParseError {
                 )
                 .with_help("add a closing '}'"),
 
+            // diag[impl diagnostic.parser.unclosed]
             ParseErrorKind::UnclosedSequence => Report::build(ReportKind::Error, (filename, range.clone()))
                 .with_message("unclosed sequence")
                 .with_label(
@@ -195,7 +196,7 @@ impl ParseError {
                     .with_help("you cannot add children to a path that already has a scalar, sequence, tag, or unit value")
             }
 
-            // diag[impl diagnostic.parser.comma-in-sequence]
+            // diag[impl diagnostic.parser.sequence-comma]
             ParseErrorKind::CommaInSequence => Report::build(ReportKind::Error, (filename, range.clone()))
                 .with_message("unexpected comma in sequence")
                 .with_label(

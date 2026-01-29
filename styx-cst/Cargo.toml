@@ -16,3 +16,4 @@ styx-parse.workspace = true
 rowan = "0.16"
 
 [dev-dependencies]
+styx-testhelpers.workspace = true

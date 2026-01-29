@@ -33,6 +33,7 @@ tracing.workspace = true
 facet-testhelpers.workspace = true
 insta.workspace = true
 strip-ansi-escapes.workspace = true
+styx-testhelpers.workspace = true
 facet-format = { workspace = true, features = ["tracing"] }
 facet-reflect = { workspace = true, features = ["tracing"] }
 figue.workspace = true

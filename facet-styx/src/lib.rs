@@ -179,7 +179,9 @@ where
 mod tests {
     use super::*;
     use facet::Facet;
+    use facet_format::DeserializeErrorKind;
     use facet_testhelpers::test;
+    use styx_testhelpers::{ActualError, assert_annotated_errors, source_without_annotations};
 
     #[derive(Facet, Debug, PartialEq)]
     struct Simple {
@@ -198,12 +200,62 @@ mod tests {
         inner: Simple,
     }
 
+    fn deserialize_error_kind_name(kind: &DeserializeErrorKind) -> &'static str {
+        match kind {
+            DeserializeErrorKind::MissingField { .. } => "MissingField",
+            DeserializeErrorKind::UnknownField { .. } => "UnknownField",
+            DeserializeErrorKind::TypeMismatch { .. } => "TypeMismatch",
+            DeserializeErrorKind::Reflect { .. } => "Reflect",
+            DeserializeErrorKind::UnexpectedEof { .. } => "UnexpectedEof",
+            DeserializeErrorKind::Unsupported { .. } => "Unsupported",
+            DeserializeErrorKind::CannotBorrow { .. } => "CannotBorrow",
+            DeserializeErrorKind::UnexpectedToken { .. } => "UnexpectedToken",
+            DeserializeErrorKind::InvalidValue { .. } => "InvalidValue",
+            _ => "DeserializeError",
+        }
+    }
+
+    fn assert_deserialize_errors(annotated_source: &str, error: &facet_format::DeserializeError) {
+        let span = error
+            .span
+            .as_ref()
+            .map(|span| {
+                let start = span.offset as usize;
+                let end = start + span.len as usize;
+                start..end
+            })
+            .unwrap_or(0..1);
+
+        let actual_errors = vec![ActualError {
+            span,
+            kind: deserialize_error_kind_name(&error.kind).to_string(),
+        }];
+
+        assert_annotated_errors(annotated_source, actual_errors);
+    }
+
     #[test]
     fn test_simple_struct() {
         let input = "name hello\nvalue 42";
         let result: Simple = from_str(input).unwrap();
         assert_eq!(result.name, "hello");
         assert_eq!(result.value, 42);
+    }
+
+    #[test]
+    fn test_deserialize_type_mismatch_span() {
+        #[derive(Facet, Debug, PartialEq)]
+        struct IntOnly {
+            value: i32,
+        }
+
+        let annotated = r#"
+value "hello"
+^^^^^ Reflect
+"#;
+        let source = source_without_annotations(annotated);
+        let err = from_str::<IntOnly>(&source).unwrap_err();
+        assert_deserialize_errors(annotated, &err);
     }
 
     #[test]

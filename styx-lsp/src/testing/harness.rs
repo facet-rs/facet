@@ -38,9 +38,9 @@ use tower_lsp::lsp_types::Url;
 use crate::extensions::{ChildStdio, StyxLspHostImpl};
 use crate::server::{DocumentMap, DocumentState};
 use styx_lsp_ext::{
-    CompletionItem, CompletionParams, Cursor, DefinitionParams, Diagnostic, DiagnosticParams,
-    HoverParams, HoverResult, InitializeParams, InlayHint, InlayHintParams, Location, Position,
-    Range, StyxLspExtensionClient, StyxLspHostDispatcher,
+    CodeAction, CodeActionParams, CompletionItem, CompletionParams, Cursor, DefinitionParams,
+    Diagnostic, DiagnosticParams, HoverParams, HoverResult, InitializeParams, InlayHint,
+    InlayHintParams, Location, Position, Range, StyxLspExtensionClient, StyxLspHostDispatcher,
 };
 
 /// A document for testing, with optional cursor position.
@@ -362,6 +362,7 @@ impl TestHarness {
             payload: None,
             span: None,
         });
+        let content = doc.content.clone();
 
         drop(docs);
 
@@ -369,6 +370,7 @@ impl TestHarness {
             .diagnostics(DiagnosticParams {
                 document_uri: document_uri.to_string(),
                 tree,
+                content,
             })
             .await
             .map_err(|e| HarnessError::CallFailed(e.to_string()))
@@ -419,6 +421,72 @@ impl TestHarness {
                 path,
                 context,
                 tagged_context,
+            })
+            .await
+            .map_err(|e| HarnessError::CallFailed(e.to_string()))
+    }
+
+    /// Get code actions at the cursor position.
+    pub async fn code_actions(&self, document_uri: &str) -> Result<Vec<CodeAction>, HarnessError> {
+        let uri = Url::parse(document_uri).map_err(|e| HarnessError::InvalidUri(e.to_string()))?;
+
+        let cursor_info = self
+            .get_cursor(document_uri)
+            .await
+            .ok_or_else(|| HarnessError::NoCursor(document_uri.to_string()))?;
+
+        let docs = self.documents.read().await;
+        let doc = docs
+            .get(&uri)
+            .ok_or_else(|| HarnessError::DocumentNotFound(document_uri.to_string()))?;
+
+        // Get diagnostics at cursor for context
+        let tree = doc.tree.clone().unwrap_or(styx_tree::Value {
+            tag: None,
+            payload: None,
+            span: None,
+        });
+        let content = doc.content.clone();
+        drop(docs);
+
+        // First get diagnostics, then filter to those at cursor
+        let all_diagnostics = self
+            .client
+            .diagnostics(DiagnosticParams {
+                document_uri: document_uri.to_string(),
+                tree,
+                content,
+            })
+            .await
+            .map_err(|e| HarnessError::CallFailed(e.to_string()))?;
+
+        // Filter diagnostics to those that overlap with cursor
+        let cursor_diagnostics: Vec<_> = all_diagnostics
+            .into_iter()
+            .filter(|d| {
+                d.range.start.line == cursor_info.line
+                    && d.range.start.character <= cursor_info.character
+                    && d.range.end.character >= cursor_info.character
+            })
+            .collect();
+
+        // Create a single-character range at cursor
+        let range = Range {
+            start: Position {
+                line: cursor_info.line,
+                character: cursor_info.character,
+            },
+            end: Position {
+                line: cursor_info.line,
+                character: cursor_info.character + 1,
+            },
+        };
+
+        self.client
+            .code_actions(CodeActionParams {
+                document_uri: document_uri.to_string(),
+                range,
+                diagnostics: cursor_diagnostics,
             })
             .await
             .map_err(|e| HarnessError::CallFailed(e.to_string()))
