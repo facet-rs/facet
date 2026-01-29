@@ -36,7 +36,7 @@ use bumpalo::Bump;
 use facet_core::{
     Def, Facet, NumericType, PrimitiveType, Shape, StructKind, TextualType, Type, UserType, Variant,
 };
-use facet_reflect::{AllocError, Partial, ReflectError, ShapeMismatchError};
+use facet_reflect::{AllocError, Partial, ReflectError, ShapeMismatchError, typeplan::TypePlan};
 
 use crate::{VNumber, Value, ValueType};
 
@@ -257,7 +257,12 @@ pub type Result<T> = core::result::Result<T, ValueError>;
 /// ```
 pub fn from_value<T: Facet<'static>>(value: Value) -> Result<T> {
     let bump = Bump::new();
-    let partial = Partial::alloc_owned::<T>(&bump).map_err(|e| {
+    let plan = TypePlan::<T>::build(&bump).map_err(|e| {
+        ValueError::from(e)
+            .with_shape(T::SHAPE)
+            .with_value(value.clone())
+    })?;
+    let partial = plan.partial_owned().map_err(|e| {
         ValueError::from(e)
             .with_shape(T::SHAPE)
             .with_value(value.clone())

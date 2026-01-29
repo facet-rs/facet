@@ -129,7 +129,7 @@ use std::sync::Arc;
 
 use bumpalo::Bump;
 use facet_core::{Facet, Shape};
-use facet_reflect::{HeapValue, Partial, Span};
+use facet_reflect::{HeapValue, Partial, Span, typeplan::TypePlan};
 use facet_solver::{KeyResult, Schema, Solver};
 
 use crate::{FormatParser, ParseEvent};
@@ -272,7 +272,8 @@ impl<'parser, 'input, 'bump> FormatDeserializer<'parser, 'input, 'bump, true> {
     where
         T: Facet<'input>,
     {
-        let wip: Partial<'input, 'bump, true> = Partial::alloc::<T>(self.bump)?;
+        let plan = TypePlan::<T>::build(self.bump)?;
+        let wip: Partial<'input, 'bump, true> = plan.partial()?;
         let partial = self.deserialize_into(wip)?;
         // SpanGuard must cover build() and materialize() which can fail with ReflectError.
         // Created AFTER deserialize_into so last_span points to the final token.
@@ -298,7 +299,8 @@ impl<'parser, 'input, 'bump> FormatDeserializer<'parser, 'input, 'bump, true> {
     where
         T: Facet<'input>,
     {
-        let wip: Partial<'input, 'bump, true> = Partial::alloc::<T>(self.bump)?;
+        let plan = TypePlan::<T>::build(self.bump)?;
+        let wip: Partial<'input, 'bump, true> = plan.partial()?;
         let wip = wip.begin_deferred()?;
         let partial = self.deserialize_into(wip)?;
 
@@ -320,13 +322,14 @@ impl<'parser, 'input, 'bump> FormatDeserializer<'parser, 'input, 'bump, false> {
         // Get format namespace for format-specific proxy resolution in TypePlan
         let format_ns = self.parser.format_namespace();
 
-        // SAFETY: alloc_owned produces Partial<'static, 'bump, false>, but our deserializer
+        let plan = TypePlan::<T>::build_for_format(self.bump, format_ns)?;
+        // SAFETY: partial_owned produces Partial<'static, 'bump, false>, but our deserializer
         // expects 'input. Since BORROW=false means we never borrow from input anyway,
         // this is safe. We also transmute the HeapValue back to 'static before materializing.
         #[allow(unsafe_code)]
         let wip: Partial<'input, 'bump, false> = unsafe {
             core::mem::transmute::<Partial<'static, 'bump, false>, Partial<'input, 'bump, false>>(
-                Partial::alloc_owned_for_format_opt::<T>(self.bump, format_ns)?,
+                plan.partial_owned()?,
             )
         };
 
@@ -367,13 +370,14 @@ impl<'parser, 'input, 'bump> FormatDeserializer<'parser, 'input, 'bump, false> {
         // Get format namespace for format-specific proxy resolution in TypePlan
         let format_ns = self.parser.format_namespace();
 
-        // SAFETY: alloc_owned produces Partial<'static, 'bump, false>, but our deserializer
+        let plan = TypePlan::<T>::build_for_format(self.bump, format_ns)?;
+        // SAFETY: partial_owned produces Partial<'static, 'bump, false>, but our deserializer
         // expects 'input. Since BORROW=false means we never borrow from input anyway,
         // this is safe. We also transmute the HeapValue back to 'static before materializing.
         #[allow(unsafe_code)]
         let wip: Partial<'input, 'bump, false> = unsafe {
             core::mem::transmute::<Partial<'static, 'bump, false>, Partial<'input, 'bump, false>>(
-                Partial::alloc_owned_for_format_opt::<T>(self.bump, format_ns)?,
+                plan.partial_owned()?,
             )
         };
         let wip = wip.begin_deferred()?;
@@ -412,10 +416,11 @@ impl<'parser, 'input, 'bump> FormatDeserializer<'parser, 'input, 'bump, false> {
         // Get format namespace for format-specific proxy resolution in TypePlan
         let format_ns = self.parser.format_namespace();
 
+        let plan = TypePlan::<T>::build_for_format(self.bump, format_ns)?;
         #[allow(unsafe_code)]
         let wip: Partial<'input, 'bump, false> = unsafe {
             core::mem::transmute::<Partial<'static, 'bump, false>, Partial<'input, 'bump, false>>(
-                Partial::alloc_owned_for_format_opt::<T>(self.bump, format_ns)?,
+                plan.partial_owned()?,
             )
         };
 

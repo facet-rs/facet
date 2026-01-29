@@ -1,8 +1,91 @@
 use super::*;
 use crate::{
     AllocError, AllocatedShape,
-    typeplan::{TypePlan, TypePlanCore},
+    typeplan::{TypePlan, TypePlanCore, build_core_for_format},
 };
+use bumpalo::Bump;
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Closure-based allocation (manages bump internally)
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+impl<'facet> Partial<'facet, 'static, true> {
+    /// Execute a closure with a freshly allocated Partial (borrowing mode).
+    ///
+    /// This is a convenience method that manages the bump allocator internally.
+    /// The closure receives a Partial and can return any result that doesn't
+    /// borrow from the Partial's internal storage.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let person: Person = Partial::alloc::<Person, _>(|p| {
+    ///     p.set_field("name", "Alice")?
+    ///      .set_field("age", 30u32)?
+    ///      .build()?
+    ///      .materialize()
+    /// })?;
+    /// ```
+    pub fn alloc<T, R, F>(f: F) -> Result<R, AllocError>
+    where
+        T: Facet<'facet>,
+        F: for<'plan> FnOnce(Partial<'facet, 'plan, true>) -> Result<R, AllocError>,
+    {
+        let bump = Bump::new();
+        let plan = TypePlan::<T>::build(&bump)?;
+        let partial = plan.partial()?;
+        f(partial)
+    }
+
+    /// Execute a closure with a Partial allocated from a shape (borrowing mode).
+    ///
+    /// This creates the bump allocator and TypePlan internally, then calls
+    /// the closure with the Partial.
+    ///
+    /// # Safety
+    ///
+    /// The shape must be valid and match the expected type structure.
+    pub unsafe fn with_shape<R, F>(shape: &'static Shape, f: F) -> Result<R, AllocError>
+    where
+        F: for<'plan> FnOnce(Partial<'facet, 'plan, true>) -> Result<R, AllocError>,
+    {
+        let bump = Bump::new();
+        let plan = build_core_for_format(&bump, shape, None)?;
+        let partial = alloc_impl(plan, shape)?;
+        f(partial)
+    }
+}
+
+impl Partial<'static, 'static, false> {
+    /// Execute a closure with a freshly allocated Partial (owned mode).
+    ///
+    /// Same as `alloc` but creates an owned Partial that doesn't borrow from input.
+    pub fn alloc_owned<T, R, F>(f: F) -> Result<R, AllocError>
+    where
+        T: Facet<'static>,
+        F: for<'plan> FnOnce(Partial<'static, 'plan, false>) -> Result<R, AllocError>,
+    {
+        let bump = Bump::new();
+        let plan = TypePlan::<T>::build(&bump)?;
+        let partial = plan.partial_owned()?;
+        f(partial)
+    }
+
+    /// Execute a closure with a Partial allocated from a shape (owned mode).
+    ///
+    /// # Safety
+    ///
+    /// The shape must be valid and match the expected type structure.
+    pub unsafe fn with_shape_owned<R, F>(shape: &'static Shape, f: F) -> Result<R, AllocError>
+    where
+        F: for<'plan> FnOnce(Partial<'static, 'plan, false>) -> Result<R, AllocError>,
+    {
+        let bump = Bump::new();
+        let plan = build_core_for_format(&bump, shape, None)?;
+        let partial = alloc_impl(plan, shape)?;
+        f(partial)
+    }
+}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Allocation using TypePlan

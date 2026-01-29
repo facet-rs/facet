@@ -3,7 +3,7 @@
 
 use bumpalo::Bump;
 use facet_core::{Def, Facet, Type, UserType};
-use facet_reflect::{AllocError, Partial, ReflectError, ShapeMismatchError};
+use facet_reflect::{AllocError, Partial, ReflectError, ShapeMismatchError, typeplan::TypePlan};
 use log::*;
 
 #[cfg(test)]
@@ -83,7 +83,8 @@ pub fn from_str<'input: 'facet, 'facet, T: Facet<'facet>>(
     urlencoded: &'input str,
 ) -> Result<T, UrlEncodedError> {
     let bump = Bump::new();
-    let partial = Partial::alloc::<T>(&bump)?;
+    let plan = TypePlan::<T>::build(&bump)?;
+    let partial = plan.partial()?;
     let partial = from_str_value(partial, urlencoded)?;
     let result: T = partial.build()?.materialize()?;
     Ok(result)
@@ -113,7 +114,8 @@ pub fn from_str<'input: 'facet, 'facet, T: Facet<'facet>>(
 /// ```
 pub fn from_str_owned<T: Facet<'static>>(urlencoded: &str) -> Result<T, UrlEncodedError> {
     let bump = Bump::new();
-    let partial = Partial::alloc_owned::<T>(&bump)?;
+    let plan = TypePlan::<T>::build(&bump)?;
+    let partial = plan.partial_owned()?;
     let partial = from_str_value(partial, urlencoded)?;
     let result: T = partial.build()?.materialize()?;
     Ok(result)
