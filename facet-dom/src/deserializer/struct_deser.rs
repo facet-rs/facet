@@ -87,7 +87,8 @@ impl<'de, 'p, const BORROW: bool, P: DomParser<'de>> StructDeserializer<'de, 'p,
         expected_name: Cow<'static, str>,
         deny_unknown_fields: bool,
     ) -> Self {
-        let field_map = StructFieldMap::new(struct_def, ns_all, rename_all);
+        let format_ns = dom_deser.parser.format_namespace();
+        let field_map = StructFieldMap::new(struct_def, ns_all, rename_all, format_ns);
         Self {
             dom_deser,
             field_map,

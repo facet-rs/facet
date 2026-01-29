@@ -147,10 +147,14 @@ impl StructFieldMap {
     /// The `rename_all` parameter, when set, applies a naming transformation to all
     /// fields that don't have explicit renames. This is used to propagate `rename_all`
     /// from parent enums to their struct variant fields.
+    ///
+    /// The `format_ns` parameter is the format namespace (e.g., "xml") used to resolve
+    /// format-specific proxies on item types.
     pub fn new(
         struct_def: &'static StructType,
         ns_all: Option<&'static str>,
         rename_all: Option<&'static str>,
+        format_ns: Option<&'static str>,
     ) -> Self {
         let mut attribute_fields: HashMap<String, Vec<FieldInfo>> = HashMap::new();
         let mut element_fields: HashMap<String, Vec<FieldInfo>> = HashMap::new();
@@ -383,7 +387,7 @@ impl StructFieldMap {
                 // Key priority:
                 // 1. Item type has xml::tag field - catch-all (matches any element)
                 // 2. Explicit field rename - single key
-                // 3. Item type is enum - register each variant name
+                // 3. Item type is enum OR has a proxy that is an enum - register each variant name
                 // 4. Item type's rename (from #[facet(rename = "...")] on the item type)
                 // 5. Singularized field name
                 if item_type_has_tag_field(shape) {
@@ -392,8 +396,10 @@ impl StructFieldMap {
                 } else if let Some(rename) = field.rename {
                     // Explicit field rename - single key
                     elements_fields.insert(rename.to_string(), info);
-                } else if let Some(enum_def) = get_item_type_enum(shape) {
-                    // Item type is an enum - register each variant name
+                } else if let Some(enum_def) =
+                    get_item_type_enum(shape).or_else(|| get_item_type_proxy_enum(shape, format_ns))
+                {
+                    // Item type is an enum (or has a proxy that is an enum) - register each variant name
                     // Match the same logic as deserialize_enum: rename.is_some() uses
                     // effective_name(), otherwise apply to_element_name() for lowerCamelCase
                     for variant in enum_def.variants.iter() {
@@ -752,12 +758,10 @@ fn classify_sequence_shape(shape: &facet_core::Shape) -> (bool, bool, bool, bool
     }
 }
 
-/// Get the item type's enum definition for a collection field.
-/// For `Vec<MyEnum>`, returns `Some(&EnumType)`.
-/// Returns `None` if the field is not a collection or the item type is not an enum.
-fn get_item_type_enum(shape: &facet_core::Shape) -> Option<&'static facet_core::EnumType> {
-    // Get the item shape for collections
-    let item_shape = match &shape.def {
+/// Get the item shape for a collection field.
+/// Returns the inner element type for Vec, Set, Slice, Array, and smart pointers to these.
+fn get_item_shape(shape: &facet_core::Shape) -> Option<&'static facet_core::Shape> {
+    match &shape.def {
         Def::List(list_def) => Some(list_def.t()),
         Def::Set(set_def) => Some(set_def.t()),
         Def::Slice(slice_def) => Some(slice_def.t()),
@@ -772,10 +776,39 @@ fn get_item_type_enum(shape: &facet_core::Shape) -> Option<&'static facet_core::
             })
         }
         _ => None,
-    }?;
+    }
+}
+
+/// Get the item type's enum definition for a collection field.
+/// For `Vec<MyEnum>`, returns `Some(&EnumType)`.
+/// Returns `None` if the field is not a collection or the item type is not an enum.
+fn get_item_type_enum(shape: &facet_core::Shape) -> Option<&'static facet_core::EnumType> {
+    let item_shape = get_item_shape(shape)?;
 
     // Check if the item type is an enum
     match &item_shape.ty {
+        Type::User(UserType::Enum(enum_def)) => Some(enum_def),
+        _ => None,
+    }
+}
+
+/// Get the item type's proxy enum definition for a collection field.
+/// For `Vec<Type>` where `Type` has `#[facet(xml::proxy = TypeProxy)]` and `TypeProxy` is an enum,
+/// returns `Some(&EnumType)`.
+/// Returns `None` if the field is not a collection, or the item type has no xml::proxy,
+/// or the proxy is not an enum.
+fn get_item_type_proxy_enum(
+    shape: &facet_core::Shape,
+    format_ns: Option<&'static str>,
+) -> Option<&'static facet_core::EnumType> {
+    let item_shape = get_item_shape(shape)?;
+
+    // Check if the item type has a proxy
+    let proxy_def = item_shape.effective_proxy(format_ns)?;
+    let proxy_shape = proxy_def.shape;
+
+    // Check if the proxy type is an enum
+    match &proxy_shape.ty {
         Type::User(UserType::Enum(enum_def)) => Some(enum_def),
         _ => None,
     }
