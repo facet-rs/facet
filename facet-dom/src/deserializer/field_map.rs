@@ -407,6 +407,9 @@ impl StructFieldMap {
                 } else if let Some(item_rename) = get_item_type_rename(shape) {
                     // Item type has a rename attribute
                     elements_fields.insert(item_rename.to_string(), info);
+                } else if let Some(item_element_name) = get_item_type_default_element_name(shape) {
+                    // Use item type's name as element name (e.g., Vec<SomeInteger> matches <someInteger>)
+                    elements_fields.insert(item_element_name, info);
                 } else {
                     // Fallback to singularized field name (with rename_all if present)
                     let element_key =
@@ -802,6 +805,33 @@ pub(crate) fn get_item_type_rename(shape: &facet_core::Shape) -> Option<&'static
 
     // Check if the item type has a rename attribute
     item_shape.get_builtin_attr_value::<&str>("rename")
+}
+
+/// Get the default element name for a collection's item type.
+///
+/// For `Vec<SomeInteger>`, this returns `"someInteger"` (the type name in lowerCamelCase).
+/// This is used when no explicit rename is specified on either the field or the item type.
+pub(crate) fn get_item_type_default_element_name(shape: &facet_core::Shape) -> Option<String> {
+    // Get the item shape for collections
+    let item_shape = match &shape.def {
+        Def::List(list_def) => Some(list_def.t()),
+        Def::Set(set_def) => Some(set_def.t()),
+        Def::Slice(slice_def) => Some(slice_def.t()),
+        Def::Array(array_def) => Some(array_def.t()),
+        Def::Pointer(ptr_def) => {
+            // Look through smart pointers like Arc<[T]>
+            ptr_def.pointee().and_then(|inner| match &inner.def {
+                Def::List(list_def) => Some(list_def.t()),
+                Def::Set(set_def) => Some(set_def.t()),
+                Def::Slice(slice_def) => Some(slice_def.t()),
+                _ => None,
+            })
+        }
+        _ => None,
+    }?;
+
+    // Use the item type's type_identifier, converted to element name format
+    Some(crate::naming::to_element_name(item_shape.type_identifier).into_owned())
 }
 
 /// Check if the item type of a collection has an `xml::tag` or `html::tag` field.
