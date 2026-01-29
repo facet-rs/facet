@@ -2,7 +2,7 @@
 
 use facet_core::{
     Def, DynDateTimeKind, DynValueKind, DynamicValueDef, DynamicValueVTable, Facet, OxPtrConst,
-    OxPtrMut, PtrConst, PtrMut, PtrUninit, Shape, ShapeBuilder, VTableErased,
+    OxPtrMut, OxPtrUninit, PtrConst, PtrMut, PtrUninit, Shape, ShapeBuilder, VTableErased,
 };
 
 use crate::{DateTimeKind, VArray, VBytes, VDateTime, VNumber, VObject, VString, Value};
@@ -369,11 +369,8 @@ unsafe fn value_debug(
     }
 }
 
-unsafe fn value_default_in_place(ox: OxPtrMut) {
-    unsafe {
-        let ptr = ox.ptr().as_mut_byte_ptr() as *mut Value;
-        ptr.write(Value::default());
-    }
+unsafe fn value_default_in_place(ox: OxPtrUninit) {
+    unsafe { ox.put(Value::default()) };
 }
 
 unsafe fn value_partial_eq(a: OxPtrConst, b: OxPtrConst) -> Option<bool> {

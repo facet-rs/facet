@@ -1083,11 +1083,11 @@ fn deserialize_untagged_enum<'facet>(
     }))
 }
 
-fn populate_variant_from_value<'facet, 'bump>(
+fn populate_variant_from_value<'facet>(
     value: &Value,
-    mut partial: Partial<'facet, 'bump, false>,
+    mut partial: Partial<'facet, false>,
     variant: &Variant,
-) -> Result<Partial<'facet, 'bump, false>> {
+) -> Result<Partial<'facet, false>> {
     match variant.data.kind {
         StructKind::Unit => {
             if !matches!(value.value_type(), ValueType::Null) {
@@ -1189,10 +1189,10 @@ fn value_matches_shape(value: &Value, shape: &'static Shape) -> bool {
 }
 
 /// Deserialize a list/Vec from a Value::Array.
-fn deserialize_list<'facet, 'bump>(
+fn deserialize_list<'facet>(
     value: &Value,
-    partial: Partial<'facet, 'bump, false>,
-) -> Result<Partial<'facet, 'bump, false>> {
+    partial: Partial<'facet, false>,
+) -> Result<Partial<'facet, false>> {
     let mut partial = partial;
     let arr = value.as_array().ok_or_else(|| {
         ValueError::new(ValueErrorKind::TypeMismatch {
@@ -1213,10 +1213,10 @@ fn deserialize_list<'facet, 'bump>(
 }
 
 /// Deserialize a fixed-size array from a Value::Array.
-fn deserialize_array<'facet, 'bump>(
+fn deserialize_array<'facet>(
     value: &Value,
-    partial: Partial<'facet, 'bump, false>,
-) -> Result<Partial<'facet, 'bump, false>> {
+    partial: Partial<'facet, false>,
+) -> Result<Partial<'facet, false>> {
     let mut partial = partial;
     let arr = value.as_array().ok_or_else(|| {
         ValueError::new(ValueErrorKind::TypeMismatch {
@@ -1254,10 +1254,10 @@ fn deserialize_array<'facet, 'bump>(
 }
 
 /// Deserialize a set from a Value::Array.
-fn deserialize_set<'facet, 'bump>(
+fn deserialize_set<'facet>(
     value: &Value,
-    partial: Partial<'facet, 'bump, false>,
-) -> Result<Partial<'facet, 'bump, false>> {
+    partial: Partial<'facet, false>,
+) -> Result<Partial<'facet, false>> {
     let mut partial = partial;
     let arr = value.as_array().ok_or_else(|| {
         ValueError::new(ValueErrorKind::TypeMismatch {
@@ -1278,10 +1278,10 @@ fn deserialize_set<'facet, 'bump>(
 }
 
 /// Deserialize a map from a Value::Object.
-fn deserialize_map<'facet, 'bump>(
+fn deserialize_map<'facet>(
     value: &Value,
-    partial: Partial<'facet, 'bump, false>,
-) -> Result<Partial<'facet, 'bump, false>> {
+    partial: Partial<'facet, false>,
+) -> Result<Partial<'facet, false>> {
     let mut partial = partial;
     let obj = value.as_object().ok_or_else(|| {
         ValueError::new(ValueErrorKind::TypeMismatch {
@@ -1316,10 +1316,10 @@ fn deserialize_map<'facet, 'bump>(
 }
 
 /// Deserialize an Option from a Value.
-fn deserialize_option<'facet, 'bump>(
+fn deserialize_option<'facet>(
     value: &Value,
-    partial: Partial<'facet, 'bump, false>,
-) -> Result<Partial<'facet, 'bump, false>> {
+    partial: Partial<'facet, false>,
+) -> Result<Partial<'facet, false>> {
     let mut partial = partial;
     if value.is_null() {
         partial = partial.set_default()?; // None
@@ -1332,10 +1332,10 @@ fn deserialize_option<'facet, 'bump>(
 }
 
 /// Deserialize a smart pointer (Box, Arc, Rc) or Cow from a Value.
-fn deserialize_pointer<'facet, 'bump>(
+fn deserialize_pointer<'facet>(
     value: &Value,
-    partial: Partial<'facet, 'bump, false>,
-) -> Result<Partial<'facet, 'bump, false>> {
+    partial: Partial<'facet, false>,
+) -> Result<Partial<'facet, false>> {
     use facet_core::{KnownPointer, SequenceType};
 
     let mut partial = partial;
