@@ -118,7 +118,8 @@ pub use typeplan::{DeserStrategy, TypePlan};
 mod partial_api;
 pub use partial_api::alloc::{PartialBuilder, PartialBuilderOwned};
 
-use crate::{KeyPath, ReflectErrorKind, TrackerKind, trace};
+use crate::{ReflectErrorKind, TrackerKind, trace};
+use facet_path::PathStep;
 
 use core::marker::PhantomData;
 
@@ -162,15 +163,9 @@ enum FrameMode<'plan> {
         /// Path calculations are relative to this depth.
         start_depth: usize,
 
-        /// Current path as we navigate (e.g., ["inner", "x"]).
-        // TODO: Intern key paths to avoid repeated allocations. The Resolution
-        // already knows all possible paths, so we could use indices into that.
-        current_path: KeyPath,
-
-        /// Frames saved when popped, keyed by their path.
+        /// Frames saved when popped, keyed by their path (derived from frame stack).
         /// When we re-enter a path, we restore the stored frame.
-        // TODO: Consider using path indices instead of cloned KeyPaths as keys.
-        stored_frames: BTreeMap<KeyPath, Frame<'plan>>,
+        stored_frames: BTreeMap<Vec<PathStep>, Frame<'plan>>,
     },
 }
 
@@ -198,14 +193,6 @@ impl<'plan> FrameMode<'plan> {
     const fn start_depth(&self) -> Option<usize> {
         match self {
             FrameMode::Deferred { start_depth, .. } => Some(*start_depth),
-            FrameMode::Strict { .. } => None,
-        }
-    }
-
-    /// Get the current path if in deferred mode.
-    const fn current_path(&self) -> Option<&KeyPath> {
-        match self {
-            FrameMode::Deferred { current_path, .. } => Some(current_path),
             FrameMode::Strict { .. } => None,
         }
     }
@@ -1460,10 +1447,52 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
         self.mode.start_depth()
     }
 
-    /// Get the current path if in deferred mode.
-    #[inline]
-    pub(crate) const fn current_path(&self) -> Option<&KeyPath> {
-        self.mode.current_path()
+    /// Derive the path steps from the current frame stack (relative to start_depth).
+    ///
+    /// Compute the navigation path for deferred mode storage and lookup.
+    ///
+    /// This extracts Field steps from struct/enum frames and Index steps from
+    /// array/list frames. Option wrappers, smart pointers (Box, Rc, etc.), and
+    /// other transparent types don't add path steps.
+    ///
+    /// This MUST match the storage path computation in end() for consistency.
+    pub(crate) fn derive_path_steps(&self) -> Vec<PathStep> {
+        let mut steps = Vec::new();
+
+        // Walk ALL frames, extracting navigation steps
+        // This matches the storage path computation in end()
+        for frame in self.frames().iter() {
+            match &frame.tracker {
+                Tracker::Struct {
+                    current_child: Some(idx),
+                    ..
+                } => {
+                    steps.push(PathStep::Field(*idx as u32));
+                }
+                Tracker::Enum {
+                    current_child: Some(idx),
+                    ..
+                } => {
+                    steps.push(PathStep::Field(*idx as u32));
+                }
+                Tracker::List {
+                    current_child: Some(idx),
+                } => {
+                    steps.push(PathStep::Index(*idx as u32));
+                }
+                Tracker::Array {
+                    current_child: Some(idx),
+                    ..
+                } => {
+                    steps.push(PathStep::Index(*idx as u32));
+                }
+                // Other tracker types (Option, SmartPointer, Map, etc.)
+                // don't contribute to the storage path - they're transparent wrappers
+                _ => {}
+            }
+        }
+
+        steps
     }
 }
 

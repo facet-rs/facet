@@ -16,7 +16,7 @@ use facet_core::{Def, Field, Shape, StructKind, Type, UserType};
 ///
 /// Each step records an index that can be used to navigate
 /// back through a [`Shape`] to reconstruct field names and types.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum PathStep {
     /// Navigate to a struct field by index
     Field(u32),

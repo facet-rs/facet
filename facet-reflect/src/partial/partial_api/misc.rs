@@ -1,4 +1,4 @@
-use facet_path::Path;
+use facet_path::{Path, PathStep};
 
 use super::*;
 use crate::typeplan::{DeserStrategy, TypePlanNodeKind};
@@ -188,10 +188,14 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
             .is_some_and(|f| matches!(f.tracker, Tracker::SmartPointerSlice { .. }))
     }
 
-    /// Returns the current path in deferred mode as a slice (for debugging/tracing).
+    /// Returns the current path steps in deferred mode (for debugging/tracing).
     #[inline]
-    pub fn current_path_slice(&self) -> Option<&[&'static str]> {
-        self.current_path().map(|p| p.as_slice())
+    pub fn current_path_steps(&self) -> Option<Vec<PathStep>> {
+        if self.is_deferred() {
+            Some(self.derive_path_steps())
+        } else {
+            None
+        }
     }
 
     /// Enables deferred materialization mode with the given Resolution.
@@ -234,7 +238,6 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
         self.mode = FrameMode::Deferred {
             stack,
             start_depth,
-            current_path: Vec::new(),
             stored_frames: BTreeMap::new(),
         };
         Ok(self)
@@ -321,13 +324,13 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
             // 1. On the frames stack (if path.len() == 1, parent is at start_depth - 1)
             // 2. On the frames stack (if parent was pushed but never ended)
             // 3. In stored_frames (if parent was ended during deferred mode)
-            if let Some(field_name) = path.last() {
+            if let Some(last_step) = path.last() {
                 let parent_path: Vec<_> = path[..path.len() - 1].to_vec();
 
-                // Special handling for Option inner values: when path ends with "Some",
+                // Special handling for Option inner values: when path ends with OptionSome,
                 // the parent is an Option frame and we need to complete the Option by
                 // writing the inner value into the Option's memory.
-                if *field_name == "Some" {
+                if matches!(last_step, PathStep::OptionSome) {
                     // Find the Option frame (parent)
                     let option_frame = if parent_path.is_empty() {
                         let parent_index = start_depth.saturating_sub(1);
@@ -347,24 +350,30 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
                     }
                 }
 
-                if parent_path.is_empty() {
-                    // Parent is the frame that was current when deferred mode started.
-                    // It's at index (start_depth - 1) because deferred mode stores frames
-                    // relative to the position at start_depth.
-                    let parent_index = start_depth.saturating_sub(1);
-                    if let Some(root_frame) = self.frames_mut().get_mut(parent_index) {
-                        Self::mark_field_initialized(root_frame, field_name);
-                    }
-                } else {
-                    // Try stored_frames first
-                    if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
-                        Self::mark_field_initialized(parent_frame, field_name);
+                // Only mark field initialized if the step is actually a Field
+                if let PathStep::Field(field_idx) = last_step {
+                    let field_idx = *field_idx as usize;
+                    if parent_path.is_empty() {
+                        // Parent is the frame that was current when deferred mode started.
+                        // It's at index (start_depth - 1) because deferred mode stores frames
+                        // relative to the position at start_depth.
+                        let parent_index = start_depth.saturating_sub(1);
+                        if let Some(root_frame) = self.frames_mut().get_mut(parent_index) {
+                            Self::mark_field_initialized_by_index(root_frame, field_idx);
+                        }
                     } else {
-                        // Parent might still be on the frames stack (never ended).
-                        // The frame at index (start_depth + parent_path.len() - 1) should be the parent.
-                        let parent_frame_index = start_depth + parent_path.len() - 1;
-                        if let Some(parent_frame) = self.frames_mut().get_mut(parent_frame_index) {
-                            Self::mark_field_initialized(parent_frame, field_name);
+                        // Try stored_frames first
+                        if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
+                            Self::mark_field_initialized_by_index(parent_frame, field_idx);
+                        } else {
+                            // Parent might still be on the frames stack (never ended).
+                            // The frame at index (start_depth + parent_path.len() - 1) should be the parent.
+                            let parent_frame_index = start_depth + parent_path.len() - 1;
+                            if let Some(parent_frame) =
+                                self.frames_mut().get_mut(parent_frame_index)
+                            {
+                                Self::mark_field_initialized_by_index(parent_frame, field_idx);
+                            }
                         }
                     }
                 }
@@ -399,54 +408,52 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
         Ok(self)
     }
 
-    /// Mark a field as initialized in a frame's tracker
-    fn mark_field_initialized(frame: &mut Frame, field_name: &str) {
+    /// Mark a field as initialized in a frame's tracker by index
+    fn mark_field_initialized_by_index(frame: &mut Frame, idx: usize) {
         crate::trace!(
-            "mark_field_initialized: field_name={}, frame shape={}, tracker={:?}",
-            field_name,
+            "mark_field_initialized_by_index: idx={}, frame shape={}, tracker={:?}",
+            idx,
             frame.allocated.shape(),
             frame.tracker.kind()
         );
-        if let Some(idx) = Self::find_field_index(frame, field_name) {
-            crate::trace!("mark_field_initialized: found field at index {}", idx);
-            // If the tracker is Scalar but this is a struct type, upgrade to Struct tracker.
-            // This can happen if the frame was deinit'd (e.g., by a failed set_default)
-            // which resets the tracker to Scalar.
-            if matches!(frame.tracker, Tracker::Scalar)
-                && let Type::User(UserType::Struct(struct_type)) = frame.allocated.shape().ty
-            {
-                frame.tracker = Tracker::Struct {
-                    iset: ISet::new(struct_type.fields.len()),
-                    current_child: None,
-                };
-            }
 
-            match &mut frame.tracker {
-                Tracker::Struct { iset, .. } => {
-                    crate::trace!("mark_field_initialized: setting iset for struct");
-                    iset.set(idx);
-                }
-                Tracker::Enum { data, .. } => {
-                    crate::trace!(
-                        "mark_field_initialized: setting data for enum, before={:?}",
-                        data
-                    );
-                    data.set(idx);
-                    crate::trace!(
-                        "mark_field_initialized: setting data for enum, after={:?}",
-                        data
-                    );
-                }
-                Tracker::Array { iset, .. } => {
-                    crate::trace!("mark_field_initialized: setting iset for array");
-                    iset.set(idx);
-                }
-                _ => {
-                    crate::trace!(
-                        "mark_field_initialized: no match for tracker {:?}",
-                        frame.tracker.kind()
-                    );
-                }
+        // If the tracker is Scalar but this is a struct type, upgrade to Struct tracker.
+        // This can happen if the frame was deinit'd (e.g., by a failed set_default)
+        // which resets the tracker to Scalar.
+        if matches!(frame.tracker, Tracker::Scalar)
+            && let Type::User(UserType::Struct(struct_type)) = frame.allocated.shape().ty
+        {
+            frame.tracker = Tracker::Struct {
+                iset: ISet::new(struct_type.fields.len()),
+                current_child: None,
+            };
+        }
+
+        match &mut frame.tracker {
+            Tracker::Struct { iset, .. } => {
+                crate::trace!("mark_field_initialized_by_index: setting iset for struct");
+                iset.set(idx);
+            }
+            Tracker::Enum { data, .. } => {
+                crate::trace!(
+                    "mark_field_initialized_by_index: setting data for enum, before={:?}",
+                    data
+                );
+                data.set(idx);
+                crate::trace!(
+                    "mark_field_initialized_by_index: setting data for enum, after={:?}",
+                    data
+                );
+            }
+            Tracker::Array { iset, .. } => {
+                crate::trace!("mark_field_initialized_by_index: setting iset for array");
+                iset.set(idx);
+            }
+            _ => {
+                crate::trace!(
+                    "mark_field_initialized_by_index: no match for tracker {:?}",
+                    frame.tracker.kind()
+                );
             }
         }
     }
@@ -481,27 +488,6 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
                 building_inner: false,
             };
             option_frame.is_init = true;
-        }
-    }
-
-    /// Find the field index for a given field name in a frame
-    fn find_field_index(frame: &Frame, field_name: &str) -> Option<usize> {
-        match frame.allocated.shape().ty {
-            Type::User(UserType::Struct(struct_type)) => {
-                struct_type.fields.iter().position(|f| f.name == field_name)
-            }
-            Type::User(UserType::Enum(_)) => {
-                if let Tracker::Enum { variant, .. } = &frame.tracker {
-                    variant
-                        .data
-                        .fields
-                        .iter()
-                        .position(|f| f.name == field_name)
-                } else {
-                    None
-                }
-            }
-            _ => None,
         }
     }
 
@@ -689,55 +675,29 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
         }
 
         // Require that the top frame is fully initialized before popping.
-        // Skip this check in deferred mode - validation happens in finish_deferred().
-        // EXCEPT for collection items (map, list, set, option) which must be fully
-        // initialized before insertion/completion.
+        // In deferred mode, tracked frames (those that will be stored for re-entry)
+        // defer validation to finish_deferred(). All other frames validate now
+        // using the TypePlan's FillRule (which knows what's Required vs Defaultable).
         let requires_full_init = if !self.is_deferred() {
             true
         } else {
-            // In deferred mode, first check if this frame will be stored (tracked field).
-            // If so, skip full init check - the frame will be stored for later completion.
-            let is_tracked_frame = if let FrameMode::Deferred {
-                stack,
-                start_depth,
-                current_path,
-                ..
-            } = &self.mode
-            {
-                // Path depth should match the relative frame depth for a tracked field.
-                // frames.len() - start_depth should equal path.len() for tracked fields.
-                let relative_depth = stack.len() - *start_depth;
-                !current_path.is_empty() && current_path.len() == relative_depth
-            } else {
-                false
-            };
+            // Check if this frame will be stored for later processing.
+            // Only frames DIRECTLY entered via begin_nth_field are stored.
+            // Frames created by unwrapping Option/Box are NOT stored (they're transparent).
+            let current_frame = self.frames().last().unwrap();
+            let is_struct_or_enum = matches!(
+                current_frame.allocated.shape().ty,
+                Type::User(UserType::Struct(_)) | Type::User(UserType::Enum(_))
+            );
+            let entered_via_field = matches!(current_frame.ownership, FrameOwnership::Field { .. });
 
-            if is_tracked_frame {
-                // This frame will be stored in deferred mode - don't require full init
-                false
-            } else {
-                // Check if parent is a collection/container that requires fully initialized items.
-                // SmartPointer is included because the pointee must be fully initialized
-                // before the smart pointer (Box, Arc, etc.) can be completed.
-                if self.frames().len() >= 2 {
-                    let frame_len = self.frames().len();
-                    let parent_frame = &self.frames()[frame_len - 2];
-                    matches!(
-                        parent_frame.tracker,
-                        Tracker::Map { .. }
-                            | Tracker::List { .. }
-                            | Tracker::Set { .. }
-                            | Tracker::Option { .. }
-                            | Tracker::Result { .. }
-                            | Tracker::SmartPointer { .. }
-                            | Tracker::DynamicValue {
-                                state: DynamicValueState::Array { .. }
-                            }
-                    )
-                } else {
-                    false
-                }
-            }
+            // This must match the should_store logic below:
+            // Only store frames that are struct/enum AND directly entered via field
+            let will_be_stored = is_struct_or_enum && entered_via_field;
+
+            // If this frame will be stored, defer validation to finish_deferred().
+            // Otherwise validate now.
+            !will_be_stored
         };
 
         if requires_full_init {
@@ -804,51 +764,122 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
             }
         }
 
+        // In deferred mode, check if we should store this frame for potential re-entry.
+        // We need to compute the storage path BEFORE popping so we can check it.
+        //
+        // We only store STRUCT/ENUM frames that were entered via begin_field.
+        // The storage path is computed from fields only (not Option/Box unwrapping),
+        // so lookups in begin_field will match.
+        let deferred_storage_info = if self.is_deferred() {
+            // Check if the current frame is a struct/enum (these are what we track for re-entry)
+            let current_frame = self.frames().last().unwrap();
+            let is_struct_or_enum = matches!(
+                current_frame.allocated.shape().ty,
+                Type::User(UserType::Struct(_)) | Type::User(UserType::Enum(_))
+            );
+
+            // Check if we entered via a Field by looking at ownership
+            // Only frames that were DIRECTLY entered via begin_nth_field should be stored.
+            // Frames created by unwrapping Option/Box containers should NOT be stored -
+            // they're transparent wrappers and their parent field will handle them.
+            let entered_via_field = matches!(current_frame.ownership, FrameOwnership::Field { .. });
+            let should_store = is_struct_or_enum && entered_via_field;
+
+            if should_store {
+                // Compute the "field-only" path for storage by finding all Field steps
+                // from PARENT frames only. The frame being ended shouldn't contribute to
+                // its own path (its current_child points to ITS children, not to itself).
+                //
+                // Note: We include ALL frames in the path computation (including those
+                // before start_depth) because they contain navigation info. The start_depth
+                // only determines which frames we STORE, not which frames contribute to paths.
+                let mut field_path = Vec::new();
+                let frames_len = self.frames().len();
+                // Iterate over all frames EXCEPT the last one (the one being ended)
+                for (frame_idx, frame) in self.frames().iter().enumerate() {
+                    // Skip the frame being ended
+                    if frame_idx == frames_len - 1 {
+                        continue;
+                    }
+                    // Extract navigation steps from frames with current_child set
+                    // This MUST match derive_path_steps() for consistency
+                    match &frame.tracker {
+                        Tracker::Struct {
+                            current_child: Some(idx),
+                            ..
+                        } => {
+                            field_path.push(PathStep::Field(*idx as u32));
+                        }
+                        Tracker::Enum {
+                            current_child: Some(idx),
+                            ..
+                        } => {
+                            field_path.push(PathStep::Field(*idx as u32));
+                        }
+                        Tracker::List {
+                            current_child: Some(idx),
+                        } => {
+                            field_path.push(PathStep::Index(*idx as u32));
+                        }
+                        Tracker::Array {
+                            current_child: Some(idx),
+                            ..
+                        } => {
+                            field_path.push(PathStep::Index(*idx as u32));
+                        }
+                        _ => {}
+                    }
+                }
+
+                if !field_path.is_empty() {
+                    Some(field_path)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         // Pop the frame and save its data pointer for SmartPointer handling
         let mut popped_frame = self.frames_mut().pop().unwrap();
 
-        // In deferred mode, store the frame for potential re-entry and skip
-        // the normal parent-updating logic. The frame will be finalized later
-        // in finish_deferred().
-        //
-        // We only store if the path depth matches the frame depth, meaning we're
-        // ending a tracked struct/enum field, not something like begin_some()
-        // or a field inside a collection item.
-        if let FrameMode::Deferred {
-            stack,
-            start_depth,
-            current_path,
-            stored_frames,
-            ..
-        } = &mut self.mode
-        {
-            // Path depth should match the relative frame depth for a tracked field.
-            // After popping: frames.len() - start_depth + 1 should equal path.len()
-            // for fields entered via begin_field (not begin_some/begin_inner).
-            let relative_depth = stack.len() - *start_depth + 1;
-            let is_tracked_field = !current_path.is_empty() && current_path.len() == relative_depth;
+        // If we determined this frame should be stored for deferred re-entry, do it now
+        if let Some(storage_path) = deferred_storage_info {
+            trace!(
+                "end(): Storing frame for deferred path {:?}, shape {}",
+                storage_path,
+                popped_frame.allocated.shape()
+            );
 
-            if is_tracked_field {
-                trace!(
-                    "end(): Storing frame for deferred path {:?}, shape {}",
-                    current_path,
-                    popped_frame.allocated.shape()
-                );
+            if let FrameMode::Deferred {
+                stack,
+                stored_frames,
+                ..
+            } = &mut self.mode
+            {
+                // Mark the field as initialized in the parent frame.
+                // This is important because the parent might validate before
+                // finish_deferred runs (e.g., parent is an array element that
+                // isn't stored). Without this, the parent's validation would
+                // fail with "missing field".
+                if let FrameOwnership::Field { field_idx } = popped_frame.ownership {
+                    if let Some(parent_frame) = stack.last_mut() {
+                        Self::mark_field_initialized_by_index(parent_frame, field_idx);
+                    }
+                }
 
-                // Store the frame at the current path
-                let path = current_path.clone();
-                stored_frames.insert(path, popped_frame);
-
-                // Pop from current_path
-                current_path.pop();
+                stored_frames.insert(storage_path, popped_frame);
 
                 // Clear parent's current_child tracking
                 if let Some(parent_frame) = stack.last_mut() {
                     parent_frame.tracker.clear_current_child();
                 }
-
-                return Ok(self);
             }
+
+            return Ok(self);
         }
 
         // check if this needs deserialization from a different shape

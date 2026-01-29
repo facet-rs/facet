@@ -1,5 +1,6 @@
 use super::*;
 use crate::AllocatedShape;
+use facet_path::PathStep;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Option / inner
@@ -66,26 +67,22 @@ impl<const BORROW: bool> Partial<'_, '_, BORROW> {
             self.prepare_for_reinitialization();
         }
 
-        // In deferred mode, push "Some" onto the path to distinguish
-        // Option<T> (path ends before "Some") from the inner T (path includes "Some").
-        // This treats Option like an enum with Some/None variants for path tracking.
-        if let FrameMode::Deferred {
-            stack,
-            start_depth,
-            current_path,
-            stored_frames,
-            ..
-        } = &mut self.mode
-        {
-            let relative_depth = stack.len() - *start_depth;
-            let should_track = current_path.len() == relative_depth;
+        // In deferred mode, check if we have a stored frame for this Option's inner value.
+        // The path for the inner value includes OptionSome to distinguish it from the Option itself.
+        if self.is_deferred() {
+            // Derive the current path and construct what the path WOULD be after entering Some
+            let mut check_path = self.derive_path_steps();
+            check_path.push(PathStep::OptionSome);
 
-            if should_track {
-                current_path.push("Some");
-
+            if let FrameMode::Deferred {
+                stack,
+                stored_frames,
+                ..
+            } = &mut self.mode
+            {
                 // Check if we have a stored frame for this path (re-entry case)
-                if let Some(stored_frame) = stored_frames.remove(current_path) {
-                    trace!("begin_some: Restoring stored frame for path {current_path:?}");
+                if let Some(stored_frame) = stored_frames.remove(&check_path) {
+                    trace!("begin_some: Restoring stored frame for path {check_path:?}");
 
                     // Update tracker to indicate we're building the inner value
                     let frame = stack.last_mut().unwrap();
