@@ -716,7 +716,9 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
                 // This frame will be stored in deferred mode - don't require full init
                 false
             } else {
-                // Check if parent is a collection that requires fully initialized items
+                // Check if parent is a collection/container that requires fully initialized items.
+                // SmartPointer is included because the pointee must be fully initialized
+                // before the smart pointer (Box, Arc, etc.) can be completed.
                 if self.frames().len() >= 2 {
                     let frame_len = self.frames().len();
                     let parent_frame = &self.frames()[frame_len - 2];
@@ -727,6 +729,7 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
                             | Tracker::Set { .. }
                             | Tracker::Option { .. }
                             | Tracker::Result { .. }
+                            | Tracker::SmartPointer { .. }
                             | Tracker::DynamicValue {
                                 state: DynamicValueState::Array { .. }
                             }
