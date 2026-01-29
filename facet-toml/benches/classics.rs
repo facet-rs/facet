@@ -126,16 +126,25 @@ struct Status<'a> {
     #[serde(borrow)]
     source: Cow<'a, str>,
     truncated: bool,
+    #[serde(default)]
     in_reply_to_status_id: Option<u64>,
+    #[serde(default)]
     in_reply_to_status_id_str: Option<&'a str>,
+    #[serde(default)]
     in_reply_to_user_id: Option<u64>,
+    #[serde(default)]
     in_reply_to_user_id_str: Option<&'a str>,
+    #[serde(default)]
     in_reply_to_screen_name: Option<&'a str>,
     #[serde(borrow)]
     user: User<'a>,
+    #[serde(default)]
     geo: Option<()>,
+    #[serde(default)]
     coordinates: Option<()>,
+    #[serde(default)]
     place: Option<()>,
+    #[serde(default)]
     contributors: Option<()>,
     retweet_count: u64,
     favorite_count: u64,
@@ -145,10 +154,8 @@ struct Status<'a> {
     retweeted: bool,
     lang: &'a str,
     #[serde(default, borrow)]
-    #[facet(default)]
     retweeted_status: Option<Box<Status<'a>>>,
     #[serde(default)]
-    #[facet(default)]
     possibly_sensitive: Option<bool>,
 }
 
@@ -314,6 +321,205 @@ struct Size {
 }
 
 // =============================================================================
+// Owned Twitter types for TOML serde (can't do zero-copy deserialization)
+// =============================================================================
+
+mod owned {
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct Twitter {
+        pub statuses: Vec<Status>,
+        pub search_metadata: SearchMetadata,
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct SearchMetadata {
+        pub completed_in: f64,
+        pub max_id: u64,
+        pub max_id_str: String,
+        pub next_results: String,
+        pub query: String,
+        pub refresh_url: String,
+        pub count: u64,
+        pub since_id: u64,
+        pub since_id_str: String,
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct Status {
+        pub metadata: Metadata,
+        pub created_at: String,
+        pub id: u64,
+        pub id_str: String,
+        pub text: String,
+        pub source: String,
+        pub truncated: bool,
+        pub in_reply_to_status_id: Option<u64>,
+        pub in_reply_to_status_id_str: Option<String>,
+        pub in_reply_to_user_id: Option<u64>,
+        pub in_reply_to_user_id_str: Option<String>,
+        pub in_reply_to_screen_name: Option<String>,
+        pub user: User,
+        pub geo: Option<()>,
+        pub coordinates: Option<()>,
+        pub place: Option<()>,
+        pub contributors: Option<()>,
+        pub retweet_count: u64,
+        pub favorite_count: u64,
+        pub entities: Entities,
+        pub favorited: bool,
+        pub retweeted: bool,
+        pub lang: String,
+        #[serde(default)]
+        pub retweeted_status: Option<Box<Status>>,
+        #[serde(default)]
+        pub possibly_sensitive: Option<bool>,
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct Metadata {
+        pub result_type: String,
+        pub iso_language_code: String,
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct User {
+        pub id: u64,
+        pub id_str: String,
+        pub name: String,
+        pub screen_name: String,
+        pub location: String,
+        pub description: String,
+        pub url: Option<String>,
+        pub entities: UserEntities,
+        pub protected: bool,
+        pub followers_count: u64,
+        pub friends_count: u64,
+        pub listed_count: u64,
+        pub created_at: String,
+        pub favourites_count: u64,
+        pub utc_offset: Option<i64>,
+        pub time_zone: Option<String>,
+        pub geo_enabled: bool,
+        pub verified: bool,
+        pub statuses_count: u64,
+        pub lang: String,
+        pub contributors_enabled: bool,
+        pub is_translator: bool,
+        pub is_translation_enabled: bool,
+        pub profile_background_color: String,
+        pub profile_background_image_url: String,
+        pub profile_background_image_url_https: String,
+        pub profile_background_tile: bool,
+        pub profile_image_url: String,
+        pub profile_image_url_https: String,
+        #[serde(default)]
+        pub profile_banner_url: Option<String>,
+        pub profile_link_color: String,
+        pub profile_sidebar_border_color: String,
+        pub profile_sidebar_fill_color: String,
+        pub profile_text_color: String,
+        pub profile_use_background_image: bool,
+        pub default_profile: bool,
+        pub default_profile_image: bool,
+        pub following: bool,
+        pub follow_request_sent: bool,
+        pub notifications: bool,
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct UserEntities {
+        #[serde(default)]
+        pub url: Option<EntityUrl>,
+        pub description: EntityDescription,
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct EntityUrl {
+        pub urls: Vec<Url>,
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct EntityDescription {
+        pub urls: Vec<Url>,
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct Entities {
+        pub hashtags: Vec<Hashtag>,
+        pub symbols: Vec<Symbol>,
+        pub urls: Vec<Url>,
+        pub user_mentions: Vec<UserMention>,
+        #[serde(default)]
+        pub media: Option<Vec<Media>>,
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct Hashtag {
+        pub text: String,
+        pub indices: Vec<u64>,
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct Symbol {
+        pub text: String,
+        pub indices: Vec<u64>,
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct Url {
+        pub url: String,
+        pub expanded_url: String,
+        pub display_url: String,
+        pub indices: Vec<u64>,
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct UserMention {
+        pub screen_name: String,
+        pub name: String,
+        pub id: u64,
+        pub id_str: String,
+        pub indices: Vec<u64>,
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct Media {
+        pub id: u64,
+        pub id_str: String,
+        pub indices: Vec<u64>,
+        pub media_url: String,
+        pub media_url_https: String,
+        pub url: String,
+        pub display_url: String,
+        pub expanded_url: String,
+        #[serde(rename = "type")]
+        pub media_type: String,
+        pub sizes: Sizes,
+        #[serde(default)]
+        pub source_status_id: Option<u64>,
+        #[serde(default)]
+        pub source_status_id_str: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct Sizes {
+        pub medium: Size,
+        pub small: Size,
+        pub thumb: Size,
+        pub large: Size,
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct Size {
+        pub w: u64,
+        pub h: u64,
+        pub resize: String,
+    }
+}
+
+// =============================================================================
 // Types for canada.json (GeoJSON)
 // =============================================================================
 
@@ -359,7 +565,8 @@ static CITM_TOML: LazyLock<String> = LazyLock::new(|| {
 
 static TWITTER_TOML: LazyLock<String> = LazyLock::new(|| {
     let json_str = &*facet_json_classics::TWITTER;
-    let data: Twitter = serde_json::from_str(json_str).expect("Failed to parse twitter JSON");
+    let data: owned::Twitter =
+        serde_json::from_str(json_str).expect("Failed to parse twitter JSON");
     toml::to_string(&data).expect("Failed to serialize twitter to TOML")
 });
 
@@ -400,7 +607,7 @@ fn citm_facet_toml(bencher: Bencher) {
 fn twitter_toml_serde(bencher: Bencher) {
     let data = &*TWITTER_TOML;
     bencher.bench(|| {
-        let result: Twitter = black_box(toml::from_str(black_box(data)).unwrap());
+        let result: owned::Twitter = black_box(toml::from_str(black_box(data)).unwrap());
         black_box(result)
     });
 }
@@ -409,7 +616,7 @@ fn twitter_toml_serde(bencher: Bencher) {
 fn twitter_facet_toml(bencher: Bencher) {
     let data = &*TWITTER_TOML;
     bencher.bench(|| {
-        let result: Twitter = black_box(facet_toml::from_str(black_box(data)).unwrap());
+        let result: Twitter = black_box(facet_toml::from_str_borrowed(black_box(data)).unwrap());
         black_box(result)
     });
 }

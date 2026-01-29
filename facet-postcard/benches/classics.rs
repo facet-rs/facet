@@ -409,7 +409,8 @@ fn twitter_postcard_serde(bencher: Bencher) {
 fn twitter_facet_postcard(bencher: Bencher) {
     let data = &*TWITTER_POSTCARD;
     bencher.bench(|| {
-        let result: Twitter = black_box(facet_postcard::from_slice(black_box(data)).unwrap());
+        let result: Twitter =
+            black_box(facet_postcard::from_slice_borrowed(black_box(data)).unwrap());
         black_box(result)
     });
 }

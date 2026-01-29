@@ -354,20 +354,20 @@ struct Geometry {
 static CITM_MSGPACK: LazyLock<Vec<u8>> = LazyLock::new(|| {
     let json_str = &*facet_json_classics::CITM_CATALOG;
     let data: CitmCatalog = serde_json::from_str(json_str).expect("Failed to parse citm JSON");
-    rmp_serde::to_vec(&data).expect("Failed to serialize citm to msgpack")
+    rmp_serde::to_vec_named(&data).expect("Failed to serialize citm to msgpack")
 });
 
 static TWITTER_MSGPACK: LazyLock<Vec<u8>> = LazyLock::new(|| {
     let json_str = &*facet_json_classics::TWITTER;
     let data: Twitter = serde_json::from_str(json_str).expect("Failed to parse twitter JSON");
-    rmp_serde::to_vec(&data).expect("Failed to serialize twitter to msgpack")
+    rmp_serde::to_vec_named(&data).expect("Failed to serialize twitter to msgpack")
 });
 
 static CANADA_MSGPACK: LazyLock<Vec<u8>> = LazyLock::new(|| {
     let json_str = &*facet_json_classics::CANADA;
     let data: FeatureCollection =
         serde_json::from_str(json_str).expect("Failed to parse canada JSON");
-    rmp_serde::to_vec(&data).expect("Failed to serialize canada to msgpack")
+    rmp_serde::to_vec_named(&data).expect("Failed to serialize canada to msgpack")
 });
 
 // =============================================================================
@@ -409,7 +409,8 @@ fn twitter_rmp_serde(bencher: Bencher) {
 fn twitter_facet_msgpack(bencher: Bencher) {
     let data = &*TWITTER_MSGPACK;
     bencher.bench(|| {
-        let result: Twitter = black_box(facet_msgpack::from_slice(black_box(data)).unwrap());
+        let result: Twitter =
+            black_box(facet_msgpack::from_slice_borrowed(black_box(data)).unwrap());
         black_box(result)
     });
 }
