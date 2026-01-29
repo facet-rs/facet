@@ -1157,10 +1157,99 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
                         }
                     }
                     StructKind::TupleStruct | StructKind::Tuple => {
-                        self.pop();
-                        return Err(SerializeError::Unsupported(Cow::Borrowed(
-                            "internally tagged tuple variants are not supported",
+                        // Single-field tuple variants containing an internally-tagged enum
+                        // get flattened: their inner enum's tag and fields merge into this object
+                        if variant.data.fields.len() != 1 {
+                            self.pop();
+                            return Err(SerializeError::Unsupported(Cow::Borrowed(
+                                "internally tagged tuple variants are not supported",
+                            )));
+                        }
+
+                        let inner_shape = variant.data.fields[0].shape();
+                        let inner_tag = match inner_shape.get_tag_attr() {
+                            Some(tag) if inner_shape.get_content_attr().is_none() => tag,
+                            _ => {
+                                self.pop();
+                                return Err(SerializeError::Unsupported(Cow::Borrowed(
+                                    "internally tagged tuple variants are not supported",
+                                )));
+                            }
+                        };
+
+                        let inner_value = enum_
+                            .field(0)
+                            .map_err(|e| SerializeError::Unsupported(Cow::Owned(e.to_string())))?
+                            .expect("single-field tuple variant should have field 0");
+
+                        let inner_enum = inner_value.into_enum().map_err(|_| {
+                            SerializeError::Unsupported(Cow::Borrowed(
+                                "internally tagged tuple variant field is not an enum",
+                            ))
+                        })?;
+
+                        let inner_variant = inner_enum
+                            .active_variant()
+                            .map_err(|e| SerializeError::Unsupported(Cow::Owned(e.to_string())))?;
+
+                        // Write the inner enum's tag
+                        self.serializer
+                            .field_key(inner_tag)
+                            .map_err(SerializeError::Backend)?;
+                        self.serializer
+                            .scalar(ScalarValue::Str(Cow::Borrowed(
+                                inner_variant.effective_name(),
+                            )))
+                            .map_err(SerializeError::Backend)?;
+
+                        // Write the inner enum's fields
+                        self.push(PathSegment::Variant(Cow::Borrowed(
+                            inner_variant.effective_name(),
                         )));
+
+                        match inner_variant.data.kind {
+                            StructKind::Unit => {}
+                            StructKind::Struct => {
+                                let mut inner_fields: alloc::vec::Vec<_> =
+                                    if field_mode == StructFieldMode::Unnamed {
+                                        inner_enum.fields_for_binary_serialize().collect()
+                                    } else {
+                                        inner_enum.fields_for_serialize().collect()
+                                    };
+                                sort_fields_if_needed(self.serializer, &mut inner_fields);
+
+                                for (field_item, field_value) in inner_fields {
+                                    self.serializer
+                                        .field_metadata(&field_item)
+                                        .map_err(SerializeError::Backend)?;
+                                    if field_mode == StructFieldMode::Named {
+                                        self.serializer
+                                            .field_key(field_item.effective_name())
+                                            .map_err(SerializeError::Backend)?;
+                                    }
+                                    self.push(PathSegment::Field(Cow::Owned(
+                                        field_item.effective_name().to_string(),
+                                    )));
+                                    if let Some(proxy_def) = field_item.field.and_then(|f| {
+                                        f.effective_proxy(self.serializer.format_namespace())
+                                    }) {
+                                        self.serialize_via_proxy(field_value, proxy_def)?;
+                                    } else {
+                                        self.serialize_impl(field_value)?;
+                                    }
+                                    self.pop();
+                                }
+                            }
+                            StructKind::TupleStruct | StructKind::Tuple => {
+                                self.pop();
+                                self.pop();
+                                return Err(SerializeError::Unsupported(Cow::Borrowed(
+                                    "nested internally tagged tuple variants are not supported",
+                                )));
+                            }
+                        }
+
+                        self.pop();
                     }
                 }
                 self.pop();
