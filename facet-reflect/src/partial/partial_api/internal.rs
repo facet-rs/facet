@@ -54,6 +54,18 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
         // All checks passed, now we can safely make changes
         let fr = self.frames_mut().last_mut().unwrap();
 
+        // Check if we're re-selecting the same variant - preserve the ISet if so.
+        // This is important for internally-tagged enums where variant fields might be
+        // deserialized before the tag field arrives in the JSON stream.
+        let existing_data = match &fr.tracker {
+            Tracker::Enum {
+                variant_idx: existing_idx,
+                data,
+                ..
+            } if *existing_idx == variant_idx => Some(data.clone()),
+            _ => None,
+        };
+
         // Write the discriminant to memory
         unsafe {
             match enum_type.enum_repr {
@@ -101,11 +113,13 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
             }
         }
 
-        // Update tracker to track the variant
+        // Update tracker to track the variant.
+        // Preserve existing ISet if re-selecting the same variant (for internally-tagged enums
+        // where fields may arrive before the tag).
         fr.tracker = Tracker::Enum {
             variant,
             variant_idx,
-            data: ISet::new(variant.data.fields.len()),
+            data: existing_data.unwrap_or_else(|| ISet::new(variant.data.fields.len())),
             current_child: None,
         };
 

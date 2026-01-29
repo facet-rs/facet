@@ -180,7 +180,16 @@ impl<'input, 'bump, const BORROW: bool> PathNavigator<'input, 'bump, BORROW> {
                 })
                 .collect();
 
+            trace!(
+                "open_segment: checking variant selection: current_path={:?}, vs_fields={:?}, variant={}",
+                current_path, vs_fields, vs.variant_name
+            );
+
             if current_path == vs_fields {
+                trace!(
+                    "open_segment: selecting variant '{}' at path {:?}",
+                    vs.variant_name, current_path
+                );
                 wip = wip.select_variant_named(vs.variant_name)?;
                 break;
             }
