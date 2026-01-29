@@ -228,7 +228,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         // Take the stack from the mode
         let stack = core::mem::take(this.frames_mut());
         let mut root_plan = Arc::new(TypePlanCore::empty());
-        std::mem::swap(&mut root_plan, &mut this.root_plan);
+        core::mem::swap(&mut root_plan, &mut this.root_plan);
 
         Self {
             mode: FrameMode::Deferred {

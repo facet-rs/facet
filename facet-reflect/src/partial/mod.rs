@@ -1072,34 +1072,34 @@ impl Frame {
         // If container has #[facet(default)] and the field's type implements Default,
         // use the type's Default impl. This allows `#[facet(default)]` on a struct to
         // mean "use Default for any missing fields whose types implement Default".
-        if container_has_default {
-            if unsafe { field.shape().call_default_in_place(field_ptr) }.is_some() {
-                return true;
-            }
+        if container_has_default
+            && unsafe { field.shape().call_default_in_place(field_ptr) }.is_some()
+        {
+            return true;
         }
 
         // Special case: Option<T> always defaults to None, even without explicit #[facet(default)]
         // This is because Option is fundamentally "optional" - if not set, it should be None
-        if matches!(field.shape().def, Def::Option(_)) {
-            if unsafe { field.shape().call_default_in_place(field_ptr) }.is_some() {
-                return true;
-            }
+        if matches!(field.shape().def, Def::Option(_))
+            && unsafe { field.shape().call_default_in_place(field_ptr) }.is_some()
+        {
+            return true;
         }
 
         // Special case: () unit type always defaults to ()
-        if field.shape().is_type::<()>() {
-            if unsafe { field.shape().call_default_in_place(field_ptr) }.is_some() {
-                return true;
-            }
+        if field.shape().is_type::<()>()
+            && unsafe { field.shape().call_default_in_place(field_ptr) }.is_some()
+        {
+            return true;
         }
 
         // Special case: Collection types (Vec, HashMap, HashSet, etc.) default to empty
         // These types have obvious "zero values" and it's almost always what you want
         // when deserializing data where the collection is simply absent.
-        if matches!(field.shape().def, Def::List(_) | Def::Map(_) | Def::Set(_)) {
-            if unsafe { field.shape().call_default_in_place(field_ptr) }.is_some() {
-                return true;
-            }
+        if matches!(field.shape().def, Def::List(_) | Def::Map(_) | Def::Set(_))
+            && unsafe { field.shape().call_default_in_place(field_ptr) }.is_some()
+        {
+            return true;
         }
 
         false

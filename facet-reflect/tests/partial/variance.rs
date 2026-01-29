@@ -28,7 +28,7 @@ fn covariant_works() {
 
     fn scope<'a>(token: CovariantLifetime<'a>) -> Wrapper<'a> {
         let plan = TypePlan::<Wrapper<'a>>::build().unwrap();
-        let partial: Partial<'a, '_> = plan.partial().unwrap();
+        let partial: Partial<'a> = plan.partial().unwrap();
         partial
             .begin_field("token")
             .unwrap()
@@ -55,7 +55,7 @@ fn contravariant_works() {
 
     fn scope<'a>(token: ContravariantLifetime<'a>) -> Wrapper<'a> {
         let plan = TypePlan::<Wrapper<'a>>::build().unwrap();
-        let partial: Partial<'a, '_> = plan.partial().unwrap();
+        let partial: Partial<'a> = plan.partial().unwrap();
         partial
             .begin_field("token")
             .unwrap()
@@ -82,7 +82,7 @@ fn invariant_works() {
 
     fn scope<'a>(token: InvariantLifetime<'a>) -> Wrapper<'a> {
         let plan = TypePlan::<Wrapper<'a>>::build().unwrap();
-        let partial: Partial<'a, '_> = plan.partial().unwrap();
+        let partial: Partial<'a> = plan.partial().unwrap();
         partial
             .begin_field("token")
             .unwrap()

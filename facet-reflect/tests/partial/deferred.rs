@@ -1445,7 +1445,7 @@ fn deferred_vec_of_structs_single_visit() -> Result<(), IPanic> {
         total: u32,
     }
 
-    let mut partial: Partial<'_, '_> = Partial::alloc::<Container>()?;
+    let mut partial: Partial<'_> = Partial::alloc::<Container>()?;
     partial = partial.begin_deferred()?;
 
     // Set total first (interleaved with items)
@@ -1495,7 +1495,7 @@ fn deferred_map_with_struct_values_single_visit() -> Result<(), IPanic> {
         count: u32,
     }
 
-    let mut partial: Partial<'_, '_> = Partial::alloc::<Directory>()?;
+    let mut partial: Partial<'_> = Partial::alloc::<Directory>()?;
     partial = partial.begin_deferred()?;
 
     // Set count first (interleaved)
@@ -1555,7 +1555,7 @@ fn deferred_multiple_enums_interleaved() -> Result<(), IPanic> {
         label: String,
     }
 
-    let mut partial: Partial<'_, '_> = Partial::alloc::<Design>()?;
+    let mut partial: Partial<'_> = Partial::alloc::<Design>()?;
     partial = partial.begin_deferred()?;
 
     // Set foreground variant and first field
@@ -1608,7 +1608,7 @@ fn deferred_tuple_struct() -> Result<(), IPanic> {
     #[derive(Facet, Debug, PartialEq)]
     struct Point(i32, i32, i32);
 
-    let mut partial: Partial<'_, '_> = Partial::alloc::<Point>()?;
+    let mut partial: Partial<'_> = Partial::alloc::<Point>()?;
     partial = partial.begin_deferred()?;
 
     partial = partial.begin_nth_field(0)?;
@@ -1641,7 +1641,7 @@ fn deferred_nested_tuple_struct_reentry() -> Result<(), IPanic> {
         name: String,
     }
 
-    let mut partial: Partial<'_, '_> = Partial::alloc::<Container>()?;
+    let mut partial: Partial<'_> = Partial::alloc::<Container>()?;
     partial = partial.begin_deferred()?;
 
     partial = partial.begin_field("pair")?;
@@ -1689,7 +1689,7 @@ fn deferred_reentry_at_varying_depths() -> Result<(), IPanic> {
         top: String,
     }
 
-    let mut partial: Partial<'_, '_> = Partial::alloc::<Level1>()?;
+    let mut partial: Partial<'_> = Partial::alloc::<Level1>()?;
     partial = partial.begin_deferred()?;
 
     // Go deep first
@@ -1741,7 +1741,7 @@ fn deferred_many_siblings_interleaved() -> Result<(), IPanic> {
         h: u32,
     }
 
-    let mut partial: Partial<'_, '_> = Partial::alloc::<Big>()?;
+    let mut partial: Partial<'_> = Partial::alloc::<Big>()?;
     partial = partial.begin_deferred()?;
 
     // Set in random order, interleaved with re-entries
@@ -1791,7 +1791,7 @@ fn wip_deferred_drop_without_finish_simple() {
     }
 
     {
-        let mut partial: Partial<'_, '_> = Partial::alloc::<Simple>().unwrap();
+        let mut partial: Partial<'_> = Partial::alloc::<Simple>().unwrap();
         partial = partial.begin_deferred().unwrap();
 
         partial = partial
@@ -1821,7 +1821,7 @@ fn wip_deferred_drop_without_finish_nested() {
     }
 
     {
-        let mut partial: Partial<'_, '_> = Partial::alloc::<Outer>().unwrap();
+        let mut partial: Partial<'_> = Partial::alloc::<Outer>().unwrap();
         partial = partial.begin_deferred().unwrap();
 
         partial = partial
@@ -1849,7 +1849,7 @@ fn wip_deferred_drop_without_finish_collections() {
     }
 
     {
-        let mut partial: Partial<'_, '_> = Partial::alloc::<WithCollections>().unwrap();
+        let mut partial: Partial<'_> = Partial::alloc::<WithCollections>().unwrap();
         partial = partial.begin_deferred().unwrap();
 
         partial = partial.begin_field("strings").unwrap();
@@ -1888,7 +1888,7 @@ fn wip_deferred_drop_mid_field() {
     }
 
     {
-        let mut partial: Partial<'_, '_> = Partial::alloc::<Outer>().unwrap();
+        let mut partial: Partial<'_> = Partial::alloc::<Outer>().unwrap();
         partial = partial.begin_deferred().unwrap();
 
         partial = partial.begin_field("inner").unwrap();
@@ -1907,7 +1907,7 @@ fn error_finish_deferred_twice() -> Result<(), IPanic> {
         value: u32,
     }
 
-    let mut partial: Partial<'_, '_> = Partial::alloc::<Simple>()?;
+    let mut partial: Partial<'_> = Partial::alloc::<Simple>()?;
     partial = partial.begin_deferred()?;
 
     partial = partial.set_field("value", 42u32)?;
@@ -1931,7 +1931,7 @@ fn error_begin_deferred_twice() -> Result<(), IPanic> {
         value: u32,
     }
 
-    let mut partial: Partial<'_, '_> = Partial::alloc::<Simple>()?;
+    let mut partial: Partial<'_> = Partial::alloc::<Simple>()?;
 
     partial = partial.begin_deferred()?;
     assert!(partial.is_deferred());
@@ -1957,7 +1957,7 @@ fn error_enum_variant_switch() -> Result<(), IPanic> {
         OptionB { b_value: String },
     }
 
-    let mut partial: Partial<'_, '_> = Partial::alloc::<Choice>()?;
+    let mut partial: Partial<'_> = Partial::alloc::<Choice>()?;
     partial = partial.begin_deferred()?;
 
     // Select variant A and set its field
@@ -2006,7 +2006,7 @@ fn error_enum_variant_switch_with_reentry() -> Result<(), IPanic> {
         id: u32,
     }
 
-    let mut partial: Partial<'_, '_> = Partial::alloc::<Record>()?;
+    let mut partial: Partial<'_> = Partial::alloc::<Record>()?;
     partial = partial.begin_deferred()?;
 
     // Set up Active variant
@@ -2044,7 +2044,7 @@ fn error_build_without_finish_deferred() -> Result<(), IPanic> {
         value: u32,
     }
 
-    let mut partial: Partial<'_, '_> = Partial::alloc::<Simple>()?;
+    let mut partial: Partial<'_> = Partial::alloc::<Simple>()?;
     partial = partial.begin_deferred()?;
 
     partial = partial.set_field("value", 42u32)?;
@@ -2072,7 +2072,7 @@ fn error_operations_after_finish() -> Result<(), IPanic> {
         b: u32,
     }
 
-    let mut partial: Partial<'_, '_> = Partial::alloc::<Simple>()?;
+    let mut partial: Partial<'_> = Partial::alloc::<Simple>()?;
     partial = partial.begin_deferred()?;
 
     partial = partial.set_field("a", 1u32)?;
@@ -2116,7 +2116,7 @@ fn wip_deferred_drop_with_stored_frames() {
     }
 
     {
-        let mut partial: Partial<'_, '_> = Partial::alloc::<L1>().unwrap();
+        let mut partial: Partial<'_> = Partial::alloc::<L1>().unwrap();
         partial = partial.begin_deferred().unwrap();
 
         // Go deep
@@ -2161,7 +2161,7 @@ fn deferred_started_from_nested_position() -> Result<(), IPanic> {
         server: Server,
     }
 
-    let mut partial: Partial<'_, '_> = Partial::alloc::<Config>()?;
+    let mut partial: Partial<'_> = Partial::alloc::<Config>()?;
 
     // Navigate into server first
     partial = partial.begin_field("server")?;
@@ -2218,7 +2218,7 @@ fn deferred_started_from_deeply_nested_position() -> Result<(), IPanic> {
         level1: Level1,
     }
 
-    let mut partial: Partial<'_, '_> = Partial::alloc::<Root>()?;
+    let mut partial: Partial<'_> = Partial::alloc::<Root>()?;
 
     // Navigate deep before starting deferred mode
     partial = partial.begin_field("level1")?;
@@ -2258,7 +2258,7 @@ fn deferred_option_field_auto_defaults_to_none() -> Result<(), IPanic> {
         optional: Option<u32>,
     }
 
-    let mut partial: Partial<'_, '_> = Partial::alloc::<WithOption>()?;
+    let mut partial: Partial<'_> = Partial::alloc::<WithOption>()?;
     partial = partial.begin_deferred()?;
 
     partial = partial.set_field("required", String::from("hello"))?;
@@ -2282,7 +2282,7 @@ fn deferred_multiple_option_fields_auto_default() -> Result<(), IPanic> {
         opt3: Option<bool>,
     }
 
-    let mut partial: Partial<'_, '_> = Partial::alloc::<ManyOptions>()?;
+    let mut partial: Partial<'_> = Partial::alloc::<ManyOptions>()?;
     partial = partial.begin_deferred()?;
 
     partial = partial.set_field("name", String::from("test"))?;
@@ -2312,7 +2312,7 @@ fn deferred_field_with_default_attr_auto_applies() -> Result<(), IPanic> {
         count: u32,
     }
 
-    let mut partial: Partial<'_, '_> = Partial::alloc::<WithDefault>()?;
+    let mut partial: Partial<'_> = Partial::alloc::<WithDefault>()?;
     partial = partial.begin_deferred()?;
 
     partial = partial.set_field("name", String::from("test"))?;
@@ -2335,7 +2335,7 @@ fn deferred_field_with_default_impl_auto_applies() -> Result<(), IPanic> {
         items: Vec<i32>,
     }
 
-    let mut partial: Partial<'_, '_> = Partial::alloc::<WithDefault>()?;
+    let mut partial: Partial<'_> = Partial::alloc::<WithDefault>()?;
     partial = partial.begin_deferred()?;
 
     partial = partial.set_field("name", String::from("test"))?;
@@ -2360,7 +2360,7 @@ fn deferred_enum_variant_option_field_auto_defaults() -> Result<(), IPanic> {
     }
 
     // Test variant B with only one field set
-    let mut partial: Partial<'_, '_> = Partial::alloc::<Root>()?;
+    let mut partial: Partial<'_> = Partial::alloc::<Root>()?;
     partial = partial.begin_deferred()?;
 
     partial = partial.select_variant_named("B")?;
@@ -2395,7 +2395,7 @@ fn deferred_enum_tuple_variant_option_defaults() -> Result<(), IPanic> {
     }
 
     // Test variant A with no field set (table header case like [A] in TOML)
-    let mut partial: Partial<'_, '_> = Partial::alloc::<Root>()?;
+    let mut partial: Partial<'_> = Partial::alloc::<Root>()?;
     partial = partial.begin_deferred()?;
 
     partial = partial.select_variant_named("A")?;
@@ -2422,7 +2422,7 @@ fn deferred_nested_struct_option_fields_auto_default() -> Result<(), IPanic> {
         opt: Option<String>,
     }
 
-    let mut partial: Partial<'_, '_> = Partial::alloc::<Outer>()?;
+    let mut partial: Partial<'_> = Partial::alloc::<Outer>()?;
     partial = partial.begin_deferred()?;
 
     partial = partial.begin_field("inner")?;
@@ -2449,7 +2449,7 @@ fn deferred_all_fields_are_optional() -> Result<(), IPanic> {
         c: Option<bool>,
     }
 
-    let mut partial: Partial<'_, '_> = Partial::alloc::<AllOptional>()?;
+    let mut partial: Partial<'_> = Partial::alloc::<AllOptional>()?;
     partial = partial.begin_deferred()?;
 
     // Set nothing at all - all should default to None
@@ -2484,7 +2484,7 @@ fn deferred_option_struct_interleaved_fields() -> Result<(), IPanic> {
         connection: Option<Inner>,
     }
 
-    let mut partial: Partial<'_, '_> = Partial::alloc::<Outer>()?;
+    let mut partial: Partial<'_> = Partial::alloc::<Outer>()?;
     partial = partial.begin_deferred()?;
 
     // Set name first
@@ -2539,7 +2539,7 @@ fn deferred_option_struct_deeply_nested_interleaved() -> Result<(), IPanic> {
         middle: Option<Middle>,
     }
 
-    let mut partial: Partial<'_, '_> = Partial::alloc::<Outer>()?;
+    let mut partial: Partial<'_> = Partial::alloc::<Outer>()?;
     partial = partial.begin_deferred()?;
 
     // Set outer name

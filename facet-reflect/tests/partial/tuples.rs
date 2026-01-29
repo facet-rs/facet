@@ -15,14 +15,14 @@ macro_rules! assert_snapshot {
 #[test]
 fn build_empty_tuple() {
     // Test building ()
-    let partial: Partial<'_, '_> = Partial::alloc::<()>().unwrap();
+    let partial: Partial<'_> = Partial::alloc::<()>().unwrap();
     partial.build().unwrap();
 }
 
 #[test]
 fn build_single_empty_tuple() {
     // Test building (())
-    let mut partial: Partial<'_, '_> = Partial::alloc::<((),)>().unwrap();
+    let mut partial: Partial<'_> = Partial::alloc::<((),)>().unwrap();
 
     // Field 0 is of type ()
     partial = partial.begin_nth_field(0).unwrap();
@@ -36,7 +36,7 @@ fn build_single_empty_tuple() {
 #[test]
 fn build_double_empty_tuple() {
     // Test building ((()),)
-    let mut partial: Partial<'_, '_> = Partial::alloc::<(((),),)>().unwrap();
+    let mut partial: Partial<'_> = Partial::alloc::<(((),),)>().unwrap();
 
     // Field 0 is of type (())
     partial = partial.begin_nth_field(0).unwrap();
@@ -56,7 +56,7 @@ fn build_double_empty_tuple() {
 #[test]
 fn build_mixed_tuple() {
     // Test building (String, i32)
-    let mut partial: Partial<'_, '_> = Partial::alloc::<(String, i32)>().unwrap();
+    let mut partial: Partial<'_> = Partial::alloc::<(String, i32)>().unwrap();
 
     partial = partial.begin_nth_field(0).unwrap();
     partial = partial.set("Hello".to_string()).unwrap();
@@ -77,7 +77,7 @@ fn build_mixed_tuple() {
 #[test]
 fn build_nested_tuple() {
     // Test building ((String, i32), bool)
-    let mut partial: Partial<'_, '_> = Partial::alloc::<((String, i32), bool)>().unwrap();
+    let mut partial: Partial<'_> = Partial::alloc::<((String, i32), bool)>().unwrap();
 
     // Field 0 is of type (String, i32)
     partial = partial.begin_nth_field(0).unwrap();
@@ -113,7 +113,7 @@ fn test_issue_691_tuple_too_few_fields() {
     // with insufficient fields could lead to accessing uninitialized memory.
 
     // Test case 1: 2-element tuple with only 1 field initialized
-    let mut partial: Partial<'_, '_> = Partial::alloc::<(String, String)>().unwrap();
+    let mut partial: Partial<'_> = Partial::alloc::<(String, String)>().unwrap();
     partial = partial.begin_nth_field(0).unwrap();
     partial = partial.set("a".to_string()).unwrap();
     partial = partial.end().unwrap();
@@ -124,7 +124,7 @@ fn test_issue_691_tuple_too_few_fields() {
 #[test]
 fn test_issue_691_3_tuple_missing_field() {
     // Test case 2: 3-element tuple with only 2 fields initialized
-    let mut partial: Partial<'_, '_> = Partial::alloc::<(String, i32, bool)>().unwrap();
+    let mut partial: Partial<'_> = Partial::alloc::<(String, i32, bool)>().unwrap();
     partial = partial.begin_nth_field(0).unwrap();
     partial = partial.set("hello".to_string()).unwrap();
     partial = partial.end().unwrap();
@@ -138,7 +138,7 @@ fn test_issue_691_3_tuple_missing_field() {
 #[test]
 fn test_issue_691_nested_tuple_incomplete() {
     // Test case 3: Nested tuple with inner tuple not fully initialized
-    let mut partial: Partial<'_, '_> = Partial::alloc::<((String, i32), bool)>().unwrap();
+    let mut partial: Partial<'_> = Partial::alloc::<((String, i32), bool)>().unwrap();
     partial = partial.begin_nth_field(0).unwrap();
     partial = partial.begin_nth_field(0).unwrap();
     partial = partial.set("nested".to_string()).unwrap();
@@ -155,12 +155,12 @@ fn test_issue_691_nested_tuple_incomplete() {
 #[test]
 fn test_issue_691_valid_tuples() {
     // Test case 4: Empty tuple should work (no fields to initialize)
-    let partial: Partial<'_, '_> = Partial::alloc::<()>().unwrap();
+    let partial: Partial<'_> = Partial::alloc::<()>().unwrap();
     let result = partial.build();
     assert!(result.is_ok(), "Building empty tuple should succeed");
 
     // Test case 5: Single-element tuple with field initialized should work
-    let mut partial: Partial<'_, '_> = Partial::alloc::<(String,)>().unwrap();
+    let mut partial: Partial<'_> = Partial::alloc::<(String,)>().unwrap();
     partial = partial.begin_nth_field(0).unwrap();
     partial = partial.set("single".to_string()).unwrap();
     partial = partial.end().unwrap();

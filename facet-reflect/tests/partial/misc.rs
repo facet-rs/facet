@@ -628,7 +628,7 @@ fn gh_354_leak_1() -> Result<(), IPanic> {
     }
 
     fn leak1() -> Result<(), ReflectError> {
-        let mut partial: Partial<'_, '_> = Partial::alloc::<Foo>().unwrap();
+        let mut partial: Partial<'_> = Partial::alloc::<Foo>().unwrap();
         partial = partial.begin_field("a")?;
         partial = partial.set(String::from("Hello, World!"))?;
         partial = partial.end()?;
@@ -649,7 +649,7 @@ fn gh_354_leak_2() -> Result<(), IPanic> {
     }
 
     fn leak2() -> Result<(), ReflectError> {
-        let mut partial: Partial<'_, '_> = Partial::alloc::<Foo>().unwrap();
+        let mut partial: Partial<'_> = Partial::alloc::<Foo>().unwrap();
         partial = partial.begin_field("a")?;
         partial = partial.set(String::from("Hello, World!"))?;
         partial = partial.end()?;
@@ -704,7 +704,7 @@ fn clone_into() -> Result<(), IPanic> {
 
 #[test]
 fn wip_build_tuple_through_listlike_api_exact() -> Result<(), IPanic> {
-    let mut partial: Partial<'_, '_> = Partial::alloc::<(f64,)>()?;
+    let mut partial: Partial<'_> = Partial::alloc::<(f64,)>()?;
     partial = partial.begin_nth_field(0)?;
     partial = partial.set(5.4321)?;
     partial = partial.end()?;
@@ -914,7 +914,7 @@ fn struct_field_set_twice() -> Result<(), IPanic> {
 
     DROP_COUNT.store(0, Ordering::SeqCst);
 
-    let mut partial: Partial<'_, '_> = Partial::alloc::<Container>()?;
+    let mut partial: Partial<'_> = Partial::alloc::<Container>()?;
 
     // Set tracker field first time
     partial = partial.set_field("tracker", DropTracker { id: 1 })?;
@@ -1008,7 +1008,7 @@ fn set_default_drops_previous() -> Result<(), IPanic> {
 
     DROP_COUNT.store(0, Ordering::SeqCst);
 
-    let mut partial: Partial<'_, '_> = Partial::alloc::<DropTracker>()?;
+    let mut partial: Partial<'_> = Partial::alloc::<DropTracker>()?;
 
     // Set initial value
     partial = partial.set(DropTracker { id: 1 })?;
@@ -1056,7 +1056,7 @@ fn drop_partially_initialized_struct() -> Result<(), IPanic> {
 
     // Create a partially initialized struct and drop it
     {
-        let mut partial: Partial<'_, '_> = Partial::alloc::<Container>()?;
+        let mut partial: Partial<'_> = Partial::alloc::<Container>()?;
 
         // Initialize first field
         partial = partial.begin_field("first")?;
@@ -1133,7 +1133,7 @@ fn drop_nested_partially_initialized() -> Result<(), IPanic> {
     DROP_COUNT.store(0, Ordering::SeqCst);
 
     {
-        let mut partial: Partial<'_, '_> = Partial::alloc::<Outer>()?;
+        let mut partial: Partial<'_> = Partial::alloc::<Outer>()?;
 
         // Start initializing inner struct
         partial = partial.begin_field("inner")?;
@@ -1163,7 +1163,7 @@ fn drop_with_copy_types() -> Result<(), IPanic> {
         more_copy: bool,
     }
 
-    let mut partial: Partial<'_, '_> = Partial::alloc::<MixedTypes>()?;
+    let mut partial: Partial<'_> = Partial::alloc::<MixedTypes>()?;
 
     partial = partial.set_field("copyable", 42u64)?;
 
@@ -1299,7 +1299,7 @@ fn field_named_on_struct() -> Result<(), IPanic> {
     );
 
     // Test invalid field name
-    let partial: Partial<'_, '_> = Partial::alloc::<Person>()?;
+    let partial: Partial<'_> = Partial::alloc::<Person>()?;
     let err = match partial.begin_field("invalid_field") {
         Ok(_) => panic!("expected error"),
         Err(e) => e,
@@ -1337,7 +1337,7 @@ fn field_named_on_enum() -> Result<(), IPanic> {
 
     // Test invalid field name on enum variant
 
-    let mut partial: Partial<'_, '_> = Partial::alloc::<Config>()?;
+    let mut partial: Partial<'_> = Partial::alloc::<Config>()?;
     partial = partial.select_variant_named("Client")?;
     let result = partial.begin_field("port"); // port doesn't exist on Client
     let err = match result {
@@ -1359,7 +1359,7 @@ fn enum_unit_variant() -> Result<(), IPanic> {
         Pending = 2,
     }
 
-    let mut partial: Partial<'_, '_> = Partial::alloc::<Status>()?;
+    let mut partial: Partial<'_> = Partial::alloc::<Status>()?;
     partial = partial.select_variant(1)?;
     let hv = partial.build()?.materialize::<Status>()?;
     assert_eq!(hv, Status::Inactive);
@@ -1377,7 +1377,7 @@ fn enum_struct_variant() -> Result<(), IPanic> {
         Empty = 2,
     }
 
-    let mut partial: Partial<'_, '_> = Partial::alloc::<Message>()?;
+    let mut partial: Partial<'_> = Partial::alloc::<Message>()?;
     partial = partial.select_variant(0)?;
     partial = partial.set_field("content", "Hello, world!".to_string())?;
     let hv = partial.build()?.materialize::<Message>()?;
@@ -1401,7 +1401,7 @@ fn enum_tuple_variant() -> Result<(), IPanic> {
         Pair(i32, String) = 2,
     }
 
-    let mut partial: Partial<'_, '_> = Partial::alloc::<Value>()?;
+    let mut partial: Partial<'_> = Partial::alloc::<Value>()?;
     partial = partial.select_variant(2)?;
     partial = partial.set_nth_field(0, 42)?;
     partial = partial.set_nth_field(1, "test".to_string())?;
@@ -1418,7 +1418,7 @@ fn enum_set_field_twice() -> Result<(), IPanic> {
         Point { x: f32, y: f32 } = 0,
     }
 
-    let mut partial: Partial<'_, '_> = Partial::alloc::<Data>()?;
+    let mut partial: Partial<'_> = Partial::alloc::<Data>()?;
     partial = partial.select_variant(0)?;
     partial = partial.set_field("x", 1.0f32)?;
     partial = partial.set_field("x", 2.0f32)?;
@@ -1437,7 +1437,7 @@ fn enum_partial_initialization_error() -> Result<(), IPanic> {
         Settings { timeout: u32, retries: u8 } = 0,
     }
 
-    let mut partial: Partial<'_, '_> = Partial::alloc::<Config>()?;
+    let mut partial: Partial<'_> = Partial::alloc::<Config>()?;
     partial = partial.select_variant(0)?;
     partial = partial.set_field("timeout", 5000u32)?;
     let result = partial.build();
@@ -1456,7 +1456,7 @@ fn enum_select_nth_variant() -> Result<(), IPanic> {
         Pending = 2,
     }
 
-    let mut partial: Partial<'_, '_> = Partial::alloc::<Status>()?;
+    let mut partial: Partial<'_> = Partial::alloc::<Status>()?;
     partial = partial.select_nth_variant(1)?;
     let hv = partial.build()?.materialize::<Status>()?;
     assert_eq!(hv, Status::Inactive);
@@ -1518,7 +1518,7 @@ fn variant_named() -> Result<(), IPanic> {
         }
     );
 
-    let partial: Partial<'_, '_> = Partial::alloc::<Animal>()?;
+    let partial: Partial<'_> = Partial::alloc::<Animal>()?;
     let result = partial.select_variant_named("Fish");
     let err = match result {
         Ok(_) => panic!("expected error"),
@@ -1547,7 +1547,7 @@ fn from_raw_simple_struct() -> Result<(), IPanic> {
     let ptr = PtrUninit::new(slot.as_mut_ptr().cast::<u8>());
     let plan = TypePlan::<Point>::build()?;
 
-    let mut partial: Partial<'_, '_> =
+    let mut partial: Partial<'_> =
         unsafe { Partial::from_raw(ptr, plan.core(), plan.core().root_id())? };
     partial = partial.set_field("x", 10i32)?;
     partial = partial.set_field("y", 20i32)?;
@@ -1575,7 +1575,7 @@ fn from_raw_nested_struct() -> Result<(), IPanic> {
     let ptr = PtrUninit::new(slot.as_mut_ptr().cast::<u8>());
     let plan = TypePlan::<Outer>::build()?;
 
-    let mut partial: Partial<'_, '_> =
+    let mut partial: Partial<'_> =
         unsafe { Partial::from_raw(ptr, plan.core(), plan.core().root_id())? };
     partial = partial.set_field("name", "test".to_string())?;
     partial = partial.begin_field("inner")?;
@@ -1615,7 +1615,7 @@ fn from_raw_drop_on_error() -> Result<(), IPanic> {
     let ptr = PtrUninit::new(slot.as_mut_ptr().cast::<u8>());
     let plan = TypePlan::<TwoFields>::build()?;
 
-    let mut partial: Partial<'_, '_> =
+    let mut partial: Partial<'_> =
         unsafe { Partial::from_raw(ptr, plan.core(), plan.core().root_id())? };
     partial = partial.set_field("first", DropTracker("first".to_string()))?;
     // Don't set second field - this should cause finish_in_place to fail
@@ -1655,7 +1655,7 @@ fn from_raw_drop_on_partial_drop() -> Result<(), IPanic> {
     let ptr = PtrUninit::new(slot.as_mut_ptr().cast::<u8>());
     let plan = TypePlan::<TwoFields>::build()?;
 
-    let mut partial: Partial<'_, '_> =
+    let mut partial: Partial<'_> =
         unsafe { Partial::from_raw(ptr, plan.core(), plan.core().root_id())? };
     partial = partial.set_field("first", DropTracker("first".to_string()))?;
     // Drop the partial without calling finish_in_place
@@ -1678,7 +1678,7 @@ fn from_raw_with_vec() -> Result<(), IPanic> {
     let ptr = PtrUninit::new(slot.as_mut_ptr().cast::<u8>());
     let plan = TypePlan::<WithVec>::build()?;
 
-    let mut partial: Partial<'_, '_> =
+    let mut partial: Partial<'_> =
         unsafe { Partial::from_raw(ptr, plan.core(), plan.core().root_id())? };
     partial = partial.begin_field("items")?;
     partial = partial.init_list()?;

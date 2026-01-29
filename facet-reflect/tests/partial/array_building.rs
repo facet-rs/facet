@@ -200,17 +200,15 @@ macro_rules! assert_snapshot {
 
 #[test]
 fn array_init() -> Result<(), IPanic> {
-    Partial::of::<[u32; 3]>().scope(|p| {
-        let hv = p
-            // Initialize in order
-            .set_nth_field(0, 42u32)?
-            .set_nth_field(1, 43u32)?
-            .set_nth_field(2, 44u32)?
-            .build()?
-            .materialize::<[u32; 3]>()?;
-        assert_eq!(hv, [42, 43, 44]);
-        Ok(())
-    })
+    let hv = Partial::alloc::<[u32; 3]>()?
+        // Initialize in order
+        .set_nth_field(0, 42u32)?
+        .set_nth_field(1, 43u32)?
+        .set_nth_field(2, 44u32)?
+        .build()?
+        .materialize::<[u32; 3]>()?;
+    assert_eq!(hv, [42, 43, 44]);
+    Ok(())
 }
 
 #[test]

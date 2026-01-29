@@ -21,7 +21,7 @@ struct OuterNoArc {
 
 #[test]
 fn outer_no_arc() {
-    let mut partial: Partial<'_, '_> = Partial::alloc::<OuterNoArc>().unwrap();
+    let mut partial: Partial<'_> = Partial::alloc::<OuterNoArc>().unwrap();
     partial = partial.begin_field("inner").unwrap();
     partial = partial.begin_field("value").unwrap();
     partial = partial.set(1234_i32).unwrap();
@@ -42,7 +42,7 @@ fn outer_no_arc() {
 
 #[test]
 fn outer_yes_arc_put() {
-    let mut partial: Partial<'_, '_> = Partial::alloc::<OuterYesArc>().unwrap();
+    let mut partial: Partial<'_> = Partial::alloc::<OuterYesArc>().unwrap();
     let inner = Arc::new(Inner { value: 5678 });
     partial = partial.begin_field("inner").unwrap();
     partial = partial.set(inner.clone()).unwrap();
@@ -57,7 +57,7 @@ fn outer_yes_arc_put() {
 
 #[test]
 fn outer_yes_arc_pointee() {
-    let mut partial: Partial<'_, '_> = Partial::alloc::<OuterYesArc>().unwrap();
+    let mut partial: Partial<'_> = Partial::alloc::<OuterYesArc>().unwrap();
     partial = partial.begin_field("inner").unwrap();
     partial = partial.begin_smart_ptr().unwrap();
     partial = partial.begin_field("value").unwrap();
@@ -80,7 +80,7 @@ fn outer_yes_arc_pointee() {
 
 #[test]
 fn outer_yes_arc_field_named_twice_error() {
-    let mut partial: Partial<'_, '_> = Partial::alloc::<OuterYesArc>().unwrap();
+    let mut partial: Partial<'_> = Partial::alloc::<OuterYesArc>().unwrap();
     partial = partial.begin_field("inner").unwrap();
     // Try to do begin_field again instead of begin_smart_ptr; this should error
     let err = partial.begin_field("value").err().unwrap();

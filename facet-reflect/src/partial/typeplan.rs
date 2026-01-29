@@ -2135,10 +2135,10 @@ mod tests {
                 assert!(!struct_plan.has_flatten);
 
                 // Check field lookup
-                assert_eq!(struct_plan.field_lookup.find("name", core), Some(0));
-                assert_eq!(struct_plan.field_lookup.find("age", core), Some(1));
-                assert_eq!(struct_plan.field_lookup.find("email", core), Some(2));
-                assert_eq!(struct_plan.field_lookup.find("unknown", core), None);
+                assert_eq!(struct_plan.field_lookup.find("name", &core), Some(0));
+                assert_eq!(struct_plan.field_lookup.find("age", &core), Some(1));
+                assert_eq!(struct_plan.field_lookup.find("email", &core), Some(2));
+                assert_eq!(struct_plan.field_lookup.find("unknown", &core), None);
 
                 // Check field metadata
                 assert_eq!(fields[0].name, "name");
@@ -2196,7 +2196,7 @@ mod tests {
                 // Struct variant has 1 field
                 let struct_variant_fields = core.fields(variants[2].fields);
                 assert_eq!(struct_variant_fields.len(), 1);
-                assert_eq!(variants[2].field_lookup.find("value", core), Some(0));
+                assert_eq!(variants[2].field_lookup.find("value", &core), Some(0));
             }
             other => panic!("Expected Enum, got {:?}", other),
         }
