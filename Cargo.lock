@@ -726,7 +726,7 @@ dependencies = [
  "regalloc2",
  "rustc-hash",
  "serde",
- "smallvec",
+ "smallvec 1.15.1",
  "target-lexicon",
  "wasmtime-internal-math",
 ]
@@ -777,7 +777,7 @@ checksum = "626a46aa207183bae011de3411a40951c494cea3fb2ef223d3118f75e13b23ca"
 dependencies = [
  "cranelift-codegen",
  "log",
- "smallvec",
+ "smallvec 1.15.1",
  "target-lexicon",
 ]
 
@@ -1027,7 +1027,7 @@ dependencies = [
  "parking_lot",
  "ruint",
  "rust_decimal",
- "smallvec",
+ "smallvec 1.15.1",
  "smartstring",
  "smol_str",
  "stable_deref_trait",
@@ -1297,10 +1297,10 @@ dependencies = [
  "facet-testhelpers",
  "facet-value",
  "hashbrown 0.16.1",
- "indextree",
  "insta",
  "proptest",
  "regex",
+ "smallvec 2.0.0-alpha.12",
  "tempfile",
  "tracing",
  "ulid",
@@ -1741,7 +1741,7 @@ dependencies = [
  "icu_normalizer_data",
  "icu_properties",
  "icu_provider",
- "smallvec",
+ "smallvec 1.15.1",
  "zerovec",
 ]
 
@@ -1806,7 +1806,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3b0875f23caa03898994f6ddc501886a45c7d3d62d04d2d90788d47be1b1e4de"
 dependencies = [
  "idna_adapter",
- "smallvec",
+ "smallvec 1.15.1",
  "utf8_iter",
 ]
 
@@ -1843,12 +1843,6 @@ dependencies = [
  "serde",
  "serde_core",
 ]
-
-[[package]]
-name = "indextree"
-version = "4.7.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb9e21e48c85fa6643a38caca564645a3bbc9211edf506fc8ed690c7e7b4d3c7"
 
 [[package]]
 name = "indoc"
@@ -2189,7 +2183,7 @@ dependencies = [
  "cfg-if",
  "libc",
  "redox_syscall",
- "smallvec",
+ "smallvec 1.15.1",
  "windows-link",
 ]
 
@@ -2454,7 +2448,7 @@ dependencies = [
  "hashbrown 0.15.5",
  "log",
  "rustc-hash",
- "smallvec",
+ "smallvec 1.15.1",
 ]
 
 [[package]]
@@ -2781,6 +2775,12 @@ checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
 dependencies = [
  "serde",
 ]
+
+[[package]]
+name = "smallvec"
+version = "2.0.0-alpha.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef784004ca8777809dcdad6ac37629f0a97caee4c685fcea805278d81dd8b857"
 
 [[package]]
 name = "smartstring"
@@ -3338,7 +3338,7 @@ dependencies = [
  "postcard",
  "serde",
  "serde_derive",
- "smallvec",
+ "smallvec 1.15.1",
  "target-lexicon",
  "wasmparser",
 ]

@@ -111,6 +111,7 @@
 
 use alloc::{collections::BTreeMap, vec::Vec};
 
+mod arena;
 mod iset;
 pub mod typeplan;
 
@@ -1493,5 +1494,35 @@ impl<'facet, const BORROW: bool> Drop for Partial<'facet, BORROW> {
             frame.deinit();
             frame.dealloc();
         }
+    }
+}
+
+#[cfg(test)]
+mod size_tests {
+    use super::*;
+    use core::mem::size_of;
+
+    #[test]
+    fn print_type_sizes() {
+        eprintln!("\n=== Type Sizes ===");
+        eprintln!("Frame: {} bytes", size_of::<Frame>());
+        eprintln!("Tracker: {} bytes", size_of::<Tracker>());
+        eprintln!("ISet: {} bytes", size_of::<ISet>());
+        eprintln!("AllocatedShape: {} bytes", size_of::<AllocatedShape>());
+        eprintln!("FrameOwnership: {} bytes", size_of::<FrameOwnership>());
+        eprintln!("PtrUninit: {} bytes", size_of::<facet_core::PtrUninit>());
+        eprintln!("Option<usize>: {} bytes", size_of::<Option<usize>>());
+        eprintln!(
+            "Option<&'static facet_core::ProxyDef>: {} bytes",
+            size_of::<Option<&'static facet_core::ProxyDef>>()
+        );
+        eprintln!("typeplan::NodeId: {} bytes", size_of::<typeplan::NodeId>());
+        eprintln!("Vec<Frame>: {} bytes", size_of::<Vec<Frame>>());
+        eprintln!("MapInsertState: {} bytes", size_of::<MapInsertState>());
+        eprintln!(
+            "DynamicValueState: {} bytes",
+            size_of::<DynamicValueState>()
+        );
+        eprintln!("===================\n");
     }
 }
