@@ -17,6 +17,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
+bumpalo = { workspace = true }
 facet = { path = "../facet", version = "0.43.2", default-features = false }
 facet-core = { path = "../facet-core", version = "0.43.2" }
 facet-format = { path = "../facet-format", version = "0.43.2" }

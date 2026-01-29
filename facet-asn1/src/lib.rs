@@ -66,6 +66,8 @@ pub use serializer::{Asn1SerializeError, Asn1Serializer, to_vec};
 // Re-export DeserializeError for convenience
 pub use facet_format::DeserializeError;
 
+use bumpalo::Bump;
+
 /// Deserialize a value from ASN.1 DER bytes into an owned type.
 ///
 /// This is the recommended default for most use cases. The input does not need
@@ -95,8 +97,9 @@ where
     T: facet_core::Facet<'static>,
 {
     use facet_format::FormatDeserializer;
+    let bump = Bump::new();
     let mut parser = Asn1Parser::new(input);
-    let mut de = FormatDeserializer::new_owned(&mut parser);
+    let mut de = FormatDeserializer::new_owned(&bump, &mut parser);
     de.deserialize()
 }
 
@@ -113,7 +116,8 @@ where
     'input: 'facet,
 {
     use facet_format::FormatDeserializer;
+    let bump = Bump::new();
     let mut parser = Asn1Parser::new(input);
-    let mut de = FormatDeserializer::new(&mut parser);
+    let mut de = FormatDeserializer::new(&bump, &mut parser);
     de.deserialize()
 }

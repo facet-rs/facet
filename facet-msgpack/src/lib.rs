@@ -68,6 +68,8 @@ pub use serializer::{MsgPackSerializeError, MsgPackSerializer, to_vec, to_writer
 // Re-export DeserializeError for convenience
 pub use facet_format::DeserializeError;
 
+use bumpalo::Bump;
+
 /// Deserialize a value from MsgPack bytes into an owned type.
 ///
 /// This is the recommended default for most use cases. The input does not need
@@ -101,8 +103,9 @@ where
     T: facet_core::Facet<'static>,
 {
     use facet_format::FormatDeserializer;
+    let bump = Bump::new();
     let mut parser = MsgPackParser::new(input);
-    let mut de = FormatDeserializer::new_owned(&mut parser);
+    let mut de = FormatDeserializer::new_owned(&bump, &mut parser);
     de.deserialize()
 }
 
@@ -139,8 +142,9 @@ where
     'input: 'facet,
 {
     use facet_format::FormatDeserializer;
+    let bump = Bump::new();
     let mut parser = MsgPackParser::new(input);
-    let mut de = FormatDeserializer::new(&mut parser);
+    let mut de = FormatDeserializer::new(&bump, &mut parser);
     de.deserialize()
 }
 
@@ -158,6 +162,7 @@ where
 /// use facet::Facet;
 /// use facet_msgpack::from_slice_into;
 /// use facet_reflect::Partial;
+/// use bumpalo::Bump;
 ///
 /// #[derive(Facet, Debug, PartialEq)]
 /// struct Point {
@@ -167,30 +172,32 @@ where
 ///
 /// // MsgPack encoding of {"x": 10, "y": 20}
 /// let bytes = &[0x82, 0xa1, b'x', 0x0a, 0xa1, b'y', 0x14];
-/// let partial = Partial::alloc_owned::<Point>().unwrap();
-/// let partial = from_slice_into(bytes, partial).unwrap();
+/// let bump = Bump::new();
+/// let partial = Partial::alloc_owned::<Point>(&bump).unwrap();
+/// let partial = from_slice_into(&bump, bytes, partial).unwrap();
 /// let value = partial.build().unwrap();
 /// let point: Point = value.materialize().unwrap();
 /// assert_eq!(point.x, 10);
 /// assert_eq!(point.y, 20);
 /// ```
-pub fn from_slice_into<'facet>(
+pub fn from_slice_into<'facet, 'bump>(
+    bump: &'bump Bump,
     input: &[u8],
-    partial: facet_reflect::Partial<'facet, false>,
-) -> Result<facet_reflect::Partial<'facet, false>, DeserializeError> {
+    partial: facet_reflect::Partial<'facet, 'bump, false>,
+) -> Result<facet_reflect::Partial<'facet, 'bump, false>, DeserializeError> {
     use facet_format::FormatDeserializer;
     let mut parser = MsgPackParser::new(input);
-    let mut de = FormatDeserializer::new_owned(&mut parser);
+    let mut de = FormatDeserializer::new_owned(bump, &mut parser);
 
-    // SAFETY: The deserializer expects Partial<'input, false> where 'input is the
+    // SAFETY: The deserializer expects Partial<'input, 'bump, false> where 'input is the
     // lifetime of the MsgPack bytes. Since BORROW=false, no data is borrowed from the
     // input, so the actual 'facet lifetime of the Partial is independent of 'input.
     // We transmute to satisfy the type system, then transmute back after deserialization.
     #[allow(unsafe_code)]
-    let partial: facet_reflect::Partial<'_, false> = unsafe {
+    let partial: facet_reflect::Partial<'_, 'bump, false> = unsafe {
         core::mem::transmute::<
-            facet_reflect::Partial<'facet, false>,
-            facet_reflect::Partial<'_, false>,
+            facet_reflect::Partial<'facet, 'bump, false>,
+            facet_reflect::Partial<'_, 'bump, false>,
         >(partial)
     };
 
@@ -198,10 +205,10 @@ pub fn from_slice_into<'facet>(
 
     // SAFETY: Same reasoning - no borrowed data since BORROW=false.
     #[allow(unsafe_code)]
-    let partial: facet_reflect::Partial<'facet, false> = unsafe {
+    let partial: facet_reflect::Partial<'facet, 'bump, false> = unsafe {
         core::mem::transmute::<
-            facet_reflect::Partial<'_, false>,
-            facet_reflect::Partial<'facet, false>,
+            facet_reflect::Partial<'_, 'bump, false>,
+            facet_reflect::Partial<'facet, 'bump, false>,
         >(partial)
     };
 
@@ -222,6 +229,7 @@ pub fn from_slice_into<'facet>(
 /// use facet::Facet;
 /// use facet_msgpack::from_slice_into_borrowed;
 /// use facet_reflect::Partial;
+/// use bumpalo::Bump;
 ///
 /// #[derive(Facet, Debug, PartialEq)]
 /// struct Message<'a> {
@@ -231,22 +239,24 @@ pub fn from_slice_into<'facet>(
 ///
 /// // MsgPack encoding of {"id": 1, "data": <bin8 with 3 bytes>}
 /// let bytes = &[0x82, 0xa2, b'i', b'd', 0x01, 0xa4, b'd', b'a', b't', b'a', 0xc4, 0x03, 0xAB, 0xCD, 0xEF];
-/// let partial = Partial::alloc::<Message>().unwrap();
-/// let partial = from_slice_into_borrowed(bytes, partial).unwrap();
+/// let bump = Bump::new();
+/// let partial = Partial::alloc::<Message>(&bump).unwrap();
+/// let partial = from_slice_into_borrowed(&bump, bytes, partial).unwrap();
 /// let value = partial.build().unwrap();
 /// let msg: Message = value.materialize().unwrap();
 /// assert_eq!(msg.id, 1);
 /// assert_eq!(msg.data, &[0xAB, 0xCD, 0xEF]);
 /// ```
-pub fn from_slice_into_borrowed<'input, 'facet>(
+pub fn from_slice_into_borrowed<'input, 'facet, 'bump>(
+    bump: &'bump Bump,
     input: &'input [u8],
-    partial: facet_reflect::Partial<'facet, true>,
-) -> Result<facet_reflect::Partial<'facet, true>, DeserializeError>
+    partial: facet_reflect::Partial<'facet, 'bump, true>,
+) -> Result<facet_reflect::Partial<'facet, 'bump, true>, DeserializeError>
 where
     'input: 'facet,
 {
     use facet_format::FormatDeserializer;
     let mut parser = MsgPackParser::new(input);
-    let mut de = FormatDeserializer::new(&mut parser);
+    let mut de = FormatDeserializer::new(bump, &mut parser);
     de.deserialize_into(partial)
 }
