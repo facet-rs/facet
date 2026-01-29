@@ -3,18 +3,16 @@
 //! Instead of repeatedly inspecting Shape/Def at runtime during deserialization,
 //! we build a plan tree once that encodes all the decisions we'll make.
 //!
-//! All allocations (nodes and slices) use bumpalo for fast bump allocation
-//! and excellent cache locality. The caller owns the `Bump` allocator and
-//! passes it to `Partial::alloc`, which builds the `TypePlan` internally.
+//! All allocations use arena-based storage with 32-bit indices instead of 64-bit
+//! pointers, providing the same cache locality benefits as bumpalo while halving
+//! the size of references.
 //!
 //! This design:
-//! - Avoids self-referential structs (Partial borrows from externally-owned Bump)
-//! - Allows reusing the arena across multiple deserializations
-//! - Enables using the arena for other temporary allocations during deserialization
+//! - Avoids self-referential structs (TypePlan owns its arenas)
+//! - Allows reusing the plan across multiple deserializations
+//! - Uses 32-bit indices for compact representation
 
 use alloc::vec::Vec;
-use bumpalo::Bump;
-use bumpalo::collections::Vec as BVec;
 use facet_core::{
     Characteristic, ConstTypeId, Def, DefaultInPlaceFn, DefaultSource, EnumType, Field, ProxyDef,
     ScalarType, SequenceType, Shape, StructType, Type, UserType, ValidatorFn, Variant,
@@ -22,76 +20,74 @@ use facet_core::{
 use hashbrown::HashMap;
 use smallvec::SmallVec;
 
+use super::arena::{Arena, Idx, SliceRange};
 use crate::AllocError;
 
-/// Build a TypePlanCore for the given shape, allocating from the provided bump.
-///
-/// This is the internal builder used by both `TypePlan::build` and `Partial::alloc`.
-#[allow(dead_code)]
-pub(crate) fn build_core<'plan>(
-    bump: &'plan Bump,
-    shape: &'static Shape,
-) -> Result<TypePlanCore<'plan>, AllocError> {
-    build_core_for_format(bump, shape, None)
-}
+/// Type alias for node indices in the TypePlan.
+pub type NodeId = Idx<TypePlanNode>;
 
-/// Build a TypePlanCore with format-specific proxy resolution.
-pub(crate) fn build_core_for_format<'plan>(
-    bump: &'plan Bump,
-    shape: &'static Shape,
-    format_namespace: Option<&'static str>,
-) -> Result<TypePlanCore<'plan>, AllocError> {
-    let mut builder = TypePlanBuilder::new(bump, format_namespace);
-    let root = builder.build_node(shape)?;
-    let node_lookup = builder.into_node_lookup();
+/// Type alias for field plan slice ranges.
+pub type FieldRange = SliceRange<FieldPlan>;
 
-    Ok(TypePlanCore { root, node_lookup })
-}
+/// Type alias for variant plan slice ranges.
+pub type VariantRange = SliceRange<VariantPlanMeta>;
+
+/// Type alias for validator slice ranges.
+pub type ValidatorRange = SliceRange<PrecomputedValidator>;
 
 /// Precomputed deserialization plan tree for a type.
 ///
 /// Built once from a Shape, this encodes all decisions needed during deserialization
-/// without repeated runtime lookups. The `'plan` lifetime ties this to a
-/// bump allocator that owns the underlying allocations.
+/// without repeated runtime lookups. The `TypePlan` owns all its allocations through
+/// internal arenas.
 ///
 /// The type parameter `T` is phantom and provides compile-time type safety:
 /// you cannot accidentally pass a `TypePlan<Foo>` where `TypePlan<Bar>` is expected.
 /// There is no public way to erase the type parameter.
 #[derive(Debug)]
-pub struct TypePlan<'plan, T: ?Sized> {
+pub struct TypePlan<T: ?Sized> {
     /// The actual plan data (type-erased internally)
-    core: TypePlanCore<'plan>,
+    core: TypePlanCore,
     /// Phantom type parameter for compile-time type safety
     _marker: core::marker::PhantomData<fn() -> T>,
 }
 
-/// Type-erased plan data.
+/// Type-erased plan data that owns all allocations.
 ///
-/// This is what `Partial` actually stores. The type safety comes from
-/// the `TypePlan<T>` wrapper at the API boundary. `TypePlanCore` is `Copy`
-/// since it's just two references, allowing it to be stored by value.
+/// This is what `Partial` actually stores a reference to. The type safety comes from
+/// the `TypePlan<T>` wrapper at the API boundary.
 ///
 /// Users should build plans using `TypePlan::<T>::build()` which provides
-/// type safety. The `TypePlanCore` is then extracted via `.core()` for
-/// internal use.
-#[derive(Debug, Clone, Copy)]
-pub struct TypePlanCore<'plan> {
-    /// Root node of the plan tree
-    root: &'plan TypePlanNode<'plan>,
+/// type safety.
+#[derive(Debug)]
+pub struct TypePlanCore {
+    /// Arena of type plan nodes
+    nodes: Arena<TypePlanNode>,
+    /// Arena of field plans (for structs and enum variants)
+    fields: Arena<FieldPlan>,
+    /// Arena of variant metadata (for enums)
+    variants: Arena<VariantPlanMeta>,
+    /// Arena of precomputed validators
+    validators: Arena<PrecomputedValidator>,
+    /// Arena of field lookup entries
+    field_entries: Arena<FieldLookupEntry>,
+    /// Arena of bucket tuples for prefix-based lookup
+    buckets: Arena<(u64, u32, u32)>,
     /// Sorted lookup table for resolving BackRef nodes by TypeId.
-    /// Populated during building, uses binary search for O(log n) resolution.
-    node_lookup: &'plan [(ConstTypeId, &'plan TypePlanNode<'plan>)],
+    node_lookup: Vec<(ConstTypeId, NodeId)>,
+    /// Root node index
+    root: NodeId,
 }
 
 /// A node in the TypePlan tree.
 #[derive(Debug)]
-pub struct TypePlanNode<'plan> {
+pub struct TypePlanNode {
     /// The shape this node was built from
     pub shape: &'static Shape,
     /// What kind of type this is and how to deserialize it
-    pub kind: TypePlanNodeKind<'plan>,
+    pub kind: TypePlanNodeKind,
     /// Precomputed deserialization strategy - tells facet-format exactly what to do
-    pub strategy: DeserStrategy<'plan>,
+    pub strategy: DeserStrategy,
     /// Whether this type has a Default implementation
     pub has_default: bool,
     /// Precomputed proxy for this shape (format-specific or generic)
@@ -100,10 +96,10 @@ pub struct TypePlanNode<'plan> {
 
 /// Precomputed deserialization strategy with all data needed to execute it.
 ///
-/// This is denormalized: we store node references, proxy defs, etc. directly so the
+/// This is denormalized: we store node indices, proxy defs, etc. directly so the
 /// deserializer can follow the plan without chasing pointers through Shape/vtable.
 #[derive(Debug)]
-pub enum DeserStrategy<'plan> {
+pub enum DeserStrategy {
     /// Container-level proxy: the type itself has `#[facet(proxy = X)]`
     ContainerProxy {
         /// The proxy definition containing conversion functions
@@ -111,7 +107,7 @@ pub enum DeserStrategy<'plan> {
         /// The shape of the proxy type (what we deserialize)
         proxy_shape: &'static Shape,
         /// Child node representing the proxy type's structure
-        proxy_node: &'plan TypePlanNode<'plan>,
+        proxy_node: NodeId,
     },
     /// Field-level proxy: the field has `#[facet(proxy = X)]` but the type doesn't
     FieldProxy {
@@ -120,12 +116,12 @@ pub enum DeserStrategy<'plan> {
         /// The shape of the proxy type (what we deserialize)
         proxy_shape: &'static Shape,
         /// Child node representing the proxy type's structure
-        proxy_node: &'plan TypePlanNode<'plan>,
+        proxy_node: NodeId,
     },
     /// Smart pointer (Box, Arc, Rc) with known pointee type
     Pointer {
         /// The pointee type's plan
-        pointee_node: &'plan TypePlanNode<'plan>,
+        pointee_node: NodeId,
     },
     /// Opaque smart pointer (`#[facet(opaque)]`) - cannot be deserialized, only set wholesale
     OpaquePointer,
@@ -134,7 +130,7 @@ pub enum DeserStrategy<'plan> {
     /// Transparent wrapper with try_from (like NonZero)
     TransparentConvert {
         /// The inner type's plan
-        inner_node: &'plan TypePlanNode<'plan>,
+        inner_node: NodeId,
     },
     /// Scalar with FromStr
     Scalar {
@@ -158,40 +154,40 @@ pub enum DeserStrategy<'plan> {
     /// `Option<T>`
     Option {
         /// The Some variant's inner type plan
-        some_node: &'plan TypePlanNode<'plan>,
+        some_node: NodeId,
     },
     /// `Result<T, E>`
     Result {
         /// The Ok variant's type plan
-        ok_node: &'plan TypePlanNode<'plan>,
+        ok_node: NodeId,
         /// The Err variant's type plan
-        err_node: &'plan TypePlanNode<'plan>,
+        err_node: NodeId,
     },
     /// List (Vec, VecDeque, etc.)
     List {
         /// The item type's plan
-        item_node: &'plan TypePlanNode<'plan>,
+        item_node: NodeId,
         /// Whether this is specifically `Vec<u8>` (for optimized byte sequence handling)
         is_byte_vec: bool,
     },
     /// Map (HashMap, BTreeMap, etc.)
     Map {
         /// The key type's plan
-        key_node: &'plan TypePlanNode<'plan>,
+        key_node: NodeId,
         /// The value type's plan
-        value_node: &'plan TypePlanNode<'plan>,
+        value_node: NodeId,
     },
     /// Set (HashSet, BTreeSet, etc.)
     Set {
         /// The item type's plan
-        item_node: &'plan TypePlanNode<'plan>,
+        item_node: NodeId,
     },
     /// Fixed-size array [T; N]
     Array {
         /// Array length
         len: usize,
         /// The item type's plan
-        item_node: &'plan TypePlanNode<'plan>,
+        item_node: NodeId,
     },
     /// DynamicValue (like `facet_value::Value`)
     DynamicValue,
@@ -208,15 +204,15 @@ pub enum DeserStrategy<'plan> {
 /// The specific kind of type and its deserialization strategy.
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)] // Struct/Enum variants are intentionally large
-pub enum TypePlanNodeKind<'plan> {
+pub enum TypePlanNodeKind {
     /// Scalar types (integers, floats, bool, char, strings)
     Scalar,
 
     /// Struct types with named or positional fields
-    Struct(StructPlan<'plan>),
+    Struct(StructPlan),
 
     /// Enum types with variants
-    Enum(EnumPlan<'plan>),
+    Enum(EnumPlan),
 
     /// `Option<T>` - special handling for None/Some
     Option,
@@ -264,14 +260,14 @@ pub enum TypePlanNodeKind<'plan> {
 
 /// Precomputed plan for struct deserialization.
 #[derive(Debug)]
-pub struct StructPlan<'plan> {
+pub struct StructPlan {
     /// Reference to the struct type definition
     pub struct_def: &'static StructType,
     /// Complete plans for each field, indexed by field position.
     /// Combines matching metadata with initialization/validation info.
-    pub fields: &'plan [FieldPlan<'plan>],
+    pub fields: FieldRange,
     /// Fast field lookup by name
-    pub field_lookup: FieldLookup<'plan>,
+    pub field_lookup: FieldLookup,
     /// Whether any field has #[facet(flatten)]
     pub has_flatten: bool,
     /// Whether to reject unknown fields (precomputed from `#[facet(deny_unknown_fields)]`)
@@ -283,7 +279,7 @@ pub struct StructPlan<'plan> {
 /// Combines field matching metadata (name, aliases, type node) with
 /// initialization/validation info (fill rule, validators, offset).
 #[derive(Debug, Clone)]
-pub struct FieldPlan<'plan> {
+pub struct FieldPlan {
     // --- Metadata for matching/lookup ---
     /// Reference to the field definition
     pub field: &'static Field,
@@ -295,8 +291,8 @@ pub struct FieldPlan<'plan> {
     pub alias: Option<&'static str>,
     /// Whether this field is flattened
     pub is_flattened: bool,
-    /// This field's type plan node
-    pub type_node: &'plan TypePlanNode<'plan>,
+    /// This field's type plan node index
+    pub type_node: NodeId,
 
     // --- Initialization/validation ---
     /// Field index in the struct (for ISet tracking)
@@ -308,11 +304,10 @@ pub struct FieldPlan<'plan> {
     /// How to handle this field if not set during deserialization
     pub fill_rule: FillRule,
     /// Validators to run after the field is set (precomputed from attributes)
-    /// Most fields have 0-2 validators, so we inline up to 2.
-    pub validators: &'plan [PrecomputedValidator],
+    pub validators: ValidatorRange,
 }
 
-impl FieldPlan<'_> {
+impl FieldPlan {
     /// Returns true if this field has a default value.
     #[inline]
     pub fn has_default(&self) -> bool {
@@ -327,7 +322,7 @@ impl FieldPlan<'_> {
 }
 
 /// Type alias for backwards compatibility with code expecting FieldInitPlan.
-pub type FieldInitPlan<'plan> = FieldPlan<'plan>;
+pub type FieldInitPlan = FieldPlan;
 
 /// How to fill a field that wasn't set during deserialization.
 #[derive(Debug, Clone)]
@@ -601,77 +596,70 @@ impl PrecomputedValidator {
         }
     }
 
-    /// Get string from field pointer using precomputed scalar type.
-    ///
-    /// # Safety
-    /// The field_ptr must point to valid, initialized memory of the type indicated by scalar_type.
-    /// The returned reference is valid as long as the underlying memory is valid.
-    #[allow(unsafe_code)]
-    unsafe fn get_string<'a>(field_ptr: facet_core::PtrConst, scalar_type: ScalarType) -> &'a str {
-        match scalar_type {
-            ScalarType::String => {
-                let s: &alloc::string::String = unsafe { field_ptr.get() };
-                s.as_str()
-            }
-            ScalarType::Str => {
-                let s: &&str = unsafe { field_ptr.get() };
-                s
-            }
-            ScalarType::CowStr => {
-                let s: &alloc::borrow::Cow<'_, str> = unsafe { field_ptr.get() };
-                s.as_ref()
-            }
-            _ => "", // Should not happen if TypePlan is built correctly
-        }
-    }
-
-    /// Get length of string field using precomputed scalar type.
     #[allow(unsafe_code)]
     fn get_string_length(field_ptr: facet_core::PtrConst, scalar_type: ScalarType) -> usize {
-        unsafe { Self::get_string(field_ptr, scalar_type) }.len()
-    }
-
-    /// Simple email validation (no regex dependency).
-    fn is_valid_email(s: &str) -> bool {
-        // Basic check: has exactly one @, something before and after, and a dot after @
-        let at_pos = s.find('@');
-        if let Some(at) = at_pos {
-            if at == 0 || at == s.len() - 1 {
-                return false;
+        // SAFETY: caller guarantees field_ptr points to valid string data
+        unsafe {
+            match scalar_type {
+                ScalarType::String => (*field_ptr.get::<alloc::string::String>()).len(),
+                ScalarType::CowStr => (*field_ptr.get::<alloc::borrow::Cow<'_, str>>()).len(),
+                _ => 0, // Non-string type
             }
-            let domain = &s[at + 1..];
-            domain.contains('.') && !domain.starts_with('.') && !domain.ends_with('.')
-        } else {
-            false
         }
     }
 
-    /// Simple URL validation (no regex dependency).
+    /// # Safety
+    /// `field_ptr` must point to initialized memory of the given scalar_type.
+    /// The returned reference is only valid while the pointed-to memory is valid.
+    #[allow(unsafe_code)]
+    unsafe fn get_string(field_ptr: facet_core::PtrConst, scalar_type: ScalarType) -> &'static str {
+        // SAFETY: The caller guarantees field_ptr points to valid memory.
+        // We transmute the lifetime to 'static because we need to return a reference
+        // but don't have a lifetime to bind it to. The caller must ensure the reference
+        // is not used after the pointed-to memory is invalidated.
+        match scalar_type {
+            ScalarType::String => {
+                let s: &str = unsafe { (*field_ptr.get::<alloc::string::String>()).as_str() };
+                // SAFETY: The caller ensures the pointed-to memory remains valid for the returned lifetime.
+                unsafe { core::mem::transmute::<&str, &'static str>(s) }
+            }
+            ScalarType::CowStr => {
+                let s: &str = unsafe { (*field_ptr.get::<alloc::borrow::Cow<'_, str>>()).as_ref() };
+                // SAFETY: The caller ensures the pointed-to memory remains valid for the returned lifetime.
+                unsafe { core::mem::transmute::<&str, &'static str>(s) }
+            }
+            _ => "", // Non-string type
+        }
+    }
+
+    fn is_valid_email(s: &str) -> bool {
+        // Simple email validation: contains exactly one @ with text on both sides
+        let parts: Vec<&str> = s.split('@').collect();
+        parts.len() == 2 && !parts[0].is_empty() && !parts[1].is_empty() && parts[1].contains('.')
+    }
+
     fn is_valid_url(s: &str) -> bool {
+        // Simple URL validation: starts with http:// or https://
         s.starts_with("http://") || s.starts_with("https://")
     }
 
-    /// Pattern matching - requires regex feature.
-    #[cfg(feature = "regex")]
     fn matches_pattern(s: &str, pattern: &str) -> bool {
-        regex::Regex::new(pattern)
-            .map(|re| re.is_match(s))
-            .unwrap_or(false)
-    }
-
-    #[cfg(not(feature = "regex"))]
-    fn matches_pattern(_s: &str, _pattern: &str) -> bool {
-        // Without regex feature, pattern matching always fails
-        // This should be caught at compile time by not enabling the feature
-        false
+        // Use regex crate if available, otherwise basic substring match
+        #[cfg(feature = "regex")]
+        {
+            regex::Regex::new(pattern)
+                .map(|re| re.is_match(s))
+                .unwrap_or(false)
+        }
+        #[cfg(not(feature = "regex"))]
+        {
+            // Fallback: treat pattern as literal substring
+            s.contains(pattern)
+        }
     }
 }
 
-/// Kinds of validators with their precomputed data.
-///
-/// Each variant stores not just the constraint but also the `ScalarType` needed
-/// to read the value. This is determined at TypePlan build time, eliminating
-/// runtime type detection during validation.
+/// The kind of validation to perform on a field.
 #[derive(Debug, Clone, Copy)]
 pub enum ValidatorKind {
     /// Custom validator function
@@ -732,13 +720,13 @@ pub enum ValidatorKind {
 
 /// Precomputed plan for enum deserialization.
 #[derive(Debug)]
-pub struct EnumPlan<'plan> {
+pub struct EnumPlan {
     /// Reference to the enum type definition
     pub enum_def: &'static EnumType,
     /// Plans for each variant
-    pub variants: &'plan [VariantPlanMeta<'plan>],
+    pub variants: VariantRange,
     /// Fast variant lookup by name
-    pub variant_lookup: VariantLookup<'plan>,
+    pub variant_lookup: VariantLookup,
     /// Number of variants
     pub num_variants: usize,
     /// Index of the `#[facet(other)]` variant, if any
@@ -747,15 +735,15 @@ pub struct EnumPlan<'plan> {
 
 /// Metadata for a single enum variant.
 #[derive(Debug, Clone)]
-pub struct VariantPlanMeta<'plan> {
+pub struct VariantPlanMeta {
     /// Reference to the variant definition
     pub variant: &'static Variant,
     /// Variant name
     pub name: &'static str,
     /// Complete field plans for this variant
-    pub fields: &'plan [FieldPlan<'plan>],
+    pub fields: FieldRange,
     /// Fast field lookup for this variant
-    pub field_lookup: FieldLookup<'plan>,
+    pub field_lookup: FieldLookup,
     /// Whether any field in this variant has #[facet(flatten)]
     pub has_flatten: bool,
 }
@@ -767,7 +755,7 @@ pub struct VariantPlanMeta<'plan> {
 /// - Large (>8 fields): prefix-based dispatch (like JIT) - group by first N bytes
 #[derive(Debug, Clone)]
 #[allow(clippy::large_enum_variant)] // SmallVec is intentionally inline
-pub enum FieldLookup<'plan> {
+pub enum FieldLookup {
     /// For small structs: just store (name, index) pairs
     /// Capped at LOOKUP_THRESHOLD (8) entries, so we inline all of them.
     Small(SmallVec<FieldLookupEntry, 16>),
@@ -776,10 +764,10 @@ pub enum FieldLookup<'plan> {
     PrefixBuckets {
         /// Prefix length in bytes (4 or 8)
         prefix_len: usize,
-        /// All entries, grouped by prefix
-        entries: &'plan [FieldLookupEntry],
-        /// (prefix, start_index, count) sorted by prefix
-        buckets: &'plan [(u64, u32, u32)],
+        /// All entries, grouped by prefix (range into field_entries arena)
+        entries: SliceRange<FieldLookupEntry>,
+        /// (prefix, start_index, count) sorted by prefix (range into buckets arena)
+        buckets: SliceRange<(u64, u32, u32)>,
     },
 }
 
@@ -797,11 +785,11 @@ pub struct FieldLookupEntry {
 /// Fast lookup from variant name to variant index.
 #[derive(Debug, Clone)]
 #[allow(clippy::large_enum_variant)] // SmallVec is intentionally inline
-pub enum VariantLookup<'plan> {
+pub enum VariantLookup {
     /// For small enums: linear scan (most enums have ≤8 variants)
     Small(SmallVec<(&'static str, usize), 8>),
-    /// For larger enums: sorted for binary search
-    Sorted(&'plan [(&'static str, usize)]),
+    /// For larger enums: sorted for binary search (range into buckets arena repurposed)
+    Sorted(Vec<(&'static str, usize)>),
 }
 
 // Threshold for switching from linear to prefix-based lookup
@@ -820,112 +808,10 @@ fn compute_prefix(name: &str, prefix_len: usize) -> u64 {
     prefix
 }
 
-impl<'plan> FieldLookup<'plan> {
-    /// Create a new field lookup from field plans, allocating from the bump.
-    pub fn new_in(bump: &'plan Bump, fields: &[FieldPlan<'plan>]) -> Self {
-        let mut entries = BVec::with_capacity_in(fields.len() * 2, bump);
-
-        for (index, field_plan) in fields.iter().enumerate() {
-            // Add primary name
-            entries.push(FieldLookupEntry {
-                name: field_plan.effective_name,
-                index,
-                is_alias: false,
-            });
-
-            // Add alias if present
-            if let Some(alias) = field_plan.alias {
-                entries.push(FieldLookupEntry {
-                    name: alias,
-                    index,
-                    is_alias: true,
-                });
-            }
-        }
-
-        Self::from_entries_in(bump, entries)
-    }
-
-    /// Create a field lookup directly from a struct type definition.
-    ///
-    /// This is a lightweight alternative to building a full `StructPlan` when
-    /// only field lookup is needed - it doesn't recursively build TypePlans
-    /// for child fields.
-    pub fn from_struct_type_in(bump: &'plan Bump, struct_def: &'static StructType) -> Self {
-        let mut entries = BVec::with_capacity_in(struct_def.fields.len() * 2, bump);
-
-        for (index, field) in struct_def.fields.iter().enumerate() {
-            // Add primary name (effective_name considers rename)
-            entries.push(FieldLookupEntry {
-                name: field.effective_name(),
-                index,
-                is_alias: false,
-            });
-
-            // Add alias if present
-            if let Some(alias) = field.alias {
-                entries.push(FieldLookupEntry {
-                    name: alias,
-                    index,
-                    is_alias: true,
-                });
-            }
-        }
-
-        Self::from_entries_in(bump, entries)
-    }
-
-    /// Build lookup structure from entries, allocating from the bump.
-    pub fn from_entries_in(bump: &'plan Bump, entries: BVec<'plan, FieldLookupEntry>) -> Self {
-        let total_entries = entries.len();
-        if total_entries <= LOOKUP_THRESHOLD {
-            return FieldLookup::Small(entries.into_iter().collect());
-        }
-
-        // Choose prefix length: 8 bytes if most keys are long, otherwise 4
-        // Short keys get zero-padded, which is fine - they'll have unique prefixes
-        let long_key_count = entries.iter().filter(|e| e.name.len() >= 8).count();
-        let prefix_len = if long_key_count > total_entries / 2 {
-            8
-        } else {
-            4
-        };
-
-        // Group entries by prefix using bumpalo HashMap
-        let mut prefix_map: hashbrown::HashMap<u64, BVec<'plan, FieldLookupEntry>> =
-            hashbrown::HashMap::new();
-        for entry in entries {
-            let prefix = compute_prefix(entry.name, prefix_len);
-            prefix_map
-                .entry(prefix)
-                .or_insert_with(|| BVec::new_in(bump))
-                .push(entry);
-        }
-
-        // Build sorted bucket list and flattened entries
-        let mut bucket_list: Vec<_> = prefix_map.into_iter().collect();
-        bucket_list.sort_by_key(|(prefix, _)| *prefix);
-
-        let mut all_entries = BVec::with_capacity_in(total_entries, bump);
-        let mut buckets = BVec::with_capacity_in(bucket_list.len(), bump);
-
-        for (prefix, bucket_entries) in bucket_list {
-            let start = all_entries.len() as u32;
-            let count = bucket_entries.len() as u32;
-            buckets.push((prefix, start, count));
-            all_entries.extend(bucket_entries);
-        }
-
-        FieldLookup::PrefixBuckets {
-            prefix_len,
-            entries: all_entries.into_bump_slice(),
-            buckets: buckets.into_bump_slice(),
-        }
-    }
-
+impl FieldLookup {
     /// Find a field index by name.
     #[inline]
-    pub fn find(&self, name: &str) -> Option<usize> {
+    pub fn find(&self, name: &str, core: &TypePlanCore) -> Option<usize> {
         match self {
             FieldLookup::Small(entries) => entries.iter().find(|e| e.name == name).map(|e| e.index),
             FieldLookup::PrefixBuckets {
@@ -935,16 +821,32 @@ impl<'plan> FieldLookup<'plan> {
             } => {
                 let prefix = compute_prefix(name, *prefix_len);
 
-                // Binary search for bucket
-                let bucket_idx = buckets.binary_search_by_key(&prefix, |(p, _, _)| *p).ok()?;
-                let (_, start, count) = buckets[bucket_idx];
+                // Get the bucket slice from arena
+                let bucket_slice = core.buckets.get_slice(*buckets);
+                let bucket_idx = bucket_slice
+                    .binary_search_by_key(&prefix, |(p, _, _)| *p)
+                    .ok()?;
+                let (_, start, count) = bucket_slice[bucket_idx];
 
-                // Linear scan within bucket
-                let bucket_entries = &entries[start as usize..(start + count) as usize];
+                // Get entries slice from arena
+                let all_entries = core.field_entries.get_slice(*entries);
+                let bucket_entries = &all_entries[start as usize..(start + count) as usize];
                 bucket_entries
                     .iter()
                     .find(|e| e.name == name)
                     .map(|e| e.index)
+            }
+        }
+    }
+
+    /// Find a field index by name (standalone version for Small lookup only).
+    /// For use in tests and contexts without TypePlanCore access.
+    #[inline]
+    pub fn find_small(&self, name: &str) -> Option<usize> {
+        match self {
+            FieldLookup::Small(entries) => entries.iter().find(|e| e.name == name).map(|e| e.index),
+            FieldLookup::PrefixBuckets { .. } => {
+                panic!("find_small called on PrefixBuckets - use find() with TypePlanCore")
             }
         }
     }
@@ -959,40 +861,7 @@ impl<'plan> FieldLookup<'plan> {
     }
 }
 
-impl<'plan> VariantLookup<'plan> {
-    /// Create a new variant lookup from variant metadata, allocating from the bump.
-    pub fn new_in(bump: &'plan Bump, variants: &[VariantPlanMeta<'plan>]) -> Self {
-        let mut entries = BVec::with_capacity_in(variants.len(), bump);
-        for (i, v) in variants.iter().enumerate() {
-            entries.push((v.name, i));
-        }
-
-        if entries.len() <= LOOKUP_THRESHOLD {
-            VariantLookup::Small(entries.into_iter().collect())
-        } else {
-            entries.sort_by_key(|(name, _)| *name);
-            VariantLookup::Sorted(entries.into_bump_slice())
-        }
-    }
-
-    /// Create a variant lookup directly from an enum type definition.
-    ///
-    /// This is a lightweight alternative to building a full `EnumPlan` when
-    /// only variant lookup is needed.
-    pub fn from_enum_type_in(bump: &'plan Bump, enum_def: &'static EnumType) -> Self {
-        let mut entries = BVec::with_capacity_in(enum_def.variants.len(), bump);
-        for (i, v) in enum_def.variants.iter().enumerate() {
-            entries.push((v.name, i));
-        }
-
-        if entries.len() <= LOOKUP_THRESHOLD {
-            VariantLookup::Small(entries.into_iter().collect())
-        } else {
-            entries.sort_by_key(|(name, _)| *name);
-            VariantLookup::Sorted(entries.into_bump_slice())
-        }
-    }
-
+impl VariantLookup {
     /// Find a variant index by name.
     #[inline]
     pub fn find(&self, name: &str) -> Option<usize> {
@@ -1009,42 +878,64 @@ impl<'plan> VariantLookup<'plan> {
 }
 
 /// Builder context for TypePlan construction.
-struct TypePlanBuilder<'plan> {
-    bump: &'plan Bump,
+struct TypePlanBuilder {
+    /// Arena for nodes
+    nodes: Arena<TypePlanNode>,
+    /// Arena for field plans
+    fields: Arena<FieldPlan>,
+    /// Arena for variant metadata
+    variants: Arena<VariantPlanMeta>,
+    /// Arena for validators
+    validators: Arena<PrecomputedValidator>,
+    /// Arena for field lookup entries
+    field_entries: Arena<FieldLookupEntry>,
+    /// Arena for bucket tuples
+    buckets: Arena<(u64, u32, u32)>,
     /// Types we're currently building (for cycle detection).
     /// Added when we START building a node.
     building: hashbrown::HashSet<ConstTypeId>,
     /// Finished nodes, keyed by TypeId.
     /// Added when we FINISH building a node.
-    finished: HashMap<ConstTypeId, &'plan TypePlanNode<'plan>>,
+    finished: HashMap<ConstTypeId, NodeId>,
     /// Format namespace for resolving format-specific proxies (e.g., "json", "xml")
     format_namespace: Option<&'static str>,
 }
 
-impl<'plan> TypePlanBuilder<'plan> {
-    fn new(bump: &'plan Bump, format_namespace: Option<&'static str>) -> Self {
+impl TypePlanBuilder {
+    fn new(format_namespace: Option<&'static str>) -> Self {
         Self {
-            bump,
+            nodes: Arena::new(),
+            fields: Arena::new(),
+            variants: Arena::new(),
+            validators: Arena::new(),
+            field_entries: Arena::new(),
+            buckets: Arena::new(),
             building: hashbrown::HashSet::new(),
             finished: HashMap::new(),
             format_namespace,
         }
     }
 
-    /// Convert finished map into a sorted slice for TypePlan.
-    /// The HashMap is consumed and its entries are sorted by TypeId for binary search.
-    fn into_node_lookup(self) -> &'plan [(ConstTypeId, &'plan TypePlanNode<'plan>)] {
-        let mut entries: BVec<'plan, _> = BVec::from_iter_in(self.finished, self.bump);
-        entries.sort_by_key(|(id, _)| *id);
-        entries.into_bump_slice()
+    /// Finalize the builder into a TypePlanCore.
+    fn finish(self, root: NodeId) -> TypePlanCore {
+        let mut node_lookup: Vec<_> = self.finished.into_iter().collect();
+        node_lookup.sort_by_key(|(id, _)| *id);
+
+        TypePlanCore {
+            nodes: self.nodes,
+            fields: self.fields,
+            variants: self.variants,
+            validators: self.validators,
+            field_entries: self.field_entries,
+            buckets: self.buckets,
+            node_lookup,
+            root,
+        }
     }
 
-    /// Build a node for a shape, returning a reference to it.
+    /// Build a node for a shape, returning its index.
     /// Uses the shape's own proxy if present (container-level proxy).
-    fn build_node(
-        &mut self,
-        shape: &'static Shape,
-    ) -> Result<&'plan TypePlanNode<'plan>, AllocError> {
+    fn build_node(&mut self, shape: &'static Shape) -> Result<NodeId, AllocError> {
         // No field-level proxy when building directly - container proxy will be detected
         // inside build_node_with_proxy from the shape itself
         self.build_node_with_proxy(shape, None)
@@ -1052,22 +943,11 @@ impl<'plan> TypePlanBuilder<'plan> {
 
     /// Build a node for a shape with an optional explicit proxy override.
     /// Used for field-level proxies where the proxy is on the field, not the type.
-    ///
-    /// If `explicit_proxy` is Some, it overrides the shape's own proxy.
-    /// If `explicit_proxy` is None, we check the shape's own proxy.
-    ///
-    /// The node stores:
-    /// - `shape`: the original type (conversion target, for metadata)
-    /// - `kind`: built from the original shape (not the proxy)
-    /// - `proxy`: proxy definition (for conversion detection)
-    ///
-    /// If a proxy is present, a child node is built for the proxy type, and the
-    /// strategy includes the child's reference so the deserializer can navigate to it.
     fn build_node_with_proxy(
         &mut self,
         shape: &'static Shape,
         field_proxy: Option<&'static ProxyDef>,
-    ) -> Result<&'plan TypePlanNode<'plan>, AllocError> {
+    ) -> Result<NodeId, AllocError> {
         let type_id = shape.id;
 
         // Get container-level proxy (from the type itself)
@@ -1078,8 +958,8 @@ impl<'plan> TypePlanBuilder<'plan> {
 
         // Check if we're currently building this type (cycle detected)
         if self.building.contains(&type_id) {
-            // Create a BackRef node with just the TypeId - resolved later via HashMap
-            let backref_node = self.bump.alloc(TypePlanNode {
+            // Create a BackRef node with just the TypeId - resolved later via lookup
+            let backref_node = TypePlanNode {
                 shape,
                 kind: TypePlanNodeKind::BackRef(type_id),
                 strategy: DeserStrategy::BackRef {
@@ -1087,8 +967,9 @@ impl<'plan> TypePlanBuilder<'plan> {
                 },
                 has_default: shape.is(Characteristic::Default),
                 proxy: effective_proxy,
-            });
-            return Ok(backref_node);
+            };
+            let idx = self.nodes.alloc(backref_node);
+            return Ok(idx);
         }
 
         // Mark this type as being built (for cycle detection)
@@ -1113,35 +994,33 @@ impl<'plan> TypePlanBuilder<'plan> {
         )?;
 
         // Now allocate the node with final values (no mutation needed!)
-        let node = self.bump.alloc(TypePlanNode {
+        let node = TypePlanNode {
             shape,
             kind,
             strategy,
             has_default: shape.is(Characteristic::Default),
             proxy: effective_proxy,
-        });
+        };
+        let idx = self.nodes.alloc(node);
 
         // Done building - move from building set to finished map
         self.building.remove(&type_id);
-        self.finished.insert(type_id, node);
+        self.finished.insert(type_id, idx);
 
-        Ok(node)
+        Ok(idx)
     }
 
     /// Compute the deserialization strategy with all data needed to execute it.
-    ///
-    /// `proxy_node` is the reference to the child node for the proxy type (if any).
-    /// `children` contains the child node references built by `build_kind`.
     fn compute_strategy(
         &self,
         shape: &'static Shape,
-        kind: &TypePlanNodeKind<'plan>,
+        kind: &TypePlanNodeKind,
         proxy: Option<&'static ProxyDef>,
         explicit_field_proxy: Option<&'static ProxyDef>,
-        proxy_node: Option<&'plan TypePlanNode<'plan>>,
-        children: &[&'plan TypePlanNode<'plan>],
-    ) -> Result<DeserStrategy<'plan>, AllocError> {
-        let nth_child = |n: usize| -> &'plan TypePlanNode<'plan> { children[n] };
+        proxy_node: Option<NodeId>,
+        children: &[NodeId],
+    ) -> Result<DeserStrategy, AllocError> {
+        let nth_child = |n: usize| -> NodeId { children[n] };
         let first_child = || children[0];
 
         // Priority 1: Field-level proxy (field has proxy, type doesn't)
@@ -1170,7 +1049,6 @@ impl<'plan> TypePlanBuilder<'plan> {
         }
 
         // Priority 4: Metadata containers (like Spanned<T>, Documented<T>)
-        // These require field-by-field handling for metadata population
         if shape.is_metadata_container() {
             return Ok(DeserStrategy::MetadataContainer);
         }
@@ -1281,11 +1159,11 @@ impl<'plan> TypePlanBuilder<'plan> {
         })
     }
 
-    /// Build the TypePlanNodeKind for a shape and return child node refs for compute_strategy.
+    /// Build the TypePlanNodeKind for a shape and return child node indices for compute_strategy.
     fn build_kind(
         &mut self,
         shape: &'static Shape,
-    ) -> Result<(TypePlanNodeKind<'plan>, Vec<&'plan TypePlanNode<'plan>>), AllocError> {
+    ) -> Result<(TypePlanNodeKind, Vec<NodeId>), AllocError> {
         let mut children = Vec::new();
 
         // Check shape.def first - this tells us the semantic meaning of the type
@@ -1387,8 +1265,8 @@ impl<'plan> TypePlanBuilder<'plan> {
         &mut self,
         shape: &'static Shape,
         struct_def: &'static StructType,
-    ) -> Result<StructPlan<'plan>, AllocError> {
-        let mut fields = BVec::with_capacity_in(struct_def.fields.len(), self.bump);
+    ) -> Result<StructPlan, AllocError> {
+        let mut field_plans = Vec::with_capacity(struct_def.fields.len());
 
         // Check if the container struct has #[facet(default)]
         let container_has_default = shape.is(Characteristic::Default);
@@ -1403,28 +1281,134 @@ impl<'plan> TypePlanBuilder<'plan> {
             let fill_rule = Self::determine_fill_rule(field, container_has_default);
 
             // Create unified field plan
-            fields.push(FieldPlan::new(
-                index, field, child_node, fill_rule, validators,
-            ));
+            field_plans
+                .push(self.create_field_plan(index, field, child_node, fill_rule, validators));
         }
 
-        let fields_slice = fields.into_bump_slice();
-        let has_flatten = fields_slice.iter().any(|f| f.is_flattened);
-        let field_lookup = FieldLookup::new_in(self.bump, fields_slice);
+        // Allocate fields into arena
+        let has_flatten = field_plans.iter().any(|f| f.is_flattened);
+        let fields = self.fields.alloc_extend(field_plans.iter().cloned());
+
+        // Build field lookup
+        let field_lookup = self.build_field_lookup(&field_plans);
+
         // Precompute deny_unknown_fields from shape attributes (avoids runtime attribute scanning)
         let deny_unknown_fields = shape.has_deny_unknown_fields_attr();
 
         Ok(StructPlan {
             struct_def,
-            fields: fields_slice,
+            fields,
             field_lookup,
             has_flatten,
             deny_unknown_fields,
         })
     }
 
+    /// Create a FieldPlan from its components.
+    fn create_field_plan(
+        &mut self,
+        index: usize,
+        field: &'static Field,
+        type_node: NodeId,
+        fill_rule: FillRule,
+        validators: ValidatorRange,
+    ) -> FieldPlan {
+        let name = field.name;
+        let effective_name = field.effective_name();
+        let alias = field.alias;
+        let is_flattened = field.is_flattened();
+
+        FieldPlan {
+            // Metadata for matching/lookup
+            field,
+            name,
+            effective_name,
+            alias,
+            is_flattened,
+            type_node,
+            // Initialization/validation
+            index,
+            offset: field.offset,
+            field_shape: field.shape(),
+            fill_rule,
+            validators,
+        }
+    }
+
+    /// Build a field lookup from field plans.
+    fn build_field_lookup(&mut self, field_plans: &[FieldPlan]) -> FieldLookup {
+        let mut entries: Vec<FieldLookupEntry> = Vec::with_capacity(field_plans.len() * 2);
+
+        for (index, field_plan) in field_plans.iter().enumerate() {
+            // Add primary name
+            entries.push(FieldLookupEntry {
+                name: field_plan.effective_name,
+                index,
+                is_alias: false,
+            });
+
+            // Add alias if present
+            if let Some(alias) = field_plan.alias {
+                entries.push(FieldLookupEntry {
+                    name: alias,
+                    index,
+                    is_alias: true,
+                });
+            }
+        }
+
+        self.build_field_lookup_from_entries(entries)
+    }
+
+    /// Build lookup structure from entries.
+    fn build_field_lookup_from_entries(&mut self, entries: Vec<FieldLookupEntry>) -> FieldLookup {
+        let total_entries = entries.len();
+        if total_entries <= LOOKUP_THRESHOLD {
+            return FieldLookup::Small(entries.into_iter().collect());
+        }
+
+        // Choose prefix length: 8 bytes if most keys are long, otherwise 4
+        let long_key_count = entries.iter().filter(|e| e.name.len() >= 8).count();
+        let prefix_len = if long_key_count > total_entries / 2 {
+            8
+        } else {
+            4
+        };
+
+        // Group entries by prefix
+        let mut prefix_map: hashbrown::HashMap<u64, Vec<FieldLookupEntry>> =
+            hashbrown::HashMap::new();
+        for entry in entries {
+            let prefix = compute_prefix(entry.name, prefix_len);
+            prefix_map.entry(prefix).or_default().push(entry);
+        }
+
+        // Build sorted bucket list and flattened entries
+        let mut bucket_list: Vec<_> = prefix_map.into_iter().collect();
+        bucket_list.sort_by_key(|(prefix, _)| *prefix);
+
+        let mut all_entries = Vec::with_capacity(total_entries);
+        let mut bucket_data = Vec::with_capacity(bucket_list.len());
+
+        for (prefix, bucket_entries) in bucket_list {
+            let start = all_entries.len() as u32;
+            let count = bucket_entries.len() as u32;
+            bucket_data.push((prefix, start, count));
+            all_entries.extend(bucket_entries);
+        }
+
+        // Allocate into arenas
+        let entries_range = self.field_entries.alloc_extend(all_entries);
+        let buckets_range = self.buckets.alloc_extend(bucket_data);
+
+        FieldLookup::PrefixBuckets {
+            prefix_len,
+            entries: entries_range,
+            buckets: buckets_range,
+        }
+    }
+
     /// Determine how to fill a field that wasn't set.
-    /// Every field is either Defaultable or Required.
     fn determine_fill_rule(field: &'static Field, container_has_default: bool) -> FillRule {
         let field_shape = field.shape();
 
@@ -1444,7 +1428,6 @@ impl<'plan> TypePlanBuilder<'plan> {
         }
 
         // Skipped fields MUST have a default (they're never deserialized)
-        // If the type implements Default, use that
         if field.should_skip_deserializing() && field_shape.is(Characteristic::Default) {
             return FillRule::Defaultable(FieldDefault::FromTrait(field_shape));
         }
@@ -1464,14 +1447,12 @@ impl<'plan> TypePlanBuilder<'plan> {
         }
 
         // Field is required - must be set during deserialization
-        // Note: For skipped fields without Default, this will cause an error
-        // at deserialization time (which is correct - it's a logic error)
         FillRule::Required
     }
 
-    /// Extract validators from field attributes, allocating from the bump.
-    fn extract_validators(&self, field: &'static Field) -> &'plan [PrecomputedValidator] {
-        let mut validators = BVec::new_in(self.bump);
+    /// Extract validators from field attributes.
+    fn extract_validators(&mut self, field: &'static Field) -> ValidatorRange {
+        let mut validators = Vec::new();
         let field_shape = field.shape();
         // Precompute scalar type once - used by validators that need it
         let scalar_type = field_shape.scalar_type();
@@ -1491,7 +1472,6 @@ impl<'plan> TypePlanBuilder<'plan> {
                     let limit = *attr
                         .get_as::<i64>()
                         .expect("validate::min attribute must contain i64");
-                    // For numeric validators, scalar_type must be a numeric type
                     let scalar_type =
                         scalar_type.expect("validate::min requires numeric field type");
                     ValidatorKind::Min { limit, scalar_type }
@@ -1558,18 +1538,15 @@ impl<'plan> TypePlanBuilder<'plan> {
             validators.push(PrecomputedValidator { kind });
         }
 
-        validators.into_bump_slice()
+        self.validators.alloc_extend(validators)
     }
 
     /// Build an EnumPlan with all field plans for each variant.
-    fn build_enum_plan(
-        &mut self,
-        enum_def: &'static EnumType,
-    ) -> Result<EnumPlan<'plan>, AllocError> {
-        let mut variants = BVec::with_capacity_in(enum_def.variants.len(), self.bump);
+    fn build_enum_plan(&mut self, enum_def: &'static EnumType) -> Result<EnumPlan, AllocError> {
+        let mut variant_metas = Vec::with_capacity(enum_def.variants.len());
 
         for variant in enum_def.variants.iter() {
-            let mut fields = BVec::with_capacity_in(variant.data.fields.len(), self.bump);
+            let mut field_plans = Vec::with_capacity(variant.data.fields.len());
 
             for (index, field) in variant.data.fields.iter().enumerate() {
                 // Build the type plan node for this field
@@ -1581,131 +1558,158 @@ impl<'plan> TypePlanBuilder<'plan> {
                 let fill_rule = Self::determine_fill_rule(field, false);
 
                 // Create unified field plan
-                fields.push(FieldPlan::new(
-                    index, field, child_node, fill_rule, validators,
-                ));
+                field_plans
+                    .push(self.create_field_plan(index, field, child_node, fill_rule, validators));
             }
 
-            let fields_slice = fields.into_bump_slice();
-            let field_lookup = FieldLookup::new_in(self.bump, fields_slice);
-            let has_flatten = fields_slice.iter().any(|f| f.is_flattened);
+            let has_flatten = field_plans.iter().any(|f| f.is_flattened);
+            let fields = self.fields.alloc_extend(field_plans.iter().cloned());
+            let field_lookup = self.build_field_lookup(&field_plans);
 
-            variants.push(VariantPlanMeta {
+            variant_metas.push(VariantPlanMeta {
                 variant,
                 name: variant.effective_name(),
-                fields: fields_slice,
+                fields,
                 field_lookup,
                 has_flatten,
             });
         }
 
-        let variants_slice = variants.into_bump_slice();
-        let variant_lookup = VariantLookup::new_in(self.bump, variants_slice);
-        let num_variants = variants_slice.len();
+        let variants = self.variants.alloc_extend(variant_metas.iter().cloned());
+        let variant_lookup = self.build_variant_lookup(&variant_metas);
+        let num_variants = variant_metas.len();
 
         // Find the index of the #[facet(other)] variant, if any
-        let other_variant_idx = variants_slice.iter().position(|v| v.variant.is_other());
+        let other_variant_idx = variant_metas.iter().position(|v| v.variant.is_other());
 
         Ok(EnumPlan {
             enum_def,
-            variants: variants_slice,
+            variants,
             variant_lookup,
             num_variants,
             other_variant_idx,
         })
     }
-}
 
-impl<'plan> FieldPlan<'plan> {
-    /// Build a complete field plan from a Field, its type plan node, and initialization info.
-    fn new(
-        index: usize,
-        field: &'static Field,
-        type_node: &'plan TypePlanNode<'plan>,
-        fill_rule: FillRule,
-        validators: &'plan [PrecomputedValidator],
-    ) -> Self {
-        let name = field.name;
-        let effective_name = field.effective_name();
-        let alias = field.alias;
-        let is_flattened = field.is_flattened();
+    /// Build a variant lookup from variant metadata.
+    fn build_variant_lookup(&self, variants: &[VariantPlanMeta]) -> VariantLookup {
+        let entries: Vec<_> = variants
+            .iter()
+            .enumerate()
+            .map(|(i, v)| (v.name, i))
+            .collect();
 
-        FieldPlan {
-            // Metadata for matching/lookup
-            field,
-            name,
-            effective_name,
-            alias,
-            is_flattened,
-            type_node,
-            // Initialization/validation
-            index,
-            offset: field.offset,
-            field_shape: field.shape(),
-            fill_rule,
-            validators,
+        if entries.len() <= LOOKUP_THRESHOLD {
+            VariantLookup::Small(entries.into_iter().collect())
+        } else {
+            let mut sorted = entries;
+            sorted.sort_by_key(|(name, _)| *name);
+            VariantLookup::Sorted(sorted)
         }
     }
 }
 
-impl<'facet, 'plan, T: facet_core::Facet<'facet> + ?Sized> TypePlan<'plan, T> {
-    /// Build a TypePlan for type `T`, allocating from the provided bump allocator.
+impl<'facet, T: facet_core::Facet<'facet> + ?Sized> TypePlan<T> {
+    /// Build a TypePlan for type `T`.
     ///
     /// The type parameter provides compile-time safety: you cannot accidentally
     /// pass a `TypePlan<Foo>` where `TypePlan<Bar>` is expected.
     ///
+    /// Note: TypePlan can be built for any `Facet<'_>` type because the `SHAPE`
+    /// is always `'static`. The lifetime parameter on `Facet` only affects the
+    /// runtime deserialized values, not the type metadata.
+    ///
     /// # Example
     ///
     /// ```ignore
-    /// use bumpalo::Bump;
     /// use facet_reflect::TypePlan;
     ///
-    /// let bump = Bump::new();
-    /// let plan = TypePlan::<MyStruct>::build(&bump)?;
+    /// let plan = TypePlan::<MyStruct>::build()?;
     /// ```
-    pub fn build(bump: &'plan Bump) -> Result<Self, AllocError> {
-        Self::build_for_format(bump, None)
+    pub fn build() -> Result<Self, AllocError> {
+        Self::build_for_format(None)
     }
 
     /// Build a TypePlan with format-specific proxy resolution.
     ///
     /// The `format_namespace` (e.g., `Some("json")`, `Some("xml")`) is used to resolve
     /// format-specific proxies like `#[facet(json::proxy = ...)]`.
-    pub fn build_for_format(
-        bump: &'plan Bump,
-        format_namespace: Option<&'static str>,
-    ) -> Result<Self, AllocError> {
-        let core = build_core_for_format(bump, T::SHAPE, format_namespace)?;
+    pub fn build_for_format(format_namespace: Option<&'static str>) -> Result<Self, AllocError> {
+        let mut builder = TypePlanBuilder::new(format_namespace);
+        let root = builder.build_node(T::SHAPE)?;
+        let core = builder.finish(root);
+
         Ok(TypePlan {
             core,
             _marker: core::marker::PhantomData,
         })
     }
 
-    /// Get the internal core (for use by Partial).
-    /// Returns by value since TypePlanCore is Copy.
+    /// Get a reference to the internal core.
     #[inline]
-    pub(crate) fn core(&self) -> TypePlanCore<'plan> {
-        self.core
+    pub fn core(&self) -> &TypePlanCore {
+        &self.core
     }
 
     /// Get the root node.
     #[inline]
-    pub fn root(&self) -> &'plan TypePlanNode<'plan> {
+    pub fn root(&self) -> &TypePlanNode {
         self.core.root()
     }
 }
 
-impl<'plan> TypePlanCore<'plan> {
+impl TypePlanCore {
     /// Get the root node.
     #[inline]
-    pub fn root(&self) -> &'plan TypePlanNode<'plan> {
+    pub fn root(&self) -> &TypePlanNode {
+        self.node(self.root)
+    }
+
+    /// Get the root node index.
+    #[inline]
+    pub fn root_id(&self) -> NodeId {
         self.root
+    }
+
+    /// Get a node by its index.
+    #[inline]
+    pub fn node(&self, idx: NodeId) -> &TypePlanNode {
+        self.nodes.get(idx)
+    }
+
+    /// Get a field by its index.
+    #[inline]
+    pub fn field(&self, idx: Idx<FieldPlan>) -> &FieldPlan {
+        self.fields.get(idx)
+    }
+
+    /// Get a slice of fields from a range.
+    #[inline]
+    pub fn fields(&self, range: FieldRange) -> &[FieldPlan] {
+        self.fields.get_slice(range)
+    }
+
+    /// Get a variant by its index.
+    #[inline]
+    pub fn variant(&self, idx: Idx<VariantPlanMeta>) -> &VariantPlanMeta {
+        self.variants.get(idx)
+    }
+
+    /// Get a slice of variants from a range.
+    #[inline]
+    pub fn variants(&self, range: VariantRange) -> &[VariantPlanMeta] {
+        self.variants.get_slice(range)
+    }
+
+    /// Get a slice of validators from a range.
+    #[inline]
+    pub fn validators(&self, range: ValidatorRange) -> &[PrecomputedValidator] {
+        self.validators.get_slice(range)
     }
 
     /// Look up a node by TypeId using binary search on the sorted lookup table.
     #[inline]
-    fn lookup_node(&self, type_id: &ConstTypeId) -> Option<&'plan TypePlanNode<'plan>> {
+    fn lookup_node(&self, type_id: &ConstTypeId) -> Option<NodeId> {
         let idx = self
             .node_lookup
             .binary_search_by_key(type_id, |(id, _)| *id)
@@ -1713,22 +1717,19 @@ impl<'plan> TypePlanCore<'plan> {
         Some(self.node_lookup[idx].1)
     }
 
-    // Navigation helpers that return node references
+    // Navigation helpers
 
     /// Get the child node for a struct field by index.
     /// Follows BackRef nodes for recursive types.
     #[inline]
-    pub fn struct_field_node(
-        &self,
-        parent: &'plan TypePlanNode<'plan>,
-        idx: usize,
-    ) -> Option<&'plan TypePlanNode<'plan>> {
+    pub fn struct_field_node(&self, parent: &TypePlanNode, idx: usize) -> Option<&TypePlanNode> {
         let resolved = self.resolve_backref(parent);
         let struct_plan = match &resolved.kind {
             TypePlanNodeKind::Struct(p) => p,
             _ => return None,
         };
-        Some(struct_plan.fields.get(idx)?.type_node)
+        let fields = self.fields(struct_plan.fields);
+        Some(self.node(fields.get(idx)?.type_node))
     }
 
     /// Get the child node for an enum variant's field.
@@ -1736,33 +1737,31 @@ impl<'plan> TypePlanCore<'plan> {
     #[inline]
     pub fn enum_variant_field_node(
         &self,
-        parent: &'plan TypePlanNode<'plan>,
+        parent: &TypePlanNode,
         variant_idx: usize,
         field_idx: usize,
-    ) -> Option<&'plan TypePlanNode<'plan>> {
+    ) -> Option<&TypePlanNode> {
         let resolved = self.resolve_backref(parent);
         let enum_plan = match &resolved.kind {
             TypePlanNodeKind::Enum(p) => p,
             _ => return None,
         };
-        let variant = enum_plan.variants.get(variant_idx)?;
-        Some(variant.fields.get(field_idx)?.type_node)
+        let variants = self.variants(enum_plan.variants);
+        let variant = variants.get(variant_idx)?;
+        let fields = self.fields(variant.fields);
+        Some(self.node(fields.get(field_idx)?.type_node))
     }
 
     /// Get the child node for list/array items.
     #[inline]
-    #[allow(clippy::only_used_in_recursion)]
-    pub fn list_item_node(
-        &self,
-        parent: &'plan TypePlanNode<'plan>,
-    ) -> Option<&'plan TypePlanNode<'plan>> {
+    pub fn list_item_node(&self, parent: &TypePlanNode) -> Option<&TypePlanNode> {
         match &parent.strategy {
             DeserStrategy::List { item_node, .. } | DeserStrategy::Array { item_node, .. } => {
-                Some(*item_node)
+                Some(self.node(*item_node))
             }
             DeserStrategy::BackRef { target_type_id } => {
                 let target = self.lookup_node(target_type_id)?;
-                self.list_item_node(target)
+                self.list_item_node(self.node(target))
             }
             _ => None,
         }
@@ -1770,16 +1769,12 @@ impl<'plan> TypePlanCore<'plan> {
 
     /// Get the child node for set items.
     #[inline]
-    #[allow(clippy::only_used_in_recursion)]
-    pub fn set_item_node(
-        &self,
-        parent: &'plan TypePlanNode<'plan>,
-    ) -> Option<&'plan TypePlanNode<'plan>> {
+    pub fn set_item_node(&self, parent: &TypePlanNode) -> Option<&TypePlanNode> {
         match &parent.strategy {
-            DeserStrategy::Set { item_node } => Some(*item_node),
+            DeserStrategy::Set { item_node } => Some(self.node(*item_node)),
             DeserStrategy::BackRef { target_type_id } => {
                 let target = self.lookup_node(target_type_id)?;
-                self.set_item_node(target)
+                self.set_item_node(self.node(target))
             }
             _ => None,
         }
@@ -1787,16 +1782,12 @@ impl<'plan> TypePlanCore<'plan> {
 
     /// Get the child node for map keys.
     #[inline]
-    #[allow(clippy::only_used_in_recursion)]
-    pub fn map_key_node(
-        &self,
-        parent: &'plan TypePlanNode<'plan>,
-    ) -> Option<&'plan TypePlanNode<'plan>> {
+    pub fn map_key_node(&self, parent: &TypePlanNode) -> Option<&TypePlanNode> {
         match &parent.strategy {
-            DeserStrategy::Map { key_node, .. } => Some(*key_node),
+            DeserStrategy::Map { key_node, .. } => Some(self.node(*key_node)),
             DeserStrategy::BackRef { target_type_id } => {
                 let target = self.lookup_node(target_type_id)?;
-                self.map_key_node(target)
+                self.map_key_node(self.node(target))
             }
             _ => None,
         }
@@ -1804,16 +1795,12 @@ impl<'plan> TypePlanCore<'plan> {
 
     /// Get the child node for map values.
     #[inline]
-    #[allow(clippy::only_used_in_recursion)]
-    pub fn map_value_node(
-        &self,
-        parent: &'plan TypePlanNode<'plan>,
-    ) -> Option<&'plan TypePlanNode<'plan>> {
+    pub fn map_value_node(&self, parent: &TypePlanNode) -> Option<&TypePlanNode> {
         match &parent.strategy {
-            DeserStrategy::Map { value_node, .. } => Some(*value_node),
+            DeserStrategy::Map { value_node, .. } => Some(self.node(*value_node)),
             DeserStrategy::BackRef { target_type_id } => {
                 let target = self.lookup_node(target_type_id)?;
-                self.map_value_node(target)
+                self.map_value_node(self.node(target))
             }
             _ => None,
         }
@@ -1821,16 +1808,12 @@ impl<'plan> TypePlanCore<'plan> {
 
     /// Get the child node for Option inner type.
     #[inline]
-    #[allow(clippy::only_used_in_recursion)]
-    pub fn option_inner_node(
-        &self,
-        parent: &'plan TypePlanNode<'plan>,
-    ) -> Option<&'plan TypePlanNode<'plan>> {
+    pub fn option_inner_node(&self, parent: &TypePlanNode) -> Option<&TypePlanNode> {
         match &parent.strategy {
-            DeserStrategy::Option { some_node } => Some(*some_node),
+            DeserStrategy::Option { some_node } => Some(self.node(*some_node)),
             DeserStrategy::BackRef { target_type_id } => {
                 let target = self.lookup_node(target_type_id)?;
-                self.option_inner_node(target)
+                self.option_inner_node(self.node(target))
             }
             _ => None,
         }
@@ -1838,16 +1821,12 @@ impl<'plan> TypePlanCore<'plan> {
 
     /// Get the child node for Result Ok type.
     #[inline]
-    #[allow(clippy::only_used_in_recursion)]
-    pub fn result_ok_node(
-        &self,
-        parent: &'plan TypePlanNode<'plan>,
-    ) -> Option<&'plan TypePlanNode<'plan>> {
+    pub fn result_ok_node(&self, parent: &TypePlanNode) -> Option<&TypePlanNode> {
         match &parent.strategy {
-            DeserStrategy::Result { ok_node, .. } => Some(*ok_node),
+            DeserStrategy::Result { ok_node, .. } => Some(self.node(*ok_node)),
             DeserStrategy::BackRef { target_type_id } => {
                 let target = self.lookup_node(target_type_id)?;
-                self.result_ok_node(target)
+                self.result_ok_node(self.node(target))
             }
             _ => None,
         }
@@ -1855,16 +1834,12 @@ impl<'plan> TypePlanCore<'plan> {
 
     /// Get the child node for Result Err type.
     #[inline]
-    #[allow(clippy::only_used_in_recursion)]
-    pub fn result_err_node(
-        &self,
-        parent: &'plan TypePlanNode<'plan>,
-    ) -> Option<&'plan TypePlanNode<'plan>> {
+    pub fn result_err_node(&self, parent: &TypePlanNode) -> Option<&TypePlanNode> {
         match &parent.strategy {
-            DeserStrategy::Result { err_node, .. } => Some(*err_node),
+            DeserStrategy::Result { err_node, .. } => Some(self.node(*err_node)),
             DeserStrategy::BackRef { target_type_id } => {
                 let target = self.lookup_node(target_type_id)?;
-                self.result_err_node(target)
+                self.result_err_node(self.node(target))
             }
             _ => None,
         }
@@ -1872,32 +1847,23 @@ impl<'plan> TypePlanCore<'plan> {
 
     /// Get the child node for pointer pointee.
     #[inline]
-    #[allow(clippy::only_used_in_recursion)]
-    pub fn pointer_pointee_node(
-        &self,
-        parent: &'plan TypePlanNode<'plan>,
-    ) -> Option<&'plan TypePlanNode<'plan>> {
+    pub fn pointer_pointee_node(&self, parent: &TypePlanNode) -> Option<&TypePlanNode> {
         match &parent.strategy {
-            DeserStrategy::Pointer { pointee_node } => Some(*pointee_node),
+            DeserStrategy::Pointer { pointee_node } => Some(self.node(*pointee_node)),
             DeserStrategy::BackRef { target_type_id } => {
                 let target = self.lookup_node(target_type_id)?;
-                self.pointer_pointee_node(target)
+                self.pointer_pointee_node(self.node(target))
             }
             _ => None,
         }
     }
 
     /// Get the child node for shape.inner navigation (used by begin_inner).
-    ///
-    /// This works for TransparentConvert strategy which has an inner_node.
     #[inline]
-    pub fn inner_node(
-        &self,
-        parent: &'plan TypePlanNode<'plan>,
-    ) -> Option<&'plan TypePlanNode<'plan>> {
+    pub fn inner_node(&self, parent: &TypePlanNode) -> Option<&TypePlanNode> {
         if parent.shape.inner.is_some() {
             match &parent.strategy {
-                DeserStrategy::TransparentConvert { inner_node } => Some(*inner_node),
+                DeserStrategy::TransparentConvert { inner_node } => Some(self.node(*inner_node)),
                 _ => None,
             }
         } else {
@@ -1907,11 +1873,12 @@ impl<'plan> TypePlanCore<'plan> {
 
     /// Resolve a BackRef to get the actual node it points to.
     #[inline]
-    pub fn resolve_backref(&self, node: &'plan TypePlanNode<'plan>) -> &'plan TypePlanNode<'plan> {
+    pub fn resolve_backref<'a>(&'a self, node: &'a TypePlanNode) -> &'a TypePlanNode {
         match &node.kind {
-            TypePlanNodeKind::BackRef(type_id) => self
-                .lookup_node(type_id)
-                .expect("BackRef target must exist in node_lookup"),
+            TypePlanNodeKind::BackRef(type_id) => self.node(
+                self.lookup_node(type_id)
+                    .expect("BackRef target must exist in node_lookup"),
+            ),
             _ => node,
         }
     }
@@ -1919,10 +1886,7 @@ impl<'plan> TypePlanCore<'plan> {
     /// Get the StructPlan if a node is a struct type.
     /// Follows BackRef nodes for recursive types.
     #[inline]
-    pub fn as_struct_plan(
-        &self,
-        node: &'plan TypePlanNode<'plan>,
-    ) -> Option<&'plan StructPlan<'plan>> {
+    pub fn as_struct_plan<'a>(&'a self, node: &'a TypePlanNode) -> Option<&'a StructPlan> {
         let resolved = self.resolve_backref(node);
         match &resolved.kind {
             TypePlanNodeKind::Struct(plan) => Some(plan),
@@ -1933,11 +1897,185 @@ impl<'plan> TypePlanCore<'plan> {
     /// Get the EnumPlan if a node is an enum type.
     /// Follows BackRef nodes for recursive types.
     #[inline]
-    pub fn as_enum_plan(&self, node: &'plan TypePlanNode<'plan>) -> Option<&'plan EnumPlan<'plan>> {
+    pub fn as_enum_plan<'a>(&'a self, node: &'a TypePlanNode) -> Option<&'a EnumPlan> {
         let resolved = self.resolve_backref(node);
         match &resolved.kind {
             TypePlanNodeKind::Enum(plan) => Some(plan),
             _ => None,
+        }
+    }
+
+    /// Resolve a BackRef (by node ID) to get the actual node it points to.
+    #[inline]
+    pub fn resolve_backref_id(&self, node_id: NodeId) -> &TypePlanNode {
+        let node = self.node(node_id);
+        self.resolve_backref(node)
+    }
+
+    /// Get the StructPlan for a node ID, if it's a struct type.
+    /// Follows BackRef nodes for recursive types.
+    #[inline]
+    pub fn struct_plan_by_id(&self, node_id: NodeId) -> Option<&StructPlan> {
+        self.as_struct_plan(self.node(node_id))
+    }
+
+    /// Get the EnumPlan for a node ID, if it's an enum type.
+    /// Follows BackRef nodes for recursive types.
+    #[inline]
+    pub fn enum_plan_by_id(&self, node_id: NodeId) -> Option<&EnumPlan> {
+        self.as_enum_plan(self.node(node_id))
+    }
+
+    // Navigation helpers that work with NodeId (returning NodeId for child nodes)
+
+    /// Get the child node ID for a struct field by index.
+    /// Follows BackRef nodes for recursive types.
+    #[inline]
+    pub fn struct_field_node_id(&self, parent_id: NodeId, idx: usize) -> Option<NodeId> {
+        let parent = self.node(parent_id);
+        let resolved = self.resolve_backref(parent);
+        let struct_plan = match &resolved.kind {
+            TypePlanNodeKind::Struct(p) => p,
+            _ => return None,
+        };
+        let fields = self.fields(struct_plan.fields);
+        Some(fields.get(idx)?.type_node)
+    }
+
+    /// Get the child node ID for an enum variant's field.
+    /// Follows BackRef nodes for recursive types.
+    #[inline]
+    pub fn enum_variant_field_node_id(
+        &self,
+        parent_id: NodeId,
+        variant_idx: usize,
+        field_idx: usize,
+    ) -> Option<NodeId> {
+        let parent = self.node(parent_id);
+        let resolved = self.resolve_backref(parent);
+        let enum_plan = match &resolved.kind {
+            TypePlanNodeKind::Enum(p) => p,
+            _ => return None,
+        };
+        let variants = self.variants(enum_plan.variants);
+        let variant = variants.get(variant_idx)?;
+        let fields = self.fields(variant.fields);
+        Some(fields.get(field_idx)?.type_node)
+    }
+
+    /// Get the child node ID for list/array items.
+    #[inline]
+    pub fn list_item_node_id(&self, parent_id: NodeId) -> Option<NodeId> {
+        let parent = self.node(parent_id);
+        match &parent.strategy {
+            DeserStrategy::List { item_node, .. } | DeserStrategy::Array { item_node, .. } => {
+                Some(*item_node)
+            }
+            DeserStrategy::BackRef { target_type_id } => {
+                let target = self.lookup_node(target_type_id)?;
+                self.list_item_node_id(target)
+            }
+            _ => None,
+        }
+    }
+
+    /// Get the child node ID for set items.
+    #[inline]
+    pub fn set_item_node_id(&self, parent_id: NodeId) -> Option<NodeId> {
+        let parent = self.node(parent_id);
+        match &parent.strategy {
+            DeserStrategy::Set { item_node } => Some(*item_node),
+            DeserStrategy::BackRef { target_type_id } => {
+                let target = self.lookup_node(target_type_id)?;
+                self.set_item_node_id(target)
+            }
+            _ => None,
+        }
+    }
+
+    /// Get the child node ID for map keys.
+    #[inline]
+    pub fn map_key_node_id(&self, parent_id: NodeId) -> Option<NodeId> {
+        let parent = self.node(parent_id);
+        match &parent.strategy {
+            DeserStrategy::Map { key_node, .. } => Some(*key_node),
+            DeserStrategy::BackRef { target_type_id } => {
+                let target = self.lookup_node(target_type_id)?;
+                self.map_key_node_id(target)
+            }
+            _ => None,
+        }
+    }
+
+    /// Get the child node ID for map values.
+    #[inline]
+    pub fn map_value_node_id(&self, parent_id: NodeId) -> Option<NodeId> {
+        let parent = self.node(parent_id);
+        match &parent.strategy {
+            DeserStrategy::Map { value_node, .. } => Some(*value_node),
+            DeserStrategy::BackRef { target_type_id } => {
+                let target = self.lookup_node(target_type_id)?;
+                self.map_value_node_id(target)
+            }
+            _ => None,
+        }
+    }
+
+    /// Get the child node ID for Option's Some variant.
+    #[inline]
+    pub fn option_some_node_id(&self, parent_id: NodeId) -> Option<NodeId> {
+        let parent = self.node(parent_id);
+        match &parent.strategy {
+            DeserStrategy::Option { some_node, .. } => Some(*some_node),
+            DeserStrategy::BackRef { target_type_id } => {
+                let target = self.lookup_node(target_type_id)?;
+                self.option_some_node_id(target)
+            }
+            _ => None,
+        }
+    }
+
+    /// Get the child node IDs for Result's Ok and Err variants.
+    #[inline]
+    pub fn result_nodes_id(&self, parent_id: NodeId) -> Option<(NodeId, NodeId)> {
+        let parent = self.node(parent_id);
+        match &parent.strategy {
+            DeserStrategy::Result {
+                ok_node, err_node, ..
+            } => Some((*ok_node, *err_node)),
+            DeserStrategy::BackRef { target_type_id } => {
+                let target = self.lookup_node(target_type_id)?;
+                self.result_nodes_id(target)
+            }
+            _ => None,
+        }
+    }
+
+    /// Get the child node ID for smart pointer inner type.
+    #[inline]
+    pub fn pointer_inner_node_id(&self, parent_id: NodeId) -> Option<NodeId> {
+        let parent = self.node(parent_id);
+        match &parent.strategy {
+            DeserStrategy::Pointer { pointee_node, .. } => Some(*pointee_node),
+            DeserStrategy::BackRef { target_type_id } => {
+                let target = self.lookup_node(target_type_id)?;
+                self.pointer_inner_node_id(target)
+            }
+            _ => None,
+        }
+    }
+
+    /// Get the child node ID for transparent convert inner type.
+    #[inline]
+    pub fn inner_node_id(&self, parent_id: NodeId) -> Option<NodeId> {
+        let parent = self.node(parent_id);
+        if parent.shape.inner.is_some() {
+            match &parent.strategy {
+                DeserStrategy::TransparentConvert { inner_node } => Some(*inner_node),
+                _ => None,
+            }
+        } else {
+            None
         }
     }
 }
@@ -1972,36 +2110,36 @@ mod tests {
 
     #[test]
     fn test_typeplan_struct() {
-        let bump = Bump::new();
-        let plan = TypePlan::<TestStruct>::build(&bump).unwrap();
+        let plan = TypePlan::<TestStruct>::build().unwrap();
         let root = plan.root();
+        let core = plan.core();
 
         assert_eq!(root.shape, TestStruct::SHAPE);
         assert!(!root.has_default);
 
         match &root.kind {
             TypePlanNodeKind::Struct(struct_plan) => {
-                assert_eq!(struct_plan.fields.len(), 3);
+                let fields = core.fields(struct_plan.fields);
+                assert_eq!(fields.len(), 3);
                 assert!(!struct_plan.has_flatten);
 
                 // Check field lookup
-                assert_eq!(struct_plan.field_lookup.find("name"), Some(0));
-                assert_eq!(struct_plan.field_lookup.find("age"), Some(1));
-                assert_eq!(struct_plan.field_lookup.find("email"), Some(2));
-                assert_eq!(struct_plan.field_lookup.find("unknown"), None);
+                assert_eq!(struct_plan.field_lookup.find("name", core), Some(0));
+                assert_eq!(struct_plan.field_lookup.find("age", core), Some(1));
+                assert_eq!(struct_plan.field_lookup.find("email", core), Some(2));
+                assert_eq!(struct_plan.field_lookup.find("unknown", core), None);
 
                 // Check field metadata
-                assert_eq!(struct_plan.fields[0].name, "name");
-                assert!(struct_plan.fields[0].is_required());
+                assert_eq!(fields[0].name, "name");
+                assert!(fields[0].is_required());
 
-                assert_eq!(struct_plan.fields[1].name, "age");
-                assert!(struct_plan.fields[1].is_required());
+                assert_eq!(fields[1].name, "age");
+                assert!(fields[1].is_required());
 
-                assert_eq!(struct_plan.fields[2].name, "email");
-                assert!(!struct_plan.fields[2].is_required()); // Option has implicit default
+                assert_eq!(fields[2].name, "email");
+                assert!(!fields[2].is_required()); // Option has implicit default
 
                 // Check child plan for Option field (field index 2 = third child)
-                let core = plan.core();
                 let email_node = core.struct_field_node(plan.root(), 2).unwrap();
                 match &email_node.kind {
                     TypePlanNodeKind::Option => {
@@ -2021,14 +2159,15 @@ mod tests {
 
     #[test]
     fn test_typeplan_enum() {
-        let bump = Bump::new();
-        let plan = TypePlan::<TestEnum>::build(&bump).unwrap();
+        let plan = TypePlan::<TestEnum>::build().unwrap();
         let root = plan.root();
+        let core = plan.core();
 
         assert_eq!(root.shape, TestEnum::SHAPE);
 
         match &root.kind {
             TypePlanNodeKind::Enum(enum_plan) => {
+                let variants = core.variants(enum_plan.variants);
                 assert_eq!(enum_plan.num_variants, 3);
 
                 // Check variant lookup
@@ -2038,14 +2177,15 @@ mod tests {
                 assert_eq!(enum_plan.variant_lookup.find("Unknown"), None);
 
                 // Unit variant has no fields
-                assert_eq!(enum_plan.variants[0].fields.len(), 0);
+                assert!(core.fields(variants[0].fields).is_empty());
 
                 // Tuple variant has 1 field
-                assert_eq!(enum_plan.variants[1].fields.len(), 1);
+                assert_eq!(core.fields(variants[1].fields).len(), 1);
 
                 // Struct variant has 1 field
-                assert_eq!(enum_plan.variants[2].fields.len(), 1);
-                assert_eq!(enum_plan.variants[2].field_lookup.find("value"), Some(0));
+                let struct_variant_fields = core.fields(variants[2].fields);
+                assert_eq!(struct_variant_fields.len(), 1);
+                assert_eq!(variants[2].field_lookup.find("value", core), Some(0));
             }
             other => panic!("Expected Enum, got {:?}", other),
         }
@@ -2053,13 +2193,12 @@ mod tests {
 
     #[test]
     fn test_typeplan_list() {
-        let bump = Bump::new();
-        let plan = TypePlan::<Vec<u32>>::build(&bump).unwrap();
+        let plan = TypePlan::<Vec<u32>>::build().unwrap();
         let root = plan.root();
+        let core = plan.core();
 
         match &root.kind {
             TypePlanNodeKind::List => {
-                let core = plan.core();
                 let item_node = core.list_item_node(plan.root()).unwrap();
                 match &item_node.kind {
                     TypePlanNodeKind::Scalar => {}
@@ -2072,17 +2211,17 @@ mod tests {
 
     #[test]
     fn test_typeplan_recursive() {
-        // This should NOT stack overflow - bumpalo handles the cycle
-        let bump = Bump::new();
-        let plan = TypePlan::<RecursiveStruct>::build(&bump).unwrap();
+        // This should NOT stack overflow - arena handles the cycle
+        let plan = TypePlan::<RecursiveStruct>::build().unwrap();
         let root = plan.root();
         let core = plan.core();
 
         match &root.kind {
             TypePlanNodeKind::Struct(struct_plan) => {
-                assert_eq!(struct_plan.fields.len(), 2);
-                assert_eq!(struct_plan.fields[0].name, "value");
-                assert_eq!(struct_plan.fields[1].name, "next");
+                let fields = core.fields(struct_plan.fields);
+                assert_eq!(fields.len(), 2);
+                assert_eq!(fields[0].name, "value");
+                assert_eq!(fields[1].name, "next");
 
                 // The 'next' field is Option<Box<RecursiveStruct>>
                 // Its child plan should eventually contain a BackRef
@@ -2134,88 +2273,10 @@ mod tests {
             },
         ]);
 
-        assert_eq!(lookup.find("foo"), Some(0));
-        assert_eq!(lookup.find("bar"), Some(1));
-        assert_eq!(lookup.find("baz"), Some(2));
-        assert_eq!(lookup.find("qux"), None);
-    }
-
-    #[test]
-    fn test_field_lookup_prefix_buckets() {
-        let bump = Bump::new();
-        // Create enough entries to trigger PrefixBuckets (>8 entries)
-        // Include short names like "id" to test zero-padding
-        let entries = bumpalo::vec![in &bump;
-            FieldLookupEntry {
-                name: "id",
-                index: 0,
-                is_alias: false,
-            },
-            FieldLookupEntry {
-                name: "name",
-                index: 1,
-                is_alias: false,
-            },
-            FieldLookupEntry {
-                name: "email",
-                index: 2,
-                is_alias: false,
-            },
-            FieldLookupEntry {
-                name: "url",
-                index: 3,
-                is_alias: false,
-            },
-            FieldLookupEntry {
-                name: "description",
-                index: 4,
-                is_alias: false,
-            },
-            FieldLookupEntry {
-                name: "created_at",
-                index: 5,
-                is_alias: false,
-            },
-            FieldLookupEntry {
-                name: "updated_at",
-                index: 6,
-                is_alias: false,
-            },
-            FieldLookupEntry {
-                name: "status",
-                index: 7,
-                is_alias: false,
-            },
-            FieldLookupEntry {
-                name: "type",
-                index: 8,
-                is_alias: false,
-            },
-            FieldLookupEntry {
-                name: "metadata",
-                index: 9,
-                is_alias: false,
-            },
-        ];
-        let lookup = FieldLookup::from_entries_in(&bump, entries);
-
-        // Verify it's using PrefixBuckets
-        assert!(matches!(lookup, FieldLookup::PrefixBuckets { .. }));
-
-        // Test lookups - including short keys
-        assert_eq!(lookup.find("id"), Some(0));
-        assert_eq!(lookup.find("name"), Some(1));
-        assert_eq!(lookup.find("email"), Some(2));
-        assert_eq!(lookup.find("url"), Some(3));
-        assert_eq!(lookup.find("description"), Some(4));
-        assert_eq!(lookup.find("created_at"), Some(5));
-        assert_eq!(lookup.find("updated_at"), Some(6));
-        assert_eq!(lookup.find("status"), Some(7));
-        assert_eq!(lookup.find("type"), Some(8));
-        assert_eq!(lookup.find("metadata"), Some(9));
-        assert_eq!(lookup.find("unknown"), None);
-        assert_eq!(lookup.find("i"), None); // prefix of "id"
-        assert_eq!(lookup.find("ide"), None); // not a field
+        assert_eq!(lookup.find_small("foo"), Some(0));
+        assert_eq!(lookup.find_small("bar"), Some(1));
+        assert_eq!(lookup.find_small("baz"), Some(2));
+        assert_eq!(lookup.find_small("qux"), None);
     }
 
     #[test]
@@ -2226,45 +2287,5 @@ mod tests {
         assert_eq!(lookup.find("B"), Some(1));
         assert_eq!(lookup.find("C"), Some(2));
         assert_eq!(lookup.find("D"), None);
-    }
-
-    #[test]
-    fn test_field_lookup_from_struct_type() {
-        use facet_core::{Type, UserType};
-
-        let bump = Bump::new();
-        // Get struct_def from TestStruct's shape
-        let struct_def = match &TestStruct::SHAPE.ty {
-            Type::User(UserType::Struct(def)) => def,
-            _ => panic!("Expected struct type"),
-        };
-
-        let lookup = FieldLookup::from_struct_type_in(&bump, struct_def);
-
-        // Should find all fields by their names
-        assert_eq!(lookup.find("name"), Some(0));
-        assert_eq!(lookup.find("age"), Some(1));
-        assert_eq!(lookup.find("email"), Some(2));
-        assert_eq!(lookup.find("unknown"), None);
-    }
-
-    #[test]
-    fn test_variant_lookup_from_enum_type() {
-        use facet_core::{Type, UserType};
-
-        let bump = Bump::new();
-        // Get enum_def from TestEnum's shape
-        let enum_def = match &TestEnum::SHAPE.ty {
-            Type::User(UserType::Enum(def)) => def,
-            _ => panic!("Expected enum type"),
-        };
-
-        let lookup = VariantLookup::from_enum_type_in(&bump, enum_def);
-
-        // Should find all variants by name
-        assert_eq!(lookup.find("Unit"), Some(0));
-        assert_eq!(lookup.find("Tuple"), Some(1));
-        assert_eq!(lookup.find("Struct"), Some(2));
-        assert_eq!(lookup.find("Unknown"), None);
     }
 }

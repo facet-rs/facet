@@ -19,7 +19,7 @@ fn lookup_field<const BORROW: bool>(
 ) -> Option<usize> {
     // Try precomputed lookup from TypePlan first
     if let Some(plan) = wip.struct_plan() {
-        return plan.field_lookup.find(name);
+        return plan.field_lookup.find(name, wip.type_plan_core());
     }
 
     // Fallback: linear scan through fields (for frames without TypePlan)

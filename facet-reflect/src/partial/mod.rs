@@ -111,6 +111,7 @@
 
 use alloc::{collections::BTreeMap, vec::Vec};
 
+mod arena;
 mod iset;
 pub(crate) mod typeplan;
 pub use typeplan::{DeserStrategy, TypePlan};
@@ -147,17 +148,17 @@ enum PartialState {
 /// In `Strict` mode, frames must be fully initialized before being popped.
 /// In `Deferred` mode, frames can be stored when popped and restored on re-entry,
 /// with final validation happening in `finish_deferred()`.
-enum FrameMode<'plan> {
+enum FrameMode {
     /// Strict mode: frames must be fully initialized before popping.
     Strict {
         /// Stack of frames for nested initialization.
-        stack: Vec<Frame<'plan>>,
+        stack: Vec<Frame>,
     },
 
     /// Deferred mode: frames are stored when popped, can be re-entered.
     Deferred {
         /// Stack of frames for nested initialization.
-        stack: Vec<Frame<'plan>>,
+        stack: Vec<Frame>,
 
         /// The frame depth when deferred mode was started.
         /// Path calculations are relative to this depth.
@@ -165,20 +166,20 @@ enum FrameMode<'plan> {
 
         /// Frames saved when popped, keyed by their path (derived from frame stack).
         /// When we re-enter a path, we restore the stored frame.
-        stored_frames: BTreeMap<Vec<PathStep>, Frame<'plan>>,
+        stored_frames: BTreeMap<Vec<PathStep>, Frame>,
     },
 }
 
-impl<'plan> FrameMode<'plan> {
+impl FrameMode {
     /// Get a reference to the frame stack.
-    const fn stack(&self) -> &Vec<Frame<'plan>> {
+    const fn stack(&self) -> &Vec<Frame> {
         match self {
             FrameMode::Strict { stack } | FrameMode::Deferred { stack, .. } => stack,
         }
     }
 
     /// Get a mutable reference to the frame stack.
-    const fn stack_mut(&mut self) -> &mut Vec<Frame<'plan>> {
+    const fn stack_mut(&mut self) -> &mut Vec<Frame> {
         match self {
             FrameMode::Strict { stack } | FrameMode::Deferred { stack, .. } => stack,
         }
@@ -213,20 +214,19 @@ impl<'plan> FrameMode<'plan> {
 /// you have to fully initialize it one go. You can't go back up and back down
 /// to it again.
 ///
-/// The `'plan` lifetime ties this to an externally-owned `TypePlan` (via bump allocator),
-/// which is built once and reused for multiple deserializations.
+/// The `'plan` lifetime ties this to a `TypePlan` that owns its allocations.
+/// The plan is built once and reused for multiple deserializations.
 pub struct Partial<'facet, 'plan, const BORROW: bool = true> {
     /// Frame management mode (strict or deferred) and associated state.
-    mode: FrameMode<'plan>,
+    mode: FrameMode,
 
     /// current state of the Partial
     state: PartialState,
 
-    /// Precomputed deserialization plan for the root type.
+    /// Reference to the precomputed deserialization plan for the root type.
     /// Built once at allocation time, navigated in parallel with value construction.
-    /// Each Frame holds a reference into this tree.
-    /// TypePlanCore is Copy (two references), so we store it by value.
-    root_plan: typeplan::TypePlanCore<'plan>,
+    /// Each Frame holds a NodeId (index) into this plan's arenas.
+    root_plan: &'plan typeplan::TypePlanCore,
 
     /// PhantomData marker for the 'facet lifetime.
     /// This is covariant in 'facet, which is safe because 'facet represents
@@ -349,7 +349,7 @@ impl AllocatedShape {
 /// it keeps track of whether a variant was selected, which fields are initialized,
 /// etc. and is able to drop & deinitialize
 #[must_use]
-pub(crate) struct Frame<'plan> {
+pub(crate) struct Frame {
     /// Address of the value being initialized
     pub(crate) data: PtrUninit,
 
@@ -372,13 +372,13 @@ pub(crate) struct Frame<'plan> {
     /// Used during custom deserialization to convert from proxy type to target type.
     pub(crate) shape_level_proxy: Option<&'static facet_core::ProxyDef>,
 
-    /// Reference to the precomputed TypePlan node for this frame's type.
+    /// Index of the precomputed TypePlan node for this frame's type.
     /// This is navigated in parallel with the value - when we begin_nth_field,
-    /// the new frame gets the reference for that field's child plan node.
-    /// The TypePlan is allocated in a Bump owned externally by the caller.
+    /// the new frame gets the index for that field's child plan node.
+    /// Use `plan.node(type_plan)` to get the actual `&TypePlanNode`.
     /// Always present - TypePlan is built for what we actually deserialize into
     /// (including proxies).
-    pub(crate) type_plan: &'plan typeplan::TypePlanNode<'plan>,
+    pub(crate) type_plan: typeplan::NodeId,
 }
 
 #[derive(Debug)]
@@ -546,12 +546,12 @@ impl Tracker {
     }
 }
 
-impl<'plan> Frame<'plan> {
+impl Frame {
     fn new(
         data: PtrUninit,
         allocated: AllocatedShape,
         ownership: FrameOwnership,
-        type_plan: &'plan typeplan::TypePlanNode<'plan>,
+        type_plan: typeplan::NodeId,
     ) -> Self {
         // For empty structs (structs with 0 fields), start as initialized since there's nothing to initialize
         // This includes empty tuples () which are zero-sized types with no fields to initialize
@@ -1279,6 +1279,7 @@ impl<'plan> Frame<'plan> {
     /// # Arguments
     /// * `plans` - Precomputed field initialization plans from TypePlan
     /// * `num_fields` - Total number of fields (from StructPlan/VariantPlanMeta)
+    /// * `type_plan_core` - Reference to the TypePlanCore for resolving validators
     ///
     /// # Returns
     /// `Ok(())` if all required fields are set (or filled with defaults), or an error
@@ -1288,6 +1289,7 @@ impl<'plan> Frame<'plan> {
         &mut self,
         plans: &[FieldInitPlan],
         num_fields: usize,
+        type_plan_core: &typeplan::TypePlanCore,
     ) -> Result<(), ReflectErrorKind> {
         // With lazy tracker initialization, structs start with Tracker::Scalar.
         // If is_init is true with Scalar, the struct was set wholesale - nothing to do.
@@ -1366,7 +1368,7 @@ impl<'plan> Frame<'plan> {
             // Run validators on the (now initialized) field
             if !plan.validators.is_empty() {
                 let field_ptr = unsafe { self.data.field_init(plan.offset) };
-                for validator in plan.validators {
+                for validator in type_plan_core.validators(plan.validators) {
                     validator.run(field_ptr.into(), plan.name, self.allocated.shape())?;
                 }
             }
@@ -1425,13 +1427,13 @@ impl<'plan> Frame<'plan> {
 impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
     /// Get a reference to the frame stack.
     #[inline]
-    pub(crate) const fn frames(&self) -> &Vec<Frame<'plan>> {
+    pub(crate) const fn frames(&self) -> &Vec<Frame> {
         self.mode.stack()
     }
 
     /// Get a mutable reference to the frame stack.
     #[inline]
-    pub(crate) const fn frames_mut(&mut self) -> &mut Vec<Frame<'plan>> {
+    pub(crate) fn frames_mut(&mut self) -> &mut Vec<Frame> {
         self.mode.stack_mut()
     }
 
@@ -1556,8 +1558,8 @@ mod size_tests {
             size_of::<Option<&'static facet_core::ProxyDef>>()
         );
         eprintln!(
-            "TypePlanNode<'_>: {} bytes",
-            size_of::<typeplan::TypePlanNode<'_>>()
+            "TypePlanNode: {} bytes",
+            size_of::<typeplan::TypePlanNode>()
         );
         eprintln!("Vec<Frame>: {} bytes", size_of::<Vec<Frame>>());
         eprintln!("MapInsertState: {} bytes", size_of::<MapInsertState>());

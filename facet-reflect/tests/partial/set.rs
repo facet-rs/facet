@@ -1,5 +1,4 @@
 use alloc::collections::BTreeSet;
-use bumpalo::Bump;
 use facet::Facet;
 use facet_reflect::Partial;
 use facet_testhelpers::{IPanic, test};
@@ -9,8 +8,7 @@ extern crate alloc;
 
 #[test]
 fn set_hashset_basic() -> Result<(), IPanic> {
-    let bump = Bump::new();
-    let set = Partial::alloc::<HashSet<i32>>(&bump)?
+    let set = Partial::alloc::<HashSet<i32>>()?
         .init_set()?
         .insert(42)?
         .insert(84)?
@@ -26,8 +24,7 @@ fn set_hashset_basic() -> Result<(), IPanic> {
 
 #[test]
 fn set_hashset_strings() -> Result<(), IPanic> {
-    let bump = Bump::new();
-    let set = Partial::alloc::<HashSet<String>>(&bump)?
+    let set = Partial::alloc::<HashSet<String>>()?
         .init_set()?
         .insert("foo".to_string())?
         .insert("bar".to_string())?
@@ -43,8 +40,7 @@ fn set_hashset_strings() -> Result<(), IPanic> {
 
 #[test]
 fn set_hashset_empty() -> Result<(), IPanic> {
-    let bump = Bump::new();
-    let set = Partial::alloc::<HashSet<String>>(&bump)?
+    let set = Partial::alloc::<HashSet<String>>()?
         .init_set()?
         .build()?
         .materialize::<HashSet<String>>()?;
@@ -54,8 +50,7 @@ fn set_hashset_empty() -> Result<(), IPanic> {
 
 #[test]
 fn set_hashset_duplicates() -> Result<(), IPanic> {
-    let bump = Bump::new();
-    let set = Partial::alloc::<HashSet<i32>>(&bump)?
+    let set = Partial::alloc::<HashSet<i32>>()?
         .init_set()?
         .insert(42)?
         .insert(42)?
@@ -69,8 +64,7 @@ fn set_hashset_duplicates() -> Result<(), IPanic> {
 
 #[test]
 fn set_btreeset_basic() -> Result<(), IPanic> {
-    let bump = Bump::new();
-    let set = Partial::alloc::<BTreeSet<i32>>(&bump)?
+    let set = Partial::alloc::<BTreeSet<i32>>()?
         .init_set()?
         .insert(3)?
         .insert(1)?
@@ -85,8 +79,7 @@ fn set_btreeset_basic() -> Result<(), IPanic> {
 
 #[test]
 fn set_using_begin_set_item() -> Result<(), IPanic> {
-    let bump = Bump::new();
-    let set = Partial::alloc::<HashSet<i32>>(&bump)?
+    let set = Partial::alloc::<HashSet<i32>>()?
         .init_set()?
         .begin_set_item()?
         .set(100)?

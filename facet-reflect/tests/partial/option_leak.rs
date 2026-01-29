@@ -1,4 +1,3 @@
-use bumpalo::Bump;
 use facet::Facet;
 use facet_reflect::Partial;
 use facet_testhelpers::test;
@@ -41,13 +40,13 @@ fn wip_option_testleak4() {
 
 #[test]
 fn wip_option_testleak5() {
-    let bump = Bump::new(); let _ = Partial::alloc::<Option<String>>(&bump).unwrap();
+    let _ = Partial::alloc::<Option<String>>().unwrap();
     // Just allocate without setting a value
 }
 
 #[test]
 fn wip_option_testleak6() {
-    let bump = Bump::new(); let _ = Partial::alloc::<Option<String>>(&bump).unwrap();
+    let _ = Partial::alloc::<Option<String>>().unwrap();
 }
 
 /// Reproduces issue #1568 - use-after-free in Option cleanup
@@ -65,7 +64,7 @@ fn wip_option_use_after_free_issue_1568() {
     }
 
     // Allocate and start building a struct
-    let bump = Bump::new(); let mut partial = Partial::alloc::<WithOption>(&bump).unwrap();
+    let mut partial = Partial::alloc::<WithOption>().unwrap();
 
     // Set the first field
     partial = partial.set_field("name", String::from("test")).unwrap();
@@ -102,7 +101,7 @@ fn wip_option_nested_struct_partial_init_issue_1568() {
     }
 
     // Allocate and start building a struct
-    let bump = Bump::new(); let mut partial = Partial::alloc::<Outer>(&bump).unwrap();
+    let mut partial = Partial::alloc::<Outer>().unwrap();
 
     // Begin the option field
     partial = partial.begin_field("inner").unwrap();
@@ -121,7 +120,7 @@ fn wip_option_nested_struct_partial_init_issue_1568() {
 #[test]
 fn wip_option_string_begin_some_drop_issue_1568() {
     // Allocate Option<String> directly
-    let bump = Bump::new(); let mut partial = Partial::alloc::<Option<String>>(&bump).unwrap();
+    let mut partial = Partial::alloc::<Option<String>>().unwrap();
 
     // Call begin_some - this allocates separate memory for the inner String
     partial = partial.begin_some().unwrap();
@@ -154,7 +153,7 @@ fn wip_option_deferred_flatten_issue_1568() {
     }
 
     // Allocate the struct
-    let bump = Bump::new(); let mut partial = Partial::alloc::<Html>(&bump).unwrap();
+    let mut partial = Partial::alloc::<Html>().unwrap();
 
     // Enter deferred mode (like FormatDeserializer does for structs with flatten)
     partial = partial.begin_deferred().unwrap();
@@ -188,7 +187,7 @@ fn fuzz_enum_begin_field_drop() {
     }
 
     // This sequence was found by the fuzzer
-    let bump = Bump::new(); let partial = Partial::alloc::<FuzzEnum>(&bump).unwrap();
+    let partial = Partial::alloc::<FuzzEnum>().unwrap();
     let partial = partial.begin_nth_field(1);
     drop(partial);
 }
@@ -206,7 +205,7 @@ fn fuzz_smart_ptr_slice_field_leak() {
     }
 
     // This sequence was found by the fuzzer - begin_smart_ptr on Arc<[u8]> field then drop
-    let bump = Bump::new(); let partial = Partial::alloc::<SmartPtrTarget>(&bump).unwrap();
+    let partial = Partial::alloc::<SmartPtrTarget>().unwrap();
     let partial = partial.begin_nth_field(1); // arc_slice field
     if let Ok(partial) = partial
         && let Ok(partial) = partial.begin_smart_ptr()
@@ -227,7 +226,7 @@ fn fuzz_map_key_leak_minimized() {
     }
 
     // This EXACT sequence was found by the fuzzer - TWO parse_from_str calls!
-    let bump = Bump::new(); let partial = Partial::alloc::<FuzzTarget>(&bump).unwrap();
+    let partial = Partial::alloc::<FuzzTarget>().unwrap();
     let partial = partial.begin_field("mapping").unwrap();
     let partial = partial.init_map().unwrap();
     let partial = partial.begin_key().unwrap();
@@ -245,7 +244,7 @@ fn fuzz_dynamic_value_nested_object_leak() {
     use facet_value::Value;
 
     // Create a DynamicValue (facet_value::Value)
-    let bump = Bump::new(); let partial = Partial::alloc::<Value>(&bump).unwrap();
+    let partial = Partial::alloc::<Value>().unwrap();
 
     // First BeginMap creates the root Object
     let partial = partial.init_map().unwrap();
@@ -265,7 +264,7 @@ fn fuzz_dynamic_value_nested_object_leak() {
 fn fuzz_dynamic_value_deeply_nested_object_leak() {
     use facet_value::Value;
 
-    let bump = Bump::new(); let partial = Partial::alloc::<Value>(&bump).unwrap();
+    let partial = Partial::alloc::<Value>().unwrap();
     let partial = partial.init_map().unwrap();
     let partial = partial.begin_object_entry("outer").unwrap();
     let partial = partial.init_map().unwrap();
@@ -288,7 +287,7 @@ fn fuzz_dynamic_value_deeply_nested_object_leak() {
 fn fuzz_dynamic_value_exact_fuzzer_sequence() {
     use facet_value::Value;
 
-    let bump = Bump::new(); let partial = Partial::alloc::<Value>(&bump).unwrap();
+    let partial = Partial::alloc::<Value>().unwrap();
     let partial = partial.init_map().unwrap();
     // Second init_map is early return (already Object)
     let partial = partial.init_map().unwrap();
@@ -319,7 +318,7 @@ fn fuzz_dynamic_value_exact_fuzzer_sequence() {
 fn fuzz_dynamic_value_simple_object_with_entry() {
     use facet_value::Value;
 
-    let bump = Bump::new(); let partial = Partial::alloc::<Value>(&bump).unwrap();
+    let partial = Partial::alloc::<Value>().unwrap();
     let partial = partial.init_map().unwrap();
 
     let partial = partial.begin_object_entry("key").unwrap();
@@ -336,7 +335,7 @@ fn fuzz_dynamic_value_simple_object_with_entry() {
 fn fuzz_dynamic_value_reenter_existing_key() {
     use facet_value::Value;
 
-    let bump = Bump::new(); let partial = Partial::alloc::<Value>(&bump).unwrap();
+    let partial = Partial::alloc::<Value>().unwrap();
     let partial = partial.init_map().unwrap();
 
     // First entry "key" -> nested Object
@@ -364,7 +363,7 @@ fn fuzz_dynamic_value_borrowed_in_place_use_after_free() {
     use facet_value::Value;
 
     // Minimized from fuzzer crash artifact
-    let bump = Bump::new(); let partial = Partial::alloc::<Value>(&bump).unwrap();
+    let partial = Partial::alloc::<Value>().unwrap();
     let partial = partial.begin_deferred().unwrap();
     let partial = partial.init_map().unwrap();
     let partial = partial.begin_object_entry("key1").unwrap();
@@ -398,7 +397,7 @@ fn fuzz_dynamic_value_borrowed_in_place_begin_list_leak() {
     use facet_value::Value;
 
     // Minimized from fuzzer artifact
-    let bump = Bump::new(); let partial = Partial::alloc::<Value>(&bump).unwrap();
+    let partial = Partial::alloc::<Value>().unwrap();
     let partial = partial.set(5570193308531891999_i64).unwrap();
     let partial = partial.init_map().unwrap();
     let partial = partial.init_map().unwrap();
@@ -432,7 +431,7 @@ fn fuzz_dynamic_value_borrowed_in_place_begin_map_leak() {
     use facet_value::Value;
 
     // Minimized from fuzzer artifact leak-bda097fba5becb8df709465989755137abf03116
-    let bump = Bump::new(); let partial = Partial::alloc::<Value>(&bump).unwrap();
+    let partial = Partial::alloc::<Value>().unwrap();
     let partial = partial.set(2676586811620664615_i64).unwrap();
     let partial = partial.init_map().unwrap();
 
@@ -463,7 +462,7 @@ fn fuzz_dynamic_value_set_then_begin_map_then_set() {
     use facet_value::Value;
 
     // Replicate the exact fuzzer sequence
-    let bump = Bump::new(); let partial = Partial::alloc::<Value>(&bump).unwrap();
+    let partial = Partial::alloc::<Value>().unwrap();
 
     // SetI64 at root - allocates a Number (16 bytes heap for big int)
     let partial = partial.set(2676586811620664615_i64).unwrap();

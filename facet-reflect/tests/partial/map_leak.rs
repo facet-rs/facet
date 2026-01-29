@@ -1,4 +1,3 @@
-use bumpalo::Bump;
 use std::collections::HashMap;
 
 use facet_reflect::Partial;
@@ -127,6 +126,6 @@ fn wip_map_leaktest7() {
 // If we partially initialize a map, do we leak memory.unwrap()
 #[test]
 fn wip_map_leaktest8() {
-    let bump = Bump::new(); let wip = Partial::alloc::<HashMap<String, String>>(&bump).unwrap();
+    let wip = Partial::alloc::<HashMap<String, String>>().unwrap();
     drop(wip);
 }

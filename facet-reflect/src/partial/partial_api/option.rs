@@ -157,9 +157,9 @@ impl<const BORROW: bool> Partial<'_, '_, BORROW> {
         // Create a new frame for the inner value
         // For re-entry, we use ManagedElsewhere ownership since the Option frame owns the memory
         // Get child type plan NodeId for Option inner
-        let child_plan = self
+        let child_plan_id = self
             .root_plan
-            .option_inner_node(parent_type_plan)
+            .option_some_node_id(parent_type_plan)
             .expect("TypePlan must have option inner node");
         let mut inner_frame = Frame::new(
             inner_data,
@@ -169,7 +169,7 @@ impl<const BORROW: bool> Partial<'_, '_, BORROW> {
             } else {
                 FrameOwnership::Owned
             },
-            child_plan,
+            child_plan_id,
         );
 
         // CRITICAL: For re-entry, mark the frame as already initialized so that init_list()
@@ -260,15 +260,15 @@ impl<const BORROW: bool> Partial<'_, '_, BORROW> {
                 // Navigate to the inner type's TypePlan node for correct strategy lookup.
                 // If the TypePlan has a child node for the inner type, use it; otherwise
                 // fall back to the parent's node (which may result in incorrect strategy).
-                let inner_type_plan = self
+                let inner_type_plan_id = self
                     .root_plan
-                    .inner_node(parent_type_plan)
+                    .inner_node_id(parent_type_plan)
                     .unwrap_or(parent_type_plan);
                 self.mode.stack_mut().push(Frame::new(
                     inner_data,
                     AllocatedShape::new(inner_shape, inner_layout.size()),
                     FrameOwnership::Owned,
-                    inner_type_plan,
+                    inner_type_plan_id,
                 ));
 
                 Ok(self)

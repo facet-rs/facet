@@ -1,4 +1,3 @@
-use bumpalo::Bump;
 use std::sync::Arc;
 
 use facet::Facet;
@@ -22,7 +21,7 @@ struct OuterNoArc {
 
 #[test]
 fn outer_no_arc() {
-    let bump = Bump::new(); let mut partial: Partial<'_, '_> = Partial::alloc::<OuterNoArc>(&bump).unwrap();
+    let mut partial: Partial<'_, '_> = Partial::alloc::<OuterNoArc>().unwrap();
     partial = partial.begin_field("inner").unwrap();
     partial = partial.begin_field("value").unwrap();
     partial = partial.set(1234_i32).unwrap();
@@ -43,7 +42,7 @@ fn outer_no_arc() {
 
 #[test]
 fn outer_yes_arc_put() {
-    let bump = Bump::new(); let mut partial: Partial<'_, '_> = Partial::alloc::<OuterYesArc>(&bump).unwrap();
+    let mut partial: Partial<'_, '_> = Partial::alloc::<OuterYesArc>().unwrap();
     let inner = Arc::new(Inner { value: 5678 });
     partial = partial.begin_field("inner").unwrap();
     partial = partial.set(inner.clone()).unwrap();
@@ -58,7 +57,7 @@ fn outer_yes_arc_put() {
 
 #[test]
 fn outer_yes_arc_pointee() {
-    let bump = Bump::new(); let mut partial: Partial<'_, '_> = Partial::alloc::<OuterYesArc>(&bump).unwrap();
+    let mut partial: Partial<'_, '_> = Partial::alloc::<OuterYesArc>().unwrap();
     partial = partial.begin_field("inner").unwrap();
     partial = partial.begin_smart_ptr().unwrap();
     partial = partial.begin_field("value").unwrap();
@@ -81,7 +80,7 @@ fn outer_yes_arc_pointee() {
 
 #[test]
 fn outer_yes_arc_field_named_twice_error() {
-    let bump = Bump::new(); let mut partial: Partial<'_, '_> = Partial::alloc::<OuterYesArc>(&bump).unwrap();
+    let mut partial: Partial<'_, '_> = Partial::alloc::<OuterYesArc>().unwrap();
     partial = partial.begin_field("inner").unwrap();
     // Try to do begin_field again instead of begin_smart_ptr; this should error
     let err = partial.begin_field("value").err().unwrap();
@@ -94,7 +93,7 @@ fn outer_yes_arc_field_named_twice_error() {
 
 #[test]
 fn arc_str_begin_smart_ptr_good() {
-    let bump = Bump::new(); let mut partial = Partial::alloc::<Arc<str>>(&bump).unwrap();
+    let mut partial = Partial::alloc::<Arc<str>>().unwrap();
     partial = partial.begin_smart_ptr().unwrap();
     partial = partial.set(String::from("foobar")).unwrap();
     partial = partial.end().unwrap();
@@ -104,7 +103,7 @@ fn arc_str_begin_smart_ptr_good() {
 
 #[test]
 fn arc_str_begin_smart_ptr_bad_1() {
-    let bump = Bump::new(); let partial = Partial::alloc::<Arc<str>>(&bump).unwrap();
+    let partial = Partial::alloc::<Arc<str>>().unwrap();
     let _err = partial.build().unwrap_err();
     #[cfg(not(miri))]
     insta::assert_snapshot!(_err);
@@ -112,7 +111,7 @@ fn arc_str_begin_smart_ptr_bad_1() {
 
 #[test]
 fn arc_str_begin_smart_ptr_bad_2a() {
-    let bump = Bump::new(); let mut partial = Partial::alloc::<Arc<str>>(&bump).unwrap();
+    let mut partial = Partial::alloc::<Arc<str>>().unwrap();
     partial = partial.begin_smart_ptr().unwrap();
     let _err = partial.build().unwrap_err();
     #[cfg(not(miri))]
@@ -121,7 +120,7 @@ fn arc_str_begin_smart_ptr_bad_2a() {
 
 #[test]
 fn arc_str_begin_smart_ptr_bad_2b() {
-    let bump = Bump::new(); let mut partial = Partial::alloc::<Arc<str>>(&bump).unwrap();
+    let mut partial = Partial::alloc::<Arc<str>>().unwrap();
     partial = partial.begin_smart_ptr().unwrap();
     let _err = match partial.end() {
         Ok(_) => panic!("expected error"),
@@ -133,7 +132,7 @@ fn arc_str_begin_smart_ptr_bad_2b() {
 
 #[test]
 fn arc_str_begin_smart_ptr_bad_3() {
-    let bump = Bump::new(); let mut partial = Partial::alloc::<Arc<str>>(&bump).unwrap();
+    let mut partial = Partial::alloc::<Arc<str>>().unwrap();
     partial = partial.begin_smart_ptr().unwrap();
     partial = partial.set(String::from("foobar")).unwrap();
     let _err = partial.build().unwrap_err();
@@ -192,7 +191,7 @@ fn box_str_begin_smart_ptr() {
 fn arc_slice_u8_begin_smart_ptr_good() {
     {
         // Just to make sure: Vec<u8> construction works
-        let bump = Bump::new(); let mut partial = Partial::alloc::<Vec<u8>>(&bump).unwrap();
+        let mut partial = Partial::alloc::<Vec<u8>>().unwrap();
         partial = partial.init_list().unwrap();
         partial = partial.push(2_u8).unwrap();
         partial = partial.push(3_u8).unwrap();
@@ -203,7 +202,7 @@ fn arc_slice_u8_begin_smart_ptr_good() {
 
     {
         // Now, does Arc<[u8]> work.unwrap()
-        let bump = Bump::new(); let mut partial = Partial::alloc::<Arc<[u8]>>(&bump).unwrap();
+        let mut partial = Partial::alloc::<Arc<[u8]>>().unwrap();
         partial = partial.begin_smart_ptr().unwrap();
         partial = partial.init_list().unwrap();
         partial = partial.push(2_u8).unwrap();

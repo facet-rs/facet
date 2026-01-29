@@ -149,15 +149,15 @@ impl<const BORROW: bool> Partial<'_, '_, BORROW> {
 
         // Push a new frame for the element
         // Get child type plan NodeId for set items
-        let child_plan = self
+        let child_plan_id = self
             .root_plan
-            .set_item_node(parent_type_plan)
+            .set_item_node_id(parent_type_plan)
             .expect("TypePlan should have item node for Set");
         self.mode.stack_mut().push(Frame::new(
             PtrUninit::new(element_ptr.as_ptr()),
             AllocatedShape::new(element_shape, element_layout.size()),
             FrameOwnership::Owned,
-            child_plan,
+            child_plan_id,
         ));
 
         Ok(self)

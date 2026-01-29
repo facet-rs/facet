@@ -2,7 +2,6 @@
 // because the value is consumed by `.build()` - this is expected behavior
 #![allow(unused_assignments)]
 
-use bumpalo::Bump;
 use facet::Facet;
 use facet_reflect::Partial;
 use facet_testhelpers::{IPanic, test};
@@ -19,8 +18,7 @@ fn deferred_simple_struct_all_fields() -> Result<(), IPanic> {
         b: String,
     }
 
-    let bump = Bump::new();
-    let mut partial = Partial::alloc::<Simple>(&bump)?;
+    let mut partial = Partial::alloc::<Simple>()?;
     partial = partial.begin_deferred()?;
 
     partial = partial.set_field("a", 1u32)?;
@@ -42,8 +40,7 @@ fn deferred_simple_struct_missing_field_should_fail() -> Result<(), IPanic> {
         b: String,
     }
 
-    let bump = Bump::new();
-    let mut partial = Partial::alloc::<Simple>(&bump)?;
+    let mut partial = Partial::alloc::<Simple>()?;
     partial = partial.begin_deferred()?;
 
     partial = partial.set_field("a", 1u32)?;
@@ -76,8 +73,7 @@ fn deferred_nested_struct_all_fields_interleaved() -> Result<(), IPanic> {
         count: u64,
     }
 
-    let bump = Bump::new();
-    let mut partial = Partial::alloc::<Outer>(&bump)?;
+    let mut partial = Partial::alloc::<Outer>()?;
 
     partial = partial.begin_deferred()?;
     assert!(partial.is_deferred());
@@ -121,8 +117,7 @@ fn deferred_nested_struct_missing_field_build_succeeds_currently() -> Result<(),
         inner: Inner,
     }
 
-    let bump = Bump::new();
-    let mut partial = Partial::alloc::<Outer>(&bump)?;
+    let mut partial = Partial::alloc::<Outer>()?;
     partial = partial.begin_deferred()?;
 
     partial = partial.set_field("name", String::from("test"))?;
@@ -145,8 +140,7 @@ fn deferred_without_begin_fails() -> Result<(), IPanic> {
         value: u32,
     }
 
-    let bump = Bump::new();
-    let partial = Partial::alloc::<Simple>(&bump)?;
+    let partial = Partial::alloc::<Simple>()?;
     match partial.finish_deferred() {
         Ok(_) => panic!("Expected error but got Ok"),
         Err(err) => assert!(err.to_string().contains("deferred mode is not enabled")),
@@ -174,8 +168,7 @@ fn deferred_deeply_nested_interleaved() -> Result<(), IPanic> {
         level2: Level2,
     }
 
-    let bump = Bump::new();
-    let mut partial = Partial::alloc::<Level1>(&bump)?;
+    let mut partial = Partial::alloc::<Level1>()?;
     partial = partial.begin_deferred()?;
 
     partial = partial.set_field("top_value", 1u64)?;
@@ -213,8 +206,7 @@ fn deferred_enum_variant_with_fields() -> Result<(), IPanic> {
         Number { value: i32 },
     }
 
-    let bump = Bump::new();
-    let mut partial = Partial::alloc::<Message>(&bump)?;
+    let mut partial = Partial::alloc::<Message>()?;
     partial = partial.begin_deferred()?;
 
     partial = partial.select_variant_named("Text")?;
@@ -241,8 +233,7 @@ fn deferred_enum_missing_variant_field_should_fail() -> Result<(), IPanic> {
         Text { content: String, sender: String },
     }
 
-    let bump = Bump::new();
-    let mut partial = Partial::alloc::<Message>(&bump)?;
+    let mut partial = Partial::alloc::<Message>()?;
     partial = partial.begin_deferred()?;
 
     partial = partial.select_variant_named("Text")?;
@@ -272,8 +263,7 @@ fn deferred_struct_containing_enum() -> Result<(), IPanic> {
         status: Status,
     }
 
-    let bump = Bump::new();
-    let mut partial = Partial::alloc::<User>(&bump)?;
+    let mut partial = Partial::alloc::<User>()?;
     partial = partial.begin_deferred()?;
 
     // Set name first
@@ -308,8 +298,7 @@ fn deferred_enum_unit_variant() -> Result<(), IPanic> {
         Inactive,
     }
 
-    let bump = Bump::new();
-    let mut partial = Partial::alloc::<Status>(&bump)?;
+    let mut partial = Partial::alloc::<Status>()?;
     partial = partial.begin_deferred()?;
 
     partial = partial.select_variant_named("Active")?;
@@ -342,8 +331,7 @@ fn deferred_struct_containing_enum_interleaved() -> Result<(), IPanic> {
         age: u32,
     }
 
-    let bump = Bump::new();
-    let mut partial = Partial::alloc::<User>(&bump)?;
+    let mut partial = Partial::alloc::<User>()?;
     partial = partial.begin_deferred()?;
 
     // For now, we set all enum fields in one visit (non-interleaved)
@@ -393,8 +381,7 @@ fn deferred_struct_with_option_set_to_some() -> Result<(), IPanic> {
         optional: Option<u32>,
     }
 
-    let bump = Bump::new();
-    let mut partial = Partial::alloc::<WithOption>(&bump)?;
+    let mut partial = Partial::alloc::<WithOption>()?;
     partial = partial.begin_deferred()?;
 
     partial = partial.set_field("required", String::from("hello"))?;
@@ -420,8 +407,7 @@ fn deferred_struct_with_option_left_none() -> Result<(), IPanic> {
         optional: Option<u32>,
     }
 
-    let bump = Bump::new();
-    let mut partial = Partial::alloc::<WithOption>(&bump)?;
+    let mut partial = Partial::alloc::<WithOption>()?;
     partial = partial.begin_deferred()?;
 
     partial = partial.set_field("required", String::from("hello"))?;
@@ -447,8 +433,7 @@ fn deferred_struct_with_default_field() -> Result<(), IPanic> {
         count: u32,
     }
 
-    let bump = Bump::new();
-    let mut partial = Partial::alloc::<WithDefault>(&bump)?;
+    let mut partial = Partial::alloc::<WithDefault>()?;
     partial = partial.begin_deferred()?;
 
     partial = partial.set_field("name", String::from("test"))?;
@@ -489,8 +474,7 @@ fn deferred_three_level_nesting_all_interleaved() -> Result<(), IPanic> {
         a2: u64,
     }
 
-    let bump = Bump::new();
-    let mut partial = Partial::alloc::<A>(&bump)?;
+    let mut partial = Partial::alloc::<A>()?;
     partial = partial.begin_deferred()?;
 
     // Maximally interleaved ordering
@@ -551,8 +535,7 @@ fn deferred_three_level_missing_deep_field_should_fail() -> Result<(), IPanic> {
         b: B,
     }
 
-    let bump = Bump::new();
-    let mut partial = Partial::alloc::<A>(&bump)?;
+    let mut partial = Partial::alloc::<A>()?;
     partial = partial.begin_deferred()?;
 
     partial = partial.set_field("a1", 1u64)?;
@@ -582,8 +565,7 @@ fn deferred_overwrite_field_value() -> Result<(), IPanic> {
         value: u32,
     }
 
-    let bump = Bump::new();
-    let mut partial = Partial::alloc::<Simple>(&bump)?;
+    let mut partial = Partial::alloc::<Simple>()?;
     partial = partial.begin_deferred()?;
 
     partial = partial.set_field("value", 1u32)?;
@@ -608,8 +590,7 @@ fn deferred_overwrite_nested_field_value() -> Result<(), IPanic> {
         inner: Inner,
     }
 
-    let bump = Bump::new();
-    let mut partial = Partial::alloc::<Outer>(&bump)?;
+    let mut partial = Partial::alloc::<Outer>()?;
     partial = partial.begin_deferred()?;
 
     partial = partial.begin_field("inner")?;
@@ -639,8 +620,7 @@ fn deferred_reenter_vec_push_more_items() -> Result<(), IPanic> {
         other: String,
     }
 
-    let bump = Bump::new();
-    let mut partial = Partial::alloc::<Container>(&bump)?;
+    let mut partial = Partial::alloc::<Container>()?;
     partial = partial.begin_deferred()?;
 
     // Push first item (need init_list on first visit)
@@ -674,8 +654,7 @@ fn deferred_reenter_vec_multiple_times() -> Result<(), IPanic> {
         count: u32,
     }
 
-    let bump = Bump::new();
-    let mut partial = Partial::alloc::<Container>(&bump)?;
+    let mut partial = Partial::alloc::<Container>()?;
     partial = partial.begin_deferred()?;
 
     // First visit
@@ -717,8 +696,7 @@ fn deferred_nested_vec_reentry() -> Result<(), IPanic> {
         name: String,
     }
 
-    let bump = Bump::new();
-    let mut partial = Partial::alloc::<Outer>(&bump)?;
+    let mut partial = Partial::alloc::<Outer>()?;
     partial = partial.begin_deferred()?;
 
     partial = partial.begin_field("inner")?;
@@ -759,8 +737,7 @@ fn deferred_reenter_hashmap() -> Result<(), IPanic> {
         label: String,
     }
 
-    let bump = Bump::new();
-    let mut partial = Partial::alloc::<Container>(&bump)?;
+    let mut partial = Partial::alloc::<Container>()?;
     partial = partial.begin_deferred()?;
 
     // Insert first entry
@@ -812,8 +789,7 @@ fn deferred_reenter_btreemap() -> Result<(), IPanic> {
         count: u32,
     }
 
-    let bump = Bump::new();
-    let mut partial = Partial::alloc::<Container>(&bump)?;
+    let mut partial = Partial::alloc::<Container>()?;
     partial = partial.begin_deferred()?;
 
     partial = partial.begin_field("map")?;
@@ -858,8 +834,7 @@ fn deferred_reenter_array() -> Result<(), IPanic> {
         name: String,
     }
 
-    let bump = Bump::new();
-    let mut partial = Partial::alloc::<Container>(&bump)?;
+    let mut partial = Partial::alloc::<Container>()?;
     partial = partial.begin_deferred()?;
 
     // Set first element
@@ -896,8 +871,7 @@ fn deferred_reenter_array_overwrite_element() -> Result<(), IPanic> {
         arr: [i32; 2],
     }
 
-    let bump = Bump::new();
-    let mut partial = Partial::alloc::<Container>(&bump)?;
+    let mut partial = Partial::alloc::<Container>()?;
     partial = partial.begin_deferred()?;
 
     partial = partial.begin_field("arr")?;
@@ -941,8 +915,7 @@ fn deferred_reenter_enum_set_more_fields() -> Result<(), IPanic> {
         tag: String,
     }
 
-    let bump = Bump::new();
-    let mut partial = Partial::alloc::<Container>(&bump)?;
+    let mut partial = Partial::alloc::<Container>()?;
     partial = partial.begin_deferred()?;
 
     // Enter enum, select variant, set one field
@@ -988,8 +961,7 @@ fn deferred_reenter_hashset() -> Result<(), IPanic> {
         count: u32,
     }
 
-    let bump = Bump::new();
-    let mut partial = Partial::alloc::<Container>(&bump)?;
+    let mut partial = Partial::alloc::<Container>()?;
     partial = partial.begin_deferred()?;
 
     partial = partial.begin_field("tags")?;
@@ -1025,8 +997,7 @@ fn deferred_reenter_btreeset() -> Result<(), IPanic> {
         name: String,
     }
 
-    let bump = Bump::new();
-    let mut partial = Partial::alloc::<Container>(&bump)?;
+    let mut partial = Partial::alloc::<Container>()?;
     partial = partial.begin_deferred()?;
 
     partial = partial.begin_field("ids")?;
@@ -1071,8 +1042,7 @@ fn deferred_deeply_interleaved_everything() -> Result<(), IPanic> {
         count: u64,
     }
 
-    let bump = Bump::new();
-    let mut partial = Partial::alloc::<Outer>(&bump)?;
+    let mut partial = Partial::alloc::<Outer>()?;
     partial = partial.begin_deferred()?;
 
     // Start inner.list
@@ -1149,8 +1119,7 @@ fn deferred_empty_struct() -> Result<(), IPanic> {
     #[derive(Facet, Debug, PartialEq)]
     struct Empty {}
 
-    let bump = Bump::new();
-    let mut partial = Partial::alloc::<Empty>(&bump)?;
+    let mut partial = Partial::alloc::<Empty>()?;
     partial = partial.begin_deferred()?;
 
     // Nothing to set
@@ -1168,8 +1137,7 @@ fn deferred_single_field_struct() -> Result<(), IPanic> {
         value: u32,
     }
 
-    let bump = Bump::new();
-    let mut partial = Partial::alloc::<Single>(&bump)?;
+    let mut partial = Partial::alloc::<Single>()?;
     partial = partial.begin_deferred()?;
 
     partial = partial.set_field("value", 42u32)?;
@@ -1193,8 +1161,7 @@ fn deferred_nested_empty_structs() -> Result<(), IPanic> {
         empty2: Empty,
     }
 
-    let bump = Bump::new();
-    let mut partial = Partial::alloc::<Container>(&bump)?;
+    let mut partial = Partial::alloc::<Container>()?;
     partial = partial.begin_deferred()?;
 
     // Empty structs need explicit begin/end to mark them as initialized
@@ -1224,8 +1191,7 @@ fn deferred_reenter_with_no_changes() -> Result<(), IPanic> {
         name: String,
     }
 
-    let bump = Bump::new();
-    let mut partial = Partial::alloc::<Outer>(&bump)?;
+    let mut partial = Partial::alloc::<Outer>()?;
     partial = partial.begin_deferred()?;
 
     // Set everything in first visit
@@ -1260,8 +1226,7 @@ fn deferred_multiple_reentries_no_changes() -> Result<(), IPanic> {
         inner: Inner,
     }
 
-    let bump = Bump::new();
-    let mut partial = Partial::alloc::<Outer>(&bump)?;
+    let mut partial = Partial::alloc::<Outer>()?;
     partial = partial.begin_deferred()?;
 
     partial = partial.begin_field("inner")?;
@@ -1299,8 +1264,7 @@ fn deferred_sibling_fields_interleaved() -> Result<(), IPanic> {
         child_c: Child,
     }
 
-    let bump = Bump::new();
-    let mut partial = Partial::alloc::<Parent>(&bump)?;
+    let mut partial = Partial::alloc::<Parent>()?;
     partial = partial.begin_deferred()?;
 
     // Interleave access to siblings
@@ -1340,8 +1304,7 @@ fn deferred_vec_empty_first_visit() -> Result<(), IPanic> {
         done: bool,
     }
 
-    let bump = Bump::new();
-    let mut partial = Partial::alloc::<Container>(&bump)?;
+    let mut partial = Partial::alloc::<Container>()?;
     partial = partial.begin_deferred()?;
 
     // First visit: just initialize the list, don't push anything
@@ -1375,8 +1338,7 @@ fn deferred_map_empty_first_visit() -> Result<(), IPanic> {
         ready: bool,
     }
 
-    let bump = Bump::new();
-    let mut partial = Partial::alloc::<Container>(&bump)?;
+    let mut partial = Partial::alloc::<Container>()?;
     partial = partial.begin_deferred()?;
 
     // First visit: just initialize the map
@@ -1423,8 +1385,7 @@ fn deferred_deeply_nested_siblings_interleaved() -> Result<(), IPanic> {
         root_right: Branch,
     }
 
-    let bump = Bump::new();
-    let mut partial = Partial::alloc::<Tree>(&bump)?;
+    let mut partial = Partial::alloc::<Tree>()?;
     partial = partial.begin_deferred()?;
 
     // Access leaves in arbitrary order
@@ -1484,7 +1445,7 @@ fn deferred_vec_of_structs_single_visit() -> Result<(), IPanic> {
         total: u32,
     }
 
-    let mut partial: Partial<'_> = Partial::alloc::<Container>()?;
+    let mut partial: Partial<'_, '_> = Partial::alloc::<Container>()?;
     partial = partial.begin_deferred()?;
 
     // Set total first (interleaved with items)
@@ -1534,7 +1495,7 @@ fn deferred_map_with_struct_values_single_visit() -> Result<(), IPanic> {
         count: u32,
     }
 
-    let mut partial: Partial<'_> = Partial::alloc::<Directory>()?;
+    let mut partial: Partial<'_, '_> = Partial::alloc::<Directory>()?;
     partial = partial.begin_deferred()?;
 
     // Set count first (interleaved)
@@ -1594,7 +1555,7 @@ fn deferred_multiple_enums_interleaved() -> Result<(), IPanic> {
         label: String,
     }
 
-    let mut partial: Partial<'_> = Partial::alloc::<Design>()?;
+    let mut partial: Partial<'_, '_> = Partial::alloc::<Design>()?;
     partial = partial.begin_deferred()?;
 
     // Set foreground variant and first field
@@ -1647,7 +1608,7 @@ fn deferred_tuple_struct() -> Result<(), IPanic> {
     #[derive(Facet, Debug, PartialEq)]
     struct Point(i32, i32, i32);
 
-    let mut partial: Partial<'_> = Partial::alloc::<Point>()?;
+    let mut partial: Partial<'_, '_> = Partial::alloc::<Point>()?;
     partial = partial.begin_deferred()?;
 
     partial = partial.begin_nth_field(0)?;
@@ -1680,7 +1641,7 @@ fn deferred_nested_tuple_struct_reentry() -> Result<(), IPanic> {
         name: String,
     }
 
-    let mut partial: Partial<'_> = Partial::alloc::<Container>()?;
+    let mut partial: Partial<'_, '_> = Partial::alloc::<Container>()?;
     partial = partial.begin_deferred()?;
 
     partial = partial.begin_field("pair")?;
@@ -1728,7 +1689,7 @@ fn deferred_reentry_at_varying_depths() -> Result<(), IPanic> {
         top: String,
     }
 
-    let mut partial: Partial<'_> = Partial::alloc::<Level1>()?;
+    let mut partial: Partial<'_, '_> = Partial::alloc::<Level1>()?;
     partial = partial.begin_deferred()?;
 
     // Go deep first
@@ -1780,7 +1741,7 @@ fn deferred_many_siblings_interleaved() -> Result<(), IPanic> {
         h: u32,
     }
 
-    let mut partial: Partial<'_> = Partial::alloc::<Big>()?;
+    let mut partial: Partial<'_, '_> = Partial::alloc::<Big>()?;
     partial = partial.begin_deferred()?;
 
     // Set in random order, interleaved with re-entries
@@ -1830,8 +1791,7 @@ fn wip_deferred_drop_without_finish_simple() {
     }
 
     {
-        let bump = Bump::new();
-        let mut partial: Partial<'_, '_> = Partial::alloc::<Simple>(&bump).unwrap();
+        let mut partial: Partial<'_, '_> = Partial::alloc::<Simple>().unwrap();
         partial = partial.begin_deferred().unwrap();
 
         partial = partial
@@ -1861,8 +1821,7 @@ fn wip_deferred_drop_without_finish_nested() {
     }
 
     {
-        let bump = Bump::new();
-        let mut partial: Partial<'_, '_> = Partial::alloc::<Outer>(&bump).unwrap();
+        let mut partial: Partial<'_, '_> = Partial::alloc::<Outer>().unwrap();
         partial = partial.begin_deferred().unwrap();
 
         partial = partial
@@ -1890,8 +1849,7 @@ fn wip_deferred_drop_without_finish_collections() {
     }
 
     {
-        let bump = Bump::new();
-        let mut partial: Partial<'_, '_> = Partial::alloc::<WithCollections>(&bump).unwrap();
+        let mut partial: Partial<'_, '_> = Partial::alloc::<WithCollections>().unwrap();
         partial = partial.begin_deferred().unwrap();
 
         partial = partial.begin_field("strings").unwrap();
@@ -1930,8 +1888,7 @@ fn wip_deferred_drop_mid_field() {
     }
 
     {
-        let bump = Bump::new();
-        let mut partial: Partial<'_, '_> = Partial::alloc::<Outer>(&bump).unwrap();
+        let mut partial: Partial<'_, '_> = Partial::alloc::<Outer>().unwrap();
         partial = partial.begin_deferred().unwrap();
 
         partial = partial.begin_field("inner").unwrap();
@@ -1950,7 +1907,7 @@ fn error_finish_deferred_twice() -> Result<(), IPanic> {
         value: u32,
     }
 
-    let mut partial: Partial<'_> = Partial::alloc::<Simple>()?;
+    let mut partial: Partial<'_, '_> = Partial::alloc::<Simple>()?;
     partial = partial.begin_deferred()?;
 
     partial = partial.set_field("value", 42u32)?;
@@ -1974,7 +1931,7 @@ fn error_begin_deferred_twice() -> Result<(), IPanic> {
         value: u32,
     }
 
-    let mut partial: Partial<'_> = Partial::alloc::<Simple>()?;
+    let mut partial: Partial<'_, '_> = Partial::alloc::<Simple>()?;
 
     partial = partial.begin_deferred()?;
     assert!(partial.is_deferred());
@@ -2000,7 +1957,7 @@ fn error_enum_variant_switch() -> Result<(), IPanic> {
         OptionB { b_value: String },
     }
 
-    let mut partial: Partial<'_> = Partial::alloc::<Choice>()?;
+    let mut partial: Partial<'_, '_> = Partial::alloc::<Choice>()?;
     partial = partial.begin_deferred()?;
 
     // Select variant A and set its field
@@ -2049,7 +2006,7 @@ fn error_enum_variant_switch_with_reentry() -> Result<(), IPanic> {
         id: u32,
     }
 
-    let mut partial: Partial<'_> = Partial::alloc::<Record>()?;
+    let mut partial: Partial<'_, '_> = Partial::alloc::<Record>()?;
     partial = partial.begin_deferred()?;
 
     // Set up Active variant
@@ -2087,7 +2044,7 @@ fn error_build_without_finish_deferred() -> Result<(), IPanic> {
         value: u32,
     }
 
-    let mut partial: Partial<'_> = Partial::alloc::<Simple>()?;
+    let mut partial: Partial<'_, '_> = Partial::alloc::<Simple>()?;
     partial = partial.begin_deferred()?;
 
     partial = partial.set_field("value", 42u32)?;
@@ -2115,7 +2072,7 @@ fn error_operations_after_finish() -> Result<(), IPanic> {
         b: u32,
     }
 
-    let mut partial: Partial<'_> = Partial::alloc::<Simple>()?;
+    let mut partial: Partial<'_, '_> = Partial::alloc::<Simple>()?;
     partial = partial.begin_deferred()?;
 
     partial = partial.set_field("a", 1u32)?;
@@ -2159,8 +2116,7 @@ fn wip_deferred_drop_with_stored_frames() {
     }
 
     {
-        let bump = Bump::new();
-        let mut partial: Partial<'_, '_> = Partial::alloc::<L1>(&bump).unwrap();
+        let mut partial: Partial<'_, '_> = Partial::alloc::<L1>().unwrap();
         partial = partial.begin_deferred().unwrap();
 
         // Go deep
@@ -2205,7 +2161,7 @@ fn deferred_started_from_nested_position() -> Result<(), IPanic> {
         server: Server,
     }
 
-    let mut partial: Partial<'_> = Partial::alloc::<Config>()?;
+    let mut partial: Partial<'_, '_> = Partial::alloc::<Config>()?;
 
     // Navigate into server first
     partial = partial.begin_field("server")?;
@@ -2262,7 +2218,7 @@ fn deferred_started_from_deeply_nested_position() -> Result<(), IPanic> {
         level1: Level1,
     }
 
-    let mut partial: Partial<'_> = Partial::alloc::<Root>()?;
+    let mut partial: Partial<'_, '_> = Partial::alloc::<Root>()?;
 
     // Navigate deep before starting deferred mode
     partial = partial.begin_field("level1")?;
@@ -2302,7 +2258,7 @@ fn deferred_option_field_auto_defaults_to_none() -> Result<(), IPanic> {
         optional: Option<u32>,
     }
 
-    let mut partial: Partial<'_> = Partial::alloc::<WithOption>()?;
+    let mut partial: Partial<'_, '_> = Partial::alloc::<WithOption>()?;
     partial = partial.begin_deferred()?;
 
     partial = partial.set_field("required", String::from("hello"))?;
@@ -2326,7 +2282,7 @@ fn deferred_multiple_option_fields_auto_default() -> Result<(), IPanic> {
         opt3: Option<bool>,
     }
 
-    let mut partial: Partial<'_> = Partial::alloc::<ManyOptions>()?;
+    let mut partial: Partial<'_, '_> = Partial::alloc::<ManyOptions>()?;
     partial = partial.begin_deferred()?;
 
     partial = partial.set_field("name", String::from("test"))?;
@@ -2356,7 +2312,7 @@ fn deferred_field_with_default_attr_auto_applies() -> Result<(), IPanic> {
         count: u32,
     }
 
-    let mut partial: Partial<'_> = Partial::alloc::<WithDefault>()?;
+    let mut partial: Partial<'_, '_> = Partial::alloc::<WithDefault>()?;
     partial = partial.begin_deferred()?;
 
     partial = partial.set_field("name", String::from("test"))?;
@@ -2379,7 +2335,7 @@ fn deferred_field_with_default_impl_auto_applies() -> Result<(), IPanic> {
         items: Vec<i32>,
     }
 
-    let mut partial: Partial<'_> = Partial::alloc::<WithDefault>()?;
+    let mut partial: Partial<'_, '_> = Partial::alloc::<WithDefault>()?;
     partial = partial.begin_deferred()?;
 
     partial = partial.set_field("name", String::from("test"))?;
@@ -2404,7 +2360,7 @@ fn deferred_enum_variant_option_field_auto_defaults() -> Result<(), IPanic> {
     }
 
     // Test variant B with only one field set
-    let mut partial: Partial<'_> = Partial::alloc::<Root>()?;
+    let mut partial: Partial<'_, '_> = Partial::alloc::<Root>()?;
     partial = partial.begin_deferred()?;
 
     partial = partial.select_variant_named("B")?;
@@ -2439,7 +2395,7 @@ fn deferred_enum_tuple_variant_option_defaults() -> Result<(), IPanic> {
     }
 
     // Test variant A with no field set (table header case like [A] in TOML)
-    let mut partial: Partial<'_> = Partial::alloc::<Root>()?;
+    let mut partial: Partial<'_, '_> = Partial::alloc::<Root>()?;
     partial = partial.begin_deferred()?;
 
     partial = partial.select_variant_named("A")?;
@@ -2466,7 +2422,7 @@ fn deferred_nested_struct_option_fields_auto_default() -> Result<(), IPanic> {
         opt: Option<String>,
     }
 
-    let mut partial: Partial<'_> = Partial::alloc::<Outer>()?;
+    let mut partial: Partial<'_, '_> = Partial::alloc::<Outer>()?;
     partial = partial.begin_deferred()?;
 
     partial = partial.begin_field("inner")?;
@@ -2493,7 +2449,7 @@ fn deferred_all_fields_are_optional() -> Result<(), IPanic> {
         c: Option<bool>,
     }
 
-    let mut partial: Partial<'_> = Partial::alloc::<AllOptional>()?;
+    let mut partial: Partial<'_, '_> = Partial::alloc::<AllOptional>()?;
     partial = partial.begin_deferred()?;
 
     // Set nothing at all - all should default to None
@@ -2528,7 +2484,7 @@ fn deferred_option_struct_interleaved_fields() -> Result<(), IPanic> {
         connection: Option<Inner>,
     }
 
-    let mut partial: Partial<'_> = Partial::alloc::<Outer>()?;
+    let mut partial: Partial<'_, '_> = Partial::alloc::<Outer>()?;
     partial = partial.begin_deferred()?;
 
     // Set name first
@@ -2583,7 +2539,7 @@ fn deferred_option_struct_deeply_nested_interleaved() -> Result<(), IPanic> {
         middle: Option<Middle>,
     }
 
-    let mut partial: Partial<'_> = Partial::alloc::<Outer>()?;
+    let mut partial: Partial<'_, '_> = Partial::alloc::<Outer>()?;
     partial = partial.begin_deferred()?;
 
     // Set outer name

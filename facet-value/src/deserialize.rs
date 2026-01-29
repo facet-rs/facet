@@ -32,7 +32,6 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-use bumpalo::Bump;
 use facet_core::{
     Def, Facet, NumericType, PrimitiveType, Shape, StructKind, TextualType, Type, UserType, Variant,
 };
@@ -256,8 +255,7 @@ pub type Result<T> = core::result::Result<T, ValueError>;
 /// assert_eq!(point, Point { x: 10, y: 20 });
 /// ```
 pub fn from_value<T: Facet<'static>>(value: Value) -> Result<T> {
-    let bump = Bump::new();
-    let plan = TypePlan::<T>::build(&bump).map_err(|e| {
+    let plan = TypePlan::<T>::build().map_err(|e| {
         ValueError::from(e)
             .with_shape(T::SHAPE)
             .with_value(value.clone())

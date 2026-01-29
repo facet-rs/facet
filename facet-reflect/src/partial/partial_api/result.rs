@@ -71,15 +71,15 @@ impl<const BORROW: bool> Partial<'_, '_, BORROW> {
 
         // Create a new frame for the inner value
         // Get child type plan NodeId for Result Ok type
-        let child_plan = self
+        let (ok_node_id, _err_node_id) = self
             .root_plan
-            .result_ok_node(parent_type_plan)
-            .expect("TypePlan should have Ok node for Result");
+            .result_nodes_id(parent_type_plan)
+            .expect("TypePlan should have Result nodes");
         let inner_frame = Frame::new(
             inner_data,
             AllocatedShape::new(inner_shape, inner_layout.size()),
             FrameOwnership::Owned,
-            child_plan,
+            ok_node_id,
         );
         self.mode.stack_mut().push(inner_frame);
 
@@ -152,15 +152,15 @@ impl<const BORROW: bool> Partial<'_, '_, BORROW> {
 
         // Create a new frame for the inner value
         // Get child type plan NodeId for Result Err type
-        let child_plan = self
+        let (_ok_node_id, err_node_id) = self
             .root_plan
-            .result_err_node(parent_type_plan)
-            .expect("TypePlan should have Err node for Result");
+            .result_nodes_id(parent_type_plan)
+            .expect("TypePlan should have Result nodes");
         let inner_frame = Frame::new(
             inner_data,
             AllocatedShape::new(inner_shape, inner_layout.size()),
             FrameOwnership::Owned,
-            child_plan,
+            err_node_id,
         );
         self.mode.stack_mut().push(inner_frame);
 

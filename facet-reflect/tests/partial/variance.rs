@@ -1,8 +1,7 @@
 #![allow(clippy::needless_lifetimes)]
 
-use bumpalo::Bump;
 use facet::Facet;
-use facet_reflect::Partial;
+use facet_reflect::{Partial, TypePlan};
 use facet_testhelpers::test;
 
 #[derive(Debug, Facet)]
@@ -28,8 +27,8 @@ fn covariant_works() {
     }
 
     fn scope<'a>(token: CovariantLifetime<'a>) -> Wrapper<'a> {
-        // SAFETY: Wrapper::<'a>::SHAPE comes from the derived Facet implementation
-        let partial: Partial<'a> = unsafe { Partial::alloc_shape(Wrapper::<'a>::SHAPE) }.unwrap();
+        let plan = TypePlan::<Wrapper<'a>>::build().unwrap();
+        let partial: Partial<'a, '_> = plan.partial().unwrap();
         partial
             .begin_field("token")
             .unwrap()
@@ -55,8 +54,8 @@ fn contravariant_works() {
     }
 
     fn scope<'a>(token: ContravariantLifetime<'a>) -> Wrapper<'a> {
-        // SAFETY: Wrapper::<'a>::SHAPE comes from the derived Facet implementation
-        let partial: Partial<'a> = unsafe { Partial::alloc_shape(Wrapper::<'a>::SHAPE) }.unwrap();
+        let plan = TypePlan::<Wrapper<'a>>::build().unwrap();
+        let partial: Partial<'a, '_> = plan.partial().unwrap();
         partial
             .begin_field("token")
             .unwrap()
@@ -82,8 +81,8 @@ fn invariant_works() {
     }
 
     fn scope<'a>(token: InvariantLifetime<'a>) -> Wrapper<'a> {
-        // SAFETY: Wrapper::<'a>::SHAPE comes from the derived Facet implementation
-        let partial: Partial<'a> = unsafe { Partial::alloc_shape(Wrapper::<'a>::SHAPE) }.unwrap();
+        let plan = TypePlan::<Wrapper<'a>>::build().unwrap();
+        let partial: Partial<'a, '_> = plan.partial().unwrap();
         partial
             .begin_field("token")
             .unwrap()

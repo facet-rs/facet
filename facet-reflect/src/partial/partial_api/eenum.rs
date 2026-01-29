@@ -18,12 +18,15 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
     ///
     /// Returns the VariantPlanMeta for the selected variant, which contains precomputed
     /// information like `has_flatten` and `field_lookup` for fast field lookups.
-    pub fn selected_variant_plan(&self) -> Option<&'plan crate::typeplan::VariantPlanMeta<'plan>> {
+    pub fn selected_variant_plan(&self) -> Option<&'plan crate::typeplan::VariantPlanMeta> {
         let frame = self.frames().last()?;
-        let enum_plan = self.root_plan.as_enum_plan(frame.type_plan)?;
+        let enum_plan = self.root_plan.enum_plan_by_id(frame.type_plan)?;
 
         match &frame.tracker {
-            Tracker::Enum { variant_idx, .. } => enum_plan.variants.get(*variant_idx),
+            Tracker::Enum { variant_idx, .. } => self
+                .root_plan
+                .variants(enum_plan.variants)
+                .get(*variant_idx),
             _ => None,
         }
     }
@@ -33,9 +36,10 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
     /// This searches by effective name (respecting `#[facet(rename = "...")]` attributes).
     pub fn find_variant(&self, variant_name: &str) -> Option<(usize, &'static Variant)> {
         let frame = self.frames().last()?;
-        let enum_plan = self.root_plan.as_enum_plan(frame.type_plan)?;
+        let enum_plan = self.root_plan.enum_plan_by_id(frame.type_plan)?;
         let idx = enum_plan.variant_lookup.find(variant_name)?;
-        Some((idx, enum_plan.variants[idx].variant))
+        let variants = self.root_plan.variants(enum_plan.variants);
+        Some((idx, variants[idx].variant))
     }
 
     /// Assuming the current frame is an enum, this selects a variant by index
@@ -80,7 +84,7 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
         let shape = frame.allocated.shape();
 
         // Use precomputed VariantLookup for fast lookup
-        let enum_plan = self.root_plan.as_enum_plan(frame.type_plan).unwrap();
+        let enum_plan = self.root_plan.enum_plan_by_id(frame.type_plan).unwrap();
         let variant_idx = enum_plan.variant_lookup.find(variant_name).ok_or_else(|| {
             self.err(ReflectErrorKind::OperationFailed {
                 shape,

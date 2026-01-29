@@ -1,4 +1,3 @@
-use bumpalo::Bump;
 use facet_reflect::Partial;
 use facet_testhelpers::test;
 
@@ -83,7 +82,7 @@ fn test_result_in_struct() {
         failure: Result<String, i32>,
     }
 
-    let bump = Bump::new(); let mut wip = Partial::alloc::<TestStruct>(&bump).unwrap();
+    let mut wip = Partial::alloc::<TestStruct>().unwrap();
 
     // Build the success field as Ok
     wip = wip.begin_nth_field(0).unwrap();

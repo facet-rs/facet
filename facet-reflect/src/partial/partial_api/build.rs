@@ -24,16 +24,22 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
             (frame.type_plan, variant_idx)
         });
 
-        // Look up plans from the type plan node (no indirection needed - we have direct references)
-        let plans_info = frame_info.and_then(|(type_plan, variant_idx)| match &type_plan.kind {
-            TypePlanNodeKind::Struct(struct_plan) => Some(struct_plan.fields),
-            TypePlanNodeKind::Enum(enum_plan) => {
-                variant_idx.and_then(|idx| enum_plan.variants.get(idx).map(|v| v.fields))
+        // Look up plans from the type plan node - need to resolve NodeId to get the actual node
+        let plans_info = frame_info.and_then(|(type_plan_id, variant_idx)| {
+            let type_plan = self.root_plan.node(type_plan_id);
+            match &type_plan.kind {
+                TypePlanNodeKind::Struct(struct_plan) => Some(struct_plan.fields),
+                TypePlanNodeKind::Enum(enum_plan) => {
+                    let variants = self.root_plan.variants(enum_plan.variants);
+                    variant_idx.and_then(|idx| variants.get(idx).map(|v| v.fields))
+                }
+                _ => None,
             }
-            _ => None,
         });
 
-        if let Some(plans) = plans_info {
+        if let Some(plans_range) = plans_info {
+            // Resolve the SliceRange to an actual slice
+            let plans = self.root_plan.fields(plans_range);
             // Now mutably borrow mode.stack to get the frame
             // (root_plan borrow of `plans` is still active but that's fine -
             // mode and root_plan are separate fields)
@@ -44,7 +50,7 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
                 frame.tracker.kind()
             );
             frame
-                .fill_and_require_fields(plans, plans.len())
+                .fill_and_require_fields(plans, plans.len(), self.root_plan)
                 .map_err(|e| self.err(e))?;
         } else {
             // Fall back to the old path if optimized path wasn't available
@@ -184,16 +190,22 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
             (frame.type_plan, variant_idx)
         });
 
-        // Look up plans from the type plan node (no indirection needed - we have direct references)
-        let plans_info = frame_info.and_then(|(type_plan, variant_idx)| match &type_plan.kind {
-            TypePlanNodeKind::Struct(struct_plan) => Some(struct_plan.fields),
-            TypePlanNodeKind::Enum(enum_plan) => {
-                variant_idx.and_then(|idx| enum_plan.variants.get(idx).map(|v| v.fields))
+        // Look up plans from the type plan node - need to resolve NodeId to get the actual node
+        let plans_info = frame_info.and_then(|(type_plan_id, variant_idx)| {
+            let type_plan = self.root_plan.node(type_plan_id);
+            match &type_plan.kind {
+                TypePlanNodeKind::Struct(struct_plan) => Some(struct_plan.fields),
+                TypePlanNodeKind::Enum(enum_plan) => {
+                    let variants = self.root_plan.variants(enum_plan.variants);
+                    variant_idx.and_then(|idx| variants.get(idx).map(|v| v.fields))
+                }
+                _ => None,
             }
-            _ => None,
         });
 
-        if let Some(plans) = plans_info {
+        if let Some(plans_range) = plans_info {
+            // Resolve the SliceRange to an actual slice
+            let plans = self.root_plan.fields(plans_range);
             // Now mutably borrow mode.stack to get the frame
             // (root_plan borrow of `plans` is still active but that's fine -
             // mode and root_plan are separate fields)
@@ -204,7 +216,7 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
                 frame.tracker.kind()
             );
             frame
-                .fill_and_require_fields(plans, plans.len())
+                .fill_and_require_fields(plans, plans.len(), self.root_plan)
                 .map_err(|e| self.err(e))?;
         } else {
             // Fall back to the old path if optimized path wasn't available

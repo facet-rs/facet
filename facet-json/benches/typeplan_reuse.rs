@@ -6,7 +6,6 @@
 //! Run with:
 //!   cargo bench -p facet-json --bench typeplan_reuse
 
-use bumpalo::Bump;
 use divan::{Bencher, black_box};
 use facet::Facet;
 use facet_json::JsonParser;
@@ -108,8 +107,7 @@ fn point_reused_typeplan(bencher: Bencher) {
     use facet_format::FormatDeserializer;
 
     let json = POINT_JSON;
-    let bump = Bump::new();
-    let plan = TypePlan::<Point>::build(&bump).unwrap();
+    let plan = TypePlan::<Point>::build().unwrap();
 
     bencher.bench(|| {
         let partial = plan.partial_owned().unwrap();
@@ -141,8 +139,7 @@ fn person_reused_typeplan(bencher: Bencher) {
     use facet_format::FormatDeserializer;
 
     let json = PERSON_JSON;
-    let bump = Bump::new();
-    let plan = TypePlan::<Person>::build(&bump).unwrap();
+    let plan = TypePlan::<Person>::build().unwrap();
 
     bencher.bench(|| {
         let partial = plan.partial_owned().unwrap();
@@ -174,8 +171,7 @@ fn company_reused_typeplan(bencher: Bencher) {
     use facet_format::FormatDeserializer;
 
     let json = COMPANY_JSON;
-    let bump = Bump::new();
-    let plan = TypePlan::<Company>::build(&bump).unwrap();
+    let plan = TypePlan::<Company>::build().unwrap();
 
     bencher.bench(|| {
         let partial = plan.partial_owned().unwrap();
@@ -209,8 +205,7 @@ fn batch_1000_reused_typeplan(bencher: Bencher) {
     use facet_format::FormatDeserializer;
 
     let json = PERSON_JSON;
-    let bump = Bump::new();
-    let plan = TypePlan::<Person>::build(&bump).unwrap();
+    let plan = TypePlan::<Person>::build().unwrap();
 
     bencher.bench(|| {
         for _ in 0..1000 {

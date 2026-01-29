@@ -82,6 +82,15 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
         self.frames().last().map(|f| f.allocated.shape())
     }
 
+    /// Returns the TypePlanCore for this Partial.
+    ///
+    /// This provides access to the arena-based type plan data, useful for
+    /// resolving field lookups and accessing precomputed metadata.
+    #[inline]
+    pub fn type_plan_core(&self) -> &'plan crate::typeplan::TypePlanCore {
+        self.root_plan
+    }
+
     /// Returns the precomputed StructPlan for the current frame, if available.
     ///
     /// This provides O(1) or O(log n) field lookup instead of O(n) linear scanning.
@@ -90,12 +99,12 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
     /// - The current frame has no TypePlan (e.g., custom deserialization frames)
     /// - The current type is not a struct
     #[inline]
-    pub fn struct_plan(&self) -> Option<&'plan crate::typeplan::StructPlan<'plan>> {
+    pub fn struct_plan(&self) -> Option<&'plan crate::typeplan::StructPlan> {
         if self.state != PartialState::Active {
             return None;
         }
         let frame = self.frames().last()?;
-        self.root_plan.as_struct_plan(frame.type_plan)
+        self.root_plan.struct_plan_by_id(frame.type_plan)
     }
 
     /// Returns the precomputed EnumPlan for the current frame, if available.
@@ -105,12 +114,12 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
     /// - The Partial is not active
     /// - The current type is not an enum
     #[inline]
-    pub fn enum_plan(&self) -> Option<&'plan crate::typeplan::EnumPlan<'plan>> {
+    pub fn enum_plan(&self) -> Option<&'plan crate::typeplan::EnumPlan> {
         if self.state != PartialState::Active {
             return None;
         }
         let frame = self.frames().last()?;
-        self.root_plan.as_enum_plan(frame.type_plan)
+        self.root_plan.enum_plan_by_id(frame.type_plan)
     }
 
     /// Returns the precomputed field plans for the current frame.
@@ -120,15 +129,21 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
     ///
     /// Returns `None` if the current type is not a struct or enum variant.
     #[inline]
-    pub fn field_plans(&self) -> Option<&'plan [crate::typeplan::FieldPlan<'plan>]> {
+    pub fn field_plans(&self) -> Option<&'plan [crate::typeplan::FieldPlan]> {
         use crate::typeplan::TypePlanNodeKind;
         let frame = self.frames().last().unwrap();
-        match &frame.type_plan.kind {
-            TypePlanNodeKind::Struct(struct_plan) => Some(struct_plan.fields),
+        let node = self.root_plan.node(frame.type_plan);
+        match &node.kind {
+            TypePlanNodeKind::Struct(struct_plan) => {
+                Some(self.root_plan.fields(struct_plan.fields))
+            }
             TypePlanNodeKind::Enum(enum_plan) => {
                 // For enums, we need the variant index from the tracker
                 if let crate::partial::Tracker::Enum { variant_idx, .. } = &frame.tracker {
-                    enum_plan.variants.get(*variant_idx).map(|v| v.fields)
+                    self.root_plan
+                        .variants(enum_plan.variants)
+                        .get(*variant_idx)
+                        .map(|v| self.root_plan.fields(v.fields))
                 } else {
                     None
                 }
@@ -146,7 +161,21 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
     /// - The Partial is not active
     /// - There are no frames
     #[inline]
-    pub fn plan_node(&self) -> Option<&'plan crate::typeplan::TypePlanNode<'plan>> {
+    pub fn plan_node(&self) -> Option<&'plan crate::typeplan::TypePlanNode> {
+        if self.state != PartialState::Active {
+            return None;
+        }
+        let frame = self.frames().last()?;
+        Some(self.root_plan.node(frame.type_plan))
+    }
+
+    /// Returns the node ID for the current frame's type plan.
+    ///
+    /// Returns `None` if:
+    /// - The Partial is not active
+    /// - There are no frames
+    #[inline]
+    pub fn plan_node_id(&self) -> Option<crate::typeplan::NodeId> {
         if self.state != PartialState::Active {
             return None;
         }
@@ -167,7 +196,7 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
     /// - The Partial is not active
     /// - There are no frames
     #[inline]
-    pub fn deser_strategy(&self) -> Option<&'plan DeserStrategy<'plan>> {
+    pub fn deser_strategy(&self) -> Option<&'plan DeserStrategy> {
         let node = self.plan_node()?;
         // Resolve BackRef if needed - resolve_backref returns the node unchanged if not a BackRef
         let resolved = self.root_plan.resolve_backref(node);
@@ -711,17 +740,22 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
                 (frame.type_plan, variant_idx)
             });
 
-            // Look up plans from the type plan node (no indirection needed - we have direct references)
-            let plans_info =
-                frame_info.and_then(|(type_plan, variant_idx)| match &type_plan.kind {
+            // Look up plans from the type plan node - need to resolve NodeId to get the actual node
+            let plans_info = frame_info.and_then(|(type_plan_id, variant_idx)| {
+                let type_plan = self.root_plan.node(type_plan_id);
+                match &type_plan.kind {
                     TypePlanNodeKind::Struct(struct_plan) => Some(struct_plan.fields),
                     TypePlanNodeKind::Enum(enum_plan) => {
-                        variant_idx.and_then(|idx| enum_plan.variants.get(idx).map(|v| v.fields))
+                        let variants = self.root_plan.variants(enum_plan.variants);
+                        variant_idx.and_then(|idx| variants.get(idx).map(|v| v.fields))
                     }
                     _ => None,
-                });
+                }
+            });
 
-            if let Some(plans) = plans_info {
+            if let Some(plans_range) = plans_info {
+                // Resolve the SliceRange to an actual slice
+                let plans = self.root_plan.fields(plans_range);
                 // Now mutably borrow mode.stack to get the frame
                 // (root_plan borrow of `plans` is still active but that's fine -
                 // mode and root_plan are separate fields)
@@ -732,7 +766,7 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
                     frame.tracker.kind()
                 );
                 frame
-                    .fill_and_require_fields(plans, plans.len())
+                    .fill_and_require_fields(plans, plans.len(), self.root_plan)
                     .map_err(|e| self.err(e))?;
             } else {
                 // Fall back to the old path if optimized path wasn't available

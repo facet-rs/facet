@@ -1,7 +1,6 @@
 #![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 
-use bumpalo::Bump;
 use facet_core::{Def, Facet, Type, UserType};
 use facet_reflect::{AllocError, Partial, ReflectError, ShapeMismatchError, TypePlan};
 use log::*;
@@ -82,8 +81,7 @@ pub use self::axum::{FormRejection, QueryRejection};
 pub fn from_str<'input: 'facet, 'facet, T: Facet<'facet>>(
     urlencoded: &'input str,
 ) -> Result<T, UrlEncodedError> {
-    let bump = Bump::new();
-    let plan = TypePlan::<T>::build(&bump)?;
+    let plan = TypePlan::<T>::build()?;
     let partial = plan.partial()?;
     let partial = from_str_value(partial, urlencoded)?;
     let result: T = partial.build()?.materialize()?;
@@ -113,8 +111,7 @@ pub fn from_str<'input: 'facet, 'facet, T: Facet<'facet>>(
 /// assert_eq!(params, SearchParams { query: "rust".to_string(), page: 1 });
 /// ```
 pub fn from_str_owned<T: Facet<'static>>(urlencoded: &str) -> Result<T, UrlEncodedError> {
-    let bump = Bump::new();
-    let plan = TypePlan::<T>::build(&bump)?;
+    let plan = TypePlan::<T>::build()?;
     let partial = plan.partial_owned()?;
     let partial = from_str_value(partial, urlencoded)?;
     let result: T = partial.build()?.materialize()?;

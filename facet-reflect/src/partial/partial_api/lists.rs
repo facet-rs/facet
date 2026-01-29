@@ -285,13 +285,13 @@ impl<const BORROW: bool> Partial<'_, '_, BORROW> {
 
             // Get child type plan NodeId for slice items
             // Navigate: Pointer -> Slice -> element
-            let slice_node = self
+            let slice_node_id = self
                 .root_plan
-                .pointer_pointee_node(parent_type_plan)
+                .pointer_inner_node_id(parent_type_plan)
                 .expect("TypePlan must have slice node for smart pointer");
-            let child_plan = self
+            let child_plan_id = self
                 .root_plan
-                .list_item_node(slice_node)
+                .list_item_node_id(slice_node_id)
                 .expect("TypePlan must have item node for slice");
 
             // Create and push the element frame
@@ -300,7 +300,7 @@ impl<const BORROW: bool> Partial<'_, '_, BORROW> {
                 element_data,
                 AllocatedShape::new(element_shape, element_layout.size()),
                 FrameOwnership::Owned,
-                child_plan,
+                child_plan_id,
             );
             self.mode.stack_mut().push(element_frame);
 
@@ -479,9 +479,9 @@ impl<const BORROW: bool> Partial<'_, '_, BORROW> {
         };
 
         // Get child type plan NodeId for list items - root_plan is free to access now
-        let child_plan = self
+        let child_plan_id = self
             .root_plan
-            .list_item_node(parent_type_plan)
+            .list_item_node_id(parent_type_plan)
             .expect("TypePlan must have list item node");
 
         // Push a new frame for the element
@@ -489,7 +489,7 @@ impl<const BORROW: bool> Partial<'_, '_, BORROW> {
             element_data,
             AllocatedShape::new(element_shape, element_layout.size()),
             ownership,
-            child_plan,
+            child_plan_id,
         ));
 
         Ok(self)

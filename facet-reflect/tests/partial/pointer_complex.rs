@@ -1,4 +1,3 @@
-use bumpalo::Bump;
 use std::sync::Arc;
 
 use facet::Facet;
@@ -15,7 +14,7 @@ struct Person {
 #[test]
 fn arc_slice_complex_struct() -> Result<(), IPanic> {
     // Test building Arc<[Person]>
-    let bump = Bump::new(); let mut partial = Partial::alloc::<Arc<[Person]>>(&bump).unwrap();
+    let mut partial = Partial::alloc::<Arc<[Person]>>().unwrap();
     partial = partial.begin_smart_ptr()?;
     partial = partial.init_list()?;
 
@@ -71,7 +70,7 @@ struct NestedStruct {
 #[test]
 fn arc_slice_nested_struct() -> Result<(), IPanic> {
     // Test building Arc<[NestedStruct]> with nested structures
-    let bump = Bump::new(); let mut partial = Partial::alloc::<Arc<[NestedStruct]>>(&bump).unwrap();
+    let mut partial = Partial::alloc::<Arc<[NestedStruct]>>().unwrap();
     partial = partial.begin_smart_ptr()?;
     partial = partial.init_list()?;
 
@@ -140,7 +139,7 @@ fn arc_slice_nested_struct() -> Result<(), IPanic> {
 #[test]
 fn arc_slice_empty() -> Result<(), IPanic> {
     // Test building an empty Arc<[Person]>
-    let bump = Bump::new(); let mut partial = Partial::alloc::<Arc<[Person]>>(&bump).unwrap();
+    let mut partial = Partial::alloc::<Arc<[Person]>>().unwrap();
     partial = partial.begin_smart_ptr()?;
     partial = partial.init_list()?;
     partial = partial.end()?; // end list/smart pointer
@@ -155,7 +154,7 @@ fn arc_slice_empty() -> Result<(), IPanic> {
 #[test]
 fn arc_slice_single_element() -> Result<(), IPanic> {
     // Test building Arc<[Person]> with just one element
-    let bump = Bump::new(); let mut partial = Partial::alloc::<Arc<[Person]>>(&bump).unwrap();
+    let mut partial = Partial::alloc::<Arc<[Person]>>().unwrap();
     partial = partial.begin_smart_ptr()?;
     partial = partial.init_list()?;
 
@@ -187,7 +186,7 @@ struct CopyableStruct {
 #[test]
 fn arc_slice_copyable_struct() -> Result<(), IPanic> {
     // Test with a copyable struct
-    let bump = Bump::new(); let mut partial = Partial::alloc::<Arc<[CopyableStruct]>>(&bump).unwrap();
+    let mut partial = Partial::alloc::<Arc<[CopyableStruct]>>().unwrap();
     partial = partial.begin_smart_ptr()?;
     partial = partial.init_list()?;
 

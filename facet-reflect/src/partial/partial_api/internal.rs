@@ -158,11 +158,11 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
 
     /// Selects the nth field of a struct by index
     pub(crate) fn begin_nth_struct_field(
-        frame: &mut Frame<'plan>,
+        frame: &mut Frame,
         struct_type: StructType,
         idx: usize,
-        child_plan: &'plan crate::typeplan::TypePlanNode<'plan>,
-    ) -> Result<Frame<'plan>, ReflectErrorKind> {
+        child_plan_id: crate::typeplan::NodeId,
+    ) -> Result<Frame, ReflectErrorKind> {
         if idx >= struct_type.fields.len() {
             return Err(ReflectErrorKind::OperationFailed {
                 shape: frame.allocated.shape(),
@@ -212,7 +212,7 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
             field_ptr,
             AllocatedShape::new(field_shape, field_size),
             FrameOwnership::Field { field_idx: idx },
-            child_plan,
+            child_plan_id,
         );
         if was_field_init {
             unsafe {
@@ -226,11 +226,11 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
 
     /// Selects the nth element of an array by index
     pub(crate) fn begin_nth_array_element(
-        frame: &mut Frame<'plan>,
+        frame: &mut Frame,
         array_type: ArrayType,
         idx: usize,
-        child_plan: &'plan crate::typeplan::TypePlanNode<'plan>,
-    ) -> Result<Frame<'plan>, ReflectErrorKind> {
+        child_plan_id: crate::typeplan::NodeId,
+    ) -> Result<Frame, ReflectErrorKind> {
         if idx >= array_type.n {
             return Err(ReflectErrorKind::OperationFailed {
                 shape: frame.allocated.shape(),
@@ -288,7 +288,7 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
                     element_data,
                     AllocatedShape::new(array_type.t, element_layout.size()),
                     FrameOwnership::Field { field_idx: idx },
-                    child_plan,
+                    child_plan_id,
                 );
                 if was_field_init {
                     // safety: `iset` said it was initialized already
@@ -304,11 +304,11 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
 
     /// Selects the nth field of an enum variant by index
     pub(crate) fn begin_nth_enum_field(
-        frame: &mut Frame<'plan>,
+        frame: &mut Frame,
         variant: &'static Variant,
         idx: usize,
-        child_plan: &'plan crate::typeplan::TypePlanNode<'plan>,
-    ) -> Result<Frame<'plan>, ReflectErrorKind> {
+        child_plan_id: crate::typeplan::NodeId,
+    ) -> Result<Frame, ReflectErrorKind> {
         if idx >= variant.data.fields.len() {
             return Err(ReflectErrorKind::OperationFailed {
                 shape: frame.allocated.shape(),
@@ -352,7 +352,7 @@ impl<'facet, 'plan, const BORROW: bool> Partial<'facet, 'plan, BORROW> {
             field_ptr,
             AllocatedShape::new(field_shape, field_size),
             FrameOwnership::Field { field_idx: idx },
-            child_plan,
+            child_plan_id,
         );
         if was_field_init {
             // SAFETY: `ISet` told us the field was initialized

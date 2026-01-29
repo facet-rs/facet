@@ -1,4 +1,3 @@
-use bumpalo::Bump;
 use facet_reflect::Partial;
 use facet_testhelpers::test;
 
@@ -194,10 +193,10 @@ fn wip_list_leaktest10() {
 
 #[test]
 fn wip_list_leaktest11() {
-    let bump = Bump::new(); let _ = Partial::alloc::<Vec<i32>>(&bump).unwrap().init_list().unwrap();
+    let _ = Partial::alloc::<Vec<i32>>().unwrap().init_list().unwrap();
 }
 
 #[test]
 fn wip_list_leaktest12() {
-    let bump = Bump::new(); let _ = Partial::alloc::<Vec<i32>>(&bump).unwrap();
+    let _ = Partial::alloc::<Vec<i32>>().unwrap();
 }

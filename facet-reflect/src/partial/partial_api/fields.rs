@@ -14,19 +14,19 @@ impl<const BORROW: bool> Partial<'_, '_, BORROW> {
         let node_id = frame.type_plan;
 
         // For structs: use StructPlan's field_lookup
-        if let Some(struct_plan) = self.root_plan.as_struct_plan(node_id) {
-            return struct_plan.field_lookup.find(field_name);
+        if let Some(struct_plan) = self.root_plan.struct_plan_by_id(node_id) {
+            return struct_plan.field_lookup.find(field_name, self.root_plan);
         }
 
         // For enums with selected variant: use variant's field_lookup
-        if let Some(enum_plan) = self.root_plan.as_enum_plan(node_id)
+        if let Some(enum_plan) = self.root_plan.enum_plan_by_id(node_id)
             && let Tracker::Enum { variant_idx, .. } = &frame.tracker
         {
-            return enum_plan
-                .variants
+            let variants = self.root_plan.variants(enum_plan.variants);
+            return variants
                 .get(*variant_idx)?
                 .field_lookup
-                .find(field_name);
+                .find(field_name, self.root_plan);
         }
 
         None
@@ -162,12 +162,12 @@ impl<const BORROW: bool> Partial<'_, '_, BORROW> {
             Type::User(user_type) => match user_type {
                 UserType::Struct(struct_type) => {
                     // Compute child NodeId before mutable borrow
-                    let child_plan = self
+                    let child_plan_id = self
                         .root_plan
-                        .struct_field_node(parent_node, idx)
+                        .struct_field_node_id(parent_node, idx)
                         .expect("TypePlan must have struct field node");
                     let frame = self.frames_mut().last_mut().unwrap();
-                    Self::begin_nth_struct_field(frame, struct_type, idx, child_plan)
+                    Self::begin_nth_struct_field(frame, struct_type, idx, child_plan_id)
                         .map_err(|e| self.err(e))?
                 }
                 UserType::Enum(_) => {
@@ -187,12 +187,12 @@ impl<const BORROW: bool> Partial<'_, '_, BORROW> {
                         }
                     };
                     // Compute child NodeId using stored variant_idx (O(1) lookup, not O(n) search)
-                    let child_plan = self
+                    let child_plan_id = self
                         .root_plan
-                        .enum_variant_field_node(parent_node, variant_idx, idx)
+                        .enum_variant_field_node_id(parent_node, variant_idx, idx)
                         .expect("TypePlan must have enum variant field node");
                     let frame = self.frames_mut().last_mut().unwrap();
-                    Self::begin_nth_enum_field(frame, variant, idx, child_plan)
+                    Self::begin_nth_enum_field(frame, variant, idx, child_plan_id)
                         .map_err(|e| self.err(e))?
                 }
                 UserType::Union(_) => {
@@ -211,12 +211,12 @@ impl<const BORROW: bool> Partial<'_, '_, BORROW> {
             Type::Sequence(sequence_type) => match sequence_type {
                 SequenceType::Array(array_type) => {
                     // Compute child NodeId before mutable borrow
-                    let child_plan = self
+                    let child_plan_id = self
                         .root_plan
-                        .list_item_node(parent_node)
+                        .list_item_node_id(parent_node)
                         .expect("TypePlan must have array item node");
                     let frame = self.frames_mut().last_mut().unwrap();
-                    Self::begin_nth_array_element(frame, array_type, idx, child_plan)
+                    Self::begin_nth_array_element(frame, array_type, idx, child_plan_id)
                         .map_err(|e| self.err(e))?
                 }
                 SequenceType::Slice(_) => {

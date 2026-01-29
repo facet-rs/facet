@@ -127,7 +127,6 @@ use std::collections::VecDeque;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use bumpalo::Bump;
 use facet_core::{Facet, Shape};
 use facet_reflect::{HeapValue, Partial, Span, TypePlan};
 use facet_solver::{KeyResult, Schema, Solver};
@@ -260,8 +259,7 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, true> {
     where
         T: Facet<'input>,
     {
-        let bump = Bump::new();
-        let plan = TypePlan::<T>::build(&bump)?;
+        let plan = TypePlan::<T>::build()?;
         let wip = plan.partial()?;
         let partial = self.deserialize_into(wip)?;
         // SpanGuard must cover build() and materialize() which can fail with ReflectError.
@@ -288,8 +286,7 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, true> {
     where
         T: Facet<'input>,
     {
-        let bump = Bump::new();
-        let plan = TypePlan::<T>::build(&bump)?;
+        let plan = TypePlan::<T>::build()?;
         let wip = plan.partial()?;
         let wip = wip.begin_deferred()?;
         let partial = self.deserialize_into(wip)?;
@@ -312,9 +309,8 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
         // Get format namespace for format-specific proxy resolution in TypePlan
         let format_ns = self.parser.format_namespace();
 
-        let bump = Bump::new();
-        let plan = TypePlan::<T>::build_for_format(&bump, format_ns)?;
-        // SAFETY: partial_owned produces Partial<'static, 'bump, false>, but deserialize_into
+        let plan = TypePlan::<T>::build_for_format(format_ns)?;
+        // SAFETY: partial_owned produces Partial<'static, 'plan, false>, but deserialize_into
         // expects 'input. Since BORROW=false means we never borrow from input anyway,
         // this is safe.
         #[allow(unsafe_code)]
@@ -356,9 +352,8 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
         // Get format namespace for format-specific proxy resolution in TypePlan
         let format_ns = self.parser.format_namespace();
 
-        let bump = Bump::new();
-        let plan = TypePlan::<T>::build_for_format(&bump, format_ns)?;
-        // SAFETY: partial_owned produces Partial<'static, 'bump, false>, but deserialize_into
+        let plan = TypePlan::<T>::build_for_format(format_ns)?;
+        // SAFETY: partial_owned produces Partial<'static, 'plan, false>, but deserialize_into
         // expects 'input. Since BORROW=false means we never borrow from input anyway,
         // this is safe.
         #[allow(unsafe_code)]
@@ -398,9 +393,8 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
         // Get format namespace for format-specific proxy resolution in TypePlan
         let format_ns = self.parser.format_namespace();
 
-        let bump = Bump::new();
-        let plan = TypePlan::<T>::build_for_format(&bump, format_ns)?;
-        // SAFETY: partial_owned produces Partial<'static, 'bump, false>, but deserialize_into
+        let plan = TypePlan::<T>::build_for_format(format_ns)?;
+        // SAFETY: partial_owned produces Partial<'static, 'plan, false>, but deserialize_into
         // expects 'input. Since BORROW=false means we never borrow from input anyway,
         // this is safe.
         #[allow(unsafe_code)]

@@ -2,7 +2,6 @@
 // because the value is consumed by `.build()` - this is expected behavior
 #![allow(unused_assignments)]
 
-use bumpalo::Bump;
 use facet::Facet;
 use facet_reflect::{Partial, ReflectErrorKind, TypePlan};
 use facet_testhelpers::{IPanic, test};
@@ -10,8 +9,7 @@ use facet_testhelpers::{IPanic, test};
 #[test]
 fn test_building_array_f32_3_pushback() -> Result<(), IPanic> {
     // Test building a [f32; 3] array using set_nth_field API
-    let bump = Bump::new();
-    let plan = TypePlan::<[f32; 3]>::build(&bump)?;
+    let plan = TypePlan::<[f32; 3]>::build()?;
     let array = plan
         .partial()?
         .set_nth_field(0, 1.0f32)?
@@ -28,8 +26,7 @@ fn test_building_array_f32_3_pushback() -> Result<(), IPanic> {
 #[test]
 fn test_building_array_u8_4_pushback() -> Result<(), IPanic> {
     // Test building a [u8; 4] array using set_nth_field API
-    let bump = Bump::new();
-    let plan = TypePlan::<[u8; 4]>::build(&bump)?;
+    let plan = TypePlan::<[u8; 4]>::build()?;
     let array = plan
         .partial()?
         .set_nth_field(0, 1u8)?
@@ -52,8 +49,7 @@ fn test_building_array_in_struct() -> Result<(), IPanic> {
         values: [f32; 3],
     }
 
-    let bump = Bump::new();
-    let plan = TypePlan::<WithArrays>::build(&bump)?;
+    let plan = TypePlan::<WithArrays>::build()?;
     let mut partial = plan.partial()?;
     println!("Allocated WithArrays");
 
@@ -91,8 +87,7 @@ fn test_building_array_in_struct() -> Result<(), IPanic> {
 #[test]
 fn test_too_many_items_in_array() -> Result<(), IPanic> {
     // Try to set more elements than array size
-    let bump = Bump::new();
-    let plan = TypePlan::<[u8; 2]>::build(&bump)?;
+    let plan = TypePlan::<[u8; 2]>::build()?;
     let mut partial = plan.partial()?;
     partial = partial.set_nth_field(0, 1u8)?;
     partial = partial.set_nth_field(1, 2u8)?;
@@ -118,8 +113,7 @@ fn test_too_many_items_in_array() -> Result<(), IPanic> {
 
 #[test]
 fn test_too_few_items_in_array() -> Result<(), IPanic> {
-    let bump = Bump::new();
-    let plan = TypePlan::<[u8; 3]>::build(&bump)?;
+    let plan = TypePlan::<[u8; 3]>::build()?;
     let result = plan
         .partial()?
         .set_nth_field(0, 1u8)?
@@ -139,8 +133,7 @@ fn test_nested_array_building() -> Result<(), IPanic> {
         matrix: [[i32; 2]; 3], // 3x2 matrix
     }
 
-    let bump = Bump::new();
-    let plan = TypePlan::<NestedArrays>::build(&bump)?;
+    let plan = TypePlan::<NestedArrays>::build()?;
     let mut partial = plan.partial()?;
     println!("Allocated NestedArrays");
 
@@ -222,8 +215,7 @@ fn array_init() -> Result<(), IPanic> {
 
 #[test]
 fn array_init_out_of_order() -> Result<(), IPanic> {
-    let bump = Bump::new();
-    let hv = Partial::alloc::<[u32; 3]>(&bump)?
+    let hv = Partial::alloc::<[u32; 3]>()?
         // Initialize out of order
         .set_nth_field(2, 44u32)?
         .set_nth_field(0, 42u32)?
@@ -237,9 +229,8 @@ fn array_init_out_of_order() -> Result<(), IPanic> {
 #[test]
 fn array_partial_init() -> Result<(), IPanic> {
     // Should fail to build
-    let bump = Bump::new();
     assert_snapshot!(
-        Partial::alloc::<[u32; 3]>(&bump)?
+        Partial::alloc::<[u32; 3]>()?
             // Initialize only two elements
             .set_nth_field(0, 42u32)?
             .set_nth_field(2, 44u32)?
@@ -269,9 +260,8 @@ fn drop_array_partially_initialized() -> Result<(), IPanic> {
 
     DROP_COUNT.store(0, Ordering::SeqCst);
 
-    let bump = Bump::new();
     {
-        let mut partial = Partial::alloc::<[NoisyDrop; 4]>(&bump)?;
+        let mut partial = Partial::alloc::<[NoisyDrop; 4]>()?;
 
         // Initialize elements 0 and 2
         partial = partial.set_nth_field(0, NoisyDrop { value: 10 })?;
@@ -307,8 +297,7 @@ fn array_element_set_twice() -> Result<(), IPanic> {
 
     DROP_COUNT.store(0, Ordering::SeqCst);
 
-    let bump = Bump::new();
-    let array = Partial::alloc::<[DropTracker; 3]>(&bump)?
+    let array = Partial::alloc::<[DropTracker; 3]>()?
         // Set element 0
         .set_nth_field(0, DropTracker { id: 1 })?
         // Set element 0 again - drops old value
