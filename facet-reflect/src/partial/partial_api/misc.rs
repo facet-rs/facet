@@ -410,10 +410,32 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     }
                 }
 
-                // Only mark field initialized if the step is actually a Field
-                if let PathStep::Field(field_idx) = last_step {
-                    let field_idx = *field_idx as usize;
-                    if parent_path.steps.is_empty() {
+                // Mark field initialized based on path step type.
+                // For Field steps: mark the parent's iset directly.
+                // For Variant steps: the enum itself needs to be marked in its parent struct,
+                // so we look for the Field step before the Variant step.
+                let field_to_mark: Option<(usize, facet_path::Path)> =
+                    if let PathStep::Field(field_idx) = last_step {
+                        Some((*field_idx as usize, parent_path.clone()))
+                    } else if matches!(last_step, PathStep::Variant(_)) {
+                        // For enums, find the Field step that contains this enum.
+                        // Path like [Field(1), Variant(0)] means enum at field 1.
+                        // We need to mark the grandparent's iset for field 1.
+                        if let Some(PathStep::Field(field_idx)) = parent_path.steps.last() {
+                            let grandparent_path = facet_path::Path {
+                                shape: path.shape,
+                                steps: parent_path.steps[..parent_path.steps.len() - 1].to_vec(),
+                            };
+                            Some((*field_idx as usize, grandparent_path))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+
+                if let Some((field_idx, target_parent_path)) = field_to_mark {
+                    if target_parent_path.steps.is_empty() {
                         // Parent is the frame that was current when deferred mode started.
                         // It's at index (start_depth - 1) because deferred mode stores frames
                         // relative to the position at start_depth.
@@ -429,23 +451,24 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         }
                     } else {
                         // Try stored_frames first
-                        if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
+                        if let Some(parent_frame) = stored_frames.get_mut(&target_parent_path) {
                             crate::trace!(
                                 "finish_deferred: marking field {} in stored parent {:?}, path={:?}",
                                 field_idx,
-                                parent_path,
+                                target_parent_path,
                                 path
                             );
                             Self::mark_field_initialized_by_index(parent_frame, field_idx);
                         } else {
                             // Parent might still be on the frames stack (never ended).
-                            // The frame at index (start_depth + parent_path.steps.len() - 1) should be the parent.
-                            let parent_frame_index = start_depth + parent_path.steps.len() - 1;
+                            // The frame at index (start_depth + target_parent_path.steps.len() - 1) should be the parent.
+                            let parent_frame_index =
+                                start_depth + target_parent_path.steps.len() - 1;
                             crate::trace!(
                                 "finish_deferred: marking field {} in stack frame (parent_frame_index={}), parent_path={:?}, path={:?}",
                                 field_idx,
                                 parent_frame_index,
-                                parent_path,
+                                target_parent_path,
                                 path
                             );
                             if let Some(parent_frame) =
@@ -676,13 +699,11 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             {
                 // Fast path: just update parent's iset and pop
                 // Extract shapes before mutable borrow
-                let parent_shape = frames[parent_idx].allocated.shape();
-                let child_shape = frames[top_idx].allocated.shape();
                 crate::trace!(
-                    "end() FAST PATH: setting iset[{}] for parent shape={}, child shape={}",
-                    field_idx,
-                    parent_shape,
-                    child_shape
+                    %field_idx,
+                    parent_shape = %frames[parent_idx].allocated.shape(),
+                    child_shape = %frames[top_idx].allocated.shape(),
+                    "end() FAST PATH: setting iset",
                 );
                 if let Tracker::Struct {
                     iset,

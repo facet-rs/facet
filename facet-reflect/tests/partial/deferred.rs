@@ -2589,6 +2589,7 @@ fn deferred_option_string_crash() -> Result<(), IPanic> {
 
     #[derive(Facet, Debug)]
     #[repr(u8)]
+    #[allow(dead_code)]
     enum SvgNode {
         Path(Path),
     }
