@@ -158,7 +158,7 @@ unsynn! {
         /// The `where` keyword.
         pub _kw_where: KWhere,
         /// The bounds (everything after `where`)
-        pub bounds: VerbatimUntil<Either<Comma, EndOfStream>>,
+        pub bounds: VerbatimUntil<EndOfStream>,
     }
 
     /// A namespaced attribute like `xml::element` or `xml::ns = "http://example.com"`
