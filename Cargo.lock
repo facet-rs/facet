@@ -1260,6 +1260,7 @@ dependencies = [
  "facet-core",
  "facet-format",
  "facet-format-suite",
+ "facet-json-classics",
  "facet-reflect",
  "http",
  "http-body-util",
@@ -1267,6 +1268,7 @@ dependencies = [
  "rmp-serde",
  "serde",
  "serde_bytes",
+ "serde_json",
 ]
 
 [[package]]

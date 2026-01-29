@@ -37,6 +37,20 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                         // Pass through the Cow as-is to preserve borrowing
                         return Ok(wip.set(s)?);
                     }
+                    // For self-describing formats like YAML, unquoted values may be
+                    // parsed as other scalar types. Convert them to owned strings.
+                    ParseEventKind::Scalar(ScalarValue::I64(n)) => {
+                        return Ok(wip.set(std::borrow::Cow::<'_, str>::Owned(n.to_string()))?);
+                    }
+                    ParseEventKind::Scalar(ScalarValue::U64(n)) => {
+                        return Ok(wip.set(std::borrow::Cow::<'_, str>::Owned(n.to_string()))?);
+                    }
+                    ParseEventKind::Scalar(ScalarValue::F64(n)) => {
+                        return Ok(wip.set(std::borrow::Cow::<'_, str>::Owned(n.to_string()))?);
+                    }
+                    ParseEventKind::Scalar(ScalarValue::Bool(b)) => {
+                        return Ok(wip.set(std::borrow::Cow::<'_, str>::Owned(b.to_string()))?);
+                    }
                     _ => {
                         return Err(self.mk_err(
                             &wip,

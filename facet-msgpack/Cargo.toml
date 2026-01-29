@@ -31,13 +31,19 @@ divan = { workspace = true }
 facet = { path = "../facet", features = ["all-impls", "iddqd"] }
 facet-format = { path = "../facet-format", features = ["jit", "net"] }
 facet-format-suite = { path = "../facet-format-suite", features = ["third-party", "msgpack", "net"] }
+facet-json-classics = { path = "../facet-json-classics" }
 libtest-mimic = "0.8"
 rmp-serde = "1"
 serde = { workspace = true, features = ["derive"] }
 serde_bytes = "0.11"
+serde_json = { workspace = true }
 
 [[bench]]
 name = "vs_msgpack"
+harness = false
+
+[[bench]]
+name = "classics"
 harness = false
 
 [[test]]
