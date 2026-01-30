@@ -172,15 +172,22 @@ This is faster (no intermediate copy) but more dangerous. The element is being b
 
 ##### Tracking for lists
 
+Depends on the path:
+
+**Push path**: The staging buffer is a separate frame with its own tracking. The list frame just knows "collection is initialized". On successful push, staging is deallocated. On failure, staging frame handles cleanup.
+
+**Direct-fill path**: The list frame tracks the in-progress slot directly:
 ```
 List frame:
-├── collection initialized? ✓ (empty Vec is valid)
-├── current_element: Option<ElementFrame>
-│   └── if Some: tracking the in-progress element
-└── (elements already in collection are owned by the collection)
+├── collection initialized? ✓
+├── building_slot: Option<usize>     ← index we're filling
+└── slot_frame: (tracks partial element in buffer)
 ```
 
-We don't track individual elements with a bitset - once pushed/set_len'd, they're the collection's responsibility. We only track the *currently building* element.
+On success: `set_len(building_slot + 1)`, clear tracking.
+On failure: drop partial element via slot_frame, do NOT set_len.
+
+Either way, we don't track individual elements with a bitset - once in the collection, they're the collection's responsibility.
 
 #### Maps (HashMap, BTreeMap, etc.)
 
