@@ -63,7 +63,7 @@ build-cov:
 # Generate source coverage report from corpus
 # Usage: just cov [format]
 
-# Formats: report (default), html
+# Formats: report (default), html, uncovered
 cov format="report": build-cov
     #!/usr/bin/env -S bash -euo pipefail
     rm -f *.profraw default.profdata
@@ -77,17 +77,25 @@ cov format="report": build-cov
     done
     echo
     llvm-profdata merge -sparse *.profraw -o default.profdata
+    ignore='/.cargo/|/rustc/|afl/src|/facet-(core|macro|macros|reflect[^2])'
     if [ "{{ format }}" = "html" ]; then
         llvm-cov show target/debug/facet-reflect2-afl \
             --instr-profile=default.profdata \
-            --ignore-filename-regex='/.cargo/|/rustc/|afl/src' \
+            --ignore-filename-regex="$ignore" \
             --format=html --output-dir=coverage
         echo "Coverage report written to coverage/"
         open coverage/index.html 2>/dev/null || true
+    elif [ "{{ format }}" = "uncovered" ]; then
+        llvm-cov show target/debug/facet-reflect2-afl \
+            --instr-profile=default.profdata \
+            --ignore-filename-regex="$ignore" \
+            --show-line-counts-or-regions \
+            --format=text \
+            | awk '/\|[[:space:]]+0\|/'
     else
         llvm-cov report target/debug/facet-reflect2-afl \
             --instr-profile=default.profdata \
-            --ignore-filename-regex='/.cargo/|/rustc/|afl/src'
+            --ignore-filename-regex="$ignore"
     fi
     rm -f *.profraw default.profdata
 
