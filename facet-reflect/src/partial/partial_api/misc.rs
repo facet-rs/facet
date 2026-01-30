@@ -1,7 +1,8 @@
 use facet_path::{Path, PathStep};
 
 use super::*;
-use crate::typeplan::{DeserStrategy, TypePlanNodeKind};
+use crate::partial::{AllocatedShape, Frame, FrameOwnership};
+use crate::typeplan::{self, DeserStrategy, TypePlanNodeKind};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Misc.
@@ -279,6 +280,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             stack,
             start_depth,
             stored_frames: BTreeMap::new(),
+            pending_map_insertions: Vec::new(),
         };
         Ok(self)
     }
@@ -306,6 +308,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         let FrameMode::Deferred {
             stack,
             mut stored_frames,
+            pending_map_insertions,
             ..
         } = core::mem::replace(&mut self.mode, FrameMode::Strict { stack: Vec::new() })
         else {
@@ -474,6 +477,93 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
             // Frame is validated and parent is updated - dealloc if needed
             frame.dealloc();
+        }
+
+        // Process pending map insertions. The values may have Option fields that
+        // need fill_defaults called before we can safely insert into the map.
+        for pending in pending_map_insertions {
+            crate::trace!(
+                "finish_deferred: Processing pending map insertion for value shape={}",
+                pending.map_def.v()
+            );
+
+            // Create a temporary frame for the value so we can call fill_defaults
+            let value_shape = pending.map_def.v();
+            let value_layout = match value_shape.layout.sized_layout() {
+                Ok(l) => l,
+                Err(_) => {
+                    // Clean up the key and value buffers on error
+                    if let Ok(key_layout) = pending.map_def.k().layout.sized_layout()
+                        && key_layout.size() > 0
+                    {
+                        unsafe {
+                            ::alloc::alloc::dealloc(pending.key_ptr.as_mut_byte_ptr(), key_layout);
+                        }
+                    }
+                    if let Ok(value_layout) = value_shape.layout.sized_layout()
+                        && value_layout.size() > 0
+                    {
+                        unsafe {
+                            ::alloc::alloc::dealloc(
+                                pending.value_ptr.as_mut_byte_ptr(),
+                                value_layout,
+                            );
+                        }
+                    }
+                    return Err(self.err(ReflectErrorKind::InvariantViolation {
+                        invariant: "pending map insertion value has unsized layout",
+                    }));
+                }
+            };
+
+            // Create a frame just for fill_defaults - we mark it as init since the
+            // value was already written, we just need to fill in missing Option fields
+            let mut value_frame = Frame::new(
+                pending.value_ptr,
+                AllocatedShape::new(value_shape, value_layout.size()),
+                FrameOwnership::TrackedBuffer,
+                typeplan::NodeId::invalid(),
+            );
+            value_frame.is_init = true;
+
+            // Fill defaults on the value (e.g., Option fields -> None)
+            if let Err(e) = value_frame.fill_defaults() {
+                // Clean up
+                if let Ok(key_layout) = pending.map_def.k().layout.sized_layout()
+                    && key_layout.size() > 0
+                {
+                    unsafe {
+                        ::alloc::alloc::dealloc(pending.key_ptr.as_mut_byte_ptr(), key_layout);
+                    }
+                }
+                value_frame.deinit();
+                value_frame.dealloc();
+                return Err(self.err(e));
+            }
+
+            // Now insert into the map
+            let insert = pending.map_def.vtable.insert;
+            unsafe {
+                insert(
+                    PtrMut::new(pending.map_ptr.as_mut_byte_ptr()),
+                    PtrMut::new(pending.key_ptr.as_mut_byte_ptr()),
+                    PtrMut::new(pending.value_ptr.as_mut_byte_ptr()),
+                );
+            }
+
+            // Deallocate the temporary key and value buffers (values have been moved into map)
+            if let Ok(key_layout) = pending.map_def.k().layout.sized_layout()
+                && key_layout.size() > 0
+            {
+                unsafe {
+                    ::alloc::alloc::dealloc(pending.key_ptr.as_mut_byte_ptr(), key_layout);
+                }
+            }
+            if value_layout.size() > 0 {
+                unsafe {
+                    ::alloc::alloc::dealloc(pending.value_ptr.as_mut_byte_ptr(), value_layout);
+                }
+            }
         }
 
         // Invariant check: we must have at least one frame after finish_deferred
@@ -1083,6 +1173,9 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         // Update parent frame's tracking when popping from a child
         // Get parent shape upfront to avoid borrow conflicts
         let parent_shape = self.frames().last().unwrap().allocated.shape();
+        // Cache is_deferred before taking mutable borrow of frames
+        let is_deferred = self.is_deferred();
+
         let parent_frame = self.frames_mut().last_mut().unwrap();
 
         crate::trace!(
@@ -1444,44 +1537,83 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     } => {
                         // We just popped the value frame, now insert the pair
                         if let (Some(value_ptr), Def::Map(map_def)) =
-                            (value_ptr, parent_frame.allocated.shape().def)
+                            (*value_ptr, parent_frame.allocated.shape().def)
                         {
-                            let insert = map_def.vtable.insert;
+                            // Capture what we need before potentially borrowing self.mode
+                            let map_ptr = parent_frame.data;
+                            let key_ptr = *key_ptr;
 
-                            // Use insert to add key-value pair to the map
-                            unsafe {
-                                insert(
-                                    PtrMut::new(parent_frame.data.as_mut_byte_ptr()),
-                                    PtrMut::new(key_ptr.as_mut_byte_ptr()),
-                                    PtrMut::new(value_ptr.as_mut_byte_ptr()),
-                                );
-                            }
-
-                            // Note: We don't deallocate the key and value memory here.
-                            // The insert function has semantically moved the values into the map,
-                            // but we still need to deallocate the temporary buffers.
-                            // However, since we don't have frames for them anymore (they were popped),
-                            // we need to handle deallocation here.
-                            if let Ok(key_shape) = map_def.k().layout.sized_layout()
-                                && key_shape.size() > 0
-                            {
-                                unsafe {
-                                    ::alloc::alloc::dealloc(key_ptr.as_mut_byte_ptr(), key_shape);
-                                }
-                            }
-                            if let Ok(value_shape) = map_def.v().layout.sized_layout()
-                                && value_shape.size() > 0
-                            {
-                                unsafe {
-                                    ::alloc::alloc::dealloc(
-                                        value_ptr.as_mut_byte_ptr(),
-                                        value_shape,
+                            if is_deferred {
+                                // In deferred mode, we can't insert yet because the value may not
+                                // be fully initialized (e.g., Option fields that need to default to None).
+                                // Store the pending insertion for processing in finish_deferred().
+                                if let FrameMode::Deferred {
+                                    pending_map_insertions,
+                                    ..
+                                } = &mut self.mode
+                                {
+                                    crate::trace!(
+                                        "end(): Deferring Map insertion for value shape={}",
+                                        map_def.v()
+                                    );
+                                    pending_map_insertions.push(
+                                        crate::partial::PendingMapInsertion {
+                                            map_ptr,
+                                            map_def,
+                                            key_ptr,
+                                            value_ptr,
+                                        },
                                     );
                                 }
-                            }
+                                // Reset to idle but DON'T deallocate - finish_deferred will handle it
+                                if let Some(parent_frame) = self.frames_mut().last_mut() {
+                                    if let Tracker::Map { insert_state } = &mut parent_frame.tracker
+                                    {
+                                        *insert_state = MapInsertState::Idle;
+                                    }
+                                }
+                            } else {
+                                // Not in deferred mode - insert immediately
+                                let insert = map_def.vtable.insert;
 
-                            // Reset to idle state
-                            *insert_state = MapInsertState::Idle;
+                                // Use insert to add key-value pair to the map
+                                unsafe {
+                                    insert(
+                                        PtrMut::new(map_ptr.as_mut_byte_ptr()),
+                                        PtrMut::new(key_ptr.as_mut_byte_ptr()),
+                                        PtrMut::new(value_ptr.as_mut_byte_ptr()),
+                                    );
+                                }
+
+                                // Note: We don't deallocate the key and value memory here.
+                                // The insert function has semantically moved the values into the map,
+                                // but we still need to deallocate the temporary buffers.
+                                // However, since we don't have frames for them anymore (they were popped),
+                                // we need to handle deallocation here.
+                                if let Ok(key_shape) = map_def.k().layout.sized_layout()
+                                    && key_shape.size() > 0
+                                {
+                                    unsafe {
+                                        ::alloc::alloc::dealloc(
+                                            key_ptr.as_mut_byte_ptr(),
+                                            key_shape,
+                                        );
+                                    }
+                                }
+                                if let Ok(value_shape) = map_def.v().layout.sized_layout()
+                                    && value_shape.size() > 0
+                                {
+                                    unsafe {
+                                        ::alloc::alloc::dealloc(
+                                            value_ptr.as_mut_byte_ptr(),
+                                            value_shape,
+                                        );
+                                    }
+                                }
+
+                                // Reset to idle state
+                                *insert_state = MapInsertState::Idle;
+                            }
                         }
                     }
                     MapInsertState::Idle => {

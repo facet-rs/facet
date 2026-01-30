@@ -3,6 +3,7 @@
 //! Includes empty tables, dotted keys, and nested table structures.
 
 use facet::Facet;
+use facet_testhelpers::test;
 use facet_value::Value;
 use std::collections::HashMap;
 

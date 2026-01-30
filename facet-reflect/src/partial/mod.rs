@@ -167,6 +167,10 @@ enum FrameMode {
         /// When we re-enter a path, we restore the stored frame.
         /// Uses the full `Path` type which includes the root shape for proper type anchoring.
         stored_frames: BTreeMap<Path, StoredFrame>,
+
+        /// Pending Map insertions that will be executed during finish_deferred().
+        /// We defer these because the value may not be fully initialized yet.
+        pending_map_insertions: Vec<PendingMapInsertion>,
     },
 }
 
@@ -178,6 +182,20 @@ pub(crate) struct StoredFrame {
     /// Index of the parent frame on the stack when this frame was stored.
     /// This is used to mark the parent's iset when the frame is finalized.
     pub(crate) parent_frame_index: usize,
+}
+
+/// A pending Map insertion that will be executed during finish_deferred().
+/// We defer Map insertions because the value may not be fully initialized yet
+/// (e.g., Option fields that need to be defaulted to None).
+pub(crate) struct PendingMapInsertion {
+    /// Pointer to the map being inserted into.
+    pub(crate) map_ptr: PtrUninit,
+    /// The map definition (contains insert vtable). MapDef is Copy.
+    pub(crate) map_def: facet_core::MapDef,
+    /// Pointer to the key buffer (will be moved into map).
+    pub(crate) key_ptr: PtrUninit,
+    /// Pointer to the value buffer (will be moved into map).
+    pub(crate) value_ptr: PtrUninit,
 }
 
 impl FrameMode {
@@ -1665,6 +1683,42 @@ impl<'facet, const BORROW: bool> Drop for Partial<'facet, BORROW> {
                     }
                     frame.deinit();
                     frame.dealloc();
+                }
+            }
+
+            // Also clean up any pending map insertions
+            if let FrameMode::Deferred {
+                pending_map_insertions,
+                ..
+            } = &mut self.mode
+            {
+                for pending in core::mem::take(pending_map_insertions) {
+                    // Drop the key
+                    if let Ok(key_layout) = pending.map_def.k().layout.sized_layout()
+                        && key_layout.size() > 0
+                    {
+                        // Drop key value if initialized (keys are always initialized when pending)
+                        unsafe {
+                            pending
+                                .map_def
+                                .k()
+                                .call_drop_in_place(pending.key_ptr.assume_init());
+                            ::alloc::alloc::dealloc(pending.key_ptr.as_mut_byte_ptr(), key_layout);
+                        }
+                    }
+                    // Drop the value
+                    if let Ok(value_layout) = pending.map_def.v().layout.sized_layout()
+                        && value_layout.size() > 0
+                    {
+                        // Value may be partially initialized, but we just deallocate
+                        // since we can't reliably know what's initialized
+                        unsafe {
+                            ::alloc::alloc::dealloc(
+                                pending.value_ptr.as_mut_byte_ptr(),
+                                value_layout,
+                            );
+                        }
+                    }
                 }
             }
         }

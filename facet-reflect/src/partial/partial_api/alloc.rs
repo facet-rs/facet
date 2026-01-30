@@ -241,6 +241,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 stack,
                 start_depth,
                 stored_frames: BTreeMap::new(),
+                pending_map_insertions: Vec::new(),
             },
             state: this.state,
             root_plan,
