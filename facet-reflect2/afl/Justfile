@@ -61,7 +61,10 @@ build-cov:
     CARGO_INCREMENTAL=0 RUSTFLAGS="-C instrument-coverage" cargo build --features cov
 
 # Generate source coverage report from corpus
-cov: build-cov
+# Usage: just cov [format]
+
+# Formats: report (default), html
+cov format="report": build-cov
     #!/usr/bin/env -S bash -euo pipefail
     rm -f *.profraw default.profdata
     files=(out/default/queue/*)
@@ -74,9 +77,18 @@ cov: build-cov
     done
     echo
     llvm-profdata merge -sparse *.profraw -o default.profdata
-    llvm-cov report target/debug/facet-reflect2-afl \
-        --instr-profile=default.profdata \
-        --ignore-filename-regex='/.cargo/|/rustc/|afl/src'
+    if [ "{{ format }}" = "html" ]; then
+        llvm-cov show target/debug/facet-reflect2-afl \
+            --instr-profile=default.profdata \
+            --ignore-filename-regex='/.cargo/|/rustc/|afl/src' \
+            --format=html --output-dir=coverage
+        echo "Coverage report written to coverage/"
+        open coverage/index.html 2>/dev/null || true
+    else
+        llvm-cov report target/debug/facet-reflect2-afl \
+            --instr-profile=default.profdata \
+            --ignore-filename-regex='/.cargo/|/rustc/|afl/src'
+    fi
     rm -f *.profraw default.profdata
 
 # Clean build artifacts and output
