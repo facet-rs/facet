@@ -47,30 +47,57 @@ You can't End because `inner` isn't complete, but you need to go back up to set 
 With `Begin { deferred: true }`, frames are stored and you can re-enter:
 
 ```
-1. Begin inner       2. Set a            3. End (store)       4. Set other
-   deferred: true                           frame by path
+1. Begin inner       2. Set a            3. End (incomplete)  4. Set other
+   deferred: true                           store frame id
    ┌─────────┐          ┌─────────┐                              ┌─────────┐
-   │  Inner  │          │  Inner  │       stored["inner"]        │  Outer  │
-   │ a: ?    │          │ a: 1 ✓  │        = Inner{a:1}          │other:hi✓│
-   │ b: ?    │          │ b: ?    │                              └─────────┘
+   │ Inner   │          │ Inner   │       stored[path] = id      │  Outer  │
+   │ path: 0 │          │ path: 0 │       frame stays in arena   │other:hi✓│
+   │ a: ?    │          │ a: 1 ✓  │                              └─────────┘
+   │ b: ?    │          │ b: ?    │
    └─────────┘          └─────────┘
    ┌─────────┐          ┌─────────┐          ┌─────────┐
    │  Outer  │          │  Outer  │          │  Outer  │
    └─────────┘          └─────────┘          └─────────┘
 
 
-5. Re-enter inner    6. Set b            7. End               
-   (restore frame)                          validates, complete!
-
+5. Re-enter inner    6. Set b            7. End (complete)
+   lookup by path,                          validates!
+   push frame id
    ┌─────────┐          ┌─────────┐          ┌─────────┐
-   │  Inner  │          │  Inner  │          │  Outer  │
-   │ a: 1 ✓  │          │ a: 1 ✓  │          │inner: ✓ │
-   │ b: ?    │          │ b: 2 ✓  │          │other: ✓ │
-   └─────────┘          └─────────┘          └─────────┘
+   │ Inner   │          │ Inner   │          │  Outer  │
+   │ path: 0 │          │ path: 0 │          │inner: ✓ │
+   │ a: 1 ✓  │          │ a: 1 ✓  │          │other: ✓ │
+   │ b: ?    │          │ b: 2 ✓  │          └─────────┘
+   └─────────┘          └─────────┘
    ┌─────────┐          ┌─────────┐
    │  Outer  │          │  Outer  │
    └─────────┘          └─────────┘
 ```
+
+## Data structures
+
+```rust
+struct Frame {
+    path: Path,           // where this frame lives
+    // ... data, iset, etc.
+}
+
+struct Partial {
+    arena: Arena<Frame>,
+    stack: Vec<FrameId>,
+    stored_frames: BTreeMap<Path, FrameId>,  // lookup by path
+}
+```
+
+On `End` of a deferred incomplete frame:
+1. Frame stays in arena (not deallocated)
+2. `stored_frames.insert(frame.path.clone(), frame_id)`
+3. Pop from stack
+
+On `Begin` with a path that exists in `stored_frames`:
+1. Look up `frame_id = stored_frames.get(&path)`
+2. Push that `frame_id` back onto stack
+3. Continue where we left off
 
 ## Core ops
 
