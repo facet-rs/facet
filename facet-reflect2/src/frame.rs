@@ -15,11 +15,31 @@ bitflags::bitflags! {
     }
 }
 
+/// Indexed children for structs and arrays.
+/// Each slot is either NOT_STARTED, COMPLETE, or a valid frame index.
+pub struct IndexedChildren(Vec<Idx<Frame>>);
+
+impl IndexedChildren {
+    /// Create indexed children with the given count, all NOT_STARTED.
+    pub fn new(count: usize) -> Self {
+        Self(vec![Idx::NOT_STARTED; count])
+    }
+
+    /// Mark a child as complete.
+    pub fn mark_complete(&mut self, idx: usize) {
+        self.0[idx] = Idx::COMPLETE;
+    }
+
+    /// Check if all children are complete.
+    pub fn all_complete(&self) -> bool {
+        self.0.iter().all(|id| id.is_complete())
+    }
+}
+
 /// Children structure varies by container type.
-/// Each child slot is either NOT_STARTED, COMPLETE, or a valid frame index.
 pub enum Children {
     /// Structs, arrays: indexed by field/element index
-    Indexed(Vec<Idx<Frame>>),
+    Indexed(IndexedChildren),
 
     /// Scalars: no children
     None,
@@ -56,33 +76,13 @@ impl Frame {
             data,
             shape,
             flags: FrameFlags::empty(),
-            children: Children::Indexed(vec![Idx::NOT_STARTED; field_count]),
-        }
-    }
-
-    /// Mark a child as complete.
-    pub fn mark_child_complete(&mut self, idx: usize) {
-        match &mut self.children {
-            Children::Indexed(slots) => {
-                slots[idx] = Idx::COMPLETE;
-            }
-            Children::None => panic!("cannot mark child on scalar"),
-        }
-    }
-
-    /// Check if all children are complete.
-    pub fn all_children_complete(&self) -> bool {
-        match &self.children {
-            Children::Indexed(slots) => slots.iter().all(|id| id.is_complete()),
-            Children::None => true,
+            children: Children::Indexed(IndexedChildren::new(field_count)),
         }
     }
 
     /// Assert that the given shape matches this frame's shape.
-    ///
-    /// Returns an error with shape mismatch details if they don't match.
-    pub fn assert_shape(&self, shape: &'static Shape, path: &Path) -> Result<(), ReflectError> {
-        if self.shape.is_shape(shape) {
+    pub fn assert_shape(&self, actual: &'static Shape, path: &Path) -> Result<(), ReflectError> {
+        if self.shape.is_shape(actual) {
             Ok(())
         } else {
             Err(ReflectError {
@@ -92,7 +92,7 @@ impl Frame {
                 },
                 kind: ReflectErrorKind::ShapeMismatch {
                     expected: self.shape,
-                    actual: shape,
+                    actual,
                 },
             })
         }

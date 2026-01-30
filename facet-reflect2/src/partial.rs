@@ -6,7 +6,7 @@ use std::ptr::NonNull;
 
 use crate::arena::{Arena, Idx};
 use crate::errors::{ErrorLocation, ReflectError, ReflectErrorKind};
-use crate::frame::{Frame, FrameFlags};
+use crate::frame::{Children, Frame, FrameFlags};
 use crate::ops::{Op, Path, Source};
 use facet_core::{Facet, Field, PtrUninit, Shape, Type, UserType};
 
@@ -77,30 +77,19 @@ impl<'facet> Partial<'facet> {
         for op in ops {
             match op {
                 Op::Set { path, source } => {
-                    // Resolve path first (immutable borrow)
+                    // Resolve path to a temporary frame for the target
                     let frame = self.arena.get(self.current);
-                    let (target_ptr, target_shape, frame_shape) = self.resolve_path(frame, path)?;
+                    let mut target = self.resolve_path(frame, path)?;
 
                     match source {
                         Source::Move(mov) => {
                             // Verify shape matches
-                            if !target_shape.is_shape(mov.shape()) {
-                                return Err(ReflectError {
-                                    location: ErrorLocation {
-                                        shape: frame_shape,
-                                        path: path.clone(),
-                                    },
-                                    kind: ReflectErrorKind::ShapeMismatch {
-                                        expected: target_shape,
-                                        actual: mov.shape(),
-                                    },
-                                });
-                            }
+                            target.assert_shape(mov.shape(), path)?;
 
-                            // Copy the value
+                            // Copy the value into the target frame
                             // SAFETY: Move's safety invariant guarantees ptr is valid for shape
                             unsafe {
-                                target_ptr.copy_from(mov.ptr(), target_shape).unwrap();
+                                target.copy_from(mov.ptr(), mov.shape());
                             }
 
                             // Now get mutable borrow to update state
@@ -112,7 +101,10 @@ impl<'facet> Partial<'facet> {
                             } else {
                                 // Mark child as complete
                                 let field_idx = path.as_slice()[0] as usize;
-                                frame.mark_child_complete(field_idx);
+                                let Children::Indexed(c) = &mut frame.children else {
+                                    panic!("expected indexed children for struct");
+                                };
+                                c.mark_complete(field_idx);
                             }
                         }
                         Source::Build(_) => todo!("Build source"),
@@ -124,19 +116,13 @@ impl<'facet> Partial<'facet> {
         Ok(())
     }
 
-    /// Resolve a path to a target pointer and shape.
+    /// Resolve a path to a temporary frame for the target location.
     ///
-    /// For an empty path, returns the frame's data pointer and shape.
-    /// For a non-empty path, navigates through struct fields.
-    ///
-    /// Returns (target_ptr, target_shape, frame_shape) - frame_shape is needed for error reporting.
-    fn resolve_path(
-        &self,
-        frame: &Frame,
-        path: &Path,
-    ) -> Result<(PtrUninit, &'static Shape, &'static Shape), ReflectError> {
+    /// For an empty path, returns a frame pointing to the current frame's data.
+    /// For a non-empty path, returns a frame pointing to the field's memory.
+    fn resolve_path(&self, frame: &Frame, path: &Path) -> Result<Frame, ReflectError> {
         if path.is_empty() {
-            return Ok((frame.data, frame.shape, frame.shape));
+            return Ok(Frame::new(frame.data, frame.shape));
         }
 
         // For now, only support single-level paths into structs
@@ -153,7 +139,7 @@ impl<'facet> Partial<'facet> {
         // Compute field pointer: base + offset
         let field_ptr = unsafe { PtrUninit::new(frame.data.as_mut_byte_ptr().add(field.offset)) };
 
-        Ok((field_ptr, field.shape(), frame.shape))
+        Ok(Frame::new(field_ptr, field.shape()))
     }
 
     /// Get a struct field by index.
@@ -215,7 +201,10 @@ impl<'facet> Partial<'facet> {
             true
         } else {
             // For compound types, check all children are complete
-            frame.all_children_complete()
+            match &frame.children {
+                Children::Indexed(c) => c.all_complete(),
+                Children::None => false,
+            }
         };
 
         if !is_initialized {
