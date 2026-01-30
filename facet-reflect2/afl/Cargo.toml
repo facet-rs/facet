@@ -8,6 +8,9 @@ edition = "2024"
 afl = "0.15"
 arbitrary = { version = "1", features = ["derive"] }
 
+[dependencies.facet]
+path = "../../facet"
+
 [dependencies.facet-core]
 path = "../../facet-core"
 

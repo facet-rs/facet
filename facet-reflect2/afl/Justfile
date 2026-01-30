@@ -1,16 +1,33 @@
-export AFL_I_DONT_CARE_ABOUT_MISSING_CRASHES := "1"
-
-# Build and run the fuzzer
+# Build and run the fuzzer with SAND (decoupled sanitizers)
 fuzz: build
-    cargo afl fuzz -i in -o out target/debug/facet-reflect2-afl
+    cargo afl fuzz -i in -o out \
+        -w target/debug/facet-reflect2-afl-asan \
+        -w target/debug/facet-reflect2-afl-msan \
+        -- target/debug/facet-reflect2-afl
 
-# Build the fuzz target
-build:
+# Build all binaries: native + sanitizer variants
+build: build-native build-asan build-msan
+
+# Build native binary (no sanitizers, full speed)
+build-native:
     cargo afl build
+
+# Build with AddressSanitizer + UBSan
+build-asan:
+    AFL_LLVM_ONLY_FSRV=1 AFL_USE_ASAN=1 AFL_USE_UBSAN=1 cargo afl build
+    cp target/debug/facet-reflect2-afl target/debug/facet-reflect2-afl-asan
+
+# Build with MemorySanitizer
+build-msan:
+    AFL_LLVM_ONLY_FSRV=1 AFL_USE_MSAN=1 cargo afl build
+    cp target/debug/facet-reflect2-afl target/debug/facet-reflect2-afl-msan
 
 # Resume fuzzing from previous state
 resume: build
-    cargo afl fuzz -i- -o out target/debug/facet-reflect2-afl
+    cargo afl fuzz -i- -o out \
+        -w target/debug/facet-reflect2-afl-asan \
+        -w target/debug/facet-reflect2-afl-msan \
+        -- target/debug/facet-reflect2-afl
 
 # Clean build artifacts and output
 clean:
