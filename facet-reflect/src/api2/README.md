@@ -109,22 +109,78 @@ Result<String, io::Error>
 
 #### Lists (Vec, VecDeque, etc.)
 
-Lists have two paths:
+Lists have two completely different paths for adding elements.
 
-**Push path**: elements are fully initialized in a staging buffer, then pushed. The Vec only ever contains complete elements.
+##### Push path
 
-**Direct-fill path**: we reserve space in the Vec's buffer and construct directly there. The element might be partial while we're building it! If we fail, we must clean up the partial element without calling `set_len`.
+Used for: linked lists, or any collection without contiguous storage.
 
 ```
-Vec<Server>
-├── [0]: Server ✓ (fully initialized)
-├── [1]: Server ✓ (fully initialized)
-└── (currently building): Server
-    ├── host: String ✓
-    └── port: u16    ✗  ← partial!
+                    ┌──────────────┐
+                    │ staging buf  │
+                    │ ┌──────────┐ │
+                    │ │ Server   │ │  ← build here first
+                    │ │ host: ✓  │ │
+                    │ │ port: ✓  │ │
+                    │ └──────────┘ │
+                    └──────┬───────┘
+                           │ push (move)
+                           ▼
+┌─────────────────────────────────────┐
+│ Vec<Server>                         │
+│ [0]: Server ✓  [1]: Server ✓  ...   │
+└─────────────────────────────────────┘
 ```
 
-The Vec itself is initialized (empty is valid). Elements are pushed one at a time, each fully initialized before the push. The tricky part is the *currently building* element - it might be partial.
+1. Allocate a temporary staging buffer
+2. Build the element completely in staging
+3. Call `push` vtable - moves from staging into collection
+4. Deallocate staging buffer
+
+The collection only ever contains fully-initialized elements. If we fail while building in staging, we drop the partial staging buffer - the collection is untouched.
+
+##### Direct-fill path
+
+Used for: Vec, VecDeque, anything with contiguous storage and a `reserve`/`set_len` API.
+
+```
+┌─────────────────────────────────────────────────────┐
+│ Vec<Server>  (len=2, cap=4)                         │
+│                                                     │
+│ [0]: Server ✓  [1]: Server ✓  [2]: ????  [3]: ????  │
+│                                    ▲                │
+│                                    │                │
+│                            building here!           │
+│                            ┌──────────┐             │
+│                            │ Server   │             │
+│                            │ host: ✓  │             │
+│                            │ port: ✗  │ ← partial!  │
+│                            └──────────┘             │
+└─────────────────────────────────────────────────────┘
+```
+
+1. `reserve(len + 1)` - ensure capacity
+2. Get pointer to `vec.as_ptr().add(len)` - the slot past the end
+3. Build element directly in that slot
+4. On success: `set_len(len + 1)`
+5. On failure: drop partial element, do NOT call `set_len`
+
+This is faster (no intermediate copy) but more dangerous. The element is being built inside the Vec's buffer but the Vec doesn't "know" about it yet (len hasn't changed). If we panic or error:
+- We must drop initialized fields of the partial element
+- We must NOT call `set_len` (element isn't complete)
+- The Vec's drop will deallocate the buffer (safe - it only drops `[0..len]`)
+
+##### Tracking for lists
+
+```
+List frame:
+├── collection initialized? ✓ (empty Vec is valid)
+├── current_element: Option<ElementFrame>
+│   └── if Some: tracking the in-progress element
+└── (elements already in collection are owned by the collection)
+```
+
+We don't track individual elements with a bitset - once pushed/set_len'd, they're the collection's responsibility. We only track the *currently building* element.
 
 #### Maps (HashMap, BTreeMap, etc.)
 
