@@ -103,6 +103,8 @@ pub enum ReflectErrorKind {
     NotAnEnum,
     /// Enum has unsupported representation (RustNPO).
     UnsupportedEnumRepr,
+    /// Cannot Set at [] while inside a variant frame - must End first.
+    SetAtRootOfVariant,
 }
 
 impl fmt::Display for ReflectErrorKind {
@@ -164,6 +166,9 @@ impl fmt::Display for ReflectErrorKind {
             ReflectErrorKind::NotAnEnum => write!(f, "Type is not an enum"),
             ReflectErrorKind::UnsupportedEnumRepr => {
                 write!(f, "Enum has unsupported representation")
+            }
+            ReflectErrorKind::SetAtRootOfVariant => {
+                write!(f, "Cannot set at [] while inside a variant frame")
             }
         }
     }

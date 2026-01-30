@@ -197,8 +197,13 @@ impl<'facet> Partial<'facet> {
 
     /// Apply a Set operation for regular (non-enum-variant) targets.
     fn apply_regular_set(&mut self, path: &Path, source: &Source<'_>) -> Result<(), ReflectError> {
-        // Resolve path to a temporary frame for the target
+        // Disallow Set at [] when inside a variant frame - must End first
         let frame = self.arena.get(self.current);
+        if path.is_empty() && matches!(frame.kind, FrameKind::VariantData(_)) {
+            return Err(self.error(ReflectErrorKind::SetAtRootOfVariant));
+        }
+
+        // Resolve path to a temporary frame for the target
         let target = self.resolve_path(frame, path)?;
 
         match source {
@@ -355,7 +360,7 @@ impl<'facet> Partial<'facet> {
         let frame = self.arena.get_mut(self.current);
         if frame.flags.contains(FrameFlags::INIT) {
             frame.uninit();
-        } else if let FrameKind::Enum(e) = &frame.kind {
+        } else if let FrameKind::Enum(e) = &mut frame.kind {
             if let Some((old_variant_idx, status)) = e.selected {
                 if status.is_complete() {
                     let old_variant = &enum_type.variants[old_variant_idx as usize];
@@ -366,6 +371,8 @@ impl<'facet> Partial<'facet> {
                 }
                 // TODO: handle partially initialized variants (status is a valid frame idx)
             }
+            // Clear selected so uninit() won't try to drop again if we error later
+            e.selected = None;
         }
 
         // Re-get frame after potential drop/uninit

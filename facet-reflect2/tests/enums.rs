@@ -219,3 +219,22 @@ fn enum_switch_variant_drops_old_value() {
     let result: MaybeBox = partial.build().unwrap();
     assert_eq!(result, MaybeBox::Empty);
 }
+
+#[test]
+fn enum_reselect_variant_with_wrong_type_fails() {
+    // AFL crash case: Set variant 1 with correct type, then try to set
+    // variant 1 again with wrong type. Should fail with shape mismatch,
+    // not hang or crash.
+
+    let mut partial = Partial::alloc::<MaybeBox>().unwrap();
+
+    // Set variant 1 (Boxed) with a Box<u32>
+    let boxed = Box::new(42u32);
+    partial.apply(&[Op::set().at(1).imm(&boxed)]).unwrap();
+    std::mem::forget(boxed);
+
+    // Try to set variant 1 again with wrong type (bool instead of Box<u32>)
+    let b = false;
+    let err = partial.apply(&[Op::set().at(1).imm(&b)]).unwrap_err();
+    assert!(matches!(err.kind, ReflectErrorKind::ShapeMismatch { .. }));
+}

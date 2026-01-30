@@ -3,7 +3,7 @@ use afl::fuzz;
 use arbitrary::Arbitrary;
 use facet::Facet;
 use facet_core::{PtrConst, Shape};
-use facet_reflect2::{Imm, Op, Partial, Path, Source};
+use facet_reflect2::{Build, Imm, Op, Partial, Path, Source};
 
 // ============================================================================
 // Compound types for fuzzing (these need Facet derive)
@@ -711,15 +711,15 @@ fn run_fuzz(input: FuzzInput, log: bool) {
                 match source {
                     FuzzSource::Imm(value) => {
                         if log {
-                            eprintln!("  [{i}] Set path={:?} source=Move({:?})", path, value);
+                            eprintln!("  [{i}] Set dst={:?} src=Imm({:?})", path, value);
                         }
                         let (ptr, shape) = value.as_ptr_and_shape();
                         // SAFETY: ptr points to value which is valid and initialized,
                         // and remains valid until apply() returns
-                        let mov = unsafe { Move::new(ptr, shape) };
+                        let imm = unsafe { Imm::new(ptr, shape) };
                         let op = Op::Set {
-                            path: path.to_path(),
-                            source: Source::Move(mov),
+                            dst: path.to_path(),
+                            src: Source::Imm(imm),
                         };
 
                         let result = partial.apply(&[op]);
@@ -738,11 +738,11 @@ fn run_fuzz(input: FuzzInput, log: bool) {
                     }
                     FuzzSource::Default => {
                         if log {
-                            eprintln!("  [{i}] Set path={:?} source=Default", path);
+                            eprintln!("  [{i}] Set dst={:?} src=Default", path);
                         }
                         let op = Op::Set {
-                            path: path.to_path(),
-                            source: Source::Default,
+                            dst: path.to_path(),
+                            src: Source::Default,
                         };
                         let result = partial.apply(&[op]);
                         if log {
@@ -752,11 +752,11 @@ fn run_fuzz(input: FuzzInput, log: bool) {
                     }
                     FuzzSource::Build { len_hint } => {
                         if log {
-                            eprintln!("  [{i}] Set path={:?} source=Build({:?})", path, len_hint);
+                            eprintln!("  [{i}] Set dst={:?} src=Build({:?})", path, len_hint);
                         }
                         let op = Op::Set {
-                            path: path.to_path(),
-                            source: Source::Build(facet_reflect2::Build {
+                            dst: path.to_path(),
+                            src: Source::Build(Build {
                                 len_hint: len_hint.map(|h| h as usize),
                             }),
                         };
