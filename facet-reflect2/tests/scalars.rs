@@ -1,4 +1,5 @@
-use facet_reflect2::{Op, Partial, ReflectErrorKind};
+use facet_core::{Facet, PtrConst};
+use facet_reflect2::{Move, Op, Partial, ReflectErrorKind, Source};
 
 #[test]
 fn set_u32_twice() {
@@ -52,4 +53,33 @@ fn set_wrong_type() {
     let err = partial.apply(&[Op::set().mov(&value)]).unwrap_err();
 
     assert!(matches!(err.kind, ReflectErrorKind::ShapeMismatch { .. }));
+}
+
+#[test]
+fn set_with_raw_move() {
+    let mut partial = Partial::alloc::<u64>().unwrap();
+
+    let value = 123u64;
+    // Use the unsafe Move::new constructor with raw pointer and shape
+    let mov = unsafe { Move::new(PtrConst::new(&value), u64::SHAPE) };
+    partial
+        .apply(&[Op::Set {
+            path: Default::default(),
+            source: Source::Move(mov),
+        }])
+        .unwrap();
+
+    let result: u64 = partial.build().unwrap();
+    assert_eq!(result, 123);
+}
+
+#[test]
+fn set_zst() {
+    let mut partial = Partial::alloc::<()>().unwrap();
+
+    let value = ();
+    partial.apply(&[Op::set().mov(&value)]).unwrap();
+
+    let result: () = partial.build().unwrap();
+    assert_eq!(result, ());
 }
