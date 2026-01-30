@@ -679,3 +679,339 @@ impl FuzzOp {
 pub fn fuzz_ops_to_partial_ops<'a>(fuzz_ops: &'a [FuzzOp]) -> Vec<PartialOp<'a>> {
     fuzz_ops.iter().map(|op| op.as_partial_op()).collect()
 }
+
+// =============================================================================
+// Type Corpus - actual Rust types for fuzzing
+// =============================================================================
+
+use facet::Facet;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::sync::Arc;
+
+// -----------------------------------------------------------------------------
+// Structs of varying complexity
+// -----------------------------------------------------------------------------
+
+/// Empty struct (unit-like)
+#[derive(Facet, Debug, Default)]
+pub struct EmptyStruct;
+
+/// Single field struct
+#[derive(Facet, Debug, Default)]
+pub struct SingleFieldStruct {
+    pub value: i32,
+}
+
+/// Struct with few fields (3)
+#[derive(Facet, Debug, Default)]
+pub struct FewFieldsStruct {
+    pub name: String,
+    pub count: u32,
+    pub enabled: bool,
+}
+
+/// Struct with many fields (16)
+#[derive(Facet, Debug, Default)]
+pub struct ManyFieldsStruct {
+    pub field_00: u8,
+    pub field_01: u16,
+    pub field_02: u32,
+    pub field_03: u64,
+    pub field_04: i8,
+    pub field_05: i16,
+    pub field_06: i32,
+    pub field_07: i64,
+    pub field_08: f32,
+    pub field_09: f64,
+    pub field_10: bool,
+    pub field_11: char,
+    pub field_12: String,
+    pub field_13: String,
+    pub field_14: String,
+    pub field_15: String,
+}
+
+/// Deeply nested struct (4 levels)
+#[derive(Facet, Debug, Default)]
+pub struct Level0 {
+    pub name: String,
+    pub level1: Option<Level1>,
+}
+
+#[derive(Facet, Debug, Default)]
+pub struct Level1 {
+    pub value: i32,
+    pub level2: Option<Level2>,
+}
+
+#[derive(Facet, Debug, Default)]
+pub struct Level2 {
+    pub items: Vec<String>,
+    pub level3: Option<Level3>,
+}
+
+#[derive(Facet, Debug, Default)]
+pub struct Level3 {
+    pub data: HashMap<String, i32>,
+}
+
+// -----------------------------------------------------------------------------
+// Enums
+// -----------------------------------------------------------------------------
+
+/// Unit variants only (C-style enum)
+#[derive(Facet, Debug, Default)]
+#[repr(u8)]
+pub enum UnitEnum {
+    #[default]
+    A,
+    B,
+    C,
+    D,
+}
+
+/// Tuple variants
+#[derive(Facet, Debug)]
+pub enum TupleEnum {
+    Single(i32),
+    Pair(String, u32),
+    Triple(bool, f64, String),
+}
+
+/// Struct variants
+#[derive(Facet, Debug)]
+pub enum StructEnum {
+    Empty {},
+    Named { x: i32, y: i32 },
+    Complex { name: String, values: Vec<i32> },
+}
+
+/// Mixed variant types
+#[derive(Facet, Debug)]
+pub enum MixedEnum {
+    Unit,
+    Tuple(String),
+    Struct { value: i32 },
+}
+
+// -----------------------------------------------------------------------------
+// Collections
+// -----------------------------------------------------------------------------
+
+/// Vec wrapper for fuzzing
+#[derive(Facet, Debug, Default)]
+pub struct VecWrapper {
+    pub items: Vec<i32>,
+}
+
+/// Nested Vec
+#[derive(Facet, Debug, Default)]
+pub struct NestedVecWrapper {
+    pub matrix: Vec<Vec<i32>>,
+}
+
+/// HashMap wrapper
+#[derive(Facet, Debug, Default)]
+pub struct HashMapWrapper {
+    pub map: HashMap<String, i32>,
+}
+
+/// BTreeMap wrapper
+#[derive(Facet, Debug, Default)]
+pub struct BTreeMapWrapper {
+    pub map: BTreeMap<String, i32>,
+}
+
+/// HashSet wrapper
+#[derive(Facet, Debug, Default)]
+pub struct HashSetWrapper {
+    pub set: HashSet<String>,
+}
+
+/// BTreeSet wrapper
+#[derive(Facet, Debug, Default)]
+pub struct BTreeSetWrapper {
+    pub set: BTreeSet<i32>,
+}
+
+/// Array wrapper
+#[derive(Facet, Debug, Default)]
+pub struct ArrayWrapper {
+    pub arr: [i32; 4],
+}
+
+// -----------------------------------------------------------------------------
+// Options and Results
+// -----------------------------------------------------------------------------
+
+/// Simple Option
+#[derive(Facet, Debug, Default)]
+pub struct OptionWrapper {
+    pub maybe: Option<String>,
+}
+
+/// Nested Option
+#[derive(Facet, Debug, Default)]
+pub struct NestedOptionWrapper {
+    pub maybe_maybe: Option<Option<i32>>,
+}
+
+/// Simple Result
+#[derive(Facet, Debug)]
+pub struct ResultWrapper {
+    pub result: Result<String, String>,
+}
+
+/// Struct with multiple Option fields
+#[derive(Facet, Debug, Default)]
+pub struct MultiOptionStruct {
+    pub required: String,
+    pub opt1: Option<String>,
+    pub opt2: Option<i32>,
+    pub opt3: Option<bool>,
+    pub opt4: Option<Vec<String>>,
+}
+
+// -----------------------------------------------------------------------------
+// Smart pointers
+// -----------------------------------------------------------------------------
+
+/// Box wrapper
+#[derive(Facet, Debug)]
+pub struct BoxWrapper {
+    pub boxed: Box<i32>,
+}
+
+/// Arc wrapper
+#[derive(Facet, Debug)]
+pub struct ArcWrapper {
+    pub shared: Arc<String>,
+}
+
+/// Box<[T]> wrapper
+#[derive(Facet, Debug)]
+pub struct BoxSliceWrapper {
+    pub slice: Box<[i32]>,
+}
+
+/// Nested smart pointers
+#[derive(Facet, Debug)]
+pub struct NestedSmartPtrWrapper {
+    pub boxed_arc: Box<Arc<String>>,
+}
+
+// -----------------------------------------------------------------------------
+// Flattened structs
+// -----------------------------------------------------------------------------
+
+/// Inner struct to be flattened
+#[derive(Facet, Debug, Default)]
+pub struct FlattenedInner {
+    pub id: Option<String>,
+    pub class: Option<String>,
+}
+
+/// Struct with flattened field
+#[derive(Facet, Debug, Default)]
+pub struct FlattenedStruct {
+    pub name: String,
+    #[facet(flatten)]
+    pub attrs: FlattenedInner,
+}
+
+/// Nested flattening
+#[derive(Facet, Debug, Default)]
+pub struct DoublyFlattenedInner {
+    pub style: Option<String>,
+}
+
+#[derive(Facet, Debug, Default)]
+pub struct FlattenedMiddle {
+    pub title: Option<String>,
+    #[facet(flatten)]
+    pub extra: DoublyFlattenedInner,
+}
+
+#[derive(Facet, Debug, Default)]
+pub struct NestedFlattenedStruct {
+    pub name: String,
+    #[facet(flatten)]
+    pub middle: FlattenedMiddle,
+}
+
+// -----------------------------------------------------------------------------
+// Complex real-world-ish types
+// -----------------------------------------------------------------------------
+
+/// Profile for map-of-structs test
+#[derive(Facet, Debug, Default)]
+pub struct Profile {
+    pub name: String,
+    pub age: Option<u32>,
+    pub email: Option<String>,
+}
+
+/// Struct with map of structs containing options (the bug reproduction case!)
+#[derive(Facet, Debug, Default)]
+pub struct MapOfStructs {
+    pub profiles: HashMap<String, Profile>,
+}
+
+/// Config-like type with many optional fields and nested structures
+#[derive(Facet, Debug, Default)]
+pub struct ConfigType {
+    pub name: String,
+    pub version: Option<String>,
+    pub debug: Option<bool>,
+    pub timeout_ms: Option<u64>,
+    pub endpoints: Vec<String>,
+    pub features: HashSet<String>,
+    pub metadata: HashMap<String, String>,
+    pub nested: Option<ConfigNested>,
+}
+
+#[derive(Facet, Debug, Default)]
+pub struct ConfigNested {
+    pub enabled: bool,
+    pub options: Vec<String>,
+    pub limits: HashMap<String, i64>,
+}
+
+// -----------------------------------------------------------------------------
+// Tuple types
+// -----------------------------------------------------------------------------
+
+/// Tuple wrapper
+#[derive(Facet, Debug, Default)]
+pub struct TupleWrapper {
+    pub pair: (i32, String),
+}
+
+/// Larger tuple
+#[derive(Facet, Debug, Default)]
+pub struct LargeTupleWrapper {
+    pub tuple: (u8, u16, u32, u64, i8, i16, i32, i64),
+}
+
+// -----------------------------------------------------------------------------
+// Special cases
+// -----------------------------------------------------------------------------
+
+/// Recursive type via Box
+#[derive(Facet, Debug)]
+pub struct RecursiveType {
+    pub value: i32,
+    pub next: Option<Box<RecursiveType>>,
+}
+
+/// Type with default values
+#[derive(Facet, Debug)]
+pub struct WithDefaults {
+    #[facet(default)]
+    pub with_default: String,
+    pub required: i32,
+    #[facet(default)]
+    pub opt_with_default: Option<String>,
+}
+
+fuzz_target!(|input: (SomeType, Vec<SomeOps>)| { todo!("fuzz") });
