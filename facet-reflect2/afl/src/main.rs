@@ -182,7 +182,7 @@ pub enum FuzzSource {
     /// Use the type's default value.
     Default,
     /// Build incrementally - pushes a frame.
-    Build,
+    Build { len_hint: Option<u8> },
 }
 
 // ============================================================================
@@ -381,10 +381,12 @@ fn run_fuzz(input: FuzzInput) {
                         // Apply may fail (e.g., type doesn't implement Default, invalid path)
                         let _ = partial.apply(&[op]);
                     }
-                    FuzzSource::Build => {
+                    FuzzSource::Build { len_hint } => {
                         let op = Op::Set {
                             path: path.to_path(),
-                            source: Source::Build(facet_reflect2::Build { len_hint: None }),
+                            source: Source::Build(facet_reflect2::Build {
+                                len_hint: len_hint.map(|h| h as usize),
+                            }),
                         };
                         // Apply may fail (e.g., empty path, invalid path)
                         let _ = partial.apply(&[op]);
