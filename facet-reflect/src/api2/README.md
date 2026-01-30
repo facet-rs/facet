@@ -18,7 +18,7 @@ A `u32` is either initialized or not. One bit of tracking.
 u32: ✓ or ✗
 ```
 
-Easy. Write the bytes, mark as initialized. Drop is trivial (no-op for primitives).
+Easy. Write the bytes, mark as initialized. Drop might be a no-op (primitives) or might do real work (`String`, `PathBuf`, or any type with heap allocations).
 
 #### Structs
 
@@ -178,6 +178,17 @@ This is why Partial exists: **tracking all of this so cleanup is always correct*
 1. **Allocations** - top-level T, Vec buffers, HashMap buckets, Box/Arc/Rc heap allocations, temporary buffers for map keys/values
 2. **Initialization state** - per-field bitsets for structs, variant selection for enums, element tracking for collections
 3. **Completeness** - before returning a finished T, verify everything is initialized (separate from facet-validate attribute validation)
+
+### Defaults: the escape hatch
+
+Not everything needs explicit initialization. Partial can fill in defaults:
+
+- `Option<T>` → defaults to `None` (implicitly, always)
+- `#[facet(default)]` on a field → use `Default::default()`
+- `#[facet(default)]` on a struct → all fields get their defaults
+- `#[facet(default = expr)]` → custom default value
+
+When we validate completeness, uninitialized fields with defaults get filled in automatically. Only fields WITHOUT defaults cause an error if unset.
 
 ## Why deferred? The flatten problem
 
