@@ -30,6 +30,31 @@ regex = ["dep:regex"] # Enable regex-based validators (email, url, regex pattern
 slow-tests = [] # Enable slow tests (compile tests)
 ci = ["slow-tests"] # CI feature
 fuzz-tests = [] # Test-only feature to keep fuzz cfgs compiling
+# Enable all types for fuzzing - turns on all facet-core type impls
+fuzz-all-types = [
+    "std",
+    "facet-core/nonzero",
+    "facet-core/net",
+    "facet-core/camino",
+    "facet-core/ordered-float",
+    "facet-core/uuid",
+    "facet-core/ulid",
+    "facet-core/time",
+    "facet-core/chrono",
+    "facet-core/url",
+    "facet-core/jiff02",
+    "facet-core/bytes",
+    "facet-core/bytestring",
+    "facet-core/compact_str",
+    "facet-core/num-complex",
+    "facet-core/smartstring",
+    "facet-core/smol_str",
+    "facet-core/ruint",
+    "facet-core/indexmap",
+    "facet-core/rust_decimal",
+    "facet-core/lock_api",
+    "facet-core/iddqd",
+]
 camino = [
     "alloc",
     "dep:camino",

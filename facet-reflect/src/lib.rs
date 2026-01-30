@@ -19,6 +19,8 @@ pub use partial::*;
 
 #[cfg(feature = "alloc")]
 mod api2;
+#[cfg(feature = "fuzz-all-types")]
+mod api2_fuzz;
 
 #[cfg(feature = "alloc")]
 mod resolution;
