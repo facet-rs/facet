@@ -1,160 +1,129 @@
-//! Arena allocation with free list for frame storage.
-//!
-//! The arena stores frames using indices (`FrameId`) rather than pointers,
-//! enabling efficient reuse of slots when frames complete. Sentinel values
-//! (`NOT_STARTED` and `COMPLETE`) allow tracking frame state without
-//! additional metadata.
+//! Arena allocation with free list for slot reuse.
 
-use crate::frame::Frame;
+use std::marker::PhantomData;
 
-/// Index into the frame arena.
+/// A typed index into an arena.
 ///
-/// Uses sentinel values for special states:
-/// - `NOT_STARTED` (0): No frame exists, value not started
-/// - `COMPLETE` (u32::MAX): Frame completed and freed, value is in place
-/// - `1..MAX-1`: Valid arena index, frame in progress
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct FrameId(u32);
+/// The phantom type prevents mixing indices from different arenas.
+#[derive(Debug)]
+pub struct Idx<T> {
+    raw: u32,
+    _ty: PhantomData<fn() -> T>,
+}
 
-impl FrameId {
-    /// Sentinel: no frame exists, value construction not started
-    pub const NOT_STARTED: FrameId = FrameId(0);
-
-    /// Sentinel: frame completed, value is in place
-    pub const COMPLETE: FrameId = FrameId(u32::MAX);
-
-    /// Returns true if this represents an unstarted value
-    #[inline]
-    pub fn is_not_started(self) -> bool {
-        self.0 == 0
-    }
-
-    /// Returns true if this represents a completed value
-    #[inline]
-    pub fn is_complete(self) -> bool {
-        self.0 == u32::MAX
-    }
-
-    /// Returns true if this is a valid arena index (frame in progress)
-    #[inline]
-    pub fn is_in_progress(self) -> bool {
-        self.0 != 0 && self.0 != u32::MAX
-    }
-
-    /// Get the raw index. Only valid when `is_in_progress()` returns true.
-    #[inline]
-    fn index(self) -> usize {
-        debug_assert!(
-            self.is_in_progress(),
-            "cannot get index of sentinel FrameId"
-        );
-        self.0 as usize
+impl<T> Clone for Idx<T> {
+    fn clone(&self) -> Self {
+        *self
     }
 }
 
-/// Arena for frame allocation with slot reuse.
-///
-/// Freed slots are tracked in a free list and reused on subsequent allocations.
-/// This prevents unbounded memory growth when constructing deeply nested values
-/// where inner frames complete before outer frames.
-///
-/// # Invariants
-///
-/// - Slot 0 is never used (reserved for `NOT_STARTED` sentinel)
-/// - Slots in the free list contain `None`
-/// - Slots with live frames contain `Some(Frame)`
-pub struct Arena {
-    /// Frame storage. Slot 0 is always `None` (reserved).
-    slots: Vec<Option<Frame>>,
+impl<T> Copy for Idx<T> {}
 
-    /// Indices of free slots available for reuse.
+impl<T> PartialEq for Idx<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.raw == other.raw
+    }
+}
+
+impl<T> Eq for Idx<T> {}
+
+impl<T> std::hash::Hash for Idx<T> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.raw.hash(state);
+    }
+}
+
+impl<T> Idx<T> {
+    /// Sentinel: slot not started (reserved, slot 0)
+    pub const NOT_STARTED: Self = Self {
+        raw: 0,
+        _ty: PhantomData,
+    };
+
+    /// Sentinel: slot completed/freed
+    pub const COMPLETE: Self = Self {
+        raw: u32::MAX,
+        _ty: PhantomData,
+    };
+
+    #[inline]
+    pub fn is_not_started(self) -> bool {
+        self.raw == 0
+    }
+
+    #[inline]
+    pub fn is_complete(self) -> bool {
+        self.raw == u32::MAX
+    }
+
+    #[inline]
+    pub fn is_valid(self) -> bool {
+        self.raw != 0 && self.raw != u32::MAX
+    }
+
+    #[inline]
+    fn index(self) -> usize {
+        debug_assert!(self.is_valid(), "cannot get index of sentinel");
+        self.raw as usize
+    }
+}
+
+/// Arena with free list for slot reuse.
+///
+/// Slot 0 is reserved for the `NOT_STARTED` sentinel.
+pub struct Arena<T> {
+    slots: Vec<Option<T>>,
     free_list: Vec<u32>,
 }
 
-impl Arena {
-    /// Create a new empty arena.
+impl<T> Arena<T> {
     pub fn new() -> Self {
-        // Start with slot 0 reserved (for NOT_STARTED sentinel)
         Arena {
-            slots: vec![None],
+            slots: vec![None], // slot 0 reserved
             free_list: Vec::new(),
         }
     }
 
-    /// Allocate a new frame, returning its ID.
-    ///
-    /// Reuses a free slot if available, otherwise grows the arena.
-    pub fn alloc(&mut self, frame: Frame) -> FrameId {
-        if let Some(idx) = self.free_list.pop() {
-            debug_assert!(
-                self.slots[idx as usize].is_none(),
-                "free slot was not empty"
-            );
-            self.slots[idx as usize] = Some(frame);
-            FrameId(idx)
+    pub fn alloc(&mut self, value: T) -> Idx<T> {
+        let raw = if let Some(idx) = self.free_list.pop() {
+            debug_assert!(self.slots[idx as usize].is_none());
+            self.slots[idx as usize] = Some(value);
+            idx
         } else {
             let idx = self.slots.len();
-            // Ensure we don't collide with COMPLETE sentinel
-            assert!(idx < u32::MAX as usize, "arena exceeded maximum capacity");
-            self.slots.push(Some(frame));
-            FrameId(idx as u32)
+            assert!(idx < u32::MAX as usize, "arena full");
+            self.slots.push(Some(value));
+            idx as u32
+        };
+        Idx {
+            raw,
+            _ty: PhantomData,
         }
     }
 
-    /// Free a frame slot, returning it to the free list.
-    ///
-    /// The frame is dropped and the slot becomes available for reuse.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `id` is a sentinel value or the slot is already empty.
-    pub fn free(&mut self, id: FrameId) -> Frame {
-        debug_assert!(id.is_in_progress(), "cannot free sentinel FrameId");
-        let frame = self.slots[id.index()]
-            .take()
-            .expect("double-free of arena slot");
-        self.free_list.push(id.0);
-        frame
+    pub fn free(&mut self, id: Idx<T>) -> T {
+        debug_assert!(id.is_valid());
+        let value = self.slots[id.index()].take().expect("double-free");
+        self.free_list.push(id.raw);
+        value
     }
 
-    /// Get a reference to a frame.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `id` is a sentinel or the slot is empty.
-    #[inline]
-    pub fn get(&self, id: FrameId) -> &Frame {
-        debug_assert!(id.is_in_progress(), "cannot get sentinel FrameId");
-        self.slots[id.index()]
-            .as_ref()
-            .expect("frame slot is empty")
+    pub fn get(&self, id: Idx<T>) -> &T {
+        debug_assert!(id.is_valid());
+        self.slots[id.index()].as_ref().expect("slot empty")
     }
 
-    /// Get a mutable reference to a frame.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `id` is a sentinel or the slot is empty.
-    #[inline]
-    pub fn get_mut(&mut self, id: FrameId) -> &mut Frame {
-        debug_assert!(id.is_in_progress(), "cannot get_mut sentinel FrameId");
-        self.slots[id.index()]
-            .as_mut()
-            .expect("frame slot is empty")
+    pub fn get_mut(&mut self, id: Idx<T>) -> &mut T {
+        debug_assert!(id.is_valid());
+        self.slots[id.index()].as_mut().expect("slot empty")
     }
 
-    /// Returns the number of currently allocated frames.
     pub fn live_count(&self) -> usize {
         self.slots.iter().filter(|s| s.is_some()).count()
     }
-
-    /// Returns the total capacity (including free slots).
-    pub fn capacity(&self) -> usize {
-        self.slots.len()
-    }
 }
 
-impl Default for Arena {
+impl<T> Default for Arena<T> {
     fn default() -> Self {
         Self::new()
     }
@@ -163,95 +132,61 @@ impl Default for Arena {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::frame::{Children, Frame, FrameFlags};
-    use facet_core::{Facet, Shape};
 
-    fn dummy_frame() -> Frame {
-        Frame {
-            parent: None,
-            children: Children::None,
-            data: facet_core::PtrUninit::dangling::<u32>(),
-            shape: <u32 as Facet>::SHAPE,
-            flags: FrameFlags::empty(),
-        }
+    #[test]
+    fn idx_sentinels() {
+        assert!(Idx::<u32>::NOT_STARTED.is_not_started());
+        assert!(!Idx::<u32>::NOT_STARTED.is_complete());
+        assert!(!Idx::<u32>::NOT_STARTED.is_valid());
+
+        assert!(!Idx::<u32>::COMPLETE.is_not_started());
+        assert!(Idx::<u32>::COMPLETE.is_complete());
+        assert!(!Idx::<u32>::COMPLETE.is_valid());
     }
 
     #[test]
-    fn frame_id_sentinels() {
-        assert!(FrameId::NOT_STARTED.is_not_started());
-        assert!(!FrameId::NOT_STARTED.is_complete());
-        assert!(!FrameId::NOT_STARTED.is_in_progress());
-
-        assert!(!FrameId::COMPLETE.is_not_started());
-        assert!(FrameId::COMPLETE.is_complete());
-        assert!(!FrameId::COMPLETE.is_in_progress());
-
-        let valid = FrameId(42);
-        assert!(!valid.is_not_started());
-        assert!(!valid.is_complete());
-        assert!(valid.is_in_progress());
-    }
-
-    #[test]
-    fn arena_alloc_and_get() {
+    fn alloc_and_get() {
         let mut arena = Arena::new();
-        let id = arena.alloc(dummy_frame());
+        let id = arena.alloc(42u32);
 
-        assert!(id.is_in_progress());
+        assert!(id.is_valid());
         assert_eq!(arena.live_count(), 1);
-
-        let frame = arena.get(id);
-        assert_eq!(frame.shape, <u32 as Facet>::SHAPE);
+        assert_eq!(*arena.get(id), 42);
     }
 
     #[test]
-    fn arena_free_and_reuse() {
+    fn free_and_reuse() {
         let mut arena = Arena::new();
 
-        let id1 = arena.alloc(dummy_frame());
-        let id2 = arena.alloc(dummy_frame());
+        let id1 = arena.alloc(1u32);
+        let _id2 = arena.alloc(2u32);
         assert_eq!(arena.live_count(), 2);
 
-        arena.free(id1);
+        let val = arena.free(id1);
+        assert_eq!(val, 1);
         assert_eq!(arena.live_count(), 1);
 
-        // Next alloc should reuse the freed slot
-        let id3 = arena.alloc(dummy_frame());
-        assert_eq!(id3.0, id1.0, "should reuse freed slot");
-        assert_eq!(arena.live_count(), 2);
-        assert_eq!(arena.capacity(), 3); // slot 0 + 2 frames
+        // Next alloc reuses freed slot
+        let id3 = arena.alloc(3u32);
+        assert_eq!(id3.raw, id1.raw);
+        assert_eq!(*arena.get(id3), 3);
     }
 
     #[test]
     #[should_panic(expected = "double-free")]
-    fn arena_double_free_panics() {
+    fn double_free_panics() {
         let mut arena = Arena::new();
-        let id = arena.alloc(dummy_frame());
+        let id = arena.alloc(1u32);
         arena.free(id);
-        arena.free(id); // should panic
+        arena.free(id);
     }
 
     #[test]
-    fn arena_multiple_alloc_free_cycles() {
+    fn get_mut() {
         let mut arena = Arena::new();
+        let id = arena.alloc(1u32);
 
-        // Allocate several frames
-        let ids: Vec<_> = (0..5).map(|_| arena.alloc(dummy_frame())).collect();
-        assert_eq!(arena.live_count(), 5);
-
-        // Free in reverse order
-        for &id in ids.iter().rev() {
-            arena.free(id);
-        }
-        assert_eq!(arena.live_count(), 0);
-
-        // Allocate again - should reuse all freed slots
-        let new_ids: Vec<_> = (0..5).map(|_| arena.alloc(dummy_frame())).collect();
-        assert_eq!(arena.capacity(), 6); // No growth (slot 0 + 5 reused)
-
-        // Original IDs should be reused (in LIFO order from free list)
-        for new_id in new_ids {
-            assert!(ids.iter().any(|&old_id| old_id.0 == new_id.0));
-        }
+        *arena.get_mut(id) = 99;
+        assert_eq!(*arena.get(id), 99);
     }
 }
