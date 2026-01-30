@@ -89,7 +89,8 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             } = &mut self.mode
             {
                 // Check if we have a stored frame for this path (re-entry case)
-                if let Some(mut stored_frame) = stored_frames.remove(&check_path) {
+                if let Some(stored) = stored_frames.remove(&check_path) {
+                    let mut restored_frame = stored.frame;
                     trace!("begin_some: Restoring stored frame for path {check_path}");
 
                     // Update tracker to indicate we're building the inner value
@@ -101,9 +102,9 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     // Clear the restored frame's current_child - we haven't entered any of its
                     // children yet in this new traversal. Without this, path() would
                     // include stale navigation state and compute incorrect paths.
-                    stored_frame.tracker.clear_current_child();
+                    restored_frame.tracker.clear_current_child();
 
-                    stack.push(stored_frame);
+                    stack.push(restored_frame);
                     return Ok(self);
                 }
             }

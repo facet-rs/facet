@@ -305,7 +305,6 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         // Extract deferred state, transitioning back to Strict mode
         let FrameMode::Deferred {
             stack,
-            start_depth,
             mut stored_frames,
             ..
         } = core::mem::replace(&mut self.mode, FrameMode::Strict { stack: Vec::new() })
@@ -332,46 +331,47 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
         // Process each stored frame from deepest to shallowest
         for path in paths {
-            let mut frame = stored_frames.remove(&path).unwrap();
+            let stored = stored_frames.remove(&path).unwrap();
+            let mut frame = stored.frame;
+            let parent_frame_index = stored.parent_frame_index;
 
             trace!(
-                "finish_deferred: Processing frame at {}, shape {}, tracker {:?}",
+                "finish_deferred: Processing frame at {}, shape {}, tracker {:?}, parent_frame_index={}",
                 path,
                 frame.allocated.shape(),
-                frame.tracker.kind()
+                frame.tracker.kind(),
+                parent_frame_index
             );
 
             // Fill in defaults for unset fields that have defaults
             if let Err(e) = frame.fill_defaults() {
                 // Before cleanup, clear the parent's iset bit for the frame that failed.
-                // This prevents the parent from trying to drop this field when Partial is dropped.
-                Self::clear_parent_iset_for_path(
+                Self::clear_parent_iset_for_stored(
                     &path,
-                    start_depth,
+                    parent_frame_index,
                     self.frames_mut(),
                     &mut stored_frames,
                 );
                 frame.deinit();
                 frame.dealloc();
                 // Clean up remaining stored frames safely (deepest first, clearing parent isets)
-                Self::cleanup_stored_frames_on_error(stored_frames, start_depth, self.frames_mut());
+                Self::cleanup_stored_frames_on_error(stored_frames, self.frames_mut());
                 return Err(self.err(e));
             }
 
             // Validate the frame is fully initialized
             if let Err(e) = frame.require_full_initialization() {
                 // Before cleanup, clear the parent's iset bit for the frame that failed.
-                // This prevents the parent from trying to drop this field when Partial is dropped.
-                Self::clear_parent_iset_for_path(
+                Self::clear_parent_iset_for_stored(
                     &path,
-                    start_depth,
+                    parent_frame_index,
                     self.frames_mut(),
                     &mut stored_frames,
                 );
                 frame.deinit();
                 frame.dealloc();
                 // Clean up remaining stored frames safely (deepest first, clearing parent isets)
-                Self::cleanup_stored_frames_on_error(stored_frames, start_depth, self.frames_mut());
+                Self::cleanup_stored_frames_on_error(stored_frames, self.frames_mut());
                 return Err(self.err(e));
             }
 
@@ -388,12 +388,9 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             }
 
             // Update parent's ISet to mark this field as initialized.
-            // The parent could be:
-            // 1. On the frames stack (if path.steps.len() == 1, parent is at start_depth - 1)
-            // 2. On the frames stack (if parent was pushed but never ended)
-            // 3. In stored_frames (if parent was ended during deferred mode)
+            // We use the stored parent_frame_index to find the parent directly.
             if let Some(last_step) = path.steps.last() {
-                // Construct parent path (same shape, all steps except the last one)
+                // Construct parent path for looking up in stored_frames
                 let parent_path = facet_path::Path {
                     shape: path.shape,
                     steps: path.steps[..path.steps.len() - 1].to_vec(),
@@ -403,16 +400,13 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 // the parent is an Option frame and we need to complete the Option by
                 // writing the inner value into the Option's memory.
                 if matches!(last_step, PathStep::OptionSome) {
-                    // Find the Option frame (parent)
-                    let option_frame = if parent_path.steps.is_empty() {
-                        let parent_index = start_depth.saturating_sub(1);
-                        self.frames_mut().get_mut(parent_index)
-                    } else if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
-                        Some(parent_frame)
-                    } else {
-                        let parent_frame_index = start_depth + parent_path.steps.len() - 1;
-                        self.frames_mut().get_mut(parent_frame_index)
-                    };
+                    // Find the Option frame (parent) - try stored_frames first, then stack
+                    let option_frame =
+                        if let Some(stored_parent) = stored_frames.get_mut(&parent_path) {
+                            Some(&mut stored_parent.frame)
+                        } else {
+                            self.frames_mut().get_mut(parent_frame_index)
+                        };
 
                     if let Some(option_frame) = option_frame {
                         // The frame contains the inner value - write it into the Option's memory
@@ -422,89 +416,58 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     }
                 }
 
-                // Mark field initialized based on path step type.
-                // For Field steps: mark the parent's iset directly.
-                // For Variant steps: the enum itself needs to be marked in its parent struct,
-                // so we look for the Field step before the Variant step.
-                //
-                // IMPORTANT: Variant steps don't correspond to frames - they're tracker state
-                // on the enum frame itself. So when computing the parent path for iset marking,
-                // we need to skip Variant steps to find the actual parent frame.
-                let field_to_mark: Option<(usize, facet_path::Path)> =
-                    if let PathStep::Field(field_idx) = last_step {
-                        // Skip any Variant steps in parent_path - they don't correspond to frames.
-                        // e.g., [Variant(0), Field(0)]'s parent is [], not [Variant(0)]
-                        let effective_parent_steps: Vec<_> = parent_path
-                            .steps
-                            .iter()
-                            .filter(|s| !matches!(s, PathStep::Variant(_)))
-                            .cloned()
-                            .collect();
-                        let effective_parent_path = facet_path::Path {
-                            shape: path.shape,
-                            steps: effective_parent_steps,
-                        };
-                        Some((*field_idx as usize, effective_parent_path))
-                    } else if matches!(last_step, PathStep::Variant(_)) {
+                // Determine what to mark based on path step type
+                let field_to_mark: Option<usize> = match last_step {
+                    PathStep::Field(field_idx) => Some(*field_idx as usize),
+                    PathStep::Index(idx) => Some(*idx as usize),
+                    PathStep::Variant(_) => {
                         // For enums, find the Field step that contains this enum.
                         // Path like [Field(1), Variant(0)] means enum at field 1.
                         // We need to mark the grandparent's iset for field 1.
                         if let Some(PathStep::Field(field_idx)) = parent_path.steps.last() {
-                            let grandparent_path = facet_path::Path {
-                                shape: path.shape,
-                                steps: parent_path.steps[..parent_path.steps.len() - 1].to_vec(),
-                            };
-                            Some((*field_idx as usize, grandparent_path))
+                            Some(*field_idx as usize)
                         } else {
                             None
                         }
+                    }
+                    _ => None,
+                };
+
+                if let Some(field_idx) = field_to_mark {
+                    // For Variant steps, we mark the grandparent (the struct containing the enum)
+                    // For other steps, we mark the direct parent
+                    let (target_path, target_index) = if matches!(last_step, PathStep::Variant(_)) {
+                        // Grandparent: path without the last two steps (Field + Variant)
+                        let grandparent_path = facet_path::Path {
+                            shape: path.shape,
+                            steps: parent_path.steps[..parent_path.steps.len().saturating_sub(1)]
+                                .to_vec(),
+                        };
+                        // The grandparent's index: look up the parent's stored parent_frame_index
+                        let grandparent_index =
+                            if let Some(stored_parent) = stored_frames.get(&parent_path) {
+                                stored_parent.parent_frame_index
+                            } else {
+                                // Parent is on stack, so grandparent is one below parent_frame_index
+                                parent_frame_index.saturating_sub(1)
+                            };
+                        (grandparent_path, grandparent_index)
                     } else {
-                        None
+                        (parent_path.clone(), parent_frame_index)
                     };
 
-                if let Some((field_idx, target_parent_path)) = field_to_mark {
-                    if target_parent_path.steps.is_empty() {
-                        // Parent is the frame that was current when deferred mode started.
-                        // It's at index (start_depth - 1) because deferred mode stores frames
-                        // relative to the position at start_depth.
-                        let parent_index = start_depth.saturating_sub(1);
-                        crate::trace!(
-                            "finish_deferred: marking field {} in root frame (parent_index={}), path={:?}",
-                            field_idx,
-                            parent_index,
-                            path
-                        );
-                        if let Some(root_frame) = self.frames_mut().get_mut(parent_index) {
-                            Self::mark_field_initialized_by_index(root_frame, field_idx);
-                        }
-                    } else {
-                        // Try stored_frames first
-                        if let Some(parent_frame) = stored_frames.get_mut(&target_parent_path) {
-                            crate::trace!(
-                                "finish_deferred: marking field {} in stored parent {:?}, path={:?}",
-                                field_idx,
-                                target_parent_path,
-                                path
-                            );
-                            Self::mark_field_initialized_by_index(parent_frame, field_idx);
-                        } else {
-                            // Parent might still be on the frames stack (never ended).
-                            // The frame at index (start_depth + target_parent_path.steps.len() - 1) should be the parent.
-                            let parent_frame_index =
-                                start_depth + target_parent_path.steps.len() - 1;
-                            crate::trace!(
-                                "finish_deferred: marking field {} in stack frame (parent_frame_index={}), parent_path={:?}, path={:?}",
-                                field_idx,
-                                parent_frame_index,
-                                target_parent_path,
-                                path
-                            );
-                            if let Some(parent_frame) =
-                                self.frames_mut().get_mut(parent_frame_index)
-                            {
-                                Self::mark_field_initialized_by_index(parent_frame, field_idx);
-                            }
-                        }
+                    crate::trace!(
+                        "finish_deferred: marking field {} at target_index={}, path={:?}",
+                        field_idx,
+                        target_index,
+                        path
+                    );
+
+                    // Try stored_frames first, then stack
+                    if let Some(stored_parent) = stored_frames.get_mut(&target_path) {
+                        Self::mark_field_initialized_by_index(&mut stored_parent.frame, field_idx);
+                    } else if let Some(parent_frame) = self.frames_mut().get_mut(target_index) {
+                        Self::mark_field_initialized_by_index(parent_frame, field_idx);
                     }
                 }
             }
@@ -595,13 +558,13 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         }
     }
 
-    /// Clear a parent frame's iset bit for a given path.
-    /// The parent could be on the stack or in stored_frames.
-    fn clear_parent_iset_for_path(
+    /// Clear a parent frame's iset bit for a stored frame.
+    /// Uses the stored parent_frame_index directly instead of computing from path.
+    fn clear_parent_iset_for_stored(
         path: &Path,
-        start_depth: usize,
+        parent_frame_index: usize,
         stack: &mut [Frame],
-        stored_frames: &mut ::alloc::collections::BTreeMap<Path, Frame>,
+        stored_frames: &mut ::alloc::collections::BTreeMap<Path, crate::partial::StoredFrame>,
     ) {
         if let Some(&PathStep::Field(field_idx)) = path.steps.last() {
             let field_idx = field_idx as usize;
@@ -610,21 +573,11 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 steps: path.steps[..path.steps.len() - 1].to_vec(),
             };
 
-            // Try stored_frames first
-            if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
+            // Try stored_frames first, then use the stored parent_frame_index
+            if let Some(stored_parent) = stored_frames.get_mut(&parent_path) {
+                Self::unset_field_in_tracker(&mut stored_parent.frame.tracker, field_idx);
+            } else if let Some(parent_frame) = stack.get_mut(parent_frame_index) {
                 Self::unset_field_in_tracker(&mut parent_frame.tracker, field_idx);
-            } else if parent_path.steps.is_empty() {
-                // Parent is on the stack at (start_depth - 1)
-                let parent_index = start_depth.saturating_sub(1);
-                if let Some(parent_frame) = stack.get_mut(parent_index) {
-                    Self::unset_field_in_tracker(&mut parent_frame.tracker, field_idx);
-                }
-            } else {
-                // Parent is on the stack at (start_depth + parent_path.steps.len() - 1)
-                let parent_index = start_depth + parent_path.steps.len() - 1;
-                if let Some(parent_frame) = stack.get_mut(parent_index) {
-                    Self::unset_field_in_tracker(&mut parent_frame.tracker, field_idx);
-                }
             }
         }
     }
@@ -650,8 +603,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// This mirrors the cleanup logic in Drop: process frames deepest-first and
     /// clear parent's iset bits before deiniting children to prevent double-drops.
     fn cleanup_stored_frames_on_error(
-        mut stored_frames: ::alloc::collections::BTreeMap<Path, Frame>,
-        start_depth: usize,
+        mut stored_frames: ::alloc::collections::BTreeMap<Path, crate::partial::StoredFrame>,
         stack: &mut [Frame],
     ) {
         // Sort by depth (deepest first) so children are processed before parents
@@ -659,10 +611,17 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         paths.sort_by_key(|p| core::cmp::Reverse(p.steps.len()));
 
         for path in paths {
-            if let Some(mut frame) = stored_frames.remove(&path) {
+            if let Some(stored) = stored_frames.remove(&path) {
+                let mut frame = stored.frame;
+                let parent_frame_index = stored.parent_frame_index;
                 // Before dropping this frame, clear the parent's iset bit so the
                 // parent won't try to drop this field again.
-                Self::clear_parent_iset_for_path(&path, start_depth, stack, &mut stored_frames);
+                Self::clear_parent_iset_for_stored(
+                    &path,
+                    parent_frame_index,
+                    stack,
+                    &mut stored_frames,
+                );
                 frame.deinit();
                 frame.dealloc();
             }
@@ -972,12 +931,22 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         let mut popped_frame = self.frames_mut().pop().unwrap();
 
         // In deferred mode, store most frames for later validation in finish_deferred().
-        // EXCEPTION: TrackedBuffer frames (map keys/values) should NOT be stored -
-        // they need to go through normal processing to actually insert into the map.
+        // EXCEPTIONS that should NOT be stored (they need to go through normal processing):
+        // - TrackedBuffer frames (map keys/values) - need to be inserted into the map
+        // - Set element frames (when parent's current_child=true) - need to be inserted into the set
         // We compute the path AFTER popping so the frame's own tracker state doesn't
         // pollute its path (e.g., Option's building_inner shouldn't add OptionSome to its own path).
-        let should_store =
-            self.is_deferred() && !matches!(popped_frame.ownership, FrameOwnership::TrackedBuffer);
+        let is_set_element = self.frames().last().is_some_and(|parent| {
+            matches!(
+                parent.tracker,
+                Tracker::Set {
+                    current_child: true
+                }
+            )
+        });
+        let should_store = self.is_deferred()
+            && !matches!(popped_frame.ownership, FrameOwnership::TrackedBuffer)
+            && !is_set_element;
 
         if should_store {
             let field_path = self.path();
@@ -1013,7 +982,15 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     // after the frame is validated. The parent's iset should only reflect
                     // actually-initialized memory.
 
-                    stored_frames.insert(storage_path, popped_frame);
+                    // Store the parent frame index - it's the current top of stack after popping
+                    let parent_frame_index = stack.len().saturating_sub(1);
+                    stored_frames.insert(
+                        storage_path,
+                        crate::partial::StoredFrame {
+                            frame: popped_frame,
+                            parent_frame_index,
+                        },
+                    );
 
                     // Clear parent's current_child tracking
                     if let Some(parent_frame) = stack.last_mut() {
