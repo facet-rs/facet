@@ -44,7 +44,7 @@ pub enum Op<'a> {
 /// How to fill a value.
 pub enum Source<'a> {
     /// Move a complete value from ptr into destination.
-    Move(Move<'a>),
+    Imm(Imm<'a>),
     /// Build incrementally - pushes a frame.
     Build(Build),
     /// Use the type's default value.
@@ -61,13 +61,13 @@ pub enum Source<'a> {
 /// `ptr` must point to a valid, initialized value whose type matches `shape`.
 /// This is enforced at construction time via [`Move::from_ref`] (safe) or
 /// [`Move::new`] (unsafe).
-pub struct Move<'a> {
+pub struct Imm<'a> {
     ptr: PtrConst,
     shape: &'static Shape,
     _marker: PhantomData<&'a ()>,
 }
 
-impl<'a> Move<'a> {
+impl<'a> Imm<'a> {
     /// Create a Move from a reference to a value.
     ///
     /// This is the safe way to create a Move - the lifetime ensures the

@@ -31,7 +31,7 @@ fn enum_struct_variant() {
     let x = 10i32;
     let y = 20i32;
     partial
-        .apply(&[Op::set().at(0).mov(&x), Op::set().at(1).mov(&y)])
+        .apply(&[Op::set().at(0).imm(&x), Op::set().at(1).imm(&y)])
         .unwrap();
 
     // End the variant frame
@@ -47,7 +47,7 @@ fn enum_tuple_variant() {
 
     // Select Write variant (index 2) with Move (complete value)
     let msg = String::from("hello");
-    partial.apply(&[Op::set().at(2).mov(&msg)]).unwrap();
+    partial.apply(&[Op::set().at(2).imm(&msg)]).unwrap();
     std::mem::forget(msg);
 
     let result: Message = partial.build().unwrap();
@@ -122,7 +122,7 @@ fn nested_enum_in_struct() {
 
     // Set id
     let id = 42u32;
-    partial.apply(&[Op::set().at(0).mov(&id)]).unwrap();
+    partial.apply(&[Op::set().at(0).imm(&id)]).unwrap();
 
     // Build message field, select Move variant
     partial.apply(&[Op::set().at(1).build()]).unwrap();
@@ -134,7 +134,7 @@ fn nested_enum_in_struct() {
     let x = 100i32;
     let y = 200i32;
     partial
-        .apply(&[Op::set().at(0).mov(&x), Op::set().at(1).mov(&y)])
+        .apply(&[Op::set().at(0).imm(&x), Op::set().at(1).imm(&y)])
         .unwrap();
 
     // End Move variant frame
@@ -162,7 +162,7 @@ fn enum_incomplete_variant_fails() {
 
     // Only set x, not y
     let x = 10i32;
-    partial.apply(&[Op::set().at(0).mov(&x)]).unwrap();
+    partial.apply(&[Op::set().at(0).imm(&x)]).unwrap();
 
     // Try to end - should fail because y is not set
     let err = partial.apply(&[Op::end()]).unwrap_err();
@@ -176,7 +176,7 @@ fn drop_partially_initialized_enum() {
 
     // Select Write variant and set the string
     let msg = String::from("will be dropped");
-    partial.apply(&[Op::set().at(2).mov(&msg)]).unwrap();
+    partial.apply(&[Op::set().at(2).imm(&msg)]).unwrap();
     std::mem::forget(msg);
 
     // Drop without building - must clean up the string
@@ -207,7 +207,7 @@ fn enum_switch_variant_drops_old_value() {
 
     // Move a complete enum value with heap allocation
     let value = MaybeBox::Boxed(Box::new(42));
-    partial.apply(&[Op::set().mov(&value)]).unwrap();
+    partial.apply(&[Op::set().imm(&value)]).unwrap();
     std::mem::forget(value);
 
     // Switch to a different variant - this must:

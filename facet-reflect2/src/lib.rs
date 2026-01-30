@@ -17,7 +17,7 @@ pub(crate) mod enum_helpers;
 
 // --- ops ---
 mod ops;
-pub use ops::{Build, Move, Op, Path, Source};
+pub use ops::{Build, Imm, Op, Path, Source};
 
 // --- partial ---
 mod partial;

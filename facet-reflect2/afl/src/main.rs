@@ -3,7 +3,7 @@ use afl::fuzz;
 use arbitrary::Arbitrary;
 use facet::Facet;
 use facet_core::{PtrConst, Shape};
-use facet_reflect2::{Move, Op, Partial, Path, Source};
+use facet_reflect2::{Imm, Op, Partial, Path, Source};
 
 // ============================================================================
 // Compound types for fuzzing (these need Facet derive)
@@ -215,7 +215,7 @@ pub enum DeepEnum {
 }
 
 // ============================================================================
-// FuzzValue - values that can be moved into a Partial
+// FuzzValue - values that we build through a Partial
 // ============================================================================
 
 /// A value that can be used in fuzzing.
@@ -434,11 +434,11 @@ impl std::fmt::Debug for FuzzValue {
 // FuzzSource - how to fill a value
 // ============================================================================
 
-/// Source for a fuzz operation.
+/// Source for a fuzz 'Set' operation
 #[derive(Clone, Arbitrary)]
 pub enum FuzzSource {
-    /// Move a value (copy bytes from the FuzzValue).
-    Move(FuzzValue),
+    /// Immediate value (copy bytes from the FuzzValue).
+    Imm(FuzzValue),
     /// Use the type's default value.
     Default,
     /// Build incrementally - pushes a frame.
@@ -448,7 +448,7 @@ pub enum FuzzSource {
 impl std::fmt::Debug for FuzzSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FuzzSource::Move(v) => write!(f, "Move({:?})", v),
+            FuzzSource::Imm(v) => write!(f, "Move({:?})", v),
             FuzzSource::Default => write!(f, "Default"),
             FuzzSource::Build { len_hint } => write!(f, "Build({:?})", len_hint),
         }
@@ -709,7 +709,7 @@ fn run_fuzz(input: FuzzInput, log: bool) {
         let result = match fuzz_op {
             FuzzOp::Set { path, source } => {
                 match source {
-                    FuzzSource::Move(value) => {
+                    FuzzSource::Imm(value) => {
                         if log {
                             eprintln!("  [{i}] Set path={:?} source=Move({:?})", path, value);
                         }

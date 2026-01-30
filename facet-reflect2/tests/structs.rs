@@ -14,7 +14,7 @@ fn set_struct_fields() {
     let x = 10i32;
     let y = 20i32;
     partial
-        .apply(&[Op::set().at(0).mov(&x), Op::set().at(1).mov(&y)])
+        .apply(&[Op::set().at(0).imm(&x), Op::set().at(1).imm(&y)])
         .unwrap();
 
     let result: Point = partial.build().unwrap();
@@ -27,7 +27,7 @@ fn build_with_incomplete_children() {
 
     // Only set one field
     let x = 10i32;
-    partial.apply(&[Op::set().at(0).mov(&x)]).unwrap();
+    partial.apply(&[Op::set().at(0).imm(&x)]).unwrap();
 
     // Try to build - should fail because y is not initialized
     let err = partial.build::<Point>().unwrap_err();
@@ -40,7 +40,7 @@ fn field_index_out_of_bounds() {
 
     let value = 10i32;
     // Point only has 2 fields (indices 0 and 1), try index 5
-    let err = partial.apply(&[Op::set().at(5).mov(&value)]).unwrap_err();
+    let err = partial.apply(&[Op::set().at(5).imm(&value)]).unwrap_err();
     assert!(matches!(
         err.kind,
         ReflectErrorKind::FieldIndexOutOfBounds {
@@ -56,7 +56,7 @@ fn set_field_on_non_struct() {
 
     let value = 10u32;
     // u32 is not a struct, can't navigate into fields
-    let err = partial.apply(&[Op::set().at(0).mov(&value)]).unwrap_err();
+    let err = partial.apply(&[Op::set().at(0).imm(&value)]).unwrap_err();
     assert!(matches!(err.kind, ReflectErrorKind::NotAStruct));
 }
 
@@ -72,7 +72,7 @@ fn multi_level_path_not_supported() {
     let value = 10i32;
     // Try to set outer.inner.x with path [0, 0] - multi-level not yet supported
     let err = partial
-        .apply(&[Op::set().at(0).at(0).mov(&value)])
+        .apply(&[Op::set().at(0).at(0).imm(&value)])
         .unwrap_err();
     assert!(matches!(
         err.kind,
@@ -86,7 +86,7 @@ fn field_type_mismatch() {
 
     // Try to set a String into an i32 field
     let value = String::from("hello");
-    let err = partial.apply(&[Op::set().at(0).mov(&value)]).unwrap_err();
+    let err = partial.apply(&[Op::set().at(0).imm(&value)]).unwrap_err();
     assert!(matches!(err.kind, ReflectErrorKind::ShapeMismatch { .. }));
 }
 
@@ -99,8 +99,8 @@ fn set_struct_fields_with_at_path() {
     // Use at_path instead of at().at()
     partial
         .apply(&[
-            Op::set().at_path(&[0]).mov(&x),
-            Op::set().at_path(&[1]).mov(&y),
+            Op::set().at_path(&[0]).imm(&x),
+            Op::set().at_path(&[1]).imm(&y),
         ])
         .unwrap();
 
@@ -120,7 +120,7 @@ fn drop_partially_initialized_struct() {
     let mut partial = Partial::alloc::<TwoStrings>().unwrap();
 
     let a = String::from("first");
-    partial.apply(&[Op::set().at(0).mov(&a)]).unwrap();
+    partial.apply(&[Op::set().at(0).imm(&a)]).unwrap();
     std::mem::forget(a);
 
     // Drop without setting field b - must clean up field a
@@ -133,7 +133,7 @@ fn build_fails_then_drops_partial_struct() {
     let mut partial = Partial::alloc::<TwoStrings>().unwrap();
 
     let a = String::from("will be cleaned up");
-    partial.apply(&[Op::set().at(0).mov(&a)]).unwrap();
+    partial.apply(&[Op::set().at(0).imm(&a)]).unwrap();
     std::mem::forget(a);
 
     // build() fails because b is not set, then Drop cleans up a
@@ -147,16 +147,16 @@ fn set_field_wrong_type_poisons_partial() {
 
     // Set field 0
     let x = 10i32;
-    partial.apply(&[Op::set().at(0).mov(&x)]).unwrap();
+    partial.apply(&[Op::set().at(0).imm(&x)]).unwrap();
 
     // Try to set field 1 with wrong type - should fail and poison the Partial
     let wrong = String::from("oops");
-    let err = partial.apply(&[Op::set().at(1).mov(&wrong)]).unwrap_err();
+    let err = partial.apply(&[Op::set().at(1).imm(&wrong)]).unwrap_err();
     assert!(matches!(err.kind, ReflectErrorKind::ShapeMismatch { .. }));
 
     // After an error, the Partial is poisoned - any further operations should fail
     let y = 20i32;
-    let err = partial.apply(&[Op::set().at(1).mov(&y)]).unwrap_err();
+    let err = partial.apply(&[Op::set().at(1).imm(&y)]).unwrap_err();
     assert!(matches!(err.kind, ReflectErrorKind::Poisoned));
 }
 
@@ -173,7 +173,7 @@ fn set_struct_field_to_default() {
     let x = 10i32;
     partial
         .apply(&[
-            Op::set().at(0).mov(&x),
+            Op::set().at(0).imm(&x),
             Op::set().at(1).default(), // y gets default value (0)
         ])
         .unwrap();
@@ -224,7 +224,7 @@ fn build_nested_struct() {
     let x = 10i32;
     let y = 20i32;
     partial
-        .apply(&[Op::set().at(0).mov(&x), Op::set().at(1).mov(&y)])
+        .apply(&[Op::set().at(0).imm(&x), Op::set().at(1).imm(&y)])
         .unwrap();
 
     // End the inner frame
@@ -232,7 +232,7 @@ fn build_nested_struct() {
 
     // Set the outer extra field
     let extra = 99i32;
-    partial.apply(&[Op::set().at(1).mov(&extra)]).unwrap();
+    partial.apply(&[Op::set().at(1).imm(&extra)]).unwrap();
 
     let result: Outer = partial.build().unwrap();
     assert_eq!(
@@ -261,7 +261,7 @@ fn end_with_incomplete_fails() {
 
     // Only set one field of inner
     let x = 10i32;
-    partial.apply(&[Op::set().at(0).mov(&x)]).unwrap();
+    partial.apply(&[Op::set().at(0).imm(&x)]).unwrap();
 
     // Try to end - should fail because inner.y is not set
     let err = partial.apply(&[Op::end()]).unwrap_err();

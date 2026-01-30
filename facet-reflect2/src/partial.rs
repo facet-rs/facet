@@ -199,7 +199,7 @@ impl<'facet> Partial<'facet> {
         let target = self.resolve_path(frame, path)?;
 
         match source {
-            Source::Move(mov) => {
+            Source::Imm(mov) => {
                 // Verify shape matches
                 target.assert_shape(mov.shape(), path)?;
 
@@ -391,7 +391,7 @@ impl<'facet> Partial<'facet> {
                 };
                 e.selected = Some((variant_idx, Idx::COMPLETE));
             }
-            Source::Move(mov) => {
+            Source::Imm(mov) => {
                 // For tuple variants with a single field, copy the field value
                 // The Move shape should match the tuple field's shape
                 if new_variant.data.fields.len() != 1 {

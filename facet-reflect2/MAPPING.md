@@ -11,7 +11,7 @@ partial.set(42u32)?;
 
 **apiv2:**
 ```rust
-Set { path: &[], source: Source::Move(Move { ptr: &42u32, shape: <u32>::SHAPE }) }
+Set { path: &[], source: Source::Imm(Imm { ptr: &42u32, shape: <u32>::SHAPE }) }
 ```
 
 ## Simple struct
@@ -29,8 +29,8 @@ partial
 
 **apiv2:**
 ```rust
-Set { path: &[0], source: Source::Move(Move { ptr: &10i32, shape: <i32>::SHAPE }) }
-Set { path: &[1], source: Source::Move(Move { ptr: &20i32, shape: <i32>::SHAPE }) }
+Set { path: &[0], source: Source::Imm(Imm { ptr: &10i32, shape: <i32>::SHAPE }) }
+Set { path: &[1], source: Source::Imm(Imm { ptr: &20i32, shape: <i32>::SHAPE }) }
 ```
 
 No `End` needed - fields are set directly without pushing frames.
@@ -58,12 +58,12 @@ partial
 **apiv2:**
 ```rust
 Set { path: &[0], source: Source::Build(Build { len_hint: None }) }  // start - push frame
-  Set { path: &[0], source: Source::Move(...) }  // start.x
-  Set { path: &[1], source: Source::Move(...) }  // start.y
+  Set { path: &[0], source: Source::Imm(...) }  // start.x
+  Set { path: &[1], source: Source::Imm(...) }  // start.y
 End
 Set { path: &[1], source: Source::Build(Build { len_hint: None }) }  // end - push frame
-  Set { path: &[0], source: Source::Move(...) }  // end.x
-  Set { path: &[1], source: Source::Move(...) }  // end.y
+  Set { path: &[0], source: Source::Imm(...) }  // end.x
+  Set { path: &[1], source: Source::Imm(...) }  // end.y
 End
 ```
 
@@ -71,8 +71,8 @@ End
 
 **apiv2 (if you have the whole Point):**
 ```rust
-Set { path: &[0], source: Source::Move(Move { ptr: &start_point, shape: <Point>::SHAPE }) }
-Set { path: &[1], source: Source::Move(Move { ptr: &end_point, shape: <Point>::SHAPE }) }
+Set { path: &[0], source: Source::Imm(Imm { ptr: &start_point, shape: <Point>::SHAPE }) }
+Set { path: &[1], source: Source::Imm(Imm { ptr: &end_point, shape: <Point>::SHAPE }) }
 ```
 
 No frames needed when you have the complete value.
@@ -80,7 +80,7 @@ No frames needed when you have the complete value.
 ## Enum
 
 ```rust
-enum Message { Quit, Move { x: i32, y: i32 }, Write(String) }
+enum Message { Quit, Imm { x: i32, y: i32 }, Write(String) }
 ```
 
 **apiv1:**
@@ -88,7 +88,7 @@ enum Message { Quit, Move { x: i32, y: i32 }, Write(String) }
 // Message::Quit
 partial.select_nth_variant(0)?.set_default()?;
 
-// Message::Move { x: 10, y: 20 }
+// Message::Imm { x: 10, y: 20 }
 partial
     .select_nth_variant(1)?
     .begin_nth_field(0)?.set(10i32)?.end()?
@@ -105,17 +105,17 @@ partial
 // Message::Quit (unit variant)
 Set { path: &[0], source: Source::Default }
 
-// Message::Move { x: 10, y: 20 }
+// Message::Imm { x: 10, y: 20 }
 Set { path: &[1], source: Source::Build(Build { len_hint: None }) }  // select variant 1, push frame
-  Set { path: &[0], source: Source::Move(...) }  // x
-  Set { path: &[1], source: Source::Move(...) }  // y
+  Set { path: &[0], source: Source::Imm(...) }  // x
+  Set { path: &[1], source: Source::Imm(...) }  // y
 End
 
 // Message::Write("hello")
-Set { path: &[2], source: Source::Move(Move { ptr: &hello_string, shape: <String>::SHAPE }) }
+Set { path: &[2], source: Source::Imm(Imm { ptr: &hello_string, shape: <String>::SHAPE }) }
 ```
 
-Path index selects the variant. `Build` for struct variants (need to set fields), `Move` for tuple variants with a complete value, `Default` for unit variants.
+Path index selects the variant. `Build` for struct variants (need to set fields), `Imm` for tuple variants with a complete value, `Default` for unit variants.
 
 ## Vec
 
@@ -136,12 +136,12 @@ partial
 **apiv2:**
 ```rust
 Set { path: &[0], source: Source::Build(Build { len_hint: Some(2) }) }  // servers - push frame
-  Push { source: Source::Move(Move { ptr: &s1, shape: <String>::SHAPE }) }
-  Push { source: Source::Move(Move { ptr: &s2, shape: <String>::SHAPE }) }
+  Push { source: Source::Imm(Imm { ptr: &s1, shape: <String>::SHAPE }) }
+  Push { source: Source::Imm(Imm { ptr: &s2, shape: <String>::SHAPE }) }
 End
 ```
 
-`len_hint` enables pre-allocation. `Push` adds elements - no frame pushed when source is `Move`.
+`len_hint` enables pre-allocation. `Push` adds elements - no frame pushed when source is `Imm`.
 
 **Empty Vec:**
 ```rust
@@ -171,8 +171,8 @@ partial
 ```rust
 Set { path: &[0], source: Source::Build(Build { len_hint: Some(1) }) }  // servers
   Push { source: Source::Build(Build { len_hint: None }) }  // element - push frame
-    Set { path: &[0], source: Source::Move(...) }  // host
-    Set { path: &[1], source: Source::Move(...) }  // port
+    Set { path: &[0], source: Source::Imm(...) }  // host
+    Set { path: &[1], source: Source::Imm(...) }  // port
   End
 End
 ```
@@ -203,7 +203,7 @@ partial
 **apiv2:**
 ```rust
 // Some(30)
-Set { path: &[0], source: Source::Move(Move { ptr: &Some(30u32), shape: <Option<u32>>::SHAPE }) }
+Set { path: &[0], source: Source::Imm(Imm { ptr: &Some(30u32), shape: <Option<u32>>::SHAPE }) }
 
 // None
 Set { path: &[0], source: Source::Default }
@@ -230,8 +230,8 @@ partial
 **apiv2:**
 ```rust
 Set { path: &[0], source: Source::Build(Build { len_hint: None }) }  // server (Option) - push frame
-  Set { path: &[0], source: Source::Move(...) }  // host (inside the Some)
-  Set { path: &[1], source: Source::Move(...) }  // port
+  Set { path: &[0], source: Source::Imm(...) }  // host (inside the Some)
+  Set { path: &[1], source: Source::Imm(...) }  // port
 End
 ```
 
@@ -258,8 +258,8 @@ partial
 **apiv2:**
 ```rust
 Set { path: &[0], source: Source::Build(Build { len_hint: None }) }  // data (Box) - push frame
-  Set { path: &[0], source: Source::Move(...) }  // host
-  Set { path: &[1], source: Source::Move(...) }  // port
+  Set { path: &[0], source: Source::Imm(...) }  // host
+  Set { path: &[1], source: Source::Imm(...) }  // port
 End
 ```
 
@@ -284,8 +284,8 @@ partial
 **apiv2:**
 ```rust
 Set { path: &[0], source: Source::Build(Build { len_hint: Some(2) }) }  // tags
-  Push { source: Source::Move(Move { ptr: &tag1, shape: <String>::SHAPE }) }
-  Push { source: Source::Move(Move { ptr: &tag2, shape: <String>::SHAPE }) }
+  Push { source: Source::Imm(Imm { ptr: &tag1, shape: <String>::SHAPE }) }
+  Push { source: Source::Imm(Imm { ptr: &tag2, shape: <String>::SHAPE }) }
 End
 ```
 
@@ -310,9 +310,9 @@ partial
 
 **apiv2:**
 ```rust
-Set { path: &[0, 0], source: Source::Move(...) }  // coords[0]
-Set { path: &[0, 1], source: Source::Move(...) }  // coords[1]
-Set { path: &[0, 2], source: Source::Move(...) }  // coords[2]
+Set { path: &[0, 0], source: Source::Imm(...) }  // coords[0]
+Set { path: &[0, 1], source: Source::Imm(...) }  // coords[1]
+Set { path: &[0, 2], source: Source::Imm(...) }  // coords[2]
 ```
 
 Arrays use `Set` with index paths - no `Push` since size is fixed. Multi-element paths work in deferred mode.
@@ -337,13 +337,13 @@ partial
 ```rust
 Set { path: &[0], source: Source::Build(Build { len_hint: Some(1) }) }  // env
   Insert {
-    key: Move { ptr: &path_key, shape: <String>::SHAPE },
-    value: Source::Move(Move { ptr: &path_value, shape: <String>::SHAPE })
+    key: Imm { ptr: &path_key, shape: <String>::SHAPE },
+    value: Source::Imm(Imm { ptr: &path_value, shape: <String>::SHAPE })
   }
 End
 ```
 
-`Insert` takes a complete key and either a complete value (`Move`) or incremental (`Build`).
+`Insert` takes a complete key and either a complete value (`Imm`) or incremental (`Build`).
 
 ## HashMap with complex values
 
@@ -369,11 +369,11 @@ partial
 ```rust
 Set { path: &[0], source: Source::Build(Build { len_hint: Some(1) }) }  // servers
   Insert {
-    key: Move { ptr: &key, shape: <String>::SHAPE },
+    key: Imm { ptr: &key, shape: <String>::SHAPE },
     value: Source::Build(Build { len_hint: None })  // push frame for value
   }
-    Set { path: &[0], source: Source::Move(...) }  // host
-    Set { path: &[1], source: Source::Move(...) }  // port
+    Set { path: &[0], source: Source::Imm(...) }  // host
+    Set { path: &[1], source: Source::Imm(...) }  // port
   End
 End
 ```
