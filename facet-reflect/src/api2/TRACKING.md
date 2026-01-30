@@ -78,12 +78,42 @@ A frame needs a unique identity for storage/lookup in deferred mode:
 - **Option inner**: parent frame + "some" marker
 - **Smart pointer inner**: parent frame + "inner" marker
 
-## Open questions
+## Decisions
 
-1. **Frame storage structure**: BTreeMap<Path, Frame>? Arena with indices? 
+1. **Frame storage structure**: `BTreeMap<Path, Frame>` - need ordering for deepest-first cleanup.
 
-2. **Key storage for maps**: We need to keep the complete key around to identify the incomplete value. Where does it live?
+2. **Key storage for maps**: SmallVec of (key, frame) pairs per map frame.
 
-3. **Bitset vs explicit tracking**: For structs, a bitset is compact. For maps with arbitrary keys, we need something else.
+3. **Nested incomplete**: Store three separate frames for `a.b.c`. Each frame has its own tracking.
 
-4. **Nested incomplete**: If `a.b.c` is incomplete, do we store three frames or one frame with nested tracking?
+4. **Bitset design**: One bitset per frame: `complete`. 
+   - `complete.get(i) = true` → value is in place, fully initialized
+   - `complete.get(i) = false` → either uninitialized OR incomplete (frame stored)
+   
+   To distinguish uninitialized from incomplete, check the frame storage map - but only when needed (re-entry, cleanup), not on every operation.
+
+## Fundamental operations
+
+The tracking structure must support these operations:
+
+1. **End (immediate mode)** - validate all fields initialized or defaultable, fill defaults, error if incomplete
+
+2. **End (deferred child)** - if complete → mark parent's bit; if incomplete → store frame, done (no validation yet)
+
+3. **End (deferred root)** - process all stored frames deepest-first, fill defaults, validate, insert map entries
+
+4. **Re-enter** (deferred only) - find stored frame by path, restore it
+
+5. **Drop** - cleanup deepest-first, drop initialized values, deallocate
+
+6. **Replace** - drop old value first, then write new
+
+7. **Variant switch** - drop old variant's initialized fields, reset tracking
+
+8. **Query** - is field X set? (for duplicate key detection, etc.)
+
+## Open question: ownership
+
+Who tracks what's allocated vs what's initialized - the child frame or the parent frame?
+
+TODO: discuss this
