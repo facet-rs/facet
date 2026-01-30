@@ -21,16 +21,58 @@ bitflags! {
     }
 }
 
+/// Type-erased key for map lookups using shape vtables
+struct DynKey {
+    ptr: PtrUninit,
+    shape: &'static Shape,
+}
+
+impl Hash for DynKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        unsafe { self.shape.call_hash(self.ptr.assume_init(), state) }
+    }
+}
+
+impl PartialEq for DynKey {
+    fn eq(&self, other: &Self) -> bool {
+        if !self.shape.is_shape(other.shape) {
+            return false;
+        }
+        unsafe { self.shape.call_eq(self.ptr.assume_init(), other.ptr.assume_init()) }
+    }
+}
+
+impl Eq for DynKey {}
+
+/// Children structure varies by container type
+enum Children {
+    /// Structs, arrays: indexed by field/element index
+    Indexed(Vec<Option<FrameId>>),
+    
+    /// Enums: at most one variant active at a time
+    /// (variant_idx, variant_frame) - type enforces single variant
+    Variant(Option<(u32, FrameId)>),
+    
+    /// Lists: can grow dynamically via Push
+    List(Vec<Option<FrameId>>),
+    
+    /// Maps: keyed by actual key values for O(1) re-entry
+    Map(HashMap<DynKey, FrameId>),
+    
+    /// Option inner, smart pointer inner: single child
+    Single(Option<FrameId>),
+    
+    /// Scalars, sets: no children (sets can't be re-entered)
+    None,
+}
+
 struct Frame {
     parent: Option<FrameId>,
-    children: Vec<Option<FrameId>>,  // indexed by field_idx / element_idx
+    children: Children,
     
     data: PtrUninit,
     shape: &'static Shape,
     flags: FrameFlags,
-    
-    // For enums: which variant is selected
-    variant_idx: Option<u32>,
 }
 
 struct Partial {
@@ -42,13 +84,29 @@ struct Partial {
 
 ## Child states
 
-`children[idx]` can be:
+For `Children::Indexed` and `Children::List`, each slot can be:
 
 | Value | Meaning |
 |-------|---------|
 | `None` | Not started - no value, no frame |
 | `Some(COMPLETE)` | Complete - value is in place, frame was discarded |
 | `Some(id)` | In progress - frame exists, possibly incomplete |
+
+For `Children::Variant`:
+- `None` → no variant selected
+- `Some((idx, COMPLETE))` → variant idx selected and complete
+- `Some((idx, id))` → variant idx in progress
+
+For `Children::Map`:
+- Key absent → not started
+- Key present with `COMPLETE` → complete
+- Key present with real id → in progress
+
+For `Children::Single`:
+- Same as Indexed but just one slot
+
+For `Children::None`:
+- No children to track (scalars, set elements)
 
 ## Operations
 
@@ -104,12 +162,35 @@ If completing a child makes the parent complete, propagate up.
 - Could parallelize validation (subtrees are independent)
 - Arena allocation - cache friendly, no per-frame heap alloc
 
+## Enum variant handling
+
+Enum variants ARE frames. When you do:
+```rust
+Set { path: &[1], source: Build }  // select variant 1
+```
+
+This creates a variant frame. The structure is:
+```
+Enum frame (Children::Variant)
+  └── Variant frame (children for variant's fields)
+        ├── field 0
+        ├── field 1
+        └── ...
+```
+
+**Reading the discriminant**: If we need to know which variant is selected (e.g., after a `Move` that wrote the whole enum), we read the discriminant from memory using the Shape's vtable. We don't track `variant_idx` separately - the memory is the source of truth.
+
+**Variant switching**: If variant 1 is in progress and someone selects variant 2:
+1. Drop all initialized fields of variant 1
+2. Deallocate variant 1's frame
+3. Create new frame for variant 2
+
 ## Open questions
 
 1. **Arena reuse**: When a frame is "complete" and discarded, can we reuse that slot? Need generation counters?
 
-2. **Maps**: Children are keyed by actual key values, not indices. Need a different structure - `HashMap<HeapValue, FrameId>` or similar?
+2. **Lists in deferred mode**: Elements are indexed, but indices can be sparse if we're re-entering. `Vec<Option<FrameId>>` should handle this (sparse = lots of `None` slots).
 
-3. **Lists in deferred mode**: Elements are indexed, but indices can be sparse if we're re-entering. `Vec<Option<FrameId>>` or sparse map?
+3. **Memory for children**: Each frame may allocate a Vec/HashMap for children. Could use arena slices for the common case?
 
-4. **Memory for children vec**: Each frame allocates a Vec for children. Could use arena slices instead?
+4. **DynKey ownership**: The `DynKey` owns the key allocation. On cleanup, we need to drop the key value and deallocate. On successful insert into the actual map, we move the key out.
