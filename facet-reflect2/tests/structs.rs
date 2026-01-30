@@ -1,6 +1,42 @@
 use facet::Facet;
 use facet_reflect2::{Op, Partial, ReflectErrorKind};
 
+// Regression test for double-free bug found by AFL fuzzer.
+// When setting a field on an already-INIT struct/tuple, we drop the old field
+// but don't clear INIT. Then if an error occurs and we poison(), uninit() sees
+// INIT and tries to drop the whole struct again - double-free.
+#[test]
+fn set_field_on_init_struct_then_error_no_double_free() {
+    #[derive(Debug, Facet)]
+    struct TwoStrings {
+        a: String,
+        b: String,
+    }
+
+    let mut partial = Partial::alloc::<TwoStrings>().unwrap();
+
+    // Step 1: Set the whole struct via Imm
+    let value = TwoStrings {
+        a: String::from("first_a"),
+        b: String::from("first_b"),
+    };
+    partial.apply(&[Op::set().imm(&value)]).unwrap();
+    std::mem::forget(value); // We moved ownership
+
+    // Step 2: Set field 0 with a new String - this should drop the old "first_a"
+    let new_a = String::from("second_a");
+    partial.apply(&[Op::set().at(0).imm(&new_a)]).unwrap();
+    std::mem::forget(new_a);
+
+    // Step 3: Trigger an error by setting the whole struct with Default
+    // (TwoStrings doesn't implement Default, so this will fail)
+    // This should NOT double-free "first_a" (already dropped in step 2)
+    let err = partial.apply(&[Op::set().default()]).unwrap_err();
+    assert!(matches!(err.kind, ReflectErrorKind::NoDefault { .. }));
+
+    // The partial is now poisoned, which is fine - but we shouldn't have UB
+}
+
 #[derive(Debug, PartialEq, Facet)]
 struct Point {
     x: i32,

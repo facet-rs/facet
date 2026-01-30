@@ -198,6 +198,15 @@ impl FrameKind {
         }
     }
 
+    /// Check if a child field is complete (for Struct and VariantData).
+    pub fn is_field_complete(&self, idx: usize) -> bool {
+        match self {
+            FrameKind::Struct(s) => s.fields.is_complete(idx),
+            FrameKind::VariantData(v) => v.fields.is_complete(idx),
+            _ => false,
+        }
+    }
+
     /// Get as mutable enum frame, if this is an enum.
     pub fn as_enum_mut(&mut self) -> Option<&mut EnumFrame> {
         match self {
