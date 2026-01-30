@@ -167,7 +167,41 @@ impl<'facet> Partial<'facet> {
                             }
                         }
                         Source::Build(_) => todo!("Build source"),
-                        Source::Default => todo!("Default source"),
+                        Source::Default => {
+                            // Drop any existing value before overwriting
+                            if path.is_empty() {
+                                let frame = self.arena.get_mut(self.current);
+                                frame.uninit();
+                            }
+
+                            // Re-resolve path after potential mutation
+                            let frame = self.arena.get(self.current);
+                            let target = self.resolve_path(frame, path)?;
+
+                            // Call default_in_place on the target
+                            // SAFETY: target.data points to uninitialized memory of the correct type
+                            let ok = unsafe { target.shape.call_default_in_place(target.data) };
+                            if ok.is_none() {
+                                return Err(self.error(ReflectErrorKind::NoDefault {
+                                    shape: target.shape,
+                                }));
+                            }
+
+                            // Now get mutable borrow to update state
+                            let frame = self.arena.get_mut(self.current);
+
+                            // Mark as initialized
+                            if path.is_empty() {
+                                frame.flags |= FrameFlags::INIT;
+                            } else {
+                                // Mark child as complete
+                                let field_idx = path.as_slice()[0] as usize;
+                                let Children::Indexed(c) = &mut frame.children else {
+                                    return Err(self.error(ReflectErrorKind::NotIndexedChildren));
+                                };
+                                c.mark_complete(field_idx);
+                            }
+                        }
                     }
                 }
             }

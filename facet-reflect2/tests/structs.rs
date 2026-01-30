@@ -159,3 +159,49 @@ fn set_field_wrong_type_poisons_partial() {
     let err = partial.apply(&[Op::set().at(1).mov(&y)]).unwrap_err();
     assert!(matches!(err.kind, ReflectErrorKind::Poisoned));
 }
+
+#[derive(Debug, Default, PartialEq, Facet)]
+struct PointWithDefault {
+    x: i32,
+    y: i32,
+}
+
+#[test]
+fn set_struct_field_to_default() {
+    let mut partial = Partial::alloc::<PointWithDefault>().unwrap();
+
+    let x = 10i32;
+    partial
+        .apply(&[
+            Op::set().at(0).mov(&x),
+            Op::set().at(1).default(), // y gets default value (0)
+        ])
+        .unwrap();
+
+    let result: PointWithDefault = partial.build().unwrap();
+    assert_eq!(result, PointWithDefault { x: 10, y: 0 });
+}
+
+#[test]
+fn set_whole_struct_to_default() {
+    let mut partial = Partial::alloc::<PointWithDefault>().unwrap();
+
+    partial.apply(&[Op::set().default()]).unwrap();
+
+    let result: PointWithDefault = partial.build().unwrap();
+    assert_eq!(result, PointWithDefault::default());
+}
+
+// A type that derives Facet but not Default
+#[derive(Debug, Facet)]
+struct NoDefaultType {
+    value: i32,
+}
+
+#[test]
+fn set_default_fails_for_type_without_default() {
+    let mut partial = Partial::alloc::<NoDefaultType>().unwrap();
+
+    let err = partial.apply(&[Op::set().default()]).unwrap_err();
+    assert!(matches!(err.kind, ReflectErrorKind::NoDefault { .. }));
+}

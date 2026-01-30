@@ -179,12 +179,12 @@ impl std::fmt::Debug for FuzzValue {
 pub enum FuzzSource {
     /// Move a value (copy bytes from the FuzzValue).
     Move(FuzzValue),
-    // Build and Default are defined in the API but not yet implemented in Partial::apply
+    /// Use the type's default value.
+    Default,
+    // Build is defined in the API but not yet implemented in Partial::apply
     // TODO: uncomment when implemented
     // /// Build incrementally - pushes a frame.
     // Build { len_hint: Option<u8> },
-    // /// Use the type's default value.
-    // Default,
 }
 
 // ============================================================================
@@ -372,6 +372,14 @@ fn run_fuzz(input: FuzzInput) {
                             std::mem::forget(value);
                         }
                         // On failure, value is dropped normally (no bytes were copied)
+                    }
+                    FuzzSource::Default => {
+                        let op = Op::Set {
+                            path: path.to_path(),
+                            source: Source::Default,
+                        };
+                        // Apply may fail (e.g., type doesn't implement Default, invalid path)
+                        let _ = partial.apply(&[op]);
                     }
                 }
             }

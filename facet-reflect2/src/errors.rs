@@ -62,4 +62,6 @@ pub enum ReflectErrorKind {
     SlotEmpty,
     /// Partial is poisoned after a previous error.
     Poisoned,
+    /// Type does not implement Default.
+    NoDefault { shape: &'static Shape },
 }

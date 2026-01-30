@@ -124,3 +124,39 @@ fn drop_uninitialized() {
     let partial = Partial::alloc::<String>().unwrap();
     drop(partial);
 }
+
+#[test]
+fn set_default_u32() {
+    let mut partial = Partial::alloc::<u32>().unwrap();
+
+    partial.apply(&[Op::set().default()]).unwrap();
+
+    let result: u32 = partial.build().unwrap();
+    assert_eq!(result, 0); // Default for u32
+}
+
+#[test]
+fn set_default_string() {
+    let mut partial = Partial::alloc::<String>().unwrap();
+
+    partial.apply(&[Op::set().default()]).unwrap();
+
+    let result: String = partial.build().unwrap();
+    assert_eq!(result, ""); // Default for String
+}
+
+#[test]
+fn set_default_overwrites_existing() {
+    let mut partial = Partial::alloc::<String>().unwrap();
+
+    // Set a value first
+    let value = String::from("hello");
+    partial.apply(&[Op::set().mov(&value)]).unwrap();
+    std::mem::forget(value);
+
+    // Overwrite with default
+    partial.apply(&[Op::set().default()]).unwrap();
+
+    let result: String = partial.build().unwrap();
+    assert_eq!(result, ""); // Should be default, not "hello"
+}
