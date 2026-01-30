@@ -35,6 +35,7 @@ impl<T> std::hash::Hash for Idx<T> {
 
 impl<T> Idx<T> {
     /// Sentinel: slot not started (reserved, slot 0)
+    #[allow(dead_code)]
     pub const NOT_STARTED: Self = Self {
         raw: 0,
         _ty: PhantomData,
@@ -47,11 +48,13 @@ impl<T> Idx<T> {
     };
 
     #[inline]
+    #[allow(dead_code)]
     pub fn is_not_started(self) -> bool {
         self.raw == 0
     }
 
     #[inline]
+    #[allow(dead_code)]
     pub fn is_complete(self) -> bool {
         self.raw == u32::MAX
     }
@@ -118,6 +121,7 @@ impl<T> Arena<T> {
         self.slots[id.index()].as_mut().expect("slot empty")
     }
 
+    #[allow(dead_code)]
     pub fn live_count(&self) -> usize {
         self.slots.iter().filter(|s| s.is_some()).count()
     }

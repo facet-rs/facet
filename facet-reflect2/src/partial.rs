@@ -94,6 +94,23 @@ impl<'facet> Partial<'facet> {
                                 });
                             }
 
+                            // If already initialized, drop the old value first.
+                            //
+                            // The INIT flag is a cached completeness check: once a frame's value
+                            // is fully initialized (all fields set for structs, etc.), we set INIT
+                            // so we don't have to walk children to verify completeness.
+                            //
+                            // For replacement: if INIT is set, the value is complete. We drop it
+                            // as a whole (which recursively drops any owned data like String buffers),
+                            // then write the new value. We don't deallocate the frame's memory since
+                            // the frame still owns that allocation and we're reusing it.
+                            if frame.flags.contains(FrameFlags::INIT) {
+                                // SAFETY: INIT flag means the value is fully initialized
+                                unsafe {
+                                    frame.shape.call_drop_in_place(frame.data.assume_init());
+                                }
+                            }
+
                             // SAFETY:
                             // - mov.ptr points to a valid, initialized value of type matching mov.shape
                             //   (caller invariant from Move construction)
