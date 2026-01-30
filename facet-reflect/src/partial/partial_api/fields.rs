@@ -140,7 +140,8 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             } = &mut self.mode
             {
                 // Check if we have a stored frame for this path (re-entry)
-                if let Some(mut stored_frame) = stored_frames.remove(&check_path) {
+                if let Some(stored) = stored_frames.remove(&check_path) {
+                    let mut restored_frame = stored.frame;
                     trace!("begin_nth_field: Restoring stored frame for path {check_path}");
 
                     // Update parent's current_child tracking
@@ -150,7 +151,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     // Clear the restored frame's current_child - we haven't entered any of its
                     // children yet in this new traversal. Without this, path() would
                     // include stale navigation state and compute incorrect paths.
-                    stored_frame.tracker.clear_current_child();
+                    restored_frame.tracker.clear_current_child();
 
                     // For Option frames, reset building_inner to false. When an Option frame
                     // is stored, it may have building_inner=true (if we were inside begin_some).
@@ -159,13 +160,27 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     // Without this, path() would include an extra OptionSome step,
                     // causing path mismatches when we call begin_some() to find the stored
                     // inner frame.
-                    if matches!(stored_frame.tracker, Tracker::Option { .. }) {
-                        stored_frame.tracker = Tracker::Option {
+                    if matches!(restored_frame.tracker, Tracker::Option { .. }) {
+                        restored_frame.tracker = Tracker::Option {
                             building_inner: false,
                         };
                     }
 
-                    stack.push(stored_frame);
+                    // For Set frames, reset current_child to false. When a Set frame
+                    // is stored mid-insertion, current_child may be true. When restored,
+                    // we're starting fresh with new insertions.
+                    if let Tracker::Set { current_child } = &mut restored_frame.tracker {
+                        *current_child = false;
+                    }
+
+                    // For Map frames, reset insert_state to Idle. When a Map frame
+                    // is stored mid-insertion, insert_state may have key/value pointers.
+                    // When restored, we're starting fresh with new insertions.
+                    if let Tracker::Map { insert_state } = &mut restored_frame.tracker {
+                        *insert_state = MapInsertState::Idle;
+                    }
+
+                    stack.push(restored_frame);
                     return Ok(self);
                 }
             }

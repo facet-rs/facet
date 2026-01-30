@@ -1,0 +1,6 @@
+---
+source: facet-path/tests/path_formatting.rs
+assertion_line: 91
+expression: formatted
+---
+debug_info.some
