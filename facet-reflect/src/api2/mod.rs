@@ -2,35 +2,32 @@
 //!
 //! This is a sketch/design doc for refactoring Partial.
 
-use std::collections::BTreeMap;
-
-use facet_core::{MapDef, SetDef, Shape};
-use facet_path::Path;
+use crate::ReflectError;
 
 mod ops;
 pub use ops::*;
 
 mod immediate;
-pub use immediate::*;
+use immediate::ImmediatePartial;
 
 mod deferred;
-pub use deferred::*;
+use deferred::DeferredPartial;
 
 // =============================================================================
 // Public API - erases the difference
 // =============================================================================
 
-enum PartialInner<'facet, const BORROW: bool> {
-    Immediate(ImmediatePartial<'facet, BORROW>),
-    Deferred(Box<DeferredPartial<'facet, BORROW>>),
+enum PartialInner {
+    Immediate(ImmediatePartial),
+    Deferred(Box<DeferredPartial>),
 }
 
 /// The public Partial API - wraps either Immediate or Deferred mode
-pub struct Partial<'facet, const BORROW: bool> {
-    inner: PartialInner<'facet, BORROW>,
+pub struct Partial {
+    inner: PartialInner,
 }
 
-impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
+impl Partial {
     /// Execute a batch of operations.
     ///
     /// All operations are processed before returning. This is required because
@@ -78,67 +75,13 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
     /// Enter deferred mode
     fn begin_deferred(&mut self) -> Result<(), ReflectError> {
-        // Take ownership of inner, transform, put back
-        let old_inner = std::mem::replace(
-            &mut self.inner,
-            // Temporary placeholder - will be replaced
-            PartialInner::Immediate(ImmediatePartial {
-                arena: FrameArena::new(),
-                stack: Vec::new(),
-                root_plan: std::sync::Arc::new(todo!()),
-                state: PartialState::Poisoned,
-                _marker: std::marker::PhantomData,
-            }),
-        );
-
-        match old_inner {
-            PartialInner::Immediate(imm) => {
-                // TODO: compute current path from imm.stack
-                let base_path: Path = todo!();
-                self.inner = PartialInner::Deferred(Box::new(DeferredPartial {
-                    arena: imm.arena,
-                    stack: imm.stack,
-                    stored_frames: BTreeMap::new(),
-                    deferred_ops: Vec::new(),
-                    base_path,
-                    inner: ImmediatePartial {
-                        arena: FrameArena::new(),
-                        stack: Vec::new(),
-                        root_plan: imm.root_plan,
-                        state: imm.state,
-                        _marker: std::marker::PhantomData,
-                    },
-                }));
-                Ok(())
-            }
-            PartialInner::Deferred(_) => {
-                Err(ReflectError) // already in deferred mode
-            }
-        }
+        // TODO: transform Immediate -> Deferred
+        todo!()
     }
 
     /// Exit deferred mode, validate everything
     fn finish_deferred(&mut self) -> Result<(), ReflectError> {
-        let old_inner = std::mem::replace(
-            &mut self.inner,
-            PartialInner::Immediate(ImmediatePartial {
-                arena: FrameArena::new(),
-                stack: Vec::new(),
-                root_plan: std::sync::Arc::new(todo!()),
-                state: PartialState::Poisoned,
-                _marker: std::marker::PhantomData,
-            }),
-        );
-
-        match old_inner {
-            PartialInner::Deferred(mut def) => {
-                let imm = def.finish()?;
-                self.inner = PartialInner::Immediate(imm);
-                Ok(())
-            }
-            PartialInner::Immediate(_) => {
-                Err(ReflectError) // not in deferred mode
-            }
-        }
+        // TODO: process deferred tasks, transform Deferred -> Immediate
+        todo!()
     }
 }

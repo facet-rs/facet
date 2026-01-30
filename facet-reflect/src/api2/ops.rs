@@ -2,6 +2,8 @@
 // Operations
 // =============================================================================
 
+use facet_core::Shape;
+
 /// An operation to execute on a Partial.
 ///
 /// Operations are processed in batches via `submit()`. Pointers in `Set` ops

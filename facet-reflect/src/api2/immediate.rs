@@ -2,25 +2,34 @@
 // Immediate Mode
 // =============================================================================
 
+use crate::{
+    ReflectError,
+    arena::{Arena, Idx},
+};
+
+use super::PartialOp;
+
+/// Frame for immediate mode
+struct Frame {
+    // TODO: fill in as we implement operations
+}
+
+type FrameId = Idx<Frame>;
+
+type FrameArena = Arena<Frame>;
+
 /// Immediate mode partial - validates on End, no frame storage
-pub(crate) struct ImmediatePartial<'facet, const BORROW: bool> {
-    arena: FrameArena, // FIXME: just use Arena<T> from arena.rs
+pub(crate) struct ImmediatePartial {
+    /// Storage for frames
+    arena: FrameArena,
+
+    /// Stack of frame indices
     stack: Vec<FrameId>,
-    root_plan: std::sync::Arc<crate::typeplan::TypePlanCore>,
-    state: PartialState,
-    _marker: std::marker::PhantomData<&'facet ()>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum PartialState {
-    Active,
-    Built,
-    Poisoned,
-}
-
-impl<'facet, const BORROW: bool> ImmediatePartial<'facet, BORROW> {
+impl ImmediatePartial {
     /// Process a batch of operations (no BeginDeferred/FinishDeferred)
-    fn submit(&mut self, ops: &[PartialOp<'_>]) -> Result<(), ReflectError> {
+    pub(crate) fn submit(&mut self, ops: &[PartialOp<'_>]) -> Result<(), ReflectError> {
         for op in ops {
             match op {
                 // Scalars

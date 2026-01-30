@@ -20,7 +20,7 @@ struct Frame {
 
 type FrameId = Idx<Frame>;
 
-type FrameArena = Arena<FrameId>;
+type FrameArena = Arena<Frame>;
 
 /// Tasks that are deferred until FinishDeferred is processed.
 /// Processed deepest-first.
@@ -44,11 +44,6 @@ enum TaskKind {
     RequireInit {
         // TODO
     },
-}
-
-/// Deferred frame
-struct DFrame {
-    // TODO: fill with useful info
 }
 
 // =============================================================================
@@ -76,7 +71,7 @@ pub(crate) struct DeferredPartial {
 
 impl DeferredPartial {
     /// Process a batch of operations (no BeginDeferred/FinishDeferred)
-    fn submit(&mut self, ops: &[PartialOp<'_>]) -> Result<(), ReflectError> {
+    pub(crate) fn submit(&mut self, ops: &[PartialOp<'_>]) -> Result<(), ReflectError> {
         for op in ops {
             match op {
                 // Scalars
