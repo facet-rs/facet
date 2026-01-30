@@ -1,16 +1,16 @@
 //! Operations for partial value construction.
 
 use facet_core::{PtrConst, Shape};
+use smallvec::SmallVec;
 
-/// A value to move into the destination.
-pub struct Move {
-    pub ptr: PtrConst,
-    pub shape: &'static Shape,
-}
+/// A path into a nested structure.
+#[derive(Clone, Debug, Default)]
+pub struct Path(SmallVec<u32, 2>);
 
-/// Build a value incrementally.
-pub struct Build {
-    pub len_hint: Option<usize>,
+/// An operation on a Partial.
+pub enum Op {
+    /// Set a value at a path relative to the current frame.
+    Set { path: Path, source: Source },
 }
 
 /// How to fill a value.
@@ -23,8 +23,13 @@ pub enum Source {
     Default,
 }
 
-/// An operation on a Partial.
-pub enum Op<'a> {
-    /// Set a value at a path relative to the current frame.
-    Set { path: &'a [usize], source: Source },
+/// A value to move into the destination.
+pub struct Move {
+    pub ptr: PtrConst,
+    pub shape: &'static Shape,
+}
+
+/// Build a value incrementally.
+pub struct Build {
+    pub len_hint: Option<usize>,
 }
