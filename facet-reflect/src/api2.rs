@@ -41,6 +41,9 @@ pub enum PartialOp<'a> {
     /// Select an enum variant by name
     SelectVariant { name: &'a str },
 
+    /// Select an enum variant by index
+    SelectNthVariant { index: usize },
+
     // -------------------------------------------------------------------------
     // Options
     // -------------------------------------------------------------------------
@@ -51,6 +54,15 @@ pub enum PartialOp<'a> {
     SetNone,
 
     // -------------------------------------------------------------------------
+    // Results
+    // -------------------------------------------------------------------------
+    /// Begin the Ok variant of a Result
+    BeginOk,
+
+    /// Begin the Err variant of a Result
+    BeginErr,
+
+    // -------------------------------------------------------------------------
     // Lists (Vec, etc.)
     // -------------------------------------------------------------------------
     /// Initialize a list
@@ -58,6 +70,12 @@ pub enum PartialOp<'a> {
 
     /// Begin a list item
     BeginListItem,
+
+    // -------------------------------------------------------------------------
+    // Arrays
+    // -------------------------------------------------------------------------
+    /// Initialize an array
+    InitArray,
 
     // -------------------------------------------------------------------------
     // Maps (HashMap, etc.)
@@ -70,6 +88,39 @@ pub enum PartialOp<'a> {
 
     /// Begin a map value
     BeginValue,
+
+    // -------------------------------------------------------------------------
+    // Sets (HashSet, etc.)
+    // -------------------------------------------------------------------------
+    /// Initialize a set
+    InitSet,
+
+    /// Begin a set item
+    BeginSetItem,
+
+    // -------------------------------------------------------------------------
+    // Smart pointers (Box, Arc, Rc)
+    // -------------------------------------------------------------------------
+    /// Begin smart pointer inner value
+    BeginSmartPtr,
+
+    /// Begin transparent inner (newtype wrappers)
+    BeginInner,
+
+    // -------------------------------------------------------------------------
+    // Defaults
+    // -------------------------------------------------------------------------
+    /// Set current value to its default
+    SetDefault,
+
+    /// Set nth field to its default value
+    SetNthFieldToDefault { index: usize },
+
+    // -------------------------------------------------------------------------
+    // Parsing
+    // -------------------------------------------------------------------------
+    /// Parse from string (for FromStr types)
+    ParseFromStr { s: &'a str },
 
     // -------------------------------------------------------------------------
     // Navigation
@@ -189,54 +240,56 @@ impl<'facet, const BORROW: bool> ImmediatePartial<'facet, BORROW> {
     fn submit(&mut self, ops: &[PartialOp<'_>]) -> Result<(), ReflectError> {
         for op in ops {
             match op {
-                PartialOp::Set { ptr, shape } => {
-                    // Copy value from ptr into current frame
-                    todo!()
-                }
-                PartialOp::BeginField { name } => {
-                    // Push a field frame onto stack
-                    todo!()
-                }
-                PartialOp::BeginNthField { index } => {
-                    // Push a field frame by index
-                    todo!()
-                }
-                PartialOp::SelectVariant { name } => {
-                    // Select enum variant
-                    todo!()
-                }
-                PartialOp::BeginSome => {
-                    // Begin Option::Some
-                    todo!()
-                }
-                PartialOp::SetNone => {
-                    // Set Option to None
-                    todo!()
-                }
-                PartialOp::InitList => {
-                    // Initialize a list
-                    todo!()
-                }
-                PartialOp::BeginListItem => {
-                    // Push a list item frame
-                    todo!()
-                }
-                PartialOp::InitMap => {
-                    // Initialize a map
-                    todo!()
-                }
-                PartialOp::BeginKey => {
-                    // Push a map key frame
-                    todo!()
-                }
-                PartialOp::BeginValue => {
-                    // Push a map value frame
-                    todo!()
-                }
-                PartialOp::End => {
-                    // Pop current frame, validate, merge into parent
-                    todo!()
-                }
+                // Scalars
+                PartialOp::Set { .. } => todo!(),
+
+                // Structs
+                PartialOp::BeginField { .. } => todo!(),
+                PartialOp::BeginNthField { .. } => todo!(),
+
+                // Enums
+                PartialOp::SelectVariant { .. } => todo!(),
+                PartialOp::SelectNthVariant { .. } => todo!(),
+
+                // Options
+                PartialOp::BeginSome => todo!(),
+                PartialOp::SetNone => todo!(),
+
+                // Results
+                PartialOp::BeginOk => todo!(),
+                PartialOp::BeginErr => todo!(),
+
+                // Lists
+                PartialOp::InitList => todo!(),
+                PartialOp::BeginListItem => todo!(),
+
+                // Arrays
+                PartialOp::InitArray => todo!(),
+
+                // Maps
+                PartialOp::InitMap => todo!(),
+                PartialOp::BeginKey => todo!(),
+                PartialOp::BeginValue => todo!(),
+
+                // Sets
+                PartialOp::InitSet => todo!(),
+                PartialOp::BeginSetItem => todo!(),
+
+                // Smart pointers
+                PartialOp::BeginSmartPtr => todo!(),
+                PartialOp::BeginInner => todo!(),
+
+                // Defaults
+                PartialOp::SetDefault => todo!(),
+                PartialOp::SetNthFieldToDefault { .. } => todo!(),
+
+                // Parsing
+                PartialOp::ParseFromStr { .. } => todo!(),
+
+                // Navigation
+                PartialOp::End => todo!(),
+
+                // Mode switches (handled by Partial wrapper)
                 PartialOp::BeginDeferred | PartialOp::FinishDeferred => {
                     unreachable!("mode switches handled by Partial::submit")
                 }
@@ -273,56 +326,56 @@ impl<'facet, const BORROW: bool> DeferredPartial<'facet, BORROW> {
     fn submit(&mut self, ops: &[PartialOp<'_>]) -> Result<(), ReflectError> {
         for op in ops {
             match op {
-                PartialOp::Set { ptr, shape } => {
-                    // Copy value from ptr into current frame
-                    todo!()
-                }
-                PartialOp::BeginField { name } => {
-                    // Check stored_frames for existing frame at this path
-                    // If found, restore it; otherwise push new frame
-                    todo!()
-                }
-                PartialOp::BeginNthField { index } => {
-                    // Same as BeginField but by index
-                    todo!()
-                }
-                PartialOp::SelectVariant { name } => {
-                    // Select enum variant
-                    todo!()
-                }
-                PartialOp::BeginSome => {
-                    // Begin Option::Some
-                    todo!()
-                }
-                PartialOp::SetNone => {
-                    // Set Option to None
-                    todo!()
-                }
-                PartialOp::InitList => {
-                    // Initialize a list
-                    todo!()
-                }
-                PartialOp::BeginListItem => {
-                    // Push a list item frame
-                    todo!()
-                }
-                PartialOp::InitMap => {
-                    // Initialize a map
-                    todo!()
-                }
-                PartialOp::BeginKey => {
-                    // Push a map key frame
-                    todo!()
-                }
-                PartialOp::BeginValue => {
-                    // Push a map value frame
-                    todo!()
-                }
-                PartialOp::End => {
-                    // Pop current frame, store it by path (don't validate yet)
-                    // For maps: queue a DeferredOp::MapInsert
-                    todo!()
-                }
+                // Scalars
+                PartialOp::Set { .. } => todo!(),
+
+                // Structs (check stored_frames for existing frame at path)
+                PartialOp::BeginField { .. } => todo!(),
+                PartialOp::BeginNthField { .. } => todo!(),
+
+                // Enums
+                PartialOp::SelectVariant { .. } => todo!(),
+                PartialOp::SelectNthVariant { .. } => todo!(),
+
+                // Options
+                PartialOp::BeginSome => todo!(),
+                PartialOp::SetNone => todo!(),
+
+                // Results
+                PartialOp::BeginOk => todo!(),
+                PartialOp::BeginErr => todo!(),
+
+                // Lists
+                PartialOp::InitList => todo!(),
+                PartialOp::BeginListItem => todo!(),
+
+                // Arrays
+                PartialOp::InitArray => todo!(),
+
+                // Maps
+                PartialOp::InitMap => todo!(),
+                PartialOp::BeginKey => todo!(),
+                PartialOp::BeginValue => todo!(),
+
+                // Sets
+                PartialOp::InitSet => todo!(),
+                PartialOp::BeginSetItem => todo!(),
+
+                // Smart pointers
+                PartialOp::BeginSmartPtr => todo!(),
+                PartialOp::BeginInner => todo!(),
+
+                // Defaults
+                PartialOp::SetDefault => todo!(),
+                PartialOp::SetNthFieldToDefault { .. } => todo!(),
+
+                // Parsing
+                PartialOp::ParseFromStr { .. } => todo!(),
+
+                // Navigation (store frame by path, queue DeferredOp for maps)
+                PartialOp::End => todo!(),
+
+                // Mode switches (handled by Partial wrapper)
                 PartialOp::BeginDeferred | PartialOp::FinishDeferred => {
                     unreachable!("mode switches handled by Partial::submit")
                 }

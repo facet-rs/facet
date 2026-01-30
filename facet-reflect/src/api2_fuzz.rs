@@ -613,34 +613,63 @@ impl FuzzOp {
     /// The returned PartialOp is only valid while `self` is alive.
     pub fn as_partial_op(&self) -> PartialOp<'_> {
         match self {
+            // Scalars
             FuzzOp::Set(v) => {
                 let (ptr, shape) = v.as_ptr_and_shape();
                 PartialOp::Set { ptr, shape }
             }
+
+            // Structs
             FuzzOp::BeginField(name) => PartialOp::BeginField { name },
             FuzzOp::BeginNthField(index) => PartialOp::BeginNthField { index: *index },
+
+            // Enums
             FuzzOp::SelectVariant(name) => PartialOp::SelectVariant { name },
-            FuzzOp::SelectNthVariant(_) => todo!("need SelectNthVariant in PartialOp"),
+            FuzzOp::SelectNthVariant(index) => PartialOp::SelectNthVariant { index: *index },
+
+            // Options
             FuzzOp::BeginSome => PartialOp::BeginSome,
             FuzzOp::SetNone => PartialOp::SetNone,
-            FuzzOp::BeginOk => todo!("need BeginOk in PartialOp"),
-            FuzzOp::BeginErr => todo!("need BeginErr in PartialOp"),
+
+            // Results
+            FuzzOp::BeginOk => PartialOp::BeginOk,
+            FuzzOp::BeginErr => PartialOp::BeginErr,
+
+            // Lists
             FuzzOp::InitList => PartialOp::InitList,
             FuzzOp::BeginListItem => PartialOp::BeginListItem,
-            FuzzOp::InitArray => todo!("need InitArray in PartialOp"),
+
+            // Arrays
+            FuzzOp::InitArray => PartialOp::InitArray,
+
+            // Maps
             FuzzOp::InitMap => PartialOp::InitMap,
             FuzzOp::BeginKey => PartialOp::BeginKey,
             FuzzOp::BeginValue => PartialOp::BeginValue,
-            FuzzOp::InitSet => todo!("need InitSet in PartialOp"),
-            FuzzOp::BeginSetItem => todo!("need BeginSetItem in PartialOp"),
-            FuzzOp::BeginSmartPtr => todo!("need BeginSmartPtr in PartialOp"),
-            FuzzOp::BeginInner => todo!("need BeginInner in PartialOp"),
+
+            // Sets
+            FuzzOp::InitSet => PartialOp::InitSet,
+            FuzzOp::BeginSetItem => PartialOp::BeginSetItem,
+
+            // Smart pointers
+            FuzzOp::BeginSmartPtr => PartialOp::BeginSmartPtr,
+            FuzzOp::BeginInner => PartialOp::BeginInner,
+
+            // Defaults
+            FuzzOp::SetDefault => PartialOp::SetDefault,
+            FuzzOp::SetNthFieldToDefault(index) => {
+                PartialOp::SetNthFieldToDefault { index: *index }
+            }
+
+            // Parsing
+            FuzzOp::ParseFromStr(s) => PartialOp::ParseFromStr { s },
+
+            // Navigation
             FuzzOp::End => PartialOp::End,
+
+            // Mode switches
             FuzzOp::BeginDeferred => PartialOp::BeginDeferred,
             FuzzOp::FinishDeferred => PartialOp::FinishDeferred,
-            FuzzOp::SetDefault => todo!("need SetDefault in PartialOp"),
-            FuzzOp::SetNthFieldToDefault(_) => todo!("need SetNthFieldToDefault in PartialOp"),
-            FuzzOp::ParseFromStr(_) => todo!("need ParseFromStr in PartialOp"),
         }
     }
 }
