@@ -19,6 +19,7 @@
 
 use std::path::Path;
 
+use facet_styx::RenderError;
 use styx_lsp_test_schema::{
     CodeActionExpectations, CompletionExpectations, DefinitionExpectations, DiagnosticExpectation,
     DiagnosticExpectations, HoverExpectations, InlayHintExpectations, TestCase, TestFile,
@@ -247,8 +248,12 @@ pub async fn run_test_file(
     let content = std::fs::read_to_string(path)
         .map_err(|e| RunnerError::ReadFailed(path.display().to_string(), e.to_string()))?;
 
-    let test_file: TestFile = facet_styx::from_str(&content)
-        .map_err(|e| RunnerError::ParseFailed(path.display().to_string(), e.to_string()))?;
+    let test_file: TestFile = facet_styx::from_str(&content).map_err(|e| {
+        RunnerError::ParseFailed(
+            path.display().to_string(),
+            e.render(path.display().to_string().as_str(), &content),
+        )
+    })?;
 
     // Build command
     let mut command = vec![bin];
