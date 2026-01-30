@@ -4,7 +4,7 @@
 //! all whitespace, comments, and exact source representation.
 
 use rowan::GreenNode;
-use styx_parse::{Lexer, Token, TokenKind};
+use styx_tokenizer::{Token, TokenKind, Tokenizer};
 
 use crate::syntax_kind::{SyntaxKind, SyntaxNode};
 
@@ -81,7 +81,7 @@ struct CstParser<'src> {
 
 /// Iterator adapter for the lexer that includes EOF.
 struct TokenIter<'src> {
-    lexer: Lexer<'src>,
+    lexer: Tokenizer<'src>,
     done: bool,
 }
 
@@ -102,7 +102,7 @@ impl<'src> Iterator for TokenIter<'src> {
 
 impl<'src> CstParser<'src> {
     fn new(source: &'src str) -> Self {
-        let lexer = Lexer::new(source);
+        let lexer = Tokenizer::new(source);
         Self {
             source,
             lexer: TokenIter { lexer, done: false }.peekable(),
@@ -184,6 +184,7 @@ impl<'src> CstParser<'src> {
             TokenKind::LBrace
                 | TokenKind::LParen
                 | TokenKind::At
+                | TokenKind::Tag
                 | TokenKind::BareScalar
                 | TokenKind::QuotedScalar
                 | TokenKind::RawScalar
@@ -362,7 +363,8 @@ impl<'src> CstParser<'src> {
         match kind {
             TokenKind::LBrace => self.parse_object(),
             TokenKind::LParen => self.parse_sequence(),
-            TokenKind::At => self.parse_tag_or_unit(),
+            TokenKind::At => self.parse_unit(),
+            TokenKind::Tag => self.parse_tag(),
             TokenKind::BareScalar | TokenKind::QuotedScalar | TokenKind::RawScalar => {
                 self.builder.start_node(SyntaxKind::SCALAR.into());
                 self.bump();
@@ -445,70 +447,49 @@ impl<'src> CstParser<'src> {
         self.builder.finish_node();
     }
 
-    /// Parse `@` (unit) or `@name` (tag).
-    fn parse_tag_or_unit(&mut self) {
-        // Consume @
-        let at_token = self.lexer.next();
-        let at_end = at_token.as_ref().map(|t| t.span.end).unwrap_or(0);
+    /// Parse `@` (unit).
+    fn parse_unit(&mut self) {
+        self.builder.start_node(SyntaxKind::UNIT.into());
+        self.bump(); // @
+        self.builder.finish_node();
+    }
 
-        // Check what follows the @
-        let (is_unit, next_start) = match self.lexer.peek() {
-            None => (true, 0),
-            Some(t) => {
-                // It's a unit if followed by whitespace, newline, or structural token
-                // or if the bare scalar doesn't start immediately after @
-                let is_unit = t.kind != TokenKind::BareScalar || t.span.start != at_end;
-                (is_unit, t.span.start)
-            }
-        };
-        let _ = next_start; // Silence unused warning
+    /// Parse `@name` (tag) with optional payload.
+    fn parse_tag(&mut self) {
+        self.builder.start_node(SyntaxKind::TAG.into());
 
-        if is_unit {
-            // Just @
-            self.builder.start_node(SyntaxKind::UNIT.into());
-            if let Some(token) = at_token {
-                self.builder.token(SyntaxKind::AT.into(), token.text);
-            }
-            self.builder.finish_node();
-        } else {
-            // @name with optional payload
-            self.builder.start_node(SyntaxKind::TAG.into());
+        // Consume the tag token (@name)
+        let tag_token = self.lexer.next();
+        let tag_end = tag_token.as_ref().map(|t| t.span.end).unwrap_or(0);
 
-            // Add @
-            if let Some(token) = at_token {
-                self.builder.token(SyntaxKind::AT.into(), token.text);
-            }
+        if let Some(token) = tag_token {
+            self.builder.token(SyntaxKind::TAG_TOKEN.into(), token.text);
+        }
 
-            // Add tag name and track its end position
-            self.builder.start_node(SyntaxKind::TAG_NAME.into());
-            let name_end = self.lexer.peek().map(|t| t.span.end).unwrap_or(0);
-            self.bump(); // The bare scalar
-            self.builder.finish_node();
+        // Check for payload - must IMMEDIATELY follow tag (no whitespace)
+        // Per grammar: Tag ::= '@' TagName TagPayload?
+        // TagPayload ::= Object | Sequence | QuotedScalar | RawScalar | HeredocScalar | '@'
+        let has_immediate_payload = self.lexer.peek().is_some_and(|t| {
+            t.span.start == tag_end
+                && matches!(
+                    t.kind,
+                    TokenKind::LBrace
+                        | TokenKind::LParen
+                        | TokenKind::QuotedScalar
+                        | TokenKind::RawScalar
+                        | TokenKind::HeredocStart
+                        | TokenKind::At
+                        | TokenKind::Tag
+                )
+        });
 
-            // Check for payload - must IMMEDIATELY follow tag name (no whitespace)
-            // Per grammar: Tag ::= '@' TagName TagPayload?
-            // TagPayload ::= Object | Sequence | QuotedScalar | RawScalar | HeredocScalar | '@'
-            let has_immediate_payload = self.lexer.peek().is_some_and(|t| {
-                t.span.start == name_end
-                    && matches!(
-                        t.kind,
-                        TokenKind::LBrace
-                            | TokenKind::LParen
-                            | TokenKind::QuotedScalar
-                            | TokenKind::RawScalar
-                            | TokenKind::HeredocStart
-                            | TokenKind::At
-                    )
-            });
-
-            if has_immediate_payload {
-                self.builder.start_node(SyntaxKind::TAG_PAYLOAD.into());
-                self.parse_atom();
-                self.builder.finish_node();
-            }
-
+        if has_immediate_payload {
+            self.builder.start_node(SyntaxKind::TAG_PAYLOAD.into());
+            self.parse_atom();
             self.builder.finish_node();
         }
+
+        self.builder.finish_node();
     }
 
     /// Parse a heredoc `<<DELIM...DELIM`.

@@ -32,13 +32,6 @@ class ScalarKind(Enum):
     HEREDOC = "heredoc"
 
 
-class Separator(Enum):
-    """The separator style in an object."""
-
-    COMMA = "comma"
-    NEWLINE = "newline"
-
-
 class PathValueKind(Enum):
     """The kind of value assigned to a path."""
 
@@ -84,7 +77,6 @@ class StyxObject:
     """An object with key-value entries."""
 
     entries: list[Entry]
-    separator: Separator
     span: Span
 
 

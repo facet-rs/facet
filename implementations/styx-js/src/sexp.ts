@@ -116,10 +116,10 @@ function payloadToSexp(payload: Scalar | Sequence | StyxObject, level: number): 
   if (payload.type === "object") {
     const span = spanStr(payload.span);
     if (payload.entries.length === 0) {
-      return `${pad}(object ${span} ${payload.separator})`;
+      return `${pad}(object ${span})`;
     }
     const lines: string[] = [];
-    lines.push(`${pad}(object ${span} ${payload.separator}`);
+    lines.push(`${pad}(object ${span}`);
     for (const entry of payload.entries) {
       lines.push(entryToSexp(entry, level + 1));
     }

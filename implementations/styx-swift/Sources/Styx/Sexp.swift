@@ -51,21 +51,23 @@ extension Value {
 
         case .scalar(let scalar):
             let escaped = escapeString(scalar.text)
-            return "(scalar [\(scalar.span.start), \(scalar.span.end)] \(scalar.kind.rawValue) \"\(escaped)\")"
+            return
+                "(scalar [\(scalar.span.start), \(scalar.span.end)] \(scalar.kind.rawValue) \"\(escaped)\")"
 
         case .sequence(let seq):
             if seq.items.isEmpty {
                 return "(sequence [\(seq.span.start), \(seq.span.end)])"
             }
-            let items = seq.items.map { "\(prefix)  \($0.toSexp(indent: indent + 1))" }.joined(separator: "\n")
+            let items = seq.items.map { "\(prefix)  \($0.toSexp(indent: indent + 1))" }.joined(
+                separator: "\n")
             return "(sequence [\(seq.span.start), \(seq.span.end)]\n\(items))"
 
         case .object(let obj):
             if obj.entries.isEmpty {
-                return "(object [\(obj.span.start), \(obj.span.end)] \(obj.separator.rawValue))"
+                return "(object [\(obj.span.start), \(obj.span.end)])"
             }
             let entries = obj.entries.map { $0.toSexp(indent: indent + 1) }.joined(separator: "\n")
-            return "(object [\(obj.span.start), \(obj.span.end)] \(obj.separator.rawValue)\n\(entries)\n\(prefix))"
+            return "(object [\(obj.span.start), \(obj.span.end)]\n\(entries)\n\(prefix))"
         }
     }
 }
@@ -89,6 +91,7 @@ func escapeString(_ s: String) -> String {
 extension ParseError {
     public func toSexp() -> String {
         let escaped = escapeString(message)
-        return "(error [\(span.start), \(span.end)] \"parse error at \(span.start)-\(span.end): \(escaped)\")"
+        return
+            "(error [\(span.start), \(span.end)] \"parse error at \(span.start)-\(span.end): \(escaped)\")"
     }
 }

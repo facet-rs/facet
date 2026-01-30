@@ -383,6 +383,9 @@ public struct Lexer {
             _ = advance()
         }
 
+        // Track content start (after the opening line)
+        let contentStart = position
+
         // Read content until we find the delimiter on its own line
         var text = ""
         var currentLine = ""
@@ -426,9 +429,9 @@ public struct Lexer {
                 hadWhitespaceBefore: ws, hadNewlineBefore: nl)
         }
 
-        // Unterminated heredoc - return error
+        // Unterminated heredoc - error points at the unmatched content
         return Token(
-            type: .error, span: Span(start: start, end: position), text: "unexpected token",
+            type: .error, span: Span(start: contentStart, end: position), text: "unexpected token",
             hadWhitespaceBefore: ws, hadNewlineBefore: nl)
     }
 

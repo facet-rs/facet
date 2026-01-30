@@ -12,7 +12,7 @@ repository.workspace = true
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-styx-parse.workspace = true
+styx-tokenizer.workspace = true
 rowan = "0.16"
 
 [dev-dependencies]

@@ -11,9 +11,6 @@ meta {
 schema {
     @ @object{
         name @string
-        server @object{
-            host @string
-            port @int
-        }
+        server @object{host @string, port @int}
     }
 }

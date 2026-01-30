@@ -1,5 +1,6 @@
 ---
 source: crates/styx-tree/src/diagnostic.rs
+assertion_line: 290
 expression: stripped
 ---
 Error: unclosed object

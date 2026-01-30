@@ -6,8 +6,5 @@ name myapp
 
 server {
     host localhost
-    tls {
-        cert /path/to/cert
-        key /path/to/key
-    }
+    tls {cert /path/to/cert, key /path/to/key}
 }

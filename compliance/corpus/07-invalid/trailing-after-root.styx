@@ -1,0 +1,2 @@
+// Trailing content after explicit root object is an error
+{a 1} value

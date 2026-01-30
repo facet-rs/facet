@@ -76,10 +76,12 @@ private struct PathState {
 /// Parser for Styx documents.
 public struct Parser {
     private var lexer: Lexer
+    private var source: String
     private var current: Token
     private var previous: Token
 
     public init(source: String) {
+        self.source = source
         self.lexer = Lexer(source: source)
         let first = lexer.nextToken()
         self.current = first
@@ -92,6 +94,23 @@ public struct Parser {
         // (comments are already skipped by the lexer)
         if check(.lBrace) {
             let obj = try parseObject()
+
+            // After explicit root object, only whitespace/comments/EOF are allowed
+            if !check(.eof) {
+                // Find the span of trailing content
+                let trailingStart = current.span.start
+                // Consume tokens to find the end of all trailing content
+                // Use EOF token's start as end (which includes trailing whitespace/newlines)
+                while !check(.eof) {
+                    _ = advance()
+                }
+                let trailingEnd = current.span.start
+                throw ParseError(
+                    message: "trailing content after explicit root object",
+                    span: Span(start: trailingStart, end: trailingEnd)
+                )
+            }
+
             // Return a single entry with unit key and object value
             return Document(entries: [
                 Entry(key: Value.unit(span: Span.invalid), value: obj)
@@ -229,7 +248,9 @@ public struct Parser {
         case .scalar(let scalar):
             // Heredocs are not valid keys
             if scalar.kind == .heredoc {
-                throw ParseError(message: "invalid key", span: key.span)
+                // Point at just the opening marker (<<TAG), not the whole content
+                let errorSpan = heredocStartSpan(scalar.span)
+                throw ParseError(message: "invalid key", span: errorSpan)
             }
         case .object(_):
             // Objects at key position are OK - they become the value of an implicit unit key
@@ -242,6 +263,18 @@ public struct Parser {
             // Unit value is OK as a key (e.g., @tag or just @)
             break
         }
+    }
+
+    /// Get the span of just the heredoc opening marker (<<TAG\n).
+    private func heredocStartSpan(_ heredocSpan: Span) -> Span {
+        let startIndex = source.utf8.index(source.utf8.startIndex, offsetBy: heredocSpan.start)
+        let endIndex = source.utf8.index(source.utf8.startIndex, offsetBy: heredocSpan.end)
+        let text = String(source[startIndex..<endIndex])
+        if let newlineIdx = text.firstIndex(of: "\n") {
+            let endOffset = text.utf8.distance(from: text.startIndex, to: newlineIdx) + 1
+            return Span(start: heredocSpan.start, end: heredocSpan.start + endOffset)
+        }
+        return heredocSpan
     }
 
     private mutating func parseDottedPathEntry(
@@ -306,7 +339,7 @@ public struct Parser {
             // This object is the VALUE of segment[i-1]
             let objStart = segmentSpans[i - 1].1.start
             let objSpan = Span(start: objStart, end: lastKeyEnd)
-            let obj = Object(entries: [entry], separator: .newline, span: objSpan)
+            let obj = Object(entries: [entry], span: objSpan)
             result = Value(span: objSpan, payload: .object(obj))
         }
 
@@ -373,18 +406,20 @@ public struct Parser {
         let tagName = String(fullText.prefix(tagNameLen))
         let nameEnd = nameToken.span.start + tagNameLen
 
-        // Validate tag name
+        // Validate tag name - error span includes the @ (it's part of the tag)
         if tagName.isEmpty {
             throw ParseError(message: "expected tag name", span: nameToken.span)
         }
         if let firstChar = tagName.first {
             if firstChar.isNumber || firstChar == "-" {
-                throw ParseError(message: "invalid tag name", span: nameToken.span)
+                throw ParseError(
+                    message: "invalid tag name", span: Span(start: start, end: nameToken.span.end))
             }
         }
         for char in tagName {
             if !(char.isLetter || char.isNumber || char == "-" || char == "_") {
-                throw ParseError(message: "invalid tag name", span: nameToken.span)
+                throw ParseError(
+                    message: "invalid tag name", span: Span(start: start, end: nameToken.span.end))
             }
         }
 
@@ -486,7 +521,6 @@ public struct Parser {
         let endSpan = entries.last?.value.span ?? startSpan
         let obj = Object(
             entries: entries,
-            separator: .comma,
             span: Span(start: startSpan.start, end: endSpan.end)
         )
         return Value(span: obj.span, payload: .object(obj))
@@ -521,50 +555,15 @@ public struct Parser {
         let start = openToken.span.start
 
         var entries: [Entry] = []
-        var separator: ObjectSeparator? = nil
-
-        // Track if first entry comes after newline (for mixed separator detection)
-        let firstEntryAfterNewline = current.hadNewlineBefore && !check(.rBrace, .eof)
 
         while !check(.rBrace, .eof) {
-            // Check for newline at start of iteration (indicating newline-separated format)
-            if current.hadNewlineBefore && !entries.isEmpty {
-                if separator == nil {
-                    separator = .newline
-                } else if separator == .comma {
-                    throw ParseError(
-                        message: "mixed separators (use either commas or newlines)",
-                        span: current.span)
-                }
-            }
-
             let key = try parseValue()
             let value = try parseValue()
             entries.append(Entry(key: key, value: value))
 
-            // Check for comma separator
+            // Skip commas (mixed separators now allowed)
             if check(.comma) {
-                // If first entry came after newline, mixing with comma is an error
-                if firstEntryAfterNewline && entries.count == 1 {
-                    throw ParseError(
-                        message: "mixed separators (use either commas or newlines)",
-                        span: current.span)
-                }
-                if separator == nil {
-                    separator = .comma
-                } else if separator != .comma {
-                    throw ParseError(
-                        message: "mixed separators (use either commas or newlines)",
-                        span: current.span)
-                }
-                _ = advance()  // consume comma
-            }
-        }
-
-        // Check for newline before closing brace (indicates newline format)
-        if current.hadNewlineBefore && !entries.isEmpty {
-            if separator == nil {
-                separator = .newline
+                _ = advance()
             }
         }
 
@@ -575,7 +574,6 @@ public struct Parser {
         let closeToken = advance()  // consume }
         return Object(
             entries: entries,
-            separator: separator ?? .comma,
             span: Span(start: start, end: closeToken.span.end)
         )
     }

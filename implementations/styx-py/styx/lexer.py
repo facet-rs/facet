@@ -286,6 +286,9 @@ class Lexer:
         if self.pos < len(self.source):
             self._advance()  # newline
 
+        # Track content start (after the opening line)
+        content_start = self.byte_pos
+
         text = ""
         bare_delimiter = delimiter.split(",")[0]
 
@@ -319,8 +322,8 @@ class Lexer:
                 self._advance()
                 text += "\n"
 
-        # EOF without closing delimiter - error
-        raise ParseError("unexpected token", Span(start, self.byte_pos))
+        # EOF without closing delimiter - error points at the unmatched content
+        raise ParseError("unexpected token", Span(content_start, self.byte_pos))
 
     def _dedent_heredoc(self, content: str, indent_len: int) -> str:
         """Strip up to indent_len whitespace characters from the start of each line."""

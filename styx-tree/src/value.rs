@@ -11,7 +11,7 @@
 //! - `@seq(a b)` is `Value { tag: Some("seq"), payload: Some(Payload::Sequence(...)) }`
 //! - `@object{...}` is `Value { tag: Some("object"), payload: Some(Payload::Object(...)) }`
 
-use styx_parse::{ScalarKind, Separator, Span};
+use styx_parse::{ScalarKind, Span};
 
 /// A Styx value: optional tag + optional payload.
 #[derive(Debug, Clone, PartialEq)]
@@ -81,8 +81,6 @@ pub struct Sequence {
 pub struct Object {
     /// Entries in the object.
     pub entries: Vec<Entry>,
-    /// Separator style used.
-    pub separator: Separator,
     /// Source span.
     pub span: Option<Span>,
 }
@@ -174,7 +172,7 @@ impl Value {
             tag: None,
             payload: Some(Payload::Object(Object {
                 entries: Vec::new(),
-                separator: Separator::Newline,
+
                 span: None,
             })),
             span: None,
@@ -523,7 +521,7 @@ mod tests {
                 value: Value::scalar("Alice"),
                 doc_comment: None,
             }],
-            separator: Separator::Newline,
+
             span: None,
         };
 
@@ -538,7 +536,7 @@ mod tests {
     fn test_object_unit_key() {
         let mut obj = Object {
             entries: vec![],
-            separator: Separator::Newline,
+
             span: None,
         };
 
@@ -563,7 +561,7 @@ mod tests {
                                     value: Value::scalar("Alice"),
                                     doc_comment: None,
                                 }],
-                                separator: Separator::Newline,
+
                                 span: None,
                             })),
                             span: None,
@@ -587,7 +585,7 @@ mod tests {
                         doc_comment: None,
                     },
                 ],
-                separator: Separator::Newline,
+
                 span: None,
             })),
             span: None,
@@ -661,7 +659,7 @@ mod tests {
                                                         doc_comment: None,
                                                     },
                                                 ],
-                                                separator: Separator::Comma,
+
                                                 span: None,
                                             })),
                                             span: None,
@@ -669,7 +667,7 @@ mod tests {
                                         doc_comment: Some("TLS configuration".to_string()),
                                     },
                                 ],
-                                separator: Separator::Newline,
+
                                 span: None,
                             })),
                             span: None,
@@ -700,7 +698,7 @@ mod tests {
                         doc_comment: None,
                     },
                 ],
-                separator: Separator::Newline,
+
                 span: Some(Span::new(0, 100)),
             })),
             span: Some(Span::new(0, 100)),
@@ -752,7 +750,7 @@ mod tests {
                                     value: Value::scalar("value"),
                                     doc_comment: None,
                                 }],
-                                separator: Separator::Newline,
+
                                 span: None,
                             })),
                             span: None,
@@ -760,7 +758,7 @@ mod tests {
                         doc_comment: Some("A nested object".to_string()),
                     },
                 ],
-                separator: Separator::Newline,
+
                 span: None,
             })),
             span: None,

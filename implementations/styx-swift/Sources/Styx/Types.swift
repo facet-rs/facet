@@ -110,21 +110,13 @@ public struct Sequence: Equatable, Sendable {
     }
 }
 
-/// The separator used in an object.
-public enum ObjectSeparator: String, Equatable, Sendable {
-    case comma
-    case newline
-}
-
 /// An object (map) of entries.
 public struct Object: Equatable, Sendable {
     public var entries: [Entry]
-    public var separator: ObjectSeparator
     public var span: Span
 
-    public init(entries: [Entry] = [], separator: ObjectSeparator, span: Span) {
+    public init(entries: [Entry] = [], span: Span) {
         self.entries = entries
-        self.separator = separator
         self.span = span
     }
 }

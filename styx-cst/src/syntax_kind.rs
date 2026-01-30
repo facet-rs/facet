@@ -1,6 +1,6 @@
 //! Syntax node and token kinds for the Styx CST.
 
-use styx_parse::TokenKind;
+use styx_tokenizer::TokenKind;
 
 /// The kind of a syntax element (node or token).
 ///
@@ -31,6 +31,8 @@ pub enum SyntaxKind {
     GT,
     /// `@`
     AT,
+    /// `@name` (tag token from tokenizer)
+    TAG_TOKEN,
 
     // Scalar tokens
     /// Bare (unquoted) scalar: `hello`, `42`, `true`
@@ -126,6 +128,7 @@ impl From<TokenKind> for SyntaxKind {
             TokenKind::Comma => Self::COMMA,
             TokenKind::Gt => Self::GT,
             TokenKind::At => Self::AT,
+            TokenKind::Tag => Self::TAG_TOKEN,
             TokenKind::BareScalar => Self::BARE_SCALAR,
             TokenKind::QuotedScalar => Self::QUOTED_SCALAR,
             TokenKind::RawScalar => Self::RAW_SCALAR,
@@ -176,33 +179,34 @@ impl SyntaxKind {
             4 => Some(Self::COMMA),
             5 => Some(Self::GT),
             6 => Some(Self::AT),
-            7 => Some(Self::BARE_SCALAR),
-            8 => Some(Self::QUOTED_SCALAR),
-            9 => Some(Self::RAW_SCALAR),
-            10 => Some(Self::HEREDOC_START),
-            11 => Some(Self::HEREDOC_CONTENT),
-            12 => Some(Self::HEREDOC_END),
-            13 => Some(Self::LINE_COMMENT),
-            14 => Some(Self::DOC_COMMENT),
-            15 => Some(Self::WHITESPACE),
-            16 => Some(Self::NEWLINE),
-            17 => Some(Self::EOF),
-            18 => Some(Self::ERROR),
-            // 19 is __LAST_TOKEN - skip it
-            20 => Some(Self::DOCUMENT),
-            21 => Some(Self::ENTRY),
-            22 => Some(Self::OBJECT),
-            23 => Some(Self::SEQUENCE),
-            24 => Some(Self::SCALAR),
-            25 => Some(Self::UNIT),
-            26 => Some(Self::TAG),
-            27 => Some(Self::TAG_NAME),
-            28 => Some(Self::TAG_PAYLOAD),
-            29 => Some(Self::KEY),
-            30 => Some(Self::VALUE),
-            31 => Some(Self::HEREDOC),
-            32 => Some(Self::ATTRIBUTES),
-            33 => Some(Self::ATTRIBUTE),
+            7 => Some(Self::TAG_TOKEN),
+            8 => Some(Self::BARE_SCALAR),
+            9 => Some(Self::QUOTED_SCALAR),
+            10 => Some(Self::RAW_SCALAR),
+            11 => Some(Self::HEREDOC_START),
+            12 => Some(Self::HEREDOC_CONTENT),
+            13 => Some(Self::HEREDOC_END),
+            14 => Some(Self::LINE_COMMENT),
+            15 => Some(Self::DOC_COMMENT),
+            16 => Some(Self::WHITESPACE),
+            17 => Some(Self::NEWLINE),
+            18 => Some(Self::EOF),
+            19 => Some(Self::ERROR),
+            // 20 is __LAST_TOKEN - skip it
+            21 => Some(Self::DOCUMENT),
+            22 => Some(Self::ENTRY),
+            23 => Some(Self::OBJECT),
+            24 => Some(Self::SEQUENCE),
+            25 => Some(Self::SCALAR),
+            26 => Some(Self::UNIT),
+            27 => Some(Self::TAG),
+            28 => Some(Self::TAG_NAME),
+            29 => Some(Self::TAG_PAYLOAD),
+            30 => Some(Self::KEY),
+            31 => Some(Self::VALUE),
+            32 => Some(Self::HEREDOC),
+            33 => Some(Self::ATTRIBUTES),
+            34 => Some(Self::ATTRIBUTE),
             _ => None,
         }
     }

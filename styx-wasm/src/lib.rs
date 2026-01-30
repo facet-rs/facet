@@ -6,7 +6,7 @@
 
 use serde::Serialize;
 use serde_json::json;
-use styx_parse::{ScalarKind, Separator};
+use styx_parse::ScalarKind;
 use styx_tree::{Entry, Object, Payload, Scalar, Sequence, Tag, Value};
 use wasm_bindgen::prelude::*;
 
@@ -43,12 +43,10 @@ pub struct ParseResult {
 /// Returns a JSON object with `success` boolean and `diagnostics` array.
 #[wasm_bindgen]
 pub fn parse(source: &str) -> JsValue {
-    let parser = styx_parse::Parser::new(source);
-    let mut events = Vec::new();
-    parser.parse(&mut events);
-
+    let mut parser = styx_parse::Parser::new(source);
     let mut diagnostics = Vec::new();
-    for event in events {
+
+    while let Some(event) = parser.next_event() {
         if let styx_parse::Event::Error { span, kind } = event {
             diagnostics.push(Diagnostic {
                 message: format_error(&kind),
@@ -170,7 +168,6 @@ fn format_error(kind: &styx_parse::ParseErrorKind) -> String {
     use styx_parse::ParseErrorKind::*;
     match kind {
         DuplicateKey { .. } => "Duplicate key in object".to_string(),
-        MixedSeparators => "Mixed separators: use either commas or newlines, not both".to_string(),
         UnclosedObject => "Unclosed object: missing '}'".to_string(),
         UnclosedSequence => "Unclosed sequence: missing ')'".to_string(),
         InvalidEscape(seq) => format!("Invalid escape sequence: '{}'", seq),
@@ -198,18 +195,20 @@ fn format_error(kind: &styx_parse::ParseErrorKind) -> String {
         }
         CommaInSequence => "Sequences use whitespace separators, not commas".to_string(),
         MissingWhitespaceBeforeBlock => "Missing whitespace before '{' or '(' after bare key (to distinguish from tags like @tag{})".to_string(),
+        TrailingContent => "Trailing content after explicit root object".to_string(),
     }
 }
 
 /// Validate a Styx document and return whether it's valid.
 #[wasm_bindgen]
 pub fn validate(source: &str) -> bool {
-    let parser = styx_parse::Parser::new(source);
-    let mut events = Vec::new();
-    parser.parse(&mut events);
-    !events
-        .iter()
-        .any(|e| matches!(e, styx_parse::Event::Error { .. }))
+    let mut parser = styx_parse::Parser::new(source);
+    while let Some(event) = parser.next_event() {
+        if matches!(event, styx_parse::Event::Error { .. }) {
+            return false;
+        }
+    }
+    true
 }
 
 /// Convert a JSON string to Styx format.
@@ -330,7 +329,6 @@ fn json_to_value(json: &serde_json::Value) -> Value {
                 tag: None,
                 payload: Some(Payload::Object(Object {
                     entries,
-                    separator: Separator::Newline,
                     span: None,
                 })),
                 span: None,

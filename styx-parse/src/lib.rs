@@ -1,34 +1,12 @@
 #![doc = include_str!("../README.md")]
-//! Event-based parser for the Styx configuration language.
-//!
-//! This crate provides a low-level lexer and event-based parser for Styx documents.
-//! It's designed to be used by higher-level tools like `styx-tree` (document tree)
-//! and `facet-styx` (serde-like deserialization).
 
-// Conditional tracing macros
-#[cfg(feature = "tracing")]
-macro_rules! trace {
-    ($($arg:tt)*) => { ::tracing::trace!($($arg)*) };
-}
+pub use styx_tokenizer::{Span, Token, TokenKind, Tokenizer};
 
-#[cfg(not(feature = "tracing"))]
-macro_rules! trace {
-    ($($arg:tt)*) => {};
-}
+mod events;
+pub use events::{Event, ParseErrorKind, ScalarKind};
 
-#[allow(unused_imports)]
-pub(crate) use trace;
-
-pub mod callback;
-pub mod event;
 mod lexer;
-pub mod parser;
-mod span;
-mod token;
+pub use lexer::{Lexeme, Lexer};
 
-pub use callback::ParseCallback;
-pub use event::{Event, ParseErrorKind, ScalarKind, Separator};
-pub use lexer::Lexer;
+mod parser;
 pub use parser::Parser;
-pub use span::Span;
-pub use token::{Token, TokenKind};

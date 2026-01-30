@@ -9,3 +9,5 @@ cc 29155dbbd84dcccca70a653dca471948daebf880b0704a0c7ca8f56d550e5b22 # shrinks to
 cc 3b5e26252c80e983e69b8a6861ecd8510ee80ae232380b7ef42e8c685aa8d4d2 # shrinks to input = "@A A"
 cc bf297340980c0a843c9a0b766472e0105157f41d64361d8ad703ca9b36046599 # shrinks to input = "@a @ A"
 cc 3dbb8cd0b9c30bfe46e6f6f1b8cefa0e71120c5f7962d4f5d240d309dfb004b9 # shrinks to key = "a", items = ["// ", "// "]
+cc c7caf5c04dcfe56bac0cb9ea8a8513dbc4b539e4e3bae9663539364be4283485 # shrinks to key = "A", seq = "(@r\"\")"
+cc bec2e7a355e6d633d7ad2914b1234676adddfd98dcf0d3e2236e8073f9818a35 # shrinks to input = "@a @ @"

@@ -374,6 +374,9 @@ export class Lexer {
       this.advance(); // newline
     }
 
+    // Track content start (after the opening line)
+    const contentStart = this.bytePos;
+
     // Read content until delimiter on its own line
     let text = "";
     const bareDelimiter = delimiter.split(",")[0];
@@ -421,8 +424,8 @@ export class Lexer {
       }
     }
 
-    // Heredoc without closing delimiter - error
-    throw new ParseError("unexpected token", { start, end: this.bytePos });
+    // Heredoc without closing delimiter - error points at the unmatched content
+    throw new ParseError("unexpected token", { start: contentStart, end: this.bytePos });
   }
 
   /** Strip up to indentLen whitespace characters from the start of each line. */

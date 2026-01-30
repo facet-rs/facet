@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -112,9 +113,112 @@ func compareOutput(t *testing.T, file string, styxCLI string) {
 	rustNorm := normalizeOutput(rustOutput)
 
 	if goNorm != rustNorm {
-		t.Errorf("output mismatch\n--- Go output ---\n%s\n--- Rust output ---\n%s",
+		t.Errorf("output mismatch\n%s\n--- Go output ---\n%s\n--- Rust output ---\n%s",
+			annotateErrorDiff(string(content), goOutput, rustOutput),
 			goOutput, rustOutput)
 	}
+}
+
+// annotateErrorDiff shows the first error span difference with source context
+func annotateErrorDiff(source, goOutput, rustOutput string) string {
+	goSpan, goMsg := parseErrorSpan(goOutput)
+	rustSpan, rustMsg := parseErrorSpan(rustOutput)
+
+	if goSpan == nil && rustSpan == nil {
+		return "" // No errors to annotate
+	}
+
+	var sb strings.Builder
+	sb.WriteString("\n")
+
+	if rustSpan != nil {
+		sb.WriteString("Expected error:\n")
+		sb.WriteString(annotateSpan(source, rustSpan[0], rustSpan[1], rustMsg))
+		sb.WriteString("\n")
+	} else {
+		sb.WriteString("Expected: no error\n\n")
+	}
+
+	if goSpan != nil {
+		sb.WriteString("Got error:\n")
+		sb.WriteString(annotateSpan(source, goSpan[0], goSpan[1], goMsg))
+	} else {
+		sb.WriteString("Got: no error\n")
+	}
+
+	return sb.String()
+}
+
+// parseErrorSpan extracts [start, end] and message from sexp error output
+func parseErrorSpan(output string) ([]int, string) {
+	re := regexp.MustCompile(`\(error \[(\d+), (\d+)\] "([^"]*)"`)
+	m := re.FindStringSubmatch(output)
+	if m == nil {
+		return nil, ""
+	}
+	start, _ := strconv.Atoi(m[1])
+	end, _ := strconv.Atoi(m[2])
+	return []int{start, end}, m[3]
+}
+
+// annotateSpan shows source with carets under the error span, handling multi-line spans
+func annotateSpan(source string, start, end int, msg string) string {
+	if start < 0 || end < 0 || start > len(source) {
+		return fmt.Sprintf("  [invalid span %d-%d]\n", start, end)
+	}
+	if end > len(source) {
+		end = len(source)
+	}
+
+	// Find all lines that overlap with the span
+	type lineInfo struct {
+		text      string
+		lineStart int
+		lineEnd   int
+	}
+	var lines []lineInfo
+	pos := 0
+	for _, lineText := range strings.Split(source, "\n") {
+		lineStart := pos
+		lineEnd := pos + len(lineText)
+		// Check if this line overlaps with [start, end)
+		if lineEnd >= start && lineStart < end {
+			lines = append(lines, lineInfo{lineText, lineStart, lineEnd})
+		}
+		pos = lineEnd + 1 // +1 for the newline
+		if lineStart >= end {
+			break
+		}
+	}
+
+	if len(lines) == 0 {
+		return fmt.Sprintf("  [span %d-%d not found]\n", start, end)
+	}
+
+	var sb strings.Builder
+	for _, li := range lines {
+		sb.WriteString("  ")
+		sb.WriteString(li.text)
+		sb.WriteString("\n  ")
+		// Calculate caret positions for this line
+		caretStart := start - li.lineStart
+		if caretStart < 0 {
+			caretStart = 0
+		}
+		caretEnd := end - li.lineStart
+		if caretEnd > len(li.text) {
+			caretEnd = len(li.text)
+		}
+		width := caretEnd - caretStart
+		if width < 1 {
+			width = 1
+		}
+		sb.WriteString(strings.Repeat(" ", caretStart))
+		sb.WriteString(strings.Repeat("^", width))
+		sb.WriteString("\n")
+	}
+	sb.WriteString(fmt.Sprintf("  %s (%d-%d)\n", msg, start, end))
+	return sb.String()
 }
 
 func getGoOutput(content string) string {
@@ -261,13 +365,13 @@ func formatPayloadSexp(value *Value, indent int) string {
 	case PayloadObject:
 		obj := value.Object
 		if len(obj.Entries) == 0 {
-			return fmt.Sprintf("(object [%d, %d] %s)", obj.Span.Start, obj.Span.End, obj.Separator)
+			return fmt.Sprintf("(object [%d, %d])", obj.Span.Start, obj.Span.End)
 		}
 		var entries []string
 		for _, entry := range obj.Entries {
 			entries = append(entries, formatEntrySexp(entry, indent+1))
 		}
-		return fmt.Sprintf("(object [%d, %d] %s\n%s\n%s)", obj.Span.Start, obj.Span.End, obj.Separator, strings.Join(entries, "\n"), prefix)
+		return fmt.Sprintf("(object [%d, %d]\n%s\n%s)", obj.Span.Start, obj.Span.End, strings.Join(entries, "\n"), prefix)
 	}
 
 	return "(unknown)"

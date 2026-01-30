@@ -417,7 +417,6 @@ export function parseTyped<T = unknown>(source: string, schemaSource: string): T
     payload: {
       type: "object",
       entries: doc.entries,
-      separator: "newline",
       span: { start: 0, end: source.length },
     },
     span: { start: 0, end: source.length },
@@ -436,7 +435,6 @@ export function parseUntyped(source: string): unknown {
     payload: {
       type: "object",
       entries: doc.entries,
-      separator: "newline",
       span: { start: 0, end: source.length },
     },
     span: { start: 0, end: source.length },

@@ -349,13 +349,7 @@ An **entry** consists of a key and an optional value.
 ### Separators
 
 > r[object.separators]
-> Entries are separated by newlines or commas. Duplicate keys are forbidden.
-> An object MUST use exactly one separator mode:
->
-> - **newline-separated**: entries separated by newlines; commas forbidden
-> - **comma-separated**: entries separated by commas; newlines forbidden
->
-> Comma-separated objects are single-line (except for heredoc content).
+> Entries are separated by newlines, commas, or both. Duplicate keys are forbidden.
 >
 > ```styx
 > server {
@@ -363,6 +357,8 @@ An **entry** consists of a key and an optional value.
 >   port 8080
 > }
 > {a 1, b 2, c 3}
+> {a 1, b 2
+>  c 3}              // mixed separators allowed
 > ```
 
 ### Attribute syntax

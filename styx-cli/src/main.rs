@@ -21,6 +21,8 @@ use facet_styx::{SchemaFile, validate};
 use figue as args;
 use styx_format::{FormatOptions, format_source};
 use styx_lsp::{TokenType, compute_highlight_spans};
+use styx_parse::{Lexer, Parser};
+use styx_tokenizer::Tokenizer;
 use styx_tree::{Payload, Value};
 
 // ============================================================================
@@ -88,6 +90,27 @@ struct Args {
 enum Command {
     /// Start language server (stdio)
     Lsp,
+
+    /// Show tokens from tokenizer
+    Tokens {
+        /// Input file
+        #[facet(args::positional)]
+        file: String,
+    },
+
+    /// Show lexemes from lexer
+    Lexemes {
+        /// Input file
+        #[facet(args::positional)]
+        file: String,
+    },
+
+    /// Show parser events
+    Events {
+        /// Input file
+        #[facet(args::positional)]
+        file: String,
+    },
 
     /// Show parse tree
     Tree {
@@ -389,6 +412,9 @@ fn run_subcommand_mode(args: &[String]) -> Result<(), CliError> {
 
     match parsed.command {
         Some(Command::Lsp) => run_lsp(),
+        Some(Command::Tokens { file }) => run_tokens(&file),
+        Some(Command::Lexemes { file }) => run_lexemes(&file),
+        Some(Command::Events { file }) => run_events(&file),
         Some(Command::Tree { format, file }) => run_tree(&format, &file),
         Some(Command::Cst { file }) => run_cst(&file),
         Some(Command::Extract { binary }) => run_extract(&binary),
@@ -493,6 +519,31 @@ fn run_lsp() -> Result<(), CliError> {
     })
 }
 
+fn run_tokens(file: &str) -> Result<(), CliError> {
+    let source = read_input(Some(file))?;
+    for token in Tokenizer::new(&source) {
+        println!("{:?}", token);
+    }
+    Ok(())
+}
+
+fn run_lexemes(file: &str) -> Result<(), CliError> {
+    let source = read_input(Some(file))?;
+    for lexeme in Lexer::new(&source) {
+        println!("{:?}", lexeme);
+    }
+    Ok(())
+}
+
+fn run_events(file: &str) -> Result<(), CliError> {
+    let source = read_input(Some(file))?;
+    let mut parser = Parser::new(&source);
+    while let Some(event) = parser.next_event() {
+        println!("{:?}", event);
+    }
+    Ok(())
+}
+
 fn run_tree(format: &str, file: &str) -> Result<(), CliError> {
     let source = read_input(Some(file))?;
     let filename = if file == "-" { "<stdin>" } else { file };
@@ -509,13 +560,16 @@ fn run_tree(format: &str, file: &str) -> Result<(), CliError> {
                     styx_tree::BuildError::Parse(_, span) => (span.start, span.end),
                     _ => (0, 0),
                 };
-                let msg = json_escape(&e.to_string());
                 println!("; file: {}", filename);
-                println!("(error [{}, {}] \"{}\")", start, end, msg);
+                println!("(error [{}, {}] {:?})", start, end, e.to_string());
             }
         },
         "debug" => {
-            let value = styx_tree::parse(&source)?;
+            let value = styx_tree::parse(&source).map_err(|e| CliError::ParseDiagnostic {
+                error: e,
+                source: source.clone(),
+                filename: filename.to_string(),
+            })?;
             print_tree(&value, 0);
         }
         _ => {
@@ -760,7 +814,6 @@ fn strip_schema_declaration(value: &Value) -> Value {
             tag: value.tag.clone(),
             payload: Some(Payload::Object(styx_tree::Object {
                 entries: filtered_entries,
-                separator: obj.separator,
                 span: obj.span,
             })),
             span: value.span,
@@ -1196,8 +1249,7 @@ fn print_sexp_value(value: &Value, indent: usize) {
             print!("{pad}(unit {span})");
         }
         (Some(tag), payload) => {
-            let tag_name = json_escape(&tag.name);
-            print!("{pad}(tag {span} \"{tag_name}\"");
+            print!("{pad}(tag {span} {:?}", tag.name);
             if let Some(p) = payload {
                 println!();
                 print_sexp_payload(p, indent + 1);
@@ -1213,8 +1265,7 @@ fn print_sexp_value(value: &Value, indent: usize) {
                 ScalarKind::Raw => "raw",
                 ScalarKind::Heredoc => "heredoc",
             };
-            let text = json_escape(&s.text);
-            print!("{pad}(scalar {span} {kind} \"{text}\")");
+            print!("{pad}(scalar {span} {kind} {:?})", s.text);
         }
         (None, Some(Payload::Sequence(seq))) => {
             print!("{pad}(sequence {span}");
@@ -1232,11 +1283,7 @@ fn print_sexp_value(value: &Value, indent: usize) {
             }
         }
         (None, Some(Payload::Object(obj))) => {
-            let sep = match obj.separator {
-                styx_parse::Separator::Newline => "newline",
-                styx_parse::Separator::Comma => "comma",
-            };
-            print!("{pad}(object {span} {sep}");
+            print!("{pad}(object {span}");
             if obj.entries.is_empty() {
                 print!(")");
             } else {
@@ -1264,8 +1311,7 @@ fn print_sexp_payload(payload: &Payload, indent: usize) {
                 ScalarKind::Raw => "raw",
                 ScalarKind::Heredoc => "heredoc",
             };
-            let text = json_escape(&s.text);
-            print!("{pad}(scalar {span} {kind} \"{text}\")");
+            print!("{pad}(scalar {span} {kind} {:?})", s.text);
         }
         Payload::Sequence(seq) => {
             let span = seq
@@ -1291,11 +1337,7 @@ fn print_sexp_payload(payload: &Payload, indent: usize) {
                 .span
                 .map(|s| format!("[{}, {}]", s.start, s.end))
                 .unwrap_or_else(|| "[-1, -1]".to_string());
-            let sep = match obj.separator {
-                styx_parse::Separator::Newline => "newline",
-                styx_parse::Separator::Comma => "comma",
-            };
-            print!("{pad}(object {span} {sep}");
+            print!("{pad}(object {span}");
             if obj.entries.is_empty() {
                 print!(")");
             } else {
@@ -1307,24 +1349,6 @@ fn print_sexp_payload(payload: &Payload, indent: usize) {
             }
         }
     }
-}
-
-fn json_escape(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    for c in s.chars() {
-        match c {
-            '"' => result.push_str("\\\""),
-            '\\' => result.push_str("\\\\"),
-            '\n' => result.push_str("\\n"),
-            '\r' => result.push_str("\\r"),
-            '\t' => result.push_str("\\t"),
-            c if c.is_control() => {
-                result.push_str(&format!("\\u{:04x}", c as u32));
-            }
-            c => result.push(c),
-        }
-    }
-    result
 }
 
 // ============================================================================
@@ -2001,8 +2025,7 @@ other @type{inner value}"#;
         assert!(highlighted.contains(ansi::COMMENT));
         assert!(highlighted.contains(ansi::PROPERTY));
         assert!(highlighted.contains(ansi::STRING));
-        assert!(highlighted.contains(ansi::OPERATOR)); // @ symbol
-        assert!(highlighted.contains(ansi::TYPE)); // type in value position
+        assert!(highlighted.contains(ansi::TYPE)); // @type in value position
     }
 
     #[test]

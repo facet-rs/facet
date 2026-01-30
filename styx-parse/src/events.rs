@@ -2,7 +2,7 @@
 
 use std::borrow::Cow;
 
-use crate::Span;
+use styx_tokenizer::Span;
 
 /// Events emitted by the parser.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,8 +18,6 @@ pub enum Event<'src> {
     ObjectStart {
         /// Span of the opening brace.
         span: Span,
-        /// Detected separator mode.
-        separator: Separator,
     },
     /// End of an object.
     ObjectEnd {
@@ -96,10 +94,10 @@ pub enum Event<'src> {
     },
     /// Doc comment `/// ...`.
     DocComment {
-        /// Span of the doc comment.
+        /// Span of the doc comment (covers all consecutive doc comment lines).
         span: Span,
-        /// Doc comment text (including ///).
-        text: &'src str,
+        /// Doc comment lines (without `/// ` prefix).
+        lines: Vec<&'src str>,
     },
 
     // Errors
@@ -110,18 +108,6 @@ pub enum Event<'src> {
         /// Kind of error.
         kind: ParseErrorKind,
     },
-}
-
-/// Separator mode for object entries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[cfg_attr(feature = "facet", derive(facet::Facet))]
-#[repr(u8)]
-pub enum Separator {
-    /// Entries separated by newlines.
-    #[default]
-    Newline,
-    /// Entries separated by commas.
-    Comma,
 }
 
 /// Kind of scalar.
@@ -148,8 +134,6 @@ pub enum ParseErrorKind {
     UnclosedObject,
     /// Unclosed sequence (missing `)`).
     UnclosedSequence,
-    /// Mixed separators in object (some commas, some newlines).
-    MixedSeparators,
     /// Invalid escape sequence in quoted string.
     InvalidEscape(String),
     /// Expected a key.
@@ -186,6 +170,8 @@ pub enum ParseErrorKind {
     /// Missing whitespace between bare scalar and `{` or `(`.
     // parser[impl entry.whitespace]
     MissingWhitespaceBeforeBlock,
+    /// Trailing content after explicit root object.
+    TrailingContent,
 }
 
 impl std::fmt::Display for ParseErrorKind {
@@ -194,9 +180,6 @@ impl std::fmt::Display for ParseErrorKind {
             ParseErrorKind::UnexpectedToken => write!(f, "unexpected token"),
             ParseErrorKind::UnclosedObject => write!(f, "unclosed object (missing `}}`)"),
             ParseErrorKind::UnclosedSequence => write!(f, "unclosed sequence (missing `)`)"),
-            ParseErrorKind::MixedSeparators => {
-                write!(f, "mixed separators (use either commas or newlines)")
-            }
             ParseErrorKind::InvalidEscape(seq) => write!(f, "invalid escape sequence: {}", seq),
             ParseErrorKind::ExpectedKey => write!(f, "expected a key"),
             ParseErrorKind::ExpectedValue => write!(f, "expected a value"),
@@ -235,6 +218,9 @@ impl std::fmt::Display for ParseErrorKind {
                     f,
                     "missing whitespace before `{{` or `(` (required after bare scalar to distinguish from tag syntax like `@tag{{}}`)"
                 )
+            }
+            ParseErrorKind::TrailingContent => {
+                write!(f, "trailing content after explicit root object")
             }
         }
     }

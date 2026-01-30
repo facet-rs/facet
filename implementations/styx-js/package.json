@@ -40,7 +40,7 @@
   "scripts": {
     "build": "tsc",
     "test": "npm run build && npm run test:compliance && npm run test:typed",
-    "test:compliance": "node dist/compliance.js ../../compliance/corpus | diff -u ../../compliance/golden.sexp - && echo 'Compliance: 50/50 tests passed'",
+    "test:compliance": "node --test dist/compliance.test.js",
     "test:typed": "node --test dist/typed.test.js",
     "prepublishOnly": "npm run build && npm test"
   },

@@ -19,6 +19,7 @@ path = "src/main.rs"
 [dependencies]
 styx-tree.workspace = true
 styx-parse.workspace = true
+styx-tokenizer.workspace = true
 styx-cst.workspace = true
 styx-format.workspace = true
 styx-lsp.workspace = true

@@ -158,21 +158,13 @@ fn walk_node_for_spans(node: &SyntaxNode, spans: &mut Vec<HighlightSpan>, ctx: W
         SyntaxKind::TAG => {
             for child in node.children_with_tokens() {
                 if let Some(token) = child.as_token() {
-                    if token.kind() == SyntaxKind::AT {
-                        add_span_from_syntax(spans, token, TokenType::Operator, false);
+                    if token.kind() == SyntaxKind::TAG_TOKEN {
+                        add_span_from_syntax(spans, token, TokenType::Type, false);
                     }
-                } else if let Some(child_node) = child.as_node() {
-                    if child_node.kind() == SyntaxKind::TAG_NAME {
-                        for t in child_node.children_with_tokens() {
-                            if let Some(token) = t.as_token()
-                                && is_scalar_token(token.kind())
-                            {
-                                add_span_from_syntax(spans, token, TokenType::Type, false);
-                            }
-                        }
-                    } else if child_node.kind() == SyntaxKind::TAG_PAYLOAD {
-                        walk_node_for_spans(child_node, spans, ctx);
-                    }
+                } else if let Some(child_node) = child.as_node()
+                    && child_node.kind() == SyntaxKind::TAG_PAYLOAD
+                {
+                    walk_node_for_spans(child_node, spans, ctx);
                 }
             }
         }
@@ -187,9 +179,9 @@ fn walk_node_for_spans(node: &SyntaxNode, spans: &mut Vec<HighlightSpan>, ctx: W
         SyntaxKind::UNIT => {
             for child in node.children_with_tokens() {
                 if let Some(token) = child.as_token()
-                    && token.kind() == SyntaxKind::AT
+                    && (token.kind() == SyntaxKind::TAG_TOKEN || token.kind() == SyntaxKind::AT)
                 {
-                    add_span_from_syntax(spans, token, TokenType::Operator, false);
+                    add_span_from_syntax(spans, token, TokenType::Type, false);
                 }
             }
         }
@@ -270,29 +262,20 @@ fn collect_key_spans(node: &SyntaxNode, spans: &mut Vec<HighlightSpan>) {
                 SyntaxKind::TAG => {
                     // Tagged key like @schema
                     for t in child_node.children_with_tokens() {
-                        if let Some(token) = t.as_token() {
-                            if token.kind() == SyntaxKind::AT {
-                                add_span_from_syntax(spans, token, TokenType::Operator, false);
-                            }
-                        } else if let Some(tag_child) = t.as_node()
-                            && tag_child.kind() == SyntaxKind::TAG_NAME
+                        if let Some(token) = t.as_token()
+                            && token.kind() == SyntaxKind::TAG_TOKEN
                         {
-                            for name_token in tag_child.children_with_tokens() {
-                                if let Some(nt) = name_token.as_token()
-                                    && is_scalar_token(nt.kind())
-                                {
-                                    add_span_from_syntax(spans, nt, TokenType::Property, false);
-                                }
-                            }
+                            add_span_from_syntax(spans, token, TokenType::Property, false);
                         }
                     }
                 }
                 SyntaxKind::UNIT => {
                     for t in child_node.children_with_tokens() {
                         if let Some(token) = t.as_token()
-                            && token.kind() == SyntaxKind::AT
+                            && (token.kind() == SyntaxKind::TAG_TOKEN
+                                || token.kind() == SyntaxKind::AT)
                         {
-                            add_span_from_syntax(spans, token, TokenType::Operator, false);
+                            add_span_from_syntax(spans, token, TokenType::Type, false);
                         }
                     }
                 }
@@ -322,9 +305,10 @@ fn collect_key_spans_as_values(node: &SyntaxNode, spans: &mut Vec<HighlightSpan>
                 SyntaxKind::UNIT => {
                     for t in child_node.children_with_tokens() {
                         if let Some(token) = t.as_token()
-                            && token.kind() == SyntaxKind::AT
+                            && (token.kind() == SyntaxKind::TAG_TOKEN
+                                || token.kind() == SyntaxKind::AT)
                         {
-                            add_span_from_syntax(spans, token, TokenType::Operator, false);
+                            add_span_from_syntax(spans, token, TokenType::Type, false);
                         }
                     }
                 }
@@ -372,26 +356,17 @@ fn walk_node(node: &SyntaxNode, content: &str, tokens: &mut Vec<RawToken>, ctx: 
             }
         }
         SyntaxKind::TAG => {
-            // Tag nodes - highlight @ as operator and tag name as type
+            // Tag nodes - TAG_TOKEN is the full @name
             for child in node.children_with_tokens() {
                 if let Some(token) = child.as_token() {
-                    if token.kind() == SyntaxKind::AT {
-                        add_token_from_syntax(tokens, content, token, TokenType::Operator, 0);
+                    if token.kind() == SyntaxKind::TAG_TOKEN {
+                        add_token_from_syntax(tokens, content, token, TokenType::Type, 0);
                     }
-                } else if let Some(child_node) = child.as_node() {
-                    if child_node.kind() == SyntaxKind::TAG_NAME {
-                        // Get the token inside TAG_NAME
-                        for t in child_node.children_with_tokens() {
-                            if let Some(token) = t.as_token()
-                                && is_scalar_token(token.kind())
-                            {
-                                add_token_from_syntax(tokens, content, token, TokenType::Type, 0);
-                            }
-                        }
-                    } else if child_node.kind() == SyntaxKind::TAG_PAYLOAD {
-                        // Recurse into payload
-                        walk_node(child_node, content, tokens, ctx);
-                    }
+                } else if let Some(child_node) = child.as_node()
+                    && child_node.kind() == SyntaxKind::TAG_PAYLOAD
+                {
+                    // Recurse into payload
+                    walk_node(child_node, content, tokens, ctx);
                 }
             }
         }
@@ -408,9 +383,9 @@ fn walk_node(node: &SyntaxNode, content: &str, tokens: &mut Vec<RawToken>, ctx: 
             // Unit @ token
             for child in node.children_with_tokens() {
                 if let Some(token) = child.as_token()
-                    && token.kind() == SyntaxKind::AT
+                    && (token.kind() == SyntaxKind::TAG_TOKEN || token.kind() == SyntaxKind::AT)
                 {
-                    add_token_from_syntax(tokens, content, token, TokenType::Operator, 0);
+                    add_token_from_syntax(tokens, content, token, TokenType::Type, 0);
                 }
             }
         }
@@ -512,35 +487,12 @@ fn collect_key_tokens(node: &SyntaxNode, content: &str, tokens: &mut Vec<RawToke
                     }
                 }
                 SyntaxKind::TAG => {
-                    // KEY -> TAG (tag as key, e.g., `@string "hello"`)
-                    // Highlight @ as operator and tag name as type (since it's in key position)
+                    // KEY -> TAG (tag as key, e.g., `@schema foo.styx`)
                     for tag_child in child_node.children_with_tokens() {
-                        if let Some(token) = tag_child.as_token() {
-                            if token.kind() == SyntaxKind::AT {
-                                add_token_from_syntax(
-                                    tokens,
-                                    content,
-                                    token,
-                                    TokenType::Operator,
-                                    0,
-                                );
-                            }
-                        } else if let Some(tag_node) = tag_child.as_node()
-                            && tag_node.kind() == SyntaxKind::TAG_NAME
+                        if let Some(token) = tag_child.as_token()
+                            && token.kind() == SyntaxKind::TAG_TOKEN
                         {
-                            for t in tag_node.children_with_tokens() {
-                                if let Some(token) = t.as_token()
-                                    && is_scalar_token(token.kind())
-                                {
-                                    add_token_from_syntax(
-                                        tokens,
-                                        content,
-                                        token,
-                                        TokenType::Type,
-                                        0,
-                                    );
-                                }
-                            }
+                            add_token_from_syntax(tokens, content, token, TokenType::Property, 0);
                         }
                     }
                 }
@@ -573,37 +525,16 @@ fn collect_key_tokens_as_values(node: &SyntaxNode, content: &str, tokens: &mut V
                 }
                 SyntaxKind::TAG => {
                     // KEY -> TAG in sequence (e.g., `(@ok @err)` or `@route{...}`)
-                    // Highlight @ and tag name, then recurse into payload
                     for tag_child in child_node.children_with_tokens() {
-                        if let Some(token) = tag_child.as_token() {
-                            if token.kind() == SyntaxKind::AT {
-                                add_token_from_syntax(
-                                    tokens,
-                                    content,
-                                    token,
-                                    TokenType::Operator,
-                                    0,
-                                );
-                            }
-                        } else if let Some(tag_node) = tag_child.as_node() {
-                            if tag_node.kind() == SyntaxKind::TAG_NAME {
-                                for t in tag_node.children_with_tokens() {
-                                    if let Some(token) = t.as_token()
-                                        && is_scalar_token(token.kind())
-                                    {
-                                        add_token_from_syntax(
-                                            tokens,
-                                            content,
-                                            token,
-                                            TokenType::Type,
-                                            0,
-                                        );
-                                    }
-                                }
-                            } else if tag_node.kind() == SyntaxKind::TAG_PAYLOAD {
-                                // Recurse into tag payload (object context for properties)
-                                walk_node(tag_node, content, tokens, WalkContext::default());
-                            }
+                        if let Some(token) = tag_child.as_token()
+                            && token.kind() == SyntaxKind::TAG_TOKEN
+                        {
+                            add_token_from_syntax(tokens, content, token, TokenType::Type, 0);
+                        } else if let Some(tag_node) = tag_child.as_node()
+                            && tag_node.kind() == SyntaxKind::TAG_PAYLOAD
+                        {
+                            // Recurse into tag payload (object context for properties)
+                            walk_node(tag_node, content, tokens, WalkContext::default());
                         }
                     }
                 }
@@ -957,34 +888,26 @@ mod tests {
     #[test]
     fn simple_tag() {
         let tokens = get_tokens(r#"status @ok"#);
-        let operators = filter_by_type(&tokens, TokenType::Operator);
         let types = filter_by_type(&tokens, TokenType::Type);
 
-        // @ is operator
-        assert_eq!(operators.len(), 1);
-        assert_eq!(operators[0].length, 1);
-
-        // "ok" is type
+        // "@ok" is type (full tag token)
         assert_eq!(types.len(), 1);
-        assert_eq!(types[0].length, 2);
+        assert_eq!(types[0].length, 3); // "@ok"
     }
 
     #[test]
     fn tag_with_object_payload() {
         let tokens = get_tokens(r#"result @error{code 500, message "fail"}"#);
-        let operators = filter_by_type(&tokens, TokenType::Operator);
         let types = filter_by_type(&tokens, TokenType::Type);
         let properties = filter_by_type(&tokens, TokenType::Property);
         let strings = filter_by_type(&tokens, TokenType::String);
 
-        // @ is operator
-        assert!(operators.iter().any(|t| t.length == 1));
-
-        // "error" is type
+        // "@error" is type
         assert_eq!(types.len(), 1);
+        assert_eq!(types[0].length, 6); // "@error"
 
-        // "code" and "message" are properties
-        assert_eq!(properties.len(), 3); // "result" + "code" + "message"
+        // "result", "code" and "message" are properties
+        assert_eq!(properties.len(), 3);
 
         // "fail" and "500" are strings
         assert_eq!(strings.len(), 2);
@@ -993,24 +916,22 @@ mod tests {
     #[test]
     fn tag_with_sequence_payload() {
         let tokens = get_tokens(r#"point @rgb(255 128 0)"#);
-        let operators = filter_by_type(&tokens, TokenType::Operator);
         let types = filter_by_type(&tokens, TokenType::Type);
         let strings = filter_by_type(&tokens, TokenType::String);
 
-        assert!(operators.iter().any(|t| t.length == 1)); // @
-        assert_eq!(types.len(), 1); // "rgb"
+        assert_eq!(types.len(), 1); // "@rgb"
+        assert_eq!(types[0].length, 4); // "@rgb"
         assert_eq!(strings.len(), 3); // 255, 128, 0
     }
 
     #[test]
     fn tag_with_string_payload() {
         let tokens = get_tokens(r#"env @env"HOME""#);
-        let operators = filter_by_type(&tokens, TokenType::Operator);
         let types = filter_by_type(&tokens, TokenType::Type);
         let strings = filter_by_type(&tokens, TokenType::String);
 
-        assert!(operators.iter().any(|t| t.length == 1)); // @
-        assert_eq!(types.len(), 1); // "env"
+        assert_eq!(types.len(), 1); // "@env"
+        assert_eq!(types[0].length, 4); // "@env"
         assert_eq!(strings.len(), 1); // "HOME"
     }
 
@@ -1019,19 +940,19 @@ mod tests {
         let tokens = get_tokens(r#"data @ok{value @some(42)}"#);
         let types = filter_by_type(&tokens, TokenType::Type);
 
-        // Both "ok" and "some" are types
+        // Both "@ok" and "@some" are types
         assert_eq!(types.len(), 2);
     }
 
     #[test]
     fn tag_as_key() {
         let tokens = get_tokens(r#"@string "hello""#);
-        let operators = filter_by_type(&tokens, TokenType::Operator);
-        let types = filter_by_type(&tokens, TokenType::Type);
+        let properties = filter_by_type(&tokens, TokenType::Property);
         let strings = filter_by_type(&tokens, TokenType::String);
 
-        assert_eq!(operators.len(), 1); // @
-        assert_eq!(types.len(), 1); // "string"
+        // "@string" as key is a property
+        assert_eq!(properties.len(), 1);
+        assert_eq!(properties[0].length, 7); // "@string"
         assert_eq!(strings.len(), 1); // "hello"
     }
 
@@ -1039,10 +960,9 @@ mod tests {
     fn consecutive_tags_in_sequence() {
         let tokens = get_tokens(r#"tags (@ok @err @none)"#);
         let types = filter_by_type(&tokens, TokenType::Type);
-        let operators = filter_by_type(&tokens, TokenType::Operator);
 
-        assert_eq!(types.len(), 3); // ok, err, none
-        assert_eq!(operators.len(), 3); // Three @ signs
+        // "@ok", "@err", "@none" are types
+        assert_eq!(types.len(), 3);
     }
 
     // ========== SECTION 7: UNIT VALUES ==========
@@ -1050,11 +970,11 @@ mod tests {
     #[test]
     fn explicit_unit() {
         let tokens = get_tokens(r#"unit @"#);
-        let operators = filter_by_type(&tokens, TokenType::Operator);
+        let types = filter_by_type(&tokens, TokenType::Type);
         let properties = filter_by_type(&tokens, TokenType::Property);
 
         assert_eq!(properties.len(), 1); // "unit"
-        assert_eq!(operators.len(), 1); // @
+        assert_eq!(types.len(), 1); // "@" (unit tag)
     }
 
     #[test]
@@ -1205,8 +1125,8 @@ HTML
         let types = filter_by_type(&tokens, TokenType::Type);
         let operators = filter_by_type(&tokens, TokenType::Operator);
 
-        assert_eq!(types.len(), 1); // "html"
-        assert!(operators.len() >= 3); // @, <<HTML, HTML
+        assert_eq!(types.len(), 1); // "@html"
+        assert!(operators.len() >= 2); // <<HTML, HTML
     }
 
     #[test]

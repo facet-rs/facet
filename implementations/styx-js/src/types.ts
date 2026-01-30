@@ -7,9 +7,6 @@ export interface Span {
 /** Scalar kinds */
 export type ScalarKind = "bare" | "quoted" | "raw" | "heredoc";
 
-/** Separator style in objects */
-export type Separator = "newline" | "comma";
-
 /** Path value kind for tracking */
 export type PathValueKind = "object" | "terminal";
 
@@ -99,7 +96,6 @@ export interface Entry {
 export interface StyxObject {
   type: "object";
   entries: Entry[];
-  separator: Separator;
   span: Span;
 }
 
@@ -126,7 +122,7 @@ export interface Document {
 export class ParseError extends Error {
   constructor(
     message: string,
-    public span: Span
+    public span: Span,
   ) {
     super(message);
     this.name = "ParseError";

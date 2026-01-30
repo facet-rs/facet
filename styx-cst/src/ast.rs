@@ -402,15 +402,12 @@ impl Scalar {
 impl Tag {
     /// Get the tag name (without @).
     pub fn name(&self) -> Option<String> {
+        // The tag token is @name, so we strip the @ prefix
         self.0
-            .children()
-            .find(|n| n.kind() == SyntaxKind::TAG_NAME)
-            .map(|n| {
-                n.children_with_tokens()
-                    .filter_map(|el| el.into_token())
-                    .map(|t| t.text().to_string())
-                    .collect()
-            })
+            .children_with_tokens()
+            .filter_map(|el| el.into_token())
+            .find(|t| t.kind() == SyntaxKind::TAG_TOKEN)
+            .map(|t| t.text()[1..].to_string()) // Skip the '@' prefix
     }
 
     /// Get the tag payload if present.

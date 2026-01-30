@@ -3,8 +3,9 @@
 //! This formatter works directly with the lossless CST (Concrete Syntax Tree),
 //! preserving all comments and producing properly indented output.
 
-use styx_cst::ast::{AstNode, Document, Entry, Object, Separator, Sequence};
-use styx_cst::{SyntaxKind, SyntaxNode};
+use styx_cst::{
+    AstNode, Document, Entry, NodeOrToken, Object, Separator, Sequence, SyntaxKind, SyntaxNode,
+};
 
 use crate::FormatOptions;
 
@@ -94,7 +95,6 @@ impl CstFormatter {
             SyntaxKind::VALUE => self.format_value(node),
             SyntaxKind::SCALAR => self.format_scalar(node),
             SyntaxKind::TAG => self.format_tag(node),
-            SyntaxKind::TAG_NAME => self.format_tag_name(node),
             SyntaxKind::TAG_PAYLOAD => self.format_tag_payload(node),
             SyntaxKind::UNIT => self.write("@"),
             SyntaxKind::HEREDOC => self.format_heredoc(node),
@@ -109,6 +109,7 @@ impl CstFormatter {
             | SyntaxKind::COMMA
             | SyntaxKind::GT
             | SyntaxKind::AT
+            | SyntaxKind::TAG_TOKEN
             | SyntaxKind::BARE_SCALAR
             | SyntaxKind::QUOTED_SCALAR
             | SyntaxKind::RAW_SCALAR
@@ -121,7 +122,8 @@ impl CstFormatter {
             | SyntaxKind::NEWLINE
             | SyntaxKind::EOF
             | SyntaxKind::ERROR
-            | SyntaxKind::__LAST_TOKEN => {
+            | SyntaxKind::__LAST_TOKEN
+            | SyntaxKind::TAG_NAME => {
                 // Tokens shouldn't be passed to format_node (they're not nodes)
                 // but if they are, ignore them - they're handled by their parent
             }
@@ -522,26 +524,19 @@ impl CstFormatter {
     }
 
     fn format_tag(&mut self, node: &SyntaxNode) {
-        self.write("@");
-
-        // Per grammar: Tag ::= '@' TagName TagPayload?
-        // TagPayload must be immediately attached (no whitespace allowed)
-        // TagPayload ::= Object | Sequence | QuotedScalar | RawScalar | HeredocScalar | '@'
+        // The TAG node contains:
+        // - TAG_TOKEN: the full `@name` text (including @)
+        // - optionally TAG_PAYLOAD: the payload node
         for el in node.children_with_tokens() {
-            if let rowan::NodeOrToken::Node(child) = el {
-                match child.kind() {
-                    SyntaxKind::TAG_NAME => self.format_tag_name(&child),
-                    SyntaxKind::TAG_PAYLOAD => self.format_tag_payload(&child),
-                    _ => {}
+            match el {
+                NodeOrToken::Token(token) if token.kind() == SyntaxKind::TAG_TOKEN => {
+                    // Write the full tag token including @
+                    self.write(token.text());
                 }
-            }
-        }
-    }
-
-    fn format_tag_name(&mut self, node: &SyntaxNode) {
-        for token in node.children_with_tokens().filter_map(|el| el.into_token()) {
-            if token.kind() == SyntaxKind::BARE_SCALAR {
-                self.write(token.text());
+                NodeOrToken::Node(child) if child.kind() == SyntaxKind::TAG_PAYLOAD => {
+                    self.format_tag_payload(&child);
+                }
+                _ => {}
             }
         }
     }
@@ -585,12 +580,12 @@ impl CstFormatter {
         // Attribute structure: BARE_SCALAR ">" SCALAR
         for el in node.children_with_tokens() {
             match el {
-                rowan::NodeOrToken::Token(token) => match token.kind() {
+                NodeOrToken::Token(token) => match token.kind() {
                     SyntaxKind::BARE_SCALAR => self.write(token.text()),
                     SyntaxKind::GT => self.write(">"),
                     _ => {}
                 },
-                rowan::NodeOrToken::Node(child) => {
+                NodeOrToken::Node(child) => {
                     self.format_node(&child);
                 }
             }
@@ -670,9 +665,13 @@ fn is_schema_declaration(entry: &Entry) -> bool {
         // Check if the key contains a @schema tag
         key.syntax().children().any(|n| {
             if n.kind() == SyntaxKind::TAG {
-                // Look for TAG_NAME child with text "schema"
-                n.children().any(|child| {
-                    child.kind() == SyntaxKind::TAG_NAME && child.to_string() == "schema"
+                // Look for TAG_TOKEN with text "@schema"
+                n.children_with_tokens().any(|el| {
+                    if let NodeOrToken::Token(token) = el {
+                        token.kind() == SyntaxKind::TAG_TOKEN && token.text() == "@schema"
+                    } else {
+                        false
+                    }
                 })
             } else {
                 false

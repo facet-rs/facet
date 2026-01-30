@@ -10,14 +10,16 @@ mod value;
 
 pub use builder::{BuildError, TreeBuilder};
 pub use diagnostic::ParseError;
-pub use styx_parse::{ParseErrorKind, ScalarKind, Separator, Span};
+pub use styx_parse::{ParseErrorKind, ScalarKind, Span};
 pub use value::{Entry, Object, Payload, Scalar, Sequence, Tag, Value};
 
 /// Parse a Styx document into a tree.
 pub fn parse(source: &str) -> Result<Value, BuildError> {
-    let parser = styx_parse::Parser::new(source);
+    let mut parser = styx_parse::Parser::new(source);
     let mut builder = TreeBuilder::new();
-    parser.parse(&mut builder);
+    while let Some(event) = parser.next_event() {
+        builder.event(event);
+    }
     builder.finish()
 }
 

@@ -2,7 +2,7 @@
 
 use std::borrow::Cow;
 
-use styx_parse::{Event, ParseCallback, ParseErrorKind, Separator, Span};
+use styx_parse::{Event, ParseErrorKind, Span};
 
 use crate::value::{Entry, Object, Payload, Scalar, Sequence, Tag, Value};
 
@@ -57,7 +57,6 @@ pub struct TreeBuilder {
 enum BuilderFrame {
     Object {
         entries: Vec<Entry>,
-        separator: Separator,
         span: Span,
         pending_doc_comment: Option<String>,
     },
@@ -102,7 +101,6 @@ impl TreeBuilder {
             tag: None,
             payload: Some(Payload::Object(Object {
                 entries: self.root_entries,
-                separator: Separator::Newline,
                 span: None,
             })),
             span: None,
@@ -204,17 +202,17 @@ impl Default for TreeBuilder {
     }
 }
 
-impl<'src> ParseCallback<'src> for TreeBuilder {
-    fn event(&mut self, event: Event<'src>) -> bool {
+impl TreeBuilder {
+    /// Process a parse event.
+    pub fn event(&mut self, event: Event<'_>) {
         match event {
             Event::DocumentStart | Event::DocumentEnd => {
                 // No-op for tree building
             }
 
-            Event::ObjectStart { span, separator } => {
+            Event::ObjectStart { span } => {
                 self.stack.push(BuilderFrame::Object {
                     entries: Vec::new(),
-                    separator,
                     span,
                     pending_doc_comment: None,
                 });
@@ -223,7 +221,6 @@ impl<'src> ParseCallback<'src> for TreeBuilder {
             Event::ObjectEnd { span } => {
                 if let Some(BuilderFrame::Object {
                     entries,
-                    separator,
                     span: start_span,
                     ..
                 }) = self.stack.pop()
@@ -232,7 +229,6 @@ impl<'src> ParseCallback<'src> for TreeBuilder {
                         tag: None,
                         payload: Some(Payload::Object(Object {
                             entries,
-                            separator,
                             span: Some(Span {
                                 start: start_span.start,
                                 end: span.end,
@@ -306,7 +302,7 @@ impl<'src> ParseCallback<'src> for TreeBuilder {
                             {
                                 last.key = key;
                                 last.doc_comment = doc_comment;
-                                return true;
+                                return;
                             }
                             // Otherwise add as unit-valued entry
                             entries.push(Entry {
@@ -323,7 +319,7 @@ impl<'src> ParseCallback<'src> for TreeBuilder {
                             {
                                 last.key = key;
                                 last.doc_comment = doc_comment;
-                                return true;
+                                return;
                             }
                             self.root_entries.push(Entry {
                                 key,
@@ -404,7 +400,7 @@ impl<'src> ParseCallback<'src> for TreeBuilder {
                         key: None,
                         doc_comment: None,
                     });
-                    return true;
+                    return;
                 }
 
                 self.push_value(scalar);
@@ -445,7 +441,7 @@ impl<'src> ParseCallback<'src> for TreeBuilder {
                         key: None,
                         doc_comment: None,
                     });
-                    return true;
+                    return;
                 }
 
                 self.push_value(unit);
@@ -462,7 +458,7 @@ impl<'src> ParseCallback<'src> for TreeBuilder {
                 // Only pop if the top frame is a Tag - otherwise the tag was already
                 // consumed when its payload was processed
                 if !matches!(self.stack.last(), Some(BuilderFrame::Tag { .. })) {
-                    return true;
+                    return;
                 }
                 if let Some(BuilderFrame::Tag { name, span }) = self.stack.pop() {
                     // Tag with no payload - just the tag itself
@@ -503,15 +499,16 @@ impl<'src> ParseCallback<'src> for TreeBuilder {
                             key: None,
                             doc_comment: None,
                         });
-                        return true;
+                        return;
                     }
 
                     self.push_value(tagged);
                 }
             }
 
-            Event::DocComment { text, .. } => {
-                let comment = extract_doc_comment(text);
+            Event::DocComment { lines, .. } => {
+                // Lines are already stripped of `/// ` prefix by the parser
+                let comment = lines.join("\n");
                 match self.stack.last_mut() {
                     Some(BuilderFrame::Object {
                         pending_doc_comment,
@@ -533,21 +530,11 @@ impl<'src> ParseCallback<'src> for TreeBuilder {
                 self.errors.push((kind, span));
             }
         }
-
-        true
     }
 }
 
 fn cow_to_string(cow: Cow<'_, str>) -> String {
     cow.into_owned()
-}
-
-fn extract_doc_comment(text: &str) -> String {
-    // Strip leading `///` and optional space
-    text.strip_prefix("///")
-        .map(|s| s.strip_prefix(' ').unwrap_or(s))
-        .unwrap_or(text)
-        .to_string()
 }
 
 /// Append a doc comment line to an existing doc comment, joining with newline.
@@ -570,16 +557,21 @@ mod tests {
     use super::*;
 
     fn parse(source: &str) -> Value {
-        let parser = Parser::new(source);
+        let mut parser = Parser::new(source);
         let mut builder = TreeBuilder::new();
-        parser.parse(&mut builder);
+        while let Some(event) = parser.next_event() {
+            eprintln!("Event: {:?}", event);
+            builder.event(event);
+        }
         builder.finish().unwrap()
     }
 
     fn try_parse(source: &str) -> Result<Value, BuildError> {
-        let parser = Parser::new(source);
+        let mut parser = Parser::new(source);
         let mut builder = TreeBuilder::new();
-        parser.parse(&mut builder);
+        while let Some(event) = parser.next_event() {
+            builder.event(event);
+        }
         builder.finish()
     }
 
@@ -706,17 +698,11 @@ mod tests {
 }"#;
 
         // Debug: print all events
-        struct EventPrinter;
-        impl<'src> styx_parse::ParseCallback<'src> for EventPrinter {
-            fn event(&mut self, event: styx_parse::Event<'src>) -> bool {
-                eprintln!("Event: {:?}", event);
-                true
-            }
-        }
-
         eprintln!("=== Events for no-space version ===");
-        let parser = styx_parse::Parser::new(source);
-        parser.parse(&mut EventPrinter);
+        let mut debug_parser = Parser::new(source);
+        while let Some(event) = debug_parser.next_event() {
+            eprintln!("Event: {:?}", event);
+        }
 
         let value = parse(source);
         let obj = value.as_object().unwrap();

@@ -1,13 +1,13 @@
 //! Serde deserializer for Styx.
 
 use serde::de::{self, Visitor};
-use styx_parse::{Lexer, ScalarKind, Span, Token, TokenKind};
+use styx_parse::{ScalarKind, Span, Token, TokenKind, Tokenizer};
 
 use crate::error::{Error, Result};
 
 /// Styx deserializer implementing serde::Deserializer.
 pub struct Deserializer<'de> {
-    lexer: Lexer<'de>,
+    lexer: Tokenizer<'de>,
     /// Peeked token (if any).
     peeked_token: Option<Token<'de>>,
     /// Current span for error reporting.
@@ -20,7 +20,7 @@ impl<'de> Deserializer<'de> {
     /// Create a new deserializer for the given source.
     pub fn new(source: &'de str) -> Self {
         Self {
-            lexer: Lexer::new(source),
+            lexer: Tokenizer::new(source),
             peeked_token: None,
             current_span: None,
             root_started: false,

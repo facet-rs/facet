@@ -72,9 +72,9 @@ def format_payload(payload: Payload, indent: int) -> str:
 
     if isinstance(payload, StyxObject):
         if not payload.entries:
-            return f"(object [{payload.span.start}, {payload.span.end}] {payload.separator.value})"
+            return f"(object [{payload.span.start}, {payload.span.end}])"
         entries_str = "\n".join(format_entry(entry, indent + 1) for entry in payload.entries)
-        return f"(object [{payload.span.start}, {payload.span.end}] {payload.separator.value}\n{entries_str}\n{prefix})"
+        return f"(object [{payload.span.start}, {payload.span.end}]\n{entries_str}\n{prefix})"
 
     return "(unknown)"
 

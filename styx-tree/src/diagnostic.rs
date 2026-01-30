@@ -60,16 +60,6 @@ impl ParseError {
                     .with_help("each key must appear only once in an object")
             }
 
-            // diag[impl diagnostic.parser.mixed-separators]
-            ParseErrorKind::MixedSeparators => Report::build(ReportKind::Error, (filename, range.clone()))
-                .with_message("mixed separators in object")
-                .with_label(
-                    Label::new((filename, range))
-                        .with_message("mixing commas and newlines")
-                        .with_color(Color::Red),
-                )
-                .with_help("use either commas or newlines to separate entries, not both"),
-
             // diag[impl diagnostic.parser.unclosed]
             ParseErrorKind::UnclosedObject => Report::build(ReportKind::Error, (filename, range.clone()))
                 .with_message("unclosed object")
@@ -215,6 +205,15 @@ impl ParseError {
                         .with_color(Color::Red),
                 )
                 .with_help("bare keys must be separated from `{` or `(` by whitespace (to distinguish from tags like `@tag{}`)"),
+
+            ParseErrorKind::TrailingContent => Report::build(ReportKind::Error, (filename, range.clone()))
+                .with_message("trailing content after explicit root object")
+                .with_label(
+                    Label::new((filename, range))
+                        .with_message("unexpected content here")
+                        .with_color(Color::Red),
+                )
+                .with_help("an explicit root object `{...}` is the entire document; nothing can follow it"),
         }
     }
 }
@@ -223,7 +222,6 @@ impl std::fmt::Display for ParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.kind {
             ParseErrorKind::DuplicateKey { .. } => write!(f, "duplicate key"),
-            ParseErrorKind::MixedSeparators => write!(f, "mixed separators in object"),
             ParseErrorKind::UnclosedObject => write!(f, "unclosed object"),
             ParseErrorKind::UnclosedSequence => write!(f, "unclosed sequence"),
             ParseErrorKind::InvalidEscape(seq) => write!(f, "invalid escape sequence '{}'", seq),
@@ -245,6 +243,9 @@ impl std::fmt::Display for ParseError {
             ParseErrorKind::MissingWhitespaceBeforeBlock => {
                 write!(f, "missing whitespace before block")
             }
+            ParseErrorKind::TrailingContent => {
+                write!(f, "trailing content after explicit root object")
+            }
         }?;
         write!(f, " at offset {}", self.span.start)
     }
@@ -257,19 +258,14 @@ mod tests {
     use super::*;
 
     fn parse_with_errors(source: &str) -> Vec<ParseError> {
-        let parser = styx_parse::Parser::new(source);
-        let mut events = Vec::new();
-        parser.parse(&mut events);
-        events
-            .into_iter()
-            .filter_map(|event| {
-                if let styx_parse::Event::Error { span, kind } = event {
-                    Some(ParseError::new(kind, span))
-                } else {
-                    None
-                }
-            })
-            .collect()
+        let mut parser = styx_parse::Parser::new(source);
+        let mut errors = Vec::new();
+        while let Some(event) = parser.next_event() {
+            if let styx_parse::Event::Error { span, kind } = event {
+                errors.push(ParseError::new(kind, span));
+            }
+        }
+        errors
     }
 
     macro_rules! assert_snapshot_stripped {
@@ -284,15 +280,6 @@ mod tests {
         let source = "a 1\na 2";
         let errors = parse_with_errors(source);
         assert_eq!(errors.len(), 1);
-
-        assert_snapshot_stripped!(errors[0].render("test.styx", source));
-    }
-
-    #[test]
-    fn test_mixed_separators_diagnostic() {
-        let source = "{\n  a 1,\n  b 2\n}";
-        let errors = parse_with_errors(source);
-        assert!(!errors.is_empty());
 
         assert_snapshot_stripped!(errors[0].render("test.styx", source));
     }

@@ -366,6 +366,9 @@ func (l *Lexer) readHeredoc(start int, hadWhitespace, hadNewline bool) (*Token, 
 		l.advance() // newline
 	}
 
+	// Track content start (after the opening line)
+	contentStart := l.bytePos
+
 	var text strings.Builder
 	delimStr := delimiter.String()
 	bareDelimiter := strings.SplitN(delimStr, ",", 2)[0]
@@ -400,10 +403,10 @@ func (l *Lexer) readHeredoc(start int, hadWhitespace, hadNewline bool) (*Token, 
 		}
 	}
 
-	// EOF without closing delimiter - error
+	// EOF without closing delimiter - error points at the unmatched content
 	return nil, &ParseError{
 		Message: "unexpected token",
-		Span:    Span{start, l.bytePos},
+		Span:    Span{contentStart, l.bytePos},
 	}
 }
 

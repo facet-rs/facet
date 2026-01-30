@@ -1,747 +1,809 @@
-//! Lexer for the Styx configuration language.
+//! Lexer for Styx - produces lexemes from tokens.
+//!
+//! The Lexer sits between the Tokenizer and Parser:
+//! - Tokenizer → Token (raw: At, BareScalar, LBrace, etc.)
+//! - Lexer → Lexeme (atoms: Scalar, Tag, Unit, structural markers)
+//! - Parser → Events (structure: entries, objects, sequences)
 
-#[allow(unused_imports)]
-use crate::trace;
-use crate::{Span, Token, TokenKind};
+use std::borrow::Cow;
 
-/// A lexer that produces tokens from Styx source text.
-#[derive(Clone)]
-pub struct Lexer<'src> {
-    /// The source text being lexed.
-    source: &'src str,
-    /// The remaining source text (suffix of `source`).
-    remaining: &'src str,
-    /// Current byte position in `source`.
-    pos: u32,
+use styx_tokenizer::{Span, Token, TokenKind, Tokenizer};
 
-    /// State for heredoc parsing.
-    heredoc_state: Option<HeredocState>,
+use crate::events::ScalarKind;
+
+/// A lexeme produced by the Lexer from raw tokens.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Lexeme<'src> {
+    /// A scalar value (bare, quoted, raw, or heredoc)
+    Scalar {
+        span: Span,
+        value: Cow<'src, str>,
+        kind: ScalarKind,
+    },
+
+    /// Unit value: standalone `@`
+    Unit { span: Span },
+
+    /// A tag: `@name`
+    /// The payload (if any) comes as the next lexeme
+    Tag {
+        span: Span,
+        name: &'src str,
+        /// True if an immediate payload follows (no whitespace): `@tag{}`, `@tag()`, `@tag"x"`, `@tag@`
+        has_payload: bool,
+    },
+
+    /// Start of object `{`
+    ObjectStart { span: Span },
+
+    /// End of object `}`
+    ObjectEnd { span: Span },
+
+    /// Start of sequence `(`
+    SeqStart { span: Span },
+
+    /// End of sequence `)`
+    SeqEnd { span: Span },
+
+    /// An attribute key `key>` - value follows as next lexeme(s)
+    AttrKey {
+        /// Span of the full `key>` including the `>`
+        span: Span,
+        /// Span of just the key (excluding `>`)
+        key_span: Span,
+        /// The key text
+        key: &'src str,
+    },
+
+    /// Comma separator
+    Comma { span: Span },
+
+    /// Newline (significant for separator detection)
+    Newline { span: Span },
+
+    /// Line comment `// ...`
+    Comment { span: Span, text: &'src str },
+
+    /// Doc comment `/// ...`
+    DocComment { span: Span, text: &'src str },
+
+    /// End of input
+    Eof,
+
+    /// Tokenizer error
+    Error { span: Span, message: &'static str },
 }
 
-/// State for tracking heredoc parsing.
-#[derive(Debug, Clone)]
-struct HeredocState {
-    /// The delimiter to match (e.g., "EOF" for `<<EOF`)
-    delimiter: String,
+impl Lexeme<'_> {
+    /// Get the span of this lexeme.
+    /// Returns a zero-length span at position 0 for Eof.
+    pub fn span(&self) -> Span {
+        match self {
+            Lexeme::Scalar { span, .. }
+            | Lexeme::Unit { span }
+            | Lexeme::Tag { span, .. }
+            | Lexeme::ObjectStart { span }
+            | Lexeme::ObjectEnd { span }
+            | Lexeme::SeqStart { span }
+            | Lexeme::SeqEnd { span }
+            | Lexeme::AttrKey { span, .. }
+            | Lexeme::Comma { span }
+            | Lexeme::Newline { span }
+            | Lexeme::Comment { span, .. }
+            | Lexeme::DocComment { span, .. }
+            | Lexeme::Error { span, .. } => *span,
+            Lexeme::Eof => Span::new(0, 0),
+        }
+    }
+}
+
+/// Lexer that produces lexemes from tokens.
+#[derive(Clone)]
+pub struct Lexer<'src> {
+    tokenizer: Tokenizer<'src>,
+    /// Peeked token (if any)
+    peeked: Option<Token<'src>>,
 }
 
 impl<'src> Lexer<'src> {
-    /// Create a new lexer for the given source text.
+    /// Create a new lexer for the given source.
     pub fn new(source: &'src str) -> Self {
         Self {
-            source,
-            remaining: source,
-            pos: 0,
-            heredoc_state: None,
+            tokenizer: Tokenizer::new(source),
+            peeked: None,
         }
     }
 
-    /// Get the current byte position.
-    #[inline]
-    pub fn position(&self) -> u32 {
-        self.pos
-    }
-
-    /// Check if we're at the end of input.
-    #[inline]
-    pub fn is_eof(&self) -> bool {
-        self.remaining.is_empty()
-    }
-
-    /// Peek at the next character without consuming it.
-    #[inline]
-    fn peek(&self) -> Option<char> {
-        self.remaining.chars().next()
-    }
-
-    /// Peek at the nth character (0-indexed) without consuming.
-    #[inline]
-    fn peek_nth(&self, n: usize) -> Option<char> {
-        self.remaining.chars().nth(n)
-    }
-
-    /// Advance by one character and return it.
-    #[inline]
-    fn advance(&mut self) -> Option<char> {
-        let c = self.peek()?;
-        self.pos += c.len_utf8() as u32;
-        self.remaining = &self.remaining[c.len_utf8()..];
-        Some(c)
-    }
-
-    /// Advance by n bytes.
-    #[inline]
-    fn advance_by(&mut self, n: usize) {
-        self.pos += n as u32;
-        self.remaining = &self.remaining[n..];
-    }
-
-    /// Check if the remaining text starts with the given prefix.
-    #[inline]
-    fn starts_with(&self, prefix: &str) -> bool {
-        self.remaining.starts_with(prefix)
-    }
-
-    /// Create a token from the given start position to current position.
-    fn token(&self, kind: TokenKind, start: u32) -> Token<'src> {
-        let span = Span::new(start, self.pos);
-        let text = &self.source[start as usize..self.pos as usize];
-        trace!("Token {:?} at {:?}: {:?}", kind, span, text);
-        Token::new(kind, span, text)
-    }
-
-    /// Get the next token.
-    pub fn next_token(&mut self) -> Token<'src> {
-        // Handle heredoc content if we're inside one
-        if let Some(ref state) = self.heredoc_state.clone() {
-            return self.lex_heredoc_content(&state.delimiter);
+    /// Peek at the next token without consuming it.
+    fn peek_token(&mut self) -> &Token<'src> {
+        if self.peeked.is_none() {
+            self.peeked = Some(self.tokenizer.next_token());
         }
-
-        // Check for EOF
-        if self.is_eof() {
-            return self.token(TokenKind::Eof, self.pos);
-        }
-
-        let start = self.pos;
-        let c = self.peek().unwrap();
-
-        match c {
-            // Structural tokens
-            '{' => {
-                self.advance();
-                self.token(TokenKind::LBrace, start)
-            }
-            '}' => {
-                self.advance();
-                self.token(TokenKind::RBrace, start)
-            }
-            '(' => {
-                self.advance();
-                self.token(TokenKind::LParen, start)
-            }
-            ')' => {
-                self.advance();
-                self.token(TokenKind::RParen, start)
-            }
-            ',' => {
-                self.advance();
-                self.token(TokenKind::Comma, start)
-            }
-            '>' => {
-                self.advance();
-                self.token(TokenKind::Gt, start)
-            }
-            '@' => {
-                self.advance();
-                self.token(TokenKind::At, start)
-            }
-
-            // Quoted scalar
-            '"' => self.lex_quoted_scalar(),
-
-            // Comment or doc comment
-            '/' if self.starts_with("///") => self.lex_doc_comment(),
-            '/' if self.starts_with("//") => self.lex_line_comment(),
-            // Single / is a bare scalar (e.g., /usr/bin/foo)
-            '/' => self.lex_bare_scalar(),
-
-            // Heredoc - only if << is followed by uppercase letter
-            // parser[impl scalar.heredoc.invalid]
-            '<' if self.starts_with("<<")
-                && matches!(self.peek_nth(2), Some(c) if c.is_ascii_uppercase()) =>
-            {
-                self.lex_heredoc_start()
-            }
-            // << not followed by uppercase is an error
-            '<' if self.starts_with("<<") => {
-                let start = self.pos;
-                self.advance(); // <
-                self.advance(); // <
-                self.token(TokenKind::Error, start)
-            }
-
-            // Raw string
-            'r' if matches!(self.peek_nth(1), Some('#' | '"')) => self.lex_raw_string(),
-
-            // Whitespace
-            ' ' | '\t' => self.lex_whitespace(),
-
-            // Newline
-            '\n' => {
-                self.advance();
-                self.token(TokenKind::Newline, start)
-            }
-            '\r' if self.peek_nth(1) == Some('\n') => {
-                self.advance();
-                self.advance();
-                self.token(TokenKind::Newline, start)
-            }
-
-            // Bare scalar (default for anything else that's not a special char)
-            _ if is_bare_scalar_start(c) => self.lex_bare_scalar(),
-
-            // Error: unrecognized character
-            _ => {
-                self.advance();
-                self.token(TokenKind::Error, start)
-            }
-        }
+        self.peeked.as_ref().unwrap()
     }
 
-    /// Lex horizontal whitespace (spaces and tabs).
-    fn lex_whitespace(&mut self) -> Token<'src> {
-        let start = self.pos;
-        while let Some(c) = self.peek() {
-            if c == ' ' || c == '\t' {
-                self.advance();
-            } else {
-                break;
-            }
-        }
-        self.token(TokenKind::Whitespace, start)
+    /// Consume and return the next token.
+    fn next_token(&mut self) -> Token<'src> {
+        self.peeked
+            .take()
+            .unwrap_or_else(|| self.tokenizer.next_token())
     }
 
-    /// Lex a bare (unquoted) scalar.
-    fn lex_bare_scalar(&mut self) -> Token<'src> {
-        let start = self.pos;
-        while let Some(c) = self.peek() {
-            if is_bare_scalar_char(c) {
-                self.advance();
-            } else {
-                break;
-            }
-        }
-        self.token(TokenKind::BareScalar, start)
-    }
-
-    /// Lex a quoted scalar: `"..."`.
-    fn lex_quoted_scalar(&mut self) -> Token<'src> {
-        let start = self.pos;
-
-        // Consume opening quote
-        self.advance();
-
+    /// Get the next lexeme.
+    pub fn next_lexeme(&mut self) -> Lexeme<'src> {
+        // Skip whitespace (but not newlines - those are significant)
         loop {
-            match self.peek() {
-                None => {
-                    // Unterminated string - return error
-                    return self.token(TokenKind::Error, start);
-                }
-                Some('"') => {
-                    self.advance();
-                    break;
-                }
-                Some('\\') => {
-                    // Escape sequence - consume backslash and next char
-                    self.advance();
-                    if self.peek().is_some() {
-                        self.advance();
-                    }
-                }
-                Some(_) => {
-                    self.advance();
-                }
-            }
-        }
-
-        self.token(TokenKind::QuotedScalar, start)
-    }
-
-    // parser[impl comment.line]
-    /// Lex a line comment: `// ...`.
-    fn lex_line_comment(&mut self) -> Token<'src> {
-        let start = self.pos;
-
-        // Consume `//`
-        self.advance();
-        self.advance();
-
-        // Consume until end of line
-        while let Some(c) = self.peek() {
-            if c == '\n' || c == '\r' {
-                break;
-            }
-            self.advance();
-        }
-
-        self.token(TokenKind::LineComment, start)
-    }
-
-    /// Lex a doc comment: `/// ...`.
-    fn lex_doc_comment(&mut self) -> Token<'src> {
-        let start = self.pos;
-
-        // Consume `///`
-        self.advance();
-        self.advance();
-        self.advance();
-
-        // Consume until end of line
-        while let Some(c) = self.peek() {
-            if c == '\n' || c == '\r' {
-                break;
-            }
-            self.advance();
-        }
-
-        self.token(TokenKind::DocComment, start)
-    }
-
-    /// Lex a heredoc start: `<<DELIM`.
-    ///
-    /// Per parser[scalar.heredoc.syntax]: delimiter MUST match `[A-Z][A-Z0-9_]*`
-    /// and not exceed 16 characters.
-    // parser[impl scalar.heredoc.syntax]
-    fn lex_heredoc_start(&mut self) -> Token<'src> {
-        let start = self.pos;
-
-        // Consume `<<`
-        self.advance();
-        self.advance();
-
-        let delim_start = self.pos as usize;
-
-        // First char MUST be uppercase letter
-        match self.peek() {
-            Some(c) if c.is_ascii_uppercase() => {
-                self.advance();
-            }
-            _ => {
-                // Invalid delimiter - first char not uppercase letter
-                // Consume any remaining delimiter-like chars for error recovery
-                while let Some(c) = self.peek() {
-                    if c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_' {
-                        self.advance();
-                    } else {
-                        break;
-                    }
-                }
-                return self.token(TokenKind::Error, start);
-            }
-        }
-
-        // Rest: uppercase, digit, or underscore
-        while let Some(c) = self.peek() {
-            if c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_' {
-                self.advance();
+            let tok = self.peek_token();
+            if tok.kind == TokenKind::Whitespace {
+                self.next_token();
             } else {
                 break;
             }
         }
 
-        let delimiter = &self.source[delim_start..self.pos as usize];
+        let tok = self.next_token();
 
-        // Check length <= 16
-        if delimiter.len() > 16 {
-            return self.token(TokenKind::Error, start);
-        }
+        match tok.kind {
+            TokenKind::Eof => Lexeme::Eof,
 
-        // Consume optional language hint: ,lang where lang matches [a-z][a-z0-9_.-]*
-        // parser[impl scalar.heredoc.lang]
-        // The language hint is metadata and does not affect the scalar content.
-        if self.peek() == Some(',') {
-            self.advance(); // consume ','
-            // First char must be lowercase letter
-            if let Some(c) = self.peek()
-                && c.is_ascii_lowercase()
-            {
-                self.advance();
-                // Rest: lowercase, digit, underscore, dot, hyphen
-                while let Some(c) = self.peek() {
-                    if c.is_ascii_lowercase()
-                        || c.is_ascii_digit()
-                        || c == '_'
-                        || c == '.'
-                        || c == '-'
-                    {
-                        self.advance();
-                    } else {
-                        break;
+            TokenKind::LBrace => Lexeme::ObjectStart { span: tok.span },
+            TokenKind::RBrace => Lexeme::ObjectEnd { span: tok.span },
+            TokenKind::LParen => Lexeme::SeqStart { span: tok.span },
+            TokenKind::RParen => Lexeme::SeqEnd { span: tok.span },
+            TokenKind::Comma => Lexeme::Comma { span: tok.span },
+            TokenKind::Gt => {
+                // Standalone `>` (with whitespace before it) - not valid in Styx
+                // Attribute syntax requires no space: `key>value`
+                Lexeme::Error {
+                    span: tok.span,
+                    message: "unexpected `>` (attribute syntax requires no spaces: key>value)",
+                }
+            }
+            TokenKind::Newline => Lexeme::Newline { span: tok.span },
+
+            TokenKind::LineComment => Lexeme::Comment {
+                span: tok.span,
+                text: tok.text,
+            },
+            TokenKind::DocComment => Lexeme::DocComment {
+                span: tok.span,
+                text: tok.text,
+            },
+
+            TokenKind::At => {
+                // Check if followed immediately by a bare scalar (invalid tag like @123)
+                let next = self.peek_token();
+                if next.span.start == tok.span.end && next.kind == TokenKind::BareScalar {
+                    // Consume the adjacent token to include it in the error span
+                    let bad_tok = self.next_token();
+                    return Lexeme::Error {
+                        span: Span::new(tok.span.start, bad_tok.span.end),
+                        message: "invalid tag name",
+                    };
+                }
+                // Standalone @ = unit
+                Lexeme::Unit { span: tok.span }
+            }
+
+            TokenKind::Tag => {
+                // Tag token includes the @ and name, e.g. "@foo"
+                // Extract the name (skip the @)
+                let name = &tok.text[1..];
+
+                // Check if payload follows immediately (no whitespace)
+                // Payload can be: { ( " r#" @ or Tag
+                let payload_tok = self.peek_token();
+                let is_adjacent = payload_tok.span.start == tok.span.end;
+                let is_valid_payload = matches!(
+                    payload_tok.kind,
+                    TokenKind::LBrace
+                        | TokenKind::LParen
+                        | TokenKind::QuotedScalar
+                        | TokenKind::RawScalar
+                        | TokenKind::At
+                        | TokenKind::Tag
+                );
+
+                // If a bare scalar is adjacent (no whitespace), it's an invalid tag name
+                // e.g., @org/package where /package is adjacent
+                // But structural tokens like ) } , or newlines are fine - they end the tag
+                if is_adjacent && !is_valid_payload && payload_tok.kind == TokenKind::BareScalar {
+                    // Consume the adjacent token to include it in the error span
+                    let bad_tok = self.next_token();
+                    return Lexeme::Error {
+                        span: Span::new(tok.span.start, bad_tok.span.end),
+                        message: "invalid tag name",
+                    };
+                }
+
+                Lexeme::Tag {
+                    span: tok.span,
+                    name,
+                    has_payload: is_adjacent && is_valid_payload,
+                }
+            }
+
+            TokenKind::BareScalar => {
+                // Check if followed by `>` (attribute syntax)
+                let next = self.peek_token();
+                let is_attr = next.kind == TokenKind::Gt && next.span.start == tok.span.end;
+                let gt_end = next.span.end;
+                if is_attr {
+                    // Attribute: key>
+                    self.next_token(); // consume `>`
+
+                    // Check that value follows immediately (no whitespace after `>`)
+                    let value_tok = self.peek_token();
+                    let gt_span = Span::new(gt_end - 1, gt_end);
+                    if value_tok.kind == TokenKind::Newline || value_tok.kind == TokenKind::Eof {
+                        return Lexeme::Error {
+                            span: gt_span,
+                            message: "expected a value",
+                        };
                     }
+                    if value_tok.kind == TokenKind::Whitespace {
+                        return Lexeme::Error {
+                            span: gt_span,
+                            message: "whitespace after `>` in attribute (use key>value with no spaces)",
+                        };
+                    }
+
+                    return Lexeme::AttrKey {
+                        span: Span::new(tok.span.start, gt_end),
+                        key_span: tok.span,
+                        key: tok.text,
+                    };
+                }
+
+                Lexeme::Scalar {
+                    span: tok.span,
+                    value: Cow::Borrowed(tok.text),
+                    kind: ScalarKind::Bare,
                 }
             }
-        }
 
-        // Consume newline after delimiter (and optional lang hint)
-        if self.peek() == Some('\r') {
-            self.advance();
-        }
-        if self.peek() == Some('\n') {
-            self.advance();
-        }
-
-        // Set state for heredoc content
-        self.heredoc_state = Some(HeredocState {
-            delimiter: delimiter.to_string(),
-        });
-
-        self.token(TokenKind::HeredocStart, start)
-    }
-
-    /// Check if the remaining input starts with the heredoc delimiter (possibly indented).
-    /// Returns Some(indent_len) if found, where indent_len is the number of leading spaces/tabs.
-    /// The delimiter must be followed by newline or EOF to be valid.
-    fn find_heredoc_delimiter(&self, delimiter: &str) -> Option<usize> {
-        // Count leading whitespace
-        let indent_len = self
-            .remaining
-            .chars()
-            .take_while(|c| *c == ' ' || *c == '\t')
-            .count();
-
-        // Check if delimiter follows the whitespace
-        let after_indent = &self.remaining[indent_len..];
-        if let Some(after_delim) = after_indent.strip_prefix(delimiter)
-            && (after_delim.is_empty()
-                || after_delim.starts_with('\n')
-                || after_delim.starts_with("\r\n"))
-        {
-            return Some(indent_len);
-        }
-        None
-    }
-
-    /// Lex heredoc content until we find the closing delimiter.
-    /// Per parser[scalar.heredoc.syntax]: The closing delimiter line MAY be indented;
-    /// that indentation is stripped from content lines.
-    fn lex_heredoc_content(&mut self, delimiter: &str) -> Token<'src> {
-        let start = self.pos;
-
-        // Check if we're at the delimiter (possibly indented) - end of heredoc
-        if let Some(indent_len) = self.find_heredoc_delimiter(delimiter) {
-            // This is the end delimiter - consume indent + delimiter
-            self.advance_by(indent_len + delimiter.len());
-            self.heredoc_state = None;
-            return self.token(TokenKind::HeredocEnd, start);
-        }
-
-        // Consume content until we find the delimiter at start of a line (possibly indented)
-        let mut found_end = false;
-        while !self.is_eof() {
-            // Consume the current line
-            while let Some(c) = self.peek() {
-                if c == '\n' {
-                    self.advance();
-                    break;
-                } else if c == '\r' && self.peek_nth(1) == Some('\n') {
-                    self.advance();
-                    self.advance();
-                    break;
+            TokenKind::QuotedScalar => {
+                // Process escape sequences
+                let inner = &tok.text[1..tok.text.len() - 1]; // strip quotes
+                match process_escapes(inner) {
+                    Ok(value) => Lexeme::Scalar {
+                        span: tok.span,
+                        value,
+                        kind: ScalarKind::Quoted,
+                    },
+                    Err(msg) => Lexeme::Error {
+                        span: tok.span,
+                        message: msg,
+                    },
                 }
-                self.advance();
             }
 
-            // Check if next line starts with delimiter (possibly indented)
-            if self.find_heredoc_delimiter(delimiter).is_some() {
-                found_end = true;
-                break;
-            }
+            TokenKind::RawScalar => {
+                // r#"..."# - extract content between quotes
+                let text = tok.text;
+                // Count leading #s after 'r'
+                let hash_count = text[1..].chars().take_while(|&c| c == '#').count();
+                // Content is between r##" and "##
+                let start = 1 + hash_count + 1; // r + hashes + quote
+                let end = text.len() - hash_count - 1; // quote + hashes
+                let content = &text[start..end];
 
-            if self.is_eof() {
-                break;
-            }
-        }
-
-        if start == self.pos
-            && found_end
-            && let Some(indent_len) = self.find_heredoc_delimiter(delimiter)
-        {
-            // No content, return the end delimiter
-            self.advance_by(indent_len + delimiter.len());
-            self.heredoc_state = None;
-            return self.token(TokenKind::HeredocEnd, start);
-        }
-
-        // CRITICAL: If we hit EOF without finding the closing delimiter,
-        // we must clear the heredoc state to avoid an infinite loop.
-        // The next call would otherwise re-enter lex_heredoc_content forever.
-        if self.is_eof() && !found_end {
-            self.heredoc_state = None;
-            return self.token(TokenKind::Error, start);
-        }
-
-        self.token(TokenKind::HeredocContent, start)
-    }
-
-    // parser[impl scalar.raw.syntax]
-    /// Lex a raw string: `r#*"..."#*`.
-    /// Returns the entire raw string including delimiters.
-    fn lex_raw_string(&mut self) -> Token<'src> {
-        let start = self.pos;
-
-        // Consume `r`
-        self.advance();
-
-        // Count and consume `#` marks
-        let mut hash_count: u8 = 0;
-        while self.peek() == Some('#') {
-            hash_count = hash_count.saturating_add(1);
-            self.advance();
-        }
-
-        // Consume opening `"`
-        if self.peek() == Some('"') {
-            self.advance();
-        } else {
-            // Invalid raw string - no opening quote
-            return self.token(TokenKind::Error, start);
-        }
-
-        // Consume content until we find the closing `"#*`
-        loop {
-            match self.peek() {
-                None => {
-                    // Unterminated raw string - return error
-                    return self.token(TokenKind::Error, start);
+                Lexeme::Scalar {
+                    span: tok.span,
+                    value: Cow::Borrowed(content),
+                    kind: ScalarKind::Raw,
                 }
-                Some('"') => {
-                    // Check for closing sequence
-                    let mut matched_hashes = 0u8;
-                    let mut lookahead = 1;
-                    while matched_hashes < hash_count {
-                        if self.peek_nth(lookahead) == Some('#') {
-                            matched_hashes += 1;
-                            lookahead += 1;
-                        } else {
+            }
+
+            TokenKind::HeredocStart => {
+                // Collect heredoc content
+                let start_span = tok.span;
+                let mut content = String::new();
+                let end_span;
+                let mut closing_indent = 0usize;
+
+                loop {
+                    // Check for closing indent before consuming content token
+                    // (it's set after HeredocContent is produced, before HeredocEnd)
+                    if let Some(indent) = self.tokenizer.heredoc_closing_indent() {
+                        closing_indent = indent;
+                    }
+
+                    let next = self.next_token();
+                    match next.kind {
+                        TokenKind::HeredocContent => {
+                            content.push_str(next.text);
+                        }
+                        TokenKind::HeredocEnd => {
+                            end_span = next.span;
                             break;
                         }
-                    }
-
-                    if matched_hashes == hash_count {
-                        // Found the closing delimiter - consume it
-                        self.advance(); // consume `"`
-                        for _ in 0..hash_count {
-                            self.advance(); // consume `#`s
+                        TokenKind::Eof => {
+                            return Lexeme::Error {
+                                span: start_span,
+                                message: "unterminated heredoc",
+                            };
                         }
-                        // Return token with full text including delimiters
-                        return self.token(TokenKind::RawScalar, start);
-                    } else {
-                        // Not a closing delimiter, consume the `"` as content
-                        self.advance();
+                        _ => {
+                            return Lexeme::Error {
+                                span: next.span,
+                                message: "unexpected token in heredoc",
+                            };
+                        }
                     }
                 }
-                Some(_) => {
-                    self.advance();
+
+                // Apply dedent if closing delimiter was indented
+                if closing_indent > 0 {
+                    content = dedent_heredoc(&content, closing_indent);
+                }
+
+                Lexeme::Scalar {
+                    span: Span::new(start_span.start, end_span.end),
+                    value: Cow::Owned(content),
+                    kind: ScalarKind::Heredoc,
                 }
             }
+
+            TokenKind::HeredocContent | TokenKind::HeredocEnd => {
+                // Should not see these outside heredoc context
+                Lexeme::Error {
+                    span: tok.span,
+                    message: "unexpected heredoc token",
+                }
+            }
+
+            TokenKind::Whitespace => {
+                // Should have been skipped above
+                unreachable!("whitespace should be skipped")
+            }
+
+            TokenKind::Error => Lexeme::Error {
+                span: tok.span,
+                message: "tokenizer error",
+            },
         }
     }
 }
 
 impl<'src> Iterator for Lexer<'src> {
-    type Item = Token<'src>;
+    type Item = Lexeme<'src>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let token = self.next_token();
-        if token.kind == TokenKind::Eof {
+        let lexeme = self.next_lexeme();
+        if matches!(lexeme, Lexeme::Eof) {
             None
         } else {
-            Some(token)
+            Some(lexeme)
         }
     }
 }
 
-// parser[impl scalar.bare.chars]
-/// Check if a character can start a bare scalar.
-fn is_bare_scalar_start(c: char) -> bool {
-    // Cannot be special chars, whitespace, or `/` (to avoid confusion with comments)
-    // `=` and `@` are allowed after first char but not at start
-    !matches!(c, '{' | '}' | '(' | ')' | ',' | '"' | '=' | '@' | '>' | '/') && !c.is_whitespace()
+/// Strip up to `indent_len` whitespace characters from the start of each line.
+fn dedent_heredoc(content: &str, indent_len: usize) -> String {
+    let mut result = String::with_capacity(content.len());
+    for (i, line) in content.split('\n').enumerate() {
+        if i > 0 {
+            result.push('\n');
+        }
+        // Strip up to indent_len whitespace chars from start of line
+        let mut stripped = 0;
+        let mut char_indices = line.char_indices().peekable();
+        while stripped < indent_len {
+            if let Some(&(_, ch)) = char_indices.peek() {
+                if ch == ' ' || ch == '\t' {
+                    char_indices.next();
+                    stripped += 1;
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+        // Append the rest of the line
+        if let Some(&(idx, _)) = char_indices.peek() {
+            result.push_str(&line[idx..]);
+        }
+    }
+    result
 }
 
-// parser[impl scalar.bare.chars]
-/// Check if a character can continue a bare scalar.
-fn is_bare_scalar_char(c: char) -> bool {
-    // Cannot be special chars or whitespace
-    // `/`, `@`, and `=` are allowed after the first char
-    // `>` is never allowed (attribute separator)
-    !matches!(c, '{' | '}' | '(' | ')' | ',' | '"' | '>') && !c.is_whitespace()
+/// Process escape sequences in a quoted string.
+fn process_escapes(s: &str) -> Result<Cow<'_, str>, &'static str> {
+    // Fast path: no escapes
+    if !s.contains('\\') {
+        return Ok(Cow::Borrowed(s));
+    }
+
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            result.push(c);
+            continue;
+        }
+
+        match chars.next() {
+            Some('\\') => result.push('\\'),
+            Some('"') => result.push('"'),
+            Some('n') => result.push('\n'),
+            Some('r') => result.push('\r'),
+            Some('t') => result.push('\t'),
+            Some('u') => {
+                // Unicode escape: \uXXXX or \u{X...}
+                match chars.peek() {
+                    Some('{') => {
+                        chars.next(); // consume '{'
+                        let mut hex = String::new();
+                        loop {
+                            match chars.next() {
+                                Some('}') => break,
+                                Some(c) if c.is_ascii_hexdigit() => hex.push(c),
+                                _ => return Err("invalid unicode escape"),
+                            }
+                        }
+                        let code =
+                            u32::from_str_radix(&hex, 16).map_err(|_| "invalid unicode escape")?;
+                        let ch = char::from_u32(code).ok_or("invalid unicode code point")?;
+                        result.push(ch);
+                    }
+                    Some(_) => {
+                        // \uXXXX - exactly 4 hex digits
+                        let mut hex = String::with_capacity(4);
+                        for _ in 0..4 {
+                            match chars.next() {
+                                Some(c) if c.is_ascii_hexdigit() => hex.push(c),
+                                _ => return Err("invalid unicode escape"),
+                            }
+                        }
+                        let code =
+                            u32::from_str_radix(&hex, 16).map_err(|_| "invalid unicode escape")?;
+                        let ch = char::from_u32(code).ok_or("invalid unicode code point")?;
+                        result.push(ch);
+                    }
+                    None => return Err("invalid unicode escape"),
+                }
+            }
+            Some(_) => return Err("invalid escape sequence"),
+            None => return Err("trailing backslash"),
+        }
+    }
+
+    Ok(Cow::Owned(result))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn lex(source: &str) -> Vec<(TokenKind, &str)> {
-        Lexer::new(source).map(|t| (t.kind, t.text)).collect()
+    #[test]
+    fn test_process_escapes_double_backslash() {
+        // Input: path\\to\\file (two backslash pairs)
+        // Expected: path\to\file (two literal backslashes)
+        let result = process_escapes(r"path\\to\\file").unwrap();
+        assert_eq!(result, r"path\to\file");
+    }
+
+    fn lex(source: &str) -> Vec<Lexeme<'_>> {
+        Lexer::new(source).collect()
     }
 
     #[test]
-    fn test_structural_tokens() {
-        assert_eq!(lex("{"), vec![(TokenKind::LBrace, "{")]);
-        assert_eq!(lex("}"), vec![(TokenKind::RBrace, "}")]);
-        assert_eq!(lex("("), vec![(TokenKind::LParen, "(")]);
-        assert_eq!(lex(")"), vec![(TokenKind::RParen, ")")]);
-        assert_eq!(lex(","), vec![(TokenKind::Comma, ",")]);
-        assert_eq!(lex(">"), vec![(TokenKind::Gt, ">")]);
-        assert_eq!(lex("@"), vec![(TokenKind::At, "@")]);
+    fn test_unit() {
+        let lexemes = lex("@");
+        assert!(matches!(&lexemes[0], Lexeme::Unit { .. }));
+    }
+
+    #[test]
+    fn test_tag_no_payload() {
+        let lexemes = lex("@foo");
+        assert!(matches!(
+            &lexemes[0],
+            Lexeme::Tag {
+                name: "foo",
+                has_payload: false,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_tag_with_object_payload() {
+        let lexemes = lex("@tag{}");
+        assert!(matches!(
+            &lexemes[0],
+            Lexeme::Tag {
+                name: "tag",
+                has_payload: true,
+                ..
+            }
+        ));
+        assert!(matches!(&lexemes[1], Lexeme::ObjectStart { .. }));
+        assert!(matches!(&lexemes[2], Lexeme::ObjectEnd { .. }));
+    }
+
+    #[test]
+    fn test_tag_with_space_before_object() {
+        // @tag {} - space means NOT a payload
+        let lexemes = lex("@tag {}");
+        assert!(matches!(
+            &lexemes[0],
+            Lexeme::Tag {
+                name: "tag",
+                has_payload: false,
+                ..
+            }
+        ));
     }
 
     #[test]
     fn test_bare_scalar() {
-        assert_eq!(lex("hello"), vec![(TokenKind::BareScalar, "hello")]);
-        assert_eq!(lex("42"), vec![(TokenKind::BareScalar, "42")]);
-        assert_eq!(lex("true"), vec![(TokenKind::BareScalar, "true")]);
-        assert_eq!(
-            lex("https://example.com/path"),
-            vec![(TokenKind::BareScalar, "https://example.com/path")]
-        );
+        let lexemes = lex("hello");
+        assert!(matches!(
+            &lexemes[0],
+            Lexeme::Scalar {
+                kind: ScalarKind::Bare,
+                ..
+            }
+        ));
     }
 
     #[test]
     fn test_quoted_scalar() {
-        assert_eq!(
-            lex(r#""hello world""#),
-            vec![(TokenKind::QuotedScalar, r#""hello world""#)]
-        );
-        assert_eq!(
-            lex(r#""with \"escapes\"""#),
-            vec![(TokenKind::QuotedScalar, r#""with \"escapes\"""#)]
-        );
+        let lexemes = lex(r#""hello\nworld""#);
+        match &lexemes[0] {
+            Lexeme::Scalar {
+                value,
+                kind: ScalarKind::Quoted,
+                ..
+            } => {
+                assert_eq!(value.as_ref(), "hello\nworld");
+            }
+            other => panic!("expected quoted scalar, got {:?}", other),
+        }
     }
 
     #[test]
     fn test_raw_scalar() {
-        // Raw scalars now include the full text with delimiters (for lossless CST)
-        assert_eq!(
-            lex(r#"r"hello""#),
-            vec![(TokenKind::RawScalar, r#"r"hello""#)]
-        );
-        assert_eq!(
-            lex(r##"r#"hello"#"##),
-            vec![(TokenKind::RawScalar, r##"r#"hello"#"##)]
-        );
+        let lexemes = lex(r##"r#"hello"#"##);
+        match &lexemes[0] {
+            Lexeme::Scalar {
+                value,
+                kind: ScalarKind::Raw,
+                ..
+            } => {
+                assert_eq!(value.as_ref(), "hello");
+            }
+            other => panic!("expected raw scalar, got {:?}", other),
+        }
     }
 
     #[test]
-    fn test_comments() {
-        assert_eq!(
-            lex("// comment"),
-            vec![(TokenKind::LineComment, "// comment")]
-        );
-        assert_eq!(lex("/// doc"), vec![(TokenKind::DocComment, "/// doc")]);
+    fn test_tag_with_quoted_payload() {
+        let lexemes = lex(r#"@env"staging""#);
+        assert!(matches!(
+            &lexemes[0],
+            Lexeme::Tag {
+                name: "env",
+                has_payload: true,
+                ..
+            }
+        ));
+        match &lexemes[1] {
+            Lexeme::Scalar {
+                value,
+                kind: ScalarKind::Quoted,
+                ..
+            } => {
+                assert_eq!(value.as_ref(), "staging");
+            }
+            other => panic!("expected quoted scalar, got {:?}", other),
+        }
     }
 
     #[test]
-    fn test_whitespace() {
-        assert_eq!(lex("  \t"), vec![(TokenKind::Whitespace, "  \t")]);
-        assert_eq!(lex("\n"), vec![(TokenKind::Newline, "\n")]);
-        assert_eq!(lex("\r\n"), vec![(TokenKind::Newline, "\r\n")]);
+    fn test_tag_with_sequence_payload() {
+        let lexemes = lex("@rgb(255 128 0)");
+        assert!(matches!(
+            &lexemes[0],
+            Lexeme::Tag {
+                name: "rgb",
+                has_payload: true,
+                ..
+            }
+        ));
+        assert!(matches!(&lexemes[1], Lexeme::SeqStart { .. }));
     }
 
     #[test]
-    fn test_mixed() {
-        let tokens = lex("{host localhost}");
-        assert_eq!(
-            tokens,
-            vec![
-                (TokenKind::LBrace, "{"),
-                (TokenKind::BareScalar, "host"),
-                (TokenKind::Whitespace, " "),
-                (TokenKind::BareScalar, "localhost"),
-                (TokenKind::RBrace, "}"),
-            ]
-        );
+    fn test_tag_with_unit_payload() {
+        // @tag@ - tag with explicit unit payload
+        let lexemes = lex("@tag@");
+        assert!(matches!(
+            &lexemes[0],
+            Lexeme::Tag {
+                name: "tag",
+                has_payload: true,
+                ..
+            }
+        ));
+        assert!(matches!(&lexemes[1], Lexeme::Unit { .. }));
     }
 
     #[test]
-    fn test_heredoc() {
-        let tokens = lex("<<EOF\nhello\nworld\nEOF");
-        assert_eq!(
-            tokens,
-            vec![
-                (TokenKind::HeredocStart, "<<EOF\n"),
-                (TokenKind::HeredocContent, "hello\nworld\n"),
-                (TokenKind::HeredocEnd, "EOF"),
-            ]
-        );
-    }
-
-    // parser[verify scalar.heredoc.syntax]
-    #[test]
-    fn test_heredoc_valid_delimiters() {
-        // Single uppercase letter
-        assert!(lex("<<A\nx\nA").iter().all(|t| t.0 != TokenKind::Error));
-        // Multiple uppercase letters
-        assert!(lex("<<EOF\nx\nEOF").iter().all(|t| t.0 != TokenKind::Error));
-        // With digits after first char
-        assert!(
-            lex("<<MY123\nx\nMY123")
-                .iter()
-                .all(|t| t.0 != TokenKind::Error)
-        );
-        // With underscores
-        assert!(
-            lex("<<MY_DELIM\nx\nMY_DELIM")
-                .iter()
-                .all(|t| t.0 != TokenKind::Error)
-        );
-        // 16 chars (max allowed)
-        assert!(
-            lex("<<ABCDEFGHIJKLMNOP\nx\nABCDEFGHIJKLMNOP")
-                .iter()
-                .all(|t| t.0 != TokenKind::Error)
-        );
-    }
-
-    // parser[verify scalar.heredoc.syntax]
-    #[test]
-    fn test_heredoc_must_start_uppercase() {
-        // Starts with digit - error
-        assert!(lex("<<123FOO").iter().any(|t| t.0 == TokenKind::Error));
-        // Starts with underscore - error
-        assert!(lex("<<_FOO").iter().any(|t| t.0 == TokenKind::Error));
-        // Lowercase - error (lexer won't even recognize it as heredoc delimiter chars)
-        let tokens = lex("<<foo");
-        // This will be << followed by bare scalar "foo"
-        assert!(!tokens.iter().any(|t| t.0 == TokenKind::HeredocStart));
-    }
-
-    // parser[verify scalar.heredoc.syntax]
-    #[test]
-    fn test_heredoc_max_16_chars() {
-        // 17 chars - error
-        assert!(
-            lex("<<ABCDEFGHIJKLMNOPQ\nx\nABCDEFGHIJKLMNOPQ")
-                .iter()
-                .any(|t| t.0 == TokenKind::Error)
-        );
+    fn test_tag_with_raw_payload() {
+        // @tagr#"x"# - tag "tag" with raw string payload
+        let lexemes = lex(r##"@tagr#"x"#"##);
+        assert!(matches!(
+            &lexemes[0],
+            Lexeme::Tag {
+                name: "tag",
+                has_payload: true,
+                ..
+            }
+        ));
+        match &lexemes[1] {
+            Lexeme::Scalar {
+                value,
+                kind: ScalarKind::Raw,
+                ..
+            } => {
+                assert_eq!(value.as_ref(), "x");
+            }
+            other => panic!("expected raw scalar, got {:?}", other),
+        }
     }
 
     #[test]
-    fn test_slash_in_bare_scalar() {
-        // Single slash followed by text should be a bare scalar
-        let tokens = lex("/foo");
-        assert_eq!(tokens, vec![(TokenKind::BareScalar, "/foo")]);
-
-        // Path-like value
-        let tokens = lex("/usr/bin/foo");
-        assert_eq!(tokens, vec![(TokenKind::BareScalar, "/usr/bin/foo")]);
-
-        // But // is still a comment
-        let tokens = lex("// comment");
-        assert_eq!(tokens, vec![(TokenKind::LineComment, "// comment")]);
+    fn test_tag_with_space_before_sequence() {
+        let lexemes = lex("@tag (a b)");
+        assert!(matches!(
+            &lexemes[0],
+            Lexeme::Tag {
+                name: "tag",
+                has_payload: false,
+                ..
+            }
+        ));
     }
 
     #[test]
-    fn test_unterminated_heredoc() {
-        // Heredoc without closing delimiter should be an error
-        let tokens = lex("<<EOF\nhello world\n");
-        eprintln!("tokens = {:?}", tokens);
-        assert!(
-            tokens.iter().any(|t| t.0 == TokenKind::Error),
-            "Expected Error token for unterminated heredoc"
-        );
+    fn test_tag_with_space_before_quoted() {
+        let lexemes = lex(r#"@tag "value""#);
+        assert!(matches!(
+            &lexemes[0],
+            Lexeme::Tag {
+                name: "tag",
+                has_payload: false,
+                ..
+            }
+        ));
+    }
+
+    // Note: @tag@ (explicit unit payload) requires tokenizer changes
+    // The tokenizer currently produces `At` + `BareScalar("tag@")` because
+    // `@` is allowed in bare scalars after the first char.
+    // This will be addressed when we update the tokenizer.
+
+    #[test]
+    fn test_at_followed_by_digit() {
+        // @123 is an invalid tag name - the error span includes both @ and 123
+        let lexemes = lex("@123");
+        assert!(matches!(
+            &lexemes[0],
+            Lexeme::Error {
+                message: "invalid tag name",
+                ..
+            }
+        ));
     }
 
     #[test]
-    fn test_unterminated_string() {
-        // String without closing quote should be an error
-        let tokens = lex("\"hello");
-        eprintln!("tokens = {:?}", tokens);
-        assert!(
-            tokens.iter().any(|t| t.0 == TokenKind::Error),
-            "Expected Error token for unterminated string"
-        );
+    fn test_structural() {
+        let lexemes = lex("{x 1}");
+        assert!(matches!(&lexemes[0], Lexeme::ObjectStart { .. }));
+        assert!(matches!(&lexemes[1], Lexeme::Scalar { .. }));
+        assert!(matches!(&lexemes[2], Lexeme::Scalar { .. }));
+        assert!(matches!(&lexemes[3], Lexeme::ObjectEnd { .. }));
+    }
+
+    #[test]
+    fn test_sequence() {
+        let lexemes = lex("(a b)");
+        assert!(matches!(&lexemes[0], Lexeme::SeqStart { .. }));
+        assert!(matches!(&lexemes[1], Lexeme::Scalar { .. }));
+        assert!(matches!(&lexemes[2], Lexeme::Scalar { .. }));
+        assert!(matches!(&lexemes[3], Lexeme::SeqEnd { .. }));
+    }
+
+    #[test]
+    fn test_newlines_preserved() {
+        let lexemes = lex("a\nb");
+        assert!(matches!(&lexemes[0], Lexeme::Scalar { .. }));
+        assert!(matches!(&lexemes[1], Lexeme::Newline { .. }));
+        assert!(matches!(&lexemes[2], Lexeme::Scalar { .. }));
+    }
+
+    #[test]
+    fn test_unicode_escape_braces() {
+        let lexemes = lex(r#""\u{1F600}""#);
+        match &lexemes[0] {
+            Lexeme::Scalar { value, .. } => {
+                assert_eq!(value.as_ref(), "😀");
+            }
+            other => panic!("expected scalar, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_unicode_escape_4digit() {
+        let lexemes = lex(r#""\u0041""#);
+        match &lexemes[0] {
+            Lexeme::Scalar { value, .. } => {
+                assert_eq!(value.as_ref(), "A");
+            }
+            other => panic!("expected scalar, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_dotted_value_is_scalar() {
+        // Dots in bare scalars are just part of the value
+        // Parser handles dot-splitting for keys
+        let lexemes = lex("a.b.c");
+        match &lexemes[0] {
+            Lexeme::Scalar {
+                value,
+                kind: ScalarKind::Bare,
+                ..
+            } => {
+                assert_eq!(value.as_ref(), "a.b.c");
+            }
+            other => panic!("expected scalar, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_attr_key() {
+        let lexemes = lex("name>value");
+        assert!(matches!(&lexemes[0], Lexeme::AttrKey { key: "name", .. }));
+        assert!(matches!(&lexemes[1], Lexeme::Scalar { .. }));
+    }
+
+    #[test]
+    fn test_attr_key_with_object() {
+        let lexemes = lex("opts>{x 1}");
+        assert!(matches!(&lexemes[0], Lexeme::AttrKey { key: "opts", .. }));
+        assert!(matches!(&lexemes[1], Lexeme::ObjectStart { .. }));
+    }
+
+    #[test]
+    fn test_attr_key_with_sequence() {
+        let lexemes = lex("tags>(a b)");
+        assert!(matches!(&lexemes[0], Lexeme::AttrKey { key: "tags", .. }));
+        assert!(matches!(&lexemes[1], Lexeme::SeqStart { .. }));
+    }
+
+    #[test]
+    fn test_standalone_gt_error() {
+        // `x > y` with spaces - the `>` is not attribute syntax
+        let lexemes = lex("x > y");
+        assert!(matches!(&lexemes[0], Lexeme::Scalar { .. }));
+        assert!(matches!(&lexemes[1], Lexeme::Error { .. }));
+    }
+
+    #[test]
+    fn test_attr_whitespace_after_gt_error() {
+        // `name> value` with space after `>` is an error
+        let lexemes = lex("name> value");
+        assert!(matches!(
+            &lexemes[0],
+            Lexeme::Error {
+                message: "whitespace after `>` in attribute (use key>value with no spaces)",
+                ..
+            }
+        ));
     }
 }

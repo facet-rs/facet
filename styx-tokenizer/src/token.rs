@@ -18,8 +18,10 @@ pub enum TokenKind {
     Comma,
     /// `>`
     Gt,
-    /// `@`
+    /// `@` (standalone unit)
     At,
+    /// `@name` (tag with identifier)
+    Tag,
 
     // Scalar tokens
     /// Bare (unquoted) scalar: `hello`, `42`, `true`

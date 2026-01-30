@@ -8,7 +8,6 @@ import {
   Document,
   Span,
   ParseError,
-  Separator,
   ScalarKind,
   PathState,
   PathValueKind,
@@ -16,10 +15,12 @@ import {
 
 export class Parser {
   private lexer: Lexer;
+  private source: string;
   private current: Token;
   private peeked: Token | null = null;
 
   constructor(source: string) {
+    this.source = source;
     this.lexer = new Lexer(source);
     this.current = this.lexer.nextToken();
   }
@@ -57,6 +58,46 @@ export class Parser {
     const entries: Entry[] = [];
     const start = this.current.span.start;
     const pathState = new PathState();
+
+    // Check for explicit root object: { ... } at document start
+    // Skip any leading commas first (just like parseEntryWithPathCheck does)
+    while (this.check("comma")) {
+      this.advance();
+    }
+
+    if (this.check("lbrace")) {
+      // Explicit root object - parse it and check for trailing content
+      const obj = this.parseObject();
+      const objValue: Value = { payload: obj, span: obj.span };
+      const unitKey: Value = { span: { start: -1, end: -1 } };
+      entries.push({ key: unitKey, value: objValue });
+
+      // After explicit root object, only whitespace/comments/EOF are allowed
+      // Skip commas (they don't count as "content")
+      while (this.check("comma")) {
+        this.advance();
+      }
+
+      if (!this.check("eof")) {
+        // Find the span of trailing content
+        const trailingStart = this.current.span.start;
+        // Consume tokens to find the end of all trailing content
+        // Use EOF token's start as end (which includes trailing whitespace/newlines)
+        while (!this.check("eof")) {
+          this.advance();
+        }
+        const trailingEnd = this.current.span.start;
+        throw new ParseError("trailing content after explicit root object", {
+          start: trailingStart,
+          end: trailingEnd,
+        });
+      }
+
+      return {
+        entries,
+        span: { start, end: this.current.span.end },
+      };
+    }
 
     while (!this.check("eof")) {
       const entry = this.parseEntryWithPathCheck(pathState);
@@ -178,7 +219,6 @@ export class Parser {
         payload: {
           type: "object",
           entries: [{ key: segmentKey, value: result }],
-          separator: "newline",
           span: objSpan,
         },
         span: objSpan,
@@ -279,9 +319,19 @@ export class Parser {
       }
       // Heredocs cannot be used as keys
       if (key.payload.type === "scalar" && key.payload.kind === "heredoc") {
-        throw new ParseError(`invalid key`, key.span);
+        // Point at just the opening marker (<<TAG), not the whole content
+        const errorSpan = this.heredocStartSpan(key.payload.span);
+        throw new ParseError(`invalid key`, errorSpan);
       }
     }
+  }
+
+  /** Get the span of just the heredoc opening marker (<<TAG\n). */
+  private heredocStartSpan(heredocSpan: Span): Span {
+    const text = this.source.slice(heredocSpan.start, heredocSpan.end);
+    const newlineIdx = text.indexOf("\n");
+    const endOffset = newlineIdx >= 0 ? newlineIdx + 1 : text.length;
+    return { start: heredocSpan.start, end: heredocSpan.start + endOffset };
   }
 
   private expandDottedPath(pathText: string, span: Span, seenKeys: Map<string, Span>): Entry {
@@ -326,7 +376,6 @@ export class Parser {
         payload: {
           type: "object",
           entries: [{ key: segmentKey, value: result }],
-          separator: "newline",
           span,
         },
         span,
@@ -378,7 +427,7 @@ export class Parser {
     if (!this.current.hadWhitespaceBefore) {
       // Check for invalid tag continuation (e.g., @org/package where / is not a valid tag char)
       if (this.check("scalar")) {
-        throw new ParseError("invalid tag name", { start: start + 1, end: this.current.span.end });
+        throw new ParseError("invalid tag name", { start, end: this.current.span.end });
       }
       if (this.check("lbrace")) {
         const obj = this.parseObject();
@@ -411,8 +460,11 @@ export class Parser {
         !this.check("eof", "rbrace", "rparen", "comma", "lbrace", "lparen")
       ) {
         // This looks like @123 or @-foo - invalid tag name
-        // Error span starts after the @, just covering the invalid name
-        throw new ParseError(`invalid tag name`, this.current.span);
+        // Error span includes the @ (it's part of the tag)
+        throw new ParseError(`invalid tag name`, {
+          start: atToken.span.start,
+          end: this.current.span.end,
+        });
       }
       return { span: { start: atToken.span.start, end: atToken.span.end } };
     }
@@ -510,7 +562,6 @@ export class Parser {
     const obj: StyxObject = {
       type: "object",
       entries: attrs,
-      separator: "comma",
       span: { start: startSpan.start, end: endSpan.end },
     };
 
@@ -564,7 +615,6 @@ export class Parser {
     const obj: StyxObject = {
       type: "object",
       entries: attrs,
-      separator: "comma",
       span: { start: startSpan.start, end: endSpan.end },
     };
 
@@ -605,12 +655,7 @@ export class Parser {
     const openBrace = this.expect("lbrace");
     const start = openBrace.span.start;
     const entries: Entry[] = [];
-    let separator: Separator | null = null;
     const seenKeys = new Map<string, Span>();
-
-    if (this.current.hadNewlineBefore) {
-      separator = "newline";
-    }
 
     while (!this.check("rbrace", "eof")) {
       const entry = this.parseEntryWithDupCheck(seenKeys);
@@ -618,28 +663,10 @@ export class Parser {
         entries.push(entry);
       }
 
+      // Skip commas (mixed separators now allowed)
       if (this.check("comma")) {
-        if (separator === "newline") {
-          throw new ParseError(
-            "mixed separators (use either commas or newlines)",
-            this.current.span,
-          );
-        }
-        separator = "comma";
         this.advance();
-      } else if (!this.check("rbrace", "eof")) {
-        if (separator === "comma") {
-          throw new ParseError(
-            "mixed separators (use either commas or newlines)",
-            this.current.span,
-          );
-        }
-        separator = "newline";
       }
-    }
-
-    if (separator === null) {
-      separator = "comma";
     }
 
     if (this.check("eof")) {
@@ -650,7 +677,6 @@ export class Parser {
     return {
       type: "object",
       entries,
-      separator,
       span: { start, end },
     };
   }

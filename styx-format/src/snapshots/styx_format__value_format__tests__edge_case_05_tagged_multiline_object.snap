@@ -2,7 +2,4 @@
 source: crates/styx-format/src/value_format.rs
 expression: result
 ---
-type @object{
-    name @string
-    age @int
-}
+type @object{name @string, age @int}

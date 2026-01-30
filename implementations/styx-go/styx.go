@@ -44,25 +44,6 @@ func (k ScalarKind) String() string {
 	}
 }
 
-// Separator represents the separator style in an object.
-type Separator int
-
-const (
-	SeparatorComma Separator = iota
-	SeparatorNewline
-)
-
-func (s Separator) String() string {
-	switch s {
-	case SeparatorComma:
-		return "comma"
-	case SeparatorNewline:
-		return "newline"
-	default:
-		return "unknown"
-	}
-}
-
 // Scalar represents a scalar value.
 type Scalar struct {
 	Text string
@@ -90,9 +71,8 @@ type Sequence struct {
 
 // Object represents an object with key-value entries.
 type Object struct {
-	Entries   []*Entry
-	Separator Separator
-	Span      Span
+	Entries []*Entry
+	Span    Span
 }
 
 // PayloadKind identifies the type of payload in a Value.

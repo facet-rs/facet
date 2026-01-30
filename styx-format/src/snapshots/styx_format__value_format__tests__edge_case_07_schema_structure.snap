@@ -2,14 +2,8 @@
 source: crates/styx-format/src/value_format.rs
 expression: result
 ---
-meta {
-    id https://example.com/schema
-    version 1.0
-}
+meta {id https://example.com/schema, version 1.0}
 
 schema {
-    @ @object{
-        name @string
-        port @int
-    }
+    @ @object{name @string, port @int}
 }

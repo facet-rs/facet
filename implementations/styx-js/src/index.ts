@@ -10,7 +10,6 @@ export type {
   Document,
   Span,
   ScalarKind,
-  Separator,
   Tag,
 } from "./types.js";
 export { ParseError } from "./types.js";

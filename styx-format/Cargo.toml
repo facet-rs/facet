@@ -15,15 +15,9 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 styx-cst.workspace = true
 styx-parse.workspace = true
 styx-tree.workspace = true
-rowan = "0.16"
-
-# Tracing (optional - compiles to nothing when disabled)
-tracing = { workspace = true, optional = true }
 
 [dev-dependencies]
-tracing.workspace = true
 insta = "1"
 proptest.workspace = true
 
 [features]
-tracing = ["dep:tracing", "styx-parse/tracing"]

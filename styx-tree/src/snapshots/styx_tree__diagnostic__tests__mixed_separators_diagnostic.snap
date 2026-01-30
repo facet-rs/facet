@@ -3,9 +3,9 @@ source: crates/styx-tree/src/diagnostic.rs
 expression: stripped
 ---
 Error: mixed separators in object
-   ╭─[ test.styx:2:6 ]
+   ╭─[ test.styx:3:6 ]
    │
- 2 │   a 1,
+ 3 │   b 2
    │      ┬  
    │      ╰── mixing commas and newlines
    │ 

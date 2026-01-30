@@ -104,13 +104,14 @@ func (ps *pathState) checkAndUpdate(path []string, span Span, kind pathValueKind
 
 type parser struct {
 	lexer   *Lexer
+	source  string
 	current *Token
 	peeked  *Token
 	err     error
 }
 
 func newParser(source string) *parser {
-	p := &parser{lexer: newLexer(source)}
+	p := &parser{lexer: newLexer(source), source: source}
 	tok, err := p.lexer.nextToken()
 	if err != nil {
 		p.err = err
@@ -178,6 +179,49 @@ func (p *parser) parse() (*Document, error) {
 	entries := []*Entry{}
 	start := p.current.Span.Start
 	ps := newPathState()
+
+	// Skip any leading commas
+	for p.check(TokenComma) {
+		p.advance()
+	}
+
+	// Check for explicit root object: { ... } at document start
+	if p.check(TokenLBrace) {
+		// Explicit root object - parse it and check for trailing content
+		obj, err := p.parseObject()
+		if err != nil {
+			return nil, err
+		}
+		objValue := &Value{Span: obj.Span, PayloadKind: PayloadObject, Object: obj}
+		unitKey := &Value{Span: Span{-1, -1}}
+		entries = append(entries, &Entry{Key: unitKey, Value: objValue})
+
+		// After explicit root object, only whitespace/comments/EOF are allowed
+		// Skip commas (they don't count as "content")
+		for p.check(TokenComma) {
+			p.advance()
+		}
+
+		if !p.check(TokenEOF) {
+			// Find the span of trailing content
+			trailingStart := p.current.Span.Start
+			// Consume tokens to find the end of all trailing content
+			// Use EOF token's start as end (which includes trailing whitespace/newlines)
+			for !p.check(TokenEOF) {
+				p.advance()
+			}
+			trailingEnd := p.current.Span.Start
+			return nil, &ParseError{
+				Message: "trailing content after explicit root object",
+				Span:    Span{trailingStart, trailingEnd},
+			}
+		}
+
+		return &Document{
+			Entries: entries,
+			Span:    Span{start, p.current.Span.End},
+		}, nil
+	}
 
 	for !p.check(TokenEOF) {
 		if p.err != nil {
@@ -343,9 +387,22 @@ func (p *parser) validateKey(key *Value) error {
 		return &ParseError{Message: "invalid key", Span: key.Span}
 	}
 	if key.PayloadKind == PayloadScalar && key.Scalar.Kind == ScalarHeredoc {
-		return &ParseError{Message: "invalid key", Span: key.Span}
+		// Point at just the opening marker (<<TAG), not the whole content
+		errorSpan := p.heredocStartSpan(key.Scalar.Span)
+		return &ParseError{Message: "invalid key", Span: errorSpan}
 	}
 	return nil
+}
+
+// heredocStartSpan returns the span of just the heredoc opening marker (<<TAG\n).
+func (p *parser) heredocStartSpan(heredocSpan Span) Span {
+	text := p.source[heredocSpan.Start:heredocSpan.End]
+	newlineIdx := strings.Index(text, "\n")
+	endOffset := len(text)
+	if newlineIdx >= 0 {
+		endOffset = newlineIdx + 1
+	}
+	return Span{Start: heredocSpan.Start, End: heredocSpan.Start + endOffset}
 }
 
 func (p *parser) expandDottedPathWithState(pathText string, span Span, ps *pathState) (*Entry, error) {
@@ -400,9 +457,8 @@ func (p *parser) expandDottedPathWithState(pathText string, span Span, ps *pathS
 			Span:        objSpan,
 			PayloadKind: PayloadObject,
 			Object: &Object{
-				Entries:   []*Entry{{Key: segmentKey, Value: result}},
-				Separator: SeparatorNewline,
-				Span:      objSpan,
+				Entries: []*Entry{{Key: segmentKey, Value: result}},
+				Span:    objSpan,
 			},
 		}
 	}
@@ -456,10 +512,10 @@ func (p *parser) parseTagValue() (*Value, error) {
 		if p.check(TokenScalar) {
 			// There's a scalar immediately after the tag without whitespace
 			// This means there was a character that broke the tag name (like /)
-			// Error span starts after the @ (at the tag name) and ends at the invalid scalar
+			// Error span starts at the @ and ends at the invalid scalar
 			return nil, &ParseError{
 				Message: "invalid tag name",
-				Span:    Span{start + 1, p.current.Span.End},
+				Span:    Span{start, p.current.Span.End},
 			}
 		}
 		if p.check(TokenLBrace) {
@@ -500,7 +556,8 @@ func (p *parser) parseValue() (*Value, error) {
 	if p.check(TokenAt) {
 		atToken := p.advance()
 		if !p.current.HadWhitespaceBefore && !p.check(TokenEOF, TokenRBrace, TokenRParen, TokenComma, TokenLBrace, TokenLParen) {
-			return nil, &ParseError{Message: "invalid tag name", Span: p.current.Span}
+			// Error span includes the @ (it's part of the tag)
+			return nil, &ParseError{Message: "invalid tag name", Span: Span{atToken.Span.Start, p.current.Span.End}}
 		}
 		return &Value{Span: Span{atToken.Span.Start, atToken.Span.End}}, nil
 	}
@@ -623,9 +680,8 @@ func (p *parser) parseAttributesAfterGT(firstKeyToken *Token) (*Value, error) {
 	}
 
 	obj := &Object{
-		Entries:   attrs,
-		Separator: SeparatorComma,
-		Span:      Span{startSpan.Start, endSpan.End},
+		Entries: attrs,
+		Span:    Span{startSpan.Start, endSpan.End},
 	}
 
 	return &Value{Span: obj.Span, PayloadKind: PayloadObject, Object: obj}, nil
@@ -662,14 +718,7 @@ func (p *parser) parseObject() (*Object, error) {
 	}
 	start := openBrace.Span.Start
 	entries := []*Entry{}
-	var separator Separator
-	hasSeparator := false
 	seenKeys := make(map[string]Span)
-
-	if p.current.HadNewlineBefore {
-		separator = SeparatorNewline
-		hasSeparator = true
-	}
 
 	for !p.check(TokenRBrace, TokenEOF) {
 		entry, err := p.parseEntryWithDupCheck(seenKeys)
@@ -680,30 +729,10 @@ func (p *parser) parseObject() (*Object, error) {
 			entries = append(entries, entry)
 		}
 
+		// Skip commas (mixed separators are allowed)
 		if p.check(TokenComma) {
-			if hasSeparator && separator == SeparatorNewline {
-				return nil, &ParseError{
-					Message: "mixed separators (use either commas or newlines)",
-					Span:    p.current.Span,
-				}
-			}
-			separator = SeparatorComma
-			hasSeparator = true
 			p.advance()
-		} else if !p.check(TokenRBrace, TokenEOF) {
-			if hasSeparator && separator == SeparatorComma {
-				return nil, &ParseError{
-					Message: "mixed separators (use either commas or newlines)",
-					Span:    p.current.Span,
-				}
-			}
-			separator = SeparatorNewline
-			hasSeparator = true
 		}
-	}
-
-	if !hasSeparator {
-		separator = SeparatorComma
 	}
 
 	if p.check(TokenEOF) {
@@ -717,7 +746,7 @@ func (p *parser) parseObject() (*Object, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Object{Entries: entries, Separator: separator, Span: Span{start, closeBrace.Span.End}}, nil
+	return &Object{Entries: entries, Span: Span{start, closeBrace.Span.End}}, nil
 }
 
 func (p *parser) parseSequence() (*Sequence, error) {

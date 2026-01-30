@@ -110,6 +110,7 @@ final class ComplianceTests: XCTestCase {
             swiftNorm, rustNorm,
             """
             Mismatch in \(relPath)
+            \(annotateErrorDiff(source: content, swiftOutput: swiftOutput, rustOutput: rustOutput))
             --- Swift output ---
             \(swiftOutput)
             --- Rust output ---
@@ -193,5 +194,100 @@ final class ComplianceTests: XCTestCase {
             .replacingOccurrences(of: "\n", with: "\\n")
             .replacingOccurrences(of: "\r", with: "\\r")
             .replacingOccurrences(of: "\t", with: "\\t")
+    }
+
+    private func annotateErrorDiff(source: String, swiftOutput: String, rustOutput: String)
+        -> String
+    {
+        let swiftSpan = parseErrorSpan(swiftOutput)
+        let rustSpan = parseErrorSpan(rustOutput)
+
+        if swiftSpan == nil && rustSpan == nil {
+            return ""
+        }
+
+        var result = "\n"
+
+        if let (start, end, msg) = rustSpan {
+            result += "Expected error:\n"
+            result += annotateSpan(source: source, start: start, end: end, msg: msg)
+            result += "\n"
+        } else {
+            result += "Expected: no error\n\n"
+        }
+
+        if let (start, end, msg) = swiftSpan {
+            result += "Got error:\n"
+            result += annotateSpan(source: source, start: start, end: end, msg: msg)
+        } else {
+            result += "Got: no error\n"
+        }
+
+        return result
+    }
+
+    private func parseErrorSpan(_ output: String) -> (Int, Int, String)? {
+        let pattern = #"\(error \[(\d+), (\d+)\] "([^"]*)""#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+            let match = regex.firstMatch(
+                in: output, range: NSRange(output.startIndex..., in: output)),
+            let startRange = Range(match.range(at: 1), in: output),
+            let endRange = Range(match.range(at: 2), in: output),
+            let msgRange = Range(match.range(at: 3), in: output),
+            let start = Int(output[startRange]),
+            let end = Int(output[endRange])
+        else {
+            return nil
+        }
+        return (start, end, String(output[msgRange]))
+    }
+
+    private func annotateSpan(source: String, start: Int, end: Int, msg: String) -> String {
+        guard start >= 0, end >= 0, start <= source.utf8.count else {
+            return "  [invalid span \(start)-\(end)]\n"
+        }
+        let effectiveEnd = min(end, source.utf8.count)
+
+        // Find all lines that overlap with the span
+        struct LineInfo {
+            let text: String
+            let lineStart: Int
+            let lineEnd: Int
+        }
+        var lines: [LineInfo] = []
+        var pos = 0
+        for lineText in source.split(separator: "\n", omittingEmptySubsequences: false).map({
+            String($0)
+        }) {
+            let lineStart = pos
+            let lineEnd = pos + lineText.utf8.count
+            // Check if this line overlaps with [start, end)
+            if lineEnd >= start && lineStart < effectiveEnd {
+                lines.append(LineInfo(text: lineText, lineStart: lineStart, lineEnd: lineEnd))
+            }
+            pos = lineEnd + 1  // +1 for the newline
+            if lineStart >= effectiveEnd {
+                break
+            }
+        }
+
+        if lines.isEmpty {
+            return "  [span \(start)-\(end) not found]\n"
+        }
+
+        var result = ""
+        for li in lines {
+            result += "  \(li.text)\n"
+            // Calculate caret positions for this line
+            let caretStart = max(start, li.lineStart) - li.lineStart
+            let caretEnd = min(effectiveEnd, li.lineEnd) - li.lineStart
+            var width = caretEnd - caretStart
+            if width < 1 { width = 1 }
+            let spaces = String(repeating: " ", count: caretStart)
+            let carets = String(repeating: "^", count: width)
+            result += "  \(spaces)\(carets)\n"
+        }
+        result += "  \(msg) (\(start)-\(end))\n"
+        return result
     }
 }
