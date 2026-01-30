@@ -21,6 +21,16 @@ impl Path {
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
+
+    /// Returns the path indices as a slice.
+    pub fn as_slice(&self) -> &[u32] {
+        &self.0
+    }
+
+    /// Returns the number of elements in the path.
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
 }
 
 /// An operation on a Partial.

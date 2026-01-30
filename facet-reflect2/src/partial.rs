@@ -8,7 +8,7 @@ use crate::arena::{Arena, Idx};
 use crate::errors::{ErrorLocation, ReflectError, ReflectErrorKind};
 use crate::frame::{Frame, FrameFlags};
 use crate::ops::{Op, Path, Source};
-use facet_core::{Facet, PtrUninit, Shape};
+use facet_core::{Facet, Field, PtrUninit, Shape, Type, UserType};
 
 /// Manages incremental construction of a value.
 pub struct Partial<'facet> {
@@ -53,7 +53,11 @@ impl<'facet> Partial<'facet> {
         };
 
         // Create frame with OWNS_ALLOC flag
-        let mut frame = Frame::new(data, shape);
+        // Use appropriate constructor based on type
+        let mut frame = match shape.ty {
+            Type::User(UserType::Struct(ref s)) => Frame::new_struct(data, shape, s.fields.len()),
+            _ => Frame::new(data, shape),
+        };
         frame.flags |= FrameFlags::OWNS_ALLOC;
 
         // Store in arena
@@ -73,18 +77,42 @@ impl<'facet> Partial<'facet> {
         for op in ops {
             match op {
                 Op::Set { path, source } => {
-                    // For now: empty path only (setting current frame directly)
-                    assert!(path.is_empty(), "non-empty paths not yet supported");
+                    // Resolve path first (immutable borrow)
+                    let frame = self.arena.get(self.current);
+                    let (target_ptr, target_shape, frame_shape) = self.resolve_path(frame, path)?;
 
                     match source {
                         Source::Move(mov) => {
-                            let frame = self.arena.get_mut(self.current);
-                            frame.assert_shape(mov.shape(), path)?;
-                            frame.uninit();
+                            // Verify shape matches
+                            if !target_shape.is_shape(mov.shape()) {
+                                return Err(ReflectError {
+                                    location: ErrorLocation {
+                                        shape: frame_shape,
+                                        path: path.clone(),
+                                    },
+                                    kind: ReflectErrorKind::ShapeMismatch {
+                                        expected: target_shape,
+                                        actual: mov.shape(),
+                                    },
+                                });
+                            }
 
+                            // Copy the value
                             // SAFETY: Move's safety invariant guarantees ptr is valid for shape
                             unsafe {
-                                frame.copy_from(mov.ptr(), mov.shape());
+                                target_ptr.copy_from(mov.ptr(), target_shape).unwrap();
+                            }
+
+                            // Now get mutable borrow to update state
+                            let frame = self.arena.get_mut(self.current);
+
+                            // Mark as initialized
+                            if path.is_empty() {
+                                frame.flags |= FrameFlags::INIT;
+                            } else {
+                                // Mark child as complete
+                                let field_idx = path.as_slice()[0] as usize;
+                                frame.mark_child_complete(field_idx);
                             }
                         }
                         Source::Build(_) => todo!("Build source"),
@@ -94,6 +122,77 @@ impl<'facet> Partial<'facet> {
             }
         }
         Ok(())
+    }
+
+    /// Resolve a path to a target pointer and shape.
+    ///
+    /// For an empty path, returns the frame's data pointer and shape.
+    /// For a non-empty path, navigates through struct fields.
+    ///
+    /// Returns (target_ptr, target_shape, frame_shape) - frame_shape is needed for error reporting.
+    fn resolve_path(
+        &self,
+        frame: &Frame,
+        path: &Path,
+    ) -> Result<(PtrUninit, &'static Shape, &'static Shape), ReflectError> {
+        if path.is_empty() {
+            return Ok((frame.data, frame.shape, frame.shape));
+        }
+
+        // For now, only support single-level paths into structs
+        let indices = path.as_slice();
+        assert!(
+            indices.len() == 1,
+            "multi-level paths not yet supported (got {} levels)",
+            indices.len()
+        );
+
+        let field_idx = indices[0];
+        let field = self.get_struct_field(frame.shape, field_idx, path)?;
+
+        // Compute field pointer: base + offset
+        let field_ptr = unsafe { PtrUninit::new(frame.data.as_mut_byte_ptr().add(field.offset)) };
+
+        Ok((field_ptr, field.shape(), frame.shape))
+    }
+
+    /// Get a struct field by index.
+    fn get_struct_field(
+        &self,
+        shape: &'static Shape,
+        index: u32,
+        path: &Path,
+    ) -> Result<&'static Field, ReflectError> {
+        // Get struct type from shape
+        let fields = match shape.ty {
+            Type::User(UserType::Struct(ref s)) => s.fields,
+            _ => {
+                return Err(ReflectError {
+                    location: ErrorLocation {
+                        shape,
+                        path: path.clone(),
+                    },
+                    kind: ReflectErrorKind::NotAStruct,
+                });
+            }
+        };
+
+        // Bounds check
+        let idx = index as usize;
+        if idx >= fields.len() {
+            return Err(ReflectError {
+                location: ErrorLocation {
+                    shape,
+                    path: path.clone(),
+                },
+                kind: ReflectErrorKind::FieldIndexOutOfBounds {
+                    index,
+                    field_count: fields.len(),
+                },
+            });
+        }
+
+        Ok(&fields[idx])
     }
 
     /// Build the final value, consuming the Partial.
@@ -110,8 +209,16 @@ impl<'facet> Partial<'facet> {
             "build() called with wrong type"
         );
 
-        // Verify initialized
-        if !frame.flags.contains(FrameFlags::INIT) {
+        // Verify initialized - check based on type
+        let is_initialized = if frame.flags.contains(FrameFlags::INIT) {
+            // Whole value was set (e.g., scalar or Move of entire struct)
+            true
+        } else {
+            // For compound types, check all children are complete
+            frame.all_children_complete()
+        };
+
+        if !is_initialized {
             return Err(ReflectError {
                 location: ErrorLocation {
                     shape: frame.shape,

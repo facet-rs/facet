@@ -1,5 +1,6 @@
 //! Frame for tracking partial value construction.
 
+use crate::arena::Idx;
 use crate::errors::{ErrorLocation, ReflectError, ReflectErrorKind};
 use crate::ops::Path;
 use facet_core::{PtrConst, PtrUninit, Shape};
@@ -7,11 +8,21 @@ use facet_core::{PtrConst, PtrUninit, Shape};
 bitflags::bitflags! {
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
     pub struct FrameFlags: u8 {
-        /// The value is initialized
+        /// The value is initialized (for scalars)
         const INIT = 1 << 0;
         /// This frame owns its allocation
         const OWNS_ALLOC = 1 << 1;
     }
+}
+
+/// Children structure varies by container type.
+/// Each child slot is either NOT_STARTED, COMPLETE, or a valid frame index.
+pub enum Children {
+    /// Structs, arrays: indexed by field/element index
+    Indexed(Vec<Idx<Frame>>),
+
+    /// Scalars: no children
+    None,
 }
 
 /// A frame tracking construction of a single value.
@@ -24,6 +35,9 @@ pub struct Frame {
 
     /// State flags.
     pub flags: FrameFlags,
+
+    /// Children tracking (for compound types).
+    pub children: Children,
 }
 
 impl Frame {
@@ -32,6 +46,35 @@ impl Frame {
             data,
             shape,
             flags: FrameFlags::empty(),
+            children: Children::None,
+        }
+    }
+
+    /// Create a frame for a struct with the given number of fields.
+    pub fn new_struct(data: PtrUninit, shape: &'static Shape, field_count: usize) -> Self {
+        Frame {
+            data,
+            shape,
+            flags: FrameFlags::empty(),
+            children: Children::Indexed(vec![Idx::NOT_STARTED; field_count]),
+        }
+    }
+
+    /// Mark a child as complete.
+    pub fn mark_child_complete(&mut self, idx: usize) {
+        match &mut self.children {
+            Children::Indexed(slots) => {
+                slots[idx] = Idx::COMPLETE;
+            }
+            Children::None => panic!("cannot mark child on scalar"),
+        }
+    }
+
+    /// Check if all children are complete.
+    pub fn all_children_complete(&self) -> bool {
+        match &self.children {
+            Children::Indexed(slots) => slots.iter().all(|id| id.is_complete()),
+            Children::None => true,
         }
     }
 

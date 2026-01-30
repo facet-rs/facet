@@ -31,4 +31,8 @@ pub enum ReflectErrorKind {
     Unsized { shape: &'static Shape },
     /// Memory allocation failed.
     AllocFailed { layout: core::alloc::Layout },
+    /// Field index out of bounds.
+    FieldIndexOutOfBounds { index: u32, field_count: usize },
+    /// Type is not a struct (cannot navigate into fields).
+    NotAStruct,
 }

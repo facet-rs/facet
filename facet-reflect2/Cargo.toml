@@ -25,6 +25,7 @@ facet-core = { path = "../facet-core", version = "0.43.2" }
 smallvec = "2.0.0-alpha.12"
 
 [dev-dependencies]
+facet = { path = "../facet" }
 
 [lints]
 workspace = true

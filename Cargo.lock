@@ -1360,6 +1360,7 @@ name = "facet-reflect2"
 version = "0.1.0"
 dependencies = [
  "bitflags 2.10.0",
+ "facet",
  "facet-core",
  "smallvec 2.0.0-alpha.12",
 ]
