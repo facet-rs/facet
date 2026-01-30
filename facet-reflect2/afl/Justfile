@@ -52,6 +52,10 @@ reproduce-all:
         target/debug/facet-reflect2-afl < "$$f" 2>&1 | grep -E "^thread.*panicked" || true; \
     done | sort -u
 
+# Show coverage from the corpus
+cov: build-native
+    cargo afl showmap -C -i out/default/queue -o /dev/stdout -- target/debug/facet-reflect2-afl
+
 # Clean build artifacts and output
 clean:
     rm -rf target out minimized.bin
