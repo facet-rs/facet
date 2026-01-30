@@ -64,4 +64,10 @@ pub enum ReflectErrorKind {
     Poisoned,
     /// Type does not implement Default.
     NoDefault { shape: &'static Shape },
+    /// Cannot use Build with empty path.
+    BuildAtEmptyPath,
+    /// Cannot End at root frame.
+    EndAtRoot,
+    /// Cannot End with incomplete children.
+    EndWithIncomplete,
 }

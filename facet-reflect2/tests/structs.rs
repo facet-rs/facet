@@ -205,3 +205,73 @@ fn set_default_fails_for_type_without_default() {
     let err = partial.apply(&[Op::set().default()]).unwrap_err();
     assert!(matches!(err.kind, ReflectErrorKind::NoDefault { .. }));
 }
+
+// Nested struct for Build tests
+#[derive(Debug, PartialEq, Facet)]
+struct Outer {
+    inner: Point,
+    extra: i32,
+}
+
+#[test]
+fn build_nested_struct() {
+    let mut partial = Partial::alloc::<Outer>().unwrap();
+
+    // Build inner struct incrementally
+    partial.apply(&[Op::set().at(0).build()]).unwrap();
+
+    // Now we're in the inner frame - set its fields
+    let x = 10i32;
+    let y = 20i32;
+    partial
+        .apply(&[Op::set().at(0).mov(&x), Op::set().at(1).mov(&y)])
+        .unwrap();
+
+    // End the inner frame
+    partial.apply(&[Op::end()]).unwrap();
+
+    // Set the outer extra field
+    let extra = 99i32;
+    partial.apply(&[Op::set().at(1).mov(&extra)]).unwrap();
+
+    let result: Outer = partial.build().unwrap();
+    assert_eq!(
+        result,
+        Outer {
+            inner: Point { x: 10, y: 20 },
+            extra: 99
+        }
+    );
+}
+
+#[test]
+fn end_at_root_fails() {
+    let mut partial = Partial::alloc::<Point>().unwrap();
+
+    let err = partial.apply(&[Op::end()]).unwrap_err();
+    assert!(matches!(err.kind, ReflectErrorKind::EndAtRoot));
+}
+
+#[test]
+fn end_with_incomplete_fails() {
+    let mut partial = Partial::alloc::<Outer>().unwrap();
+
+    // Start building inner
+    partial.apply(&[Op::set().at(0).build()]).unwrap();
+
+    // Only set one field of inner
+    let x = 10i32;
+    partial.apply(&[Op::set().at(0).mov(&x)]).unwrap();
+
+    // Try to end - should fail because inner.y is not set
+    let err = partial.apply(&[Op::end()]).unwrap_err();
+    assert!(matches!(err.kind, ReflectErrorKind::EndWithIncomplete));
+}
+
+#[test]
+fn build_at_empty_path_fails() {
+    let mut partial = Partial::alloc::<Point>().unwrap();
+
+    let err = partial.apply(&[Op::set().build()]).unwrap_err();
+    assert!(matches!(err.kind, ReflectErrorKind::BuildAtEmptyPath));
+}

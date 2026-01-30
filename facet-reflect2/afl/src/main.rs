@@ -181,10 +181,8 @@ pub enum FuzzSource {
     Move(FuzzValue),
     /// Use the type's default value.
     Default,
-    // Build is defined in the API but not yet implemented in Partial::apply
-    // TODO: uncomment when implemented
-    // /// Build incrementally - pushes a frame.
-    // Build { len_hint: Option<u8> },
+    /// Build incrementally - pushes a frame.
+    Build,
 }
 
 // ============================================================================
@@ -220,6 +218,8 @@ impl FuzzPath {
 pub enum FuzzOp {
     /// Set a value at a path.
     Set { path: FuzzPath, source: FuzzSource },
+    /// End the current frame.
+    End,
 }
 
 // ============================================================================
@@ -381,7 +381,19 @@ fn run_fuzz(input: FuzzInput) {
                         // Apply may fail (e.g., type doesn't implement Default, invalid path)
                         let _ = partial.apply(&[op]);
                     }
+                    FuzzSource::Build => {
+                        let op = Op::Set {
+                            path: path.to_path(),
+                            source: Source::Build(facet_reflect2::Build { len_hint: None }),
+                        };
+                        // Apply may fail (e.g., empty path, invalid path)
+                        let _ = partial.apply(&[op]);
+                    }
                 }
+            }
+            FuzzOp::End => {
+                // End may fail (e.g., at root, incomplete children)
+                let _ = partial.apply(&[Op::End]);
             }
         }
     }

@@ -15,6 +15,11 @@ impl Op<'_> {
             path: Path::default(),
         }
     }
+
+    /// Create an End operation.
+    pub fn end() -> Op<'static> {
+        Op::End
+    }
 }
 
 impl SetBuilder {

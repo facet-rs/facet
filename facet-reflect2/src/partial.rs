@@ -166,7 +166,31 @@ impl<'facet> Partial<'facet> {
                                 c.mark_complete(field_idx);
                             }
                         }
-                        Source::Build(_) => todo!("Build source"),
+                        Source::Build(_build) => {
+                            // Build pushes a new frame for incremental construction
+                            // Path must be non-empty (can't "build" at current position)
+                            if path.is_empty() {
+                                return Err(self.error(ReflectErrorKind::BuildAtEmptyPath));
+                            }
+
+                            // Resolve path to get target shape and pointer
+                            let frame = self.arena.get(self.current);
+                            let target = self.resolve_path(frame, path)?;
+
+                            // Create a new frame for the nested value
+                            let field_idx = path.as_slice()[0];
+                            let mut new_frame = match target.shape.ty {
+                                Type::User(UserType::Struct(ref s)) => {
+                                    Frame::new_struct(target.data, target.shape, s.fields.len())
+                                }
+                                _ => Frame::new(target.data, target.shape),
+                            };
+                            new_frame.parent = Some((self.current, field_idx));
+
+                            // Store in arena and make it current
+                            let new_idx = self.arena.alloc(new_frame);
+                            self.current = new_idx;
+                        }
                         Source::Default => {
                             // Drop any existing value before overwriting
                             if path.is_empty() {
@@ -203,6 +227,40 @@ impl<'facet> Partial<'facet> {
                             }
                         }
                     }
+                }
+                Op::End => {
+                    // Pop back to parent frame
+                    let frame = self.arena.get(self.current);
+                    let Some((parent_idx, field_idx)) = frame.parent else {
+                        return Err(self.error(ReflectErrorKind::EndAtRoot));
+                    };
+
+                    // Check if current frame is complete
+                    let is_complete = if frame.flags.contains(FrameFlags::INIT) {
+                        true
+                    } else {
+                        match &frame.children {
+                            Children::Indexed(c) => c.all_complete(),
+                            Children::None => false,
+                        }
+                    };
+
+                    if !is_complete {
+                        return Err(self.error(ReflectErrorKind::EndWithIncomplete));
+                    }
+
+                    // Free the current frame (memory stays - it's part of parent's allocation)
+                    let _ = self.arena.free(self.current);
+
+                    // Mark field complete in parent
+                    let parent = self.arena.get_mut(parent_idx);
+                    let Children::Indexed(c) = &mut parent.children else {
+                        return Err(self.error_at(parent_idx, ReflectErrorKind::NotIndexedChildren));
+                    };
+                    c.mark_complete(field_idx as usize);
+
+                    // Pop back to parent
+                    self.current = parent_idx;
                 }
             }
         }
