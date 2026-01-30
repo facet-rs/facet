@@ -60,4 +60,6 @@ pub enum ReflectErrorKind {
     DoubleFree,
     /// Arena slot is empty.
     SlotEmpty,
+    /// Partial is poisoned after a previous error.
+    Poisoned,
 }

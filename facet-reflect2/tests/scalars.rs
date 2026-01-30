@@ -83,3 +83,44 @@ fn set_zst() {
     let result: () = partial.build().unwrap();
     assert_eq!(result, ());
 }
+
+#[test]
+fn build_without_initialization() {
+    let partial = Partial::alloc::<u32>().unwrap();
+
+    // Try to build without setting any value
+    let err = partial.build::<u32>().unwrap_err();
+    assert!(matches!(err.kind, ReflectErrorKind::NotInitialized));
+}
+
+#[test]
+fn build_wrong_type() {
+    let mut partial = Partial::alloc::<u32>().unwrap();
+
+    let value = 42u32;
+    partial.apply(&[Op::set().mov(&value)]).unwrap();
+
+    // Try to build as wrong type
+    let err = partial.build::<i32>().unwrap_err();
+    assert!(matches!(err.kind, ReflectErrorKind::ShapeMismatch { .. }));
+}
+
+#[test]
+fn drop_without_build() {
+    // Test that dropping a Partial without calling build() properly cleans up
+    let mut partial = Partial::alloc::<String>().unwrap();
+
+    let value = String::from("will be dropped");
+    partial.apply(&[Op::set().mov(&value)]).unwrap();
+    std::mem::forget(value);
+
+    // Drop without building - should clean up the String
+    drop(partial);
+}
+
+#[test]
+fn drop_uninitialized() {
+    // Test that dropping an uninitialized Partial works
+    let partial = Partial::alloc::<String>().unwrap();
+    drop(partial);
+}

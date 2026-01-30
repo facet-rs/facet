@@ -163,6 +163,21 @@ impl Frame {
         self.flags |= FrameFlags::INIT;
         Ok(())
     }
+
+    /// Deallocate the frame's memory if it owns the allocation.
+    ///
+    /// This should be called after the value has been moved out or dropped.
+    pub fn dealloc_if_owned(self) {
+        if self.flags.contains(FrameFlags::OWNS_ALLOC) {
+            let layout = self.shape.layout.sized_layout().unwrap();
+            if layout.size() > 0 {
+                // SAFETY: we allocated this memory with this layout
+                unsafe {
+                    std::alloc::dealloc(self.data.as_mut_byte_ptr(), layout);
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

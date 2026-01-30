@@ -1,6 +1,6 @@
 //! Partial value construction.
 
-use std::alloc::{alloc, dealloc};
+use std::alloc::alloc;
 use std::marker::PhantomData;
 use std::ptr::NonNull;
 
@@ -15,6 +15,8 @@ pub struct Partial<'facet> {
     arena: Arena<Frame>,
     root: Idx<Frame>,
     current: Idx<Frame>,
+    root_shape: &'static Shape,
+    poisoned: bool,
     _marker: PhantomData<&'facet ()>,
 }
 
@@ -74,12 +76,51 @@ impl<'facet> Partial<'facet> {
             arena,
             root,
             current: root,
+            root_shape: shape,
+            poisoned: false,
             _marker: PhantomData,
         })
     }
 
+    /// Poison the partial and clean up all resources.
+    /// After this, any operation will return `Poisoned` error.
+    fn poison(&mut self) {
+        if self.poisoned {
+            return;
+        }
+        self.poisoned = true;
+
+        // Clean up if root is valid
+        if self.root.is_valid() {
+            // Drop any initialized value
+            self.arena.get_mut(self.root).uninit();
+
+            // Free the frame and deallocate if we own the allocation
+            let frame = self.arena.free(self.root);
+            frame.dealloc_if_owned();
+
+            // Mark root as invalid
+            self.root = Idx::COMPLETE;
+        }
+    }
+
     /// Apply a sequence of operations.
     pub fn apply(&mut self, ops: &[Op<'_>]) -> Result<(), ReflectError> {
+        if self.poisoned {
+            return Err(ReflectError::at_root(
+                self.root_shape,
+                ReflectErrorKind::Poisoned,
+            ));
+        }
+
+        let result = self.apply_inner(ops);
+        if result.is_err() {
+            self.poison();
+        }
+        result
+    }
+
+    fn apply_inner(&mut self, ops: &[Op<'_>]) -> Result<(), ReflectError> {
         for op in ops {
             match op {
                 Op::Set { path, source } => {
@@ -229,18 +270,7 @@ impl<'facet> Partial<'facet> {
         // Mark root as invalid so Drop doesn't try to free it again
         self.root = Idx::COMPLETE;
 
-        if frame.flags.contains(FrameFlags::OWNS_ALLOC) {
-            let layout = frame.shape.layout.sized_layout().unwrap();
-            if layout.size() > 0 {
-                // SAFETY:
-                // - frame.data was allocated with this layout in alloc_shape
-                // - we own the allocation (OWNS_ALLOC flag)
-                // - we've read the value out, so we're not dropping it, just deallocating
-                unsafe {
-                    dealloc(frame.data.as_mut_byte_ptr(), layout);
-                }
-            }
-        }
+        frame.dealloc_if_owned();
 
         Ok(value)
     }
@@ -255,15 +285,7 @@ impl<'facet> Drop for Partial<'facet> {
 
             // Free the frame and deallocate if we own the allocation
             let frame = self.arena.free(self.root);
-            if frame.flags.contains(FrameFlags::OWNS_ALLOC) {
-                let layout = frame.shape.layout.sized_layout().unwrap();
-                if layout.size() > 0 {
-                    // SAFETY: we allocated this memory in alloc_shape with this layout
-                    unsafe {
-                        dealloc(frame.data.as_mut_byte_ptr(), layout);
-                    }
-                }
-            }
+            frame.dealloc_if_owned();
         }
     }
 }
