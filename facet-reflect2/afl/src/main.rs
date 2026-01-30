@@ -1,4 +1,4 @@
-#[cfg(not(feature = "cov"))]
+#[cfg(not(feature = "standalone"))]
 use afl::fuzz;
 use arbitrary::Arbitrary;
 use facet::Facet;
@@ -460,14 +460,14 @@ pub struct FuzzInput {
 // Main fuzz target
 // ============================================================================
 
-#[cfg(not(feature = "cov"))]
+#[cfg(not(feature = "standalone"))]
 fn main() {
     fuzz!(|input: FuzzInput| {
         run_fuzz(input, false);
     });
 }
 
-#[cfg(feature = "cov")]
+#[cfg(feature = "standalone")]
 fn main() {
     use arbitrary::Unstructured;
     use std::io::Read;

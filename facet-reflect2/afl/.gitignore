@@ -1,4 +1,11 @@
 target/
+target-standalone/
+target-cov/
+target-miri/
 out/
+coverage/
 Cargo.lock
 .tracey/
+*.profraw
+*.profdata
+minimized.bin

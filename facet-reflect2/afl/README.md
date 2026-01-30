@@ -33,25 +33,22 @@ just resume
 
 ## Reproducing Crashes
 
-Crashes are saved in `out/default/crashes/`. To reproduce one:
+Crashes are saved in `out/default/crashes/`.
 
 ```bash
-target/debug/facet-reflect2-afl < out/default/crashes/id:000000*
+just run out/default/crashes/id:000000*
 ```
 
-To see a backtrace:
+With backtrace:
 
 ```bash
-RUST_BACKTRACE=1 target/debug/facet-reflect2-afl < out/default/crashes/id:000000*
+just run-bt out/default/crashes/id:000000*
 ```
 
-To check multiple crashes at once:
+Under Miri (catches undefined behavior, memory safety issues):
 
 ```bash
-for f in out/default/crashes/id:*; do
-    echo "=== $f ==="
-    target/debug/facet-reflect2-afl < "$f" 2>&1 | tail -3
-done
+just run-miri out/default/crashes/id:000000*
 ```
 
 ## Minimizing Crash Inputs
@@ -59,7 +56,17 @@ done
 To get a minimal reproducer:
 
 ```bash
-cargo afl tmin -i out/default/crashes/id:000000* -o minimized.bin -- target/debug/facet-reflect2-afl
+just minimize out/default/crashes/id:000000*
+```
+
+## Source Coverage
+
+Generate a coverage report from the fuzzer corpus:
+
+```bash
+just cov          # summary report
+just cov html     # HTML report (opens in browser)
+just cov uncovered  # show uncovered lines
 ```
 
 ## Cleaning Up
