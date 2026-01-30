@@ -39,6 +39,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                         // Regular list type - just update the tracker
                         frame.tracker = Tracker::List {
                             current_child: None,
+                            element_count: 0,
                         };
                         return Ok(self);
                     }
@@ -114,6 +115,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 // Update tracker to List state and mark as initialized
                 frame.tracker = Tracker::List {
                     current_child: None,
+                    element_count: 0,
                 };
                 frame.is_init = true;
             }
@@ -394,17 +396,18 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         {
             let frame = self.mode.stack_mut().last_mut().unwrap();
             match &mut frame.tracker {
-                Tracker::List { current_child } if frame.is_init => {
+                Tracker::List {
+                    current_child,
+                    element_count,
+                } if frame.is_init => {
                     if current_child.is_some() {
                         return Err(self.err(ReflectErrorKind::OperationFailed {
                             shape,
                             operation: "already pushing an element, call pop() first",
                         }));
                     }
-                    // Get the current length to use as the index for path tracking
-                    let current_len =
-                        unsafe { (list_def.vtable.len)(frame.data.assume_init().as_const()) };
-                    *current_child = Some(current_len);
+                    // Use element_count for path tracking (not Vec's len, which may not be updated yet in deferred mode)
+                    *current_child = Some(*element_count);
                 }
                 _ => {
                     return Err(self.err(ReflectErrorKind::OperationFailed {
@@ -433,22 +436,26 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         // This avoids a separate heap allocation + copy for each element
         let (element_data, ownership) = {
             let frame = self.mode.stack_mut().last_mut().unwrap();
+
+            // Get element_count from tracker - this is how many elements we've pushed,
+            // which may differ from Vec's len in deferred mode (where set_len is called later)
+            let element_count = match &frame.tracker {
+                Tracker::List { element_count, .. } => *element_count,
+                _ => unreachable!("already verified List tracker above"),
+            };
+
             if let (Some(reserve_fn), Some(as_mut_ptr_fn), Some(_set_len_fn), Some(capacity_fn)) = (
                 list_def.reserve(),
                 list_def.as_mut_ptr_typed(),
                 list_def.set_len(),
                 list_def.capacity(),
             ) {
-                // Get current length and capacity
-                let current_len =
-                    unsafe { (list_def.vtable.len)(frame.data.assume_init().as_const()) };
                 let current_capacity = unsafe { capacity_fn(frame.data.assume_init().as_const()) };
 
                 // Only reserve if we need more space
-                if current_len >= current_capacity {
+                if element_count >= current_capacity {
                     // Reserve with growth factor to reduce future vtable calls
-                    // Use max(len, 4) to handle empty vecs and small lists
-                    let additional = current_len.max(4);
+                    let additional = element_count.max(4);
                     unsafe {
                         reserve_fn(frame.data.assume_init(), additional);
                     }
@@ -456,7 +463,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
 
                 // Get pointer to the buffer and calculate element offset
                 let buffer_ptr = unsafe { as_mut_ptr_fn(frame.data.assume_init()) };
-                let element_ptr = unsafe { buffer_ptr.add(current_len * element_layout.size()) };
+                let element_ptr = unsafe { buffer_ptr.add(element_count * element_layout.size()) };
 
                 (PtrUninit::new(element_ptr), FrameOwnership::ListSlot)
             } else if element_layout.size() == 0 {

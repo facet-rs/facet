@@ -182,11 +182,13 @@ impl Path {
                     }
                 }
                 PathStep::OptionSome => {
+                    result.push_str(".some");
                     if let Some(inner_shape) = get_option_inner_shape(current_shape) {
                         current_shape = inner_shape;
                     }
                 }
                 PathStep::Deref => {
+                    result.push_str(".*");
                     if let Some(inner_shape) = get_pointer_inner_shape(current_shape) {
                         current_shape = inner_shape;
                     }

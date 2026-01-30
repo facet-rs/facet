@@ -375,6 +375,18 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 return Err(self.err(e));
             }
 
+            // For List frames, finalize the Vec's length based on element_count
+            if let Tracker::List { element_count, .. } = &frame.tracker
+                && let Def::List(list_def) = frame.allocated.shape().def
+            {
+                if let Some(set_len_fn) = list_def.set_len() {
+                    crate::trace!("finish_deferred: finalizing Vec len to {}", element_count);
+                    unsafe {
+                        set_len_fn(frame.data.assume_init(), *element_count);
+                    }
+                }
+            }
+
             // Update parent's ISet to mark this field as initialized.
             // The parent could be:
             // 1. On the frames stack (if path.steps.len() == 1, parent is at start_depth - 1)
@@ -414,9 +426,25 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 // For Field steps: mark the parent's iset directly.
                 // For Variant steps: the enum itself needs to be marked in its parent struct,
                 // so we look for the Field step before the Variant step.
+                //
+                // IMPORTANT: Variant steps don't correspond to frames - they're tracker state
+                // on the enum frame itself. So when computing the parent path for iset marking,
+                // we need to skip Variant steps to find the actual parent frame.
                 let field_to_mark: Option<(usize, facet_path::Path)> =
                     if let PathStep::Field(field_idx) = last_step {
-                        Some((*field_idx as usize, parent_path.clone()))
+                        // Skip any Variant steps in parent_path - they don't correspond to frames.
+                        // e.g., [Variant(0), Field(0)]'s parent is [], not [Variant(0)]
+                        let effective_parent_steps: Vec<_> = parent_path
+                            .steps
+                            .iter()
+                            .filter(|s| !matches!(s, PathStep::Variant(_)))
+                            .cloned()
+                            .collect();
+                        let effective_parent_path = facet_path::Path {
+                            shape: path.shape,
+                            steps: effective_parent_steps,
+                        };
+                        Some((*field_idx as usize, effective_parent_path))
                     } else if matches!(last_step, PathStep::Variant(_)) {
                         // For enums, find the Field step that contains this enum.
                         // Path like [Field(1), Variant(0)] means enum at field 1.
@@ -940,50 +968,68 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             }
         }
 
-        // In deferred mode, store ALL frames for later validation in finish_deferred().
-        // This is simple and correct - no complex filtering logic needed.
-        let deferred_storage_info = if self.is_deferred() {
+        // Pop the frame first
+        let mut popped_frame = self.frames_mut().pop().unwrap();
+
+        // In deferred mode, store most frames for later validation in finish_deferred().
+        // EXCEPTION: TrackedBuffer frames (map keys/values) should NOT be stored -
+        // they need to go through normal processing to actually insert into the map.
+        // We compute the path AFTER popping so the frame's own tracker state doesn't
+        // pollute its path (e.g., Option's building_inner shouldn't add OptionSome to its own path).
+        let should_store =
+            self.is_deferred() && !matches!(popped_frame.ownership, FrameOwnership::TrackedBuffer);
+
+        if should_store {
             let field_path = self.path();
             trace!("path() returned steps: {:?}", field_path.steps);
             if !field_path.is_empty() {
-                Some(field_path)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+                let storage_path = field_path;
+                trace!(
+                    "end(): Storing frame for deferred path {}, shape {}",
+                    storage_path,
+                    popped_frame.allocated.shape()
+                );
 
-        // Pop the frame and save its data pointer for SmartPointer handling
-        let mut popped_frame = self.frames_mut().pop().unwrap();
+                if let FrameMode::Deferred {
+                    stack,
+                    stored_frames,
+                    ..
+                } = &mut self.mode
+                {
+                    // For ListSlot frames, increment the parent's element_count so subsequent
+                    // elements get the correct index. The actual set_len happens in finish_deferred.
+                    if matches!(popped_frame.ownership, FrameOwnership::ListSlot)
+                        && let Some(parent_frame) = stack.last_mut()
+                        && let Tracker::List { element_count, .. } = &mut parent_frame.tracker
+                    {
+                        *element_count += 1;
+                        crate::trace!(
+                            "end(): ListSlot - incremented element_count to {}",
+                            element_count
+                        );
+                    }
 
-        // If we determined this frame should be stored for deferred re-entry, do it now
-        if let Some(storage_path) = deferred_storage_info {
-            trace!(
-                "end(): Storing frame for deferred path {}, shape {}",
-                storage_path,
-                popped_frame.allocated.shape()
-            );
+                    // Don't mark the field as initialized yet - that happens in finish_deferred
+                    // after the frame is validated. The parent's iset should only reflect
+                    // actually-initialized memory.
 
-            if let FrameMode::Deferred {
-                stack,
-                stored_frames,
-                ..
-            } = &mut self.mode
-            {
-                // Don't mark the field as initialized yet - that happens in finish_deferred
-                // after the frame is validated. The parent's iset should only reflect
-                // actually-initialized memory.
+                    stored_frames.insert(storage_path, popped_frame);
 
-                stored_frames.insert(storage_path, popped_frame);
-
-                // Clear parent's current_child tracking
-                if let Some(parent_frame) = stack.last_mut() {
-                    parent_frame.tracker.clear_current_child();
+                    // Clear parent's current_child tracking
+                    if let Some(parent_frame) = stack.last_mut() {
+                        crate::trace!(
+                            "end(): Clearing current_child on parent shape={}, tracker={:?}",
+                            parent_frame.allocated.shape(),
+                            parent_frame.tracker.kind()
+                        );
+                        parent_frame.tracker.clear_current_child();
+                    } else {
+                        crate::trace!("end(): No parent frame to clear current_child on");
+                    }
                 }
-            }
 
-            return Ok(self);
+                return Ok(self);
+            }
         }
 
         // check if this needs deserialization from a different shape
@@ -1344,7 +1390,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     parent_frame.is_init = true;
                 }
             }
-            Tracker::List { current_child } if parent_frame.is_init => {
+            Tracker::List { current_child, .. } if parent_frame.is_init => {
                 if current_child.is_some() {
                     // We just popped an element frame, now add it to the list
                     if let Def::List(list_def) = parent_shape.def {

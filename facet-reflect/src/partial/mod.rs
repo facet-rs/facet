@@ -432,8 +432,12 @@ pub(crate) enum Tracker {
     /// Partially initialized list (Vec, etc.)
     /// Whether it's initialized is tracked by `Frame::is_init`.
     List {
-        /// If we're pushing another frame for an element, this is the element index
+        /// If we're pushing another frame for an element, this is the element index.
+        /// This is cleared after each element is done.
         current_child: Option<usize>,
+        /// Number of elements that have been added to this list.
+        /// This is NOT cleared - it tracks the total count for deferred mode.
+        element_count: usize,
     },
 
     /// Partially initialized map (HashMap, BTreeMap, etc.)
@@ -530,12 +534,13 @@ impl Tracker {
         }
     }
 
-    /// Clear the current_child index for trackers that support it
+    /// Clear the current_child index for trackers that support it.
     const fn clear_current_child(&mut self) {
         match self {
             Tracker::Struct { current_child, .. }
             | Tracker::Enum { current_child, .. }
-            | Tracker::Array { current_child, .. } => {
+            | Tracker::Array { current_child, .. }
+            | Tracker::List { current_child, .. } => {
                 *current_child = None;
             }
             _ => {}
@@ -1240,7 +1245,7 @@ impl Frame {
                     Ok(())
                 }
             }
-            Tracker::List { current_child } => {
+            Tracker::List { current_child, .. } => {
                 if self.is_init && current_child.is_none() {
                     Ok(())
                 } else {
@@ -1530,6 +1535,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 }
                 Tracker::List {
                     current_child: Some(idx),
+                    ..
                 } => {
                     path.push(PathStep::Index(*idx as u32));
                 }
@@ -1545,7 +1551,25 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     // Option with building_inner contributes OptionSome to path
                     path.push(PathStep::OptionSome);
                 }
-                // Other tracker types (SmartPointer, Map, etc.)
+                Tracker::Map { insert_state } => {
+                    // Map contributes MapKey or MapValue based on insert state
+                    match insert_state {
+                        MapInsertState::PushingKey {
+                            key_frame_on_stack: true,
+                            ..
+                        } => {
+                            path.push(PathStep::MapKey);
+                        }
+                        MapInsertState::PushingValue {
+                            value_frame_on_stack: true,
+                            ..
+                        } => {
+                            path.push(PathStep::MapValue);
+                        }
+                        _ => {}
+                    }
+                }
+                // Other tracker types (SmartPointer, Set, etc.)
                 // don't contribute to the storage path - they're transparent wrappers
                 _ => {}
             }
