@@ -114,11 +114,11 @@ use alloc::{collections::BTreeMap, sync::Arc, vec::Vec};
 mod arena;
 mod iset;
 pub(crate) mod typeplan;
-pub use typeplan::{DeserStrategy, TypePlan};
+pub use typeplan::{DeserStrategy, NodeId, TypePlan, TypePlanCore};
 
 mod partial_api;
 
-use crate::{ReflectErrorKind, TrackerKind, trace, typeplan::TypePlanCore};
+use crate::{ReflectErrorKind, TrackerKind, trace};
 use facet_path::{Path, PathStep};
 
 use core::marker::PhantomData;
