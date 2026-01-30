@@ -50,6 +50,8 @@ The workhorse operation. Sets a value at a path relative to the current frame.
 Set { path: &[usize], source: Source }
 ```
 
+**Path semantics**: The path navigates within the current frame. Multi-element paths like `&[0, 1]` (field 0, then subfield 1) only work in deferred mode where intermediate frames may already exist. In immediate mode, paths must be single-element - you push frames explicitly via `Build`.
+
 ### End
 
 Pops the current frame. Validates completeness (unless deferred - see below).
@@ -154,11 +156,17 @@ Set { path: &[1], source: Source::Move(Move { ptr: &end_point, shape: <Point>::S
 ```rust
 // enum Message { Quit, Move { x: i32, y: i32 }, Write(String) }
 
+// Set Message::Quit (unit variant)
+Set { path: &[0], source: Source::Default }
+
 // Set Message::Move { x: 10, y: 20 }
 Set { path: &[1], source: Source::Build(Build { len_hint: None }) }  // select variant 1, push frame
   Set { path: &[0], source: Source::Move(...) }  // x
   Set { path: &[1], source: Source::Move(...) }  // y
 End
+
+// Set Message::Write("hello")
+Set { path: &[2], source: Source::Move(Move { ptr: &hello_string, shape: <String>::SHAPE }) }
 ```
 
 ### List (Vec)
@@ -224,7 +232,7 @@ Set { path: &[0], source: Source::Build(Build { len_hint: Some(2) }) }
 End
 ```
 
-## Deferred frames
+## Deferred mode
 
 For `#[facet(flatten)]` support, frames can be deferred - left incomplete and re-entered later.
 
@@ -235,9 +243,15 @@ struct Build {
 }
 ```
 
-When `deferred: true`, an incomplete frame at `End` is stored (by path for structs, by key for maps) and can be re-entered later. When `deferred: false`, an incomplete frame at `End` is an error.
+**Entering deferred mode**: When `Build { deferred: true, .. }` is used, that frame and all descendants enter deferred mode. The depth at which deferred mode started is tracked.
 
-For maps, deferred entries are keyed by the (complete) key. Re-entering looks up the incomplete value frame by key.
+**Frame storage**: When `End` is called on an incomplete frame in deferred mode, the frame is stored (by path for structs, by key for maps) rather than causing an error.
+
+**Re-entry**: A subsequent `Set` to the same path (or `Insert` with the same key) finds the stored frame and resumes building it. This is automatic - no special "resume" operation needed.
+
+**Multi-element paths**: In deferred mode, `Set { path: &[0, 1], ... }` can navigate through stored frames. If field 0 has a stored frame, we re-enter it and navigate to subfield 1.
+
+**Finishing**: When deferred mode ends (the frame that started it is completed), all stored frames must be complete or have defaults. Incomplete frames without defaults are an error.
 
 ## Arrays
 
