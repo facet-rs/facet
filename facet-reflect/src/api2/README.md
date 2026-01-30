@@ -55,23 +55,36 @@ Enums are trickier. First you must select a variant, then initialize its payload
 
 ```rust
 enum Message {
-    Quit,
-    Move { x: i32, y: i32 },
-    Write(String),
+    Quit,                      // variant 0
+    Move { x: i32, y: i32 },   // variant 1
+    Write(String),             // variant 2
 }
 ```
 
-Tracking state:
-- Which variant is selected (or none yet)
-- For the selected variant: its payload's initialization state
+The variant index is part of the path. To set `Message::Move { x: 10, y: 20 }`:
 
 ```
-Message
-├── variant: None | Quit | Move | Write
-└── payload: (depends on variant)
-    - Quit: nothing
-    - Move: ISet for {x, y}
-    - Write: single value (String)
+Begin { path: &[1] }      // select variant 1 (Move)
+Set { path: &[0], ... }   // x
+Set { path: &[1], ... }   // y
+End
+```
+
+When you `Begin` into a variant:
+1. The discriminant is written to memory (e.g., `1` for `Move`)
+2. The frame tracks: which variant is selected + ISet for its payload fields
+
+The variant selection **persists** even after End. This is part of the enum's state, not just navigation.
+
+**Switching variants**: If you Begin a different variant, the previous payload (if any) must be dropped first. This is destructive - you can't have a "partial Move" and then switch to Write without cleaning up.
+
+```
+Message (tracking state)
+├── selected_variant: None | 0 | 1 | 2
+└── payload_iset: (depends on variant)
+    - variant 0 (Quit): nothing to track
+    - variant 1 (Move): ISet for {x, y}
+    - variant 2 (Write): single value tracking
 ```
 
 #### Options
@@ -96,7 +109,11 @@ Result<String, io::Error>
 
 #### Lists (Vec, VecDeque, etc.)
 
-Lists don't use a bitset - elements are always fully initialized before being added.
+Lists have two paths:
+
+**Push path**: elements are fully initialized in a staging buffer, then pushed. The Vec only ever contains complete elements.
+
+**Direct-fill path**: we reserve space in the Vec's buffer and construct directly there. The element might be partial while we're building it! If we fail, we must clean up the partial element without calling `set_len`.
 
 ```
 Vec<Server>
