@@ -127,7 +127,10 @@ impl<'facet> Partial<'facet> {
     fn apply_inner(&mut self, ops: &[Op<'_>]) -> Result<(), ReflectError> {
         for op in ops {
             match op {
-                Op::Set { path, source } => {
+                Op::Set {
+                    dst: path,
+                    src: source,
+                } => {
                     // Check if current frame is an enum frame (not inside a variant's fields)
                     // and path is non-empty - that means we're selecting a variant
                     let frame = self.arena.get(self.current);

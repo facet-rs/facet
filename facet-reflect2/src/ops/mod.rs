@@ -36,7 +36,7 @@ impl Path {
 /// An operation on a Partial.
 pub enum Op<'a> {
     /// Set a value at a path relative to the current frame.
-    Set { path: Path, source: Source<'a> },
+    Set { dst: Path, src: Source<'a> },
     /// End the current frame and pop back to parent.
     End,
 }

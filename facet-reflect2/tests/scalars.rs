@@ -64,8 +64,8 @@ fn set_with_raw_move() {
     let mov = unsafe { Imm::new(PtrConst::new(&value), u64::SHAPE) };
     partial
         .apply(&[Op::Set {
-            path: Default::default(),
-            source: Source::Imm(mov),
+            dst: Default::default(),
+            src: Source::Imm(mov),
         }])
         .unwrap();
 

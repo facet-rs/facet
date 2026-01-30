@@ -40,32 +40,32 @@ impl SetBuilder {
     /// Complete with an immediate value
     pub fn imm<'a, 'f, T: Facet<'f>>(self, value: &'a T) -> Op<'a> {
         Op::Set {
-            path: self.path,
-            source: Source::Imm(Imm::from_ref(value)),
+            dst: self.path,
+            src: Source::Imm(Imm::from_ref(value)),
         }
     }
 
     /// Complete with a default value.
     pub fn default(self) -> Op<'static> {
         Op::Set {
-            path: self.path,
-            source: Source::Default,
+            dst: self.path,
+            src: Source::Default,
         }
     }
 
     /// Complete with build (push frame).
     pub fn build(self) -> Op<'static> {
         Op::Set {
-            path: self.path,
-            source: Source::Build(Build { len_hint: None }),
+            dst: self.path,
+            src: Source::Build(Build { len_hint: None }),
         }
     }
 
     /// Complete with build and length hint.
     pub fn build_with_hint(self, hint: usize) -> Op<'static> {
         Op::Set {
-            path: self.path,
-            source: Source::Build(Build {
+            dst: self.path,
+            src: Source::Build(Build {
                 len_hint: Some(hint),
             }),
         }
