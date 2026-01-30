@@ -9,7 +9,8 @@ use facet_reflect2::{Op, Partial};
 fn build_empty_vec() {
     let mut partial = Partial::alloc::<Vec<u32>>().unwrap();
 
-    partial.apply(&[Op::set().build(), Op::End]).unwrap();
+    // For root-level lists, no End needed - Build initializes the list
+    partial.apply(&[Op::set().build()]).unwrap();
 
     let result: Vec<u32> = partial.build().unwrap();
     assert!(result.is_empty());
@@ -23,13 +24,13 @@ fn build_vec_with_imm_elements() {
     let b = 2u32;
     let c = 3u32;
 
+    // For root-level lists, no End needed
     partial
         .apply(&[
             Op::set().build_with_len_hint(3),
             Op::push().imm(&a),
             Op::push().imm(&b),
             Op::push().imm(&c),
-            Op::End,
         ])
         .unwrap();
 
@@ -46,7 +47,6 @@ fn build_vec_with_default_elements() {
             Op::set().build(),
             Op::push().default(),
             Op::push().default(),
-            Op::End,
         ])
         .unwrap();
 
@@ -66,7 +66,6 @@ fn build_vec_of_strings() {
             Op::set().build_with_len_hint(2),
             Op::push().imm(&hello),
             Op::push().imm(&world),
-            Op::End,
         ])
         .unwrap();
     std::mem::forget(hello);
@@ -108,8 +107,7 @@ fn build_vec_of_structs_with_build() {
             Op::set().at(0).imm(&x2),
             Op::set().at(1).imm(&y2),
             Op::End,
-            // End the Vec
-            Op::End,
+            // No End for root-level Vec
         ])
         .unwrap();
 
@@ -131,7 +129,7 @@ fn build_vec_of_strings_with_build() {
             Op::push().build(),
             Op::set().default(),
             Op::End,
-            Op::End,
+            // No End for root-level Vec
         ])
         .unwrap();
 
@@ -298,7 +296,7 @@ fn build_vec_of_vecs() {
             Op::push().imm(&c),
             Op::push().imm(&d),
             Op::End,
-            Op::End,
+            // No End for root-level Vec
         ])
         .unwrap();
 
@@ -325,7 +323,7 @@ fn build_vec_of_vecs_empty_inner() {
             // Third inner vec - empty
             Op::push().build(),
             Op::End,
-            Op::End,
+            // No End for root-level Vec
         ])
         .unwrap();
 
@@ -350,7 +348,6 @@ fn build_vec_of_options_with_imm() {
             Op::push().imm(&some_val),
             Op::push().imm(&none_val),
             Op::push().imm(&some_val),
-            Op::End,
         ])
         .unwrap();
 
@@ -382,7 +379,6 @@ fn build_vec_of_enums_with_imm() {
             Op::set().build(),
             Op::push().imm(&active),
             Op::push().imm(&pending),
-            Op::End,
         ])
         .unwrap();
 
@@ -407,7 +403,7 @@ fn build_vec_of_enums_with_build() {
             Op::push().build(),
             Op::set().at(2).imm(&count), // Select variant 2, set field
             Op::End,
-            Op::End,
+            // No End for root-level Vec
         ])
         .unwrap();
 

@@ -306,6 +306,8 @@ fuzz_types! {
         VecU8 => Vec<u8>,
         VecU32 => Vec<u32>,
         VecString => Vec<String>,
+        VecPoint => Vec<Point>,
+        VecVecU32 => Vec<Vec<u32>>,
 
         // Box
         BoxU32 => Box<u32>,
@@ -435,6 +437,8 @@ impl FuzzPath {
 pub enum FuzzOp {
     /// Set a value at a path.
     Set { path: FuzzPath, source: FuzzSource },
+    /// Push an element to the current list.
+    Push { source: FuzzSource },
     /// End the current frame.
     End,
 }
@@ -543,6 +547,64 @@ fn run_fuzz(input: FuzzInput, log: bool) {
                         }
                         let op = Op::Set {
                             dst: path.to_path(),
+                            src: Source::Build(Build {
+                                len_hint: len_hint.map(|h| h as usize),
+                            }),
+                        };
+                        let result = partial.apply(&[op]);
+                        if log {
+                            eprintln!("    result: {result:?}");
+                        }
+                        result
+                    }
+                }
+            }
+            FuzzOp::Push { source } => {
+                match source {
+                    FuzzSource::Imm(value) => {
+                        if log {
+                            eprintln!("  [{i}] Push src=Imm({:?})", value);
+                        }
+                        let (ptr, shape) = value.as_ptr_and_shape();
+                        // SAFETY: ptr points to value which is valid and initialized,
+                        // and remains valid until apply() returns
+                        let imm = unsafe { Imm::new(ptr, shape) };
+                        let op = Op::Push {
+                            src: Source::Imm(imm),
+                        };
+
+                        let result = partial.apply(&[op]);
+
+                        if log {
+                            eprintln!("    result: {result:?}");
+                        }
+
+                        if result.is_ok() {
+                            // Success! The value's bytes have been copied into the list.
+                            // We must forget the original to avoid double-free.
+                            std::mem::forget(value);
+                        }
+                        // On failure, value is dropped normally (no bytes were copied)
+                        result
+                    }
+                    FuzzSource::Default => {
+                        if log {
+                            eprintln!("  [{i}] Push src=Default");
+                        }
+                        let op = Op::Push {
+                            src: Source::Default,
+                        };
+                        let result = partial.apply(&[op]);
+                        if log {
+                            eprintln!("    result: {result:?}");
+                        }
+                        result
+                    }
+                    FuzzSource::Build { len_hint } => {
+                        if log {
+                            eprintln!("  [{i}] Push src=Build({:?})", len_hint);
+                        }
+                        let op = Op::Push {
                             src: Source::Build(Build {
                                 len_hint: len_hint.map(|h| h as usize),
                             }),

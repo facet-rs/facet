@@ -173,11 +173,60 @@ impl<'facet> Partial<'facet> {
                         return Err(self.error(ReflectErrorKind::EndWithIncomplete));
                     }
 
-                    // Check if parent is a pointer frame - special finalization needed
+                    // Check if parent is a pointer or list frame - special finalization needed
                     let parent = self.arena.get(parent_idx);
                     let is_pointer_parent = matches!(parent.kind, FrameKind::Pointer(_));
+                    let is_list_parent = matches!(parent.kind, FrameKind::List(_));
 
-                    if is_pointer_parent {
+                    if is_list_parent {
+                        // Get list def and push function from parent's shape
+                        let parent = self.arena.get(parent_idx);
+                        let Def::List(list_def) = &parent.shape.def else {
+                            return Err(self.error_at(parent_idx, ReflectErrorKind::NotAList));
+                        };
+                        let push_fn = list_def.push().ok_or_else(|| {
+                            self.error_at(
+                                parent_idx,
+                                ReflectErrorKind::ListDoesNotSupportOp {
+                                    shape: parent.shape,
+                                },
+                            )
+                        })?;
+
+                        // Get the element data pointer (our current frame's data, now initialized)
+                        let frame = self.arena.get(self.current);
+                        let element_ptr = unsafe { frame.data.assume_init() };
+
+                        // Get the list pointer from parent's ListFrame
+                        let parent = self.arena.get(parent_idx);
+                        let FrameKind::List(ref list_frame) = parent.kind else {
+                            unreachable!()
+                        };
+                        let list_ptr = list_frame.list_ptr;
+
+                        // Push the element to the list (moves the value)
+                        // SAFETY: element_ptr points to initialized data of the correct element type
+                        unsafe {
+                            push_fn(list_ptr, element_ptr.as_const());
+                        }
+
+                        // The value has been moved into the list. Now deallocate our temp memory.
+                        let frame = self.arena.get_mut(self.current);
+                        // Don't drop the value - it was moved out by push_fn
+                        frame.flags.remove(FrameFlags::INIT);
+                        // Deallocate our staging memory
+                        let freed_frame = self.arena.free(self.current);
+                        freed_frame.dealloc_if_owned();
+
+                        // Increment element count in parent list
+                        let parent = self.arena.get_mut(parent_idx);
+                        if let FrameKind::List(ref mut l) = parent.kind {
+                            l.len += 1;
+                        }
+
+                        // Pop back to parent
+                        self.current = parent_idx;
+                    } else if is_pointer_parent {
                         // Get pointer vtable from parent's shape
                         let parent = self.arena.get(parent_idx);
                         let Def::Pointer(ptr_def) = &parent.shape.def else {
@@ -673,14 +722,60 @@ impl<'facet> Partial<'facet> {
                     l.len += 1;
                 }
             }
-            Source::Build(_build) => {
-                // For Build, we need to allocate space for the element, push a frame,
-                // and then push the element when End is called.
-                // This is more complex - for now, error out.
-                // TODO: support Build for list elements
-                return Err(
-                    self.error(ReflectErrorKind::ListDoesNotSupportOp { shape: frame.shape })
-                );
+            Source::Build(build) => {
+                // Allocate temporary space for the element
+                let layout = element_shape.layout.sized_layout().map_err(|_| {
+                    self.error(ReflectErrorKind::Unsized {
+                        shape: element_shape,
+                    })
+                })?;
+
+                let temp_ptr = if layout.size() == 0 {
+                    PtrUninit::new(std::ptr::NonNull::<u8>::dangling().as_ptr())
+                } else {
+                    let ptr = unsafe { std::alloc::alloc(layout) };
+                    if ptr.is_null() {
+                        return Err(self.error(ReflectErrorKind::AllocFailed { layout }));
+                    }
+                    PtrUninit::new(ptr)
+                };
+
+                // Create appropriate frame based on element shape
+                let mut element_frame = if let Def::List(inner_list_def) = &element_shape.def {
+                    // Element is itself a list - initialize it
+                    let init_fn =
+                        inner_list_def
+                            .init_in_place_with_capacity()
+                            .ok_or_else(|| {
+                                self.error(ReflectErrorKind::ListDoesNotSupportOp {
+                                    shape: element_shape,
+                                })
+                            })?;
+                    let capacity = build.len_hint.unwrap_or(0);
+                    // SAFETY: temp_ptr points to uninitialized memory of the correct layout
+                    let inner_list_ptr = unsafe { init_fn(temp_ptr, capacity) };
+                    let mut frame = Frame::new_list(temp_ptr, element_shape, inner_list_ptr);
+                    frame.flags |= FrameFlags::INIT; // List is initialized (empty but valid)
+                    frame
+                } else {
+                    match element_shape.ty {
+                        Type::User(UserType::Struct(ref s)) => {
+                            Frame::new_struct(temp_ptr, element_shape, s.fields.len())
+                        }
+                        Type::User(UserType::Enum(_)) => Frame::new_enum(temp_ptr, element_shape),
+                        _ => Frame::new(temp_ptr, element_shape),
+                    }
+                };
+
+                // Mark that this frame owns its allocation (for cleanup on End)
+                element_frame.flags |= FrameFlags::OWNS_ALLOC;
+
+                // Set parent to current list frame (field_idx doesn't matter for lists)
+                element_frame.parent = Some((self.current, 0));
+
+                // Push frame and make it current
+                let element_idx = self.arena.alloc(element_frame);
+                self.current = element_idx;
             }
             Source::Default => {
                 // Allocate temporary space for the default value
