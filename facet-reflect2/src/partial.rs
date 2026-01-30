@@ -79,12 +79,22 @@ impl<'facet> Partial<'facet> {
                 Op::Set { path, source } => {
                     // Resolve path to a temporary frame for the target
                     let frame = self.arena.get(self.current);
-                    let mut target = self.resolve_path(frame, path)?;
+                    let target = self.resolve_path(frame, path)?;
 
                     match source {
                         Source::Move(mov) => {
                             // Verify shape matches
                             target.assert_shape(mov.shape(), path)?;
+
+                            // Drop any existing value before overwriting
+                            if path.is_empty() {
+                                let frame = self.arena.get_mut(self.current);
+                                frame.uninit();
+                            }
+
+                            // Re-resolve path after potential mutation
+                            let frame = self.arena.get(self.current);
+                            let mut target = self.resolve_path(frame, path)?;
 
                             // Copy the value into the target frame
                             // SAFETY: Move's safety invariant guarantees ptr is valid for shape

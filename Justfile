@@ -116,7 +116,7 @@ reflect2-miri *args:
 reflect2-cov *args:
     #!/usr/bin/env -S bash -euo pipefail
     source miri-env.sh
-    cargo llvm-cov nextest -p facet-reflect2 {{ args }}
+    cargo llvm-cov nextest -p facet-reflect2 --ignore-filename-regex '/facet-(core|macro|macros|reflect[^2])' {{ args }}
 
 miri-json *args:
     #!/usr/bin/env -S bash -euo pipefail
