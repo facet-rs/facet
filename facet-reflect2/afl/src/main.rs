@@ -35,6 +35,186 @@ pub struct WithVec {
 }
 
 // ============================================================================
+// Enum types for fuzzing
+// ============================================================================
+
+// Unit enums with various reprs
+#[derive(Clone, Debug, Facet, Arbitrary)]
+#[repr(u8)]
+pub enum UnitEnumU8 {
+    A,
+    B,
+    C,
+}
+
+#[derive(Clone, Debug, Facet, Arbitrary)]
+#[repr(u16)]
+pub enum UnitEnumU16 {
+    X,
+    Y,
+    Z,
+}
+
+#[derive(Clone, Debug, Facet, Arbitrary)]
+#[repr(u32)]
+pub enum UnitEnumU32 {
+    One,
+    Two,
+    Three,
+}
+
+#[derive(Clone, Debug, Facet, Arbitrary)]
+#[repr(u64)]
+pub enum UnitEnumU64 {
+    Alpha,
+    Beta,
+    Gamma,
+}
+
+#[derive(Clone, Debug, Facet, Arbitrary)]
+#[repr(i8)]
+pub enum UnitEnumI8 {
+    Neg,
+    Zero,
+    Pos,
+}
+
+#[derive(Clone, Debug, Facet, Arbitrary)]
+#[repr(i16)]
+pub enum UnitEnumI16 {
+    Low,
+    Mid,
+    High,
+}
+
+#[derive(Clone, Debug, Facet, Arbitrary)]
+#[repr(i32)]
+pub enum UnitEnumI32 {
+    Small,
+    Medium,
+    Large,
+}
+
+#[derive(Clone, Debug, Facet, Arbitrary)]
+#[repr(i64)]
+pub enum UnitEnumI64 {
+    Past,
+    Present,
+    Future,
+}
+
+// Data enums with various reprs
+#[derive(Clone, Debug, Facet, Arbitrary)]
+#[repr(u8)]
+pub enum DataEnumU8 {
+    Empty,
+    WithU32(u32),
+    WithString(String),
+}
+
+#[derive(Clone, Debug, Facet, Arbitrary)]
+#[repr(u16)]
+pub enum DataEnumU16 {
+    None,
+    Bool(bool),
+    Pair(u32, u32),
+}
+
+#[derive(Clone, Debug, Facet, Arbitrary)]
+#[repr(u32)]
+pub enum DataEnumU32 {
+    Vacant,
+    Single(i64),
+    Double(String, String),
+}
+
+#[derive(Clone, Debug, Facet, Arbitrary)]
+#[repr(i8)]
+pub enum DataEnumI8 {
+    Nothing,
+    Something(u8),
+    Everything(Vec<u8>),
+}
+
+#[derive(Clone, Debug, Facet, Arbitrary)]
+#[repr(i32)]
+pub enum DataEnumI32 {
+    Nil,
+    Value(f64),
+    Values(Vec<f64>),
+}
+
+// Mixed enums (unit + tuple + struct variants) with various reprs
+#[derive(Clone, Debug, Facet, Arbitrary)]
+#[repr(u8)]
+pub enum MixedEnumU8 {
+    Unit,
+    Tuple(u32, String),
+    Struct { x: i32, y: i32 },
+}
+
+#[derive(Clone, Debug, Facet, Arbitrary)]
+#[repr(u32)]
+pub enum MixedEnumU32 {
+    Empty,
+    Wrapped(Box<u32>),
+    Named { value: Option<String> },
+}
+
+#[derive(Clone, Debug, Facet, Arbitrary)]
+#[repr(i16)]
+pub enum MixedEnumI16 {
+    Zero,
+    One(bool),
+    Two { a: u8, b: u8 },
+}
+
+#[derive(Clone, Debug, Facet, Arbitrary)]
+#[repr(i64)]
+pub enum MixedEnumI64 {
+    Void,
+    Scalar(usize),
+    Record { id: u64, name: String },
+}
+
+// Nested enums (enums containing enums)
+#[derive(Clone, Debug, Facet, Arbitrary)]
+#[repr(u8)]
+pub enum NestedEnumU8 {
+    Simple(UnitEnumU8),
+    Complex(DataEnumU8),
+    Both { unit: UnitEnumU8, data: DataEnumU8 },
+}
+
+#[derive(Clone, Debug, Facet, Arbitrary)]
+#[repr(u32)]
+pub enum NestedEnumU32 {
+    Left(UnitEnumU32),
+    Right(DataEnumU32),
+    Mixed(MixedEnumU32),
+}
+
+#[derive(Clone, Debug, Facet, Arbitrary)]
+#[repr(i32)]
+pub enum NestedEnumI32 {
+    A(UnitEnumI32),
+    B(DataEnumI32),
+    C { inner: MixedEnumI16 },
+}
+
+// Deeply nested enum
+#[derive(Clone, Debug, Facet, Arbitrary)]
+#[repr(u16)]
+pub enum DeepEnum {
+    Leaf(u32),
+    Branch(Box<NestedEnumU8>),
+    Tree {
+        left: NestedEnumU32,
+        right: NestedEnumI32,
+    },
+}
+
+// ============================================================================
 // FuzzValue - values that can be moved into a Partial
 // ============================================================================
 
@@ -82,6 +262,35 @@ pub enum FuzzValue {
 
     // Unit
     Unit(()),
+
+    // Unit enums
+    UnitEnumU8(UnitEnumU8),
+    UnitEnumU16(UnitEnumU16),
+    UnitEnumU32(UnitEnumU32),
+    UnitEnumU64(UnitEnumU64),
+    UnitEnumI8(UnitEnumI8),
+    UnitEnumI16(UnitEnumI16),
+    UnitEnumI32(UnitEnumI32),
+    UnitEnumI64(UnitEnumI64),
+
+    // Data enums
+    DataEnumU8(DataEnumU8),
+    DataEnumU16(DataEnumU16),
+    DataEnumU32(DataEnumU32),
+    DataEnumI8(DataEnumI8),
+    DataEnumI32(DataEnumI32),
+
+    // Mixed enums
+    MixedEnumU8(MixedEnumU8),
+    MixedEnumU32(MixedEnumU32),
+    MixedEnumI16(MixedEnumI16),
+    MixedEnumI64(MixedEnumI64),
+
+    // Nested enums
+    NestedEnumU8(NestedEnumU8),
+    NestedEnumU32(NestedEnumU32),
+    NestedEnumI32(NestedEnumI32),
+    DeepEnum(DeepEnum),
 }
 
 impl FuzzValue {
@@ -129,6 +338,35 @@ impl FuzzValue {
 
             // Unit
             FuzzValue::Unit(v) => (PtrConst::new(v), <()>::SHAPE),
+
+            // Unit enums
+            FuzzValue::UnitEnumU8(v) => (PtrConst::new(v), UnitEnumU8::SHAPE),
+            FuzzValue::UnitEnumU16(v) => (PtrConst::new(v), UnitEnumU16::SHAPE),
+            FuzzValue::UnitEnumU32(v) => (PtrConst::new(v), UnitEnumU32::SHAPE),
+            FuzzValue::UnitEnumU64(v) => (PtrConst::new(v), UnitEnumU64::SHAPE),
+            FuzzValue::UnitEnumI8(v) => (PtrConst::new(v), UnitEnumI8::SHAPE),
+            FuzzValue::UnitEnumI16(v) => (PtrConst::new(v), UnitEnumI16::SHAPE),
+            FuzzValue::UnitEnumI32(v) => (PtrConst::new(v), UnitEnumI32::SHAPE),
+            FuzzValue::UnitEnumI64(v) => (PtrConst::new(v), UnitEnumI64::SHAPE),
+
+            // Data enums
+            FuzzValue::DataEnumU8(v) => (PtrConst::new(v), DataEnumU8::SHAPE),
+            FuzzValue::DataEnumU16(v) => (PtrConst::new(v), DataEnumU16::SHAPE),
+            FuzzValue::DataEnumU32(v) => (PtrConst::new(v), DataEnumU32::SHAPE),
+            FuzzValue::DataEnumI8(v) => (PtrConst::new(v), DataEnumI8::SHAPE),
+            FuzzValue::DataEnumI32(v) => (PtrConst::new(v), DataEnumI32::SHAPE),
+
+            // Mixed enums
+            FuzzValue::MixedEnumU8(v) => (PtrConst::new(v), MixedEnumU8::SHAPE),
+            FuzzValue::MixedEnumU32(v) => (PtrConst::new(v), MixedEnumU32::SHAPE),
+            FuzzValue::MixedEnumI16(v) => (PtrConst::new(v), MixedEnumI16::SHAPE),
+            FuzzValue::MixedEnumI64(v) => (PtrConst::new(v), MixedEnumI64::SHAPE),
+
+            // Nested enums
+            FuzzValue::NestedEnumU8(v) => (PtrConst::new(v), NestedEnumU8::SHAPE),
+            FuzzValue::NestedEnumU32(v) => (PtrConst::new(v), NestedEnumU32::SHAPE),
+            FuzzValue::NestedEnumI32(v) => (PtrConst::new(v), NestedEnumI32::SHAPE),
+            FuzzValue::DeepEnum(v) => (PtrConst::new(v), DeepEnum::SHAPE),
         }
     }
 }
@@ -167,6 +405,27 @@ impl std::fmt::Debug for FuzzValue {
             FuzzValue::Tuple2U32(v) => write!(f, "Tuple2U32({v:?})"),
             FuzzValue::Tuple3Mixed(v) => write!(f, "Tuple3Mixed({v:?})"),
             FuzzValue::Unit(v) => write!(f, "Unit({v:?})"),
+            FuzzValue::UnitEnumU8(v) => write!(f, "UnitEnumU8({v:?})"),
+            FuzzValue::UnitEnumU16(v) => write!(f, "UnitEnumU16({v:?})"),
+            FuzzValue::UnitEnumU32(v) => write!(f, "UnitEnumU32({v:?})"),
+            FuzzValue::UnitEnumU64(v) => write!(f, "UnitEnumU64({v:?})"),
+            FuzzValue::UnitEnumI8(v) => write!(f, "UnitEnumI8({v:?})"),
+            FuzzValue::UnitEnumI16(v) => write!(f, "UnitEnumI16({v:?})"),
+            FuzzValue::UnitEnumI32(v) => write!(f, "UnitEnumI32({v:?})"),
+            FuzzValue::UnitEnumI64(v) => write!(f, "UnitEnumI64({v:?})"),
+            FuzzValue::DataEnumU8(v) => write!(f, "DataEnumU8({v:?})"),
+            FuzzValue::DataEnumU16(v) => write!(f, "DataEnumU16({v:?})"),
+            FuzzValue::DataEnumU32(v) => write!(f, "DataEnumU32({v:?})"),
+            FuzzValue::DataEnumI8(v) => write!(f, "DataEnumI8({v:?})"),
+            FuzzValue::DataEnumI32(v) => write!(f, "DataEnumI32({v:?})"),
+            FuzzValue::MixedEnumU8(v) => write!(f, "MixedEnumU8({v:?})"),
+            FuzzValue::MixedEnumU32(v) => write!(f, "MixedEnumU32({v:?})"),
+            FuzzValue::MixedEnumI16(v) => write!(f, "MixedEnumI16({v:?})"),
+            FuzzValue::MixedEnumI64(v) => write!(f, "MixedEnumI64({v:?})"),
+            FuzzValue::NestedEnumU8(v) => write!(f, "NestedEnumU8({v:?})"),
+            FuzzValue::NestedEnumU32(v) => write!(f, "NestedEnumU32({v:?})"),
+            FuzzValue::NestedEnumI32(v) => write!(f, "NestedEnumI32({v:?})"),
+            FuzzValue::DeepEnum(v) => write!(f, "DeepEnum({v:?})"),
         }
     }
 }
@@ -270,6 +529,35 @@ pub enum FuzzTargetType {
 
     // Unit
     Unit,
+
+    // Unit enums
+    UnitEnumU8,
+    UnitEnumU16,
+    UnitEnumU32,
+    UnitEnumU64,
+    UnitEnumI8,
+    UnitEnumI16,
+    UnitEnumI32,
+    UnitEnumI64,
+
+    // Data enums
+    DataEnumU8,
+    DataEnumU16,
+    DataEnumU32,
+    DataEnumI8,
+    DataEnumI32,
+
+    // Mixed enums
+    MixedEnumU8,
+    MixedEnumU32,
+    MixedEnumI16,
+    MixedEnumI64,
+
+    // Nested enums
+    NestedEnumU8,
+    NestedEnumU32,
+    NestedEnumI32,
+    DeepEnum,
 }
 
 impl FuzzTargetType {
@@ -315,6 +603,35 @@ impl FuzzTargetType {
 
             // Unit
             FuzzTargetType::Unit => <()>::SHAPE,
+
+            // Unit enums
+            FuzzTargetType::UnitEnumU8 => UnitEnumU8::SHAPE,
+            FuzzTargetType::UnitEnumU16 => UnitEnumU16::SHAPE,
+            FuzzTargetType::UnitEnumU32 => UnitEnumU32::SHAPE,
+            FuzzTargetType::UnitEnumU64 => UnitEnumU64::SHAPE,
+            FuzzTargetType::UnitEnumI8 => UnitEnumI8::SHAPE,
+            FuzzTargetType::UnitEnumI16 => UnitEnumI16::SHAPE,
+            FuzzTargetType::UnitEnumI32 => UnitEnumI32::SHAPE,
+            FuzzTargetType::UnitEnumI64 => UnitEnumI64::SHAPE,
+
+            // Data enums
+            FuzzTargetType::DataEnumU8 => DataEnumU8::SHAPE,
+            FuzzTargetType::DataEnumU16 => DataEnumU16::SHAPE,
+            FuzzTargetType::DataEnumU32 => DataEnumU32::SHAPE,
+            FuzzTargetType::DataEnumI8 => DataEnumI8::SHAPE,
+            FuzzTargetType::DataEnumI32 => DataEnumI32::SHAPE,
+
+            // Mixed enums
+            FuzzTargetType::MixedEnumU8 => MixedEnumU8::SHAPE,
+            FuzzTargetType::MixedEnumU32 => MixedEnumU32::SHAPE,
+            FuzzTargetType::MixedEnumI16 => MixedEnumI16::SHAPE,
+            FuzzTargetType::MixedEnumI64 => MixedEnumI64::SHAPE,
+
+            // Nested enums
+            FuzzTargetType::NestedEnumU8 => NestedEnumU8::SHAPE,
+            FuzzTargetType::NestedEnumU32 => NestedEnumU32::SHAPE,
+            FuzzTargetType::NestedEnumI32 => NestedEnumI32::SHAPE,
+            FuzzTargetType::DeepEnum => DeepEnum::SHAPE,
         }
     }
 }
