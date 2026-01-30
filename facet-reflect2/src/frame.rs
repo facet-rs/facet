@@ -34,6 +34,11 @@ impl IndexedFields {
     pub fn all_complete(&self) -> bool {
         self.0.iter().all(|id| id.is_complete())
     }
+
+    /// Check if a field is complete.
+    pub fn is_complete(&self, idx: usize) -> bool {
+        self.0[idx].is_complete()
+    }
 }
 
 /// Struct frame data.
@@ -354,6 +359,21 @@ impl Frame {
             // Also clear enum selected state
             if let FrameKind::Enum(ref mut e) = self.kind {
                 e.selected = None;
+            }
+        } else if let FrameKind::Struct(ref mut s) = self.kind {
+            // Struct may have some fields initialized - drop them individually
+            if let Type::User(UserType::Struct(ref struct_type)) = self.shape.ty {
+                for (idx, field) in struct_type.fields.iter().enumerate() {
+                    if s.fields.is_complete(idx) {
+                        // SAFETY: field is marked complete, so it's initialized
+                        unsafe {
+                            let field_ptr = self.data.assume_init().field(field.offset);
+                            field.shape().call_drop_in_place(field_ptr);
+                        }
+                    }
+                }
+                // Reset all fields to NOT_STARTED
+                s.fields = IndexedFields::new(struct_type.fields.len());
             }
         } else if let FrameKind::Enum(ref mut e) = self.kind {
             // Enum variant may be complete even if INIT flag isn't set
