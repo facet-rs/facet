@@ -17,6 +17,41 @@ impl FrameId {
     // Valid arena indices: 1..MAX-1
 }
 
+struct Arena {
+    slots: Vec<Option<Frame>>,
+    free_list: Vec<u32>,
+}
+
+impl Arena {
+    fn alloc(&mut self, frame: Frame) -> FrameId {
+        if let Some(idx) = self.free_list.pop() {
+            self.slots[idx as usize] = Some(frame);
+            FrameId(idx)
+        } else {
+            let idx = self.slots.len() as u32;
+            self.slots.push(Some(frame));
+            FrameId(idx)
+        }
+    }
+    
+    fn free(&mut self, id: FrameId) {
+        debug_assert!(id.is_in_progress());
+        self.slots[id.0 as usize] = None;
+        self.free_list.push(id.0);
+    }
+    
+    fn get(&self, id: FrameId) -> &Frame {
+        self.slots[id.0 as usize].as_ref().unwrap()
+    }
+    
+    fn get_mut(&mut self, id: FrameId) -> &mut Frame {
+        self.slots[id.0 as usize].as_mut().unwrap()
+    }
+}
+```
+
+**No generational indices needed**: The only place a FrameId is stored is in `parent.children[idx]`. When a frame completes, we overwrite that slot with `COMPLETE` and free the arena slot. There are no stale references - the parent held the only reference and we just replaced it.
+
 bitflags! {
     struct FrameFlags: u8 {
         const OWNS_ALLOCATION = 1 << 0;
@@ -188,10 +223,8 @@ Enum frame (Children::Variant)
 
 ## Open questions
 
-1. **Arena reuse**: When a frame is "complete" and discarded, can we reuse that slot? Need generation counters?
+1. **Lists in deferred mode**: Elements are indexed, but indices can be sparse if we're re-entering. `Vec<FrameId>` with `NOT_STARTED` slots should handle this.
 
-2. **Lists in deferred mode**: Elements are indexed, but indices can be sparse if we're re-entering. `Vec<Option<FrameId>>` should handle this (sparse = lots of `None` slots).
+2. **Memory for children**: Each frame may allocate a Vec/HashMap for children. Could use arena slices for the common case?
 
-3. **Memory for children**: Each frame may allocate a Vec/HashMap for children. Could use arena slices for the common case?
-
-4. **DynKey ownership**: The `DynKey` owns the key allocation. On cleanup, we need to drop the key value and deallocate. On successful insert into the actual map, we move the key out.
+3. **DynKey ownership**: The `DynKey` owns the key allocation. On cleanup, we need to drop the key value and deallocate. On successful insert into the actual map, we move the key out.
