@@ -1,9 +1,7 @@
-#![no_main]
-
+use afl::fuzz;
 use arbitrary::Arbitrary;
 use facet_core::{Facet, PtrConst, Shape};
 use facet_reflect2::{Move, Op, Partial, Path, Source};
-use libfuzzer_sys::fuzz_target;
 
 /// A value that can be used in fuzzing.
 /// Each variant holds an owned value that we can get a pointer to.
@@ -164,44 +162,46 @@ pub struct FuzzInput {
     pub ops: Vec<FuzzOp>,
 }
 
-fuzz_target!(|input: FuzzInput| {
-    // Allocate a Partial for the target type
-    let mut partial = match Partial::alloc_shape(input.target.shape()) {
-        Ok(p) => p,
-        Err(_) => return, // Allocation failed, that's fine
-    };
+fn main() {
+    fuzz!(|input: FuzzInput| {
+        // Allocate a Partial for the target type
+        let mut partial = match Partial::alloc_shape(input.target.shape()) {
+            Ok(p) => p,
+            Err(_) => return, // Allocation failed, that's fine
+        };
 
-    // Apply operations
-    // We need to own the FuzzValues so we can forget them after successful moves
-    for fuzz_op in input.ops {
-        match fuzz_op {
-            FuzzOp::Set(source) => {
-                match source {
-                    FuzzSource::Move(value) => {
-                        let (ptr, shape) = value.as_ptr_and_shape();
-                        // SAFETY: ptr points to value which is valid and initialized,
-                        // and remains valid until apply() returns
-                        let mov = unsafe { Move::new(ptr, shape) };
-                        let op = Op::Set {
-                            path: Path::default(),
-                            source: Source::Move(mov),
-                        };
+        // Apply operations
+        // We need to own the FuzzValues so we can forget them after successful moves
+        for fuzz_op in input.ops {
+            match fuzz_op {
+                FuzzOp::Set(source) => {
+                    match source {
+                        FuzzSource::Move(value) => {
+                            let (ptr, shape) = value.as_ptr_and_shape();
+                            // SAFETY: ptr points to value which is valid and initialized,
+                            // and remains valid until apply() returns
+                            let mov = unsafe { Move::new(ptr, shape) };
+                            let op = Op::Set {
+                                path: Path::default(),
+                                source: Source::Move(mov),
+                            };
 
-                        // Apply may fail (e.g., shape mismatch)
-                        let result = partial.apply(&[op]);
+                            // Apply may fail (e.g., shape mismatch)
+                            let result = partial.apply(&[op]);
 
-                        if result.is_ok() {
-                            // Success! The value's bytes have been copied into the Partial.
-                            // We must forget the original to avoid double-free.
-                            std::mem::forget(value);
+                            if result.is_ok() {
+                                // Success! The value's bytes have been copied into the Partial.
+                                // We must forget the original to avoid double-free.
+                                std::mem::forget(value);
+                            }
+                            // On failure, value is dropped normally (no bytes were copied)
                         }
-                        // On failure, value is dropped normally (no bytes were copied)
                     }
                 }
             }
         }
-    }
 
-    // Drop partial - this exercises the Drop impl
-    // If it doesn't panic or crash, we're good
-});
+        // Drop partial - this exercises the Drop impl
+        // If it doesn't panic or crash, we're good
+    });
+}

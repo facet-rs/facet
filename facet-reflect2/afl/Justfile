@@ -1,0 +1,17 @@
+export AFL_I_DONT_CARE_ABOUT_MISSING_CRASHES := "1"
+
+# Build and run the fuzzer
+fuzz: build
+    cargo afl fuzz -i in -o out target/debug/facet-reflect2-afl
+
+# Build the fuzz target
+build:
+    cargo afl build
+
+# Resume fuzzing from previous state
+resume: build
+    cargo afl fuzz -i- -o out target/debug/facet-reflect2-afl
+
+# Clean build artifacts and output
+clean:
+    rm -rf target out
