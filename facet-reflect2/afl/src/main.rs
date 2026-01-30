@@ -11,26 +11,26 @@ use facet_reflect2::{Build, Imm, Op, Partial, Path, Source};
 
 #[derive(Clone, Debug, Facet, Arbitrary)]
 pub struct Point {
-    x: i32,
-    y: i32,
+    x: Box<i32>,
+    y: Box<i32>,
 }
 
 #[derive(Clone, Debug, Facet, Arbitrary)]
 pub struct Nested {
     name: String,
     point: Point,
-    value: u64,
+    value: Box<u64>,
 }
 
 #[derive(Clone, Debug, Facet, Arbitrary)]
 pub struct WithOption {
-    required: u32,
+    required: Box<u32>,
     optional: Option<String>,
 }
 
 #[derive(Clone, Debug, Facet, Arbitrary)]
 pub struct WithVec {
-    items: Vec<u32>,
+    items: Vec<Box<u32>>,
     label: String,
 }
 

@@ -43,7 +43,7 @@ run-bt file: build-standalone
 
 # Run under Miri
 run-miri file:
-    cargo +nightly miri run --features standalone --target-dir target-miri < {{ file }}
+    MIRIFLAGS="-Zmiri-disable-isolation" cargo +nightly miri run --features standalone --target-dir target-miri < {{ file }}
 
 # Minimize a crash input
 minimize file:
