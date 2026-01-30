@@ -2,7 +2,9 @@
 
 mod builder;
 
-use facet_core::{PtrConst, Shape};
+use std::marker::PhantomData;
+
+use facet_core::{Facet, PtrConst, Shape};
 use smallvec::SmallVec;
 
 /// A path into a nested structure.
@@ -22,15 +24,15 @@ impl Path {
 }
 
 /// An operation on a Partial.
-pub enum Op {
+pub enum Op<'a> {
     /// Set a value at a path relative to the current frame.
-    Set { path: Path, source: Source },
+    Set { path: Path, source: Source<'a> },
 }
 
 /// How to fill a value.
-pub enum Source {
+pub enum Source<'a> {
     /// Move a complete value from ptr into destination.
-    Move(Move),
+    Move(Move<'a>),
     /// Build incrementally - pushes a frame.
     Build(Build),
     /// Use the type's default value.
@@ -38,9 +40,66 @@ pub enum Source {
 }
 
 /// A value to move into the destination.
-pub struct Move {
-    pub ptr: PtrConst,
-    pub shape: &'static Shape,
+///
+/// The lifetime `'a` ensures the source pointer remains valid until the
+/// operation is applied.
+///
+/// # Safety invariant
+///
+/// `ptr` must point to a valid, initialized value whose type matches `shape`.
+/// This is enforced at construction time via [`Move::from_ref`] (safe) or
+/// [`Move::new`] (unsafe).
+pub struct Move<'a> {
+    ptr: PtrConst,
+    shape: &'static Shape,
+    _marker: PhantomData<&'a ()>,
+}
+
+impl<'a> Move<'a> {
+    /// Create a Move from a reference to a value.
+    ///
+    /// This is the safe way to create a Move - the lifetime ensures the
+    /// source value remains valid.
+    ///
+    /// After `apply()` returns successfully, the value's bytes have been copied
+    /// and the caller must not drop the source value (use `mem::forget`).
+    #[inline]
+    pub fn from_ref<'facet, T: Facet<'facet>>(value: &'a T) -> Self {
+        Self {
+            ptr: PtrConst::new(value),
+            shape: T::SHAPE,
+            _marker: PhantomData,
+        }
+    }
+
+    /// Create a Move from a raw pointer and shape.
+    ///
+    /// # Safety
+    ///
+    /// - `ptr` must point to a valid, initialized value whose type matches `shape`
+    /// - `ptr` must remain valid for lifetime `'a`
+    /// - After `apply()` returns successfully, the value has been moved and the
+    ///   caller must not drop or use the source value (e.g., use `mem::forget`)
+    #[inline]
+    pub unsafe fn new(ptr: PtrConst, shape: &'static Shape) -> Self {
+        Self {
+            ptr,
+            shape,
+            _marker: PhantomData,
+        }
+    }
+
+    /// Get the pointer to the source value.
+    #[inline]
+    pub fn ptr(&self) -> PtrConst {
+        self.ptr
+    }
+
+    /// Get the shape of the source value.
+    #[inline]
+    pub fn shape(&self) -> &'static Shape {
+        self.shape
+    }
 }
 
 /// Build a value incrementally.

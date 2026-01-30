@@ -1,14 +1,14 @@
 //! Builder API for constructing operations.
 
 use super::{Build, Move, Op, Path, Source};
-use facet_core::{Facet, PtrConst};
+use facet_core::Facet;
 
 /// Builder for Set operations.
 pub struct SetBuilder {
     path: Path,
 }
 
-impl Op {
+impl Op<'_> {
     /// Start building a Set operation.
     pub fn set() -> SetBuilder {
         SetBuilder {
@@ -33,18 +33,15 @@ impl SetBuilder {
     }
 
     /// Complete with a moved value.
-    pub fn mov<'f, T: Facet<'f>>(self, value: &T) -> Op {
+    pub fn mov<'a, 'f, T: Facet<'f>>(self, value: &'a T) -> Op<'a> {
         Op::Set {
             path: self.path,
-            source: Source::Move(Move {
-                ptr: PtrConst::new(value),
-                shape: T::SHAPE,
-            }),
+            source: Source::Move(Move::from_ref(value)),
         }
     }
 
     /// Complete with a default value.
-    pub fn default(self) -> Op {
+    pub fn default(self) -> Op<'static> {
         Op::Set {
             path: self.path,
             source: Source::Default,
@@ -52,7 +49,7 @@ impl SetBuilder {
     }
 
     /// Complete with build (push frame).
-    pub fn build(self) -> Op {
+    pub fn build(self) -> Op<'static> {
         Op::Set {
             path: self.path,
             source: Source::Build(Build { len_hint: None }),
@@ -60,7 +57,7 @@ impl SetBuilder {
     }
 
     /// Complete with build and length hint.
-    pub fn build_with_hint(self, hint: usize) -> Op {
+    pub fn build_with_hint(self, hint: usize) -> Op<'static> {
         Op::Set {
             path: self.path,
             source: Source::Build(Build {

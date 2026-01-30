@@ -22,13 +22,9 @@ default = []
 [dependencies]
 bitflags = "2.10.0"
 facet-core = { path = "../facet-core", version = "0.43.2" }
-hashbrown = "0.16.1"
 smallvec = "2.0.0-alpha.12"
 
 [dev-dependencies]
-facet = { path = "../facet" }
-facet-testhelpers = { path = "../facet-testhelpers" }
-proptest = "1.9"
 
 [lints]
 workspace = true

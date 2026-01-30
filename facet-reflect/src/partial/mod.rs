@@ -1560,17 +1560,17 @@ impl<'facet, const BORROW: bool> Drop for Partial<'facet, BORROW> {
                             };
 
                         // If parent not in stored_frames, use the stored parent_frame_index
-                        if !parent_found_in_stored {
-                            if let Some(parent_frame) = stack.get_mut(parent_frame_index) {
-                                match &mut parent_frame.tracker {
-                                    Tracker::Struct { iset, .. } => {
-                                        iset.unset(field_idx);
-                                    }
-                                    Tracker::Enum { data, .. } => {
-                                        data.unset(field_idx);
-                                    }
-                                    _ => {}
+                        if !parent_found_in_stored
+                            && let Some(parent_frame) = stack.get_mut(parent_frame_index)
+                        {
+                            match &mut parent_frame.tracker {
+                                Tracker::Struct { iset, .. } => {
+                                    iset.unset(field_idx);
                                 }
+                                Tracker::Enum { data, .. } => {
+                                    data.unset(field_idx);
+                                }
+                                _ => {}
                             }
                         }
                     }

@@ -381,12 +381,11 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             // For List frames, finalize the Vec's length based on element_count
             if let Tracker::List { element_count, .. } = &frame.tracker
                 && let Def::List(list_def) = frame.allocated.shape().def
+                && let Some(set_len_fn) = list_def.set_len()
             {
-                if let Some(set_len_fn) = list_def.set_len() {
-                    crate::trace!("finish_deferred: finalizing Vec len to {}", element_count);
-                    unsafe {
-                        set_len_fn(frame.data.assume_init(), *element_count);
-                    }
+                crate::trace!("finish_deferred: finalizing Vec len to {}", element_count);
+                unsafe {
+                    set_len_fn(frame.data.assume_init(), *element_count);
                 }
             }
 
@@ -1566,11 +1565,10 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                                     );
                                 }
                                 // Reset to idle but DON'T deallocate - finish_deferred will handle it
-                                if let Some(parent_frame) = self.frames_mut().last_mut() {
-                                    if let Tracker::Map { insert_state } = &mut parent_frame.tracker
-                                    {
-                                        *insert_state = MapInsertState::Idle;
-                                    }
+                                if let Some(parent_frame) = self.frames_mut().last_mut()
+                                    && let Tracker::Map { insert_state } = &mut parent_frame.tracker
+                                {
+                                    *insert_state = MapInsertState::Idle;
                                 }
                             } else {
                                 // Not in deferred mode - insert immediately

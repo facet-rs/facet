@@ -179,9 +179,12 @@ fuzz_target!(|input: FuzzInput| {
                 match source {
                     FuzzSource::Move(value) => {
                         let (ptr, shape) = value.as_ptr_and_shape();
+                        // SAFETY: ptr points to value which is valid and initialized,
+                        // and remains valid until apply() returns
+                        let mov = unsafe { Move::new(ptr, shape) };
                         let op = Op::Set {
                             path: Path::default(),
-                            source: Source::Move(Move { ptr, shape }),
+                            source: Source::Move(mov),
                         };
 
                         // Apply may fail (e.g., shape mismatch)

@@ -69,7 +69,7 @@ impl<'facet> Partial<'facet> {
     }
 
     /// Apply a sequence of operations.
-    pub fn apply(&mut self, ops: &[Op]) -> Result<(), ReflectError> {
+    pub fn apply(&mut self, ops: &[Op<'_>]) -> Result<(), ReflectError> {
         for op in ops {
             match op {
                 Op::Set { path, source } => {
@@ -79,50 +79,13 @@ impl<'facet> Partial<'facet> {
                     match source {
                         Source::Move(mov) => {
                             let frame = self.arena.get_mut(self.current);
+                            frame.assert_shape(mov.shape(), path)?;
+                            frame.uninit();
 
-                            // Exact shape match required
-                            if !frame.shape.is_shape(mov.shape) {
-                                return Err(ReflectError {
-                                    location: ErrorLocation {
-                                        shape: frame.shape,
-                                        path: path.clone(),
-                                    },
-                                    kind: ReflectErrorKind::ShapeMismatch {
-                                        expected: frame.shape,
-                                        actual: mov.shape,
-                                    },
-                                });
-                            }
-
-                            // If already initialized, drop the old value first.
-                            //
-                            // The INIT flag is a cached completeness check: once a frame's value
-                            // is fully initialized (all fields set for structs, etc.), we set INIT
-                            // so we don't have to walk children to verify completeness.
-                            //
-                            // For replacement: if INIT is set, the value is complete. We drop it
-                            // as a whole (which recursively drops any owned data like String buffers),
-                            // then write the new value. We don't deallocate the frame's memory since
-                            // the frame still owns that allocation and we're reusing it.
-                            if frame.flags.contains(FrameFlags::INIT) {
-                                // SAFETY: INIT flag means the value is fully initialized
-                                unsafe {
-                                    frame.shape.call_drop_in_place(frame.data.assume_init());
-                                }
-                            }
-
-                            // SAFETY:
-                            // - mov.ptr points to a valid, initialized value of type matching mov.shape
-                            //   (caller invariant from Move construction)
-                            // - frame.data points to allocated memory of sufficient size
-                            //   (guaranteed by alloc_shape using shape.layout)
-                            // - shapes match (checked above), so size and alignment are compatible
-                            // - copy_from only fails for unsized types, but we verified sized in alloc_shape
+                            // SAFETY: Move's safety invariant guarantees ptr is valid for shape
                             unsafe {
-                                frame.data.copy_from(mov.ptr, frame.shape).unwrap();
+                                frame.copy_from(mov.ptr(), mov.shape());
                             }
-
-                            frame.flags |= FrameFlags::INIT;
                         }
                         Source::Build(_) => todo!("Build source"),
                         Source::Default => todo!("Default source"),
@@ -191,17 +154,11 @@ impl<'facet> Drop for Partial<'facet> {
     fn drop(&mut self) {
         // If root is valid, we need to clean up
         if self.root.is_valid() {
+            // Drop any initialized value
+            self.arena.get_mut(self.root).uninit();
+
+            // Free the frame and deallocate if we own the allocation
             let frame = self.arena.free(self.root);
-
-            // Drop the value in place if initialized
-            if frame.flags.contains(FrameFlags::INIT) {
-                // SAFETY: INIT flag means the value is initialized
-                unsafe {
-                    frame.shape.call_drop_in_place(frame.data.assume_init());
-                }
-            }
-
-            // Deallocate if we own the allocation
             if frame.flags.contains(FrameFlags::OWNS_ALLOC) {
                 let layout = frame.shape.layout.sized_layout().unwrap();
                 if layout.size() > 0 {
