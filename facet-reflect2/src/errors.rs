@@ -20,5 +20,15 @@ pub struct ReflectError {
 /// The kind of reflection error.
 #[derive(Debug)]
 pub enum ReflectErrorKind {
-    // TODO
+    /// Shape mismatch during set operation.
+    ShapeMismatch {
+        expected: &'static Shape,
+        actual: &'static Shape,
+    },
+    /// Tried to build an uninitialized value.
+    NotInitialized,
+    /// Cannot allocate unsized type.
+    Unsized { shape: &'static Shape },
+    /// Memory allocation failed.
+    AllocFailed { layout: core::alloc::Layout },
 }

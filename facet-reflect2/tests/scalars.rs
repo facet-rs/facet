@@ -3,7 +3,7 @@ use facet_reflect2::{Move, Op, Partial, Path, Source};
 
 #[test]
 fn set_u32() {
-    let mut partial = Partial::alloc::<u32>();
+    let mut partial = Partial::alloc::<u32>().unwrap();
 
     let value = 42u32;
     partial

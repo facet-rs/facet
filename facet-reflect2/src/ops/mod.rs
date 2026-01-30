@@ -14,6 +14,11 @@ impl Path {
     pub fn push(&mut self, index: u32) {
         self.0.push(index);
     }
+
+    /// Returns true if the path is empty.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
 }
 
 /// An operation on a Partial.
