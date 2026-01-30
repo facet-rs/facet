@@ -255,6 +255,7 @@ pub enum FuzzValue {
     VecString(Vec<String>),
     BoxU32(Box<u32>),
     BoxString(Box<String>),
+    BoxPoint(Box<Point>),
 
     // Tuples
     Tuple2U32((u32, u32)),
@@ -331,6 +332,7 @@ impl FuzzValue {
             FuzzValue::VecString(v) => (PtrConst::new(v), <Vec<String>>::SHAPE),
             FuzzValue::BoxU32(v) => (PtrConst::new(v), <Box<u32>>::SHAPE),
             FuzzValue::BoxString(v) => (PtrConst::new(v), <Box<String>>::SHAPE),
+            FuzzValue::BoxPoint(v) => (PtrConst::new(v), <Box<Point>>::SHAPE),
 
             // Tuples
             FuzzValue::Tuple2U32(v) => (PtrConst::new(v), <(u32, u32)>::SHAPE),
@@ -402,6 +404,7 @@ impl std::fmt::Debug for FuzzValue {
             FuzzValue::VecString(v) => write!(f, "Vec<String>({v:?})"),
             FuzzValue::BoxU32(v) => write!(f, "Box<u32>({v:?})"),
             FuzzValue::BoxString(v) => write!(f, "Box<String>({v:?})"),
+            FuzzValue::BoxPoint(v) => write!(f, "Box<Point>({v:?})"),
             FuzzValue::Tuple2U32(v) => write!(f, "(u32, u32)({v:?})"),
             FuzzValue::Tuple3Mixed(v) => write!(f, "(u8, String, bool)({v:?})"),
             FuzzValue::Unit(_) => write!(f, "()"),
@@ -538,6 +541,7 @@ pub enum FuzzTargetType {
     VecString,
     BoxU32,
     BoxString,
+    BoxPoint,
 
     // Tuples
     Tuple2U32,
@@ -612,6 +616,7 @@ impl FuzzTargetType {
             FuzzTargetType::VecString => <Vec<String>>::SHAPE,
             FuzzTargetType::BoxU32 => <Box<u32>>::SHAPE,
             FuzzTargetType::BoxString => <Box<String>>::SHAPE,
+            FuzzTargetType::BoxPoint => <Box<Point>>::SHAPE,
 
             // Tuples
             FuzzTargetType::Tuple2U32 => <(u32, u32)>::SHAPE,
