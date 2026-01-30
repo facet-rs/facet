@@ -1,509 +1,236 @@
-# Partial API v2 Design Notes
+# Partial API v2 - Revised Operation Design
 
-## What is Partial?
+## Core insight
 
-Partial is a type-erased builder for any type that derives `Facet`. You give it a shape (runtime type info), and it lets you construct values field by field, element by element, without knowing the concrete type at compile time.
+Most operations should decide whether to push a frame based on their **payload**, not the operation type.
 
-This is what powers format parsers: `facet-json` reads JSON tokens, calls Partial methods, and out comes a fully-initialized `T`.
-
-### Why is this hard?
-
-Let's build up from simple to complex.
-
-#### Scalars
-
-A `u32` is either initialized or not. One bit of tracking.
-
-```
-u32: ✓ or ✗
-```
-
-Easy. Write the bytes, mark as initialized. Drop might be a no-op (primitives) or might do real work (`String`, `PathBuf`, or any type with heap allocations).
-
-#### Structs
-
-A struct with N fields needs N bits - one per field.
+## Source enum
 
 ```rust
-struct Point { x: i32, y: i32 }
-```
+/// A complete value to move into the destination
+struct Move {
+    ptr: *const (),
+    shape: &'static Shape,
+}
 
-```
-Point
-├── x: i32   ✓ or ✗
-└── y: i32   ✓ or ✗
-```
+/// Build incrementally - pushes a frame
+struct Build {
+    len_hint: Option<usize>,
+}
 
-We use an `ISet` (initialization set) - a bitset that tracks which fields are done. For structs with ≤64 fields, this fits in a single `u64`.
-
-On drop, we iterate fields in declaration order, dropping only the initialized ones.
-
-#### Tuples
-
-Same as structs - just fields without names.
-
-```
-(String, i32, bool)
-├── .0: String   ✓ or ✗
-├── .1: i32      ✓ or ✗
-└── .2: bool     ✓ or ✗
-```
-
-#### Enums
-
-Enums are trickier. First you must select a variant, then initialize its payload.
-
-```rust
-enum Message {
-    Quit,                      // variant 0
-    Move { x: i32, y: i32 },   // variant 1
-    Write(String),             // variant 2
+enum Source {
+    Move(Move),
+    Build(Build),
 }
 ```
 
-The variant index is part of the path. To set `Message::Move { x: 10, y: 20 }`:
+For `Move`: move the bytes from ptr into destination, mark as initialized. No frame pushed. The source is consumed (caller must not drop it).
 
+For `Build`: push a frame. Subsequent operations are relative to this frame until `End`.
+
+The `len_hint` is used when entering collections (Vec, HashMap, etc.) - it allows pre-allocation. Ignored for non-collections.
+
+If the caller needs to clone a value, that's their responsibility - clone first, then move the clone.
+
+## Operations
+
+### Set
+
+The workhorse operation. Sets a value at a path relative to the current frame.
+
+```rust
+Set { path: &[usize], source: Source }
 ```
-Begin { path: &[1] }      // select variant 1 (Move)
-Set { path: &[0], ... }   // x
-Set { path: &[1], ... }   // y
+
+### End
+
+Pops the current frame. Validates completeness (unless deferred - see below).
+
+```rust
 End
 ```
 
-When you `Begin` into a variant:
-1. The discriminant is written to memory (e.g., `1` for `Move`)
-2. The frame tracks: which variant is selected + ISet for its payload fields
+### Push
 
-The variant selection **persists** even after End. This is part of the enum's state, not just navigation.
-
-**Switching variants**: If you Begin a different variant, the previous payload (if any) must be dropped first. This is destructive - you can't have a "partial Move" and then switch to Write without cleaning up.
-
-```
-Message (tracking state)
-├── selected_variant: None | 0 | 1 | 2
-└── payload_iset: (depends on variant)
-    - variant 0 (Quit): nothing to track
-    - variant 1 (Move): ISet for {x, y}
-    - variant 2 (Write): single value tracking
-```
-
-#### Options
-
-`Option<T>` is really just an enum: `None` or `Some(T)`.
-
-```
-Option<String>
-├── variant: None | Some
-└── payload: (if Some) String ✓ or ✗
-```
-
-#### Results
-
-Same pattern: `Ok(T)` or `Err(E)`.
-
-```
-Result<String, io::Error>
-├── variant: Ok | Err
-└── payload: String or io::Error
-```
-
-#### Lists (Vec, VecDeque, etc.)
-
-Lists have two completely different paths for adding elements.
-
-##### Push path
-
-Used for: linked lists, or any collection without contiguous storage.
-
-```
-                    ┌──────────────┐
-                    │ staging buf  │
-                    │ ┌──────────┐ │
-                    │ │ Server   │ │  ← build here first
-                    │ │ host: ✓  │ │
-                    │ │ port: ✓  │ │
-                    │ └──────────┘ │
-                    └──────┬───────┘
-                           │ push (move)
-                           ▼
-┌─────────────────────────────────────┐
-│ Vec<Server>                         │
-│ [0]: Server ✓  [1]: Server ✓  ...   │
-└─────────────────────────────────────┘
-```
-
-1. Allocate a temporary staging buffer
-2. Build the element completely in staging
-3. Call `push` vtable - moves from staging into collection
-4. Deallocate staging buffer
-
-The collection only ever contains fully-initialized elements. If we fail while building in staging, we drop the partial staging buffer - the collection is untouched.
-
-##### Direct-fill path
-
-Used for: Vec, VecDeque, anything with contiguous storage and a `reserve`/`set_len` API.
-
-```
-┌─────────────────────────────────────────────────────┐
-│ Vec<Server>  (len=2, cap=4)                         │
-│                                                     │
-│ [0]: Server ✓  [1]: Server ✓  [2]: ????  [3]: ????  │
-│                                    ▲                │
-│                                    │                │
-│                            building here!           │
-│                            ┌──────────┐             │
-│                            │ Server   │             │
-│                            │ host: ✓  │             │
-│                            │ port: ✗  │ ← partial!  │
-│                            └──────────┘             │
-└─────────────────────────────────────────────────────┘
-```
-
-1. `reserve(len + 1)` - ensure capacity
-2. Get pointer to `vec.as_ptr().add(len)` - the slot past the end
-3. Build element directly in that slot
-4. On success: `set_len(len + 1)`
-5. On failure: drop partial element, do NOT call `set_len`
-
-This is faster (no intermediate copy) but more dangerous. The element is being built inside the Vec's buffer but the Vec doesn't "know" about it yet (len hasn't changed). If we panic or error:
-- We must drop initialized fields of the partial element
-- We must NOT call `set_len` (element isn't complete)
-- The Vec's drop will deallocate the buffer (safe - it only drops `[0..len]`)
-
-##### Tracking for lists
-
-Depends on the path:
-
-**Push path**: The staging buffer is a separate frame with its own tracking. The list frame just knows "collection is initialized". On successful push, staging is deallocated. On failure, staging frame handles cleanup.
-
-**Direct-fill path**: The list frame tracks the in-progress slot directly:
-```
-List frame:
-├── collection initialized? ✓
-├── building_slot: Option<usize>     ← index we're filling
-└── slot_frame: (tracks partial element in buffer)
-```
-
-On success: `set_len(building_slot + 1)`, clear tracking.
-On failure: drop partial element via slot_frame, do NOT set_len.
-
-Either way, we don't track individual elements with a bitset - once in the collection, they're the collection's responsibility.
-
-#### Maps (HashMap, BTreeMap, etc.)
-
-Maps need TWO temporary values: key and value.
-
-```
-HashMap<String, Server>
-├── {"localhost": Server} ✓
-├── {"remote": Server}    ✓
-└── (currently building):
-    ├── key: String     ✓
-    └── value: Server
-        ├── host: String ✓
-        └── port: u16    ✗  ← partial!
-```
-
-Both key and value must be fully initialized before insertion. We build them in temporary buffers, then call the map's insert.
-
-#### Smart Pointers (Box, Arc, Rc)
-
-These allocate their inner value on the heap.
-
-```
-Box<Config>
-└── inner: Config
-    ├── name: String ✓
-    └── port: u16    ✗
-```
-
-The Box itself isn't "initialized" until its inner value is complete. If we fail partway, we must drop the partial inner value AND deallocate the Box's heap memory.
-
-#### Nested complexity
-
-Now combine everything:
+Append an element to a list or set.
 
 ```rust
-struct Config {
-    name: String,
-    servers: Vec<Server>,
-    timeout: Option<Duration>,
+Push { source: Source }
+```
+
+**When `source` is `Move`**: Element is complete, add it directly.
+
+**When `source` is `Build`**: Push a frame for building the element. `End` completes and appends/inserts.
+
+For lists, the implementation decides whether to use direct-fill or staging:
+
+- **Direct-fill** (Vec, VecDeque - has `reserve`/`set_len`):
+  1. `reserve(len + 1)`
+  2. Frame points into `vec.as_ptr().add(len)`
+  3. On `End`: `set_len(len + 1)`
+
+- **Staging** (LinkedList, etc. - only has `push`):
+  1. Allocate staging buffer
+  2. Frame points at staging
+  3. On `End`: call `push` vtable, deallocate staging
+
+For sets, always uses staging (build element, then insert).
+
+The caller doesn't know or care which path is taken.
+
+### Insert
+
+Insert a key-value pair into a map.
+
+```rust
+Insert { key: Move, value: Source }
+```
+
+The key must always be complete (`Move`) - this enables deferred map entries. If we need to defer mid-value, we can store the incomplete value frame keyed by the (complete) key and re-enter later.
+
+The value can be `Move` (complete) or `Build` (incremental).
+
+## Examples
+
+### Scalar
+
+```rust
+Set { path: &[], source: Source::Move(Move { ptr: &42u32, shape: <u32>::SHAPE }) }
+```
+
+### Struct (field by field)
+
+```rust
+// struct Point { x: i32, y: i32 }
+Set { path: &[0], source: Source::Move(...) }  // x
+Set { path: &[1], source: Source::Move(...) }  // y
+```
+
+### Nested struct (incremental)
+
+```rust
+// struct Line { start: Point, end: Point }
+Set { path: &[0], source: Source::Build(Build { len_hint: None }) }  // start - pushes frame
+  Set { path: &[0], source: Source::Move(...) }  // start.x
+  Set { path: &[1], source: Source::Move(...) }  // start.y
+End
+Set { path: &[1], source: Source::Build(Build { len_hint: None }) }  // end - pushes frame
+  Set { path: &[0], source: Source::Move(...) }  // end.x
+  Set { path: &[1], source: Source::Move(...) }  // end.y
+End
+```
+
+### Nested struct (you have the whole thing)
+
+```rust
+// If you already have a Point value
+Set { path: &[0], source: Source::Move(Move { ptr: &start_point, shape: <Point>::SHAPE }) }
+Set { path: &[1], source: Source::Move(Move { ptr: &end_point, shape: <Point>::SHAPE }) }
+```
+
+### Enum (variant selection via path)
+
+```rust
+// enum Message { Quit, Move { x: i32, y: i32 }, Write(String) }
+
+// Set Message::Move { x: 10, y: 20 }
+Set { path: &[1], source: Source::Build(Build { len_hint: None }) }  // select variant 1, push frame
+  Set { path: &[0], source: Source::Move(...) }  // x
+  Set { path: &[1], source: Source::Move(...) }  // y
+End
+```
+
+### List (Vec)
+
+```rust
+// Vec<Server> where Server { host: String, port: u16 }
+
+// Enter Vec field - len_hint enables pre-allocation
+Set { path: &[0], source: Source::Build(Build { len_hint: Some(2) }) }
+  
+  // Element 0 - built incrementally
+  Push { source: Source::Build(Build { len_hint: None }) }
+    Set { path: &[0], source: Source::Move(...) }  // host
+    Set { path: &[1], source: Source::Move(...) }  // port
+  End
+  
+  // Element 1 - have the whole thing
+  Push { source: Source::Move(Move { ptr: &server2, shape: <Server>::SHAPE }) }
+End
+```
+
+### Set (HashSet)
+
+```rust
+// HashSet<Server> where Server { host: String, port: u16 }
+
+// Enter HashSet field
+Set { path: &[0], source: Source::Build(Build { len_hint: Some(2) }) }
+  
+  // Element 0 - built incrementally
+  Push { source: Source::Build(Build { len_hint: None }) }
+    Set { path: &[0], source: Source::Move(...) }  // host
+    Set { path: &[1], source: Source::Move(...) }  // port
+  End
+  
+  // Element 1 - have the whole thing
+  Push { source: Source::Move(Move { ptr: &server2, shape: <Server>::SHAPE }) }
+End
+```
+
+### Map (HashMap)
+
+```rust
+// HashMap<String, Server>
+
+// Enter HashMap field
+Set { path: &[0], source: Source::Build(Build { len_hint: Some(2) }) }
+
+  // Entry 1 - value built incrementally
+  Insert { 
+    key: Move { ptr: &"server1", shape: <String>::SHAPE },
+    value: Source::Build(Build { len_hint: None })
+  }
+    Set { path: &[0], source: Source::Move(...) }  // host
+    Set { path: &[1], source: Source::Move(...) }  // port
+  End
+
+  // Entry 2 - complete value
+  Insert {
+    key: Move { ptr: &"server2", shape: <String>::SHAPE },
+    value: Source::Move(Move { ptr: &server2, shape: <Server>::SHAPE })
+  }
+End
+```
+
+## Deferred frames
+
+For `#[facet(flatten)]` support, frames can be deferred - left incomplete and re-entered later.
+
+```rust
+struct Build {
+    len_hint: Option<usize>,
+    deferred: bool,
 }
 ```
 
-```
-Config
-├── name: String           ✓
-├── servers: Vec<Server>   ✓ (vec initialized)
-│   ├── [0]: Server        ✓
-│   └── [1]: Server        partial!
-│       ├── host: String   ✓
-│       └── port: u16      ✗
-└── timeout: Option        ✗ (no variant selected yet)
-```
+When `deferred: true`, an incomplete frame at `End` is stored (by path for structs, by key for maps) and can be re-entered later. When `deferred: false`, an incomplete frame at `End` is an error.
 
-If we error here, cleanup must:
-1. Drop `servers[1].host` (initialized String)
-2. NOT touch `servers[1].port` (uninitialized)
-3. Drop `servers[0]` entirely
-4. Drop the Vec (deallocates buffer, drops elements)
-5. Drop `name`
-6. NOT touch `timeout`
-7. Deallocate Config
+For maps, deferred entries are keyed by the (complete) key. Re-entering looks up the incomplete value frame by key.
 
-This is why Partial exists: **tracking all of this so cleanup is always correct**.
+## Arrays
 
-### Summary: what we track
-
-1. **Allocations** - top-level T, Vec buffers, HashMap buckets, Box/Arc/Rc heap allocations, temporary buffers for map keys/values
-2. **Initialization state** - per-field bitsets for structs, variant selection for enums, element tracking for collections
-3. **Completeness** - before returning a finished T, verify everything is initialized (separate from facet-validate attribute validation)
-
-### Defaults: the escape hatch
-
-Not everything needs explicit initialization. Partial can fill in defaults:
-
-- `Option<T>` → defaults to `None` (implicitly, always)
-- `#[facet(default)]` on a field → use `Default::default()`
-- `#[facet(default)]` on a struct → all fields get their defaults
-- `#[facet(default = expr)]` → custom default value
-
-When we validate completeness, uninitialized fields with defaults get filled in automatically. Only fields WITHOUT defaults cause an error if unset.
-
-## Why deferred? The flatten problem
+Fixed-size `[T; N]`. Use `Set` with path index - no `Push` since size is fixed:
 
 ```rust
-struct Outer {
-    #[facet(flatten)]
-    inner: Inner,
-    other: String,
-}
-
-struct Inner {
-    a: i32,
-    b: i32,
-}
+// [i32; 3]
+Set { path: &[0], source: Source::Move(...) }
+Set { path: &[1], source: Source::Move(...) }
+Set { path: &[2], source: Source::Move(...) }
 ```
 
-In JSON this can look like:
+## Error handling
 
-```json
-{ "a": 1, "other": "hi", "b": 2 }
-```
+On any error, the Partial is poisoned. All initialized fields are dropped, all allocations are freed, and you're done. No partial recovery, no "undo just this operation".
 
-With `Begin { deferred: false }`, you can't handle this:
-
-```
-1. Begin inner         2. Set a              3. End inner ← BOOM!
-                                                b isn't set yet!
-   ┌─────────┐            ┌─────────┐
-   │  Inner  │            │  Inner  │
-   │ a: ?    │            │ a: 1 ✓  │
-   │ b: ?    │            │ b: ?    │
-   └─────────┘            └─────────┘
-   ┌─────────┐            ┌─────────┐
-   │  Outer  │            │  Outer  │
-   └─────────┘            └─────────┘
-```
-
-You can't End because `inner` isn't complete, but you need to go back up to set `other`, then come back down to set `b`.
-
-With `Begin { deferred: true }`, frames are stored and you can re-enter:
-
-```
-1. Begin inner       2. Set a            3. End (incomplete)  4. Set other
-   deferred: true                           store frame id
-   ┌─────────┐          ┌─────────┐                              ┌─────────┐
-   │ Inner   │          │ Inner   │       stored[path] = id      │  Outer  │
-   │ path: 0 │          │ path: 0 │       frame stays in arena   │other:hi✓│
-   │ a: ?    │          │ a: 1 ✓  │                              └─────────┘
-   │ b: ?    │          │ b: ?    │
-   └─────────┘          └─────────┘
-   ┌─────────┐          ┌─────────┐          ┌─────────┐
-   │  Outer  │          │  Outer  │          │  Outer  │
-   └─────────┘          └─────────┘          └─────────┘
-
-
-5. Re-enter inner    6. Set b            7. End (complete)
-   lookup by path,                          validates!
-   push frame id
-   ┌─────────┐          ┌─────────┐          ┌─────────┐
-   │ Inner   │          │ Inner   │          │  Outer  │
-   │ path: 0 │          │ path: 0 │          │inner: ✓ │
-   │ a: 1 ✓  │          │ a: 1 ✓  │          │other: ✓ │
-   │ b: ?    │          │ b: 2 ✓  │          └─────────┘
-   └─────────┘          └─────────┘
-   ┌─────────┐          ┌─────────┐
-   │  Outer  │          │  Outer  │
-   └─────────┘          └─────────┘
-```
-
-## Data structures
-
-```rust
-struct Frame {
-    path: Path,           // where this frame lives
-    // ... data, iset, etc.
-}
-
-struct Partial {
-    arena: Arena<Frame>,
-    stack: Vec<FrameId>,
-    stored_frames: BTreeMap<Path, FrameId>,  // lookup by path
-}
-```
-
-On `End` of a deferred incomplete frame:
-1. Frame stays in arena (not deallocated)
-2. `stored_frames.insert(frame.path.clone(), frame_id)`
-3. Pop from stack
-
-On `Begin` with a path that exists in `stored_frames`:
-1. Look up `frame_id = stored_frames.get(&path)`
-2. Push that `frame_id` back onto stack
-3. Continue where we left off
-
-## Core ops
-
-```rust
-Begin { path: &[usize], deferred: bool }
-End
-Set { path: &[usize], ptr: *const (), shape: &'static Shape }
-```
-
-Path is relative to current frame.
-
-**End behavior** depends on how the frame was begun:
-
-- `deferred: false` → validate, must be complete, pop
-- `deferred: true` → if complete, validate and pop; if incomplete, store frame by path, pop (can re-enter later)
-
-Re-entering a path that has a stored frame restores it to the stack.
-
-## The core tension
-
-**Set** can copy any value - scalars, structs, enums, anything. Just memcpy the bytes.
-
-But sometimes you **want** to build in-place:
-- Avoid allocating a temp buffer just to copy it later
-- Write directly into the final destination (a field inside a struct inside a Vec, etc.)
-
-Hence **Begin/End**: begin work on a nested location, let subsequent ops write there, end when done.
-
-## Examples by type
-
-### Scalars
-
-```rust
-// Building a u32 at root
-Set { path: &[], ptr: &42u32, shape: <u32 as Facet>::SHAPE }
-```
-
-### Structs
-
-```rust
-struct Point { x: i32, y: i32 }
-
-// Option 1: Set entire struct at once (if you have it)
-Set { path: &[], ptr: &point, shape: <Point as Facet>::SHAPE }
-
-// Option 2: Build in-place, field by field
-Set { path: &[0], ptr: &10i32, ... }  // x
-Set { path: &[1], ptr: &20i32, ... }  // y
-
-// Nested struct
-struct Line { start: Point, end: Point }
-
-// Need Begin/End for each nested struct
-Begin { path: &[0], deferred: false }  // start
-Set { path: &[0], ... }                // start.x
-Set { path: &[1], ... }                // start.y
-End                                    // validates start is complete
-Begin { path: &[1], deferred: false }  // end  
-Set { path: &[0], ... }                // end.x
-Set { path: &[1], ... }                // end.y
-End                                    // validates end is complete
-```
-
-### Lists
-
-Two paths depending on what the list supports:
-
-**Direct-fill** (Vec-like with contiguous storage):
-1. Reserve capacity
-2. Get pointer to `vec.as_ptr().add(len)`
-3. Construct in-place there
-4. `set_len(len + 1)`
-
-```rust
-Begin { path: &[0], deferred: false }  // enter the Vec field
-InitList
-BeginSlot { index: 0 }                 // points directly into vec's buffer
-Set { path: &[], ... }                 // write the element
-End                                    // done with slot
-BeginSlot { index: 1 }
-Set { path: &[], ... }
-End
-End                                    // done with list
-```
-
-**Push path** (linked lists, or when direct-fill unavailable):
-1. Allocate staging buffer
-2. Construct value there
-3. Call `push` vtable which moves from staging
-4. Dealloc staging buffer
-
-```rust
-Begin { path: &[0], deferred: false }
-InitList
-BeginItem                              // allocates staging
-Set { path: &[], ... }
-End                                    // calls push, frees staging
-BeginItem
-Set { path: &[], ... }
-End
-End
-```
-
-The format parser **must** know which path to use.
-
-### Maps
-
-Maps are special: build key and value in **separate Partials**, then insert.
-
-```rust
-Begin { path: &[0], deferred: false }  // enter the HashMap field
-InitMap
-
-// Build key in scratch partial, build value in scratch partial
-// Then:
-Insert { key_ptr: ..., value_ptr: ... }
-
-End
-```
-
-Format parser builds key/value in scratch Partials, emits Insert with pointers to finished values. Map's insert vtable moves them in.
-
-### Sets
-
-Same as maps but only element:
-
-```rust
-Begin { path: &[0], deferred: false }
-InitSet
-Insert { element_ptr: ... }
-End
-```
-
-## Open questions
-
-### Enums
-
-How do variant selection work with paths? Probably:
-```rust
-SelectVariant { index: usize }  // then fields are accessible by index
-```
-
-### Init* ops
-
-Do we need separate `InitList`/`InitMap`/`InitSet`/`InitArray`? Or just `Init` and the shape tells us what to do?
+This keeps the implementation simple and matches fail-fast semantics.
