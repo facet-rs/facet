@@ -1,11 +1,20 @@
 //! Operations for partial value construction.
 
+mod builder;
+
 use facet_core::{PtrConst, Shape};
 use smallvec::SmallVec;
 
 /// A path into a nested structure.
 #[derive(Clone, Debug, Default)]
 pub struct Path(SmallVec<u32, 2>);
+
+impl Path {
+    /// Push an index onto the path.
+    pub fn push(&mut self, index: u32) {
+        self.0.push(index);
+    }
+}
 
 /// An operation on a Partial.
 pub enum Op {
