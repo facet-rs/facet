@@ -9,10 +9,30 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
+afl = "0.15"
 arbitrary = { version = "1", features = ["derive"] }
 
 [dependencies.facet]
 path = "../../facet"
+features = [
+    "nonzero",
+    "net",
+    "chrono",
+    "time",
+    "jiff02",
+    "url",
+    "uuid",
+    "ulid",
+    "bytes",
+    "bytestring",
+    "camino",
+    "compact_str",
+    "ordered-float",
+    "smol_str",
+    "smartstring",
+    "rust_decimal",
+    "num-complex",
+]
 
 [dependencies.facet-reflect]
 path = ".."
@@ -27,6 +47,13 @@ members = ["."]
 [[bin]]
 name = "fuzz_partial"
 path = "fuzz_targets/fuzz_partial.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_api2"
+path = "fuzz_targets/fuzz_api2.rs"
 test = false
 doc = false
 bench = false

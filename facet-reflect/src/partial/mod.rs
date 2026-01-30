@@ -1,124 +1,18 @@
 //! Partial value construction for dynamic reflection
-//!
-//! This module provides APIs for incrementally building values through reflection,
-//! particularly useful when deserializing data from external formats like JSON or YAML.
-//!
-//! # Overview
-//!
-//! The `Partial` type (formerly known as `Wip` - Work In Progress) allows you to:
-//! - Allocate memory for a value based on its `Shape`
-//! - Initialize fields incrementally in a type-safe manner
-//! - Handle complex nested structures including structs, enums, collections, and smart pointers
-//! - Build the final value once all required fields are initialized
-//!
-//! **Note**: This is the only API for partial value construction. The previous `TypedPartial`
-//! wrapper has been removed in favor of using `Partial` directly.
-//!
-//! # Basic Usage
-//!
-//! ```no_run
-//! # use facet_reflect::Partial;
-//! # use facet_core::{Shape, Facet};
-//! # fn example<T: Facet<'static>>() -> Result<(), Box<dyn std::error::Error>> {
-//! // Allocate memory for a struct
-//! let mut partial = Partial::alloc::<T>()?;
-//!
-//! // Set simple fields
-//! partial = partial.set_field("name", "Alice")?;
-//! partial = partial.set_field("age", 30u32)?;
-//!
-//! // Work with nested structures
-//! partial = partial.begin_field("address")?;
-//! partial = partial.set_field("street", "123 Main St")?;
-//! partial = partial.set_field("city", "Springfield")?;
-//! partial = partial.end()?;
-//!
-//! // Build the final value
-//! let value = partial.build()?;
-//! # Ok(())
-//! # }
-//! ```
-//!
-//! # Chaining Style
-//!
-//! The API supports method chaining for cleaner code:
-//!
-//! ```no_run
-//! # use facet_reflect::Partial;
-//! # use facet_core::{Shape, Facet};
-//! # fn example<T: Facet<'static>>() -> Result<(), Box<dyn std::error::Error>> {
-//! let value = Partial::alloc::<T>()?
-//!     .set_field("name", "Bob")?
-//!     .begin_field("scores")?
-//!         .set(vec![95, 87, 92])?
-//!     .end()?
-//!     .build()?;
-//! # Ok(())
-//! # }
-//! ```
-//!
-//! # Working with Collections
-//!
-//! ```no_run
-//! # use facet_reflect::Partial;
-//! # use facet_core::{Shape, Facet};
-//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let mut partial = Partial::alloc::<Vec<String>>()?;
-//!
-//! // Add items to a list
-//! partial = partial.begin_list_item()?;
-//! partial = partial.set("first")?;
-//! partial = partial.end()?;
-//!
-//! partial = partial.begin_list_item()?;
-//! partial = partial.set("second")?;
-//! partial = partial.end()?;
-//!
-//! let vec = partial.build()?;
-//! # Ok(())
-//! # }
-//! ```
-//!
-//! # Working with Maps
-//!
-//! ```no_run
-//! # use facet_reflect::Partial;
-//! # use facet_core::{Shape, Facet};
-//! # use std::collections::HashMap;
-//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let mut partial = Partial::alloc::<HashMap<String, i32>>()?;
-//!
-//! // Insert key-value pairs
-//! partial = partial.begin_key()?;
-//! partial = partial.set("score")?;
-//! partial = partial.end()?;
-//! partial = partial.begin_value()?;
-//! partial = partial.set(100i32)?;
-//! partial = partial.end()?;
-//!
-//! let map = partial.build()?;
-//! # Ok(())
-//! # }
-//! ```
-//!
-//! # Safety and Memory Management
-//!
-//! The `Partial` type ensures memory safety by:
-//! - Tracking initialization state of all fields
-//! - Preventing use-after-build through state tracking
-//! - Properly handling drop semantics for partially initialized values
-//! - Supporting both owned and borrowed values through lifetime parameters
 
 use alloc::{collections::BTreeMap, sync::Arc, vec::Vec};
 
-mod arena;
+pub(crate) mod arena;
 mod iset;
+
+// TODO: make non-pub
 pub(crate) mod typeplan;
-pub use typeplan::{DeserStrategy, TypePlan};
+pub use typeplan::{DeserStrategy, TypePlan, TypePlanCore};
+use typeplan::{FieldDefault, FieldInitPlan, FillRule};
 
 mod partial_api;
 
-use crate::{ReflectErrorKind, TrackerKind, trace, typeplan::TypePlanCore};
+use crate::{ReflectErrorKind, TrackerKind, trace};
 use facet_path::{Path, PathStep};
 
 use core::marker::PhantomData;
@@ -130,7 +24,6 @@ use facet_core::{
     Def, EnumType, Field, PtrUninit, Shape, SliceBuilderVTable, Type, UserType, Variant,
 };
 use iset::ISet;
-use typeplan::{FieldDefault, FieldInitPlan, FillRule};
 
 /// State of a partial value
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

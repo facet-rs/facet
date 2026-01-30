@@ -2,10 +2,9 @@
 //!
 //! Key insight: instead of generating raw `*const ()` pointers, we generate
 //! typed values that get converted to pointers at submit time.
-//!
-//! Enable the `fuzz-all-types` feature to get all type variants.
 
-use facet_core::{Facet, Shape};
+use facet::Facet;
+use facet_core::Shape;
 
 // =============================================================================
 // Fuzz Value - type-erased but safe value storage
@@ -1014,4 +1013,10 @@ pub struct WithDefaults {
     pub opt_with_default: Option<String>,
 }
 
-fuzz_target!(|input: (SomeType, Vec<SomeOps>)| { todo!("fuzz") });
+fn main() {
+    afl::fuzz!(|data: &[u8]| {
+        // TODO: deserialize data into (FuzzTargetType, Vec<FuzzOp>)
+        // and run the fuzzing logic
+        let _ = data;
+    });
+}
