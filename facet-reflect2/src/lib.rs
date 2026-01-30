@@ -2,8 +2,20 @@
 //!
 //! Partial value construction for facet - v2 API with tree-based tracking.
 
-pub mod arena;
-pub mod errors;
-pub mod frame;
-pub mod ops;
-pub mod partial;
+// --- arena ---
+pub(crate) mod arena;
+
+// --- errors ---
+mod errors;
+pub use errors::{ErrorLocation, ReflectError, ReflectErrorKind};
+
+// --- frame ---
+pub(crate) mod frame;
+
+// --- ops ---
+mod ops;
+pub use ops::{Build, Move, Op, Path, Source};
+
+// --- partial ---
+mod partial;
+pub use partial::Partial;

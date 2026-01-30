@@ -19,17 +19,17 @@ impl Partial {
         todo!()
     }
 
-    /// Apply an operation.
-    pub fn apply(&mut self, op: Op) -> Result<(), ReflectError> {
+    /// Apply a sequence of operations.
+    pub fn apply(&mut self, ops: &[Op]) -> Result<(), ReflectError> {
         todo!()
     }
 
     /// Build the final value, consuming the Partial.
     ///
-    /// # Safety
+    /// # Panics
     ///
-    /// The caller must ensure the type `T` matches the shape used to create this Partial.
-    pub unsafe fn build<T>(self) -> Result<T, ReflectError> {
+    /// Panics if `T::SHAPE` does not match the shape passed to `alloc`.
+    pub fn build<T>(self) -> Result<T, ReflectError> {
         todo!()
     }
 }
