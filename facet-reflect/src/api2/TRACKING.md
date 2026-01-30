@@ -2,57 +2,88 @@
 
 How does Partial track what's initialized?
 
-## The problem
+## Why we track
 
-When building a struct incrementally, we need to know:
-1. Which fields have been set
-2. Which fields still need values (or defaults)
-3. When it's safe to "finalize" the value
+### 1. Drop safety / cleanup on error
 
-## Current approach (apiv1)
+If something fails partway through, we need to drop exactly what's initialized and nothing else. If `inner.x` is set but `inner.y` isn't, and we error, we must:
+- Drop the value at `inner.x`
+- NOT touch uninitialized memory at `inner.y`
+- Deallocate the allocation
 
-The `Tracker` enum has variants for each container type:
+Without tracking: leak, double-free, or UB.
 
-```rust
-enum Tracker {
-    Scalar,
-    Struct { iset: ISet, current_child: Option<usize> },
-    Enum { variant: &'static Variant, variant_idx: usize, data: ISet, current_child: Option<usize> },
-    Array { iset: ISet, current_child: Option<usize> },
-    List { current_child: Option<usize>, element_count: usize },
-    Map { insert_state: MapInsertState },
-    Set { current_child: bool },
-    Option { building_inner: bool },
-    // ... etc
-}
-```
+### 2. Validation at finish
 
-`ISet` is a bitset tracking which fields/elements are initialized (up to 63).
+When finalizing, we check: is everything initialized (or defaultable)? We need to know which fields are missing to either fill defaults or error.
 
-## Questions for apiv2
+### 3. Re-entry in deferred mode
 
-1. **Do we still need per-type tracker variants?**
+When re-entering a stored frame, we need to know what's already set. Is setting `inner.x` again an error? An overwrite? Depends on knowing it was already set.
 
-   With the new ops, the "what kind of thing" is implicit in the Shape. Do we need `Tracker::Struct` vs `Tracker::List` etc, or can we unify?
+### 4. Replacement / overwrite
 
-2. **current_child tracking**
+If a field is already set and someone sets it again:
+- Drop the old value first
+- Write the new one
+- Tracking still shows "initialized"
 
-   In apiv1, `current_child` tracks "which field/element we're currently building" for path derivation in deferred mode. With apiv2's explicit paths in `Set`, do we still need this?
+### 5. Enum variant switching
 
-3. **element_count for lists**
+If we select variant A, set some fields, then select variant B:
+- Drop all initialized fields from variant A
+- Reset tracking for the new variant
+- Update discriminant
 
-   Lists track `element_count` separately from the Vec's actual len (because in deferred mode, `set_len` is called later). This seems still necessary.
+### 6. Staging / temporaries
 
-4. **MapInsertState complexity**
+For `Arc<T>`, we build a temporary `T`, then wrap it. The staging `T` needs tracking - if we error mid-build, we drop what's initialized in staging and deallocate, but don't touch the never-created Arc.
 
-   Maps have a state machine for key/value insertion. With apiv2's `Insert { key: Move, value: Source }`, the key is always complete. Does this simplify the state machine?
+### 7. Map key/value staging
 
-5. **Frame storage in deferred mode**
+For `Insert { key, value: Build }` in deferred mode:
+- Key is complete (moved in)
+- Value is incomplete (stored frame)
+- Re-entry is by key lookup
 
-   Currently frames are stored by `Path` (derived from the frame stack). With explicit paths in ops, can we simplify this?
+### 8. Memory ownership
 
-## TODO
+Who owns what? A Vec with 3 elements owns those elements. If we store that frame and re-enter to push more, the Vec grows. If we error, Vec's drop handles its elements - but only because we know the Vec itself is initialized.
 
-- [ ] Decide on unified vs per-type tracking
-- [ ] Determine what state is actually needed per frame
-- [ ] Design the deferred frame storage mechanism
+## What can be deferred?
+
+Not everything can be re-entered:
+
+| Type | Re-enterable by |
+|------|-----------------|
+| Struct fields | path index |
+| Enum variant fields | path index (after variant selected) |
+| Map values | key |
+| List elements | index |
+| Array elements | index |
+| **Set elements** | **NOT re-enterable** - must complete |
+
+Set elements have no identity (no key, no stable index) until they're hashed and inserted. An incomplete set element at `End` is an error even in deferred mode.
+
+## Frame identity
+
+A frame needs a unique identity for storage/lookup in deferred mode:
+
+- **Struct field**: parent frame + field index
+- **Enum field**: parent frame + variant index + field index  
+- **List element**: parent frame + element index
+- **Array element**: parent frame + element index
+- **Map value**: parent frame + key (the actual key value)
+- **Set element**: N/A (not storable)
+- **Option inner**: parent frame + "some" marker
+- **Smart pointer inner**: parent frame + "inner" marker
+
+## Open questions
+
+1. **Frame storage structure**: BTreeMap<Path, Frame>? Arena with indices? 
+
+2. **Key storage for maps**: We need to keep the complete key around to identify the incomplete value. Where does it live?
+
+3. **Bitset vs explicit tracking**: For structs, a bitset is compact. For maps with arbitrary keys, we need something else.
+
+4. **Nested incomplete**: If `a.b.c` is incomplete, do we store three frames or one frame with nested tracking?
