@@ -215,15 +215,24 @@ pub enum DeepEnum {
 
 macro_rules! fuzz_types {
     (
-        $(
-            $variant:ident => $type:ty
-        ),* $(,)?
+        // Types that can be both values and targets (implement Clone + Arbitrary)
+        values {
+            $(
+                $val_variant:ident => $val_type:ty
+            ),* $(,)?
+        }
+        // Types that can only be targets (don't implement Clone or Arbitrary)
+        targets_only {
+            $(
+                $tgt_variant:ident => $tgt_type:ty
+            ),* $(,)?
+        }
     ) => {
         /// A value that can be used in fuzzing.
         /// Each variant holds an owned value that we can get a pointer to.
         #[derive(Clone, Arbitrary)]
         pub enum FuzzValue {
-            $( $variant($type), )*
+            $( $val_variant($val_type), )*
         }
 
         impl FuzzValue {
@@ -231,7 +240,7 @@ macro_rules! fuzz_types {
             /// The pointer is only valid while self is alive.
             fn as_ptr_and_shape(&self) -> (PtrConst, &'static Shape) {
                 match self {
-                    $( FuzzValue::$variant(v) => (PtrConst::new(v), <$type>::SHAPE), )*
+                    $( FuzzValue::$val_variant(v) => (PtrConst::new(v), <$val_type>::SHAPE), )*
                 }
             }
         }
@@ -239,7 +248,7 @@ macro_rules! fuzz_types {
         impl std::fmt::Debug for FuzzValue {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 match self {
-                    $( FuzzValue::$variant(v) => write!(f, "{}({:?})", stringify!($variant), v), )*
+                    $( FuzzValue::$val_variant(v) => write!(f, "{}({:?})", stringify!($val_variant), v), )*
                 }
             }
         }
@@ -247,13 +256,15 @@ macro_rules! fuzz_types {
         /// The target type to allocate.
         #[derive(Debug, Clone, Copy, Arbitrary)]
         pub enum FuzzTargetType {
-            $( $variant, )*
+            $( $val_variant, )*
+            $( $tgt_variant, )*
         }
 
         impl FuzzTargetType {
             fn shape(&self) -> &'static Shape {
                 match self {
-                    $( FuzzTargetType::$variant => <$type>::SHAPE, )*
+                    $( FuzzTargetType::$val_variant => <$val_type>::SHAPE, )*
+                    $( FuzzTargetType::$tgt_variant => <$tgt_type>::SHAPE, )*
                 }
             }
         }
@@ -261,91 +272,103 @@ macro_rules! fuzz_types {
 }
 
 fuzz_types! {
-    // Scalars
-    Bool => bool,
-    U8 => u8,
-    U16 => u16,
-    U32 => u32,
-    U64 => u64,
-    U128 => u128,
-    Usize => usize,
-    I8 => i8,
-    I16 => i16,
-    I32 => i32,
-    I64 => i64,
-    I128 => i128,
-    Isize => isize,
-    F32 => f32,
-    F64 => f64,
-    Char => char,
-    String => String,
+    values {
+        // Scalars
+        Bool => bool,
+        U8 => u8,
+        U16 => u16,
+        U32 => u32,
+        U64 => u64,
+        U128 => u128,
+        Usize => usize,
+        I8 => i8,
+        I16 => i16,
+        I32 => i32,
+        I64 => i64,
+        I128 => i128,
+        Isize => isize,
+        F32 => f32,
+        F64 => f64,
+        Char => char,
+        String => String,
 
-    // Custom structs
-    Point => Point,
-    Nested => Nested,
-    WithOption => WithOption,
-    WithVec => WithVec,
+        // Custom structs
+        Point => Point,
+        Nested => Nested,
+        WithOption => WithOption,
+        WithVec => WithVec,
 
-    // Option
-    OptionU32 => Option<u32>,
-    OptionString => Option<String>,
+        // Option
+        OptionU32 => Option<u32>,
+        OptionString => Option<String>,
 
-    // Vec
-    VecU8 => Vec<u8>,
-    VecU32 => Vec<u32>,
-    VecString => Vec<String>,
+        // Vec
+        VecU8 => Vec<u8>,
+        VecU32 => Vec<u32>,
+        VecString => Vec<String>,
 
-    // Box
-    BoxU32 => Box<u32>,
-    BoxString => Box<String>,
-    BoxPoint => Box<Point>,
+        // Box
+        BoxU32 => Box<u32>,
+        BoxString => Box<String>,
+        BoxPoint => Box<Point>,
 
-    // Rc
-    RcU32 => std::rc::Rc<u32>,
-    RcString => std::rc::Rc<String>,
-    RcPoint => std::rc::Rc<Point>,
+        // Rc
+        RcU32 => std::rc::Rc<u32>,
+        RcString => std::rc::Rc<String>,
+        RcPoint => std::rc::Rc<Point>,
 
-    // Arc
-    ArcU32 => std::sync::Arc<u32>,
-    ArcString => std::sync::Arc<String>,
-    ArcPoint => std::sync::Arc<Point>,
+        // Arc
+        ArcU32 => std::sync::Arc<u32>,
+        ArcString => std::sync::Arc<String>,
+        ArcPoint => std::sync::Arc<Point>,
 
+        // Tuples
+        Tuple2U32 => (u32, u32),
+        Tuple3Mixed => (u8, String, bool),
 
-    // Tuples
-    Tuple2U32 => (u32, u32),
-    Tuple3Mixed => (u8, String, bool),
+        // Unit
+        Unit => (),
 
-    // Unit
-    Unit => (),
+        // Unit enums
+        UnitEnumU8 => UnitEnumU8,
+        UnitEnumU16 => UnitEnumU16,
+        UnitEnumU32 => UnitEnumU32,
+        UnitEnumU64 => UnitEnumU64,
+        UnitEnumI8 => UnitEnumI8,
+        UnitEnumI16 => UnitEnumI16,
+        UnitEnumI32 => UnitEnumI32,
+        UnitEnumI64 => UnitEnumI64,
 
-    // Unit enums
-    UnitEnumU8 => UnitEnumU8,
-    UnitEnumU16 => UnitEnumU16,
-    UnitEnumU32 => UnitEnumU32,
-    UnitEnumU64 => UnitEnumU64,
-    UnitEnumI8 => UnitEnumI8,
-    UnitEnumI16 => UnitEnumI16,
-    UnitEnumI32 => UnitEnumI32,
-    UnitEnumI64 => UnitEnumI64,
+        // Data enums
+        DataEnumU8 => DataEnumU8,
+        DataEnumU16 => DataEnumU16,
+        DataEnumU32 => DataEnumU32,
+        DataEnumI8 => DataEnumI8,
+        DataEnumI32 => DataEnumI32,
 
-    // Data enums
-    DataEnumU8 => DataEnumU8,
-    DataEnumU16 => DataEnumU16,
-    DataEnumU32 => DataEnumU32,
-    DataEnumI8 => DataEnumI8,
-    DataEnumI32 => DataEnumI32,
+        // Mixed enums
+        MixedEnumU8 => MixedEnumU8,
+        MixedEnumU32 => MixedEnumU32,
+        MixedEnumI16 => MixedEnumI16,
+        MixedEnumI64 => MixedEnumI64,
 
-    // Mixed enums
-    MixedEnumU8 => MixedEnumU8,
-    MixedEnumU32 => MixedEnumU32,
-    MixedEnumI16 => MixedEnumI16,
-    MixedEnumI64 => MixedEnumI64,
+        // Nested enums
+        NestedEnumU8 => NestedEnumU8,
+        NestedEnumU32 => NestedEnumU32,
+        NestedEnumI32 => NestedEnumI32,
+        DeepEnum => DeepEnum,
+    }
+    targets_only {
+        // Mutex (no Clone/Arbitrary)
+        MutexU32 => std::sync::Mutex<u32>,
+        MutexString => std::sync::Mutex<String>,
+        MutexPoint => std::sync::Mutex<Point>,
 
-    // Nested enums
-    NestedEnumU8 => NestedEnumU8,
-    NestedEnumU32 => NestedEnumU32,
-    NestedEnumI32 => NestedEnumI32,
-    DeepEnum => DeepEnum,
+        // RwLock (no Clone/Arbitrary)
+        RwLockU32 => std::sync::RwLock<u32>,
+        RwLockString => std::sync::RwLock<String>,
+        RwLockPoint => std::sync::RwLock<Point>,
+    }
 }
 
 // ============================================================================
