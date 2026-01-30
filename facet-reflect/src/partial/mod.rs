@@ -166,18 +166,8 @@ enum FrameMode {
         /// Frames saved when popped, keyed by their path (derived from frame stack).
         /// When we re-enter a path, we restore the stored frame.
         /// Uses the full `Path` type which includes the root shape for proper type anchoring.
-        stored_frames: BTreeMap<Path, StoredFrame>,
+        stored_frames: BTreeMap<Path, Frame>,
     },
-}
-
-/// A frame stored during deferred mode, along with its parent frame index.
-/// The parent frame index is captured at storage time to avoid path arithmetic.
-pub(crate) struct StoredFrame {
-    /// The actual frame data.
-    pub(crate) frame: Frame,
-    /// Index of the parent frame on the stack when this frame was stored.
-    /// This is used to mark the parent's iset when the frame is finalized.
-    pub(crate) parent_frame_index: usize,
 }
 
 impl FrameMode {
@@ -1618,10 +1608,7 @@ impl<'facet, const BORROW: bool> Drop for Partial<'facet, BORROW> {
             // Sort by path depth (number of steps), deepest first
             paths.sort_by_key(|p| core::cmp::Reverse(p.steps.len()));
             for path in paths {
-                if let Some(stored) = stored_frames.remove(&path) {
-                    let mut frame = stored.frame;
-                    let parent_frame_index = stored.parent_frame_index;
-
+                if let Some(mut frame) = stored_frames.remove(&path) {
                     // Before dropping this frame, mark the parent's field as uninitialized
                     // so the parent won't try to drop it again.
                     if let Some(PathStep::Field(field_idx)) = path.steps.last() {
@@ -1631,10 +1618,10 @@ impl<'facet, const BORROW: bool> Drop for Partial<'facet, BORROW> {
                             shape: path.shape,
                             steps: path.steps[..path.steps.len() - 1].to_vec(),
                         };
-                        // Find and update the parent frame - check stored_frames first, then stack
+                        // Find and update the parent frame - check BOTH stored_frames AND the stack
                         let parent_found_in_stored =
-                            if let Some(stored_parent) = stored_frames.get_mut(&parent_path) {
-                                match &mut stored_parent.frame.tracker {
+                            if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
+                                match &mut parent_frame.tracker {
                                     Tracker::Struct { iset, .. } => {
                                         iset.unset(field_idx);
                                     }
@@ -1648,10 +1635,13 @@ impl<'facet, const BORROW: bool> Drop for Partial<'facet, BORROW> {
                                 false
                             };
 
-                        // If parent not in stored_frames, use the stored parent_frame_index
-                        if !parent_found_in_stored {
-                            if let Some(parent_frame) = stack.get_mut(parent_frame_index) {
-                                match &mut parent_frame.tracker {
+                        // If parent not in stored_frames, check the stack.
+                        // For stored frames at depth 1 (e.g., [Field(1)]), the parent is
+                        // on the stack. We need to find it and unset its bit.
+                        if !parent_found_in_stored && parent_path.steps.is_empty() {
+                            // Parent is the root frame on the stack
+                            if let Some(root_frame) = stack.first_mut() {
+                                match &mut root_frame.tracker {
                                     Tracker::Struct { iset, .. } => {
                                         iset.unset(field_idx);
                                     }
