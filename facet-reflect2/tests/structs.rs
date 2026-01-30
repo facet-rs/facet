@@ -296,3 +296,49 @@ fn build_box_containing_struct() {
     let result: Box<Point> = partial.build().unwrap();
     assert_eq!(*result, Point { x: 10, y: 20 });
 }
+
+#[test]
+fn build_rc_containing_struct() {
+    use std::rc::Rc;
+
+    let mut partial = Partial::alloc::<Rc<Point>>().unwrap();
+
+    // Use Build to enter the Rc (allocate staging memory)
+    partial.apply(&[Op::set().build()]).unwrap();
+
+    // Set inner struct fields
+    let x = 100i32;
+    let y = 200i32;
+    partial
+        .apply(&[Op::set().at(0).imm(&x), Op::set().at(1).imm(&y)])
+        .unwrap();
+
+    // End - this calls new_into_fn to create the actual Rc
+    partial.apply(&[Op::end()]).unwrap();
+
+    let result: Rc<Point> = partial.build().unwrap();
+    assert_eq!(*result, Point { x: 100, y: 200 });
+}
+
+#[test]
+fn build_arc_containing_struct() {
+    use std::sync::Arc;
+
+    let mut partial = Partial::alloc::<Arc<Point>>().unwrap();
+
+    // Use Build to enter the Arc (allocate staging memory)
+    partial.apply(&[Op::set().build()]).unwrap();
+
+    // Set inner struct fields
+    let x = 1000i32;
+    let y = 2000i32;
+    partial
+        .apply(&[Op::set().at(0).imm(&x), Op::set().at(1).imm(&y)])
+        .unwrap();
+
+    // End - this calls new_into_fn to create the actual Arc
+    partial.apply(&[Op::end()]).unwrap();
+
+    let result: Arc<Point> = partial.build().unwrap();
+    assert_eq!(*result, Point { x: 1000, y: 2000 });
+}

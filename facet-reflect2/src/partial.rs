@@ -167,31 +167,38 @@ impl<'facet> Partial<'facet> {
                     let is_pointer_parent = matches!(parent.kind, FrameKind::Pointer(_));
 
                     if is_pointer_parent {
-                        // Get the pointee data pointer (our current frame's data)
-                        let frame = self.arena.get(self.current);
-                        let pointee_ptr = frame.data.as_mut_byte_ptr();
-
-                        // Get the parent's data pointer (where the Box will be written)
+                        // Get pointer vtable from parent's shape
                         let parent = self.arena.get(parent_idx);
-                        let box_ptr = parent.data;
+                        let Def::Pointer(ptr_def) = &parent.shape.def else {
+                            return Err(
+                                self.error_at(parent_idx, ReflectErrorKind::UnsupportedPointerType)
+                            );
+                        };
+                        let new_into_fn = ptr_def.vtable.new_into_fn.ok_or_else(|| {
+                            self.error_at(parent_idx, ReflectErrorKind::UnsupportedPointerType)
+                        })?;
 
-                        // For Box<T>, the Box is just a pointer to the heap allocation.
-                        // We already allocated the memory and filled it in, so we just
-                        // need to write the pointer value into the Box's location.
-                        // SAFETY: box_ptr points to uninitialized memory sized for a pointer,
-                        // pointee_ptr points to our heap-allocated, initialized pointee.
-                        unsafe {
-                            // Write the raw pointer into the Box location
-                            // Box<T> has the same layout as *mut T
-                            std::ptr::write(box_ptr.as_mut_byte_ptr() as *mut *mut u8, pointee_ptr);
-                        }
+                        // Get the pointee data pointer (our current frame's data, now initialized)
+                        let frame = self.arena.get(self.current);
+                        let pointee_ptr = unsafe { frame.data.assume_init() };
 
-                        // Free the current frame - but DON'T deallocate its memory!
-                        // The memory now belongs to the Box.
-                        // We need to clear OWNS_ALLOC before freeing.
+                        // Get the parent's data pointer (where the pointer will be written)
+                        let parent = self.arena.get(parent_idx);
+                        let ptr_dest = parent.data;
+
+                        // Call new_into_fn to create the pointer (Box/Rc/Arc) from the pointee.
+                        // This reads the value from pointee_ptr and creates a proper pointer.
+                        // SAFETY: pointee_ptr points to initialized data of the correct type.
+                        let _result = unsafe { new_into_fn(ptr_dest, pointee_ptr) };
+
+                        // The value has been moved into the pointer. Now we need to deallocate
+                        // our temporary staging memory (the pointer now owns its own allocation).
                         let frame = self.arena.get_mut(self.current);
-                        frame.flags.remove(FrameFlags::OWNS_ALLOC);
-                        let _ = self.arena.free(self.current);
+                        // Don't drop the value - it was moved out by new_into_fn
+                        frame.flags.remove(FrameFlags::INIT);
+                        // But DO deallocate our staging memory
+                        let freed_frame = self.arena.free(self.current);
+                        freed_frame.dealloc_if_owned();
 
                         // Mark parent as initialized and complete
                         let parent = self.arena.get_mut(parent_idx);
