@@ -132,7 +132,7 @@ impl<'facet> Partial<'facet> {
                     // and path is non-empty - that means we're selecting a variant
                     let frame = self.arena.get(self.current);
                     let is_enum_variant_selection = !path.is_empty()
-                        && matches!(frame.kind, FrameKind::Enum { .. })
+                        && matches!(frame.kind, FrameKind::Enum(_))
                         && matches!(frame.shape.ty, Type::User(UserType::Enum(_)));
 
                     if is_enum_variant_selection {
@@ -165,13 +165,16 @@ impl<'facet> Partial<'facet> {
                     // Mark field/variant complete in parent
                     let parent = self.arena.get_mut(parent_idx);
                     match &mut parent.kind {
-                        FrameKind::Struct { fields } | FrameKind::VariantData { fields, .. } => {
-                            fields.mark_complete(field_idx as usize);
+                        FrameKind::Struct(s) => {
+                            s.mark_field_complete(field_idx as usize);
                         }
-                        FrameKind::Enum { selected } => {
+                        FrameKind::VariantData(v) => {
+                            v.mark_field_complete(field_idx as usize);
+                        }
+                        FrameKind::Enum(e) => {
                             // Mark the variant as complete
-                            if let Some((variant_idx, _)) = *selected {
-                                *selected = Some((variant_idx, Idx::COMPLETE));
+                            if let Some((variant_idx, _)) = e.selected {
+                                e.selected = Some((variant_idx, Idx::COMPLETE));
                             }
                         }
                         FrameKind::Scalar => {
@@ -227,7 +230,7 @@ impl<'facet> Partial<'facet> {
 
                     // For enums, read the discriminant and update selected variant
                     if let Type::User(UserType::Enum(ref enum_type)) = frame.shape.ty {
-                        if let FrameKind::Enum { ref mut selected } = frame.kind {
+                        if let FrameKind::Enum(ref mut e) = frame.kind {
                             // SAFETY: we just copied a valid enum value, so discriminant is valid
                             let discriminant = unsafe {
                                 read_discriminant(frame.data.assume_init().as_const(), enum_type)
@@ -248,7 +251,7 @@ impl<'facet> Partial<'facet> {
                                 variant_index_from_discriminant(enum_type, discriminant)
                             {
                                 // Mark the variant as complete (the whole value was moved in)
-                                *selected = Some((variant_idx, Idx::COMPLETE));
+                                e.selected = Some((variant_idx, Idx::COMPLETE));
                             }
                         }
                     }
@@ -349,8 +352,8 @@ impl<'facet> Partial<'facet> {
         let frame = self.arena.get_mut(self.current);
         if frame.flags.contains(FrameFlags::INIT) {
             frame.uninit();
-        } else if let FrameKind::Enum { selected } = &frame.kind {
-            if let Some((old_variant_idx, status)) = *selected {
+        } else if let FrameKind::Enum(e) = &frame.kind {
+            if let Some((old_variant_idx, status)) = e.selected {
                 if status.is_complete() {
                     let old_variant = &enum_type.variants[old_variant_idx as usize];
                     // SAFETY: the variant was marked complete, so its fields are initialized
@@ -383,10 +386,10 @@ impl<'facet> Partial<'facet> {
 
                 // Mark variant as complete
                 let frame = self.arena.get_mut(self.current);
-                let FrameKind::Enum { selected } = &mut frame.kind else {
+                let Some(e) = frame.kind.as_enum_mut() else {
                     return Err(self.error(ReflectErrorKind::NotAnEnum));
                 };
-                *selected = Some((variant_idx, Idx::COMPLETE));
+                e.selected = Some((variant_idx, Idx::COMPLETE));
             }
             Source::Move(mov) => {
                 // For tuple variants with a single field, copy the field value
@@ -415,10 +418,10 @@ impl<'facet> Partial<'facet> {
 
                 // Mark variant as complete
                 let frame = self.arena.get_mut(self.current);
-                let FrameKind::Enum { selected } = &mut frame.kind else {
+                let Some(e) = frame.kind.as_enum_mut() else {
                     return Err(self.error(ReflectErrorKind::NotAnEnum));
                 };
-                *selected = Some((variant_idx, Idx::COMPLETE));
+                e.selected = Some((variant_idx, Idx::COMPLETE));
             }
             Source::Build(_build) => {
                 // Push a frame for the variant's fields
@@ -431,10 +434,10 @@ impl<'facet> Partial<'facet> {
 
                 // Record the frame in enum's selected variant
                 let frame = self.arena.get_mut(self.current);
-                let FrameKind::Enum { selected } = &mut frame.kind else {
+                let Some(e) = frame.kind.as_enum_mut() else {
                     return Err(self.error(ReflectErrorKind::NotAnEnum));
                 };
-                *selected = Some((variant_idx, new_idx));
+                e.selected = Some((variant_idx, new_idx));
 
                 self.current = new_idx;
             }
@@ -462,8 +465,8 @@ impl<'facet> Partial<'facet> {
         let index = indices[0];
 
         // Check if we're inside a variant - use variant's fields for resolution
-        if let FrameKind::VariantData { variant, .. } = &frame.kind {
-            let field = self.get_struct_field(variant.data.fields, index)?;
+        if let FrameKind::VariantData(v) = &frame.kind {
+            let field = self.get_struct_field(v.variant.data.fields, index)?;
             let field_ptr =
                 unsafe { PtrUninit::new(frame.data.as_mut_byte_ptr().add(field.offset)) };
             return Ok(Frame::new(field_ptr, field.shape()));

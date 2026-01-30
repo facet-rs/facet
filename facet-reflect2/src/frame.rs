@@ -36,24 +36,91 @@ impl IndexedFields {
     }
 }
 
+/// Struct frame data.
+pub struct StructFrame {
+    pub fields: IndexedFields,
+}
+
+impl StructFrame {
+    pub fn new(field_count: usize) -> Self {
+        Self {
+            fields: IndexedFields::new(field_count),
+        }
+    }
+
+    pub fn is_complete(&self) -> bool {
+        self.fields.all_complete()
+    }
+
+    pub fn mark_field_complete(&mut self, idx: usize) {
+        self.fields.mark_complete(idx);
+    }
+}
+
+/// Enum frame data.
+/// `selected` is None if no variant selected yet,
+/// or Some((variant_idx, state)) where state is NOT_STARTED/COMPLETE/valid frame idx.
+pub struct EnumFrame {
+    pub selected: Option<(u32, Idx<Frame>)>,
+}
+
+impl EnumFrame {
+    pub fn new() -> Self {
+        Self { selected: None }
+    }
+
+    pub fn is_complete(&self) -> bool {
+        matches!(self.selected, Some((_, idx)) if idx.is_complete())
+    }
+
+    #[allow(dead_code)]
+    pub fn selected_variant(&self) -> Option<u32> {
+        self.selected.map(|(idx, _)| idx)
+    }
+}
+
+impl Default for EnumFrame {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Variant data frame (inside an enum variant, building its fields).
+pub struct VariantFrame {
+    pub variant: &'static Variant,
+    pub fields: IndexedFields,
+}
+
+impl VariantFrame {
+    pub fn new(variant: &'static Variant) -> Self {
+        Self {
+            variant,
+            fields: IndexedFields::new(variant.data.fields.len()),
+        }
+    }
+
+    pub fn is_complete(&self) -> bool {
+        self.fields.all_complete()
+    }
+
+    pub fn mark_field_complete(&mut self, idx: usize) {
+        self.fields.mark_complete(idx);
+    }
+}
+
 /// What kind of value this frame is building.
 pub enum FrameKind {
     /// Scalar or opaque value - no children.
     Scalar,
 
     /// Struct with indexed fields.
-    Struct { fields: IndexedFields },
+    Struct(StructFrame),
 
     /// Enum - variant may or may not be selected.
-    /// None = no variant selected yet.
-    /// Some((variant_idx, state)) where state is NOT_STARTED/COMPLETE/valid frame idx.
-    Enum { selected: Option<(u32, Idx<Frame>)> },
+    Enum(EnumFrame),
 
     /// Inside a variant, building its fields.
-    VariantData {
-        variant: &'static Variant,
-        fields: IndexedFields,
-    },
+    VariantData(VariantFrame),
 }
 
 impl FrameKind {
@@ -61,21 +128,71 @@ impl FrameKind {
     pub fn is_complete(&self) -> bool {
         match self {
             FrameKind::Scalar => false, // scalars use INIT flag instead
-            FrameKind::Struct { fields } => fields.all_complete(),
-            FrameKind::Enum { selected } => {
-                matches!(selected, Some((_, idx)) if idx.is_complete())
-            }
-            FrameKind::VariantData { fields, .. } => fields.all_complete(),
+            FrameKind::Struct(s) => s.is_complete(),
+            FrameKind::Enum(e) => e.is_complete(),
+            FrameKind::VariantData(v) => v.is_complete(),
         }
     }
 
     /// Mark a child field as complete (for Struct and VariantData).
     pub fn mark_field_complete(&mut self, idx: usize) {
         match self {
-            FrameKind::Struct { fields } | FrameKind::VariantData { fields, .. } => {
-                fields.mark_complete(idx);
-            }
+            FrameKind::Struct(s) => s.mark_field_complete(idx),
+            FrameKind::VariantData(v) => v.mark_field_complete(idx),
             _ => {}
+        }
+    }
+
+    /// Get as enum frame, if this is an enum.
+    #[allow(dead_code)]
+    pub fn as_enum(&self) -> Option<&EnumFrame> {
+        match self {
+            FrameKind::Enum(e) => Some(e),
+            _ => None,
+        }
+    }
+
+    /// Get as mutable enum frame, if this is an enum.
+    pub fn as_enum_mut(&mut self) -> Option<&mut EnumFrame> {
+        match self {
+            FrameKind::Enum(e) => Some(e),
+            _ => None,
+        }
+    }
+
+    /// Get as struct frame, if this is a struct.
+    #[allow(dead_code)]
+    pub fn as_struct(&self) -> Option<&StructFrame> {
+        match self {
+            FrameKind::Struct(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    /// Get as mutable struct frame, if this is a struct.
+    #[allow(dead_code)]
+    pub fn as_struct_mut(&mut self) -> Option<&mut StructFrame> {
+        match self {
+            FrameKind::Struct(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    /// Get as variant frame, if this is variant data.
+    #[allow(dead_code)]
+    pub fn as_variant(&self) -> Option<&VariantFrame> {
+        match self {
+            FrameKind::VariantData(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    /// Get as mutable variant frame, if this is variant data.
+    #[allow(dead_code)]
+    pub fn as_variant_mut(&mut self) -> Option<&mut VariantFrame> {
+        match self {
+            FrameKind::VariantData(v) => Some(v),
+            _ => None,
         }
     }
 }
@@ -134,9 +251,7 @@ impl Frame {
         Frame {
             data,
             shape,
-            kind: FrameKind::Struct {
-                fields: IndexedFields::new(field_count),
-            },
+            kind: FrameKind::Struct(StructFrame::new(field_count)),
             flags: FrameFlags::empty(),
             parent: None,
         }
@@ -147,7 +262,7 @@ impl Frame {
         Frame {
             data,
             shape,
-            kind: FrameKind::Enum { selected: None },
+            kind: FrameKind::Enum(EnumFrame::new()),
             flags: FrameFlags::empty(),
             parent: None,
         }
@@ -158,10 +273,7 @@ impl Frame {
         Frame {
             data,
             shape,
-            kind: FrameKind::VariantData {
-                variant,
-                fields: IndexedFields::new(variant.data.fields.len()),
-            },
+            kind: FrameKind::VariantData(VariantFrame::new(variant)),
             flags: FrameFlags::empty(),
             parent: None,
         }
@@ -200,13 +312,13 @@ impl Frame {
             self.flags.remove(FrameFlags::INIT);
 
             // Also clear enum selected state
-            if let FrameKind::Enum { ref mut selected } = self.kind {
-                *selected = None;
+            if let FrameKind::Enum(ref mut e) = self.kind {
+                e.selected = None;
             }
-        } else if let FrameKind::Enum { ref mut selected } = self.kind {
+        } else if let FrameKind::Enum(ref mut e) = self.kind {
             // Enum variant may be complete even if INIT flag isn't set
             // (e.g., when variant was set via apply_enum_variant_set)
-            if let Some((variant_idx, status)) = *selected {
+            if let Some((variant_idx, status)) = e.selected {
                 if status.is_complete() {
                     if let Type::User(UserType::Enum(ref enum_type)) = self.shape.ty {
                         let variant = &enum_type.variants[variant_idx as usize];
@@ -216,7 +328,7 @@ impl Frame {
                         }
                     }
                 }
-                *selected = None;
+                e.selected = None;
             }
         }
     }
