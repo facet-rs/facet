@@ -112,7 +112,13 @@ impl<'facet> Partial<'facet> {
                                 // Mark child as complete
                                 let field_idx = path.as_slice()[0] as usize;
                                 let Children::Indexed(c) = &mut frame.children else {
-                                    panic!("expected indexed children for struct");
+                                    return Err(ReflectError {
+                                        location: ErrorLocation {
+                                            shape: frame.shape,
+                                            path: path.clone(),
+                                        },
+                                        kind: ReflectErrorKind::NotIndexedChildren,
+                                    });
                                 };
                                 c.mark_complete(field_idx);
                             }
@@ -137,11 +143,17 @@ impl<'facet> Partial<'facet> {
 
         // For now, only support single-level paths into structs
         let indices = path.as_slice();
-        assert!(
-            indices.len() == 1,
-            "multi-level paths not yet supported (got {} levels)",
-            indices.len()
-        );
+        if indices.len() != 1 {
+            return Err(ReflectError {
+                location: ErrorLocation {
+                    shape: frame.shape,
+                    path: path.clone(),
+                },
+                kind: ReflectErrorKind::MultiLevelPathNotSupported {
+                    depth: indices.len(),
+                },
+            });
+        }
 
         let field_idx = indices[0];
         let field = self.get_struct_field(frame.shape, field_idx, path)?;
@@ -192,18 +204,22 @@ impl<'facet> Partial<'facet> {
     }
 
     /// Build the final value, consuming the Partial.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `T::SHAPE` does not match the shape passed to `alloc`.
     pub fn build<T: Facet<'facet>>(mut self) -> Result<T, ReflectError> {
         let frame = self.arena.get(self.root);
 
         // Verify shape matches
-        assert!(
-            frame.shape.is_shape(T::SHAPE),
-            "build() called with wrong type"
-        );
+        if !frame.shape.is_shape(T::SHAPE) {
+            return Err(ReflectError {
+                location: ErrorLocation {
+                    shape: frame.shape,
+                    path: Path::default(),
+                },
+                kind: ReflectErrorKind::ShapeMismatch {
+                    expected: frame.shape,
+                    actual: T::SHAPE,
+                },
+            });
+        }
 
         // Verify initialized - check based on type
         let is_initialized = if frame.flags.contains(FrameFlags::INIT) {

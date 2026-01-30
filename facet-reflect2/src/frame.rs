@@ -1,6 +1,6 @@
 //! Frame for tracking partial value construction.
 
-use crate::arena::Idx;
+use crate::arena::{Arena, Idx};
 use crate::errors::{ErrorLocation, ReflectError, ReflectErrorKind};
 use crate::ops::Path;
 use facet_core::{PtrConst, PtrUninit, Shape};
@@ -58,6 +58,29 @@ pub struct Frame {
 
     /// Children tracking (for compound types).
     pub children: Children,
+
+    /// Parent frame (if any) and our index within it.
+    pub parent: Option<(Idx<Frame>, u32)>,
+}
+
+/// Build the absolute path from root to the given frame by walking up the parent chain.
+pub fn absolute_path(arena: &Arena<Frame>, mut idx: Idx<Frame>) -> Path {
+    let mut indices = Vec::new();
+    while idx.is_valid() {
+        let frame = arena.get(idx);
+        if let Some((parent_idx, field_idx)) = frame.parent {
+            indices.push(field_idx);
+            idx = parent_idx;
+        } else {
+            break;
+        }
+    }
+    indices.reverse();
+    let mut path = Path::default();
+    for i in indices {
+        path.push(i);
+    }
+    path
 }
 
 impl Frame {
@@ -67,6 +90,7 @@ impl Frame {
             shape,
             flags: FrameFlags::empty(),
             children: Children::None,
+            parent: None,
         }
     }
 
@@ -77,6 +101,7 @@ impl Frame {
             shape,
             flags: FrameFlags::empty(),
             children: Children::Indexed(IndexedChildren::new(field_count)),
+            parent: None,
         }
     }
 
@@ -134,5 +159,93 @@ impl Frame {
             self.data.copy_from(src, self.shape).unwrap();
         }
         self.flags |= FrameFlags::INIT;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use facet_core::Facet;
+    use std::ptr::NonNull;
+
+    fn dummy_frame() -> Frame {
+        Frame::new(
+            PtrUninit::new(NonNull::<u8>::dangling().as_ptr()),
+            u32::SHAPE,
+        )
+    }
+
+    fn dummy_frame_with_parent(parent: Idx<Frame>, index: u32) -> Frame {
+        let mut frame = dummy_frame();
+        frame.parent = Some((parent, index));
+        frame
+    }
+
+    #[test]
+    fn absolute_path_root_frame() {
+        let mut arena = Arena::new();
+        let root = arena.alloc(dummy_frame());
+
+        let path = absolute_path(&arena, root);
+        assert!(path.is_empty());
+    }
+
+    #[test]
+    fn absolute_path_one_level() {
+        let mut arena = Arena::new();
+        let root = arena.alloc(dummy_frame());
+        let child = arena.alloc(dummy_frame_with_parent(root, 3));
+
+        let path = absolute_path(&arena, child);
+        assert_eq!(path.as_slice(), &[3]);
+    }
+
+    #[test]
+    fn absolute_path_two_levels() {
+        let mut arena = Arena::new();
+        let root = arena.alloc(dummy_frame());
+        let child = arena.alloc(dummy_frame_with_parent(root, 1));
+        let grandchild = arena.alloc(dummy_frame_with_parent(child, 2));
+
+        let path = absolute_path(&arena, grandchild);
+        assert_eq!(path.as_slice(), &[1, 2]);
+    }
+
+    #[test]
+    fn absolute_path_three_levels() {
+        let mut arena = Arena::new();
+        let root = arena.alloc(dummy_frame());
+        let a = arena.alloc(dummy_frame_with_parent(root, 0));
+        let b = arena.alloc(dummy_frame_with_parent(a, 5));
+        let c = arena.alloc(dummy_frame_with_parent(b, 10));
+
+        let path = absolute_path(&arena, c);
+        assert_eq!(path.as_slice(), &[0, 5, 10]);
+    }
+
+    #[test]
+    fn absolute_path_sibling_frames() {
+        let mut arena = Arena::new();
+        let root = arena.alloc(dummy_frame());
+        let child0 = arena.alloc(dummy_frame_with_parent(root, 0));
+        let child1 = arena.alloc(dummy_frame_with_parent(root, 1));
+        let child2 = arena.alloc(dummy_frame_with_parent(root, 2));
+
+        assert_eq!(absolute_path(&arena, child0).as_slice(), &[0]);
+        assert_eq!(absolute_path(&arena, child1).as_slice(), &[1]);
+        assert_eq!(absolute_path(&arena, child2).as_slice(), &[2]);
+    }
+
+    #[test]
+    fn absolute_path_deep_nesting() {
+        let mut arena = Arena::new();
+        let mut current = arena.alloc(dummy_frame());
+
+        for i in 0..10 {
+            current = arena.alloc(dummy_frame_with_parent(current, i));
+        }
+
+        let path = absolute_path(&arena, current);
+        assert_eq!(path.as_slice(), &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
     }
 }

@@ -29,6 +29,29 @@ resume: build
         -w target/debug/facet-reflect2-afl-msan \
         -- target/debug/facet-reflect2-afl
 
+# Run a single input file
+run file:
+    target/debug/facet-reflect2-afl < {{ file }}
+
+# Run with backtrace
+run-bt file:
+    RUST_BACKTRACE=1 target/debug/facet-reflect2-afl < {{ file }}
+
+# Minimize a crash input
+minimize file:
+    cargo afl tmin -i {{ file }} -o minimized.bin -- target/debug/facet-reflect2-afl
+    @echo "Minimized input saved to minimized.bin"
+
+# List all crashes
+crashes:
+    @ls -la out/default/crashes/ 2>/dev/null || echo "No crashes yet"
+
+# Reproduce all crashes and show unique panic messages
+reproduce-all:
+    @for f in out/default/crashes/id:*; do \
+        target/debug/facet-reflect2-afl < "$$f" 2>&1 | grep -E "^thread.*panicked" || true; \
+    done | sort -u
+
 # Clean build artifacts and output
 clean:
-    rm -rf target out
+    rm -rf target out minimized.bin

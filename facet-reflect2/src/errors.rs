@@ -17,6 +17,21 @@ pub struct ReflectError {
     pub kind: ReflectErrorKind,
 }
 
+impl ReflectError {
+    /// Create a new error at the given shape and path.
+    pub fn new(shape: &'static Shape, path: Path, kind: ReflectErrorKind) -> Self {
+        Self {
+            location: ErrorLocation { shape, path },
+            kind,
+        }
+    }
+
+    /// Create a new error at the root (empty path).
+    pub fn at_root(shape: &'static Shape, kind: ReflectErrorKind) -> Self {
+        Self::new(shape, Path::default(), kind)
+    }
+}
+
 /// The kind of reflection error.
 #[derive(Debug)]
 pub enum ReflectErrorKind {
@@ -35,4 +50,14 @@ pub enum ReflectErrorKind {
     FieldIndexOutOfBounds { index: u32, field_count: usize },
     /// Type is not a struct (cannot navigate into fields).
     NotAStruct,
+    /// Multi-level paths are not yet supported.
+    MultiLevelPathNotSupported { depth: usize },
+    /// Frame is already initialized.
+    AlreadyInitialized,
+    /// Expected indexed children but found none.
+    NotIndexedChildren,
+    /// Arena double-free detected.
+    DoubleFree,
+    /// Arena slot is empty.
+    SlotEmpty,
 }

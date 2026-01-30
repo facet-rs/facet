@@ -337,12 +337,7 @@ pub struct FuzzInput {
 
 fn main() {
     fuzz!(|input: FuzzInput| {
-        // Wrap in catch_unwind so panics don't count as crashes.
-        // We only care about memory safety issues (segfaults, corruption),
-        // not panics from invalid operations.
-        let _ = std::panic::catch_unwind(|| {
-            run_fuzz(input);
-        });
+        run_fuzz(input);
     });
 }
 
