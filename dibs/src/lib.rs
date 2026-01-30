@@ -371,12 +371,8 @@ pub fn build_queries(queries_path: impl AsRef<std::path::Path>) {
         .unwrap_or_else(|e| panic!("Failed to read {}: {}", queries_path.display(), e));
 
     let filename = queries_path.display().to_string();
-    let file = parse_query_file(&source).unwrap_or_else(|e| {
-        if let Some(pretty) = e.to_pretty(&filename, &source) {
-            panic!("Failed to parse {filename}:\n{pretty}");
-        } else {
-            panic!("Failed to parse {filename}: {e}");
-        }
+    let file = parse_query_file(&filename, &source).unwrap_or_else(|e| {
+        panic!("Failed to parse {filename}:\n{e:?}");
     });
 
     let generated = generate_rust_code_with_planner(&file, &schema, Some(&planner_schema));
