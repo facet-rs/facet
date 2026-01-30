@@ -1,0 +1,29 @@
+[package]
+name = "facet-reflect2-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+
+[dependencies.facet-core]
+path = "../../facet-core"
+
+[dependencies.facet-reflect2]
+path = ".."
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "fuzz_ops"
+path = "fuzz_targets/fuzz_ops.rs"
+test = false
+doc = false
+bench = false
