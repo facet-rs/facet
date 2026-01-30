@@ -209,14 +209,6 @@ Set { path: &[0], source: Source::Move(Move { ptr: &Some(30u32), shape: <Option<
 Set { path: &[0], source: Source::Default }
 ```
 
-For `Option`, you typically have the whole value. If you need to build the inner incrementally:
-
-```rust
-Set { path: &[0], source: Source::Build(Build { len_hint: None }) }  // push Option frame
-  // ... build inner value ...
-End
-```
-
 ## Option with complex inner
 
 ```rust
