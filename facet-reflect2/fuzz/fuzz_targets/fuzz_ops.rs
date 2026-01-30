@@ -7,7 +7,7 @@ use libfuzzer_sys::fuzz_target;
 
 /// A value that can be used in fuzzing.
 /// Each variant holds an owned value that we can get a pointer to.
-#[derive(Debug, Clone, Arbitrary)]
+#[derive(Clone, Arbitrary)]
 pub enum FuzzValue {
     Bool(bool),
     U8(u8),
@@ -54,19 +54,59 @@ impl FuzzValue {
     }
 }
 
+impl std::fmt::Debug for FuzzValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FuzzValue::Bool(v) => write!(f, "{v:?}_bool"),
+            FuzzValue::U8(v) => write!(f, "{v}_u8"),
+            FuzzValue::U16(v) => write!(f, "{v}_u16"),
+            FuzzValue::U32(v) => write!(f, "{v}_u32"),
+            FuzzValue::U64(v) => write!(f, "{v}_u64"),
+            FuzzValue::U128(v) => write!(f, "{v}_u128"),
+            FuzzValue::Usize(v) => write!(f, "{v}_usize"),
+            FuzzValue::I8(v) => write!(f, "{v}_i8"),
+            FuzzValue::I16(v) => write!(f, "{v}_i16"),
+            FuzzValue::I32(v) => write!(f, "{v}_i32"),
+            FuzzValue::I64(v) => write!(f, "{v}_i64"),
+            FuzzValue::I128(v) => write!(f, "{v}_i128"),
+            FuzzValue::Isize(v) => write!(f, "{v}_isize"),
+            FuzzValue::F32(v) => write!(f, "{v}_f32"),
+            FuzzValue::F64(v) => write!(f, "{v}_f64"),
+            FuzzValue::Char(v) => write!(f, "{v:?}_char"),
+            FuzzValue::String(v) => write!(f, "{v:?}_String"),
+        }
+    }
+}
+
 /// Source for a fuzz operation.
-#[derive(Debug, Clone, Arbitrary)]
+#[derive(Clone, Arbitrary)]
 pub enum FuzzSource {
     /// Move a value (copy bytes from the FuzzValue).
     Move(FuzzValue),
     // TODO: Build, Default when implemented
 }
 
+impl std::fmt::Debug for FuzzSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FuzzSource::Move(v) => write!(f, "Move({v:?})"),
+        }
+    }
+}
+
 /// A fuzzing operation that maps to Op.
-#[derive(Debug, Clone, Arbitrary)]
+#[derive(Clone, Arbitrary)]
 pub enum FuzzOp {
     /// Set a value at the root (empty path for now).
     Set(FuzzSource),
+}
+
+impl std::fmt::Debug for FuzzOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FuzzOp::Set(source) => write!(f, "Set({source:?})"),
+        }
+    }
 }
 
 /// The target type to allocate.
