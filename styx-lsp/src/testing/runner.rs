@@ -877,11 +877,16 @@ fn check_code_actions(
 }
 
 /// Errors from the test runner.
-#[derive(Debug)]
 pub enum RunnerError {
     ReadFailed(String, String),
     ParseFailed(String, String),
     Harness(HarnessError),
+}
+
+impl std::fmt::Debug for RunnerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self, f)
+    }
 }
 
 impl std::fmt::Display for RunnerError {
