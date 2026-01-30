@@ -275,3 +275,24 @@ fn build_at_empty_path_fails() {
     let err = partial.apply(&[Op::set().build()]).unwrap_err();
     assert!(matches!(err.kind, ReflectErrorKind::BuildAtEmptyPath));
 }
+
+#[test]
+fn build_box_containing_struct() {
+    let mut partial = Partial::alloc::<Box<Point>>().unwrap();
+
+    // Use Build to enter the box (allocate the inner memory)
+    partial.apply(&[Op::set().build()]).unwrap();
+
+    // Set inner struct fields
+    let x = 10i32;
+    let y = 20i32;
+    partial
+        .apply(&[Op::set().at(0).imm(&x), Op::set().at(1).imm(&y)])
+        .unwrap();
+
+    // End the box frame
+    partial.apply(&[Op::end()]).unwrap();
+
+    let result: Box<Point> = partial.build().unwrap();
+    assert_eq!(*result, Point { x: 10, y: 20 });
+}

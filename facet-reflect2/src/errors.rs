@@ -105,6 +105,8 @@ pub enum ReflectErrorKind {
     UnsupportedEnumRepr,
     /// Cannot Set at [] while inside a variant frame - must End first.
     SetAtRootOfVariant,
+    /// Pointer type doesn't have a pointee shape.
+    UnsupportedPointerType,
 }
 
 impl fmt::Display for ReflectErrorKind {
@@ -169,6 +171,9 @@ impl fmt::Display for ReflectErrorKind {
             }
             ReflectErrorKind::SetAtRootOfVariant => {
                 write!(f, "Cannot set at [] while inside a variant frame")
+            }
+            ReflectErrorKind::UnsupportedPointerType => {
+                write!(f, "Pointer type doesn't have a pointee shape")
             }
         }
     }

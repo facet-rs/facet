@@ -11,7 +11,7 @@ use crate::enum_helpers::{
 use crate::errors::{ReflectError, ReflectErrorKind};
 use crate::frame::{Frame, FrameFlags, FrameKind, absolute_path};
 use crate::ops::{Op, Path, Source};
-use facet_core::{EnumType, Facet, Field, PtrUninit, Shape, Type, UserType, Variant};
+use facet_core::{Def, EnumType, Facet, Field, PtrUninit, Shape, Type, UserType, Variant};
 
 /// Manages incremental construction of a value.
 pub struct Partial<'facet> {
@@ -162,33 +162,79 @@ impl<'facet> Partial<'facet> {
                         return Err(self.error(ReflectErrorKind::EndWithIncomplete));
                     }
 
-                    // Free the current frame (memory stays - it's part of parent's allocation)
-                    let _ = self.arena.free(self.current);
+                    // Check if parent is a pointer frame - special finalization needed
+                    let parent = self.arena.get(parent_idx);
+                    let is_pointer_parent = matches!(parent.kind, FrameKind::Pointer(_));
 
-                    // Mark field/variant complete in parent
-                    let parent = self.arena.get_mut(parent_idx);
-                    match &mut parent.kind {
-                        FrameKind::Struct(s) => {
-                            s.mark_field_complete(field_idx as usize);
+                    if is_pointer_parent {
+                        // Get the pointee data pointer (our current frame's data)
+                        let frame = self.arena.get(self.current);
+                        let pointee_ptr = frame.data.as_mut_byte_ptr();
+
+                        // Get the parent's data pointer (where the Box will be written)
+                        let parent = self.arena.get(parent_idx);
+                        let box_ptr = parent.data;
+
+                        // For Box<T>, the Box is just a pointer to the heap allocation.
+                        // We already allocated the memory and filled it in, so we just
+                        // need to write the pointer value into the Box's location.
+                        // SAFETY: box_ptr points to uninitialized memory sized for a pointer,
+                        // pointee_ptr points to our heap-allocated, initialized pointee.
+                        unsafe {
+                            // Write the raw pointer into the Box location
+                            // Box<T> has the same layout as *mut T
+                            std::ptr::write(box_ptr.as_mut_byte_ptr() as *mut *mut u8, pointee_ptr);
                         }
-                        FrameKind::VariantData(v) => {
-                            v.mark_field_complete(field_idx as usize);
+
+                        // Free the current frame - but DON'T deallocate its memory!
+                        // The memory now belongs to the Box.
+                        // We need to clear OWNS_ALLOC before freeing.
+                        let frame = self.arena.get_mut(self.current);
+                        frame.flags.remove(FrameFlags::OWNS_ALLOC);
+                        let _ = self.arena.free(self.current);
+
+                        // Mark parent as initialized and complete
+                        let parent = self.arena.get_mut(parent_idx);
+                        parent.flags |= FrameFlags::INIT;
+                        if let FrameKind::Pointer(ref mut p) = parent.kind {
+                            p.inner = Idx::COMPLETE;
                         }
-                        FrameKind::Enum(e) => {
-                            // Mark the variant as complete
-                            if let Some((variant_idx, _)) = e.selected {
-                                e.selected = Some((variant_idx, Idx::COMPLETE));
+
+                        // Pop back to parent
+                        self.current = parent_idx;
+                    } else {
+                        // Normal (non-pointer) End handling
+                        // Free the current frame (memory stays - it's part of parent's allocation)
+                        let _ = self.arena.free(self.current);
+
+                        // Mark field/variant complete in parent
+                        let parent = self.arena.get_mut(parent_idx);
+                        match &mut parent.kind {
+                            FrameKind::Struct(s) => {
+                                s.mark_field_complete(field_idx as usize);
+                            }
+                            FrameKind::VariantData(v) => {
+                                v.mark_field_complete(field_idx as usize);
+                            }
+                            FrameKind::Enum(e) => {
+                                // Mark the variant as complete
+                                if let Some((variant_idx, _)) = e.selected {
+                                    e.selected = Some((variant_idx, Idx::COMPLETE));
+                                }
+                            }
+                            FrameKind::Pointer(p) => {
+                                p.inner = Idx::COMPLETE;
+                            }
+                            FrameKind::Scalar => {
+                                return Err(
+                                    self.error_at(parent_idx, ReflectErrorKind::NotIndexedChildren)
+                                );
                             }
                         }
-                        FrameKind::Scalar => {
-                            return Err(
-                                self.error_at(parent_idx, ReflectErrorKind::NotIndexedChildren)
-                            );
-                        }
-                    }
 
-                    // Pop back to parent
-                    self.current = parent_idx;
+                        // Pop back to parent
+                        self.current = parent_idx;
+                    }
                 }
             }
         }
@@ -271,9 +317,65 @@ impl<'facet> Partial<'facet> {
             }
             Source::Build(_build) => {
                 // Build pushes a new frame for incremental construction
-                // Path must be non-empty (can't "build" at current position)
+                let frame = self.arena.get(self.current);
+
+                // Check for pointer type at empty path - special handling for Box/Rc/Arc
                 if path.is_empty() {
-                    return Err(self.error(ReflectErrorKind::BuildAtEmptyPath));
+                    if let Def::Pointer(ptr_def) = &frame.shape.def {
+                        // Get pointee shape
+                        let pointee_shape = ptr_def
+                            .pointee
+                            .ok_or_else(|| self.error(ReflectErrorKind::UnsupportedPointerType))?;
+
+                        // Allocate memory for the pointee
+                        let pointee_layout = pointee_shape.layout.sized_layout().map_err(|_| {
+                            self.error(ReflectErrorKind::Unsized {
+                                shape: pointee_shape,
+                            })
+                        })?;
+
+                        let pointee_data = if pointee_layout.size() == 0 {
+                            PtrUninit::new(NonNull::<u8>::dangling().as_ptr())
+                        } else {
+                            // SAFETY: layout has non-zero size and is valid
+                            let ptr = unsafe { alloc(pointee_layout) };
+                            if ptr.is_null() {
+                                return Err(self.error(ReflectErrorKind::AllocFailed {
+                                    layout: pointee_layout,
+                                }));
+                            }
+                            PtrUninit::new(ptr)
+                        };
+
+                        // Create the appropriate frame type for the pointee
+                        // If the pointee is a struct, use struct tracking; if enum, use enum tracking
+                        let mut new_frame = match pointee_shape.ty {
+                            Type::User(UserType::Struct(ref s)) => {
+                                Frame::new_struct(pointee_data, pointee_shape, s.fields.len())
+                            }
+                            Type::User(UserType::Enum(_)) => {
+                                Frame::new_enum(pointee_data, pointee_shape)
+                            }
+                            _ => Frame::new_pointer(pointee_data, pointee_shape),
+                        };
+                        // For pointer frames, parent is current and index is 0 (the pointee)
+                        new_frame.parent = Some((self.current, 0));
+                        // Mark that this frame owns its allocation (for cleanup on error)
+                        new_frame.flags |= FrameFlags::OWNS_ALLOC;
+
+                        // Record the frame in parent's pointer state
+                        let new_idx = self.arena.alloc(new_frame);
+
+                        // Update parent to track this as a pointer frame
+                        let frame = self.arena.get_mut(self.current);
+                        frame.kind =
+                            FrameKind::Pointer(crate::frame::PointerFrame { inner: new_idx });
+
+                        self.current = new_idx;
+                        return Ok(());
+                    } else {
+                        return Err(self.error(ReflectErrorKind::BuildAtEmptyPath));
+                    }
                 }
 
                 // Resolve path to get target shape and pointer

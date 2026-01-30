@@ -108,6 +108,30 @@ impl VariantFrame {
     }
 }
 
+/// Pointer frame data (inside a Box/Rc/Arc, building the pointee).
+/// `inner` is NOT_STARTED, COMPLETE, or a valid frame index for the inner value.
+pub struct PointerFrame {
+    pub inner: Idx<Frame>,
+}
+
+impl PointerFrame {
+    pub fn new() -> Self {
+        Self {
+            inner: Idx::NOT_STARTED,
+        }
+    }
+
+    pub fn is_complete(&self) -> bool {
+        self.inner.is_complete()
+    }
+}
+
+impl Default for PointerFrame {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// What kind of value this frame is building.
 pub enum FrameKind {
     /// Scalar or opaque value - no children.
@@ -121,6 +145,9 @@ pub enum FrameKind {
 
     /// Inside a variant, building its fields.
     VariantData(VariantFrame),
+
+    /// Inside a pointer (Box/Rc/Arc), building the pointee.
+    Pointer(PointerFrame),
 }
 
 impl FrameKind {
@@ -131,6 +158,7 @@ impl FrameKind {
             FrameKind::Struct(s) => s.is_complete(),
             FrameKind::Enum(e) => e.is_complete(),
             FrameKind::VariantData(v) => v.is_complete(),
+            FrameKind::Pointer(p) => p.is_complete(),
         }
     }
 
@@ -274,6 +302,18 @@ impl Frame {
             data,
             shape,
             kind: FrameKind::VariantData(VariantFrame::new(variant)),
+            flags: FrameFlags::empty(),
+            parent: None,
+        }
+    }
+
+    /// Create a frame for a pointer's pointee (Box, Rc, Arc, etc.).
+    /// `data` points to the allocated pointee memory, `shape` is the pointee's shape.
+    pub fn new_pointer(data: PtrUninit, shape: &'static Shape) -> Self {
+        Frame {
+            data,
+            shape,
+            kind: FrameKind::Pointer(PointerFrame::new()),
             flags: FrameFlags::empty(),
             parent: None,
         }
