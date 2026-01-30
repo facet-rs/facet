@@ -5,13 +5,16 @@ Instead of `BTreeMap<Path, Frame>`, we keep an actual tree of frames in an arena
 ## Structure
 
 ```rust
-struct FrameId(NonZeroU32);
+struct FrameId(u32);
 
 impl FrameId {
-    // Special sentinels (using Option<FrameId> niche)
-    // None (0)         → not started
-    // Some(MAX)        → complete, value in place
-    // Some(1..MAX-1)   → in progress, frame exists at this id
+    const NOT_STARTED: FrameId = FrameId(0);
+    const COMPLETE: FrameId = FrameId(u32::MAX);
+    
+    fn is_not_started(self) -> bool { self.0 == 0 }
+    fn is_complete(self) -> bool { self.0 == u32::MAX }
+    fn is_in_progress(self) -> bool { self.0 != 0 && self.0 != u32::MAX }
+    // Valid arena indices: 1..MAX-1
 }
 
 bitflags! {
@@ -47,20 +50,21 @@ impl Eq for DynKey {}
 /// Children structure varies by container type
 enum Children {
     /// Structs, arrays: indexed by field/element index
-    Indexed(Vec<Option<FrameId>>),
+    /// FrameId::NOT_STARTED, COMPLETE, or valid index
+    Indexed(Vec<FrameId>),
     
     /// Enums: at most one variant active at a time
-    /// (variant_idx, variant_frame) - type enforces single variant
+    /// None = no variant selected, Some = (variant_idx, frame state)
     Variant(Option<(u32, FrameId)>),
     
     /// Lists: can grow dynamically via Push
-    List(Vec<Option<FrameId>>),
+    List(Vec<FrameId>),
     
     /// Maps: keyed by actual key values for O(1) re-entry
     Map(HashMap<DynKey, FrameId>),
     
     /// Option inner, smart pointer inner: single child
-    Single(Option<FrameId>),
+    Single(FrameId),  // NOT_STARTED, COMPLETE, or valid index
     
     /// Scalars, sets: no children (sets can't be re-entered)
     None,
@@ -84,26 +88,23 @@ struct Partial {
 
 ## Child states
 
-For `Children::Indexed` and `Children::List`, each slot can be:
+For `Children::Indexed`, `Children::List`, and `Children::Single`:
 
 | Value | Meaning |
 |-------|---------|
-| `None` | Not started - no value, no frame |
-| `Some(COMPLETE)` | Complete - value is in place, frame was discarded |
-| `Some(id)` | In progress - frame exists, possibly incomplete |
+| `NOT_STARTED` (0) | Not started - no value, no frame |
+| `COMPLETE` (MAX) | Complete - value is in place, frame was discarded |
+| `1..MAX-1` | In progress - frame exists at this arena index |
 
 For `Children::Variant`:
 - `None` → no variant selected
 - `Some((idx, COMPLETE))` → variant idx selected and complete
-- `Some((idx, id))` → variant idx in progress
+- `Some((idx, frame_id))` → variant idx in progress
 
 For `Children::Map`:
 - Key absent → not started
 - Key present with `COMPLETE` → complete
-- Key present with real id → in progress
-
-For `Children::Single`:
-- Same as Indexed but just one slot
+- Key present with valid id → in progress
 
 For `Children::None`:
 - No children to track (scalars, set elements)
