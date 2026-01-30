@@ -1,10 +1,183 @@
 # Partial API v2 Design Notes
 
-## What do we need to track?
+## What is Partial?
 
-1. **Allocations** - avoid use-after-free, double-free, leaks
-2. **Granular initialization state** - for correct drop while partially initialized (must drop initialized fields, not uninitialized ones)
-3. **Validation** - facet-validate attrs (min/max, regex, custom validators)
+Partial is a type-erased builder for any type that derives `Facet`. You give it a shape (runtime type info), and it lets you construct values field by field, element by element, without knowing the concrete type at compile time.
+
+This is what powers format parsers: `facet-json` reads JSON tokens, calls Partial methods, and out comes a fully-initialized `T`.
+
+### Why is this hard?
+
+Let's build up from simple to complex.
+
+#### Scalars
+
+A `u32` is either initialized or not. One bit of tracking.
+
+```
+u32: ✓ or ✗
+```
+
+Easy. Write the bytes, mark as initialized. Drop is trivial (no-op for primitives).
+
+#### Structs
+
+A struct with N fields needs N bits - one per field.
+
+```rust
+struct Point { x: i32, y: i32 }
+```
+
+```
+Point
+├── x: i32   ✓ or ✗
+└── y: i32   ✓ or ✗
+```
+
+We use an `ISet` (initialization set) - a bitset that tracks which fields are done. For structs with ≤64 fields, this fits in a single `u64`.
+
+On drop, we iterate fields in declaration order, dropping only the initialized ones.
+
+#### Tuples
+
+Same as structs - just fields without names.
+
+```
+(String, i32, bool)
+├── .0: String   ✓ or ✗
+├── .1: i32      ✓ or ✗
+└── .2: bool     ✓ or ✗
+```
+
+#### Enums
+
+Enums are trickier. First you must select a variant, then initialize its payload.
+
+```rust
+enum Message {
+    Quit,
+    Move { x: i32, y: i32 },
+    Write(String),
+}
+```
+
+Tracking state:
+- Which variant is selected (or none yet)
+- For the selected variant: its payload's initialization state
+
+```
+Message
+├── variant: None | Quit | Move | Write
+└── payload: (depends on variant)
+    - Quit: nothing
+    - Move: ISet for {x, y}
+    - Write: single value (String)
+```
+
+#### Options
+
+`Option<T>` is really just an enum: `None` or `Some(T)`.
+
+```
+Option<String>
+├── variant: None | Some
+└── payload: (if Some) String ✓ or ✗
+```
+
+#### Results
+
+Same pattern: `Ok(T)` or `Err(E)`.
+
+```
+Result<String, io::Error>
+├── variant: Ok | Err
+└── payload: String or io::Error
+```
+
+#### Lists (Vec, VecDeque, etc.)
+
+Lists don't use a bitset - elements are always fully initialized before being added.
+
+```
+Vec<Server>
+├── [0]: Server ✓ (fully initialized)
+├── [1]: Server ✓ (fully initialized)
+└── (currently building): Server
+    ├── host: String ✓
+    └── port: u16    ✗  ← partial!
+```
+
+The Vec itself is initialized (empty is valid). Elements are pushed one at a time, each fully initialized before the push. The tricky part is the *currently building* element - it might be partial.
+
+#### Maps (HashMap, BTreeMap, etc.)
+
+Maps need TWO temporary values: key and value.
+
+```
+HashMap<String, Server>
+├── {"localhost": Server} ✓
+├── {"remote": Server}    ✓
+└── (currently building):
+    ├── key: String     ✓
+    └── value: Server
+        ├── host: String ✓
+        └── port: u16    ✗  ← partial!
+```
+
+Both key and value must be fully initialized before insertion. We build them in temporary buffers, then call the map's insert.
+
+#### Smart Pointers (Box, Arc, Rc)
+
+These allocate their inner value on the heap.
+
+```
+Box<Config>
+└── inner: Config
+    ├── name: String ✓
+    └── port: u16    ✗
+```
+
+The Box itself isn't "initialized" until its inner value is complete. If we fail partway, we must drop the partial inner value AND deallocate the Box's heap memory.
+
+#### Nested complexity
+
+Now combine everything:
+
+```rust
+struct Config {
+    name: String,
+    servers: Vec<Server>,
+    timeout: Option<Duration>,
+}
+```
+
+```
+Config
+├── name: String           ✓
+├── servers: Vec<Server>   ✓ (vec initialized)
+│   ├── [0]: Server        ✓
+│   └── [1]: Server        partial!
+│       ├── host: String   ✓
+│       └── port: u16      ✗
+└── timeout: Option        ✗ (no variant selected yet)
+```
+
+If we error here, cleanup must:
+1. Drop `servers[1].host` (initialized String)
+2. NOT touch `servers[1].port` (uninitialized)
+3. Drop `servers[0]` entirely
+4. Drop the Vec (deallocates buffer, drops elements)
+5. Drop `name`
+6. NOT touch `timeout`
+7. Deallocate Config
+
+This is why Partial exists: **tracking all of this so cleanup is always correct**.
+
+### Summary: what we track
+
+1. **Allocations** - top-level T, Vec buffers, HashMap buckets, Box/Arc/Rc heap allocations, temporary buffers for map keys/values
+2. **Initialization state** - per-field bitsets for structs, variant selection for enums, element tracking for collections
+3. **Completeness** - before returning a finished T, verify everything is initialized (separate from facet-validate attribute validation)
 
 ## Why deferred? The flatten problem
 
