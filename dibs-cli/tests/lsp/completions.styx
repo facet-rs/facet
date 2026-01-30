@@ -80,9 +80,9 @@ tests (
         inlay_hints {
             count 3
             has (
-                {label ": BIGINT" line 4}
-                {label ": TEXT" line 5}
-                {label ": BOOLEAN" line 6}
+                {label ": BIGINT", line 4}
+                {label ": TEXT", line 5}
+                {label ": BOOLEAN", line 6}
             )
         }
     }
@@ -109,11 +109,11 @@ tests (
         inlay_hints {
             count 5
             has (
-                {label ": BIGINT" line 4}
-                {label ": TEXT" line 5}
-                {label ": BIGINT" line 11}
-                {label ": TEXT" line 12}
-                {label ": TEXT" line 13}
+                {label ": BIGINT", line 4}
+                {label ": TEXT", line 5}
+                {label ": BIGINT", line 11}
+                {label ": TEXT", line 12}
+                {label ": TEXT", line 13}
             )
         }
     }
@@ -134,10 +134,10 @@ tests (
         inlay_hints {
             count 4
             has (
-                {label ": TIMESTAMPTZ" line 3}
-                {label ": BIGINT" line 5}
-                {label ": TIMESTAMPTZ" line 6}
-                {label ": BIGINT" line 8}
+                {label ": TIMESTAMPTZ", line 3}
+                {label ": BIGINT", line 5}
+                {label ": TIMESTAMPTZ", line 6}
+                {label ": BIGINT", line 8}
             )
         }
     }
@@ -158,10 +158,10 @@ tests (
         inlay_hints {
             count 4
             has (
-                {label ": TIMESTAMPTZ" line 4}
-                {label ": BOOLEAN" line 5}
-                {label ": BIGINT" line 6}
-                {label ": TEXT" line 8}
+                {label ": TIMESTAMPTZ", line 4}
+                {label ": BOOLEAN", line 5}
+                {label ": BIGINT", line 6}
+                {label ": TEXT", line 8}
             )
         }
     }
@@ -181,9 +181,9 @@ tests (
         inlay_hints {
             count 3
             has (
-                {label ": TEXT" line 4}
-                {label ": BOOLEAN" line 5}
-                {label ": TEXT" line 6}
+                {label ": TEXT", line 4}
+                {label ": BOOLEAN", line 5}
+                {label ": TEXT", line 6}
             )
         }
     }
@@ -203,9 +203,9 @@ tests (
         inlay_hints {
             count 3
             has (
-                {label ": TEXT" line 4}
-                {label ": BOOLEAN" line 5}
-                {label ": BIGINT" line 7}
+                {label ": TEXT", line 4}
+                {label ": BOOLEAN", line 5}
+                {label ": BIGINT", line 7}
             )
         }
     }
@@ -242,8 +242,8 @@ tests (
         inlay_hints {
             count 2
             has (
-                {label ": TEXT" line 5}
-                {label ": BOOLEAN" line 6}
+                {label ": TEXT", line 5}
+                {label ": BOOLEAN", line 6}
             )
         }
     }
@@ -946,7 +946,7 @@ tests (
             STYX
         code_actions {
             count 1
-            has ({title "Shorten to" kind "quickfix" preferred true})
+            has ({title "Shorten to", kind "quickfix", preferred true})
         }
     }
 
@@ -998,8 +998,8 @@ tests (
         inlay_hints {
             count 2
             has (
-                {label ": BIGINT" line 4 col 22}
-                {label ": TEXT" line 5 col 26}
+                {label ": BIGINT", line 4, col 22}
+                {label ": TEXT", line 5, col 26}
             )
         }
     }
@@ -1016,7 +1016,7 @@ tests (
             }
             STYX
         inlay_hints {
-            has ({label ": BIGINT" line 4 col 999})
+            has ({label ": BIGINT", line 4, col 999})
         }
     }
 
@@ -1147,8 +1147,8 @@ tests (
         inlay_hints {
             count 2
             has (
-                {label ": TEXT" line 5}
-                {label ": TEXT" line 6}
+                {label ": TEXT", line 5}
+                {label ": TEXT", line 6}
             )
         }
     }
@@ -1166,10 +1166,10 @@ tests (
         inlay_hints {
             count 4
             has (
-                {label ": TEXT" line 4}
-                {label ": TEXT" line 4}
-                {label ": BIGINT" line 5}
-                {label ": TEXT" line 5}
+                {label ": TEXT", line 4}
+                {label ": TEXT", line 4}
+                {label ": BIGINT", line 5}
+                {label ": TEXT", line 5}
             )
         }
     }
@@ -1193,10 +1193,10 @@ tests (
         inlay_hints {
             count 4
             has (
-                {label ": TEXT" line 5}
-                {label ": TEXT" line 6}
-                {label ": TEXT" line 9}
-                {label ": TEXT" line 10}
+                {label ": TEXT", line 5}
+                {label ": TEXT", line 6}
+                {label ": TEXT", line 9}
+                {label ": TEXT", line 10}
             )
         }
     }
@@ -1277,5 +1277,5 @@ tests (
             has ({message "Unknown table", code "unknown-table"})
         }
     }
-
 )
+
