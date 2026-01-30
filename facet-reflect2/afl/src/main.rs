@@ -1,3 +1,4 @@
+#[cfg(not(feature = "cov"))]
 use afl::fuzz;
 use arbitrary::Arbitrary;
 use facet::Facet;
@@ -335,10 +336,23 @@ pub struct FuzzInput {
 // Main fuzz target
 // ============================================================================
 
+#[cfg(not(feature = "cov"))]
 fn main() {
     fuzz!(|input: FuzzInput| {
         run_fuzz(input);
     });
+}
+
+#[cfg(feature = "cov")]
+fn main() {
+    use arbitrary::Unstructured;
+    use std::io::Read;
+
+    let mut data = Vec::new();
+    std::io::stdin().read_to_end(&mut data).unwrap();
+    if let Ok(input) = FuzzInput::arbitrary(&mut Unstructured::new(&data)) {
+        run_fuzz(input);
+    }
 }
 
 fn run_fuzz(input: FuzzInput) {

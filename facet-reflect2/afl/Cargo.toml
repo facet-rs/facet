@@ -4,6 +4,9 @@ version = "0.0.0"
 publish = false
 edition = "2024"
 
+[features]
+cov = []
+
 [dependencies]
 afl = "0.15"
 arbitrary = { version = "1", features = ["derive"] }

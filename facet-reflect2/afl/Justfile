@@ -52,9 +52,32 @@ reproduce-all:
         target/debug/facet-reflect2-afl < "$$f" 2>&1 | grep -E "^thread.*panicked" || true; \
     done | sort -u
 
-# Show coverage from the corpus
-cov: build-native
+# Show AFL edge coverage from the corpus
+edges: build-native
     cargo afl showmap -C -i out/default/queue -o /dev/stdout -- target/debug/facet-reflect2-afl
+
+# Build with LLVM source coverage (non-AFL binary)
+build-cov:
+    CARGO_INCREMENTAL=0 RUSTFLAGS="-C instrument-coverage" cargo build --features cov
+
+# Generate source coverage report from corpus
+cov: build-cov
+    #!/usr/bin/env -S bash -euo pipefail
+    rm -f *.profraw default.profdata
+    files=(out/default/queue/*)
+    total=${#files[@]}
+    i=0
+    for f in "${files[@]}"; do
+        i=$((i + 1))
+        printf "\r%d/%d" "$i" "$total"
+        target/debug/facet-reflect2-afl < "$f" 2>/dev/null || true
+    done
+    echo
+    llvm-profdata merge -sparse *.profraw -o default.profdata
+    llvm-cov report target/debug/facet-reflect2-afl \
+        --instr-profile=default.profdata \
+        --ignore-filename-regex='/.cargo/|/rustc/|afl/src'
+    rm -f *.profraw default.profdata
 
 # Clean build artifacts and output
 clean:
