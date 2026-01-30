@@ -138,19 +138,21 @@ impl Frame {
 
     /// Copy a value into this frame, marking it as initialized.
     ///
-    /// # Panics
-    ///
-    /// Panics if the frame is already initialized. Call [`uninit()`](Self::uninit) first.
+    /// Returns an error if the frame is already initialized.
+    /// Call [`uninit()`](Self::uninit) first to clear it.
     ///
     /// # Safety
     ///
     /// - `src` must point to a valid, initialized value matching `shape`
     /// - `shape` must match `self.shape`
-    pub unsafe fn copy_from(&mut self, src: PtrConst, shape: &'static Shape) {
-        assert!(
-            !self.flags.contains(FrameFlags::INIT),
-            "frame already initialized - call uninit() first"
-        );
+    pub unsafe fn copy_from(
+        &mut self,
+        src: PtrConst,
+        shape: &'static Shape,
+    ) -> Result<(), ReflectErrorKind> {
+        if self.flags.contains(FrameFlags::INIT) {
+            return Err(ReflectErrorKind::AlreadyInitialized);
+        }
         debug_assert!(self.shape.is_shape(shape), "shape mismatch");
 
         // SAFETY: caller guarantees src points to valid data matching shape,
@@ -159,6 +161,7 @@ impl Frame {
             self.data.copy_from(src, self.shape).unwrap();
         }
         self.flags |= FrameFlags::INIT;
+        Ok(())
     }
 }
 

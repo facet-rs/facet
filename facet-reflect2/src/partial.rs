@@ -5,8 +5,8 @@ use std::marker::PhantomData;
 use std::ptr::NonNull;
 
 use crate::arena::{Arena, Idx};
-use crate::errors::{ErrorLocation, ReflectError, ReflectErrorKind};
-use crate::frame::{Children, Frame, FrameFlags};
+use crate::errors::{ReflectError, ReflectErrorKind};
+use crate::frame::{Children, Frame, FrameFlags, absolute_path};
 use crate::ops::{Op, Path, Source};
 use facet_core::{Facet, Field, PtrUninit, Shape, Type, UserType};
 
@@ -19,6 +19,18 @@ pub struct Partial<'facet> {
 }
 
 impl<'facet> Partial<'facet> {
+    /// Create an error at the current frame location.
+    fn error(&self, kind: ReflectErrorKind) -> ReflectError {
+        let frame = self.arena.get(self.current);
+        ReflectError::new(frame.shape, absolute_path(&self.arena, self.current), kind)
+    }
+
+    /// Create an error at a specific frame location.
+    fn error_at(&self, idx: Idx<Frame>, kind: ReflectErrorKind) -> ReflectError {
+        let frame = self.arena.get(idx);
+        ReflectError::new(frame.shape, absolute_path(&self.arena, idx), kind)
+    }
+
     /// Allocate for a known type.
     pub fn alloc<T: Facet<'facet>>() -> Result<Self, ReflectError> {
         Self::alloc_shape(T::SHAPE)
@@ -26,13 +38,10 @@ impl<'facet> Partial<'facet> {
 
     /// Allocate for a dynamic shape.
     pub fn alloc_shape(shape: &'static Shape) -> Result<Self, ReflectError> {
-        let layout = shape.layout.sized_layout().map_err(|_| ReflectError {
-            location: ErrorLocation {
-                shape,
-                path: Path::default(),
-            },
-            kind: ReflectErrorKind::Unsized { shape },
-        })?;
+        let layout = shape
+            .layout
+            .sized_layout()
+            .map_err(|_| ReflectError::at_root(shape, ReflectErrorKind::Unsized { shape }))?;
 
         // Allocate memory (handle ZST case)
         let data = if layout.size() == 0 {
@@ -41,13 +50,10 @@ impl<'facet> Partial<'facet> {
             // SAFETY: layout has non-zero size (checked above) and is valid from Shape
             let ptr = unsafe { alloc(layout) };
             if ptr.is_null() {
-                return Err(ReflectError {
-                    location: ErrorLocation {
-                        shape,
-                        path: Path::default(),
-                    },
-                    kind: ReflectErrorKind::AllocFailed { layout },
-                });
+                return Err(ReflectError::at_root(
+                    shape,
+                    ReflectErrorKind::AllocFailed { layout },
+                ));
             }
             PtrUninit::new(ptr)
         };
@@ -99,7 +105,9 @@ impl<'facet> Partial<'facet> {
                             // Copy the value into the target frame
                             // SAFETY: Move's safety invariant guarantees ptr is valid for shape
                             unsafe {
-                                target.copy_from(mov.ptr(), mov.shape());
+                                target
+                                    .copy_from(mov.ptr(), mov.shape())
+                                    .map_err(|kind| self.error(kind))?;
                             }
 
                             // Now get mutable borrow to update state
@@ -112,13 +120,7 @@ impl<'facet> Partial<'facet> {
                                 // Mark child as complete
                                 let field_idx = path.as_slice()[0] as usize;
                                 let Children::Indexed(c) = &mut frame.children else {
-                                    return Err(ReflectError {
-                                        location: ErrorLocation {
-                                            shape: frame.shape,
-                                            path: path.clone(),
-                                        },
-                                        kind: ReflectErrorKind::NotIndexedChildren,
-                                    });
+                                    return Err(self.error(ReflectErrorKind::NotIndexedChildren));
                                 };
                                 c.mark_complete(field_idx);
                             }
@@ -144,19 +146,13 @@ impl<'facet> Partial<'facet> {
         // For now, only support single-level paths into structs
         let indices = path.as_slice();
         if indices.len() != 1 {
-            return Err(ReflectError {
-                location: ErrorLocation {
-                    shape: frame.shape,
-                    path: path.clone(),
-                },
-                kind: ReflectErrorKind::MultiLevelPathNotSupported {
-                    depth: indices.len(),
-                },
-            });
+            return Err(self.error(ReflectErrorKind::MultiLevelPathNotSupported {
+                depth: indices.len(),
+            }));
         }
 
         let field_idx = indices[0];
-        let field = self.get_struct_field(frame.shape, field_idx, path)?;
+        let field = self.get_struct_field(frame.shape, field_idx)?;
 
         // Compute field pointer: base + offset
         let field_ptr = unsafe { PtrUninit::new(frame.data.as_mut_byte_ptr().add(field.offset)) };
@@ -169,35 +165,22 @@ impl<'facet> Partial<'facet> {
         &self,
         shape: &'static Shape,
         index: u32,
-        path: &Path,
     ) -> Result<&'static Field, ReflectError> {
         // Get struct type from shape
         let fields = match shape.ty {
             Type::User(UserType::Struct(ref s)) => s.fields,
             _ => {
-                return Err(ReflectError {
-                    location: ErrorLocation {
-                        shape,
-                        path: path.clone(),
-                    },
-                    kind: ReflectErrorKind::NotAStruct,
-                });
+                return Err(self.error(ReflectErrorKind::NotAStruct));
             }
         };
 
         // Bounds check
         let idx = index as usize;
         if idx >= fields.len() {
-            return Err(ReflectError {
-                location: ErrorLocation {
-                    shape,
-                    path: path.clone(),
-                },
-                kind: ReflectErrorKind::FieldIndexOutOfBounds {
-                    index,
-                    field_count: fields.len(),
-                },
-            });
+            return Err(self.error(ReflectErrorKind::FieldIndexOutOfBounds {
+                index,
+                field_count: fields.len(),
+            }));
         }
 
         Ok(&fields[idx])
@@ -209,16 +192,13 @@ impl<'facet> Partial<'facet> {
 
         // Verify shape matches
         if !frame.shape.is_shape(T::SHAPE) {
-            return Err(ReflectError {
-                location: ErrorLocation {
-                    shape: frame.shape,
-                    path: Path::default(),
-                },
-                kind: ReflectErrorKind::ShapeMismatch {
+            return Err(self.error_at(
+                self.root,
+                ReflectErrorKind::ShapeMismatch {
                     expected: frame.shape,
                     actual: T::SHAPE,
                 },
-            });
+            ));
         }
 
         // Verify initialized - check based on type
@@ -234,13 +214,7 @@ impl<'facet> Partial<'facet> {
         };
 
         if !is_initialized {
-            return Err(ReflectError {
-                location: ErrorLocation {
-                    shape: frame.shape,
-                    path: Path::default(),
-                },
-                kind: ReflectErrorKind::NotInitialized,
-            });
+            return Err(self.error_at(self.root, ReflectErrorKind::NotInitialized));
         }
 
         // SAFETY:
