@@ -58,8 +58,7 @@ fn field_default_value(field: &Field) -> Option<String> {
             unsafe { default_fn(ptr_uninit) };
         }
         DefaultSource::FromTrait => {
-            let ptr_mut = unsafe { ptr_uninit.assume_init() };
-            if unsafe { shape.call_default_in_place(ptr_mut) }.is_none() {
+            if unsafe { shape.call_default_in_place(ptr_uninit) }.is_none() {
                 unsafe { std::alloc::dealloc(ptr.as_ptr(), layout) };
                 return None;
             }
