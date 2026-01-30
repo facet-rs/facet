@@ -3,7 +3,7 @@
 use crate::arena::{Arena, Idx};
 use crate::errors::{ErrorLocation, ReflectError, ReflectErrorKind};
 use crate::ops::Path;
-use facet_core::{PtrConst, PtrUninit, Shape};
+use facet_core::{PtrConst, PtrUninit, Shape, Variant};
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -15,34 +15,69 @@ bitflags::bitflags! {
     }
 }
 
-/// Indexed children for structs and arrays.
+/// Indexed fields for structs, arrays, and variant data.
 /// Each slot is either NOT_STARTED, COMPLETE, or a valid frame index.
-pub struct IndexedChildren(Vec<Idx<Frame>>);
+pub struct IndexedFields(Vec<Idx<Frame>>);
 
-impl IndexedChildren {
-    /// Create indexed children with the given count, all NOT_STARTED.
+impl IndexedFields {
+    /// Create indexed fields with the given count, all NOT_STARTED.
     pub fn new(count: usize) -> Self {
         Self(vec![Idx::NOT_STARTED; count])
     }
 
-    /// Mark a child as complete.
+    /// Mark a field as complete.
     pub fn mark_complete(&mut self, idx: usize) {
         self.0[idx] = Idx::COMPLETE;
     }
 
-    /// Check if all children are complete.
+    /// Check if all fields are complete.
     pub fn all_complete(&self) -> bool {
         self.0.iter().all(|id| id.is_complete())
     }
 }
 
-/// Children structure varies by container type.
-pub enum Children {
-    /// Structs, arrays: indexed by field/element index
-    Indexed(IndexedChildren),
+/// What kind of value this frame is building.
+pub enum FrameKind {
+    /// Scalar or opaque value - no children.
+    Scalar,
 
-    /// Scalars: no children
-    None,
+    /// Struct with indexed fields.
+    Struct { fields: IndexedFields },
+
+    /// Enum - variant may or may not be selected.
+    /// None = no variant selected yet.
+    /// Some((variant_idx, state)) where state is NOT_STARTED/COMPLETE/valid frame idx.
+    Enum { selected: Option<(u32, Idx<Frame>)> },
+
+    /// Inside a variant, building its fields.
+    VariantData {
+        variant: &'static Variant,
+        fields: IndexedFields,
+    },
+}
+
+impl FrameKind {
+    /// Check if this frame is complete.
+    pub fn is_complete(&self) -> bool {
+        match self {
+            FrameKind::Scalar => false, // scalars use INIT flag instead
+            FrameKind::Struct { fields } => fields.all_complete(),
+            FrameKind::Enum { selected } => {
+                matches!(selected, Some((_, idx)) if idx.is_complete())
+            }
+            FrameKind::VariantData { fields, .. } => fields.all_complete(),
+        }
+    }
+
+    /// Mark a child field as complete (for Struct and VariantData).
+    pub fn mark_field_complete(&mut self, idx: usize) {
+        match self {
+            FrameKind::Struct { fields } | FrameKind::VariantData { fields, .. } => {
+                fields.mark_complete(idx);
+            }
+            _ => {}
+        }
+    }
 }
 
 /// A frame tracking construction of a single value.
@@ -53,11 +88,11 @@ pub struct Frame {
     /// Shape (type metadata) of the value.
     pub shape: &'static Shape,
 
+    /// What kind of value we're building.
+    pub kind: FrameKind,
+
     /// State flags.
     pub flags: FrameFlags,
-
-    /// Children tracking (for compound types).
-    pub children: Children,
 
     /// Parent frame (if any) and our index within it.
     pub parent: Option<(Idx<Frame>, u32)>,
@@ -88,8 +123,8 @@ impl Frame {
         Frame {
             data,
             shape,
+            kind: FrameKind::Scalar,
             flags: FrameFlags::empty(),
-            children: Children::None,
             parent: None,
         }
     }
@@ -99,8 +134,35 @@ impl Frame {
         Frame {
             data,
             shape,
+            kind: FrameKind::Struct {
+                fields: IndexedFields::new(field_count),
+            },
             flags: FrameFlags::empty(),
-            children: Children::Indexed(IndexedChildren::new(field_count)),
+            parent: None,
+        }
+    }
+
+    /// Create a frame for an enum (variant not yet selected).
+    pub fn new_enum(data: PtrUninit, shape: &'static Shape) -> Self {
+        Frame {
+            data,
+            shape,
+            kind: FrameKind::Enum { selected: None },
+            flags: FrameFlags::empty(),
+            parent: None,
+        }
+    }
+
+    /// Create a frame for an enum variant's fields.
+    pub fn new_variant(data: PtrUninit, shape: &'static Shape, variant: &'static Variant) -> Self {
+        Frame {
+            data,
+            shape,
+            kind: FrameKind::VariantData {
+                variant,
+                fields: IndexedFields::new(variant.data.fields.len()),
+            },
+            flags: FrameFlags::empty(),
             parent: None,
         }
     }

@@ -12,6 +12,9 @@ pub use errors::{ErrorLocation, ReflectError, ReflectErrorKind};
 // --- frame ---
 pub(crate) mod frame;
 
+// --- enum helpers ---
+pub(crate) mod enum_helpers;
+
 // --- ops ---
 mod ops;
 pub use ops::{Build, Move, Op, Path, Source};

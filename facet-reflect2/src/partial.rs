@@ -5,10 +5,11 @@ use std::marker::PhantomData;
 use std::ptr::NonNull;
 
 use crate::arena::{Arena, Idx};
+use crate::enum_helpers::write_discriminant;
 use crate::errors::{ReflectError, ReflectErrorKind};
-use crate::frame::{Children, Frame, FrameFlags, absolute_path};
+use crate::frame::{Frame, FrameFlags, FrameKind, absolute_path};
 use crate::ops::{Op, Path, Source};
-use facet_core::{Facet, Field, PtrUninit, Shape, Type, UserType};
+use facet_core::{EnumType, Facet, Field, PtrUninit, Shape, Type, UserType, Variant};
 
 /// Manages incremental construction of a value.
 pub struct Partial<'facet> {
@@ -64,6 +65,7 @@ impl<'facet> Partial<'facet> {
         // Use appropriate constructor based on type
         let mut frame = match shape.ty {
             Type::User(UserType::Struct(ref s)) => Frame::new_struct(data, shape, s.fields.len()),
+            Type::User(UserType::Enum(_)) => Frame::new_enum(data, shape),
             _ => Frame::new(data, shape),
         };
         frame.flags |= FrameFlags::OWNS_ALLOC;
@@ -124,108 +126,17 @@ impl<'facet> Partial<'facet> {
         for op in ops {
             match op {
                 Op::Set { path, source } => {
-                    // Resolve path to a temporary frame for the target
+                    // Check if current frame is an enum frame (not inside a variant's fields)
+                    // and path is non-empty - that means we're selecting a variant
                     let frame = self.arena.get(self.current);
-                    let target = self.resolve_path(frame, path)?;
+                    let is_enum_variant_selection = !path.is_empty()
+                        && matches!(frame.kind, FrameKind::Enum { .. })
+                        && matches!(frame.shape.ty, Type::User(UserType::Enum(_)));
 
-                    match source {
-                        Source::Move(mov) => {
-                            // Verify shape matches
-                            target.assert_shape(mov.shape(), path)?;
-
-                            // Drop any existing value before overwriting
-                            if path.is_empty() {
-                                let frame = self.arena.get_mut(self.current);
-                                frame.uninit();
-                            }
-
-                            // Re-resolve path after potential mutation
-                            let frame = self.arena.get(self.current);
-                            let mut target = self.resolve_path(frame, path)?;
-
-                            // Copy the value into the target frame
-                            // SAFETY: Move's safety invariant guarantees ptr is valid for shape
-                            unsafe {
-                                target
-                                    .copy_from(mov.ptr(), mov.shape())
-                                    .map_err(|kind| self.error(kind))?;
-                            }
-
-                            // Now get mutable borrow to update state
-                            let frame = self.arena.get_mut(self.current);
-
-                            // Mark as initialized
-                            if path.is_empty() {
-                                frame.flags |= FrameFlags::INIT;
-                            } else {
-                                // Mark child as complete
-                                let field_idx = path.as_slice()[0] as usize;
-                                let Children::Indexed(c) = &mut frame.children else {
-                                    return Err(self.error(ReflectErrorKind::NotIndexedChildren));
-                                };
-                                c.mark_complete(field_idx);
-                            }
-                        }
-                        Source::Build(_build) => {
-                            // Build pushes a new frame for incremental construction
-                            // Path must be non-empty (can't "build" at current position)
-                            if path.is_empty() {
-                                return Err(self.error(ReflectErrorKind::BuildAtEmptyPath));
-                            }
-
-                            // Resolve path to get target shape and pointer
-                            let frame = self.arena.get(self.current);
-                            let target = self.resolve_path(frame, path)?;
-
-                            // Create a new frame for the nested value
-                            let field_idx = path.as_slice()[0];
-                            let mut new_frame = match target.shape.ty {
-                                Type::User(UserType::Struct(ref s)) => {
-                                    Frame::new_struct(target.data, target.shape, s.fields.len())
-                                }
-                                _ => Frame::new(target.data, target.shape),
-                            };
-                            new_frame.parent = Some((self.current, field_idx));
-
-                            // Store in arena and make it current
-                            let new_idx = self.arena.alloc(new_frame);
-                            self.current = new_idx;
-                        }
-                        Source::Default => {
-                            // Drop any existing value before overwriting
-                            if path.is_empty() {
-                                let frame = self.arena.get_mut(self.current);
-                                frame.uninit();
-                            }
-
-                            // Re-resolve path after potential mutation
-                            let frame = self.arena.get(self.current);
-                            let target = self.resolve_path(frame, path)?;
-
-                            // Call default_in_place on the target
-                            // SAFETY: target.data points to uninitialized memory of the correct type
-                            let ok = unsafe { target.shape.call_default_in_place(target.data) };
-                            if ok.is_none() {
-                                return Err(self.error(ReflectErrorKind::NoDefault {
-                                    shape: target.shape,
-                                }));
-                            }
-
-                            // Now get mutable borrow to update state
-                            let frame = self.arena.get_mut(self.current);
-
-                            // Mark as initialized
-                            if path.is_empty() {
-                                frame.flags |= FrameFlags::INIT;
-                            } else {
-                                // Mark child as complete
-                                let field_idx = path.as_slice()[0] as usize;
-                                let Children::Indexed(c) = &mut frame.children else {
-                                    return Err(self.error(ReflectErrorKind::NotIndexedChildren));
-                                };
-                                c.mark_complete(field_idx);
-                            }
-                        }
+                    if is_enum_variant_selection {
+                        self.apply_enum_variant_set(path, source)?;
+                    } else {
+                        self.apply_regular_set(path, source)?;
                     }
                 }
                 Op::End => {
@@ -239,10 +150,7 @@ impl<'facet> Partial<'facet> {
                     let is_complete = if frame.flags.contains(FrameFlags::INIT) {
                         true
                     } else {
-                        match &frame.children {
-                            Children::Indexed(c) => c.all_complete(),
-                            Children::None => false,
-                        }
+                        frame.kind.is_complete()
                     };
 
                     if !is_complete {
@@ -252,16 +160,228 @@ impl<'facet> Partial<'facet> {
                     // Free the current frame (memory stays - it's part of parent's allocation)
                     let _ = self.arena.free(self.current);
 
-                    // Mark field complete in parent
+                    // Mark field/variant complete in parent
                     let parent = self.arena.get_mut(parent_idx);
-                    let Children::Indexed(c) = &mut parent.children else {
-                        return Err(self.error_at(parent_idx, ReflectErrorKind::NotIndexedChildren));
-                    };
-                    c.mark_complete(field_idx as usize);
+                    match &mut parent.kind {
+                        FrameKind::Struct { fields } | FrameKind::VariantData { fields, .. } => {
+                            fields.mark_complete(field_idx as usize);
+                        }
+                        FrameKind::Enum { selected } => {
+                            // Mark the variant as complete
+                            if let Some((variant_idx, _)) = *selected {
+                                *selected = Some((variant_idx, Idx::COMPLETE));
+                            }
+                        }
+                        FrameKind::Scalar => {
+                            return Err(
+                                self.error_at(parent_idx, ReflectErrorKind::NotIndexedChildren)
+                            );
+                        }
+                    }
 
                     // Pop back to parent
                     self.current = parent_idx;
                 }
+            }
+        }
+        Ok(())
+    }
+
+    /// Apply a Set operation for regular (non-enum-variant) targets.
+    fn apply_regular_set(&mut self, path: &Path, source: &Source<'_>) -> Result<(), ReflectError> {
+        // Resolve path to a temporary frame for the target
+        let frame = self.arena.get(self.current);
+        let target = self.resolve_path(frame, path)?;
+
+        match source {
+            Source::Move(mov) => {
+                // Verify shape matches
+                target.assert_shape(mov.shape(), path)?;
+
+                // Drop any existing value before overwriting
+                if path.is_empty() {
+                    let frame = self.arena.get_mut(self.current);
+                    frame.uninit();
+                }
+
+                // Re-resolve path after potential mutation
+                let frame = self.arena.get(self.current);
+                let mut target = self.resolve_path(frame, path)?;
+
+                // Copy the value into the target frame
+                // SAFETY: Move's safety invariant guarantees ptr is valid for shape
+                unsafe {
+                    target
+                        .copy_from(mov.ptr(), mov.shape())
+                        .map_err(|kind| self.error(kind))?;
+                }
+
+                // Now get mutable borrow to update state
+                let frame = self.arena.get_mut(self.current);
+
+                // Mark as initialized
+                if path.is_empty() {
+                    frame.flags |= FrameFlags::INIT;
+                } else {
+                    // Mark child as complete
+                    let field_idx = path.as_slice()[0] as usize;
+                    frame.kind.mark_field_complete(field_idx);
+                }
+            }
+            Source::Build(_build) => {
+                // Build pushes a new frame for incremental construction
+                // Path must be non-empty (can't "build" at current position)
+                if path.is_empty() {
+                    return Err(self.error(ReflectErrorKind::BuildAtEmptyPath));
+                }
+
+                // Resolve path to get target shape and pointer
+                let frame = self.arena.get(self.current);
+                let target = self.resolve_path(frame, path)?;
+
+                // Create a new frame for the nested value
+                let field_idx = path.as_slice()[0];
+                let mut new_frame = match target.shape.ty {
+                    Type::User(UserType::Struct(ref s)) => {
+                        Frame::new_struct(target.data, target.shape, s.fields.len())
+                    }
+                    Type::User(UserType::Enum(_)) => Frame::new_enum(target.data, target.shape),
+                    _ => Frame::new(target.data, target.shape),
+                };
+                new_frame.parent = Some((self.current, field_idx));
+
+                // Store in arena and make it current
+                let new_idx = self.arena.alloc(new_frame);
+                self.current = new_idx;
+            }
+            Source::Default => {
+                // Drop any existing value before overwriting
+                if path.is_empty() {
+                    let frame = self.arena.get_mut(self.current);
+                    frame.uninit();
+                }
+
+                // Re-resolve path after potential mutation
+                let frame = self.arena.get(self.current);
+                let target = self.resolve_path(frame, path)?;
+
+                // Call default_in_place on the target
+                // SAFETY: target.data points to uninitialized memory of the correct type
+                let ok = unsafe { target.shape.call_default_in_place(target.data) };
+                if ok.is_none() {
+                    return Err(self.error(ReflectErrorKind::NoDefault {
+                        shape: target.shape,
+                    }));
+                }
+
+                // Now get mutable borrow to update state
+                let frame = self.arena.get_mut(self.current);
+
+                // Mark as initialized
+                if path.is_empty() {
+                    frame.flags |= FrameFlags::INIT;
+                } else {
+                    // Mark child as complete
+                    let field_idx = path.as_slice()[0] as usize;
+                    frame.kind.mark_field_complete(field_idx);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Apply a Set operation for enum variant selection.
+    fn apply_enum_variant_set(
+        &mut self,
+        path: &Path,
+        source: &Source<'_>,
+    ) -> Result<(), ReflectError> {
+        let indices = path.as_slice();
+        if indices.len() != 1 {
+            return Err(self.error(ReflectErrorKind::MultiLevelPathNotSupported {
+                depth: indices.len(),
+            }));
+        }
+        let variant_idx = indices[0];
+
+        // Get enum type and variant
+        let frame = self.arena.get(self.current);
+        let Type::User(UserType::Enum(ref enum_type)) = frame.shape.ty else {
+            return Err(self.error(ReflectErrorKind::NotAnEnum));
+        };
+        let variant = self.get_enum_variant(enum_type, variant_idx)?;
+
+        // Write the discriminant
+        // SAFETY: frame.data points to valid enum memory
+        unsafe {
+            write_discriminant(frame.data, enum_type, variant).map_err(|kind| self.error(kind))?;
+        }
+
+        match source {
+            Source::Default => {
+                // For unit variants, just writing the discriminant is enough
+                // For struct variants with Default, we'd need to default-initialize fields
+                // For now, only support unit variants with Default
+                if !variant.data.fields.is_empty() {
+                    return Err(self.error(ReflectErrorKind::NoDefault { shape: frame.shape }));
+                }
+
+                // Mark variant as complete
+                let frame = self.arena.get_mut(self.current);
+                let FrameKind::Enum { selected } = &mut frame.kind else {
+                    return Err(self.error(ReflectErrorKind::NotAnEnum));
+                };
+                *selected = Some((variant_idx, Idx::COMPLETE));
+            }
+            Source::Move(mov) => {
+                // For tuple variants with a single field, copy the field value
+                // The Move shape should match the tuple field's shape
+                if variant.data.fields.len() != 1 {
+                    return Err(self.error(ReflectErrorKind::ShapeMismatch {
+                        expected: frame.shape,
+                        actual: mov.shape(),
+                    }));
+                }
+
+                let field = &variant.data.fields[0];
+                if !field.shape().is_shape(mov.shape()) {
+                    return Err(self.error(ReflectErrorKind::ShapeMismatch {
+                        expected: field.shape(),
+                        actual: mov.shape(),
+                    }));
+                }
+
+                // Copy the value into the field
+                let field_ptr =
+                    unsafe { PtrUninit::new(frame.data.as_mut_byte_ptr().add(field.offset)) };
+                unsafe {
+                    field_ptr.copy_from(mov.ptr(), mov.shape()).unwrap();
+                }
+
+                // Mark variant as complete
+                let frame = self.arena.get_mut(self.current);
+                let FrameKind::Enum { selected } = &mut frame.kind else {
+                    return Err(self.error(ReflectErrorKind::NotAnEnum));
+                };
+                *selected = Some((variant_idx, Idx::COMPLETE));
+            }
+            Source::Build(_build) => {
+                // Push a frame for the variant's fields
+                let frame = self.arena.get(self.current);
+                let mut new_frame = Frame::new_variant(frame.data, frame.shape, variant);
+                new_frame.parent = Some((self.current, variant_idx));
+
+                // Store in arena and make it current
+                let new_idx = self.arena.alloc(new_frame);
+
+                // Record the frame in enum's selected variant
+                let frame = self.arena.get_mut(self.current);
+                let FrameKind::Enum { selected } = &mut frame.kind else {
+                    return Err(self.error(ReflectErrorKind::NotAnEnum));
+                };
+                *selected = Some((variant_idx, new_idx));
+
+                self.current = new_idx;
             }
         }
         Ok(())
@@ -276,7 +396,7 @@ impl<'facet> Partial<'facet> {
             return Ok(Frame::new(frame.data, frame.shape));
         }
 
-        // For now, only support single-level paths into structs
+        // For now, only support single-level paths
         let indices = path.as_slice();
         if indices.len() != 1 {
             return Err(self.error(ReflectErrorKind::MultiLevelPathNotSupported {
@@ -284,30 +404,40 @@ impl<'facet> Partial<'facet> {
             }));
         }
 
-        let field_idx = indices[0];
-        let field = self.get_struct_field(frame.shape, field_idx)?;
+        let index = indices[0];
 
-        // Compute field pointer: base + offset
-        let field_ptr = unsafe { PtrUninit::new(frame.data.as_mut_byte_ptr().add(field.offset)) };
+        // Check if we're inside a variant - use variant's fields for resolution
+        if let FrameKind::VariantData { variant, .. } = &frame.kind {
+            let field = self.get_struct_field(variant.data.fields, index)?;
+            let field_ptr =
+                unsafe { PtrUninit::new(frame.data.as_mut_byte_ptr().add(field.offset)) };
+            return Ok(Frame::new(field_ptr, field.shape()));
+        }
 
-        Ok(Frame::new(field_ptr, field.shape()))
+        match frame.shape.ty {
+            Type::User(UserType::Struct(ref s)) => {
+                let field = self.get_struct_field(s.fields, index)?;
+                let field_ptr =
+                    unsafe { PtrUninit::new(frame.data.as_mut_byte_ptr().add(field.offset)) };
+                Ok(Frame::new(field_ptr, field.shape()))
+            }
+            Type::User(UserType::Enum(ref e)) => {
+                // Validate the variant index
+                let _variant = self.get_enum_variant(e, index)?;
+                // For enums, we return the shape of the whole enum (not the variant)
+                // The variant's fields will be accessed in a nested frame after Build
+                Ok(Frame::new(frame.data, frame.shape))
+            }
+            _ => Err(self.error(ReflectErrorKind::NotAStruct)),
+        }
     }
 
     /// Get a struct field by index.
     fn get_struct_field(
         &self,
-        shape: &'static Shape,
+        fields: &'static [Field],
         index: u32,
     ) -> Result<&'static Field, ReflectError> {
-        // Get struct type from shape
-        let fields = match shape.ty {
-            Type::User(UserType::Struct(ref s)) => s.fields,
-            _ => {
-                return Err(self.error(ReflectErrorKind::NotAStruct));
-            }
-        };
-
-        // Bounds check
         let idx = index as usize;
         if idx >= fields.len() {
             return Err(self.error(ReflectErrorKind::FieldIndexOutOfBounds {
@@ -315,8 +445,23 @@ impl<'facet> Partial<'facet> {
                 field_count: fields.len(),
             }));
         }
-
         Ok(&fields[idx])
+    }
+
+    /// Get an enum variant by index.
+    fn get_enum_variant(
+        &self,
+        enum_type: &EnumType,
+        index: u32,
+    ) -> Result<&'static Variant, ReflectError> {
+        let idx = index as usize;
+        if idx >= enum_type.variants.len() {
+            return Err(self.error(ReflectErrorKind::VariantIndexOutOfBounds {
+                index,
+                variant_count: enum_type.variants.len(),
+            }));
+        }
+        Ok(&enum_type.variants[idx])
     }
 
     /// Build the final value, consuming the Partial.
@@ -340,10 +485,7 @@ impl<'facet> Partial<'facet> {
             true
         } else {
             // For compound types, check all children are complete
-            match &frame.children {
-                Children::Indexed(c) => c.all_complete(),
-                Children::None => false,
-            }
+            frame.kind.is_complete()
         };
 
         if !is_initialized {

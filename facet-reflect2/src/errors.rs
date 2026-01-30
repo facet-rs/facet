@@ -70,4 +70,10 @@ pub enum ReflectErrorKind {
     EndAtRoot,
     /// Cannot End with incomplete children.
     EndWithIncomplete,
+    /// Variant index out of bounds.
+    VariantIndexOutOfBounds { index: u32, variant_count: usize },
+    /// Type is not an enum.
+    NotAnEnum,
+    /// Enum has unsupported representation (RustNPO).
+    UnsupportedEnumRepr,
 }
