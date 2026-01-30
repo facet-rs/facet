@@ -182,3 +182,40 @@ fn drop_partially_initialized_enum() {
     // Drop without building - must clean up the string
     drop(partial);
 }
+
+// ============================================================================
+// Bug regression tests (run under Miri to detect memory issues)
+// ============================================================================
+
+// Enum with heap-allocated variant for testing memory safety
+#[derive(Debug, PartialEq, Facet)]
+#[repr(u8)]
+enum MaybeBox {
+    Empty,
+    Boxed(Box<u32>),
+    Named { value: Option<String> },
+}
+
+#[test]
+fn enum_switch_variant_drops_old_value() {
+    // Bug: When switching enum variants, the old variant's data must be dropped.
+    // After Move of enum at [], FrameKind::Enum { selected } must track the
+    // active variant (by reading the discriminant), so subsequent variant
+    // switches know what to drop.
+
+    let mut partial = Partial::alloc::<MaybeBox>().unwrap();
+
+    // Move a complete enum value with heap allocation
+    let value = MaybeBox::Boxed(Box::new(42));
+    partial.apply(&[Op::set().mov(&value)]).unwrap();
+    std::mem::forget(value);
+
+    // Switch to a different variant - this must:
+    // 1. Read the discriminant to know Boxed variant is active
+    // 2. Drop the Box<u32> before switching variants
+    // 3. Write the new discriminant
+    partial.apply(&[Op::set().at(0).default()]).unwrap(); // Select Empty
+
+    let result: MaybeBox = partial.build().unwrap();
+    assert_eq!(result, MaybeBox::Empty);
+}

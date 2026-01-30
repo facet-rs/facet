@@ -656,7 +656,7 @@ pub struct FuzzInput {
 #[cfg(not(feature = "cov"))]
 fn main() {
     fuzz!(|input: FuzzInput| {
-        run_fuzz(input);
+        run_fuzz(input, false);
     });
 }
 
@@ -668,23 +668,35 @@ fn main() {
     let mut data = Vec::new();
     std::io::stdin().read_to_end(&mut data).unwrap();
     if let Ok(input) = FuzzInput::arbitrary(&mut Unstructured::new(&data)) {
-        run_fuzz(input);
+        run_fuzz(input, true);
     }
 }
 
-fn run_fuzz(input: FuzzInput) {
+fn run_fuzz(input: FuzzInput, log: bool) {
+    if log {
+        eprintln!("=== Allocating {:?} ===", input.target);
+    }
+
     // Allocate a Partial for the target type
     let mut partial = match Partial::alloc_shape(input.target.shape()) {
         Ok(p) => p,
-        Err(_) => return, // Allocation failed, that's fine
+        Err(e) => {
+            if log {
+                eprintln!("  alloc failed: {e:?}");
+            }
+            return;
+        }
     };
 
     // Apply operations
-    for fuzz_op in input.ops {
+    for (i, fuzz_op) in input.ops.into_iter().enumerate() {
         match fuzz_op {
             FuzzOp::Set { path, source } => {
                 match source {
                     FuzzSource::Move(value) => {
+                        if log {
+                            eprintln!("  [{i}] Set path={:?} source=Move({:?})", path, value);
+                        }
                         let (ptr, shape) = value.as_ptr_and_shape();
                         // SAFETY: ptr points to value which is valid and initialized,
                         // and remains valid until apply() returns
@@ -697,6 +709,10 @@ fn run_fuzz(input: FuzzInput) {
                         // Apply may fail (e.g., shape mismatch, invalid path)
                         let result = partial.apply(&[op]);
 
+                        if log {
+                            eprintln!("    result: {result:?}");
+                        }
+
                         if result.is_ok() {
                             // Success! The value's bytes have been copied into the Partial.
                             // We must forget the original to avoid double-free.
@@ -705,14 +721,23 @@ fn run_fuzz(input: FuzzInput) {
                         // On failure, value is dropped normally (no bytes were copied)
                     }
                     FuzzSource::Default => {
+                        if log {
+                            eprintln!("  [{i}] Set path={:?} source=Default", path);
+                        }
                         let op = Op::Set {
                             path: path.to_path(),
                             source: Source::Default,
                         };
                         // Apply may fail (e.g., type doesn't implement Default, invalid path)
-                        let _ = partial.apply(&[op]);
+                        let result = partial.apply(&[op]);
+                        if log {
+                            eprintln!("    result: {result:?}");
+                        }
                     }
                     FuzzSource::Build { len_hint } => {
+                        if log {
+                            eprintln!("  [{i}] Set path={:?} source=Build({:?})", path, len_hint);
+                        }
                         let op = Op::Set {
                             path: path.to_path(),
                             source: Source::Build(facet_reflect2::Build {
@@ -720,17 +745,29 @@ fn run_fuzz(input: FuzzInput) {
                             }),
                         };
                         // Apply may fail (e.g., empty path, invalid path)
-                        let _ = partial.apply(&[op]);
+                        let result = partial.apply(&[op]);
+                        if log {
+                            eprintln!("    result: {result:?}");
+                        }
                     }
                 }
             }
             FuzzOp::End => {
+                if log {
+                    eprintln!("  [{i}] End");
+                }
                 // End may fail (e.g., at root, incomplete children)
-                let _ = partial.apply(&[Op::End]);
+                let result = partial.apply(&[Op::End]);
+                if log {
+                    eprintln!("    result: {result:?}");
+                }
             }
         }
     }
 
+    if log {
+        eprintln!("=== Dropping partial ===");
+    }
     // Drop partial - this exercises the Drop impl
     // If it doesn't panic or crash, we're good
 }
