@@ -256,6 +256,10 @@ pub enum FuzzValue {
     BoxU32(Box<u32>),
     BoxString(Box<String>),
     BoxPoint(Box<Point>),
+    RcU32(std::rc::Rc<u32>),
+    RcPoint(std::rc::Rc<Point>),
+    ArcU32(std::sync::Arc<u32>),
+    ArcPoint(std::sync::Arc<Point>),
 
     // Tuples
     Tuple2U32((u32, u32)),
@@ -333,6 +337,10 @@ impl FuzzValue {
             FuzzValue::BoxU32(v) => (PtrConst::new(v), <Box<u32>>::SHAPE),
             FuzzValue::BoxString(v) => (PtrConst::new(v), <Box<String>>::SHAPE),
             FuzzValue::BoxPoint(v) => (PtrConst::new(v), <Box<Point>>::SHAPE),
+            FuzzValue::RcU32(v) => (PtrConst::new(v), <std::rc::Rc<u32>>::SHAPE),
+            FuzzValue::RcPoint(v) => (PtrConst::new(v), <std::rc::Rc<Point>>::SHAPE),
+            FuzzValue::ArcU32(v) => (PtrConst::new(v), <std::sync::Arc<u32>>::SHAPE),
+            FuzzValue::ArcPoint(v) => (PtrConst::new(v), <std::sync::Arc<Point>>::SHAPE),
 
             // Tuples
             FuzzValue::Tuple2U32(v) => (PtrConst::new(v), <(u32, u32)>::SHAPE),
@@ -405,6 +413,10 @@ impl std::fmt::Debug for FuzzValue {
             FuzzValue::BoxU32(v) => write!(f, "Box<u32>({v:?})"),
             FuzzValue::BoxString(v) => write!(f, "Box<String>({v:?})"),
             FuzzValue::BoxPoint(v) => write!(f, "Box<Point>({v:?})"),
+            FuzzValue::RcU32(v) => write!(f, "Rc<u32>({v:?})"),
+            FuzzValue::RcPoint(v) => write!(f, "Rc<Point>({v:?})"),
+            FuzzValue::ArcU32(v) => write!(f, "Arc<u32>({v:?})"),
+            FuzzValue::ArcPoint(v) => write!(f, "Arc<Point>({v:?})"),
             FuzzValue::Tuple2U32(v) => write!(f, "(u32, u32)({v:?})"),
             FuzzValue::Tuple3Mixed(v) => write!(f, "(u8, String, bool)({v:?})"),
             FuzzValue::Unit(_) => write!(f, "()"),
@@ -542,6 +554,10 @@ pub enum FuzzTargetType {
     BoxU32,
     BoxString,
     BoxPoint,
+    RcU32,
+    RcPoint,
+    ArcU32,
+    ArcPoint,
 
     // Tuples
     Tuple2U32,
@@ -617,6 +633,10 @@ impl FuzzTargetType {
             FuzzTargetType::BoxU32 => <Box<u32>>::SHAPE,
             FuzzTargetType::BoxString => <Box<String>>::SHAPE,
             FuzzTargetType::BoxPoint => <Box<Point>>::SHAPE,
+            FuzzTargetType::RcU32 => <std::rc::Rc<u32>>::SHAPE,
+            FuzzTargetType::RcPoint => <std::rc::Rc<Point>>::SHAPE,
+            FuzzTargetType::ArcU32 => <std::sync::Arc<u32>>::SHAPE,
+            FuzzTargetType::ArcPoint => <std::sync::Arc<Point>>::SHAPE,
 
             // Tuples
             FuzzTargetType::Tuple2U32 => <(u32, u32)>::SHAPE,
