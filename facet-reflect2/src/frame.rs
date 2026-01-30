@@ -77,11 +77,6 @@ impl EnumFrame {
     pub fn is_complete(&self) -> bool {
         matches!(self.selected, Some((_, idx)) if idx.is_complete())
     }
-
-    #[allow(dead_code)]
-    pub fn selected_variant(&self) -> Option<u32> {
-        self.selected.map(|(idx, _)| idx)
-    }
 }
 
 impl Default for EnumFrame {
@@ -176,55 +171,10 @@ impl FrameKind {
         }
     }
 
-    /// Get as enum frame, if this is an enum.
-    #[allow(dead_code)]
-    pub fn as_enum(&self) -> Option<&EnumFrame> {
-        match self {
-            FrameKind::Enum(e) => Some(e),
-            _ => None,
-        }
-    }
-
     /// Get as mutable enum frame, if this is an enum.
     pub fn as_enum_mut(&mut self) -> Option<&mut EnumFrame> {
         match self {
             FrameKind::Enum(e) => Some(e),
-            _ => None,
-        }
-    }
-
-    /// Get as struct frame, if this is a struct.
-    #[allow(dead_code)]
-    pub fn as_struct(&self) -> Option<&StructFrame> {
-        match self {
-            FrameKind::Struct(s) => Some(s),
-            _ => None,
-        }
-    }
-
-    /// Get as mutable struct frame, if this is a struct.
-    #[allow(dead_code)]
-    pub fn as_struct_mut(&mut self) -> Option<&mut StructFrame> {
-        match self {
-            FrameKind::Struct(s) => Some(s),
-            _ => None,
-        }
-    }
-
-    /// Get as variant frame, if this is variant data.
-    #[allow(dead_code)]
-    pub fn as_variant(&self) -> Option<&VariantFrame> {
-        match self {
-            FrameKind::VariantData(v) => Some(v),
-            _ => None,
-        }
-    }
-
-    /// Get as mutable variant frame, if this is variant data.
-    #[allow(dead_code)]
-    pub fn as_variant_mut(&mut self) -> Option<&mut VariantFrame> {
-        match self {
-            FrameKind::VariantData(v) => Some(v),
             _ => None,
         }
     }
