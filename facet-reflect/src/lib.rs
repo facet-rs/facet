@@ -18,9 +18,6 @@ mod partial;
 pub use partial::*;
 
 #[cfg(feature = "alloc")]
-mod api2;
-
-#[cfg(feature = "alloc")]
 mod resolution;
 #[cfg(feature = "alloc")]
 pub use resolution::*;
