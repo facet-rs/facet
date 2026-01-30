@@ -159,7 +159,11 @@ impl<P> LockResult<P> {
     ///   will release the lock
     /// - The guard must outlive any use of `data`
     #[must_use]
-    pub const unsafe fn new(data: P, guard: PtrConst, guard_vtable: &'static LockGuardVTable) -> Self {
+    pub const unsafe fn new(
+        data: P,
+        guard: PtrConst,
+        guard_vtable: &'static LockGuardVTable,
+    ) -> Self {
         Self {
             data,
             guard,
@@ -219,7 +223,7 @@ pub type SliceBuilderNewFn = fn() -> PtrMut;
 ///
 /// Item must point to a valid value of type `U` and must be initialized.
 /// Function is infallible as it uses the global allocator.
-pub type SliceBuilderPushFn = unsafe fn(builder: PtrMut, item: PtrMut);
+pub type SliceBuilderPushFn = unsafe fn(builder: PtrMut, item: PtrConst);
 
 /// Converts a slice builder into a pointer. This takes ownership of the builder
 /// and frees the backing storage.

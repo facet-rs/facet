@@ -37,6 +37,8 @@ impl Path {
 pub enum Op<'a> {
     /// Set a value at a path relative to the current frame.
     Set { dst: Path, src: Source<'a> },
+    /// Push an element onto the current list frame.
+    Push { src: Source<'a> },
     /// End the current frame and pop back to parent.
     End,
 }
@@ -59,8 +61,8 @@ pub enum Source<'a> {
 /// # Safety invariant
 ///
 /// `ptr` must point to a valid, initialized value whose type matches `shape`.
-/// This is enforced at construction time via [`Move::from_ref`] (safe) or
-/// [`Move::new`] (unsafe).
+/// This is enforced at construction time via [`Imm::from_ref`] (safe) or
+/// [`Imm::new`] (unsafe).
 pub struct Imm<'a> {
     ptr: PtrConst,
     shape: &'static Shape,

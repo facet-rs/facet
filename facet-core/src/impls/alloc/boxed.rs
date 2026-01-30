@@ -141,7 +141,7 @@ fn box_slice_builder_new<'a, U: Facet<'a>>() -> PtrMut {
     PtrMut::new(raw as *mut u8)
 }
 
-unsafe fn box_slice_builder_push<'a, U: Facet<'a>>(builder: PtrMut, item: PtrMut) {
+unsafe fn box_slice_builder_push<'a, U: Facet<'a>>(builder: PtrMut, item: PtrConst) {
     unsafe {
         let vec = builder.as_mut::<Vec<U>>();
         let value = item.read::<U>();
@@ -403,8 +403,8 @@ mod tests {
         let push_fn = slice_builder_vtable.push_fn;
         let values: [u8; 5] = [1, 2, 3, 4, 5];
         for &value in &values {
-            let mut value_copy = value;
-            let value_ptr = PtrMut::new(NonNull::from(&mut value_copy).as_ptr());
+            let value_copy = value;
+            let value_ptr = PtrConst::new(&value_copy);
             unsafe { push_fn(builder_ptr, value_ptr) };
         }
 

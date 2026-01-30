@@ -68,7 +68,15 @@ impl<'facet> Partial<'facet> {
         let mut frame = match shape.ty {
             Type::User(UserType::Struct(ref s)) => Frame::new_struct(data, shape, s.fields.len()),
             Type::User(UserType::Enum(_)) => Frame::new_enum(data, shape),
-            _ => Frame::new(data, shape),
+            _ => {
+                // Check for list type
+                if let Def::List(_) = &shape.def {
+                    // Lists start uninitialized - Build will initialize them
+                    Frame::new(data, shape)
+                } else {
+                    Frame::new(data, shape)
+                }
+            }
         };
         frame.flags |= FrameFlags::OWNS_ALLOC;
 
@@ -143,6 +151,9 @@ impl<'facet> Partial<'facet> {
                     } else {
                         self.apply_regular_set(path, source)?;
                     }
+                }
+                Op::Push { src } => {
+                    self.apply_push(src)?;
                 }
                 Op::End => {
                     // Pop back to parent frame
@@ -232,6 +243,13 @@ impl<'facet> Partial<'facet> {
                             FrameKind::Pointer(p) => {
                                 p.inner = Idx::COMPLETE;
                             }
+                            FrameKind::List(_) => {
+                                // List elements don't have indexed tracking - the list itself tracks length
+                                // This shouldn't happen with current implementation (list elements are pushed directly)
+                                return Err(
+                                    self.error_at(parent_idx, ReflectErrorKind::NotIndexedChildren)
+                                );
+                            }
                             FrameKind::Scalar => {
                                 return Err(
                                     self.error_at(parent_idx, ReflectErrorKind::NotIndexedChildren)
@@ -290,30 +308,30 @@ impl<'facet> Partial<'facet> {
                     frame.flags |= FrameFlags::INIT;
 
                     // For enums, read the discriminant and update selected variant
-                    if let Type::User(UserType::Enum(ref enum_type)) = frame.shape.ty {
-                        if let FrameKind::Enum(ref mut e) = frame.kind {
-                            // SAFETY: we just copied a valid enum value, so discriminant is valid
-                            let discriminant = unsafe {
-                                read_discriminant(frame.data.assume_init().as_const(), enum_type)
-                            };
-                            // Handle error after releasing mutable borrow
-                            let discriminant = match discriminant {
-                                Ok(d) => d,
-                                Err(kind) => {
-                                    return Err(ReflectError::new(
-                                        frame.shape,
-                                        absolute_path(&self.arena, self.current),
-                                        kind,
-                                    ));
-                                }
-                            };
-
-                            if let Some(variant_idx) =
-                                variant_index_from_discriminant(enum_type, discriminant)
-                            {
-                                // Mark the variant as complete (the whole value was moved in)
-                                e.selected = Some((variant_idx, Idx::COMPLETE));
+                    if let Type::User(UserType::Enum(ref enum_type)) = frame.shape.ty
+                        && let FrameKind::Enum(ref mut e) = frame.kind
+                    {
+                        // SAFETY: we just copied a valid enum value, so discriminant is valid
+                        let discriminant = unsafe {
+                            read_discriminant(frame.data.assume_init().as_const(), enum_type)
+                        };
+                        // Handle error after releasing mutable borrow
+                        let discriminant = match discriminant {
+                            Ok(d) => d,
+                            Err(kind) => {
+                                return Err(ReflectError::new(
+                                    frame.shape,
+                                    absolute_path(&self.arena, self.current),
+                                    kind,
+                                ));
                             }
+                        };
+
+                        if let Some(variant_idx) =
+                            variant_index_from_discriminant(enum_type, discriminant)
+                        {
+                            // Mark the variant as complete (the whole value was moved in)
+                            e.selected = Some((variant_idx, Idx::COMPLETE));
                         }
                     }
                 } else {
@@ -322,12 +340,36 @@ impl<'facet> Partial<'facet> {
                     frame.kind.mark_field_complete(field_idx);
                 }
             }
-            Source::Build(_build) => {
+            Source::Build(build) => {
                 // Build pushes a new frame for incremental construction
                 let frame = self.arena.get(self.current);
 
-                // Check for pointer type at empty path - special handling for Box/Rc/Arc
+                // Check for special types at empty path
                 if path.is_empty() {
+                    // Handle list types (Vec, etc.)
+                    if let Def::List(list_def) = &frame.shape.def {
+                        // Get the init function
+                        let init_fn = list_def.init_in_place_with_capacity().ok_or_else(|| {
+                            self.error(ReflectErrorKind::ListDoesNotSupportOp {
+                                shape: frame.shape,
+                            })
+                        })?;
+
+                        // Initialize the list with capacity hint
+                        let capacity = build.len_hint.unwrap_or(0);
+                        // SAFETY: frame.data points to uninitialized memory of the correct layout
+                        let list_ptr = unsafe { init_fn(frame.data, capacity) };
+
+                        // Convert to list frame
+                        let frame = self.arena.get_mut(self.current);
+                        frame.kind = FrameKind::List(crate::frame::ListFrame::new(list_ptr));
+                        // The list is now initialized (empty, but valid)
+                        frame.flags |= FrameFlags::INIT;
+
+                        return Ok(());
+                    }
+
+                    // Handle pointer types (Box/Rc/Arc)
                     if let Def::Pointer(ptr_def) = &frame.shape.def {
                         // Get pointee shape
                         let pointee_shape = ptr_def
@@ -391,18 +433,42 @@ impl<'facet> Partial<'facet> {
 
                 // Create a new frame for the nested value
                 let field_idx = path.as_slice()[0];
-                let mut new_frame = match target.shape.ty {
-                    Type::User(UserType::Struct(ref s)) => {
-                        Frame::new_struct(target.data, target.shape, s.fields.len())
-                    }
-                    Type::User(UserType::Enum(_)) => Frame::new_enum(target.data, target.shape),
-                    _ => Frame::new(target.data, target.shape),
-                };
-                new_frame.parent = Some((self.current, field_idx));
 
-                // Store in arena and make it current
-                let new_idx = self.arena.alloc(new_frame);
-                self.current = new_idx;
+                // Check if target is a list - needs special initialization
+                if let Def::List(list_def) = &target.shape.def {
+                    // Get the init function
+                    let init_fn = list_def.init_in_place_with_capacity().ok_or_else(|| {
+                        self.error(ReflectErrorKind::ListDoesNotSupportOp {
+                            shape: target.shape,
+                        })
+                    })?;
+
+                    // Initialize the list with capacity hint
+                    let capacity = build.len_hint.unwrap_or(0);
+                    // SAFETY: target.data points to uninitialized memory of the correct layout
+                    let list_ptr = unsafe { init_fn(target.data, capacity) };
+
+                    // Create list frame
+                    let mut new_frame = Frame::new_list(target.data, target.shape, list_ptr);
+                    new_frame.parent = Some((self.current, field_idx));
+                    new_frame.flags |= FrameFlags::INIT; // List is initialized (empty but valid)
+
+                    let new_idx = self.arena.alloc(new_frame);
+                    self.current = new_idx;
+                } else {
+                    let mut new_frame = match target.shape.ty {
+                        Type::User(UserType::Struct(ref s)) => {
+                            Frame::new_struct(target.data, target.shape, s.fields.len())
+                        }
+                        Type::User(UserType::Enum(_)) => Frame::new_enum(target.data, target.shape),
+                        _ => Frame::new(target.data, target.shape),
+                    };
+                    new_frame.parent = Some((self.current, field_idx));
+
+                    // Store in arena and make it current
+                    let new_idx = self.arena.alloc(new_frame);
+                    self.current = new_idx;
+                }
             }
             Source::Default => {
                 // Drop any existing value before overwriting
@@ -470,13 +536,13 @@ impl<'facet> Partial<'facet> {
         if frame.flags.contains(FrameFlags::INIT) {
             frame.uninit();
         } else if let FrameKind::Enum(e) = &mut frame.kind {
-            if let Some((old_variant_idx, status)) = e.selected {
-                if status.is_complete() {
-                    let old_variant = &enum_type.variants[old_variant_idx as usize];
-                    // SAFETY: the variant was marked complete, so its fields are initialized
-                    unsafe {
-                        drop_variant_fields(frame.data.assume_init().as_const(), old_variant);
-                    }
+            if let Some((old_variant_idx, status)) = e.selected
+                && status.is_complete()
+            {
+                let old_variant = &enum_type.variants[old_variant_idx as usize];
+                // SAFETY: the variant was marked complete, so its fields are initialized
+                unsafe {
+                    drop_variant_fields(frame.data.assume_init().as_const(), old_variant);
                 }
                 // TODO: handle partially initialized variants (status is a valid frame idx)
             }
@@ -561,6 +627,110 @@ impl<'facet> Partial<'facet> {
                 self.current = new_idx;
             }
         }
+        Ok(())
+    }
+
+    /// Apply a Push operation to add an element to the current list.
+    fn apply_push(&mut self, source: &Source<'_>) -> Result<(), ReflectError> {
+        // Verify we're in a list frame
+        let frame = self.arena.get(self.current);
+        let FrameKind::List(ref list_frame) = frame.kind else {
+            return Err(self.error(ReflectErrorKind::NotAList));
+        };
+
+        // Get the list def and element shape
+        let Def::List(list_def) = &frame.shape.def else {
+            return Err(self.error(ReflectErrorKind::NotAList));
+        };
+        let element_shape = list_def.t;
+
+        // Get push function
+        let push_fn = list_def.push().ok_or_else(|| {
+            self.error(ReflectErrorKind::ListDoesNotSupportOp { shape: frame.shape })
+        })?;
+
+        let list_ptr = list_frame.list_ptr;
+
+        match source {
+            Source::Imm(mov) => {
+                // Verify element shape matches
+                if !element_shape.is_shape(mov.shape()) {
+                    return Err(self.error(ReflectErrorKind::ShapeMismatch {
+                        expected: element_shape,
+                        actual: mov.shape(),
+                    }));
+                }
+
+                // Push the element - the push_fn moves the value out
+                // SAFETY: mov.ptr() points to valid initialized data of the element type
+                unsafe {
+                    push_fn(list_ptr, mov.ptr());
+                }
+
+                // Increment element count
+                let frame = self.arena.get_mut(self.current);
+                if let FrameKind::List(ref mut l) = frame.kind {
+                    l.len += 1;
+                }
+            }
+            Source::Build(_build) => {
+                // For Build, we need to allocate space for the element, push a frame,
+                // and then push the element when End is called.
+                // This is more complex - for now, error out.
+                // TODO: support Build for list elements
+                return Err(
+                    self.error(ReflectErrorKind::ListDoesNotSupportOp { shape: frame.shape })
+                );
+            }
+            Source::Default => {
+                // Allocate temporary space for the default value
+                let layout = element_shape.layout.sized_layout().map_err(|_| {
+                    self.error(ReflectErrorKind::Unsized {
+                        shape: element_shape,
+                    })
+                })?;
+
+                let temp_ptr = if layout.size() == 0 {
+                    PtrUninit::new(std::ptr::NonNull::<u8>::dangling().as_ptr())
+                } else {
+                    let ptr = unsafe { std::alloc::alloc(layout) };
+                    if ptr.is_null() {
+                        return Err(self.error(ReflectErrorKind::AllocFailed { layout }));
+                    }
+                    PtrUninit::new(ptr)
+                };
+
+                // Initialize with default
+                let ok = unsafe { element_shape.call_default_in_place(temp_ptr) };
+                if ok.is_none() {
+                    // Deallocate on failure
+                    if layout.size() > 0 {
+                        unsafe { std::alloc::dealloc(temp_ptr.as_mut_byte_ptr(), layout) };
+                    }
+                    return Err(self.error(ReflectErrorKind::NoDefault {
+                        shape: element_shape,
+                    }));
+                }
+
+                // Push the element
+                // SAFETY: temp_ptr now contains initialized data
+                unsafe {
+                    push_fn(list_ptr, temp_ptr.assume_init().as_const());
+                }
+
+                // Deallocate temp storage (value was moved out by push_fn)
+                if layout.size() > 0 {
+                    unsafe { std::alloc::dealloc(temp_ptr.as_mut_byte_ptr(), layout) };
+                }
+
+                // Increment element count
+                let frame = self.arena.get_mut(self.current);
+                if let FrameKind::List(ref mut l) = frame.kind {
+                    l.len += 1;
+                }
+            }
+        }
+
         Ok(())
     }
 

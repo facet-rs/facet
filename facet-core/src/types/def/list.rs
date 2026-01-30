@@ -110,7 +110,7 @@ pub type ListInitInPlaceWithCapacityFn = unsafe fn(list: PtrUninit, capacity: us
 /// The `list` parameter must point to aligned, initialized memory of the correct type.
 /// `item` is moved out of (with [`core::ptr::read`]) — it should be deallocated afterwards (e.g.
 /// with [`core::mem::forget`]) but NOT dropped.
-pub type ListPushFn = unsafe fn(list: PtrMut, item: PtrMut);
+pub type ListPushFn = unsafe fn(list: PtrMut, item: PtrConst);
 // FIXME: this forces allocating item separately, copying it, and then dropping it — it's not great.
 
 /// Get the number of items in the list

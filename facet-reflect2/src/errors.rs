@@ -107,6 +107,10 @@ pub enum ReflectErrorKind {
     SetAtRootOfVariant,
     /// Pointer type doesn't have a pointee shape.
     UnsupportedPointerType,
+    /// List type doesn't support the required operation.
+    ListDoesNotSupportOp { shape: &'static Shape },
+    /// Push operation requires a list frame.
+    NotAList,
 }
 
 impl fmt::Display for ReflectErrorKind {
@@ -175,6 +179,14 @@ impl fmt::Display for ReflectErrorKind {
             ReflectErrorKind::UnsupportedPointerType => {
                 write!(f, "Pointer type doesn't have a pointee shape")
             }
+            ReflectErrorKind::ListDoesNotSupportOp { shape } => {
+                write!(
+                    f,
+                    "List type {} doesn't support the required operation",
+                    shape.type_identifier
+                )
+            }
+            ReflectErrorKind::NotAList => write!(f, "Push requires a list frame"),
         }
     }
 }

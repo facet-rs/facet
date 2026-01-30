@@ -202,7 +202,7 @@ unsafe fn bytes_mut_init_in_place_with_capacity(data: PtrUninit, capacity: usize
     unsafe { data.put(BytesMut::with_capacity(capacity)) }
 }
 
-unsafe fn bytes_mut_push(ptr: PtrMut, item: PtrMut) {
+unsafe fn bytes_mut_push(ptr: PtrMut, item: PtrConst) {
     unsafe {
         let bytes = ptr.as_mut::<BytesMut>();
         let item = item.read::<u8>();

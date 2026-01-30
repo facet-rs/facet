@@ -8,12 +8,20 @@ pub struct SetBuilder {
     path: Path,
 }
 
+/// Builder for Push operations.
+pub struct PushBuilder;
+
 impl Op<'_> {
     /// Start building a Set operation.
     pub fn set() -> SetBuilder {
         SetBuilder {
             path: Path::default(),
         }
+    }
+
+    /// Start building a Push operation.
+    pub fn push() -> PushBuilder {
+        PushBuilder
     }
 
     /// Create an End operation.
@@ -62,12 +70,35 @@ impl SetBuilder {
     }
 
     /// Complete with build and length hint.
-    pub fn build_with_hint(self, hint: usize) -> Op<'static> {
+    pub fn build_with_len_hint(self, hint: usize) -> Op<'static> {
         Op::Set {
             dst: self.path,
             src: Source::Build(Build {
                 len_hint: Some(hint),
             }),
+        }
+    }
+}
+
+impl PushBuilder {
+    /// Push an immediate value.
+    pub fn imm<'a, 'f, T: Facet<'f>>(self, value: &'a T) -> Op<'a> {
+        Op::Push {
+            src: Source::Imm(Imm::from_ref(value)),
+        }
+    }
+
+    /// Push a default value.
+    pub fn default(self) -> Op<'static> {
+        Op::Push {
+            src: Source::Default,
+        }
+    }
+
+    /// Push with build (for complex elements).
+    pub fn build(self) -> Op<'static> {
+        Op::Push {
+            src: Source::Build(Build { len_hint: None }),
         }
     }
 }

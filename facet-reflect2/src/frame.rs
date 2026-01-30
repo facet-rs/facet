@@ -3,7 +3,7 @@
 use crate::arena::{Arena, Idx};
 use crate::errors::{ErrorLocation, ReflectError, ReflectErrorKind};
 use crate::ops::Path;
-use facet_core::{PtrConst, PtrUninit, Shape, Variant};
+use facet_core::{PtrConst, PtrMut, PtrUninit, Shape, Variant};
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -132,6 +132,29 @@ impl Default for PointerFrame {
     }
 }
 
+/// List frame data (building a Vec or similar).
+/// Tracks the initialized list and count of pushed elements.
+pub struct ListFrame {
+    /// Pointer to the initialized list (after init_in_place_with_capacity).
+    pub list_ptr: PtrMut,
+    /// Number of elements that have been pushed.
+    pub len: usize,
+}
+
+impl ListFrame {
+    pub fn new(list_ptr: PtrMut) -> Self {
+        Self { list_ptr, len: 0 }
+    }
+
+    /// Lists are always "complete" since they have variable size.
+    /// Completion just means End was called.
+    pub fn is_complete(&self) -> bool {
+        // Lists don't have a fixed number of elements to track,
+        // they're complete when End is called
+        true
+    }
+}
+
 /// What kind of value this frame is building.
 pub enum FrameKind {
     /// Scalar or opaque value - no children.
@@ -148,6 +171,9 @@ pub enum FrameKind {
 
     /// Inside a pointer (Box/Rc/Arc), building the pointee.
     Pointer(PointerFrame),
+
+    /// Building a list (Vec, etc.).
+    List(ListFrame),
 }
 
 impl FrameKind {
@@ -159,6 +185,7 @@ impl FrameKind {
             FrameKind::Enum(e) => e.is_complete(),
             FrameKind::VariantData(v) => v.is_complete(),
             FrameKind::Pointer(p) => p.is_complete(),
+            FrameKind::List(l) => l.is_complete(),
         }
     }
 
@@ -274,6 +301,19 @@ impl Frame {
         }
     }
 
+    /// Create a frame for a list (Vec, etc.).
+    /// `data` points to the list memory, `list_ptr` is the initialized list,
+    /// `shape` is the list's shape.
+    pub fn new_list(data: PtrUninit, shape: &'static Shape, list_ptr: PtrMut) -> Self {
+        Frame {
+            data,
+            shape,
+            kind: FrameKind::List(ListFrame::new(list_ptr)),
+            flags: FrameFlags::empty(),
+            parent: None,
+        }
+    }
+
     /// Assert that the given shape matches this frame's shape.
     pub fn assert_shape(&self, actual: &'static Shape, path: &Path) -> Result<(), ReflectError> {
         if self.shape.is_shape(actual) {
@@ -329,13 +369,13 @@ impl Frame {
             // Enum variant may be complete even if INIT flag isn't set
             // (e.g., when variant was set via apply_enum_variant_set)
             if let Some((variant_idx, status)) = e.selected {
-                if status.is_complete() {
-                    if let Type::User(UserType::Enum(ref enum_type)) = self.shape.ty {
-                        let variant = &enum_type.variants[variant_idx as usize];
-                        // SAFETY: the variant was marked complete, so its fields are initialized
-                        unsafe {
-                            drop_variant_fields(self.data.assume_init().as_const(), variant);
-                        }
+                if status.is_complete()
+                    && let Type::User(UserType::Enum(ref enum_type)) = self.shape.ty
+                {
+                    let variant = &enum_type.variants[variant_idx as usize];
+                    // SAFETY: the variant was marked complete, so its fields are initialized
+                    unsafe {
+                        drop_variant_fields(self.data.assume_init().as_const(), variant);
                     }
                 }
                 e.selected = None;
