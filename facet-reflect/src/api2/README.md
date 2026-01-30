@@ -19,14 +19,22 @@ struct Build {
 }
 
 enum Source {
+    /// Move a complete value from ptr into destination
     Move(Move),
+    
+    /// Build incrementally - pushes a frame
     Build(Build),
+    
+    /// Use the type's default value (empty collections, None, #[facet(default)] fields)
+    Default,
 }
 ```
 
 For `Move`: move the bytes from ptr into destination, mark as initialized. No frame pushed. The source is consumed (caller must not drop it).
 
 For `Build`: push a frame. Subsequent operations are relative to this frame until `End`.
+
+For `Default`: call the type's default vtable function. No frame pushed. Errors if the type has no default.
 
 The `len_hint` is used when entering collections (Vec, HashMap, etc.) - it allows pre-allocation. Ignored for non-collections.
 
@@ -96,6 +104,19 @@ The value can be `Move` (complete) or `Build` (incremental).
 
 ```rust
 Set { path: &[], source: Source::Move(Move { ptr: &42u32, shape: <u32>::SHAPE }) }
+```
+
+### Default values
+
+```rust
+// Empty Vec
+Set { path: &[0], source: Source::Default }
+
+// Option::None
+Set { path: &[1], source: Source::Default }
+
+// Struct field with #[facet(default)]
+Set { path: &[2], source: Source::Default }
 ```
 
 ### Struct (field by field)
