@@ -5,7 +5,9 @@ use std::marker::PhantomData;
 use std::ptr::NonNull;
 
 use crate::arena::{Arena, Idx};
-use crate::enum_helpers::write_discriminant;
+use crate::enum_helpers::{
+    drop_variant_fields, read_discriminant, variant_index_from_discriminant, write_discriminant,
+};
 use crate::errors::{ReflectError, ReflectErrorKind};
 use crate::frame::{Frame, FrameFlags, FrameKind, absolute_path};
 use crate::ops::{Op, Path, Source};
@@ -222,6 +224,34 @@ impl<'facet> Partial<'facet> {
                 // Mark as initialized
                 if path.is_empty() {
                     frame.flags |= FrameFlags::INIT;
+
+                    // For enums, read the discriminant and update selected variant
+                    if let Type::User(UserType::Enum(ref enum_type)) = frame.shape.ty {
+                        if let FrameKind::Enum { ref mut selected } = frame.kind {
+                            // SAFETY: we just copied a valid enum value, so discriminant is valid
+                            let discriminant = unsafe {
+                                read_discriminant(frame.data.assume_init().as_const(), enum_type)
+                            };
+                            // Handle error after releasing mutable borrow
+                            let discriminant = match discriminant {
+                                Ok(d) => d,
+                                Err(kind) => {
+                                    return Err(ReflectError::new(
+                                        frame.shape,
+                                        absolute_path(&self.arena, self.current),
+                                        kind,
+                                    ));
+                                }
+                            };
+
+                            if let Some(variant_idx) =
+                                variant_index_from_discriminant(enum_type, discriminant)
+                            {
+                                // Mark the variant as complete (the whole value was moved in)
+                                *selected = Some((variant_idx, Idx::COMPLETE));
+                            }
+                        }
+                    }
                 } else {
                     // Mark child as complete
                     let field_idx = path.as_slice()[0] as usize;
@@ -309,12 +339,37 @@ impl<'facet> Partial<'facet> {
         let Type::User(UserType::Enum(ref enum_type)) = frame.shape.ty else {
             return Err(self.error(ReflectErrorKind::NotAnEnum));
         };
-        let variant = self.get_enum_variant(enum_type, variant_idx)?;
+        let new_variant = self.get_enum_variant(enum_type, variant_idx)?;
+
+        // Drop any existing value before switching variants.
+        // If INIT is set, the whole enum was initialized (e.g., via Move at []),
+        // so we use uninit() which calls drop_in_place on the whole shape.
+        // If INIT is not set but selected has a complete variant, we drop just that
+        // variant's fields (the variant was set via apply_enum_variant_set).
+        let frame = self.arena.get_mut(self.current);
+        if frame.flags.contains(FrameFlags::INIT) {
+            frame.uninit();
+        } else if let FrameKind::Enum { selected } = &frame.kind {
+            if let Some((old_variant_idx, status)) = *selected {
+                if status.is_complete() {
+                    let old_variant = &enum_type.variants[old_variant_idx as usize];
+                    // SAFETY: the variant was marked complete, so its fields are initialized
+                    unsafe {
+                        drop_variant_fields(frame.data.assume_init().as_const(), old_variant);
+                    }
+                }
+                // TODO: handle partially initialized variants (status is a valid frame idx)
+            }
+        }
+
+        // Re-get frame after potential drop/uninit
+        let frame = self.arena.get(self.current);
 
         // Write the discriminant
         // SAFETY: frame.data points to valid enum memory
         unsafe {
-            write_discriminant(frame.data, enum_type, variant).map_err(|kind| self.error(kind))?;
+            write_discriminant(frame.data, enum_type, new_variant)
+                .map_err(|kind| self.error(kind))?;
         }
 
         match source {
@@ -322,7 +377,7 @@ impl<'facet> Partial<'facet> {
                 // For unit variants, just writing the discriminant is enough
                 // For struct variants with Default, we'd need to default-initialize fields
                 // For now, only support unit variants with Default
-                if !variant.data.fields.is_empty() {
+                if !new_variant.data.fields.is_empty() {
                     return Err(self.error(ReflectErrorKind::NoDefault { shape: frame.shape }));
                 }
 
@@ -336,14 +391,14 @@ impl<'facet> Partial<'facet> {
             Source::Move(mov) => {
                 // For tuple variants with a single field, copy the field value
                 // The Move shape should match the tuple field's shape
-                if variant.data.fields.len() != 1 {
+                if new_variant.data.fields.len() != 1 {
                     return Err(self.error(ReflectErrorKind::ShapeMismatch {
                         expected: frame.shape,
                         actual: mov.shape(),
                     }));
                 }
 
-                let field = &variant.data.fields[0];
+                let field = &new_variant.data.fields[0];
                 if !field.shape().is_shape(mov.shape()) {
                     return Err(self.error(ReflectErrorKind::ShapeMismatch {
                         expected: field.shape(),
@@ -368,7 +423,7 @@ impl<'facet> Partial<'facet> {
             Source::Build(_build) => {
                 // Push a frame for the variant's fields
                 let frame = self.arena.get(self.current);
-                let mut new_frame = Frame::new_variant(frame.data, frame.shape, variant);
+                let mut new_frame = Frame::new_variant(frame.data, frame.shape, new_variant);
                 new_frame.parent = Some((self.current, variant_idx));
 
                 // Store in arena and make it current

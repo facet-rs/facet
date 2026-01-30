@@ -374,58 +374,58 @@ impl FuzzValue {
 impl std::fmt::Debug for FuzzValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FuzzValue::Bool(v) => write!(f, "Bool({v:?})"),
-            FuzzValue::U8(v) => write!(f, "U8({v})"),
-            FuzzValue::U16(v) => write!(f, "U16({v})"),
-            FuzzValue::U32(v) => write!(f, "U32({v})"),
-            FuzzValue::U64(v) => write!(f, "U64({v})"),
-            FuzzValue::U128(v) => write!(f, "U128({v})"),
-            FuzzValue::Usize(v) => write!(f, "Usize({v})"),
-            FuzzValue::I8(v) => write!(f, "I8({v})"),
-            FuzzValue::I16(v) => write!(f, "I16({v})"),
-            FuzzValue::I32(v) => write!(f, "I32({v})"),
-            FuzzValue::I64(v) => write!(f, "I64({v})"),
-            FuzzValue::I128(v) => write!(f, "I128({v})"),
-            FuzzValue::Isize(v) => write!(f, "Isize({v})"),
-            FuzzValue::F32(v) => write!(f, "F32({v})"),
-            FuzzValue::F64(v) => write!(f, "F64({v})"),
-            FuzzValue::Char(v) => write!(f, "Char({v:?})"),
+            FuzzValue::Bool(v) => write!(f, "bool({v:?})"),
+            FuzzValue::U8(v) => write!(f, "u8({v})"),
+            FuzzValue::U16(v) => write!(f, "u16({v})"),
+            FuzzValue::U32(v) => write!(f, "u32({v})"),
+            FuzzValue::U64(v) => write!(f, "u64({v})"),
+            FuzzValue::U128(v) => write!(f, "u128({v})"),
+            FuzzValue::Usize(v) => write!(f, "usize({v})"),
+            FuzzValue::I8(v) => write!(f, "i8({v})"),
+            FuzzValue::I16(v) => write!(f, "i16({v})"),
+            FuzzValue::I32(v) => write!(f, "i32({v})"),
+            FuzzValue::I64(v) => write!(f, "i64({v})"),
+            FuzzValue::I128(v) => write!(f, "i128({v})"),
+            FuzzValue::Isize(v) => write!(f, "isize({v})"),
+            FuzzValue::F32(v) => write!(f, "f32({v})"),
+            FuzzValue::F64(v) => write!(f, "f64({v})"),
+            FuzzValue::Char(v) => write!(f, "char({v:?})"),
             FuzzValue::String(v) => write!(f, "String({v:?})"),
             FuzzValue::Point(v) => write!(f, "Point({v:?})"),
             FuzzValue::Nested(v) => write!(f, "Nested({v:?})"),
             FuzzValue::WithOption(v) => write!(f, "WithOption({v:?})"),
             FuzzValue::WithVec(v) => write!(f, "WithVec({v:?})"),
-            FuzzValue::OptionU32(v) => write!(f, "OptionU32({v:?})"),
-            FuzzValue::OptionString(v) => write!(f, "OptionString({v:?})"),
-            FuzzValue::VecU8(v) => write!(f, "VecU8({v:?})"),
-            FuzzValue::VecU32(v) => write!(f, "VecU32({v:?})"),
-            FuzzValue::VecString(v) => write!(f, "VecString({v:?})"),
-            FuzzValue::BoxU32(v) => write!(f, "BoxU32({v:?})"),
-            FuzzValue::BoxString(v) => write!(f, "BoxString({v:?})"),
-            FuzzValue::Tuple2U32(v) => write!(f, "Tuple2U32({v:?})"),
-            FuzzValue::Tuple3Mixed(v) => write!(f, "Tuple3Mixed({v:?})"),
-            FuzzValue::Unit(v) => write!(f, "Unit({v:?})"),
-            FuzzValue::UnitEnumU8(v) => write!(f, "UnitEnumU8({v:?})"),
-            FuzzValue::UnitEnumU16(v) => write!(f, "UnitEnumU16({v:?})"),
-            FuzzValue::UnitEnumU32(v) => write!(f, "UnitEnumU32({v:?})"),
-            FuzzValue::UnitEnumU64(v) => write!(f, "UnitEnumU64({v:?})"),
-            FuzzValue::UnitEnumI8(v) => write!(f, "UnitEnumI8({v:?})"),
-            FuzzValue::UnitEnumI16(v) => write!(f, "UnitEnumI16({v:?})"),
-            FuzzValue::UnitEnumI32(v) => write!(f, "UnitEnumI32({v:?})"),
-            FuzzValue::UnitEnumI64(v) => write!(f, "UnitEnumI64({v:?})"),
-            FuzzValue::DataEnumU8(v) => write!(f, "DataEnumU8({v:?})"),
-            FuzzValue::DataEnumU16(v) => write!(f, "DataEnumU16({v:?})"),
-            FuzzValue::DataEnumU32(v) => write!(f, "DataEnumU32({v:?})"),
-            FuzzValue::DataEnumI8(v) => write!(f, "DataEnumI8({v:?})"),
-            FuzzValue::DataEnumI32(v) => write!(f, "DataEnumI32({v:?})"),
-            FuzzValue::MixedEnumU8(v) => write!(f, "MixedEnumU8({v:?})"),
-            FuzzValue::MixedEnumU32(v) => write!(f, "MixedEnumU32({v:?})"),
-            FuzzValue::MixedEnumI16(v) => write!(f, "MixedEnumI16({v:?})"),
-            FuzzValue::MixedEnumI64(v) => write!(f, "MixedEnumI64({v:?})"),
-            FuzzValue::NestedEnumU8(v) => write!(f, "NestedEnumU8({v:?})"),
-            FuzzValue::NestedEnumU32(v) => write!(f, "NestedEnumU32({v:?})"),
-            FuzzValue::NestedEnumI32(v) => write!(f, "NestedEnumI32({v:?})"),
-            FuzzValue::DeepEnum(v) => write!(f, "DeepEnum({v:?})"),
+            FuzzValue::OptionU32(v) => write!(f, "Option<u32>({v:?})"),
+            FuzzValue::OptionString(v) => write!(f, "Option<String>({v:?})"),
+            FuzzValue::VecU8(v) => write!(f, "Vec<u8>({v:?})"),
+            FuzzValue::VecU32(v) => write!(f, "Vec<u32>({v:?})"),
+            FuzzValue::VecString(v) => write!(f, "Vec<String>({v:?})"),
+            FuzzValue::BoxU32(v) => write!(f, "Box<u32>({v:?})"),
+            FuzzValue::BoxString(v) => write!(f, "Box<String>({v:?})"),
+            FuzzValue::Tuple2U32(v) => write!(f, "(u32, u32)({v:?})"),
+            FuzzValue::Tuple3Mixed(v) => write!(f, "(u8, String, bool)({v:?})"),
+            FuzzValue::Unit(_) => write!(f, "()"),
+            FuzzValue::UnitEnumU8(v) => write!(f, "UnitEnumU8::{v:?}"),
+            FuzzValue::UnitEnumU16(v) => write!(f, "UnitEnumU16::{v:?}"),
+            FuzzValue::UnitEnumU32(v) => write!(f, "UnitEnumU32::{v:?}"),
+            FuzzValue::UnitEnumU64(v) => write!(f, "UnitEnumU64::{v:?}"),
+            FuzzValue::UnitEnumI8(v) => write!(f, "UnitEnumI8::{v:?}"),
+            FuzzValue::UnitEnumI16(v) => write!(f, "UnitEnumI16::{v:?}"),
+            FuzzValue::UnitEnumI32(v) => write!(f, "UnitEnumI32::{v:?}"),
+            FuzzValue::UnitEnumI64(v) => write!(f, "UnitEnumI64::{v:?}"),
+            FuzzValue::DataEnumU8(v) => write!(f, "DataEnumU8::{v:?}"),
+            FuzzValue::DataEnumU16(v) => write!(f, "DataEnumU16::{v:?}"),
+            FuzzValue::DataEnumU32(v) => write!(f, "DataEnumU32::{v:?}"),
+            FuzzValue::DataEnumI8(v) => write!(f, "DataEnumI8::{v:?}"),
+            FuzzValue::DataEnumI32(v) => write!(f, "DataEnumI32::{v:?}"),
+            FuzzValue::MixedEnumU8(v) => write!(f, "MixedEnumU8::{v:?}"),
+            FuzzValue::MixedEnumU32(v) => write!(f, "MixedEnumU32::{v:?}"),
+            FuzzValue::MixedEnumI16(v) => write!(f, "MixedEnumI16::{v:?}"),
+            FuzzValue::MixedEnumI64(v) => write!(f, "MixedEnumI64::{v:?}"),
+            FuzzValue::NestedEnumU8(v) => write!(f, "NestedEnumU8::{v:?}"),
+            FuzzValue::NestedEnumU32(v) => write!(f, "NestedEnumU32::{v:?}"),
+            FuzzValue::NestedEnumI32(v) => write!(f, "NestedEnumI32::{v:?}"),
+            FuzzValue::DeepEnum(v) => write!(f, "DeepEnum::{v:?}"),
         }
     }
 }
@@ -435,7 +435,7 @@ impl std::fmt::Debug for FuzzValue {
 // ============================================================================
 
 /// Source for a fuzz operation.
-#[derive(Clone, Debug, Arbitrary)]
+#[derive(Clone, Arbitrary)]
 pub enum FuzzSource {
     /// Move a value (copy bytes from the FuzzValue).
     Move(FuzzValue),
@@ -445,17 +445,33 @@ pub enum FuzzSource {
     Build { len_hint: Option<u8> },
 }
 
+impl std::fmt::Debug for FuzzSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FuzzSource::Move(v) => write!(f, "Move({:?})", v),
+            FuzzSource::Default => write!(f, "Default"),
+            FuzzSource::Build { len_hint } => write!(f, "Build({:?})", len_hint),
+        }
+    }
+}
+
 // ============================================================================
 // FuzzPath - path into nested structures
 // ============================================================================
 
 /// A path for accessing nested fields.
 /// Uses small indices to keep fuzzing efficient.
-#[derive(Clone, Debug, Arbitrary)]
+#[derive(Clone, Arbitrary)]
 pub struct FuzzPath {
     /// Field indices (limited to keep paths reasonable).
     /// Using u8 since structs rarely have more than 256 fields.
     pub indices: Vec<u8>,
+}
+
+impl std::fmt::Debug for FuzzPath {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.indices)
+    }
 }
 
 impl FuzzPath {
@@ -688,9 +704,9 @@ fn run_fuzz(input: FuzzInput, log: bool) {
         }
     };
 
-    // Apply operations
+    // Apply operations (stop on first error)
     for (i, fuzz_op) in input.ops.into_iter().enumerate() {
-        match fuzz_op {
+        let result = match fuzz_op {
             FuzzOp::Set { path, source } => {
                 match source {
                     FuzzSource::Move(value) => {
@@ -706,7 +722,6 @@ fn run_fuzz(input: FuzzInput, log: bool) {
                             source: Source::Move(mov),
                         };
 
-                        // Apply may fail (e.g., shape mismatch, invalid path)
                         let result = partial.apply(&[op]);
 
                         if log {
@@ -719,6 +734,7 @@ fn run_fuzz(input: FuzzInput, log: bool) {
                             std::mem::forget(value);
                         }
                         // On failure, value is dropped normally (no bytes were copied)
+                        result
                     }
                     FuzzSource::Default => {
                         if log {
@@ -728,11 +744,11 @@ fn run_fuzz(input: FuzzInput, log: bool) {
                             path: path.to_path(),
                             source: Source::Default,
                         };
-                        // Apply may fail (e.g., type doesn't implement Default, invalid path)
                         let result = partial.apply(&[op]);
                         if log {
                             eprintln!("    result: {result:?}");
                         }
+                        result
                     }
                     FuzzSource::Build { len_hint } => {
                         if log {
@@ -744,11 +760,11 @@ fn run_fuzz(input: FuzzInput, log: bool) {
                                 len_hint: len_hint.map(|h| h as usize),
                             }),
                         };
-                        // Apply may fail (e.g., empty path, invalid path)
                         let result = partial.apply(&[op]);
                         if log {
                             eprintln!("    result: {result:?}");
                         }
+                        result
                     }
                 }
             }
@@ -756,12 +772,16 @@ fn run_fuzz(input: FuzzInput, log: bool) {
                 if log {
                     eprintln!("  [{i}] End");
                 }
-                // End may fail (e.g., at root, incomplete children)
                 let result = partial.apply(&[Op::End]);
                 if log {
                     eprintln!("    result: {result:?}");
                 }
+                result
             }
+        };
+
+        if result.is_err() {
+            break;
         }
     }
 

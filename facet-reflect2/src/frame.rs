@@ -189,12 +189,35 @@ impl Frame {
     ///
     /// This is idempotent - calling on an uninitialized frame is a no-op.
     pub fn uninit(&mut self) {
+        use crate::enum_helpers::drop_variant_fields;
+        use facet_core::{Type, UserType};
+
         if self.flags.contains(FrameFlags::INIT) {
             // SAFETY: INIT flag means the value is fully initialized
             unsafe {
                 self.shape.call_drop_in_place(self.data.assume_init());
             }
             self.flags.remove(FrameFlags::INIT);
+
+            // Also clear enum selected state
+            if let FrameKind::Enum { ref mut selected } = self.kind {
+                *selected = None;
+            }
+        } else if let FrameKind::Enum { ref mut selected } = self.kind {
+            // Enum variant may be complete even if INIT flag isn't set
+            // (e.g., when variant was set via apply_enum_variant_set)
+            if let Some((variant_idx, status)) = *selected {
+                if status.is_complete() {
+                    if let Type::User(UserType::Enum(ref enum_type)) = self.shape.ty {
+                        let variant = &enum_type.variants[variant_idx as usize];
+                        // SAFETY: the variant was marked complete, so its fields are initialized
+                        unsafe {
+                            drop_variant_fields(self.data.assume_init().as_const(), variant);
+                        }
+                    }
+                }
+                *selected = None;
+            }
         }
     }
 
