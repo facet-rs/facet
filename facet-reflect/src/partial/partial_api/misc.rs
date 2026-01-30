@@ -1367,7 +1367,10 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     parent_frame.is_init = true;
                 }
             }
-            Tracker::List { current_child, .. } if parent_frame.is_init => {
+            Tracker::List {
+                current_child,
+                element_count,
+            } if parent_frame.is_init => {
                 if current_child.is_some() {
                     // We just popped an element frame, now add it to the list
                     if let Def::List(list_def) = parent_shape.def {
@@ -1387,6 +1390,9 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                             unsafe {
                                 set_len_fn(parent_frame.data.assume_init(), current_len + 1);
                             }
+                            // Increment element_count to track how many elements we've pushed
+                            // (used by begin_list_item to compute offsets)
+                            *element_count += 1;
                             // No dealloc needed - memory belongs to Vec
                         } else {
                             // Fallback: element is in separate heap buffer, use push to copy
@@ -1412,6 +1418,8 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                             popped_frame.tracker = Tracker::Scalar;
                             popped_frame.is_init = false;
                             popped_frame.dealloc();
+                            // Increment element_count to track how many elements we've pushed
+                            *element_count += 1;
                         }
 
                         *current_child = None;
