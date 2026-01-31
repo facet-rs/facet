@@ -49,6 +49,7 @@ scripts/app.js
 .tracey/
 .playwright-mcp/
 *.callgrind
+callgrind.*
 heaptrack.*.zst
 citm_catalog.json
 twitter.json
