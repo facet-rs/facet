@@ -246,11 +246,13 @@ impl<'de> StyxParser<'de> {
                     }
                     // Unit key: `@` alone
                     (None, None) => FieldKey::unit_with_doc(FieldLocationHint::KeyValue, doc),
-                    // Tagged key with payload - shouldn't happen for keys
-                    (Some(tag_name), Some(_payload)) => {
-                        // Treat as tagged key, ignore payload
-                        FieldKey::tagged_with_doc(tag_name, FieldLocationHint::KeyValue, doc)
-                    }
+                    // Tagged key with payload: `@tag"payload"`
+                    (Some(tag_name), Some(payload)) => FieldKey::tagged_with_name_and_doc(
+                        tag_name,
+                        payload,
+                        FieldLocationHint::KeyValue,
+                        doc,
+                    ),
                 };
 
                 trace!(?field_key, "convert_event: FieldKey");
@@ -417,12 +419,13 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
         // Get events from inner parser until we have one to return
         loop {
             let event = self.inner.next_event();
-            trace!(?event, "next_event: got inner event");
 
             match event {
                 Some(inner_event) => {
-                    if let Some(converted) = self.convert_event(inner_event)? {
-                        return Ok(Some(converted));
+                    trace!(?inner_event);
+                    if let Some(converted_event) = self.convert_event(inner_event)? {
+                        trace!(?converted_event);
+                        return Ok(Some(converted_event));
                     }
                     // Event was skipped, continue to next
                 }

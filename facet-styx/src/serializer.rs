@@ -60,10 +60,18 @@ fn extract_field_key<'mem, 'facet>(key: Peek<'mem, 'facet>) -> Option<FieldKey<'
         }
 
         // Construct FieldKey using available constructors
-        // Priority: if we have a name, use it; otherwise use tag
         return Some(match (name_value, tag_value) {
-            (Some(name), _) => {
-                // Name takes priority - use with_doc if we have doc lines
+            (Some(name), Some(tag)) => {
+                // Both name and tag - use tagged_with_name_and_doc
+                FieldKey::tagged_with_name_and_doc(
+                    tag,
+                    name,
+                    FieldLocationHint::KeyValue,
+                    doc_lines,
+                )
+            }
+            (Some(name), None) => {
+                // Name only - use with_doc if we have doc lines
                 FieldKey::with_doc(name, FieldLocationHint::KeyValue, doc_lines)
             }
             (None, Some(tag)) => {
@@ -320,8 +328,14 @@ impl FormatSerializer for StyxSerializer {
     }
 
     fn scalar(&mut self, scalar: ScalarValue<'_>) -> Result<(), Self::Error> {
-        trace!(?scalar, "scalar");
+        trace!(?scalar, just_wrote_tag = self.just_wrote_tag, "scalar");
         self.at_root = false;
+        // If we just wrote a tag and the value is unit, skip writing (e.g., @ok instead of @ok@)
+        if self.just_wrote_tag && matches!(scalar, ScalarValue::Unit | ScalarValue::Null) {
+            self.just_wrote_tag = false;
+            self.writer.clear_skip_before_value();
+            return Ok(());
+        }
         self.just_wrote_tag = false;
         match scalar {
             ScalarValue::Unit | ScalarValue::Null => self.writer.write_null(),
@@ -400,6 +414,32 @@ impl FormatSerializer for StyxSerializer {
 
         // Fall back to default behavior for other key types
         trace!("serialize_map_key: falling back to default");
+        Ok(false)
+    }
+
+    fn serialize_metadata_container(
+        &mut self,
+        container: &facet_reflect::PeekStruct<'_, '_>,
+    ) -> Result<bool, Self::Error> {
+        trace!("serialize_metadata_container");
+
+        // Extract tag from the metadata container
+        for (f, field_value) in container.fields() {
+            if f.metadata_kind() == Some("tag") {
+                // Extract tag value
+                if let Ok(opt) = field_value.into_option()
+                    && let Some(inner) = opt.value()
+                    && let Some(s) = inner.as_str()
+                {
+                    // Emit the tag before the value
+                    self.write_variant_tag(s)?;
+                }
+                break;
+            }
+        }
+
+        // Return false to let the caller serialize the value field
+        // (the fallback behavior in serialize_impl)
         Ok(false)
     }
 

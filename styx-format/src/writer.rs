@@ -41,6 +41,9 @@ pub struct StyxWriter {
     options: FormatOptions,
     /// If true, skip the next before_value() call (used after writing a tag)
     skip_next_before_value: bool,
+    /// If true, force the next scalar to be quoted (used after writing a tag,
+    /// since bare scalars cannot be tagged)
+    force_quote_next_scalar: bool,
 }
 
 impl StyxWriter {
@@ -55,6 +58,7 @@ impl StyxWriter {
             out: Vec::new(),
             stack: Vec::new(),
             skip_next_before_value: false,
+            force_quote_next_scalar: false,
             options,
         }
     }
@@ -221,6 +225,8 @@ impl StyxWriter {
     /// Begin a struct directly after a tag (no space before the brace).
     pub fn begin_struct_after_tag(&mut self, force_multiline: bool) {
         // Don't call before_value() - we want no space after the tag
+        // Clear the force_quote flag since the tag's payload is a struct, not a scalar
+        self.force_quote_next_scalar = false;
         self.out.push(b'{');
         let open_pos = self.out.len(); // Position right after '{'
         self.stack.push(Context::Struct {
@@ -513,8 +519,10 @@ impl StyxWriter {
         self.before_value();
         self.out.push(b'@');
         self.out.extend_from_slice(name.as_bytes());
-        // The payload should follow without spacing
+        // The payload should follow without spacing, and must be quoted
+        // (bare scalars cannot be tagged)
         self.skip_next_before_value = true;
+        self.force_quote_next_scalar = true;
     }
 
     /// Write a scalar value with appropriate quoting.
@@ -536,6 +544,8 @@ impl StyxWriter {
 
     /// Begin a sequence directly after a tag (no space before the paren).
     pub fn begin_seq_after_tag(&mut self) {
+        // Clear the force_quote flag since the tag's payload is a sequence, not a scalar
+        self.force_quote_next_scalar = false;
         self.out.push(b'(');
         // Sequences after tags always start inline
         self.stack.push(Context::Seq {
@@ -853,8 +863,12 @@ impl StyxWriter {
 
     /// Write a scalar value with appropriate quoting.
     fn write_scalar_string(&mut self, s: &str) {
-        // Rule 1: Prefer bare scalars when valid
-        if can_be_bare(s) {
+        // Check if we need to force quoting (e.g., after a tag)
+        let force_quote = self.force_quote_next_scalar;
+        self.force_quote_next_scalar = false;
+
+        // Rule 1: Prefer bare scalars when valid (but not after a tag)
+        if !force_quote && can_be_bare(s) {
             self.out.extend_from_slice(s.as_bytes());
             return;
         }
