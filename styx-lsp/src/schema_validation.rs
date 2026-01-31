@@ -657,6 +657,17 @@ fn get_schema_at_path_recursive(
             }
             None
         }
+        Schema::Map(map_schema) => {
+            // For @map(@V) or @map(@K @V), any key navigates to the value type.
+            // If 1 element: that's the value type (key defaults to @string).
+            // If 2 elements: first is key type, second is value type.
+            let value_schema = if map_schema.0.len() == 1 {
+                &map_schema.0[0].value
+            } else {
+                &map_schema.0[1].value
+            };
+            get_schema_at_path_recursive(value_schema, rest, schema_file)
+        }
         Schema::Optional(opt) => get_schema_at_path_recursive(&opt.0.0, path, schema_file),
         Schema::Default(def) => get_schema_at_path_recursive(&def.0.1, path, schema_file),
         Schema::Deprecated(dep) => get_schema_at_path_recursive(&dep.0.1, path, schema_file),
@@ -821,6 +832,90 @@ schema {
             ctx.path.contains(&"@query".to_string()),
             "path should contain '@query', got: {:?}",
             ctx.path
+        );
+    }
+
+    #[test]
+    fn test_get_schema_fields_at_path_through_map() {
+        // Regression test for https://github.com/bearcove/styx/issues/48
+        // When you have Option<HashMap<String, T>>, the LSP should autocomplete
+        // the T fields when inside a map value.
+        //
+        // Example schema: packages @optional(@map(@string @TestConfig))
+        // Example doc: packages { my-package { /* should complete TestConfig fields */ } }
+        let schema_source = r#"
+meta {id "test@1"}
+schema {
+    @ @object{
+        /// Per-package test configurations.
+        packages @optional(@map(@string @TestConfig))
+    }
+    TestConfig @object{
+        /// Test timeout in seconds.
+        timeout @optional(@int)
+        /// Whether to run in parallel.
+        parallel @optional(@bool)
+        /// Extra arguments to pass.
+        args @optional(@seq(@string))
+    }
+}
+"#;
+        let schema_file: SchemaFile =
+            facet_styx::from_str(schema_source).expect("should parse schema");
+
+        // Path: ["packages", "my-package"] - navigating into a map value
+        let fields =
+            get_schema_fields_at_path(&schema_file, &["packages".into(), "my-package".into()]);
+
+        let field_names: Vec<_> = fields.iter().map(|f| f.name.as_str()).collect();
+        assert!(
+            field_names.contains(&"timeout"),
+            "should have 'timeout' field from TestConfig, got: {:?}",
+            field_names
+        );
+        assert!(
+            field_names.contains(&"parallel"),
+            "should have 'parallel' field from TestConfig, got: {:?}",
+            field_names
+        );
+        assert!(
+            field_names.contains(&"args"),
+            "should have 'args' field from TestConfig, got: {:?}",
+            field_names
+        );
+    }
+
+    #[test]
+    fn test_get_schema_fields_at_path_through_map_shorthand() {
+        // Same as above but using @map(@T) shorthand (key defaults to @string)
+        let schema_source = r#"
+meta {id "test@1"}
+schema {
+    @ @object{
+        items @map(@Item)
+    }
+    Item @object{
+        name @string
+        count @int
+    }
+}
+"#;
+        let schema_file: SchemaFile =
+            facet_styx::from_str(schema_source).expect("should parse schema");
+
+        // Path: ["items", "some-key"] - navigating into a map value
+        let fields = get_schema_fields_at_path(&schema_file, &["items".into(), "some-key".into()]);
+
+        let field_names: Vec<_> = fields.iter().map(|f| f.name.as_str()).collect();
+        assert!(
+            field_names.contains(&"name"),
+            "should have 'name' field from Item, got: {:?}",
+            field_names
+        );
+        assert!(
+            field_names.contains(&"count"),
+            "should have 'count' field from Item, got: {:?}",
+            field_names
         );
     }
 }

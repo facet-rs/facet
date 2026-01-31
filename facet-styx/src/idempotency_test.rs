@@ -1274,3 +1274,156 @@ fn idempotent_named_type_reference() {
     // Full roundtrip: use assert_idempotent which handles the wrapping properly
     assert_idempotent(&schema, "named type reference");
 }
+
+/// Test parsing a SchemaFile with @map(@string @TypeRef) from source.
+/// This is a regression test for styx#48 - the LSP was failing to parse
+/// schemas that have maps with type references as values.
+#[test]
+fn parse_schema_file_with_map_and_type_ref() {
+    use crate::SchemaFile;
+    use crate::error::RenderError;
+
+    // First test: simple map with builtins (this should work)
+    let simple_source = r#"
+meta {id "test@1"}
+schema {
+    @ @map(@string @int)
+}
+"#;
+
+    let simple_result: Result<SchemaFile, _> = crate::from_str(simple_source);
+    assert!(
+        simple_result.is_ok(),
+        "Simple @map(@string @int) should parse: {:?}",
+        simple_result
+            .err()
+            .map(|e| e.render("<test>", simple_source))
+    );
+
+    // Test: map with type reference at root level (simplest case)
+    let type_ref_source = r#"
+meta {id "test@1"}
+schema {
+    @ @map(@string @TestConfig)
+    TestConfig @int
+}
+"#;
+
+    let type_ref_result: Result<SchemaFile, _> = crate::from_str(type_ref_source);
+    assert!(
+        type_ref_result.is_ok(),
+        "@map(@string @TestConfig) should parse: {:?}",
+        type_ref_result
+            .err()
+            .map(|e| e.render("<test>", type_ref_source))
+    );
+
+    // Test: just @optional(@int) - does this work?
+    let optional_int_source = r#"
+meta {id "test@1"}
+schema {
+    @ @optional(@int)
+}
+"#;
+
+    let optional_int_result: Result<SchemaFile, _> = crate::from_str(optional_int_source);
+    assert!(
+        optional_int_result.is_ok(),
+        "@optional(@int) should parse: {:?}",
+        optional_int_result
+            .err()
+            .map(|e| e.render("<test>", optional_int_source))
+    );
+
+    // Test: @optional(@seq(@int)) - does this work?
+    let optional_seq_source = r#"
+meta {id "test@1"}
+schema {
+    @ @optional(@seq(@int))
+}
+"#;
+
+    let optional_seq_result: Result<SchemaFile, _> = crate::from_str(optional_seq_source);
+    assert!(
+        optional_seq_result.is_ok(),
+        "@optional(@seq(@int)) should parse: {:?}",
+        optional_seq_result
+            .err()
+            .map(|e| e.render("<test>", optional_seq_source))
+    );
+
+    // Test: map inside optional with builtin (does this work?)
+    let optional_map_builtin_source = r#"
+meta {id "test@1"}
+schema {
+    @ @optional(@map(@string @int))
+}
+"#;
+
+    let optional_map_builtin_result: Result<SchemaFile, _> =
+        crate::from_str(optional_map_builtin_source);
+    assert!(
+        optional_map_builtin_result.is_ok(),
+        "@optional(@map(@string @int)) should parse: {:?}",
+        optional_map_builtin_result
+            .err()
+            .map(|e| e.render("<test>", optional_map_builtin_source))
+    );
+
+    // Test: map inside optional with type reference (narrowing down)
+    let optional_map_source = r#"
+meta {id "test@1"}
+schema {
+    @ @optional(@map(@string @TestConfig))
+    TestConfig @int
+}
+"#;
+
+    let optional_map_result: Result<SchemaFile, _> = crate::from_str(optional_map_source);
+    assert!(
+        optional_map_result.is_ok(),
+        "@optional(@map(@string @TestConfig)) should parse: {:?}",
+        optional_map_result
+            .err()
+            .map(|e| e.render("<test>", optional_map_source))
+    );
+
+    // Now test: map with type reference nested in optional inside object (full case)
+    let source = r#"
+meta {id "test@1"}
+schema {
+    @ @object{
+        packages @optional(@map(@string @TestConfig))
+    }
+    TestConfig @object{
+        timeout @optional(@int)
+        parallel @optional(@bool)
+    }
+}
+"#;
+
+    let result: Result<SchemaFile, _> = crate::from_str(source);
+    match result {
+        Ok(schema_file) => {
+            assert_eq!(schema_file.meta.id, "test@1");
+            // Should have 2 type definitions: @ (root) and TestConfig
+            assert_eq!(schema_file.schema.len(), 2);
+            assert!(
+                schema_file.schema.contains_key(&None),
+                "should have root schema @"
+            );
+            assert!(
+                schema_file
+                    .schema
+                    .contains_key(&Some("TestConfig".to_string())),
+                "should have TestConfig type"
+            );
+        }
+        Err(e) => {
+            panic!(
+                "Failed to parse SchemaFile with map and type ref: {}",
+                e.render("<test>", source)
+            );
+        }
+    }
+}
