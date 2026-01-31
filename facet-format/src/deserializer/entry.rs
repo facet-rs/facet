@@ -217,10 +217,10 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
             // Merge tag with any existing meta (preserving doc comments)
             let mut builder = ValueMeta::builder().span(tag_span);
-            if let Some(m) = meta {
-                if let Some(doc) = m.doc() {
-                    builder = builder.doc(doc.to_vec());
-                }
+            if let Some(m) = meta
+                && let Some(doc) = m.doc()
+            {
+                builder = builder.doc(doc.to_vec());
             }
             if let Some(tag) = tag {
                 builder = builder.tag(tag);
