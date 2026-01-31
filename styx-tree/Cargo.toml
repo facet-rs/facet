@@ -19,6 +19,7 @@ facet = ["dep:facet", "styx-parse/facet"]
 styx-parse.workspace = true
 ariadne = "0.6"
 facet = { workspace = true, optional = true }
+facet-testhelpers.workspace = true
 
 [dev-dependencies]
 insta = "1.42"

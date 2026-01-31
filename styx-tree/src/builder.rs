@@ -225,21 +225,26 @@ impl TreeBuilder {
                     ..
                 }) = self.stack.pop()
                 {
-                    let obj = Value {
-                        tag: None,
-                        payload: Some(Payload::Object(Object {
-                            entries,
+                    // If stack is now empty, this is the root object
+                    if self.stack.is_empty() {
+                        self.root_entries = entries;
+                    } else {
+                        let obj = Value {
+                            tag: None,
+                            payload: Some(Payload::Object(Object {
+                                entries,
+                                span: Some(Span {
+                                    start: start_span.start,
+                                    end: span.end,
+                                }),
+                            })),
                             span: Some(Span {
                                 start: start_span.start,
                                 end: span.end,
                             }),
-                        })),
-                        span: Some(Span {
-                            start: start_span.start,
-                            end: span.end,
-                        }),
-                    };
-                    self.push_value(obj);
+                        };
+                        self.push_value(obj);
+                    }
                 }
             }
 
@@ -599,6 +604,7 @@ mod tests {
     #[test]
     fn test_path_access() {
         let value = parse("name Alice\nage 30");
+        eprintln!("Built value: {value:#?}");
         assert_eq!(value.get("name").and_then(|v| v.as_str()), Some("Alice"));
         assert_eq!(value.get("age").and_then(|v| v.as_str()), Some("30"));
     }
