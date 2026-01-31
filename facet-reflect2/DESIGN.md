@@ -1,478 +1,265 @@
-# facet-reflect2 Design
+# facet-reflect2 Design (Unified Path Model)
 
-Partial value construction for facet. Build values incrementally when you don't have all the data upfront.
+Partial value construction for facet: build values incrementally when data arrives out of order, with a unified path model and explicit frame tracking.
+
+This document is the single source of truth for the API and semantics.
+
+---
 
 ## 1. Overview
 
-The core abstraction is a **frame tree**. Each frame represents a value being constructed - it holds a pointer to memory, the shape (type metadata), and tracks which parts are initialized.
+The core abstraction is a **frame tree**. Each frame represents a value being constructed — it holds a pointer to memory, type metadata (shape), and tracking state. A `Partial` manages this tree and has a **cursor** pointing at the current frame. Operations navigate and mutate the tree; `build()` validates and returns the final value.
 
-A `Partial` manages this tree. It has a `current` pointer that acts like a cursor. Operations navigate and mutate the tree. When you're done, `build()` validates everything is initialized and returns the value.
+Key goals:
+- Build nested values incrementally.
+- Support out-of-order input (deferred mode).
+- Provide stable re-entry into partially built nodes.
+- Keep semantics explicit and deterministic.
 
-### Example: Building a Nested Struct
+---
+
+## 2. API
 
 ```rust
-struct Line { start: Point, end: Point }
-struct Point { x: i32, y: i32 }
+enum PathSegment {
+    Field(u32),      // Struct field, tuple element, array index, enum variant
+    Append,          // New list element, set element, or map entry
+    Root,            // Jump to root frame (non-recursive deserializers)
+}
+
+type Path = &[PathSegment];
+
+enum Source {
+    Imm(Imm),               // Copy bytes from existing value
+    Stage(Option<usize>),   // Push a frame (optional capacity hint)
+    Default,                // Call Default::default() in place
+}
+
+enum Op {
+    Set { dst: Path, src: Source },
+    End,
+}
+
+// Function signature
+fn apply(op: Op) -> Result<(), Error>;
 ```
 
-Here's how to build a `Line` step by step, with the frame tree shown after each operation:
+---
 
-**Initial state** - `Partial::alloc::<Line>()`:
+## 3. Path Semantics
 
-```
-    ┌─────────────┐
-───►│ Line        │   fields: [_, _]
-    │ (current)   │
-    └─────────────┘
-```
+Paths are **relative to the current frame**.
 
-**Op: `Set { dst: &[0], src: Build }`** - push frame for `start`:
+| Segment | Meaning |
+|---------|---------|
+| `Field(n)` | Field/element `n` of the current frame. |
+| `Append` | Create a new element at the end of a collection. |
+| `Root` | Jump to the root frame (see rules below). |
 
-```
-    ┌─────────────┐
-    │ Line        │   fields: [→, _]
-    └──────┬──────┘            │
-           │                   │
-           ▼                   │
-    ┌─────────────┐            │
-───►│ Point       │◄───────────┘
-    │ (current)   │   fields: [_, _]
-    └─────────────┘
-```
+### Multi-Level Paths
 
-**Op: `Set { dst: &[0], src: Imm(&0) }`** - set `start.x`:
+Paths can have multiple segments. **Multi-level paths implicitly create frames for all intermediate segments** as if `Stage` had been applied at each step.
 
-```
-    ┌─────────────┐
-    │ Line        │   fields: [→, _]
-    └──────┬──────┘
-           │
-           ▼
-    ┌─────────────┐
-───►│ Point       │   fields: [✓, _]
-    │ (current)   │
-    └─────────────┘
-```
+Example:
 
-**Op: `Set { dst: &[1], src: Imm(&0) }`** - set `start.y`:
+- `Set { dst: &[Field(0), Field(1)], src: Imm(&20) }`
 
-```
-    ┌─────────────┐
-    │ Line        │   fields: [→, _]
-    └──────┬──────┘
-           │
-           ▼
-    ┌─────────────┐
-───►│ Point       │   fields: [✓, ✓]  ← complete!
-    │ (current)   │
-    └─────────────┘
-```
+Is equivalent to:
 
-**Op: `End`** - pop back to parent, mark field complete:
+- `Set { dst: &[Field(0)], src: Stage(None) }`
+- `Set { dst: &[Field(1)], src: Imm(&20) }`
 
-```
-    ┌─────────────┐
-───►│ Line        │   fields: [✓, _]
-    │ (current)   │
-    └─────────────┘
-```
+The cursor ends at the deepest frame implied by the final segment.
 
-The Point frame is freed. Now repeat for `end`:
+### Root
 
-**Op: `Set { dst: &[1], src: Build }`** - push frame for `end`:
+- `Root` is **only legal as the first segment** in a path.
+- If `Root` appears mid-path, it is an error.
+- `Root` **implicitly climbs** from the current frame to the root, as if repeatedly applying `End`.
+- Climbing can trigger deferred validation (see §8).
 
-```
-    ┌─────────────┐
-    │ Line        │   fields: [✓, →]
-    └──────┬──────┘               │
-           │                      │
-           ▼                      │
-    ┌─────────────┐               │
-───►│ Point       │◄──────────────┘
-    │ (current)   │   fields: [_, _]
-    └─────────────┘
-```
+---
 
-**Ops: set `end.x`, `end.y`, then `End`**:
-
-```
-    ┌─────────────┐
-───►│ Line        │   fields: [✓, ✓]  ← complete!
-    │ (current)   │
-    └─────────────┘
-```
-
-**`build()`** - validate and return the value.
-
-### Core Operations
-
-There are three operations that write values: **Set**, **Push**, and **Insert**.
-
-| Op | Target | Path |
-|----|--------|------|
-| `Set { dst, src }` | struct fields, enum variants, scalars | by index |
-| `Push { src }` | list elements | appends |
-| `Insert { key, value }` | map entries | by key |
-
-All three take a **src** that determines how the value is written:
+## 4. Sources
 
 | Source | Effect |
 |--------|--------|
-| `Imm` | Copy bytes from an existing value (caller must `mem::forget` the original) |
-| `Build` | Push a new frame - subsequent ops target that frame until `End` |
-| `Default` | Call the type's `Default` in place |
+| `Imm` | Copy bytes from an existing value (caller must ensure safety). |
+| `Stage(cap)` | Push a frame to build incrementally. `cap` hints at container size. |
+| `Default` | Call `Default::default()` in place for the target. |
 
-**End** pops the current frame back to its parent. In immediate mode, the frame must be complete (all required fields initialized) or `End` returns an error.
+### Overwrite Semantics
 
-**dst** is a sequence of indices relative to the current frame. `&[]` means the current frame itself. `&[0]` means field 0 (or variant 0 for enums). For Insert, the key serves as the path.
+If a target location already has a partially initialized subtree, and you apply:
 
-## 2. Building Each Type
+- `Source::Imm` or `Source::Default` at that location:
+  - The existing subtree is dropped.
+  - The new value overwrites it.
+  - The target is treated as **complete**.
 
-### Scalars
+This applies even in deferred mode.
 
-```rust
-// Direct set
-Set { dst: &[], src: Imm(&42u32) }
+---
 
-// Or with default
-Set { dst: &[], src: Default }
-```
-
-No `End` needed - scalars don't push frames.
-
-### Structs
-
-```rust
-struct Point { x: i32, y: i32 }
-```
-
-**Option A: Set fields individually (common case)**
-
-```rust
-Set { dst: &[0], src: Imm(&10i32) }  // x
-Set { dst: &[1], src: Imm(&20i32) }  // y
-```
-
-No frames pushed, no `End` needed.
-
-**Option B: Push a frame for a nested struct**
-
-```rust
-struct Line { start: Point, end: Point }
-
-Set { dst: &[0], src: Build }  // push frame for start
-  Set { dst: &[0], src: Imm(&0i32) }  // start.x
-  Set { dst: &[1], src: Imm(&0i32) }  // start.y
-End
-Set { dst: &[1], src: Build }  // push frame for end
-  Set { dst: &[0], src: Imm(&10i32) }  // end.x
-  Set { dst: &[1], src: Imm(&10i32) }  // end.y
-End
-```
-
-**Option C: Move a complete struct**
-
-```rust
-Set { dst: &[0], src: Imm(&start_point) }
-Set { dst: &[1], src: Imm(&end_point) }
-```
-
-### Enums
-
-```rust
-#[repr(u8)]
-enum Message { Quit, Move { x: i32, y: i32 }, Write(String) }
-```
-
-Path index selects the variant.
-
-**Unit variant**:
-
-```rust
-Set { dst: &[0], src: Default }  // Quit
-```
-
-**Struct variant** (needs frame for fields):
-
-```rust
-Set { dst: &[1], src: Build }  // select Move, push frame
-  Set { dst: &[0], src: Imm(&10i32) }  // x
-  Set { dst: &[1], src: Imm(&20i32) }  // y
-End
-```
-
-**Tuple variant with single field** (Imm directly):
-
-```rust
-Set { dst: &[2], src: Imm(&"hello".to_string()) }  // Write
-```
-
-**Moving a complete enum**:
-
-```rust
-Set { dst: &[], src: Imm(&Message::Quit) }
-```
+## 5. Containers and Staging
 
 ### Lists (Vec, etc.)
 
-```rust
-Set { dst: &[], src: Build }  // initialize empty list, push frame
-  Push { src: Imm(&1u32) }
-  Push { src: Imm(&2u32) }
-  Push { src: Imm(&3u32) }
-// No End needed for root-level list
-```
+- `Append` creates a new element frame (staged).
+- Caller tracks indices for later re-entry (e.g., via `Field(n)`).
+- Finalization converts staged elements to the list on `End` of the list frame (strict) or on exiting the deferred subtree (deferred).
 
-**List as a struct field**:
-
-```rust
-Set { dst: &[0], src: Build }  // push frame for list field
-  Push { src: Imm(&"server1") }
-  Push { src: Imm(&"server2") }
-End
-```
+### Maps
 
-**List with complex elements**:
+Maps use a **Direct Fill staging buffer**.
 
-```rust
-Set { dst: &[], src: Build }
-  Push { src: Build }  // push frame for element
-    Set { dst: &[0], src: Imm(&"host") }
-    Set { dst: &[1], src: Imm(&8080u16) }
-  End
-End
-```
-
-`Build.len_hint` enables pre-allocation.
-
-### Maps (HashMap, etc.)
-
-```rust
-Set { dst: &[], src: Build }  // initialize empty map, push frame
-  Insert { key: Imm(&"PATH"), value: Imm(&"/usr/bin") }
-  Insert { key: Imm(&"HOME"), value: Imm(&"/home/user") }
-// No End needed for root-level map
-```
+- `Append` creates a new entry frame containing `(Key, Value)` fields.
+- You may build **key and value simultaneously**, in any order.
+- Caller tracks the entry index for re-entry (`Field(n)` on the container).
+- `Set { dst: &[Append], src: Imm }` is **invalid** (no tuple shortcut).
 
-**Map with complex values**:
+**Duplicate keys:** at finalization, the behavior is “last wins,” as defined by the map’s iterator/insertion semantics.
 
-```rust
-Set { dst: &[], src: Build }
-  Insert { key: Imm(&"primary"), value: Build }  // push frame for value
-    Set { dst: &[0], src: Imm(&"localhost") }  // host
-    Set { dst: &[1], src: Imm(&8080u16) }      // port
-  End
-End
-```
+### Sets
 
-### Arrays
+Sets also use staging buffers.
 
-```rust
-struct Point3D { coords: [f32; 3] }
-```
+- `Append` creates a new element frame.
+- Elements can be partially built and re-entered by index.
+- On finalization, elements are inserted into the set.
 
-Arrays are fixed-size. Push a frame for the array, then set elements by index:
+**Note:** Sets treat elements like staged entries; index is preserved on overwrite.
 
-```rust
-Set { dst: &[0], src: Build }  // push frame for coords
-  Set { dst: &[0], src: Imm(&1.0f32) }  // coords[0]
-  Set { dst: &[1], src: Imm(&2.0f32) }  // coords[1]
-  Set { dst: &[2], src: Imm(&3.0f32) }  // coords[2]
-End
-```
+---
 
-Or set the whole array at once:
+## 6. Enums and Variants
 
-```rust
-Set { dst: &[0], src: Imm(&[1.0f32, 2.0f32, 3.0f32]) }
-```
+`Field(n)` at an enum frame selects variant `n`.
 
-### Sets (HashSet, etc.)
+- **Unit variant:** select with `Source::Default` or `Source::Stage` then immediate `End`.
+- **Tuple variant:** `Field(n)` enters the variant; subsequent `Field(k)` selects the tuple element.
+- **Struct variant:** `Field(n)` enters; subsequent `Field(k)` selects struct fields.
 
-```rust
-Push { src: Imm(&"tag1") }
-Push { src: Imm(&"tag2") }
-```
+`Set { dst: &[Field(n)], src: Imm(...) }` is allowed only when the variant’s representation matches and is compatible with `Imm` semantics (e.g., single-field tuple variant).
 
-Sets use `Push` like lists. The implementation hashes and inserts.
+---
 
-**Important**: Set elements cannot be partially constructed. They have no identity until hashed. `Push { src: Build }` for a set element must complete before `End`.
+## 7. Frame Lifecycle
 
-### Option
+### Creation
 
-**Complete Option via Imm**:
+A frame is created when:
+- `Source::Stage` is used,
+- a path uses `Append`,
+- a multi-level path enters an uninitialized child.
 
-```rust
-Set { dst: &[0], src: Imm(&Some(30u32)) }  // Some
-Set { dst: &[0], src: Imm(&None::<u32>) }  // None
-Set { dst: &[0], src: Default }            // None (Option's default)
-```
+### Collapse
 
-**Building Some with complex inner**:
+When a frame is **complete**, it may be collapsed (freed) and its parent is updated to mark completion.
 
-```rust
-Set { dst: &[0], src: Build }  // push frame for Some(T)
-  Set { dst: &[0], src: Imm(&"host") }  // T's field 0
-  Set { dst: &[1], src: Imm(&8080u16) } // T's field 1
-End
-```
+In deferred mode, frames are not eagerly collapsed if they might be re-entered; memory usage scales with O(nodes) rather than O(depth).
 
-When you `Build` into an Option, the frame is for the `Some(T)` - you set fields of `T` directly.
+---
 
-### Smart Pointers (Box, Rc, Arc)
+## 8. Strict vs Deferred Mode
 
-```rust
-Set { dst: &[], src: Build }  // allocate staging memory, push frame
-  Set { dst: &[0], src: Imm(&10i32) }  // x
-  Set { dst: &[1], src: Imm(&20i32) }  // y
-End  // calls new_into_fn to create the pointer
-```
+Each frame has a `deferred` flag, and **deferred state applies to all descendants**. The `Partial` tracks the **rootmost deferred boundary** for fast checks.
 
-`Build` allocates staging memory for the pointee. `End` wraps it in the pointer type and deallocates the staging memory.
+### End Behavior
 
-## 3. Frames and Tracking
+- **Strict Mode**: `End` requires the current frame to be complete.
+- **Deferred Mode**: `End` on an incomplete frame stores it for later and pops to parent.
 
-A **frame** represents a value under construction:
+### Exiting Deferred Mode
 
-```rust
-struct Frame {
-    data: PtrUninit,           // pointer to the memory
-    shape: &'static Shape,     // type metadata
-    kind: FrameKind,           // how to track children
-    flags: FrameFlags,         // INIT, OWNS_ALLOC
-    parent: Option<(Idx, u32)>, // parent frame and our index in it
-    pending_key: Option<...>,  // for map value frames
-}
-```
+You cannot move the cursor upstream of a deferred subtree without validating it.
 
-### Frame Kinds
+When the cursor climbs *out of* a deferred subtree:
+1. The subtree is validated in full.
+2. If any incomplete nodes remain, this is an error.
+3. Deferred state is cleared for that subtree.
 
-- **Scalar**: No children. Complete when `INIT` flag is set.
+`Root` behaves like repeated `End`: it triggers deferred validation as it climbs.
 
-- **Struct**: Tracks each field as NOT_STARTED, in-progress, or COMPLETE. Complete when all fields are COMPLETE.
+### Nested Deferred Frames
 
-- **Enum**: Tracks selected variant as `Option<(variant_idx, status)>`. Status is NOT_STARTED, in-progress frame idx, or COMPLETE.
+Nested deferred frames are allowed (e.g., multi-level flatten). The `Partial` tracks the **rootmost deferred boundary**.
 
-- **VariantData**: Inside an enum variant, building its fields. Same tracking as Struct.
+---
 
-- **Pointer**: Tracks inner as NOT_STARTED, in-progress frame idx, or COMPLETE.
+## 9. Validation and Defaults
 
-- **List**: Holds the initialized list pointer and element count. Always "complete" (variable size).
+### Validation Timing
 
-- **Map**: Holds the initialized map pointer and entry count. Always "complete" (variable size).
+- **Strict mode**: validation occurs at each `End`.
+- **Deferred mode**: validation occurs when exiting the deferred subtree or at `build()`.
 
-### Completeness
+### Default Rules
 
-A frame is complete when:
+Defaults are applied at `End` according to the historical facet-reflect rules:
 
-- **Scalar**: `INIT` flag is set
-- **Struct/VariantData**: All fields are COMPLETE
-- **Enum**: A variant is selected AND its status is COMPLETE
-- **List/Map**: Always complete (they own their elements)
-- **Pointer**: Inner is COMPLETE
+- Fields annotated with `#[facet(default)]` are default-initialized when missing.
+- **Option** fields are an exception and **implicitly behave as `#[facet(default)]`** (missing → `None`).
+- Missing fields **without** defaults are errors.
+- If a struct is partially initialized and missing fields without defaults, the struct’s own `Default` impl is **not** used to fill missing fields.
 
-`End` checks completeness. If incomplete, returns error.
+---
 
-### The Arena
-
-Frames live in an arena with a free list for reuse:
-
-```rust
-struct Idx(u32);  // 0 = NOT_STARTED, MAX = COMPLETE, else valid index
-
-struct Arena<Frame> {
-    slots: Vec<Option<Frame>>,
-    free_list: Vec<u32>,
-}
-```
-
-When a frame completes, its slot can be reused. The parent's tracking changes from a valid index to `COMPLETE`.
-
-## 4. Safety
-
-### Drop on Error
-
-If an operation fails, `poison()` is called:
-
-1. Walk from current frame up to root
-2. For each frame, call `uninit()` to drop any initialized values
-3. Free the frame and deallocate if it owns its allocation
-
-After poisoning, any further operation returns `Poisoned` error.
-
-### Overwriting Values
-
-When setting a field that already has a value:
-
-1. If the whole struct has `INIT` flag (set via Imm of complete struct):
-   - Drop the old field value
-   - Clear `INIT` flag
-   - Mark all OTHER fields as COMPLETE (they're still valid)
-
-2. If just this field was set individually:
-   - Drop the old field value
-   - Mark field as NOT_STARTED (so cleanup won't double-drop on error)
-
-This is handled by `prepare_field_for_overwrite()`.
-
-### Variant Switching
-
-When selecting a different enum variant:
-
-1. If `INIT` is set (whole enum was moved in): call `drop_in_place` on the whole value
-2. If a variant was selected and complete: drop that variant's fields
-3. Clear the selected variant
-4. Write the new discriminant
-
-## 5. Deferred Mode
-
-**Current behavior (immediate mode)**: `End` requires the frame to be complete. All children must be initialized before you can pop back to the parent.
-
-**Deferred mode** (not yet implemented): `End` on an incomplete frame stores it for later. You can re-enter that frame to finish initialization.
-
-### Why Deferred Mode
-
-Consider parsing JSON into a struct. JSON objects have no guaranteed field order. With immediate mode, you'd need to buffer the entire object, sort by field, then apply ops. With deferred mode:
-
-```rust
-Set { dst: &[0], src: Build }  // push frame for struct field
-  // ... see field "y" first in JSON ...
-  Set { dst: &[1], src: Imm(&20) }  // set y
-End  // frame is incomplete, but that's OK - store it
-
-// ... later, see field "x" ...
-// re-enter the stored frame
-Set { dst: &[0], src: Imm(&10) }  // set x
-End  // now complete
-```
-
-### How It Changes Semantics
-
-**End behavior**:
-- Immediate: incomplete → error
-- Deferred: incomplete → store frame, pop to parent anyway
-
-**Set with Build behavior**:
-- Immediate: always creates new frame
-- Deferred: if frame already exists for that path, re-enter it
-
-**Validation**:
-- Immediate: checked at each `End`
-- Deferred: checked at final `build()` or explicit flush
-
-### Re-entry by Path
-
-For struct fields: re-enter by field index.
-For enum variants: re-enter by variant index (after variant is selected).
-For list elements: re-enter by element index.
-For map values: re-enter by key.
-
-### What Cannot Be Deferred
-
-**Set elements** have no identity until hashed and inserted. You can't partially build a set element, `End`, then come back - there's no key to find it by. Set elements must complete immediately.
-
-### Frame Storage
-
-Incomplete frames stay in the arena. The parent's child tracking holds the frame index (not COMPLETE). Re-entry looks up the child, finds a valid index, and sets `current` to that frame.
-
-For maps, re-entry by key requires storing the key with the frame. This needs a type-erased key (`DynKey`) that can hash and compare using the shape's vtable.
+## 10. Error Handling and Poisoning
+
+Any error during an operation or finalization **poisons** the entire `Partial`.
+Once poisoned:
+- All subsequent operations return `Poisoned`.
+- No recovery or retry.
+
+This includes failures during finalization (e.g., allocation failure or insertion errors).
+
+---
+
+## 11. Examples
+
+### Structs
+
+- Set fields individually:
+  - `Set { dst: &[Field(0)], src: Imm(&10) }`
+  - `Set { dst: &[Field(1)], src: Imm(&20) }`
+
+### Maps (staged)
+
+1. Enter map:
+   - `Set { dst: &[Field(0)], src: Stage(Some(1)) }`
+2. Append entry:
+   - `Set { dst: &[Append], src: Stage(None) }`
+3. Build key:
+   - `Set { dst: &[Field(0), Field(0)], src: Imm(&"/api") }`
+   - `Set { dst: &[Field(0), Field(1)], src: Imm(&"POST") }`
+4. Build value:
+   - `Set { dst: &[Field(1)], src: Imm(&handler) }`
+5. End entry:
+   - `End`
+6. End map (strict):
+   - `End`
+
+### Lists with re-entry (deferred)
+
+1. Enter list:
+   - `Set { dst: &[Field(0)], src: Stage(None) }`
+2. Append new element:
+   - `Set { dst: &[Append], src: Stage(None) }`
+3. Set field 0:
+   - `Set { dst: &[Field(0)], src: Imm(&"host") }`
+4. `End` (element incomplete, stored)
+5. Re-enter by index:
+   - `Set { dst: &[Field(0)], src: Stage(None) }`
+6. Set field 1:
+   - `Set { dst: &[Field(1)], src: Imm(&8080) }`
+7. `End`
+
+---
+
+## 12. Build
+
+`build()` always navigates to root, performing `End` semantics as it climbs.
+- If it pops a deferred boundary, it validates that entire subtree.
+- If any incomplete nodes remain at that point, it errors.
+- On success, it returns the fully constructed value.
