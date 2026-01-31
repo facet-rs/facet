@@ -55,7 +55,8 @@ mod visitor;
 pub mod jit;
 
 pub use deserializer::{
-    DeserializeError, DeserializeErrorKind, FormatDeserializer, ParseError, SpanGuard,
+    DeserializeError, DeserializeErrorKind, DocGuard, FormatDeserializer, ParseError, SpanGuard,
+    current_doc,
 };
 pub use event::{
     ContainerKind, FieldKey, FieldLocationHint, ParseEvent, ParseEventKind, ScalarValue,

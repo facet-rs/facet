@@ -5,7 +5,7 @@ use facet_reflect::{DeserStrategy, Partial};
 
 use crate::{
     ContainerKind, DeserializeError, DeserializeErrorKind, FieldEvidence, FieldLocationHint,
-    FormatDeserializer, ParseEventKind, ScalarTypeHint, ScalarValue, SpanGuard,
+    FormatDeserializer, ParseEventKind, ScalarTypeHint, ScalarValue, SpanGuard, current_doc,
 };
 
 impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BORROW> {
@@ -199,8 +199,8 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
-        trace!("deserialize_into: metadata container detected");
         let shape = wip.shape();
+        trace!(%shape, "deserialize_into: metadata container detected");
 
         if let Type::User(UserType::Struct(st)) = &shape.ty {
             for field in st.fields {
@@ -220,8 +220,27 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                             .end()?
                             .end()?;
                     }
+                    Some("doc") => {
+                        // Populate doc from thread-local set by DocGuard
+                        wip = wip.begin_field(field.effective_name())?;
+                        if let Some(doc_lines) = current_doc() {
+                            // Set as Some(Vec<String>)
+                            wip = wip.begin_some()?.init_list()?;
+                            for line in doc_lines {
+                                wip = wip
+                                    .begin_list_item()?
+                                    .with(|w| self.set_string_value(w, line))?
+                                    .end()?;
+                            }
+                            wip = wip.end()?;
+                        } else {
+                            // Set as None
+                            wip = wip.set_default()?;
+                        }
+                        wip = wip.end()?;
+                    }
                     Some(_other) => {
-                        // Other metadata types (doc, tag) - set to default for now
+                        // Other metadata types (tag) - set to default for now
                         wip = wip
                             .begin_field(field.effective_name())?
                             .set_default()?

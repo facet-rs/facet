@@ -99,7 +99,7 @@ static SUBSCRIBER_INIT: LazyLock<()> = LazyLock::new(|| {
             tracing_subscriber::fmt::layer()
                 .with_ansi(true)
                 .with_timer(Uptime)
-                .with_target(is_verbose)
+                .with_target(false)
                 .with_level(true)
                 .with_file(is_verbose)
                 .with_line_number(is_verbose)

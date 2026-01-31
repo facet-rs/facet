@@ -409,8 +409,11 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     /// Refill the event buffer from the parser.
     #[inline]
     fn refill_buffer(&mut self) -> Result<(), ParseError> {
+        let _old_len = self.event_buffer.len();
         self.parser
             .next_events(&mut self.event_buffer, self.buffer_capacity)?;
+        let _new_len = self.event_buffer.len();
+        trace!("buffer refill {_old_len} => {_new_len} events");
         Ok(())
     }
 
@@ -501,9 +504,10 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             self.refill_buffer()?;
         }
 
+        // FIXME: cloning bad for perf, obvs. can we borrow? can we stop cloningj?
         let event = self.event_buffer.front().cloned();
         if let Some(ref _e) = event {
-            trace!(?_e, "peek_event_opt: peeked event");
+            trace!(?_e, "peeked event");
         }
         Ok(event)
     }

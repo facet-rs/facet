@@ -2,8 +2,8 @@ use facet_core::{StructType, Type, UserType};
 use facet_reflect::Partial;
 
 use crate::{
-    DeserializeError, DeserializeErrorKind, FormatDeserializer, ParseEventKind, ScalarValue,
-    SpanGuard,
+    DeserializeError, DeserializeErrorKind, DocGuard, FormatDeserializer, ParseEventKind,
+    ScalarValue, SpanGuard,
 };
 
 /// Look up a field by name using precomputed TypePlan if available, otherwise linear scan.
@@ -144,6 +144,15 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                             field_name = struct_def.fields[idx].name,
                             "deserialize_struct_simple: matched field"
                         );
+
+                        // Extract doc from key and set up DocGuard for metadata containers
+                        let doc = key.doc().map(|lines| {
+                            lines
+                                .iter()
+                                .map(|s| std::borrow::Cow::Owned(s.to_string()))
+                                .collect()
+                        });
+                        let _doc_guard = DocGuard::new(doc);
 
                         wip = wip.begin_nth_field(idx)?;
                         wip = self.deserialize_into(wip)?;
