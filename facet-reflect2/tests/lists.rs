@@ -10,7 +10,7 @@ fn build_empty_vec() {
     let mut partial = Partial::alloc::<Vec<u32>>().unwrap();
 
     // For root-level lists, no End needed - Build initializes the list
-    partial.apply(&[Op::set().build()]).unwrap();
+    partial.apply(&[Op::set().stage()]).unwrap();
 
     let result: Vec<u32> = partial.build().unwrap();
     assert!(result.is_empty());
@@ -27,10 +27,10 @@ fn build_vec_with_imm_elements() {
     // For root-level lists, no End needed
     partial
         .apply(&[
-            Op::set().build_with_len_hint(3),
-            Op::push().imm(&mut a),
-            Op::push().imm(&mut b),
-            Op::push().imm(&mut c),
+            Op::set().stage_with_capacity(3),
+            Op::set().append().imm(&mut a),
+            Op::set().append().imm(&mut b),
+            Op::set().append().imm(&mut c),
         ])
         .unwrap();
 
@@ -44,9 +44,9 @@ fn build_vec_with_default_elements() {
 
     partial
         .apply(&[
-            Op::set().build(),
-            Op::push().default(),
-            Op::push().default(),
+            Op::set().stage(),
+            Op::set().append().default(),
+            Op::set().append().default(),
         ])
         .unwrap();
 
@@ -63,9 +63,9 @@ fn build_vec_of_strings() {
 
     partial
         .apply(&[
-            Op::set().build_with_len_hint(2),
-            Op::push().imm(&mut hello),
-            Op::push().imm(&mut world),
+            Op::set().stage_with_capacity(2),
+            Op::set().append().imm(&mut hello),
+            Op::set().append().imm(&mut world),
         ])
         .unwrap();
     std::mem::forget(hello);
@@ -96,14 +96,14 @@ fn build_vec_of_structs_with_build() {
 
     partial
         .apply(&[
-            Op::set().build_with_len_hint(2),
+            Op::set().stage_with_capacity(2),
             // First Point - build field by field
-            Op::push().build(),
+            Op::set().append().stage(),
             Op::set().at(0).imm(&mut x1),
             Op::set().at(1).imm(&mut y1),
             Op::End,
             // Second Point - build field by field
-            Op::push().build(),
+            Op::set().append().stage(),
             Op::set().at(0).imm(&mut x2),
             Op::set().at(1).imm(&mut y2),
             Op::End,
@@ -122,11 +122,11 @@ fn build_vec_of_strings_with_build() {
 
     partial
         .apply(&[
-            Op::set().build(),
-            Op::push().build(),
+            Op::set().stage(),
+            Op::set().append().stage(),
             Op::set().default(), // String::default() = ""
             Op::End,
-            Op::push().build(),
+            Op::set().append().stage(),
             Op::set().default(),
             Op::End,
             // No End for root-level Vec
@@ -160,9 +160,9 @@ fn build_struct_with_vec_field() {
             // Set name field
             Op::set().at(0).imm(&mut name),
             // Build servers field
-            Op::set().at(1).build_with_len_hint(2),
-            Op::push().imm(&mut server1),
-            Op::push().imm(&mut server2),
+            Op::set().at(1).stage_with_capacity(2),
+            Op::set().append().imm(&mut server1),
+            Op::set().append().imm(&mut server2),
             Op::End,
         ])
         .unwrap();
@@ -192,7 +192,7 @@ fn build_struct_with_empty_vec_field() {
     partial
         .apply(&[
             Op::set().at(0).imm(&mut name),
-            Op::set().at(1).build(), // empty vec
+            Op::set().at(1).stage(), // empty vec
             Op::End,
         ])
         .unwrap();
@@ -233,14 +233,14 @@ fn build_struct_with_vec_of_structs() {
     partial
         .apply(&[
             Op::set().at(0).imm(&mut team_name),
-            Op::set().at(1).build_with_len_hint(2),
+            Op::set().at(1).stage_with_capacity(2),
             // First person - build field by field
-            Op::push().build(),
+            Op::set().append().stage(),
             Op::set().at(0).imm(&mut alice),
             Op::set().at(1).imm(&mut age1),
             Op::End,
             // Second person - build field by field
-            Op::push().build(),
+            Op::set().append().stage(),
             Op::set().at(0).imm(&mut bob),
             Op::set().at(1).imm(&mut age2),
             Op::End,
@@ -285,16 +285,16 @@ fn build_vec_of_vecs() {
 
     partial
         .apply(&[
-            Op::set().build_with_len_hint(2),
+            Op::set().stage_with_capacity(2),
             // First inner vec
-            Op::push().build(),
-            Op::push().imm(&mut a),
-            Op::push().imm(&mut b),
+            Op::set().append().stage(),
+            Op::set().append().imm(&mut a),
+            Op::set().append().imm(&mut b),
             Op::End,
             // Second inner vec
-            Op::push().build(),
-            Op::push().imm(&mut c),
-            Op::push().imm(&mut d),
+            Op::set().append().stage(),
+            Op::set().append().imm(&mut c),
+            Op::set().append().imm(&mut d),
             Op::End,
             // No End for root-level Vec
         ])
@@ -312,16 +312,16 @@ fn build_vec_of_vecs_empty_inner() {
 
     partial
         .apply(&[
-            Op::set().build(),
+            Op::set().stage(),
             // First inner vec - empty
-            Op::push().build(),
+            Op::set().append().stage(),
             Op::End,
             // Second inner vec - one element
-            Op::push().build(),
-            Op::push().imm(&mut a),
+            Op::set().append().stage(),
+            Op::set().append().imm(&mut a),
             Op::End,
             // Third inner vec - empty
-            Op::push().build(),
+            Op::set().append().stage(),
             Op::End,
             // No End for root-level Vec
         ])
@@ -345,10 +345,10 @@ fn build_vec_of_options_with_imm() {
 
     partial
         .apply(&[
-            Op::set().build(),
-            Op::push().imm(&mut some_val1),
-            Op::push().imm(&mut none_val),
-            Op::push().imm(&mut some_val2),
+            Op::set().stage(),
+            Op::set().append().imm(&mut some_val1),
+            Op::set().append().imm(&mut none_val),
+            Op::set().append().imm(&mut some_val2),
         ])
         .unwrap();
 
@@ -377,9 +377,9 @@ fn build_vec_of_enums_with_imm() {
 
     partial
         .apply(&[
-            Op::set().build(),
-            Op::push().imm(&mut active),
-            Op::push().imm(&mut pending),
+            Op::set().stage(),
+            Op::set().append().imm(&mut active),
+            Op::set().append().imm(&mut pending),
         ])
         .unwrap();
 
@@ -395,13 +395,13 @@ fn build_vec_of_enums_with_build() {
 
     partial
         .apply(&[
-            Op::set().build(),
+            Op::set().stage(),
             // Active variant (unit)
-            Op::push().build(),
+            Op::set().append().stage(),
             Op::set().at(0).default(), // Select variant 0
             Op::End,
             // Pending variant with data
-            Op::push().build(),
+            Op::set().append().stage(),
             Op::set().at(2).imm(&mut count), // Select variant 2, set field
             Op::End,
             // No End for root-level Vec
@@ -426,9 +426,9 @@ fn drop_partial_vec_mid_construction() {
 
     partial
         .apply(&[
-            Op::set().build(),
-            Op::push().imm(&mut hello),
-            Op::push().imm(&mut world),
+            Op::set().stage(),
+            Op::set().append().imm(&mut hello),
+            Op::set().append().imm(&mut world),
             // Don't call End - just drop
         ])
         .unwrap();
@@ -448,8 +448,8 @@ fn drop_partial_vec_of_structs_mid_element() {
     let mut x = 1i32;
 
     let result = partial.apply(&[
-        Op::set().build(),
-        Op::push().build(),
+        Op::set().stage(),
+        Op::set().append().stage(),
         Op::set().at(0).imm(&mut x),
         // Don't set y, don't End - just drop
     ]);
@@ -469,7 +469,9 @@ fn push_on_non_list_errors() {
     let mut partial = Partial::alloc::<u32>().unwrap();
 
     let mut val = 42u32;
-    let err = partial.apply(&[Op::push().imm(&mut val)]).unwrap_err();
+    let err = partial
+        .apply(&[Op::set().append().imm(&mut val)])
+        .unwrap_err();
     assert!(matches!(
         err.kind,
         facet_reflect2::ReflectErrorKind::NotAList
@@ -482,9 +484,9 @@ fn push_wrong_element_type_errors() {
 
     let mut wrong_type = String::from("not a u32");
 
-    partial.apply(&[Op::set().build()]).unwrap();
+    partial.apply(&[Op::set().stage()]).unwrap();
     let err = partial
-        .apply(&[Op::push().imm(&mut wrong_type)])
+        .apply(&[Op::set().append().imm(&mut wrong_type)])
         .unwrap_err();
     assert!(matches!(
         err.kind,
@@ -508,12 +510,12 @@ fn overwrite_vec_field_with_build_no_double_free() {
 
     // Step 1: Build the Vec field and complete it
     partial
-        .apply(&[Op::set().at(0).build(), Op::end()])
+        .apply(&[Op::set().at(0).stage(), Op::end()])
         .unwrap();
 
     // Step 2: Build the same field again - this should drop the old Vec
     partial
-        .apply(&[Op::set().at(0).build(), Op::end()])
+        .apply(&[Op::set().at(0).stage(), Op::end()])
         .unwrap();
 
     // Step 3: Drop - should not double-free

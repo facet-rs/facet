@@ -25,7 +25,7 @@ fn enum_struct_variant() {
     let mut partial = Partial::alloc::<Message>().unwrap();
 
     // Select Move variant (index 1) with Build, then set fields
-    partial.apply(&[Op::set().at(1).build()]).unwrap();
+    partial.apply(&[Op::set().at(1).stage()]).unwrap();
 
     // Inside the variant frame, set x and y
     let mut x = 10i32;
@@ -125,10 +125,10 @@ fn nested_enum_in_struct() {
     partial.apply(&[Op::set().at(0).imm(&mut id)]).unwrap();
 
     // Build message field, select Move variant
-    partial.apply(&[Op::set().at(1).build()]).unwrap();
+    partial.apply(&[Op::set().at(1).stage()]).unwrap();
 
     // Select variant 1 (Move) inside the message frame
-    partial.apply(&[Op::set().at(1).build()]).unwrap();
+    partial.apply(&[Op::set().at(1).stage()]).unwrap();
 
     // Set Move's fields
     let mut x = 100i32;
@@ -158,7 +158,7 @@ fn enum_incomplete_variant_fails() {
     let mut partial = Partial::alloc::<Message>().unwrap();
 
     // Select Move variant with Build
-    partial.apply(&[Op::set().at(1).build()]).unwrap();
+    partial.apply(&[Op::set().at(1).stage()]).unwrap();
 
     // Only set x, not y
     let mut x = 10i32;

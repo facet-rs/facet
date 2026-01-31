@@ -55,7 +55,7 @@ fn build_result_ok_struct_with_build() {
 
     partial
         .apply(&[
-            Op::set().at(0).build(), // variant 0 = Ok, enter SuccessData
+            Op::set().at(0).stage(), // variant 0 = Ok, enter SuccessData
             Op::set().at(0).imm(&mut id),
             Op::set().at(1).imm(&mut message),
             Op::end(),
@@ -84,7 +84,7 @@ fn build_result_err_struct_with_build() {
 
     partial
         .apply(&[
-            Op::set().at(1).build(), // variant 1 = Err, enter ErrorData
+            Op::set().at(1).stage(), // variant 1 = Err, enter ErrorData
             Op::set().at(0).imm(&mut code),
             Op::set().at(1).imm(&mut details),
             Op::end(),
@@ -116,7 +116,7 @@ fn build_result_ok_scalar_with_build() {
 
     partial
         .apply(&[
-            Op::set().at(0).build(), // Ok variant
+            Op::set().at(0).stage(), // Ok variant
             Op::set().imm(&mut val),
             Op::end(),
         ])
@@ -134,7 +134,7 @@ fn build_result_err_string_with_build() {
 
     partial
         .apply(&[
-            Op::set().at(1).build(), // Err variant
+            Op::set().at(1).stage(), // Err variant
             Op::set().imm(&mut err),
             Op::end(),
         ])
@@ -167,8 +167,8 @@ fn build_struct_with_result_field_ok() {
     partial
         .apply(&[
             Op::set().at(0).imm(&mut request_id),
-            Op::set().at(1).build(), // enter Result field
-            Op::set().at(0).build(), // Ok variant
+            Op::set().at(1).stage(), // enter Result field
+            Op::set().at(0).stage(), // Ok variant
             Op::set().imm(&mut data),
             Op::end(), // end Ok
             Op::end(), // end Result
@@ -199,8 +199,8 @@ fn build_struct_with_result_field_err() {
     partial
         .apply(&[
             Op::set().at(0).imm(&mut request_id),
-            Op::set().at(1).build(), // enter Result field
-            Op::set().at(1).build(), // Err variant
+            Op::set().at(1).stage(), // enter Result field
+            Op::set().at(1).stage(), // Err variant
             Op::set().imm(&mut error),
             Op::end(), // end Err
             Op::end(), // end Result
@@ -233,8 +233,8 @@ fn build_nested_result_ok_ok() {
 
     partial
         .apply(&[
-            Op::set().at(0).build(), // outer Ok
-            Op::set().at(0).build(), // inner Ok
+            Op::set().at(0).stage(), // outer Ok
+            Op::set().at(0).stage(), // inner Ok
             Op::set().imm(&mut val),
             Op::end(), // end inner Result
             Op::end(), // end outer Result
@@ -253,8 +253,8 @@ fn build_nested_result_ok_err() {
 
     partial
         .apply(&[
-            Op::set().at(0).build(), // outer Ok
-            Op::set().at(1).build(), // inner Err
+            Op::set().at(0).stage(), // outer Ok
+            Op::set().at(1).stage(), // inner Err
             Op::set().imm(&mut err),
             Op::end(), // end inner Result
             Op::end(), // end outer Result
@@ -276,7 +276,7 @@ fn build_nested_result_err() {
 
     partial
         .apply(&[
-            Op::set().at(1).build(), // outer Err
+            Op::set().at(1).stage(), // outer Err
             Op::set().imm(&mut err),
             Op::end(), // end outer Result
         ])
@@ -303,22 +303,22 @@ fn build_vec_of_results_with_build() {
 
     partial
         .apply(&[
-            Op::set().build(), // initialize Vec
+            Op::set().stage(), // initialize Vec
             // First: Ok(1)
-            Op::push().build(),
-            Op::set().at(0).build(),
+            Op::set().append().stage(),
+            Op::set().at(0).stage(),
             Op::set().imm(&mut val1),
             Op::end(), // end Ok
             Op::end(), // end Result
             // Second: Err("failed")
-            Op::push().build(),
-            Op::set().at(1).build(),
+            Op::set().append().stage(),
+            Op::set().at(1).stage(),
             Op::set().imm(&mut err),
             Op::end(), // end Err
             Op::end(), // end Result
             // Third: Ok(3)
-            Op::push().build(),
-            Op::set().at(0).build(),
+            Op::set().append().stage(),
+            Op::set().at(0).stage(),
             Op::set().imm(&mut val2),
             Op::end(), // end Ok
             Op::end(), // end Result

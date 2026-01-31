@@ -10,7 +10,7 @@ use std::collections::{BTreeSet, HashSet};
 fn build_empty_hashset() {
     let mut partial = Partial::alloc::<HashSet<u32>>().unwrap();
 
-    partial.apply(&[Op::set().build()]).unwrap();
+    partial.apply(&[Op::set().stage()]).unwrap();
 
     let result: HashSet<u32> = partial.build().unwrap();
     assert!(result.is_empty());
@@ -26,10 +26,10 @@ fn build_hashset_with_imm_elements() {
 
     partial
         .apply(&[
-            Op::set().build(),
-            Op::push().imm(&mut a),
-            Op::push().imm(&mut b),
-            Op::push().imm(&mut c),
+            Op::set().stage(),
+            Op::set().append().imm(&mut a),
+            Op::set().append().imm(&mut b),
+            Op::set().append().imm(&mut c),
         ])
         .unwrap();
 
@@ -46,9 +46,9 @@ fn build_hashset_with_default_elements() {
 
     partial
         .apply(&[
-            Op::set().build(),
-            Op::push().default(),
-            Op::push().default(),
+            Op::set().stage(),
+            Op::set().append().default(),
+            Op::set().append().default(),
         ])
         .unwrap();
 
@@ -68,10 +68,10 @@ fn build_hashset_of_strings() {
 
     partial
         .apply(&[
-            Op::set().build(),
-            Op::push().imm(&mut a),
-            Op::push().imm(&mut b),
-            Op::push().imm(&mut c),
+            Op::set().stage(),
+            Op::set().append().imm(&mut a),
+            Op::set().append().imm(&mut b),
+            Op::set().append().imm(&mut c),
         ])
         .unwrap();
 
@@ -97,10 +97,10 @@ fn build_hashset_with_duplicates() {
 
     partial
         .apply(&[
-            Op::set().build(),
-            Op::push().imm(&mut a),
-            Op::push().imm(&mut b),
-            Op::push().imm(&mut c),
+            Op::set().stage(),
+            Op::set().append().imm(&mut a),
+            Op::set().append().imm(&mut b),
+            Op::set().append().imm(&mut c),
         ])
         .unwrap();
 
@@ -118,7 +118,7 @@ fn build_hashset_with_duplicates() {
 fn build_empty_btreeset() {
     let mut partial = Partial::alloc::<BTreeSet<u32>>().unwrap();
 
-    partial.apply(&[Op::set().build()]).unwrap();
+    partial.apply(&[Op::set().stage()]).unwrap();
 
     let result: BTreeSet<u32> = partial.build().unwrap();
     assert!(result.is_empty());
@@ -134,10 +134,10 @@ fn build_btreeset_with_imm_elements() {
 
     partial
         .apply(&[
-            Op::set().build(),
-            Op::push().imm(&mut a),
-            Op::push().imm(&mut b),
-            Op::push().imm(&mut c),
+            Op::set().stage(),
+            Op::set().append().imm(&mut a),
+            Op::set().append().imm(&mut b),
+            Op::set().append().imm(&mut c),
         ])
         .unwrap();
 
@@ -158,10 +158,10 @@ fn build_btreeset_of_strings() {
 
     partial
         .apply(&[
-            Op::set().build(),
-            Op::push().imm(&mut a),
-            Op::push().imm(&mut b),
-            Op::push().imm(&mut c),
+            Op::set().stage(),
+            Op::set().append().imm(&mut a),
+            Op::set().append().imm(&mut b),
+            Op::set().append().imm(&mut c),
         ])
         .unwrap();
 
@@ -198,9 +198,9 @@ fn build_struct_with_hashset_field() {
     partial
         .apply(&[
             Op::set().at(0).imm(&mut name),
-            Op::set().at(1).build(),
-            Op::push().imm(&mut tag1),
-            Op::push().imm(&mut tag2),
+            Op::set().at(1).stage(),
+            Op::set().append().imm(&mut tag1),
+            Op::set().append().imm(&mut tag2),
             Op::end(),
         ])
         .unwrap();
@@ -232,10 +232,10 @@ fn build_struct_with_btreeset_field() {
 
     partial
         .apply(&[
-            Op::set().at(0).build(),
-            Op::push().imm(&mut a),
-            Op::push().imm(&mut b),
-            Op::push().imm(&mut c),
+            Op::set().at(0).stage(),
+            Op::set().append().imm(&mut a),
+            Op::set().append().imm(&mut b),
+            Op::set().append().imm(&mut c),
             Op::end(),
         ])
         .unwrap();

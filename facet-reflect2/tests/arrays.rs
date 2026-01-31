@@ -96,11 +96,11 @@ fn build_array_of_structs_with_build() {
 
     partial
         .apply(&[
-            Op::set().at(0).build(), // enter Point[0]
+            Op::set().at(0).stage(), // enter Point[0]
             Op::set().at(0).imm(&mut x1),
             Op::set().at(1).imm(&mut y1),
             Op::end(),
-            Op::set().at(1).build(), // enter Point[1]
+            Op::set().at(1).stage(), // enter Point[1]
             Op::set().at(0).imm(&mut x2),
             Op::set().at(1).imm(&mut y2),
             Op::end(),
@@ -130,7 +130,7 @@ fn build_struct_with_array_field() {
 
     partial
         .apply(&[
-            Op::set().at(0).build(), // enter coords array
+            Op::set().at(0).stage(), // enter coords array
             Op::set().at(0).imm(&mut x),
             Op::set().at(1).imm(&mut y),
             Op::set().at(2).imm(&mut z),
@@ -162,7 +162,7 @@ fn build_struct_with_array_of_structs_field() {
 
     partial
         .apply(&[
-            Op::set().at(0).build(), // enter vertices array
+            Op::set().at(0).stage(), // enter vertices array
             Op::set().at(0).imm(&mut v0),
             Op::set().at(1).imm(&mut v1),
             Op::set().at(2).imm(&mut v2),
@@ -196,19 +196,19 @@ fn build_struct_with_array_of_structs_field_via_build() {
 
     partial
         .apply(&[
-            Op::set().at(0).build(), // enter vertices array
+            Op::set().at(0).stage(), // enter vertices array
             // Build vertex 0
-            Op::set().at(0).build(),
+            Op::set().at(0).stage(),
             Op::set().at(0).imm(&mut x0),
             Op::set().at(1).imm(&mut y0),
             Op::end(),
             // Build vertex 1
-            Op::set().at(1).build(),
+            Op::set().at(1).stage(),
             Op::set().at(0).imm(&mut x1),
             Op::set().at(1).imm(&mut y1),
             Op::end(),
             // Build vertex 2
-            Op::set().at(2).build(),
+            Op::set().at(2).stage(),
             Op::set().at(0).imm(&mut x2),
             Op::set().at(1).imm(&mut y2),
             Op::end(),
@@ -332,11 +332,11 @@ fn build_2d_array_element_by_element() {
 
     partial
         .apply(&[
-            Op::set().at(0).build(), // enter row 0
+            Op::set().at(0).stage(), // enter row 0
             Op::set().at(0).imm(&mut a),
             Op::set().at(1).imm(&mut b),
             Op::end(),
-            Op::set().at(1).build(), // enter row 1
+            Op::set().at(1).stage(), // enter row 1
             Op::set().at(0).imm(&mut c),
             Op::set().at(1).imm(&mut d),
             Op::end(),

@@ -80,26 +80,12 @@ impl SetBuilder {
             src: Source::Stage(Some(hint)),
         }
     }
-
-    // --- Deprecated methods for migration ---
-
-    /// Complete with build (deprecated: use stage).
-    #[deprecated(note = "Use stage() instead")]
-    pub fn build(self) -> Op<'static> {
-        self.stage()
-    }
-
-    /// Complete with build and length hint (deprecated: use stage_with_capacity).
-    #[deprecated(note = "Use stage_with_capacity() instead")]
-    pub fn build_with_len_hint(self, hint: usize) -> Op<'static> {
-        self.stage_with_capacity(hint)
-    }
 }
 
 // --- Deprecated builders for migration ---
 
 /// Builder for Push operations (deprecated: use Set with append).
-#[deprecated(note = "Use Op::set().append() instead of Op::push()")]
+#[deprecated(note = "Use Op::set().append() instead of Op::set().append()")]
 pub struct PushBuilder;
 
 /// Builder for Insert operations (deprecated: use Set with append for map entries).

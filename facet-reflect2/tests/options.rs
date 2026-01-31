@@ -58,7 +58,7 @@ fn build_option_some_struct_with_build() {
 
     partial
         .apply(&[
-            Op::set().at(1).build(),     // variant 1 = Some, push frame for Point
+            Op::set().at(1).stage(),     // variant 1 = Some, push frame for Point
             Op::set().at(0).imm(&mut x), // Point.x
             Op::set().at(1).imm(&mut y), // Point.y
             Op::end(),
@@ -77,7 +77,7 @@ fn build_option_some_string_with_build() {
 
     partial
         .apply(&[
-            Op::set().at(1).build(), // variant 1 = Some
+            Op::set().at(1).stage(), // variant 1 = Some
             Op::set().imm(&mut s),   // the String itself
             Op::end(),
         ])
@@ -105,7 +105,7 @@ fn build_option_some_server_with_build() {
 
     partial
         .apply(&[
-            Op::set().at(1).build(),        // Some variant
+            Op::set().at(1).stage(),        // Some variant
             Op::set().at(0).imm(&mut host), // Server.host
             Op::set().at(1).imm(&mut port), // Server.port
             Op::end(),
@@ -146,8 +146,8 @@ fn build_struct_with_option_field_some_via_build() {
     partial
         .apply(&[
             Op::set().at(0).imm(&mut name),
-            Op::set().at(1).build(),        // enter Option<Server> field
-            Op::set().at(1).build(),        // Some variant, enter Server
+            Op::set().at(1).stage(),        // enter Option<Server> field
+            Op::set().at(1).stage(),        // Some variant, enter Server
             Op::set().at(0).imm(&mut host), // Server.host
             Op::set().at(1).imm(&mut port), // Server.port
             Op::end(),                      // end Server
@@ -210,8 +210,8 @@ fn build_nested_option_some_some() {
 
     partial
         .apply(&[
-            Op::set().at(1).build(), // outer Some
-            Op::set().at(1).build(), // inner Some
+            Op::set().at(1).stage(), // outer Some
+            Op::set().at(1).stage(), // inner Some
             Op::set().imm(&mut val), // the u32
             Op::end(),               // end inner Option
             Op::end(),               // end outer Option
@@ -228,7 +228,7 @@ fn build_nested_option_some_none() {
 
     partial
         .apply(&[
-            Op::set().at(1).build(), // outer Some
+            Op::set().at(1).stage(), // outer Some
             Op::set().default(),     // inner None (Option's default)
             Op::end(),               // end outer Option
         ])
@@ -253,19 +253,19 @@ fn build_vec_of_option_structs_with_build() {
 
     partial
         .apply(&[
-            Op::set().build(), // initialize Vec
+            Op::set().stage(), // initialize Vec
             // First element: Some(Point)
-            Op::push().build(),      // push and enter Option
-            Op::set().at(1).build(), // Some variant, enter Point
+            Op::set().append().stage(), // push and enter Option
+            Op::set().at(1).stage(),    // Some variant, enter Point
             Op::set().at(0).imm(&mut x1),
             Op::set().at(1).imm(&mut y1),
             Op::end(), // end Point
             Op::end(), // end Option
             // Second element: None
-            Op::push().default(), // None
+            Op::set().append().default(), // None
             // Third element: Some(Point)
-            Op::push().build(),      // push and enter Option
-            Op::set().at(1).build(), // Some variant, enter Point
+            Op::set().append().stage(), // push and enter Option
+            Op::set().at(1).stage(),    // Some variant, enter Point
             Op::set().at(0).imm(&mut x2),
             Op::set().at(1).imm(&mut y2),
             Op::end(), // end Point

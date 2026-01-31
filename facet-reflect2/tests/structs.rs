@@ -293,7 +293,7 @@ fn build_nested_struct() {
     let mut partial = Partial::alloc::<Outer>().unwrap();
 
     // Build inner struct incrementally
-    partial.apply(&[Op::set().at(0).build()]).unwrap();
+    partial.apply(&[Op::set().at(0).stage()]).unwrap();
 
     // Now we're in the inner frame - set its fields
     let mut x = 10i32;
@@ -332,7 +332,7 @@ fn end_with_incomplete_fails() {
     let mut partial = Partial::alloc::<Outer>().unwrap();
 
     // Start building inner
-    partial.apply(&[Op::set().at(0).build()]).unwrap();
+    partial.apply(&[Op::set().at(0).stage()]).unwrap();
 
     // Only set one field of inner
     let mut x = 10i32;
@@ -347,7 +347,7 @@ fn end_with_incomplete_fails() {
 fn build_at_empty_path_fails() {
     let mut partial = Partial::alloc::<Point>().unwrap();
 
-    let err = partial.apply(&[Op::set().build()]).unwrap_err();
+    let err = partial.apply(&[Op::set().stage()]).unwrap_err();
     assert!(matches!(err.kind, ReflectErrorKind::BuildAtEmptyPath));
 }
 
@@ -356,7 +356,7 @@ fn build_box_containing_struct() {
     let mut partial = Partial::alloc::<Box<Point>>().unwrap();
 
     // Use Build to enter the box (allocate the inner memory)
-    partial.apply(&[Op::set().build()]).unwrap();
+    partial.apply(&[Op::set().stage()]).unwrap();
 
     // Set inner struct fields
     let mut x = 10i32;
@@ -379,7 +379,7 @@ fn build_rc_containing_struct() {
     let mut partial = Partial::alloc::<Rc<Point>>().unwrap();
 
     // Use Build to enter the Rc (allocate staging memory)
-    partial.apply(&[Op::set().build()]).unwrap();
+    partial.apply(&[Op::set().stage()]).unwrap();
 
     // Set inner struct fields
     let mut x = 100i32;
@@ -402,7 +402,7 @@ fn build_arc_containing_struct() {
     let mut partial = Partial::alloc::<Arc<Point>>().unwrap();
 
     // Use Build to enter the Arc (allocate staging memory)
-    partial.apply(&[Op::set().build()]).unwrap();
+    partial.apply(&[Op::set().stage()]).unwrap();
 
     // Set inner struct fields
     let mut x = 1000i32;
