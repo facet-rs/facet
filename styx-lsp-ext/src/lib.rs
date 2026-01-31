@@ -141,11 +141,59 @@ pub struct Position {
     pub character: u32,
 }
 
+impl Position {
+    /// Create a new position.
+    pub fn new(line: u32, character: u32) -> Self {
+        Self { line, character }
+    }
+
+    /// Convert a byte offset to a position using document content.
+    ///
+    /// This is useful in `diagnostics()` where `DiagnosticParams` includes
+    /// the document content, allowing offset→position conversion without
+    /// an RPC call back to the host.
+    pub fn from_offset(content: &str, offset: u32) -> Self {
+        let offset = offset as usize;
+        if offset > content.len() {
+            // Past end of content - return last position
+            let line = content.chars().filter(|&c| c == '\n').count() as u32;
+            let last_newline = content.rfind('\n').map(|i| i + 1).unwrap_or(0);
+            let character = (content.len() - last_newline) as u32;
+            return Self { line, character };
+        }
+
+        let before = &content[..offset];
+        let line = before.chars().filter(|&c| c == '\n').count() as u32;
+        let last_newline = before.rfind('\n').map(|i| i + 1).unwrap_or(0);
+        let character = (offset - last_newline) as u32;
+        Self { line, character }
+    }
+}
+
 /// A range in a document.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Facet)]
 pub struct Range {
     pub start: Position,
     pub end: Position,
+}
+
+impl Range {
+    /// Create a new range.
+    pub fn new(start: Position, end: Position) -> Self {
+        Self { start, end }
+    }
+
+    /// Convert a styx span to a range using document content.
+    ///
+    /// This is useful in `diagnostics()` where `DiagnosticParams` includes
+    /// the document content, allowing span→range conversion without
+    /// an RPC call back to the host.
+    pub fn from_span(content: &str, span: &styx_tree::Span) -> Self {
+        Self {
+            start: Position::from_offset(content, span.start),
+            end: Position::from_offset(content, span.end),
+        }
+    }
 }
 
 /// Cursor position with both line/character and byte offset.
