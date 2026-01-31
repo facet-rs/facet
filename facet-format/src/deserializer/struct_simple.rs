@@ -3,7 +3,7 @@ use facet_reflect::Partial;
 
 use crate::{
     DeserializeError, DeserializeErrorKind, FormatDeserializer, ParseEventKind, ScalarValue,
-    SpanGuard,
+    SpanGuard, ValueMeta,
 };
 
 /// Look up a field by name using precomputed TypePlan if available, otherwise linear scan.
@@ -120,7 +120,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                     if idx < struct_def.fields.len() {
                         wip = wip
                             .begin_nth_field(idx)?
-                            .with(|w| self.deserialize_into(w))?
+                            .with(|w| self.deserialize_into(w, None))?
                             .end()?;
                     }
                 }
@@ -145,8 +145,23 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                             "deserialize_struct_simple: matched field"
                         );
 
+                        // Extract metadata from key for metadata containers
+                        let mut meta_builder = ValueMeta::builder();
+                        if let Some(lines) = key.doc() {
+                            meta_builder = meta_builder.doc(
+                                lines
+                                    .iter()
+                                    .map(|s| std::borrow::Cow::Owned(s.to_string()))
+                                    .collect(),
+                            );
+                        }
+                        if let Some(t) = key.tag() {
+                            meta_builder = meta_builder.tag(std::borrow::Cow::Owned(t.to_string()));
+                        }
+                        let meta = meta_builder.build();
+
                         wip = wip.begin_nth_field(idx)?;
-                        wip = self.deserialize_into(wip)?;
+                        wip = self.deserialize_into(wip, Some(&meta))?;
 
                         let _guard = SpanGuard::new(self.last_span);
                         wip = wip.end()?;

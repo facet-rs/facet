@@ -273,7 +273,7 @@ pub fn from_str_into<'facet>(
     let partial: Partial<'_, false> =
         unsafe { core::mem::transmute::<Partial<'facet, false>, Partial<'_, false>>(partial) };
 
-    let partial = de.deserialize_into(partial)?;
+    let partial = de.deserialize_into(partial, None)?;
 
     // SAFETY: Same reasoning - no borrowed data since BORROW=false.
     #[allow(unsafe_code)]
@@ -328,7 +328,7 @@ pub fn from_slice_into<'facet>(
     let partial: Partial<'_, false> =
         unsafe { core::mem::transmute::<Partial<'facet, false>, Partial<'_, false>>(partial) };
 
-    let partial = de.deserialize_into(partial)?;
+    let partial = de.deserialize_into(partial, None)?;
 
     // SAFETY: Same reasoning - no borrowed data since BORROW=false.
     #[allow(unsafe_code)]
@@ -378,7 +378,7 @@ where
     // TRUSTED_UTF8 = true: input came from &str, so it's valid UTF-8
     let mut parser = JsonParser::<true>::new(input.as_bytes());
     let mut de = FormatDeserializer::new(&mut parser);
-    de.deserialize_into(partial)
+    de.deserialize_into(partial, None)
 }
 
 /// Deserialize JSON from bytes into an existing Partial, allowing zero-copy borrowing.
@@ -420,5 +420,5 @@ where
     use facet_format::FormatDeserializer;
     let mut parser = JsonParser::<false>::new(input);
     let mut de = FormatDeserializer::new(&mut parser);
-    de.deserialize_into(partial)
+    de.deserialize_into(partial, None)
 }

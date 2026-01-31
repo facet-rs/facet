@@ -80,6 +80,20 @@ static SUBSCRIBER_INIT: LazyLock<()> = LazyLock::new(|| {
             Targets::new().with_default(tracing::Level::DEBUG)
         });
 
+    fn is_set_to_1(key: &str) -> bool {
+        match std::env::var(key) {
+            Ok(val) => val == "1",
+            Err(_) => false,
+        }
+    }
+
+    let is_verbose = is_set_to_1("FACET_LOG_VERBOSE");
+    if !is_verbose {
+        eprintln!(
+            "You can set FACET_LOG_VERBOSE=1 to see targets, files and line numbers for each tracing message"
+        );
+    }
+
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::fmt::layer()
@@ -87,10 +101,8 @@ static SUBSCRIBER_INIT: LazyLock<()> = LazyLock::new(|| {
                 .with_timer(Uptime)
                 .with_target(false)
                 .with_level(true)
-                // .with_file(true)
-                // .with_line_number(true)
-                .with_file(false)
-                .with_line_number(false)
+                .with_file(is_verbose)
+                .with_line_number(is_verbose)
                 .compact(),
         )
         .with(filter)

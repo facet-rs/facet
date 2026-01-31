@@ -533,7 +533,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                             {
                                 wip = wip
                                     .begin_nth_field(idx)?
-                                    .with(|w| self.deserialize_into(w))?
+                                    .with(|w| self.deserialize_into(w, None))?
                                     .end()?;
                             } else {
                                 // Unknown field - skip
@@ -639,7 +639,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                             }
 
                             // Deserialize the value
-                            wip = self.deserialize_into(wip)?;
+                            wip = self.deserialize_into(wip, None)?;
 
                             // Close the leaf field we just deserialized into
                             // (but keep parent segments open for potential sibling fields)
@@ -663,7 +663,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                         {
                             wip = wip
                                 .begin_nth_field(idx)?
-                                .with(|w| self.deserialize_into(w))?
+                                .with(|w| self.deserialize_into(w, None))?
                                 .end()?;
                         } else {
                             // Unknown field - skip
@@ -973,7 +973,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         }
 
         // Deserialize the variant's value (newtype pattern - single field)
-        wip = self.deserialize_into(wip)?;
+        wip = self.deserialize_into(wip, None)?;
         wip = wip.end()?;
 
         // Consume StructEnd
@@ -1018,7 +1018,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 // Single-element tuple variant (newtype): deserialize the inner value directly
                 wip = wip
                     .begin_nth_field(0)?
-                    .with(|w| self.deserialize_into(w))?
+                    .with(|w| self.deserialize_into(w, None))?
                     .end()?;
                 return Ok(wip);
             }
@@ -1079,7 +1079,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                     {
                         wip = wip
                             .begin_nth_field(idx)?
-                            .with(|w| self.deserialize_into(w))?
+                            .with(|w| self.deserialize_into(w, None))?
                             .end()?;
                     } else {
                         // Unknown field - skip
@@ -1292,7 +1292,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                     // Newtype variant - content is the single field's value
                     wip = wip
                         .begin_nth_field(0)?
-                        .with(|w| self.deserialize_into(w))?
+                        .with(|w| self.deserialize_into(w, None))?
                         .end()?;
                 } else {
                     // Multi-field tuple variant - expect array or struct
@@ -1336,7 +1336,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
                         wip = wip
                             .begin_nth_field(idx)?
-                            .with(|w| self.deserialize_into(w))?
+                            .with(|w| self.deserialize_into(w, None))?
                             .end()?;
                         idx += 1;
                     }
@@ -1401,7 +1401,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                             if idx < num_fields {
                                 wip = wip
                                     .begin_nth_field(idx)?
-                                    .with(|w| self.deserialize_into(w))?
+                                    .with(|w| self.deserialize_into(w, None))?
                                     .end()?;
                             }
                         }
@@ -1443,7 +1443,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                                         open_segments.push((field_name, is_option));
                                     }
 
-                                    wip = self.deserialize_into(wip)?;
+                                    wip = self.deserialize_into(wip, None)?;
 
                                     if let Some((_, is_option)) = open_segments.pop() {
                                         if is_option {
@@ -1464,7 +1464,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                                 {
                                     wip = wip
                                         .begin_nth_field(idx)?
-                                        .with(|w| self.deserialize_into(w))?
+                                        .with(|w| self.deserialize_into(w, None))?
                                         .end()?;
                                 } else {
                                     self.skip_value()?;
@@ -1559,7 +1559,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         // Deserialize directly into the variant's single field
         wip = wip
             .begin_nth_field(0)?
-            .with(|w| self.deserialize_into(w))?
+            .with(|w| self.deserialize_into(w, None))?
             .end()?;
 
         Ok(wip)
@@ -1791,7 +1791,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         if let Some(idx) = content_field_idx {
             wip = wip
                 .begin_nth_field(idx)?
-                .with(|w| self.deserialize_into(w))?
+                .with(|w| self.deserialize_into(w, None))?
                 .end()?;
         } else {
             // No content field - the payload must be Unit

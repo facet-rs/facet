@@ -113,7 +113,7 @@ fn point_reused_typeplan(bencher: Bencher) {
         let partial = plan.partial_owned().unwrap();
         let mut parser = JsonParser::<true>::new(black_box(json.as_bytes()));
         let mut de = FormatDeserializer::new_owned(&mut parser);
-        let partial = de.deserialize_into(partial).unwrap();
+        let partial = de.deserialize_into(partial, None).unwrap();
         let result: Point = partial.build().unwrap().materialize().unwrap();
         black_box(result)
     });
@@ -145,7 +145,7 @@ fn person_reused_typeplan(bencher: Bencher) {
         let partial = plan.partial_owned().unwrap();
         let mut parser = JsonParser::<true>::new(black_box(json.as_bytes()));
         let mut de = FormatDeserializer::new_owned(&mut parser);
-        let partial = de.deserialize_into(partial).unwrap();
+        let partial = de.deserialize_into(partial, None).unwrap();
         let result: Person = partial.build().unwrap().materialize().unwrap();
         black_box(result)
     });
@@ -177,7 +177,7 @@ fn company_reused_typeplan(bencher: Bencher) {
         let partial = plan.partial_owned().unwrap();
         let mut parser = JsonParser::<true>::new(black_box(json.as_bytes()));
         let mut de = FormatDeserializer::new_owned(&mut parser);
-        let partial = de.deserialize_into(partial).unwrap();
+        let partial = de.deserialize_into(partial, None).unwrap();
         let result: Company = partial.build().unwrap().materialize().unwrap();
         black_box(result)
     });
@@ -212,7 +212,7 @@ fn batch_1000_reused_typeplan(bencher: Bencher) {
             let partial = plan.partial_owned().unwrap();
             let mut parser = JsonParser::<true>::new(black_box(json.as_bytes()));
             let mut de = FormatDeserializer::new_owned(&mut parser);
-            let partial = de.deserialize_into(partial).unwrap();
+            let partial = de.deserialize_into(partial, None).unwrap();
             let result: Person = partial.build().unwrap().materialize().unwrap();
             black_box(result);
         }

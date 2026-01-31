@@ -1,11 +1,11 @@
 use std::borrow::Cow;
 
 use facet_core::{Def, ScalarType, Shape, StructKind, Type, UserType};
-use facet_reflect::{DeserStrategy, Partial};
+use facet_reflect::{DeserStrategy, Partial, Span};
 
 use crate::{
     ContainerKind, DeserializeError, DeserializeErrorKind, FieldEvidence, FieldLocationHint,
-    FormatDeserializer, ParseEventKind, ScalarTypeHint, ScalarValue, SpanGuard,
+    FormatDeserializer, ParseEventKind, ScalarTypeHint, ScalarValue, SpanGuard, ValueMeta,
 };
 
 impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BORROW> {
@@ -14,9 +14,13 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     /// Uses the precomputed `DeserStrategy` from TypePlan for fast dispatch.
     /// The strategy is computed once at Partial allocation time, eliminating
     /// repeated runtime inspection of Shape/Def/vtable during deserialization.
+    ///
+    /// The `meta` parameter carries metadata (doc comments, type tags) from formats
+    /// that support them (like Styx). Pass `None` for formats without metadata.
     pub fn deserialize_into(
         &mut self,
         wip: Partial<'input, BORROW>,
+        meta: Option<&ValueMeta<'input>>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
         let shape = wip.shape();
@@ -46,7 +50,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         if shape.builder_shape.is_some() {
             return Ok(wip
                 .begin_inner()?
-                .with(|w| self.deserialize_into(w))?
+                .with(|w| self.deserialize_into(w, None))?
                 .end()?);
         }
 
@@ -63,14 +67,14 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 let format_ns = self.parser.format_namespace();
                 let (wip, _) =
                     wip.begin_custom_deserialization_from_shape_with_format(format_ns)?;
-                Ok(wip.with(|w| self.deserialize_into(w))?.end()?)
+                Ok(wip.with(|w| self.deserialize_into(w, None))?.end()?)
             }
 
             Some(DeserStrategy::FieldProxy) => {
                 // Field-level proxy - the field has #[facet(proxy = X)]
                 let format_ns = self.parser.format_namespace();
                 let wip = wip.begin_custom_deserialization_with_format(format_ns)?;
-                Ok(wip.with(|w| self.deserialize_into(w))?.end()?)
+                Ok(wip.with(|w| self.deserialize_into(w, None))?.end()?)
             }
 
             Some(DeserStrategy::Pointer { .. }) => {
@@ -82,7 +86,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 trace!("deserialize_into: dispatching via begin_inner (transparent convert)");
                 Ok(wip
                     .begin_inner()?
-                    .with(|w| self.deserialize_into(w))?
+                    .with(|w| self.deserialize_into(w, None))?
                     .end()?)
             }
 
@@ -154,7 +158,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
             Some(DeserStrategy::MetadataContainer) => {
                 trace!("deserialize_into: dispatching to deserialize_metadata_container");
-                self.deserialize_metadata_container(wip)
+                self.deserialize_metadata_container(wip, meta)
             }
 
             Some(DeserStrategy::BackRef { .. }) => {
@@ -194,47 +198,142 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     /// Deserialize a metadata container (like `Spanned<T>`, `Documented<T>`).
     ///
     /// These require special handling - the value field gets the data,
-    /// metadata fields are populated from parser state.
+    /// metadata fields are populated from the passed `meta`.
+    ///
+    /// VariantTag events (like `@tag"hello"` in Styx) are already consumed by
+    /// `deserialize_into` and passed down via `meta`.
     fn deserialize_metadata_container(
         &mut self,
         mut wip: Partial<'input, BORROW>,
+        meta: Option<&ValueMeta<'input>>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
-        trace!("deserialize_into: metadata container detected");
-        let shape = wip.shape();
+        // Check for VariantTag at the start - this handles tagged values like `@tag"hello"`.
+        // We consume it here and merge it into meta.
+        let event = self.expect_peek("value for metadata container")?;
+        let (meta_owned, tag_span) = if let ParseEventKind::VariantTag(tag) = &event.kind {
+            let tag_span = event.span;
+            let tag = tag.map(Cow::Borrowed);
+            let _ = self.expect_event("variant tag")?; // consume it
 
+            // Merge tag with any existing meta (preserving doc comments)
+            let mut builder = ValueMeta::builder().span(tag_span);
+            if let Some(m) = meta
+                && let Some(doc) = m.doc()
+            {
+                builder = builder.doc(doc.to_vec());
+            }
+            if let Some(tag) = tag {
+                builder = builder.tag(tag);
+            }
+            (Some(builder.build()), Some(tag_span))
+        } else {
+            (None, None)
+        };
+
+        static EMPTY_META: ValueMeta<'static> = ValueMeta::empty();
+        let meta = meta_owned.as_ref().or(meta).unwrap_or(&EMPTY_META);
+
+        let shape = wip.shape();
+        trace!(%shape, "deserialize_into: metadata container detected");
+
+        // Deserialize the value field and track its span
+        let mut value_span = Span::default();
         if let Type::User(UserType::Struct(st)) = &shape.ty {
             for field in st.fields {
-                match field.metadata_kind() {
-                    Some("span") => {
-                        // Populate span from parser's current position
-                        let span = self.last_span;
-                        wip = wip
-                            .begin_field(field.effective_name())?
-                            .begin_some()?
-                            .begin_field("offset")?
-                            .set(span.offset)?
-                            .end()?
-                            .begin_field("len")?
-                            .set(span.len)?
-                            .end()?
-                            .end()?
-                            .end()?;
-                    }
-                    Some(_other) => {
-                        // Other metadata types (doc, tag) - set to default for now
-                        wip = wip
-                            .begin_field(field.effective_name())?
-                            .set_default()?
-                            .end()?;
-                    }
-                    None => {
-                        // This is the value field - recurse into it
-                        wip = wip
-                            .begin_field(field.effective_name())?
-                            .with(|w| self.deserialize_into(w))?
-                            .end()?;
-                    }
+                if field.metadata_kind().is_none() {
+                    // This is the value field - recurse into it (no meta for inner value)
+                    wip = wip
+                        .begin_field(field.effective_name())?
+                        .with(|w| self.deserialize_into(w, None))?
+                        .end()?;
+                    value_span = self.last_span;
+                    break;
                 }
+            }
+        }
+
+        // Compute the full span: if we have a tag span, extend from tag start to value end.
+        // Otherwise, just use the value's span.
+        let full_span = if let Some(tag_span) = tag_span {
+            Span {
+                offset: tag_span.offset,
+                len: (value_span.offset + value_span.len).saturating_sub(tag_span.offset),
+            }
+        } else {
+            value_span
+        };
+
+        // Populate metadata fields
+        if let Type::User(UserType::Struct(st)) = &shape.ty {
+            for field in st.fields {
+                if let Some(kind) = field.metadata_kind() {
+                    wip = wip.begin_field(field.effective_name())?;
+                    wip = self.populate_metadata_field_with_span(wip, kind, meta, full_span)?;
+                    wip = wip.end()?;
+                }
+            }
+        }
+        Ok(wip)
+    }
+
+    /// Populate a single metadata field on a metadata container.
+    fn populate_metadata_field(
+        &mut self,
+        wip: Partial<'input, BORROW>,
+        kind: &str,
+        meta: &ValueMeta<'input>,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        self.populate_metadata_field_with_span(wip, kind, meta, self.last_span)
+    }
+
+    /// Populate a single metadata field on a metadata container with an explicit span.
+    fn populate_metadata_field_with_span(
+        &mut self,
+        mut wip: Partial<'input, BORROW>,
+        kind: &str,
+        meta: &ValueMeta<'input>,
+        span: Span,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        match kind {
+            "span" => {
+                wip = wip
+                    .begin_some()?
+                    .begin_field("offset")?
+                    .set(span.offset)?
+                    .end()?
+                    .begin_field("len")?
+                    .set(span.len)?
+                    .end()?
+                    .end()?;
+            }
+            "doc" => {
+                if let Some(doc_lines) = meta.doc() {
+                    // Set as Some(Vec<String>)
+                    wip = wip.begin_some()?.init_list()?;
+                    for line in doc_lines {
+                        wip = wip
+                            .begin_list_item()?
+                            .with(|w| self.set_string_value(w, line.clone()))?
+                            .end()?;
+                    }
+                    wip = wip.end()?;
+                } else {
+                    wip = wip.set_default()?;
+                }
+            }
+            "tag" => {
+                if let Some(tag_name) = meta.tag() {
+                    wip = wip
+                        .begin_some()?
+                        .with(|w| self.set_string_value(w, tag_name.clone()))?
+                        .end()?;
+                } else {
+                    wip = wip.set_default()?;
+                }
+            }
+            _ => {
+                // Unknown metadata kind - set to default
+                wip = wip.set_default()?;
             }
         }
         Ok(wip)
@@ -352,7 +451,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             // Some(value)
             wip = wip
                 .begin_some()?
-                .with(|w| self.deserialize_into(w))?
+                .with(|w| self.deserialize_into(w, None))?
                 .end()?;
         }
         Ok(wip)
@@ -394,7 +493,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             // Unwrap into field 0 and deserialize directly
             return Ok(wip
                 .begin_nth_field(0)?
-                .with(|w| self.deserialize_into(w))?
+                .with(|w| self.deserialize_into(w, None))?
                 .end()?);
         }
 
@@ -474,7 +573,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             // Select field by index
             wip = wip
                 .begin_nth_field(index)?
-                .with(|w| self.deserialize_into(w))?
+                .with(|w| self.deserialize_into(w, None))?
                 .end()?;
             index += 1;
         }
@@ -668,7 +767,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             trace!("deserialize_list: deserializing list item");
             wip = wip
                 .begin_list_item()?
-                .with(|w| self.deserialize_into(w))?
+                .with(|w| self.deserialize_into(w, None))?
                 .end()?;
         }
 
@@ -743,7 +842,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
             wip = wip
                 .begin_nth_field(index)?
-                .with(|w| self.deserialize_into(w))?
+                .with(|w| self.deserialize_into(w, None))?
                 .end()?;
             index += 1;
         }
@@ -803,7 +902,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
             wip = wip
                 .begin_set_item()?
-                .with(|w| self.deserialize_into(w))?
+                .with(|w| self.deserialize_into(w, None))?
                 .end()?;
         }
 
@@ -839,19 +938,14 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                             wip = wip
                                 .begin_key()?
                                 .with(|w| {
-                                    self.deserialize_map_key(
-                                        w,
-                                        key.name().cloned(),
-                                        key.doc().map(|d| d.to_vec()),
-                                        key.tag().cloned(),
-                                    )
+                                    self.deserialize_map_key(w, key.name().cloned(), key.meta())
                                 })?
                                 .end()?;
 
                             // Begin value
                             wip = wip
                                 .begin_value()?
-                                .with(|w| self.deserialize_into(w))?
+                                .with(|w| self.deserialize_into(w, None))?
                                 .end()?;
                         }
                         _ => {
@@ -880,12 +974,15 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                             self.expect_event("value")?;
 
                             // Deserialize key
-                            wip = wip.begin_key()?.with(|w| self.deserialize_into(w))?.end()?;
+                            wip = wip
+                                .begin_key()?
+                                .with(|w| self.deserialize_into(w, None))?
+                                .end()?;
 
                             // Deserialize value
                             wip = wip
                                 .begin_value()?
-                                .with(|w| self.deserialize_into(w))?
+                                .with(|w| self.deserialize_into(w, None))?
                                 .end()?;
                         }
                         _ => {
@@ -1024,67 +1121,47 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     /// - Option types: None key becomes None, Some(key) recurses into inner type
     /// - Metadata containers (like `Documented<T>`): populate doc/tag metadata and recurse into value
     ///
-    /// The `tag` parameter is for formats like Styx where keys can be type patterns (e.g., `@string`).
+    /// The `meta.tag` is for formats like Styx where keys can be type patterns (e.g., `@string`).
     /// When present, it indicates the key was a tag rather than a bare identifier.
     pub(crate) fn deserialize_map_key(
         &mut self,
         mut wip: Partial<'input, BORROW>,
         key: Option<Cow<'input, str>>,
-        doc: Option<Vec<Cow<'input, str>>>,
-        tag: Option<Cow<'input, str>>,
+        meta: Option<&ValueMeta<'input>>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
         let shape = wip.shape();
 
-        trace!(shape_name = %shape, shape_def = ?shape.def, ?key, ?doc, ?tag, "deserialize_map_key");
+        trace!(shape_name = %shape, shape_def = ?shape.def, ?key, ?meta, "deserialize_map_key");
 
         // Handle metadata containers (like `Documented<T>` or `ObjectKey`): populate metadata and recurse into value
         if shape.is_metadata_container() {
             trace!("deserialize_map_key: metadata container detected");
+            let empty_meta = ValueMeta::default();
+            let meta = meta.unwrap_or(&empty_meta);
 
             // Find field info from the shape's struct type
             if let Type::User(UserType::Struct(st)) = &shape.ty {
                 for field in st.fields {
-                    if field.metadata_kind() == Some("doc") {
-                        // This is the doc field - set it from the doc parameter
-                        wip = wip.begin_field(field.effective_name())?;
-                        if let Some(ref doc_lines) = doc {
-                            // Set as Some(Vec<String>)
-                            wip = wip.begin_some()?.init_list()?;
-                            for line in doc_lines {
-                                wip = wip
-                                    .begin_list_item()?
-                                    .with(|w| self.set_string_value(w, line.clone()))?
-                                    .end()?;
-                            }
+                    match field.metadata_kind() {
+                        Some(kind) => {
+                            wip = wip.begin_field(field.effective_name())?;
+                            wip = self.populate_metadata_field(wip, kind, meta)?;
                             wip = wip.end()?;
-                        } else {
-                            // Set as None
-                            wip = wip.set_default()?;
                         }
-                        wip = wip.end()?;
-                    } else if field.metadata_kind() == Some("tag") {
-                        // This is the tag field - set it from the tag parameter
-                        wip = wip.begin_field(field.effective_name())?;
-                        if let Some(ref tag_name) = tag {
-                            // Set as Some(String)
+                        None => {
+                            // This is the value field - recurse with the key and tag.
+                            // Doc is already consumed by this container, but tag may be needed
+                            // by a nested metadata container (e.g., Documented<ObjectKey>).
+                            let inner_meta =
+                                ValueMeta::builder().maybe_tag(meta.tag().cloned()).build();
                             wip = wip
-                                .begin_some()?
-                                .with(|w| self.set_string_value(w, tag_name.clone()))?
+                                .begin_field(field.effective_name())?
+                                .with(|w| {
+                                    self.deserialize_map_key(w, key.clone(), Some(&inner_meta))
+                                })?
                                 .end()?;
-                        } else {
-                            // Set as None (not a tagged key)
-                            wip = wip.set_default()?;
                         }
-                        wip = wip.end()?;
-                    } else if field.metadata_kind().is_none() {
-                        // This is the value field - recurse with the key and tag.
-                        // Doc is already consumed by this container, but tag may be needed
-                        // by a nested metadata container (e.g., Documented<ObjectKey>).
-                        wip = wip
-                            .begin_field(field.effective_name())?
-                            .with(|w| self.deserialize_map_key(w, key.clone(), None, tag.clone()))?
-                            .end()?;
                     }
                 }
             }
@@ -1104,7 +1181,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                     // Named key -> Some(inner)
                     return Ok(wip
                         .begin_some()?
-                        .with(|w| self.deserialize_map_key(w, Some(inner_key), None, None))?
+                        .with(|w| self.deserialize_map_key(w, Some(inner_key), None))?
                         .end()?);
                 }
             }
@@ -1114,7 +1191,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         // For tagged keys (e.g., @schema in Styx), use the tag (with @ prefix) as the key.
         let key = key
             .or_else(|| {
-                tag.as_ref()
+                meta.and_then(|m| m.tag())
                     .filter(|t| !t.is_empty())
                     .map(|t| Cow::Owned(format!("@{}", t)))
             })
@@ -1134,7 +1211,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         if shape.inner.is_some() && !is_pointer {
             return Ok(wip
                 .begin_inner()?
-                .with(|w| self.deserialize_map_key(w, Some(key), None, None))?
+                .with(|w| self.deserialize_map_key(w, Some(key), None))?
                 .end()?);
         }
 

@@ -110,7 +110,7 @@
 //! ```ignore
 //! // Instead of:
 //! wip = wip.begin_field("name")?;
-//! wip = self.deserialize_into(wip)?;
+//! wip = self.deserialize_into(wip, None)?;
 //! wip = wip.end()?;
 //!
 //! // Use:
@@ -261,7 +261,7 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, true> {
     {
         let plan = TypePlan::<T>::build()?;
         let wip = plan.partial()?;
-        let partial = self.deserialize_into(wip)?;
+        let partial = self.deserialize_into(wip, None)?;
         // SpanGuard must cover build() and materialize() which can fail with ReflectError.
         // Created AFTER deserialize_into so last_span points to the final token.
         let _guard = SpanGuard::new(self.last_span);
@@ -289,7 +289,7 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, true> {
         let plan = TypePlan::<T>::build()?;
         let wip = plan.partial()?;
         let wip = wip.begin_deferred()?;
-        let partial = self.deserialize_into(wip)?;
+        let partial = self.deserialize_into(wip, None)?;
 
         // SpanGuard must cover finish_deferred(), build() and materialize() which can fail with ReflectError.
         // Created AFTER deserialize_into so last_span points to the final token.
@@ -313,7 +313,7 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
         #[allow(unsafe_code)]
         let wip: Partial<'input, false> = unsafe { core::mem::transmute(plan.partial_owned()?) };
 
-        let partial = self.deserialize_into(wip)?;
+        let partial = self.deserialize_into(wip, None)?;
 
         // SpanGuard must cover build() and materialize() which can fail with ReflectError.
         // Created AFTER deserialize_into so last_span points to the final token.
@@ -352,7 +352,7 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
         #[allow(unsafe_code)]
         let wip: Partial<'input, false> = unsafe { core::mem::transmute(plan.partial_owned()?) };
         let wip = wip.begin_deferred()?;
-        let partial = self.deserialize_into(wip)?;
+        let partial = self.deserialize_into(wip, None)?;
 
         // SpanGuard must cover finish_deferred(), build() and materialize() which can fail with ReflectError.
         // Created AFTER deserialize_into so last_span points to the final token.
@@ -409,8 +409,11 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     /// Refill the event buffer from the parser.
     #[inline]
     fn refill_buffer(&mut self) -> Result<(), ParseError> {
+        let _old_len = self.event_buffer.len();
         self.parser
             .next_events(&mut self.event_buffer, self.buffer_capacity)?;
+        let _new_len = self.event_buffer.len();
+        trace!("buffer refill {_old_len} => {_new_len} events");
         Ok(())
     }
 
@@ -501,9 +504,10 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             self.refill_buffer()?;
         }
 
+        // FIXME: cloning bad for perf, obvs. can we borrow? can we stop cloningj?
         let event = self.event_buffer.front().cloned();
         if let Some(ref _e) = event {
-            trace!(?_e, "peek_event_opt: peeked event");
+            trace!(?_e, "peeked event");
         }
         Ok(event)
     }

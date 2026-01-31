@@ -91,7 +91,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             let _guard = SpanGuard::new(self.last_span);
             wip = wip
                 .begin_inner()?
-                .with(|w| self.deserialize_into(w))?
+                .with(|w| self.deserialize_into(w, None))?
                 .end()?;
             return Ok(wip);
         }
@@ -197,7 +197,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 let _guard = SpanGuard::new(self.last_span);
                 wip = wip
                     .begin_list_item()?
-                    .with(|w| self.deserialize_into(w))?
+                    .with(|w| self.deserialize_into(w, None))?
                     .end()?;
             }
 
@@ -207,7 +207,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             // DON'T call end() again - the caller (deserialize_struct) will do that
         } else {
             // Regular smart pointer with sized pointee
-            wip = wip.with(|w| self.deserialize_into(w))?.end()?;
+            wip = wip.with(|w| self.deserialize_into(w, None))?.end()?;
         }
 
         Ok(wip)

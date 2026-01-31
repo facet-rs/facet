@@ -4,6 +4,7 @@ use alloc::borrow::Cow;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::fmt;
+use facet_reflect::Span;
 
 /// Location hint for a serialized field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -41,22 +42,8 @@ pub struct FullFieldKey<'de> {
     pub name: Option<Cow<'de, str>>,
     /// Location hint.
     pub location: FieldLocationHint,
-    /// Documentation comments attached to this field (for formats that support them).
-    ///
-    /// Used by formats like Styx where `/// comment` before a field is preserved.
-    /// When deserializing into a `metadata_container` type like `Documented<T>`,
-    /// these doc lines are used to populate the metadata.
-    pub doc: Option<Vec<Cow<'de, str>>>,
-    /// Tag name for tagged keys (for formats that support them).
-    ///
-    /// Used by formats like Styx where `@string` in key position represents a type pattern.
-    /// When deserializing into a `metadata_container` type with `#[facet(metadata = "tag")]`,
-    /// this tag name is used to populate the metadata.
-    ///
-    /// - `None`: not a tagged key (bare identifier like `name`)
-    /// - `Some("")`: unit tag (`@` alone)
-    /// - `Some("string")`: named tag (`@string`)
-    pub tag: Option<Cow<'de, str>>,
+    /// Metadata (doc comments, type tags) attached to this field.
+    pub meta: ValueMeta<'de>,
 }
 
 impl<'de> FieldKey<'de> {
@@ -78,8 +65,7 @@ impl<'de> FieldKey<'de> {
             FieldKey::Full(Box::new(FullFieldKey {
                 name: Some(name.into()),
                 location,
-                doc: Some(doc),
-                tag: None,
+                meta: ValueMeta::builder().doc(doc).build(),
             }))
         }
     }
@@ -91,8 +77,7 @@ impl<'de> FieldKey<'de> {
         FieldKey::Full(Box::new(FullFieldKey {
             name: None,
             location,
-            doc: None,
-            tag: Some(tag.into()),
+            meta: ValueMeta::builder().tag(tag.into()).build(),
         }))
     }
 
@@ -105,8 +90,42 @@ impl<'de> FieldKey<'de> {
         FieldKey::Full(Box::new(FullFieldKey {
             name: None,
             location,
-            doc: if doc.is_empty() { None } else { Some(doc) },
-            tag: Some(tag.into()),
+            meta: ValueMeta::builder()
+                .tag(tag.into())
+                .maybe_doc(Some(doc))
+                .build(),
+        }))
+    }
+
+    /// Create a tagged field key with a name (e.g., `@string"mykey"` in Styx).
+    ///
+    /// Used for type pattern keys that also have an associated name/payload.
+    pub fn tagged_with_name(
+        tag: impl Into<Cow<'de, str>>,
+        name: impl Into<Cow<'de, str>>,
+        location: FieldLocationHint,
+    ) -> Self {
+        FieldKey::Full(Box::new(FullFieldKey {
+            name: Some(name.into()),
+            location,
+            meta: ValueMeta::builder().tag(tag.into()).build(),
+        }))
+    }
+
+    /// Create a tagged field key with a name and documentation.
+    pub fn tagged_with_name_and_doc(
+        tag: impl Into<Cow<'de, str>>,
+        name: impl Into<Cow<'de, str>>,
+        location: FieldLocationHint,
+        doc: Vec<Cow<'de, str>>,
+    ) -> Self {
+        FieldKey::Full(Box::new(FullFieldKey {
+            name: Some(name.into()),
+            location,
+            meta: ValueMeta::builder()
+                .tag(tag.into())
+                .maybe_doc(Some(doc))
+                .build(),
         }))
     }
 
@@ -118,8 +137,7 @@ impl<'de> FieldKey<'de> {
         FieldKey::Full(Box::new(FullFieldKey {
             name: None,
             location,
-            doc: None,
-            tag: Some(Cow::Borrowed("")),
+            meta: ValueMeta::builder().tag(Cow::Borrowed("")).build(),
         }))
     }
 
@@ -128,8 +146,10 @@ impl<'de> FieldKey<'de> {
         FieldKey::Full(Box::new(FullFieldKey {
             name: None,
             location,
-            doc: if doc.is_empty() { None } else { Some(doc) },
-            tag: Some(Cow::Borrowed("")),
+            meta: ValueMeta::builder()
+                .tag(Cow::Borrowed(""))
+                .maybe_doc(Some(doc))
+                .build(),
         }))
     }
 
@@ -147,7 +167,7 @@ impl<'de> FieldKey<'de> {
     pub fn doc(&self) -> Option<&[Cow<'de, str>]> {
         match self {
             FieldKey::Name(_) => None,
-            FieldKey::Full(full) => full.doc.as_deref(),
+            FieldKey::Full(full) => full.meta.doc(),
         }
     }
 
@@ -156,7 +176,16 @@ impl<'de> FieldKey<'de> {
     pub fn tag(&self) -> Option<&Cow<'de, str>> {
         match self {
             FieldKey::Name(_) => None,
-            FieldKey::Full(full) => full.tag.as_ref(),
+            FieldKey::Full(full) => full.meta.tag(),
+        }
+    }
+
+    /// Get the metadata, if any.
+    #[inline]
+    pub fn meta(&self) -> Option<&ValueMeta<'de>> {
+        match self {
+            FieldKey::Name(_) => None,
+            FieldKey::Full(full) => Some(&full.meta),
         }
     }
 
@@ -299,6 +328,124 @@ impl<'de> ScalarValue<'de> {
     }
 }
 
+/// Metadata associated with a value being deserialized.
+///
+/// This includes documentation comments and type tags from formats that support them
+/// (like Styx). For formats that don't provide metadata (like JSON), these will be empty/none.
+///
+/// Use [`ValueMeta::builder()`] to construct instances.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ValueMeta<'a> {
+    doc: Option<Vec<Cow<'a, str>>>,
+    tag: Option<Cow<'a, str>>,
+    span: Option<Span>,
+}
+
+impl<'a> ValueMeta<'a> {
+    /// A const empty `ValueMeta` for use as a default reference.
+    pub const fn empty() -> Self {
+        Self {
+            doc: None,
+            tag: None,
+            span: None,
+        }
+    }
+
+    /// Create a new builder for `ValueMeta`.
+    #[inline]
+    pub fn builder() -> ValueMetaBuilder<'a> {
+        ValueMetaBuilder::default()
+    }
+
+    /// Get the documentation comments, if any.
+    #[inline]
+    pub fn doc(&self) -> Option<&[Cow<'a, str>]> {
+        self.doc.as_deref()
+    }
+
+    /// Get the type tag, if any (e.g., `@string` in Styx).
+    #[inline]
+    pub fn tag(&self) -> Option<&Cow<'a, str>> {
+        self.tag.as_ref()
+    }
+
+    /// Get the span where this value starts (e.g., where a VariantTag was found).
+    #[inline]
+    pub fn span(&self) -> Option<Span> {
+        self.span
+    }
+
+    /// Returns `true` if this metadata has no content.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.doc.is_none() && self.tag.is_none() && self.span.is_none()
+    }
+}
+
+/// Builder for [`ValueMeta`].
+#[derive(Debug, Clone, Default)]
+pub struct ValueMetaBuilder<'a> {
+    doc: Option<Vec<Cow<'a, str>>>,
+    tag: Option<Cow<'a, str>>,
+    span: Option<Span>,
+}
+
+impl<'a> ValueMetaBuilder<'a> {
+    /// Set the documentation comments.
+    #[inline]
+    pub fn doc(mut self, doc: Vec<Cow<'a, str>>) -> Self {
+        if !doc.is_empty() {
+            self.doc = Some(doc);
+        }
+        self
+    }
+
+    /// Set the documentation comments if present.
+    #[inline]
+    pub fn maybe_doc(mut self, doc: Option<Vec<Cow<'a, str>>>) -> Self {
+        if let Some(d) = doc
+            && !d.is_empty()
+        {
+            self.doc = Some(d);
+        }
+        self
+    }
+
+    /// Set the type tag.
+    #[inline]
+    pub fn tag(mut self, tag: Cow<'a, str>) -> Self {
+        self.tag = Some(tag);
+        self
+    }
+
+    /// Set the type tag if present.
+    #[inline]
+    pub fn maybe_tag(mut self, tag: Option<Cow<'a, str>>) -> Self {
+        if tag.is_some() {
+            self.tag = tag;
+        }
+        self
+    }
+
+    /// Set the span where this value starts.
+    #[inline]
+    pub fn span(mut self, span: Span) -> Self {
+        self.span = Some(span);
+        self
+    }
+
+    /// Build the `ValueMeta`.
+    #[inline]
+    pub fn build(self) -> ValueMeta<'a> {
+        ValueMeta {
+            doc: self.doc,
+            tag: self.tag,
+            span: self.span,
+        }
+    }
+}
+
 /// Event emitted by a format parser while streaming through input.
 #[derive(Clone, PartialEq)]
 pub struct ParseEvent<'de> {
@@ -306,13 +453,40 @@ pub struct ParseEvent<'de> {
     pub kind: ParseEventKind<'de>,
     /// Source span of this event in the input.
     pub span: facet_reflect::Span,
+    /// Optional metadata (doc comments, type tags) attached to this value.
+    ///
+    /// For most formats (JSON, TOML, etc.) this will be `None`. Formats like Styx
+    /// that support documentation comments and type tags on values will populate this.
+    pub meta: Option<ValueMeta<'de>>,
 }
 
 impl<'de> ParseEvent<'de> {
     /// Create a new event with the given kind and span.
     #[inline]
     pub fn new(kind: ParseEventKind<'de>, span: facet_reflect::Span) -> Self {
-        Self { kind, span }
+        Self {
+            kind,
+            span,
+            meta: None,
+        }
+    }
+
+    /// Attach metadata to this event using a builder.
+    ///
+    /// # Example
+    /// ```ignore
+    /// ParseEvent::new(kind, span).with_meta(|m| m.doc(lines).tag(tag))
+    /// ```
+    #[inline]
+    pub fn with_meta(
+        mut self,
+        f: impl FnOnce(ValueMetaBuilder<'de>) -> ValueMetaBuilder<'de>,
+    ) -> Self {
+        let meta = f(ValueMetaBuilder::default()).build();
+        if !meta.is_empty() {
+            self.meta = Some(meta);
+        }
+        self
     }
 }
 
@@ -350,7 +524,7 @@ pub enum ParseEventKind<'de> {
 impl<'de> fmt::Debug for ParseEvent<'de> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Delegate to kind's debug, span is secondary
-        write!(f, "{:?}@{:?}", self.kind, self.span)
+        write!(f, "{:?}@{}", self.kind, self.span)
     }
 }
 

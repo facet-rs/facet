@@ -194,7 +194,7 @@ pub fn from_slice_into<'facet>(
         >(partial)
     };
 
-    let partial = de.deserialize_into(partial)?;
+    let partial = de.deserialize_into(partial, None)?;
 
     // SAFETY: Same reasoning - no borrowed data since BORROW=false.
     #[allow(unsafe_code)]
@@ -248,5 +248,5 @@ where
     use facet_format::FormatDeserializer;
     let mut parser = MsgPackParser::new(input);
     let mut de = FormatDeserializer::new(&mut parser);
-    de.deserialize_into(partial)
+    de.deserialize_into(partial, None)
 }

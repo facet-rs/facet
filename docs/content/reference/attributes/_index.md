@@ -87,9 +87,17 @@ struct Documented<T> {
 2. **At least one metadata field** — Fields marked with `#[facet(metadata = "...")]`
 3. **No duplicate metadata kinds** — Each metadata kind can only appear once
 
+**Supported metadata kinds:**
+
+| Kind | Expected type | Description |
+|------|---------------|-------------|
+| `"span"` | `Option<facet_reflect::Span>` | Source location (byte offset and length). `Span` has `offset: u32` and `len: u32` fields. |
+| `"doc"` | `Option<Vec<S>>` | Documentation comments as lines (without the `///` prefix). `S` can be `String`, `Cow<str>`, or any string-like type. |
+| `"tag"` | `Option<S>` | Type tag for formats that support tagged values (like [Styx](https://github.com/bearcove/styx)'s `@string`). `S` can be `String`, `Cow<str>`, etc. |
+
 **Serialization behavior:**
 
-During serialization, the container is transparent — `Documented<String>` serializes exactly like `String`. However, formats that support metadata (like Styx) can access the metadata fields and emit them appropriately (e.g., as doc comments).
+During serialization, the container is transparent — `Documented<String>` serializes exactly like `String`. However, formats that support metadata (like [Styx](https://github.com/bearcove/styx)) can access the metadata fields and emit them appropriately (e.g., as doc comments).
 
 ```rust,noexec
 #[derive(Facet)]
@@ -124,6 +132,36 @@ let config = Config {
 // /// Port to listen on
 // /// Must be > 1024
 // port 8080
+```
+
+**Deserialization behavior:**
+
+During deserialization, the container is also transparent — the deserializer reads the value field normally and populates metadata fields from format-specific sources:
+
+- **`span`** — Populated from the parser's position information (byte offset and length in the source)
+- **`doc`** — Populated from doc comments in formats that support them (like [Styx](https://github.com/bearcove/styx)'s `///` comments)
+- **`tag`** — Populated from type tags in formats that support them (like Styx's `@string` patterns)
+
+For formats that don't provide metadata (like JSON), the metadata fields receive their default values (typically `None`).
+
+```rust,noexec
+// Parsing this Styx input:
+// /// The application name
+// name "myapp"
+
+// Into this type:
+#[derive(Facet)]
+struct Config {
+    name: Documented<String>,
+}
+
+// Results in:
+// Config {
+//     name: Documented {
+//         value: "myapp".to_string(),
+//         doc: Some(vec!["The application name".to_string()]),
+//     }
+// }
 ```
 
 **Composing metadata containers:**
