@@ -733,8 +733,11 @@ fn run_fuzz(input: FuzzInput, log: bool) {
             }
         }
 
-        // Apply the batch
-        let result = partial.apply_batch(&op_batch);
+        // Apply the batch - consumed ops are popped from op_batch
+        let initial_len = op_batch.len();
+        let result = partial.apply_batch(&mut op_batch);
+        let consumed_count = initial_len - op_batch.len();
+
         if log {
             eprintln!("    batch result: {result:?}");
         }
@@ -743,14 +746,13 @@ fn run_fuzz(input: FuzzInput, log: bool) {
         // - ops 0..consumed_count: data moved to Partial → forget source values
         // - ops consumed_count..: data NOT moved → let source values drop normally
         for (i, fuzz_op) in batch.into_iter().enumerate() {
-            let consumed = i < result.consumed_count;
+            let consumed = i < consumed_count;
             match fuzz_op {
                 FuzzOp::Set { source, .. } => {
                     if let FuzzSource::Imm(value) = source {
                         if consumed {
                             std::mem::forget(value);
                         }
-                        // else: let value drop normally
                     }
                 }
                 FuzzOp::Push { source } => {
@@ -767,14 +769,13 @@ fn run_fuzz(input: FuzzInput, log: bool) {
                             std::mem::forget(value);
                         }
                     }
-                    // else: let key and value drop normally
                 }
                 FuzzOp::End => {}
             }
         }
 
         // Stop on first error (partial is poisoned)
-        if result.error.is_some() {
+        if result.is_err() {
             break;
         }
     }

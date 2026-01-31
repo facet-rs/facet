@@ -13,7 +13,7 @@ use std::ptr::NonNull;
 use crate::arena::{Arena, Idx};
 use crate::errors::{ReflectError, ReflectErrorKind};
 use crate::frame::{Frame, FrameFlags, FrameKind, absolute_path};
-use crate::ops::{Op, Path};
+use crate::ops::{Op, OpBatch, Path};
 use facet_core::{
     Def, EnumType, Facet, Field, PtrUninit, SequenceType, Shape, Type, UserType, Variant,
 };
@@ -157,29 +157,24 @@ impl<'facet> Partial<'facet> {
 
     /// Apply a batch of operations.
     ///
-    /// Returns an [`ApplyBatchResult`](crate::ops::ApplyBatchResult) indicating how many
-    /// operations were consumed. The caller is responsible for cleanup:
+    /// Consumes operations from the batch (popping from front) as they are processed.
+    /// After this returns:
+    /// - Ops that were consumed have been removed from the batch
+    /// - Remaining ops in the batch were NOT consumed (on error or if batch wasn't empty)
     ///
-    /// - For ops `0..result.consumed_count`: `Imm` data was moved into the Partial.
-    ///   The caller must NOT drop the source values (use `mem::forget`).
-    /// - For ops `result.consumed_count..`: `Imm` data was NOT consumed.
-    ///   The caller should drop the source values normally.
-    pub fn apply_batch(&mut self, batch: &crate::ops::OpBatch<'_>) -> crate::ops::ApplyBatchResult {
-        use crate::ops::ApplyBatchResult;
-
+    /// The caller is responsible for cleanup:
+    /// - Consumed ops: their `Imm` data was moved, caller must forget source values
+    /// - Remaining ops: their `Imm` data was NOT moved, caller should drop normally
+    pub fn apply_batch(&mut self, batch: &mut OpBatch<'_>) -> Result<(), ReflectError> {
         if self.poisoned {
-            return ApplyBatchResult {
-                consumed_count: 0,
-                error: Some(ReflectError::at_root(
-                    self.root_shape,
-                    ReflectErrorKind::Poisoned,
-                )),
-            };
+            return Err(ReflectError::at_root(
+                self.root_shape,
+                ReflectErrorKind::Poisoned,
+            ));
         }
 
-        let ops = batch.ops();
-        for (i, op) in ops.iter().enumerate() {
-            let result = match op {
+        while let Some(op) = batch.pop() {
+            let result = match &op {
                 Op::Set {
                     dst: path,
                     src: source,
@@ -201,18 +196,15 @@ impl<'facet> Partial<'facet> {
             };
 
             if let Err(e) = result {
+                // Push the failed op back so caller knows it wasn't consumed
+                batch.push_front(op);
                 self.poison();
-                return ApplyBatchResult {
-                    consumed_count: i,
-                    error: Some(e),
-                };
+                return Err(e);
             }
+            // Op was consumed successfully, it's been popped and won't be in batch
         }
 
-        ApplyBatchResult {
-            consumed_count: ops.len(),
-            error: None,
-        }
+        Ok(())
     }
 
     fn apply_inner(&mut self, ops: &[Op<'_>]) -> Result<(), ReflectError> {

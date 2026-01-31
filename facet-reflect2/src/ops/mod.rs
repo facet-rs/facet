@@ -2,6 +2,7 @@
 
 mod builder;
 
+use std::collections::VecDeque;
 use std::marker::PhantomData;
 
 use facet_core::{Facet, PtrConst, PtrMut, Shape};
@@ -126,34 +127,44 @@ pub struct Build {
 
 /// A batch of operations to apply to a [`Partial`](crate::Partial).
 ///
-/// `OpBatch` does NOT take ownership of the data pointed to by `Imm` values.
-/// The caller retains ownership and is responsible for cleanup based on the
-/// [`ApplyBatchResult`] returned by [`Partial::apply_batch`](crate::Partial::apply_batch).
+/// Operations are stored in a `VecDeque` and consumed (popped) from the front
+/// as they are processed by [`Partial::apply_batch`](crate::Partial::apply_batch).
+///
+/// After `apply_batch` returns:
+/// - Consumed ops have been removed from the batch (caller must forget their source values)
+/// - Remaining ops in the batch were NOT consumed (caller should drop them normally)
 pub struct OpBatch<'a> {
-    ops: Vec<Op<'a>>,
+    ops: VecDeque<Op<'a>>,
 }
 
 impl<'a> OpBatch<'a> {
     /// Create a new empty batch.
     pub fn new() -> Self {
-        Self { ops: Vec::new() }
+        Self {
+            ops: VecDeque::new(),
+        }
     }
 
     /// Create a batch with the given capacity.
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            ops: Vec::with_capacity(capacity),
+            ops: VecDeque::with_capacity(capacity),
         }
     }
 
-    /// Add an operation to the batch.
+    /// Add an operation to the back of the batch.
     pub fn push(&mut self, op: Op<'a>) {
-        self.ops.push(op);
+        self.ops.push_back(op);
     }
 
-    /// Get the operations as a slice.
-    pub fn ops(&self) -> &[Op<'a>] {
-        &self.ops
+    /// Pop an operation from the front of the batch.
+    pub fn pop(&mut self) -> Option<Op<'a>> {
+        self.ops.pop_front()
+    }
+
+    /// Push an operation back to the front of the batch.
+    pub fn push_front(&mut self, op: Op<'a>) {
+        self.ops.push_front(op);
     }
 
     /// Get the number of operations in the batch.
@@ -171,21 +182,4 @@ impl Default for OpBatch<'_> {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Result of applying a batch of operations.
-///
-/// This tells the caller which operations were consumed so they can handle cleanup:
-/// - Operations `0..consumed_count` were fully processed - their `Imm` data was moved
-///   into the `Partial` and the caller should NOT drop the source values
-/// - If `error` is `Some`, operation at index `consumed_count` failed - its `Imm` data
-///   was NOT moved and the caller should drop the source value normally
-/// - Operations after `consumed_count` were never processed - the caller should drop
-///   their source values normally
-#[derive(Debug)]
-pub struct ApplyBatchResult {
-    /// Number of operations that were fully consumed (data moved into Partial).
-    pub consumed_count: usize,
-    /// The error that stopped processing, if any.
-    pub error: Option<crate::errors::ReflectError>,
 }
