@@ -1,7 +1,7 @@
 //! Pull-based event parser for Styx.
 
 use std::borrow::Cow;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 
 use styx_tokenizer::Span;
 
@@ -1617,7 +1617,7 @@ impl KeyValue {
 }
 
 // ============================================================================
-// Path tracking
+// Path tracking (O(depth) implementation)
 // ============================================================================
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1633,11 +1633,34 @@ enum PathError {
     NestIntoTerminal { terminal_path: Vec<String> },
 }
 
+/// A single segment in the current path.
+///
+/// Each segment tracks:
+/// - The key name and where it was defined
+/// - Whether it has a terminal value (can't nest into it)
+/// - Which child keys have been "closed" (can't be reopened)
+#[derive(Debug, Clone)]
+struct PathSegment {
+    key: String,
+    span: Span,
+    value_kind: PathValueKind,
+    /// Keys that have been closed at this level. When we move from a.b.c to a.b.d,
+    /// we add "c" to the closed_children of the "b" segment. This is O(siblings at this level)
+    /// rather than O(all paths ever seen).
+    closed_children: HashMap<String, Span>,
+}
+
+/// Path state tracker with O(depth) memory usage.
+///
+/// Instead of tracking all paths ever seen (O(total paths)), we only track:
+/// - The current path as a stack of segments
+/// - At each segment, which sibling keys have been closed
+///
+/// This works because we can never go back to a previous sibling in the file order.
 #[derive(Default, Clone)]
 struct PathState {
-    current_path: Vec<String>,
-    closed_paths: HashSet<Vec<String>>,
-    assigned_paths: HashMap<Vec<String>, (Span, PathValueKind)>,
+    /// The current path, as a stack of segments. Length is O(max depth).
+    segments: Vec<PathSegment>,
 }
 
 impl PathState {
@@ -1647,50 +1670,120 @@ impl PathState {
         span: Span,
         value_kind: PathValueKind,
     ) -> Result<(), PathError> {
-        // Check for duplicate
-        if let Some(&(original, _)) = self.assigned_paths.get(path) {
-            return Err(PathError::Duplicate { original });
+        if path.is_empty() {
+            return Ok(());
         }
 
-        // Check prefixes
-        for i in 1..path.len() {
-            let prefix = &path[..i];
-            if self.closed_paths.contains(prefix) {
-                return Err(PathError::Reopened {
-                    closed_path: prefix.to_vec(),
-                });
-            }
-            if let Some(&(_, PathValueKind::Terminal)) = self.assigned_paths.get(prefix) {
-                return Err(PathError::NestIntoTerminal {
-                    terminal_path: prefix.to_vec(),
-                });
-            }
-        }
-
-        // Close paths beyond common prefix
+        // Find common prefix length with current path
         let common_len = self
-            .current_path
+            .segments
             .iter()
             .zip(path.iter())
-            .take_while(|(a, b)| a == b)
+            .take_while(|(seg, key)| seg.key == **key)
             .count();
 
-        for i in common_len..self.current_path.len() {
-            let closed: Vec<String> = self.current_path[..=i].to_vec();
-            self.closed_paths.insert(closed);
+        // Special case: if the entire path matches, check for duplicate
+        // This happens when we see `a 1` then `a 2` - the path ["a"] fully matches
+        if common_len == path.len()
+            && common_len == self.segments.len()
+            && !self.segments.is_empty()
+        {
+            // Exact same path - this is a duplicate
+            return Err(PathError::Duplicate {
+                original: self.segments.last().unwrap().span,
+            });
         }
 
-        // Record intermediate segments as objects
-        for i in 1..path.len() {
-            let prefix = path[..i].to_vec();
-            self.assigned_paths
-                .entry(prefix)
-                .or_insert((span, PathValueKind::Object));
+        // Close segments beyond common prefix and check for reopening
+        // We iterate from deepest to shallowest
+        while self.segments.len() > common_len {
+            let closed_segment = self.segments.pop().unwrap();
+
+            // Add this key to parent's closed_children (if there is a parent)
+            if let Some(parent) = self.segments.last_mut() {
+                parent
+                    .closed_children
+                    .insert(closed_segment.key, closed_segment.span);
+            }
         }
 
-        self.assigned_paths
-            .insert(path.to_vec(), (span, value_kind));
-        self.current_path = path.to_vec();
+        // Now process each new segment of the path
+        for (i, key) in path.iter().enumerate().skip(common_len) {
+            let is_last = i == path.len() - 1;
+            let segment_value_kind = if is_last {
+                value_kind
+            } else {
+                PathValueKind::Object
+            };
+
+            if i == common_len && common_len < self.segments.len() {
+                // This case shouldn't happen after the while loop above, but handle defensively
+                unreachable!("segments should have been truncated");
+            }
+
+            if i < self.segments.len() {
+                // We're on the same path segment - check for exact duplicate
+                let existing = &self.segments[i];
+                if existing.key == *key && is_last {
+                    return Err(PathError::Duplicate {
+                        original: existing.span,
+                    });
+                }
+            } else if i == 0 {
+                // Root level - no parent to check
+                // Check if we already have a root segment with this key
+                if !self.segments.is_empty() && self.segments[0].key == *key {
+                    if is_last {
+                        return Err(PathError::Duplicate {
+                            original: self.segments[0].span,
+                        });
+                    }
+                    // Continue using existing segment
+                    continue;
+                }
+                // New root segment
+                self.segments.push(PathSegment {
+                    key: key.clone(),
+                    span,
+                    value_kind: segment_value_kind,
+                    closed_children: HashMap::new(),
+                });
+            } else {
+                // Check parent's closed_children for reopening
+                let parent = &self.segments[i - 1];
+
+                // Check if parent is terminal (can't nest into it)
+                if parent.value_kind == PathValueKind::Terminal {
+                    return Err(PathError::NestIntoTerminal {
+                        terminal_path: self.segments.iter().map(|s| s.key.clone()).collect(),
+                    });
+                }
+
+                // Check if this key was already closed at this level
+                if parent.closed_children.contains_key(key) {
+                    return Err(PathError::Reopened {
+                        closed_path: self.segments[..i]
+                            .iter()
+                            .map(|s| s.key.clone())
+                            .chain(std::iter::once(key.clone()))
+                            .collect(),
+                    });
+                }
+
+                // Add new segment
+                self.segments.push(PathSegment {
+                    key: key.clone(),
+                    span,
+                    value_kind: segment_value_kind,
+                    closed_children: HashMap::new(),
+                });
+            }
+        }
+
+        // Update the value_kind of the last segment to match what was passed in
+        if let Some(last) = self.segments.last_mut() {
+            last.value_kind = value_kind;
+        }
 
         Ok(())
     }
