@@ -13,6 +13,7 @@ enum PathSegment {
     Field(u32),      // struct field, tuple element, array index, enum variant
     Append,          // new list/set element
     Insert(Imm),     // new map entry by key
+    Root,            // jump to root frame (for non-recursive deserializers)
 }
 
 type Path = &[PathSegment];
@@ -45,43 +46,86 @@ A path is relative to the current frame. Each segment navigates one level:
 | `Field(n)` | Field/element `n` of current frame (struct field, array element, enum variant) |
 | `Append` | New element at end of list/set |
 | `Insert(key)` | Map entry with given key |
+| `Root` | Jump to root frame, regardless of current position |
 
 ### Multi-Level Paths
 
 Paths can have multiple segments: `&[Field(0), Field(1)]` means "field 1 of field 0."
 
-**Rule: multi-level paths work only when all intermediate segments are statically laid out.**
+**Rule: multi-level paths implicitly create frames for all intermediate segments.**
 
-For structs, arrays, and tuples, field access is just offset arithmetic—no allocation needed. You can write directly to nested fields:
+Every segment except the last creates a frame. This is how we track partial initialization—frames are the bookkeeping mechanism. Without them, we wouldn't know which fields are set and which aren't.
 
 ```rust
 struct Outer { inner: Inner }
 struct Inner { x: i32, y: i32 }
 
-// Direct write to nested field, no frames
-Set { dst: &[Field(0), Field(1)], src: Imm(&20) }  // outer.inner.y = 20
+// This path:
+Set { dst: &[Field(0), Field(1)], src: Imm(&20) }
+
+// Is equivalent to:
+Set { dst: &[Field(0)], src: Stage }    // create frame for inner
+Set { dst: &[Field(1)], src: Imm(&20) } // set inner.y
+// cursor is now at the Inner frame
 ```
 
-But dynamic containers (Vec, HashMap, etc.) require frames because:
-1. Elements aren't inline—they're heap-allocated
-2. The container might be empty
-3. You need `Append`/`Insert` to create slots
-
-So paths must "stop" at dynamic containers:
+The same applies to dynamic containers:
 
 ```rust
 struct Config { servers: Vec<Server> }
+struct Server { host: String, port: u16 }
 
-// Can't do this - Vec requires staging
-Set { dst: &[Field(0), Append, Field(0)], src: Imm(&host) }  // INVALID
+// This path:
+Set { dst: &[Field(0), Append, Field(0)], src: Imm(&host) }
 
-// Must stage the list first
-Set { dst: &[Field(0)], src: Stage }        // enter servers list
-Set { dst: &[Append], src: Stage }          // create element, enter it
-Set { dst: &[Field(0)], src: Imm(&host) }   // set field
-End                                          // back to list
-End                                          // back to Config
+// Is equivalent to:
+Set { dst: &[Field(0)], src: Stage }     // frame for servers list
+Set { dst: &[Append], src: Stage }       // frame for new Server
+Set { dst: &[Field(0)], src: Imm(&host) } // set host
+// cursor is now at the Server frame
 ```
+
+After a multi-level path, the cursor is at the deepest frame created. You need `End` calls to pop back up.
+
+### Root
+
+`Root` jumps to the root frame, regardless of the current cursor position. This enables **non-recursive deserializers** like TOML that don't naturally track their position.
+
+```toml
+[server]
+host = "localhost"
+
+[database]
+url = "postgres://..."
+
+[server]    # re-opens server section!
+port = 8080
+```
+
+Without `Root`, a TOML deserializer would need to:
+- Track its current position in the frame tree
+- Emit `End` calls to navigate back to root before each section
+- Or buffer everything and emit ops in a different order
+
+With `Root`, each section header maps directly to a path:
+
+```rust
+// [server]
+// host = "localhost"
+Set { dst: &[Root, Field(0), Field(0)], src: Imm(&host) }   // server.host
+
+// [database]
+// url = "postgres://..."
+Set { dst: &[Root, Field(1), Field(0)], src: Imm(&url) }    // database.url
+
+// [server] - re-entry!
+// port = 8080
+Set { dst: &[Root, Field(0), Field(1)], src: Imm(&port) }   // server.port
+```
+
+The deserializer stays stateless. Each `[section]` translates to `Root, Field(section_idx), ...` and the frame tree handles re-entry automatically (in deferred mode).
+
+**Note**: `Root` should typically appear at the start of a path. `&[Field(0), Root, Field(1)]` is valid but unusual—it would enter field 0, then jump back to root, then enter field 1.
 
 ### Source
 
@@ -105,10 +149,75 @@ After `End`, the parent's tracking for that child changes from "in-progress" to 
 The cursor (`current`) always points to exactly one frame. Operations are relative to it.
 
 - `Set { src: Stage }` pushes a new frame; cursor moves to it
+- Multi-level paths push frames for intermediates; cursor ends at deepest frame
 - `End` pops current frame; cursor moves to parent
-- `Set { src: Imm | Default }` writes a value; cursor stays where it is
+- `Set { src: Imm | Default }` with single-segment path writes a value; cursor stays where it is
 
-This is explicit and unambiguous. You always know where the cursor is by counting `Stage` and `End` operations.
+You always know where the cursor is by tracking frame creation and `End` operations.
+
+## Frame Lifecycle
+
+Frames are transient bookkeeping, not permanent overhead.
+
+### Creation
+
+A frame is created when:
+- `Set { src: Stage }` is called
+- A multi-level path navigates through intermediate segments
+
+Each frame tracks:
+- Pointer to the memory being constructed
+- Shape (type metadata)
+- Which children are initialized (bitset for structs, count for lists, etc.)
+- Parent frame reference
+
+### Tracking
+
+As children complete, the frame updates its tracking:
+- Struct: bitset flips for each field
+- List/Set: element count increments
+- Map: entry count increments
+- Enum: variant selection + variant data status
+
+### Collapse
+
+When all children of a frame are complete, the frame can be **collapsed**:
+
+1. The frame detects it's fully initialized
+2. Child frames are detached and freed
+3. The parent records "this child is complete" (not "this child has frame X")
+
+This keeps memory bounded. Even deeply nested structures don't accumulate frames—once a subtree is complete, its frames evaporate. The parent just knows "done."
+
+```
+Before collapse:
+
+    ┌─────────────┐
+    │ Line        │   fields: [→frame1, →frame2]
+    └──────┬──────┘
+           │
+     ┌─────┴─────┐
+     ▼           ▼
+┌─────────┐ ┌─────────┐
+│ Point   │ │ Point   │
+│ [✓, ✓]  │ │ [✓, ✓]  │
+└─────────┘ └─────────┘
+
+After collapse:
+
+    ┌─────────────┐
+    │ Line        │   fields: [✓, ✓]  ← complete, no child frames
+    └─────────────┘
+```
+
+### Why Frames Are Cheap
+
+1. **Short-lived**: Frames exist only while their subtree is being built
+2. **Bounded depth**: At most O(depth) frames exist at once, not O(nodes)
+3. **Reusable**: Arena allocation with free list means no repeated allocations
+4. **Collapse eagerly**: As soon as a frame completes, it's freed
+
+The "optimization" of avoiding frames for simple structs happens naturally—you create the frame, set all fields, frame detects completion and collapses. No manual optimization needed.
 
 ## Examples
 
@@ -118,7 +227,7 @@ This is explicit and unambiguous. You always know where the cursor is by countin
 Set { dst: &[], src: Imm(&42u32) }
 ```
 
-Empty path means "current frame itself." No `End` needed—scalars don't push frames.
+Empty path means "current frame itself." No child frames created.
 
 ### Structs
 
@@ -129,28 +238,31 @@ Set { dst: &[Field(0)], src: Imm(&10) }  // x = 10
 Set { dst: &[Field(1)], src: Imm(&20) }  // y = 20
 ```
 
-No frames, no `End`. Just direct field writes.
+Single-segment paths with `Imm` don't create child frames. The root frame tracks field completion directly.
 
 ### Nested Structs
 
 ```rust
 struct Line { start: Point, end: Point }
 
-// Option A: Stage intermediate struct
+// Option A: Explicit staging
 Set { dst: &[Field(0)], src: Stage }          // enter start
 Set { dst: &[Field(0)], src: Imm(&0) }        // start.x
 Set { dst: &[Field(1)], src: Imm(&0) }        // start.y
-End                                            // back to Line
+End                                            // back to Line, start frame collapses
 Set { dst: &[Field(1)], src: Imm(&end_point) } // end = complete Point
 
-// Option B: Multi-level paths (no frames)
-Set { dst: &[Field(0), Field(0)], src: Imm(&0) }   // start.x
-Set { dst: &[Field(0), Field(1)], src: Imm(&0) }   // start.y
-Set { dst: &[Field(1), Field(0)], src: Imm(&10) }  // end.x
+// Option B: Multi-level paths (frames created implicitly)
+Set { dst: &[Field(0), Field(0)], src: Imm(&0) }   // start.x (creates start frame)
+Set { dst: &[Field(0), Field(1)], src: Imm(&0) }   // start.y (re-enters start frame)
+// cursor is at start frame, need to End back
+End
+Set { dst: &[Field(1), Field(0)], src: Imm(&10) }  // end.x (creates end frame)
 Set { dst: &[Field(1), Field(1)], src: Imm(&10) }  // end.y
+End
 ```
 
-Option B avoids frames entirely for pure struct nesting.
+Both options create the same frames. Option B just does it implicitly.
 
 ### Enums
 
@@ -189,16 +301,19 @@ End                                             // back to Config
 struct Config { servers: Vec<Server> }
 struct Server { host: String, port: u16 }
 
+// Explicit staging
 Set { dst: &[Field(0)], src: Stage }           // enter servers list
 Set { dst: &[Append], src: Stage }             // append new Server, enter it
 Set { dst: &[Field(0)], src: Imm(&host) }      // host
 Set { dst: &[Field(1)], src: Imm(&port) }      // port
-End                                             // back to list
-Set { dst: &[Append], src: Stage }             // append another Server
-Set { dst: &[Field(0)], src: Imm(&host2) }
-Set { dst: &[Field(1)], src: Imm(&port2) }
-End
+End                                             // back to list, Server frame collapses
 End                                             // back to Config
+
+// Or with multi-level paths
+Set { dst: &[Field(0), Append, Field(0)], src: Imm(&host) }  // creates list + Server frames
+Set { dst: &[Field(1)], src: Imm(&port) }                     // still in Server frame
+End                                                            // back to list
+End                                                            // back to Config
 ```
 
 ### Maps
@@ -223,6 +338,12 @@ Set { dst: &[Field(0)], src: Imm(&host) }          // host
 Set { dst: &[Field(1)], src: Imm(&port) }          // port
 End                                                 // back to map
 End                                                 // back to Config
+
+// Or with multi-level path
+Set { dst: &[Field(0), Insert(key_primary), Field(0)], src: Imm(&host) }
+Set { dst: &[Field(1)], src: Imm(&port) }
+End  // back to map
+End  // back to Config
 ```
 
 ### Arrays
@@ -230,20 +351,19 @@ End                                                 // back to Config
 ```rust
 struct Point3D { coords: [f32; 3] }
 
-// Option A: Stage the array
+// Explicit staging
 Set { dst: &[Field(0)], src: Stage }       // enter coords
 Set { dst: &[Field(0)], src: Imm(&1.0) }   // coords[0]
 Set { dst: &[Field(1)], src: Imm(&2.0) }   // coords[1]
 Set { dst: &[Field(2)], src: Imm(&3.0) }   // coords[2]
 End
 
-// Option B: Multi-level paths (arrays are statically sized)
-Set { dst: &[Field(0), Field(0)], src: Imm(&1.0) }  // coords[0]
-Set { dst: &[Field(0), Field(1)], src: Imm(&2.0) }  // coords[1]
-Set { dst: &[Field(0), Field(2)], src: Imm(&3.0) }  // coords[2]
+// Multi-level paths
+Set { dst: &[Field(0), Field(0)], src: Imm(&1.0) }  // coords[0], creates array frame
+Set { dst: &[Field(1)], src: Imm(&2.0) }            // coords[1], still in array frame
+Set { dst: &[Field(2)], src: Imm(&3.0) }            // coords[2]
+End
 ```
-
-Arrays are fixed-size and inline, so multi-level paths work.
 
 ### Sets
 
@@ -293,6 +413,34 @@ End                                         // calls Box::new, moves value
 
 `Stage` allocates temporary memory for the pointee. `End` wraps it in the pointer type.
 
+## Building the Final Value
+
+When construction is complete, call `build()` to extract the final value.
+
+```rust
+let value: T = partial.build()?;
+```
+
+### Auto-Navigation to Root
+
+`build()` automatically navigates from the current cursor position back to root. You don't need to manually `End` all the way up:
+
+```rust
+Set { dst: &[Field(0), Append, Field(0)], src: Imm(&host) }
+Set { dst: &[Field(1)], src: Imm(&port) }
+// cursor is at Server frame, inside list, inside Config
+
+let config: Config = partial.build()?;  // auto-pops all frames to root
+```
+
+This is equivalent to calling `End` repeatedly until reaching root, then extracting the value.
+
+### Validation
+
+In strict mode, `build()` validates that every frame along the path to root is complete. If any frame is incomplete, it returns an error.
+
+In deferred mode, `build()` validates the entire tree—all deferred frames must be complete by the time `build()` is called.
+
 ## Deferred Mode
 
 In strict mode (default), `End` requires the frame to be complete. In deferred mode, incomplete frames are stored for later completion.
@@ -316,7 +464,7 @@ End                                     // now complete
 
 ### Re-entry Semantics
 
-When `Set { dst, src: Stage }` targets a path that already has an incomplete frame:
+When a path navigates to a location that already has an incomplete frame:
 - **Strict mode**: Error (can't re-enter)
 - **Deferred mode**: Re-enter the existing frame instead of creating a new one
 
@@ -325,6 +473,18 @@ Re-entry works by:
 - **Enum variants**: Variant index (after selection)
 - **List elements**: Element index
 - **Map values**: Key lookup
+
+This means multi-level paths in deferred mode will re-enter existing frames as needed:
+
+```rust
+// First access creates frames
+Set { dst: &[Field(0), Field(1)], src: Imm(&20) }  // creates Outer frame, sets inner.y
+End  // Outer frame incomplete (inner.x not set), stored
+
+// Second access re-enters
+Set { dst: &[Field(0), Field(0)], src: Imm(&10) }  // re-enters Outer frame, sets inner.x
+End  // now complete, frame collapses
+```
 
 ### What Cannot Be Deferred
 
@@ -340,18 +500,23 @@ Renamed:
 - `Build` → `Stage` (clearer intent)
 - `Push` → `Append` (path segment, not operation)
 
+Added:
+- Multi-level paths with implicit frame creation
+- Explicit frame lifecycle documentation
+
 Same:
 - Explicit `End` for frame management
-- Clear cursor position
 - Deferred mode semantics
 
 ### vs DESIGN-2.md
 
-DESIGN-2.md unified operations but introduced ambiguity about cursor position with implicit frame creation and `Up`/`Root` navigation.
+DESIGN-2.md unified operations but introduced ambiguity about cursor position with `Up` navigation in paths.
 
-This design keeps the unified path model but retains explicit `Stage`/`End` for clarity:
-- No implicit frame creation—`Stage` is always explicit
-- No `Up`—use `End` to pop frames
-- Cursor position is always unambiguous
+This design keeps the unified path model and adopts the good parts:
+- `Root` segment for non-recursive deserializers (TOML)
+- `build()` auto-navigates to root
 
-DESIGN-2.md's `Root` for TOML-style random access is not included here. That's a separate concern to be addressed if needed.
+But retains explicit `End` for clarity:
+- No `Up` in paths—use `End` to pop frames
+- Frames are created implicitly by paths, but popping is explicit
+- Cursor position is always determinable
