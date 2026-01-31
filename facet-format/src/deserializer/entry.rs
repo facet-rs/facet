@@ -207,28 +207,38 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         mut wip: Partial<'input, BORROW>,
         meta: Option<&ValueMeta<'input>>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
-        // Check for VariantTag at the start - this handles tagged values like `@tag"hello"`.
-        // We consume it here and merge it into meta.
-        let event = self.expect_peek("value for metadata container")?;
-        let (meta_owned, tag_span) = if let ParseEventKind::VariantTag(tag) = &event.kind {
-            let tag_span = event.span;
-            let tag = tag.map(Cow::Borrowed);
-            let _ = self.expect_event("variant tag")?; // consume it
-
-            // Merge tag with any existing meta (preserving doc comments)
-            let mut builder = ValueMeta::builder().span(tag_span);
-            if let Some(m) = meta
-                && let Some(doc) = m.doc()
-            {
-                builder = builder.doc(doc.to_vec());
-            }
-            if let Some(tag) = tag {
-                builder = builder.tag(tag);
-            }
-            (Some(builder.build()), Some(tag_span))
+        // Check if this metadata container has a "tag" metadata field.
+        // Only consume VariantTag events if the container can store them.
+        // Otherwise, the VariantTag belongs to the inner value (e.g., an enum).
+        let has_tag_field = if let Type::User(UserType::Struct(st)) = &wip.shape().ty {
+            st.fields.iter().any(|f| f.metadata_kind() == Some("tag"))
         } else {
-            (None, None)
+            false
         };
+
+        // Check for VariantTag at the start - this handles tagged values like `@tag"hello"`.
+        // We consume it here and merge it into meta, but ONLY if this container has a tag field.
+        let event = self.expect_peek("value for metadata container")?;
+        let (meta_owned, tag_span) =
+            if has_tag_field && let ParseEventKind::VariantTag(tag) = &event.kind {
+                let tag_span = event.span;
+                let tag = tag.map(Cow::Borrowed);
+                let _ = self.expect_event("variant tag")?; // consume it
+
+                // Merge tag with any existing meta (preserving doc comments)
+                let mut builder = ValueMeta::builder().span(tag_span);
+                if let Some(m) = meta
+                    && let Some(doc) = m.doc()
+                {
+                    builder = builder.doc(doc.to_vec());
+                }
+                if let Some(tag) = tag {
+                    builder = builder.tag(tag);
+                }
+                (Some(builder.build()), Some(tag_span))
+            } else {
+                (None, None)
+            };
 
         static EMPTY_META: ValueMeta<'static> = ValueMeta::empty();
         let meta = meta_owned.as_ref().or(meta).unwrap_or(&EMPTY_META);
