@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="235" height="147">
+<svg xmlns="http://www.w3.org/2000/svg" width="421" height="97">
    <defs>
       <style type="text/css">
     @namespace "http://www.w3.org/2000/svg";
@@ -29,31 +29,38 @@
     polygon.regexp        {fill: #FFF4C7; stroke: #332900; stroke-width: 1;}
   </style>
    </defs>
-   <polygon points="9 51 1 47 1 55"/>
-   <polygon points="17 51 9 47 9 55"/>
+   <polygon points="9 61 1 57 1 65"/>
+   <polygon points="17 61 9 57 9 65"/>
    <a xmlns:xlink="http://www.w3.org/1999/xlink"
       xlink:href="#WS"
       xlink:title="WS">
-      <rect x="71" y="3" width="40" height="32"/>
-      <rect x="69" y="1" width="40" height="32" class="nonterminal"/>
-      <text class="nonterminal" x="79" y="21">WS</text>
+      <rect x="51" y="13" width="40" height="32"/>
+      <rect x="49" y="11" width="40" height="32" class="nonterminal"/>
+      <text class="nonterminal" x="59" y="31">WS</text>
    </a>
    <a xmlns:xlink="http://www.w3.org/1999/xlink"
-      xlink:href="#NewlineSeparated"
-      xlink:title="NewlineSeparated">
-      <rect x="51" y="69" width="136" height="32"/>
-      <rect x="49" y="67" width="136" height="32" class="nonterminal"/>
-      <text class="nonterminal" x="59" y="87">NewlineSeparated</text>
+      xlink:href="#Entry"
+      xlink:title="Entry">
+      <rect x="171" y="47" width="52" height="32"/>
+      <rect x="169" y="45" width="52" height="32" class="nonterminal"/>
+      <text class="nonterminal" x="179" y="65">Entry</text>
    </a>
    <a xmlns:xlink="http://www.w3.org/1999/xlink"
-      xlink:href="#CommaSeparated"
-      xlink:title="CommaSeparated">
-      <rect x="51" y="113" width="134" height="32"/>
-      <rect x="49" y="111" width="134" height="32" class="nonterminal"/>
-      <text class="nonterminal" x="59" y="131">CommaSeparated</text>
+      xlink:href="#Separator"
+      xlink:title="Separator">
+      <rect x="171" y="3" width="82" height="32"/>
+      <rect x="169" y="1" width="82" height="32" class="nonterminal"/>
+      <text class="nonterminal" x="179" y="21">Separator</text>
+   </a>
+   <a xmlns:xlink="http://www.w3.org/1999/xlink"
+      xlink:href="#WS"
+      xlink:title="WS">
+      <rect x="333" y="13" width="40" height="32"/>
+      <rect x="331" y="11" width="40" height="32" class="nonterminal"/>
+      <text class="nonterminal" x="341" y="31">WS</text>
    </a>
    <path class="line"
-         d="m17 51 h2 m40 0 h10 m0 0 h50 m-80 0 l20 0 m-1 0 q-9 0 -9 -10 l0 -14 q0 -10 10 -10 m60 34 l20 0 m-20 0 q10 0 10 -10 l0 -14 q0 -10 -10 -10 m-60 0 h10 m40 0 h10 m20 34 h56 m-176 0 h20 m156 0 h20 m-196 0 q10 0 10 10 m176 0 q0 -10 10 -10 m-186 10 v12 m176 0 v-12 m-176 12 q0 10 10 10 m156 0 q10 0 10 -10 m-166 10 h10 m136 0 h10 m-166 -10 v20 m176 0 v-20 m-176 20 v24 m176 0 v-24 m-176 24 q0 10 10 10 m156 0 q10 0 10 -10 m-166 10 h10 m134 0 h10 m0 0 h2 m23 -76 h-3"/>
-   <polygon points="225 51 233 47 233 55"/>
-   <polygon points="225 51 217 47 217 55"/>
+         d="m17 61 h2 m20 0 h10 m0 0 h50 m-80 0 l20 0 m-1 0 q-9 0 -9 -10 l0 -14 q0 -10 10 -10 m60 34 l20 0 m-20 0 q10 0 10 -10 l0 -14 q0 -10 -10 -10 m-60 0 h10 m40 0 h10 m60 34 h10 m52 0 h10 m0 0 h30 m-122 0 l20 0 m-1 0 q-9 0 -9 -10 l0 -24 q0 -10 10 -10 m102 44 l20 0 m-20 0 q10 0 10 -10 l0 -24 q0 -10 -10 -10 m-102 0 h10 m82 0 h10 m-142 44 h20 m142 0 h20 m-182 0 q10 0 10 10 m162 0 q0 -10 10 -10 m-172 10 v14 m162 0 v-14 m-162 14 q0 10 10 10 m142 0 q10 0 10 -10 m-152 10 h10 m0 0 h132 m40 -34 h10 m0 0 h50 m-80 0 l20 0 m-1 0 q-9 0 -9 -10 l0 -14 q0 -10 10 -10 m60 34 l20 0 m-20 0 q10 0 10 -10 l0 -14 q0 -10 -10 -10 m-60 0 h10 m40 0 h10 m23 34 h-3"/>
+   <polygon points="411 61 419 57 419 65"/>
+   <polygon points="411 61 403 57 403 65"/>
 </svg>

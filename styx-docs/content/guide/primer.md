@@ -100,7 +100,12 @@ age 30
 
 ### Separator rules
 
-Objects use either commas OR newlines as separators — never both in the same object. This prevents the ambiguity that plagues YAML.
+Objects use commas, newlines, or both as separators. You can mix them freely within the same object:
+
+```styx
+{a 1, b 2
+ c 3}
+```
 
 ### What can be a key?
 

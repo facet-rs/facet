@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="351" height="81">
+<svg xmlns="http://www.w3.org/2000/svg" width="207" height="103">
    <defs>
       <style type="text/css">
     @namespace "http://www.w3.org/2000/svg";
@@ -29,39 +29,25 @@
     polygon.regexp        {fill: #FFF4C7; stroke: #332900; stroke-width: 1;}
   </style>
    </defs>
-   <polygon points="9 61 1 57 1 65"/>
-   <polygon points="17 61 9 57 9 65"/>
-   <a xmlns:xlink="http://www.w3.org/1999/xlink"
-      xlink:href="#WS"
-      xlink:title="WS">
-      <rect x="51" y="13" width="40" height="32"/>
-      <rect x="49" y="11" width="40" height="32" class="nonterminal"/>
-      <text class="nonterminal" x="59" y="31">WS</text>
-   </a>
-   <a xmlns:xlink="http://www.w3.org/1999/xlink"
-      xlink:href="#Entry"
-      xlink:title="Entry">
-      <rect x="151" y="47" width="52" height="32"/>
-      <rect x="149" y="45" width="52" height="32" class="nonterminal"/>
-      <text class="nonterminal" x="159" y="65">Entry</text>
-   </a>
-   <rect x="151" y="3" width="24" height="32" rx="10"/>
-   <rect x="149"
+   <polygon points="9 17 1 13 1 21"/>
+   <polygon points="17 17 9 13 9 21"/>
+   <rect x="51" y="3" width="24" height="32" rx="10"/>
+   <rect x="49"
          y="1"
          width="24"
          height="32"
          class="terminal"
          rx="10"/>
-   <text class="terminal" x="159" y="21">,</text>
+   <text class="terminal" x="59" y="21">,</text>
    <a xmlns:xlink="http://www.w3.org/1999/xlink"
-      xlink:href="#WS"
-      xlink:title="WS">
-      <rect x="263" y="13" width="40" height="32"/>
-      <rect x="261" y="11" width="40" height="32" class="nonterminal"/>
-      <text class="nonterminal" x="271" y="31">WS</text>
+      xlink:href="#Newline"
+      xlink:title="Newline">
+      <rect x="71" y="69" width="68" height="32"/>
+      <rect x="69" y="67" width="68" height="32" class="nonterminal"/>
+      <text class="nonterminal" x="79" y="87">Newline</text>
    </a>
    <path class="line"
-         d="m17 61 h2 m20 0 h10 m0 0 h50 m-80 0 l20 0 m-1 0 q-9 0 -9 -10 l0 -14 q0 -10 10 -10 m60 34 l20 0 m-20 0 q10 0 10 -10 l0 -14 q0 -10 -10 -10 m-60 0 h10 m40 0 h10 m40 34 h10 m52 0 h10 m-92 0 l20 0 m-1 0 q-9 0 -9 -10 l0 -24 q0 -10 10 -10 m72 44 l20 0 m-20 0 q10 0 10 -10 l0 -24 q0 -10 -10 -10 m-72 0 h10 m24 0 h10 m0 0 h28 m40 44 h10 m0 0 h50 m-80 0 l20 0 m-1 0 q-9 0 -9 -10 l0 -14 q0 -10 10 -10 m60 34 l20 0 m-20 0 q10 0 10 -10 l0 -14 q0 -10 -10 -10 m-60 0 h10 m40 0 h10 m23 34 h-3"/>
-   <polygon points="341 61 349 57 349 65"/>
-   <polygon points="341 61 333 57 333 65"/>
+         d="m17 17 h2 m20 0 h10 m24 0 h10 m0 0 h84 m-148 0 h20 m128 0 h20 m-168 0 q10 0 10 10 m148 0 q0 -10 10 -10 m-158 10 v46 m148 0 v-46 m-148 46 q0 10 10 10 m128 0 q10 0 10 -10 m-118 10 h10 m68 0 h10 m-108 0 l20 0 m-1 0 q-9 0 -9 -10 l0 -12 q0 -10 10 -10 m88 32 l20 0 m-20 0 q10 0 10 -10 l0 -12 q0 -10 -10 -10 m-88 0 h10 m0 0 h78 m43 -34 h-3"/>
+   <polygon points="197 17 205 13 205 21"/>
+   <polygon points="197 17 189 13 189 21"/>
 </svg>

@@ -85,15 +85,11 @@ Sequence ::= '(' WS* ( Atom ( WS+ Atom )* )? WS* ')'
 Object   ::= '{' ObjectBody '}'
 
 ObjectBody
-         ::= NewlineSeparated
-           | CommaSeparated
-           | WS*
+         ::= WS* ( Entry ( Separator Entry )* )? WS*
 
-NewlineSeparated
-         ::= WS* Entry ( Newline+ Entry )* WS*
-
-CommaSeparated
-         ::= WS* Entry ( ',' Entry )* WS*
+Separator
+         ::= ','
+           | Newline+
 
 /* Attributes */
 

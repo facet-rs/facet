@@ -25,9 +25,8 @@ Entry    ::= DocComment? Atom+
 
 referenced by:
 
-* CommaSeparated
 * Document
-* NewlineSeparated
+* ObjectBody
 
 **DocComment:**
 
@@ -298,35 +297,21 @@ referenced by:
 
 ```
 ObjectBody
-         ::= NewlineSeparated
-           | CommaSeparated
-           | WS*
+         ::= WS* ( Entry ( Separator Entry )* )? WS*
 ```
 
 referenced by:
 
 * Object
 
-**NewlineSeparated:**
+**Separator:**
 
-![NewlineSeparated](/grammar/NewlineSeparated.svg)
-
-```
-NewlineSeparated
-         ::= WS* Entry ( Newline+ Entry )* WS*
-```
-
-referenced by:
-
-* ObjectBody
-
-**CommaSeparated:**
-
-![CommaSeparated](/grammar/CommaSeparated.svg)
+![Separator](/grammar/Separator.svg)
 
 ```
-CommaSeparated
-         ::= WS* Entry ( ',' Entry )* WS*
+Separator
+         ::= ','
+           | Newline+
 ```
 
 referenced by:
@@ -399,8 +384,6 @@ WS       ::= [#x20#x09#x0A#x0D]
 
 referenced by:
 
-* CommaSeparated
-* NewlineSeparated
 * ObjectBody
 * Sequence
 
@@ -417,7 +400,7 @@ referenced by:
 * DocComment
 * HeredocLine
 * HeredocScalar
-* NewlineSeparated
+* Separator
 
 **NonNewline:**
 
