@@ -46,7 +46,7 @@ fn enum_tuple_variant() {
     let mut partial = Partial::alloc::<Message>().unwrap();
 
     // Select Write variant (index 2) with Move (complete value)
-    let msg = String::from("hello");
+    let mut msg = String::from("hello");
     partial.apply(&[Op::set().at(2).imm(&mut msg)]).unwrap();
     std::mem::forget(msg);
 
@@ -121,7 +121,7 @@ fn nested_enum_in_struct() {
     let mut partial = Partial::alloc::<Event>().unwrap();
 
     // Set id
-    let id = 42u32;
+    let mut id = 42u32;
     partial.apply(&[Op::set().at(0).imm(&mut id)]).unwrap();
 
     // Build message field, select Move variant
@@ -175,7 +175,7 @@ fn drop_partially_initialized_enum() {
     let mut partial = Partial::alloc::<Message>().unwrap();
 
     // Select Write variant and set the string
-    let msg = String::from("will be dropped");
+    let mut msg = String::from("will be dropped");
     partial.apply(&[Op::set().at(2).imm(&mut msg)]).unwrap();
     std::mem::forget(msg);
 
@@ -229,7 +229,7 @@ fn enum_reselect_variant_with_wrong_type_fails() {
     let mut partial = Partial::alloc::<MaybeBox>().unwrap();
 
     // Set variant 1 (Boxed) with a Box<u32>
-    let boxed = Box::new(42u32);
+    let mut boxed = Box::new(42u32);
     partial.apply(&[Op::set().at(1).imm(&mut boxed)]).unwrap();
     std::mem::forget(boxed);
 

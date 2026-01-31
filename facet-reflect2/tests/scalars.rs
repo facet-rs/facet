@@ -1,4 +1,4 @@
-use facet_core::{Facet, PtrConst};
+use facet_core::{Facet, PtrMut};
 use facet_reflect2::{Imm, Op, Partial, ReflectErrorKind, Source};
 
 #[test]
@@ -61,7 +61,7 @@ fn set_with_raw_move() {
 
     let mut value = 123u64;
     // Use the unsafe Move::new constructor with raw pointer and shape
-    let mov = unsafe { Imm::new(PtrConst::new(&value), u64::SHAPE) };
+    let mov = unsafe { Imm::new(PtrMut::new(&mut value), u64::SHAPE) };
     partial
         .apply(&[Op::Set {
             dst: Default::default(),

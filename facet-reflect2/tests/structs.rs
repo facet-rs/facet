@@ -24,7 +24,7 @@ fn set_field_on_init_struct_then_error_no_double_free() {
     std::mem::forget(value); // We moved ownership
 
     // Step 2: Set field 0 with a new String - this should drop the old "first_a"
-    let new_a = String::from("second_a");
+    let mut new_a = String::from("second_a");
     partial.apply(&[Op::set().at(0).imm(&mut new_a)]).unwrap();
     std::mem::forget(new_a);
 
@@ -192,7 +192,7 @@ fn set_field_wrong_type_poisons_partial() {
     partial.apply(&[Op::set().at(0).imm(&mut x)]).unwrap();
 
     // Try to set field 1 with wrong type - should fail and poison the Partial
-    let wrong = String::from("oops");
+    let mut wrong = String::from("oops");
     let err = partial
         .apply(&[Op::set().at(1).imm(&mut wrong)])
         .unwrap_err();
@@ -275,7 +275,7 @@ fn build_nested_struct() {
     partial.apply(&[Op::end()]).unwrap();
 
     // Set the outer extra field
-    let extra = 99i32;
+    let mut extra = 99i32;
     partial.apply(&[Op::set().at(1).imm(&mut extra)]).unwrap();
 
     let result: Outer = partial.build().unwrap();

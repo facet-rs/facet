@@ -80,8 +80,8 @@ fn build_map_with_struct_values() {
     let mut partial = Partial::alloc::<HashMap<String, Server>>().unwrap();
 
     let mut key = String::from("primary");
-    let host = String::from("localhost");
-    let port = 8080u16;
+    let mut host = String::from("localhost");
+    let mut port = 8080u16;
 
     partial
         .apply(&[
@@ -113,10 +113,10 @@ fn build_map_with_multiple_struct_values() {
 
     let mut key1 = String::from("primary");
     let mut key2 = String::from("secondary");
-    let host1 = String::from("host1.example.com");
-    let host2 = String::from("host2.example.com");
-    let port1 = 8080u16;
-    let port2 = 9090u16;
+    let mut host1 = String::from("host1.example.com");
+    let mut host2 = String::from("host2.example.com");
+    let mut port1 = 8080u16;
+    let mut port2 = 9090u16;
 
     partial
         .apply(&[
@@ -170,9 +170,9 @@ struct Config {
 fn build_struct_with_map_field() {
     let mut partial = Partial::alloc::<Config>().unwrap();
 
-    let name = String::from("my-app");
-    let env_key = String::from("PATH");
-    let env_value = String::from("/usr/bin");
+    let mut name = String::from("my-app");
+    let mut env_key = String::from("PATH");
+    let mut env_value = String::from("/usr/bin");
 
     partial
         .apply(&[
@@ -198,7 +198,7 @@ fn build_struct_with_map_field() {
 fn build_struct_with_empty_map_field() {
     let mut partial = Partial::alloc::<Config>().unwrap();
 
-    let name = String::from("empty-config");
+    let mut name = String::from("empty-config");
 
     partial
         .apply(&[
@@ -355,7 +355,7 @@ fn drop_partial_map_mid_value_build() {
     let mut partial = Partial::alloc::<HashMap<String, Server>>().unwrap();
 
     let mut key = String::from("server");
-    let host = String::from("localhost");
+    let mut host = String::from("localhost");
 
     let result = partial.apply(&[
         Op::set().build(),

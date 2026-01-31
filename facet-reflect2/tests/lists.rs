@@ -58,8 +58,8 @@ fn build_vec_with_default_elements() {
 fn build_vec_of_strings() {
     let mut partial = Partial::alloc::<Vec<String>>().unwrap();
 
-    let hello = String::from("hello");
-    let world = String::from("world");
+    let mut hello = String::from("hello");
+    let mut world = String::from("world");
 
     partial
         .apply(&[
@@ -151,9 +151,9 @@ struct Config {
 fn build_struct_with_vec_field() {
     let mut partial = Partial::alloc::<Config>().unwrap();
 
-    let name = String::from("my-config");
-    let server1 = String::from("server1.example.com");
-    let server2 = String::from("server2.example.com");
+    let mut name = String::from("my-config");
+    let mut server1 = String::from("server1.example.com");
+    let mut server2 = String::from("server2.example.com");
 
     partial
         .apply(&[
@@ -187,7 +187,7 @@ fn build_struct_with_vec_field() {
 fn build_struct_with_empty_vec_field() {
     let mut partial = Partial::alloc::<Config>().unwrap();
 
-    let name = String::from("empty-config");
+    let mut name = String::from("empty-config");
 
     partial
         .apply(&[
@@ -224,11 +224,11 @@ struct Person {
 fn build_struct_with_vec_of_structs() {
     let mut partial = Partial::alloc::<Team>().unwrap();
 
-    let team_name = String::from("Engineering");
-    let alice = String::from("Alice");
-    let bob = String::from("Bob");
-    let age1 = 30u32;
-    let age2 = 25u32;
+    let mut team_name = String::from("Engineering");
+    let mut alice = String::from("Alice");
+    let mut bob = String::from("Bob");
+    let mut age1 = 30u32;
+    let mut age2 = 25u32;
 
     partial
         .apply(&[
@@ -339,15 +339,16 @@ fn build_vec_of_vecs_empty_inner() {
 fn build_vec_of_options_with_imm() {
     let mut partial = Partial::alloc::<Vec<Option<u32>>>().unwrap();
 
-    let some_val = Some(42u32);
-    let none_val: Option<u32> = None;
+    let mut some_val1 = Some(42u32);
+    let mut none_val: Option<u32> = None;
+    let mut some_val2 = Some(42u32);
 
     partial
         .apply(&[
             Op::set().build(),
-            Op::push().imm(&mut some_val),
+            Op::push().imm(&mut some_val1),
             Op::push().imm(&mut none_val),
-            Op::push().imm(&mut some_val),
+            Op::push().imm(&mut some_val2),
         ])
         .unwrap();
 
@@ -371,8 +372,8 @@ enum Status {
 fn build_vec_of_enums_with_imm() {
     let mut partial = Partial::alloc::<Vec<Status>>().unwrap();
 
-    let active = Status::Active;
-    let pending = Status::Pending(5);
+    let mut active = Status::Active;
+    let mut pending = Status::Pending(5);
 
     partial
         .apply(&[
@@ -390,7 +391,7 @@ fn build_vec_of_enums_with_imm() {
 fn build_vec_of_enums_with_build() {
     let mut partial = Partial::alloc::<Vec<Status>>().unwrap();
 
-    let count = 10u32;
+    let mut count = 10u32;
 
     partial
         .apply(&[
@@ -420,8 +421,8 @@ fn drop_partial_vec_mid_construction() {
     // Start building a Vec<String>, push some elements, then drop without finishing
     let mut partial = Partial::alloc::<Vec<String>>().unwrap();
 
-    let hello = String::from("hello");
-    let world = String::from("world");
+    let mut hello = String::from("hello");
+    let mut world = String::from("world");
 
     partial
         .apply(&[
