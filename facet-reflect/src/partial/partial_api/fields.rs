@@ -179,6 +179,13 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         let next_frame = match shape.ty {
             Type::User(user_type) => match user_type {
                 UserType::Struct(struct_type) => {
+                    // Check bounds first before looking up the type plan node
+                    if idx >= struct_type.fields.len() {
+                        return Err(self.err(ReflectErrorKind::OperationFailed {
+                            shape,
+                            operation: "field index out of bounds",
+                        }));
+                    }
                     // Compute child NodeId before mutable borrow
                     let child_plan_id = self
                         .root_plan
