@@ -4,7 +4,7 @@ use arbitrary::Arbitrary;
 use facet::Facet;
 use facet_core::{PtrMut, Shape};
 use facet_reflect2::{Build, Imm, Op, OpBatch, Partial, Path, Source};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 // ============================================================================
 // Compound types for fuzzing (these need Facet derive)
@@ -33,6 +33,46 @@ pub struct WithOption {
 pub struct WithVec {
     items: Vec<Box<u32>>,
     label: String,
+}
+
+#[derive(Clone, Debug, Facet, Arbitrary)]
+pub struct WithResult {
+    id: u32,
+    outcome: Result<String, i32>,
+}
+
+#[derive(Clone, Debug, Facet, Arbitrary)]
+pub struct WithNestedOption {
+    outer: Option<Option<u32>>,
+    name: String,
+}
+
+#[derive(Clone, Debug, Facet, Arbitrary)]
+pub struct WithNestedResult {
+    inner: Result<Result<u32, String>, i32>,
+}
+
+#[derive(Clone, Debug, Facet, Arbitrary)]
+pub struct WithOptionVec {
+    items: Option<Vec<u32>>,
+    count: u32,
+}
+
+#[derive(Clone, Debug, Facet, Arbitrary)]
+pub struct WithResultVec {
+    data: Result<Vec<u32>, String>,
+}
+
+#[derive(Clone, Debug, Facet, Arbitrary)]
+pub struct WithSets {
+    hash_set: HashSet<u32>,
+    btree_set: BTreeSet<String>,
+}
+
+#[derive(Clone, Debug, Facet, Arbitrary)]
+pub struct WithArrays {
+    small: [u32; 3],
+    medium: [u8; 8],
 }
 
 // ============================================================================
@@ -298,10 +338,42 @@ fuzz_types! {
         Nested => Nested,
         WithOption => WithOption,
         WithVec => WithVec,
+        WithResult => WithResult,
+        WithNestedOption => WithNestedOption,
+        WithNestedResult => WithNestedResult,
+        WithOptionVec => WithOptionVec,
+        WithResultVec => WithResultVec,
+        WithSets => WithSets,
+        WithArrays => WithArrays,
 
-        // Option
+        // Option (basic)
         OptionU32 => Option<u32>,
         OptionString => Option<String>,
+        OptionBool => Option<bool>,
+        OptionPoint => Option<Point>,
+        OptionVecU32 => Option<Vec<u32>>,
+        OptionBoxU32 => Option<Box<u32>>,
+
+        // Option (nested)
+        OptionOptionU32 => Option<Option<u32>>,
+        OptionOptionString => Option<Option<String>>,
+
+        // Result (basic)
+        ResultU32String => Result<u32, String>,
+        ResultStringI32 => Result<String, i32>,
+        ResultPointString => Result<Point, String>,
+        ResultVecU32String => Result<Vec<u32>, String>,
+        ResultBoxU32I32 => Result<Box<u32>, i32>,
+
+        // Result (nested)
+        ResultResultU32StringI32 => Result<Result<u32, String>, i32>,
+        ResultU32ResultStringI32 => Result<u32, Result<String, i32>>,
+
+        // Option containing Result
+        OptionResultU32String => Option<Result<u32, String>>,
+
+        // Result containing Option
+        ResultOptionU32String => Result<Option<u32>, String>,
 
         // Vec
         VecU8 => Vec<u8>,
@@ -309,6 +381,28 @@ fuzz_types! {
         VecString => Vec<String>,
         VecPoint => Vec<Point>,
         VecVecU32 => Vec<Vec<u32>>,
+        VecOptionU32 => Vec<Option<u32>>,
+        VecOptionString => Vec<Option<String>>,
+        VecResultU32String => Vec<Result<u32, String>>,
+
+        // HashSet
+        HashSetU32 => HashSet<u32>,
+        HashSetString => HashSet<String>,
+        HashSetI32 => HashSet<i32>,
+
+        // BTreeSet
+        BTreeSetU32 => BTreeSet<u32>,
+        BTreeSetString => BTreeSet<String>,
+        BTreeSetI32 => BTreeSet<i32>,
+
+        // Arrays
+        ArrayU32x3 => [u32; 3],
+        ArrayU8x8 => [u8; 8],
+        ArrayI32x4 => [i32; 4],
+        ArrayBoolx5 => [bool; 5],
+        ArrayStringx2 => [String; 2],
+        ArrayPointx2 => [Point; 2],
+        ArrayOptionU32x3 => [Option<u32>; 3],
 
         // Box
         BoxU32 => Box<u32>,
@@ -368,6 +462,14 @@ fuzz_types! {
         HashMapStringPoint => HashMap<String, Point>,
         HashMapStringVecU32 => HashMap<String, Vec<u32>>,
         HashMapStringBoxU32 => HashMap<String, Box<u32>>,
+        HashMapStringOptionU32 => HashMap<String, Option<u32>>,
+        HashMapStringResultU32String => HashMap<String, Result<u32, String>>,
+
+        // BTreeMaps
+        BTreeMapStringU32 => BTreeMap<String, u32>,
+        BTreeMapStringString => BTreeMap<String, String>,
+        BTreeMapI32String => BTreeMap<i32, String>,
+        BTreeMapStringPoint => BTreeMap<String, Point>,
     }
     targets_only {
         // Mutex (no Clone/Arbitrary)
