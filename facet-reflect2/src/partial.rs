@@ -66,23 +66,26 @@ impl<'facet> Partial<'facet> {
         };
 
         // Create frame with OWNS_ALLOC flag
-        // Use appropriate constructor based on type
-        let mut frame = match shape.ty {
-            Type::User(UserType::Struct(ref s)) => Frame::new_struct(data, shape, s.fields.len()),
-            Type::User(UserType::Enum(_)) => Frame::new_enum(data, shape),
-            Type::Sequence(SequenceType::Array(ref a)) => {
-                // Arrays are like structs with N indexed elements
-                Frame::new_struct(data, shape, a.n)
+        // Check Def first because Option/Result have Def::Option/Result
+        // but are also UserType::Enum at the ty level
+        let mut frame = match &shape.def {
+            Def::Option(_) => Frame::new_option(data, shape),
+            Def::Result(_) => Frame::new_result(data, shape),
+            Def::List(_) => {
+                // Lists start uninitialized - Build will initialize them
+                Frame::new(data, shape)
             }
-            _ => {
-                // Check for list type
-                if let Def::List(_) = &shape.def {
-                    // Lists start uninitialized - Build will initialize them
-                    Frame::new(data, shape)
-                } else {
-                    Frame::new(data, shape)
+            _ => match shape.ty {
+                Type::User(UserType::Struct(ref s)) => {
+                    Frame::new_struct(data, shape, s.fields.len())
                 }
-            }
+                Type::User(UserType::Enum(_)) => Frame::new_enum(data, shape),
+                Type::Sequence(SequenceType::Array(ref a)) => {
+                    // Arrays are like structs with N indexed elements
+                    Frame::new_struct(data, shape, a.n)
+                }
+                _ => Frame::new(data, shape),
+            },
         };
         frame.flags |= FrameFlags::OWNS_ALLOC;
 
@@ -222,8 +225,21 @@ impl<'facet> Partial<'facet> {
                         && matches!(frame.kind, FrameKind::Enum(_))
                         && matches!(frame.shape.ty, Type::User(UserType::Enum(_)));
 
+                    // Check if current frame is an Option/Result frame with variant selection
+                    let is_option_variant_selection = !path.is_empty()
+                        && matches!(frame.kind, FrameKind::Option(_))
+                        && matches!(frame.shape.def, Def::Option(_));
+
+                    let is_result_variant_selection = !path.is_empty()
+                        && matches!(frame.kind, FrameKind::Result(_))
+                        && matches!(frame.shape.def, Def::Result(_));
+
                     if is_enum_variant_selection {
                         self.apply_enum_variant_set(path, source)?;
+                    } else if is_option_variant_selection {
+                        self.apply_option_variant_set(path, source)?;
+                    } else if is_result_variant_selection {
+                        self.apply_result_variant_set(path, source)?;
                     } else {
                         self.apply_regular_set(path, source)?;
                     }
@@ -261,12 +277,14 @@ impl<'facet> Partial<'facet> {
             return Err(self.error(ReflectErrorKind::EndWithIncomplete));
         }
 
-        // Check if parent is a pointer, list, map, or set frame - special finalization needed
+        // Check if parent is a pointer, list, map, set, option, or result frame - special finalization needed
         let parent = self.arena.get(parent_idx);
         let is_pointer_parent = matches!(parent.kind, FrameKind::Pointer(_));
         let is_list_parent = matches!(parent.kind, FrameKind::List(_));
         let is_map_parent = matches!(parent.kind, FrameKind::Map(_));
         let is_set_parent = matches!(parent.kind, FrameKind::Set(_));
+        let is_option_parent = matches!(parent.kind, FrameKind::Option(_));
+        let is_result_parent = matches!(parent.kind, FrameKind::Result(_));
 
         // Check if current frame has a pending key (value frame for map insert)
         let frame = self.arena.get(self.current);
@@ -457,8 +475,100 @@ impl<'facet> Partial<'facet> {
 
             // Pop back to parent
             self.current = parent_idx;
+        } else if is_option_parent {
+            // Get Option def and init_some function from parent's shape
+            let parent = self.arena.get(parent_idx);
+            let Def::Option(option_def) = &parent.shape.def else {
+                return Err(self.error_at(parent_idx, ReflectErrorKind::NotAnOption));
+            };
+            let init_some_fn = option_def.vtable.init_some;
+
+            // Get the inner value data pointer (our current frame's data, now initialized)
+            let frame = self.arena.get(self.current);
+            let inner_ptr = unsafe { frame.data.assume_init() };
+
+            // Get the parent's data pointer (where the Option will be written)
+            let parent = self.arena.get(parent_idx);
+            let option_dest = parent.data;
+
+            // Call init_some to create Some(inner_value)
+            // SAFETY: inner_ptr points to initialized data, option_dest points to Option memory
+            unsafe {
+                init_some_fn(option_dest, inner_ptr);
+            }
+
+            // The value has been moved into the Option. Now deallocate our temp memory.
+            let frame = self.arena.get_mut(self.current);
+            // Don't drop the value - it was moved out by init_some_fn
+            frame.flags.remove(FrameFlags::INIT);
+            // Deallocate our staging memory
+            let freed_frame = self.arena.free(self.current);
+            freed_frame.dealloc_if_owned();
+
+            // Mark parent as initialized and complete
+            let parent = self.arena.get_mut(parent_idx);
+            parent.flags |= FrameFlags::INIT;
+            if let FrameKind::Option(ref mut o) = parent.kind {
+                o.inner = Idx::COMPLETE;
+            }
+
+            // Pop back to parent
+            self.current = parent_idx;
+        } else if is_result_parent {
+            // Get Result def from parent's shape
+            let parent = self.arena.get(parent_idx);
+            let Def::Result(result_def) = &parent.shape.def else {
+                return Err(self.error_at(parent_idx, ReflectErrorKind::NotAResult));
+            };
+
+            // Get the selected variant (Ok=0, Err=1) from parent's ResultFrame
+            let FrameKind::Result(ref result_frame) = parent.kind else {
+                return Err(self.error_at(parent_idx, ReflectErrorKind::NotAResult));
+            };
+            let variant_idx = result_frame
+                .selected
+                .ok_or_else(|| self.error_at(parent_idx, ReflectErrorKind::NotAResult))?;
+
+            // Get the appropriate init function based on variant
+            let init_fn = if variant_idx == 0 {
+                result_def.vtable.init_ok
+            } else {
+                result_def.vtable.init_err
+            };
+
+            // Get the inner value data pointer (our current frame's data, now initialized)
+            let frame = self.arena.get(self.current);
+            let inner_ptr = unsafe { frame.data.assume_init() };
+
+            // Get the parent's data pointer (where the Result will be written)
+            let parent = self.arena.get(parent_idx);
+            let result_dest = parent.data;
+
+            // Call init_ok/init_err to create Ok(value) or Err(value)
+            // SAFETY: inner_ptr points to initialized data, result_dest points to Result memory
+            unsafe {
+                init_fn(result_dest, inner_ptr);
+            }
+
+            // The value has been moved into the Result. Now deallocate our temp memory.
+            let frame = self.arena.get_mut(self.current);
+            // Don't drop the value - it was moved out by init_fn
+            frame.flags.remove(FrameFlags::INIT);
+            // Deallocate our staging memory
+            let freed_frame = self.arena.free(self.current);
+            freed_frame.dealloc_if_owned();
+
+            // Mark parent as initialized and complete
+            let parent = self.arena.get_mut(parent_idx);
+            parent.flags |= FrameFlags::INIT;
+            if let FrameKind::Result(ref mut r) = parent.kind {
+                r.inner = Idx::COMPLETE;
+            }
+
+            // Pop back to parent
+            self.current = parent_idx;
         } else {
-            // Normal (non-pointer) End handling
+            // Normal (non-special) End handling
             // Free the current frame (memory stays - it's part of parent's allocation)
             let _ = self.arena.free(self.current);
 
@@ -493,6 +603,10 @@ impl<'facet> Partial<'facet> {
                 FrameKind::Set(_) => {
                     // Set elements are inserted directly via the set insert path
                     // This shouldn't happen with current implementation
+                    return Err(self.error_at(parent_idx, ReflectErrorKind::NotIndexedChildren));
+                }
+                FrameKind::Option(_) | FrameKind::Result(_) => {
+                    // Option/Result should have been handled above
                     return Err(self.error_at(parent_idx, ReflectErrorKind::NotIndexedChildren));
                 }
                 FrameKind::Scalar => {
@@ -681,15 +795,20 @@ impl<'facet> Partial<'facet> {
                         };
 
                         // Create the appropriate frame type for the pointee
-                        // If the pointee is a struct, use struct tracking; if enum, use enum tracking
-                        let mut new_frame = match pointee_shape.ty {
-                            Type::User(UserType::Struct(ref s)) => {
-                                Frame::new_struct(pointee_data, pointee_shape, s.fields.len())
-                            }
-                            Type::User(UserType::Enum(_)) => {
-                                Frame::new_enum(pointee_data, pointee_shape)
-                            }
-                            _ => Frame::new_pointer(pointee_data, pointee_shape),
+                        // Check Def first because Option/Result have Def::Option/Result
+                        // but are also UserType::Enum at the ty level
+                        let mut new_frame = match &pointee_shape.def {
+                            Def::Option(_) => Frame::new_option(pointee_data, pointee_shape),
+                            Def::Result(_) => Frame::new_result(pointee_data, pointee_shape),
+                            _ => match pointee_shape.ty {
+                                Type::User(UserType::Struct(ref s)) => {
+                                    Frame::new_struct(pointee_data, pointee_shape, s.fields.len())
+                                }
+                                Type::User(UserType::Enum(_)) => {
+                                    Frame::new_enum(pointee_data, pointee_shape)
+                                }
+                                _ => Frame::new_pointer(pointee_data, pointee_shape),
+                            },
                         };
                         // For pointer frames, parent is current and index is 0 (the pointee)
                         new_frame.parent = Some((self.current, 0));
@@ -779,6 +898,20 @@ impl<'facet> Partial<'facet> {
                     let mut new_frame = Frame::new_set(target.data, target.shape, set_ptr);
                     new_frame.parent = Some((self.current, field_idx));
                     new_frame.flags |= FrameFlags::INIT; // Set is initialized (empty but valid)
+
+                    let new_idx = self.arena.alloc(new_frame);
+                    self.current = new_idx;
+                } else if let Def::Option(_) = &target.shape.def {
+                    // Create Option frame
+                    let mut new_frame = Frame::new_option(target.data, target.shape);
+                    new_frame.parent = Some((self.current, field_idx));
+
+                    let new_idx = self.arena.alloc(new_frame);
+                    self.current = new_idx;
+                } else if let Def::Result(_) = &target.shape.def {
+                    // Create Result frame
+                    let mut new_frame = Frame::new_result(target.data, target.shape);
+                    new_frame.parent = Some((self.current, field_idx));
 
                     let new_idx = self.arena.alloc(new_frame);
                     self.current = new_idx;
@@ -965,6 +1098,329 @@ impl<'facet> Partial<'facet> {
         Ok(())
     }
 
+    /// Apply a Set operation for Option variant selection.
+    fn apply_option_variant_set(
+        &mut self,
+        path: &Path,
+        source: &Source<'_>,
+    ) -> Result<(), ReflectError> {
+        let indices = path.as_slice();
+        if indices.len() != 1 {
+            return Err(self.error(ReflectErrorKind::MultiLevelPathNotSupported {
+                depth: indices.len(),
+            }));
+        }
+        let variant_idx = indices[0];
+
+        // Validate variant index: 0 = None, 1 = Some
+        if variant_idx > 1 {
+            return Err(
+                self.error(ReflectErrorKind::OptionVariantOutOfBounds { index: variant_idx })
+            );
+        }
+
+        // Get Option def
+        let frame = self.arena.get(self.current);
+        let Def::Option(_option_def) = &frame.shape.def else {
+            return Err(self.error(ReflectErrorKind::NotAnOption));
+        };
+
+        // Drop any existing value before switching variants
+        let frame = self.arena.get_mut(self.current);
+        if frame.flags.contains(FrameFlags::INIT) {
+            frame.uninit();
+        } else if let FrameKind::Option(o) = &mut frame.kind {
+            // If we had previously selected Some and the inner was complete,
+            // we need to drop it. But since Option doesn't expose variant fields
+            // like enums do, we rely on the vtable. For now, if the Option frame
+            // was never fully initialized (INIT flag), the inner value was never
+            // written via the vtable, so nothing to drop.
+            o.selected = None;
+            o.inner = Idx::NOT_STARTED;
+        }
+
+        // Re-get frame and option_def
+        let frame = self.arena.get(self.current);
+        let Def::Option(option_def) = &frame.shape.def else {
+            return Err(self.error(ReflectErrorKind::NotAnOption));
+        };
+        let inner_shape = option_def.t;
+
+        match variant_idx {
+            0 => {
+                // None variant - initialize immediately
+                let init_none_fn = option_def.vtable.init_none;
+                // SAFETY: frame.data points to uninitialized Option memory
+                unsafe {
+                    init_none_fn(frame.data);
+                }
+
+                // Mark as initialized
+                let frame = self.arena.get_mut(self.current);
+                frame.flags |= FrameFlags::INIT;
+                if let FrameKind::Option(o) = &mut frame.kind {
+                    o.selected = Some(0);
+                    o.inner = Idx::COMPLETE;
+                }
+            }
+            1 => {
+                // Some variant - depends on source
+                match source {
+                    Source::Default => {
+                        // Initialize inner with default, then wrap in Some
+                        // SAFETY: we'll write through the vtable
+                        let ok = unsafe { inner_shape.call_default_in_place(frame.data) };
+                        if ok.is_none() {
+                            return Err(
+                                self.error(ReflectErrorKind::NoDefault { shape: inner_shape })
+                            );
+                        }
+                        // The default was written to frame.data, now wrap it in Some
+                        let init_some_fn = option_def.vtable.init_some;
+                        // SAFETY: inner value is at frame.data, init_some moves it
+                        unsafe {
+                            init_some_fn(frame.data, frame.data.assume_init());
+                        }
+
+                        let frame = self.arena.get_mut(self.current);
+                        frame.flags |= FrameFlags::INIT;
+                        if let FrameKind::Option(o) = &mut frame.kind {
+                            o.selected = Some(1);
+                            o.inner = Idx::COMPLETE;
+                        }
+                    }
+                    Source::Imm(mov) => {
+                        // Verify shape matches inner type
+                        if !inner_shape.is_shape(mov.shape()) {
+                            return Err(self.error(ReflectErrorKind::ShapeMismatch {
+                                expected: inner_shape,
+                                actual: mov.shape(),
+                            }));
+                        }
+
+                        // Initialize as Some with the moved value
+                        let init_some_fn = option_def.vtable.init_some;
+                        // SAFETY: mov.ptr_mut() points to initialized value of inner type
+                        unsafe {
+                            init_some_fn(frame.data, mov.ptr_mut());
+                        }
+
+                        let frame = self.arena.get_mut(self.current);
+                        frame.flags |= FrameFlags::INIT;
+                        if let FrameKind::Option(o) = &mut frame.kind {
+                            o.selected = Some(1);
+                            o.inner = Idx::COMPLETE;
+                        }
+                    }
+                    Source::Build(_build) => {
+                        // Allocate temporary space for the inner value
+                        let layout = inner_shape.layout.sized_layout().map_err(|_| {
+                            self.error(ReflectErrorKind::Unsized { shape: inner_shape })
+                        })?;
+
+                        let temp_ptr = if layout.size() == 0 {
+                            PtrUninit::new(std::ptr::NonNull::<u8>::dangling().as_ptr())
+                        } else {
+                            let ptr = unsafe { std::alloc::alloc(layout) };
+                            if ptr.is_null() {
+                                return Err(self.error(ReflectErrorKind::AllocFailed { layout }));
+                            }
+                            PtrUninit::new(ptr)
+                        };
+
+                        // Create appropriate frame based on inner shape
+                        // Check Def first because Option/Result have Def::Option/Result
+                        // but are also UserType::Enum at the ty level
+                        let mut inner_frame = match &inner_shape.def {
+                            Def::Option(_) => Frame::new_option(temp_ptr, inner_shape),
+                            Def::Result(_) => Frame::new_result(temp_ptr, inner_shape),
+                            _ => match inner_shape.ty {
+                                Type::User(UserType::Struct(ref s)) => {
+                                    Frame::new_struct(temp_ptr, inner_shape, s.fields.len())
+                                }
+                                Type::User(UserType::Enum(_)) => {
+                                    Frame::new_enum(temp_ptr, inner_shape)
+                                }
+                                _ => Frame::new(temp_ptr, inner_shape),
+                            },
+                        };
+                        inner_frame.flags |= FrameFlags::OWNS_ALLOC;
+                        inner_frame.parent = Some((self.current, variant_idx));
+
+                        let inner_idx = self.arena.alloc(inner_frame);
+
+                        // Record in Option frame
+                        let frame = self.arena.get_mut(self.current);
+                        if let FrameKind::Option(o) = &mut frame.kind {
+                            o.selected = Some(1);
+                            o.inner = inner_idx;
+                        }
+
+                        self.current = inner_idx;
+                    }
+                }
+            }
+            _ => unreachable!(),
+        }
+        Ok(())
+    }
+
+    /// Apply a Set operation for Result variant selection.
+    fn apply_result_variant_set(
+        &mut self,
+        path: &Path,
+        source: &Source<'_>,
+    ) -> Result<(), ReflectError> {
+        let indices = path.as_slice();
+        if indices.len() != 1 {
+            return Err(self.error(ReflectErrorKind::MultiLevelPathNotSupported {
+                depth: indices.len(),
+            }));
+        }
+        let variant_idx = indices[0];
+
+        // Validate variant index: 0 = Ok, 1 = Err
+        if variant_idx > 1 {
+            return Err(
+                self.error(ReflectErrorKind::ResultVariantOutOfBounds { index: variant_idx })
+            );
+        }
+
+        // Get Result def
+        let frame = self.arena.get(self.current);
+        let Def::Result(_result_def) = &frame.shape.def else {
+            return Err(self.error(ReflectErrorKind::NotAResult));
+        };
+
+        // Drop any existing value before switching variants
+        let frame = self.arena.get_mut(self.current);
+        if frame.flags.contains(FrameFlags::INIT) {
+            frame.uninit();
+        } else if let FrameKind::Result(r) = &mut frame.kind {
+            r.selected = None;
+            r.inner = Idx::NOT_STARTED;
+        }
+
+        // Re-get frame and result_def
+        let frame = self.arena.get(self.current);
+        let Def::Result(result_def) = &frame.shape.def else {
+            return Err(self.error(ReflectErrorKind::NotAResult));
+        };
+
+        // Get the inner shape based on variant
+        let inner_shape = if variant_idx == 0 {
+            result_def.t // Ok type
+        } else {
+            result_def.e // Err type
+        };
+
+        match source {
+            Source::Default => {
+                // Initialize inner with default, then wrap
+                // SAFETY: we'll write through the vtable
+                let ok = unsafe { inner_shape.call_default_in_place(frame.data) };
+                if ok.is_none() {
+                    return Err(self.error(ReflectErrorKind::NoDefault { shape: inner_shape }));
+                }
+
+                // Wrap in Ok or Err
+                if variant_idx == 0 {
+                    let init_ok_fn = result_def.vtable.init_ok;
+                    unsafe {
+                        init_ok_fn(frame.data, frame.data.assume_init());
+                    }
+                } else {
+                    let init_err_fn = result_def.vtable.init_err;
+                    unsafe {
+                        init_err_fn(frame.data, frame.data.assume_init());
+                    }
+                }
+
+                let frame = self.arena.get_mut(self.current);
+                frame.flags |= FrameFlags::INIT;
+                if let FrameKind::Result(r) = &mut frame.kind {
+                    r.selected = Some(variant_idx);
+                    r.inner = Idx::COMPLETE;
+                }
+            }
+            Source::Imm(mov) => {
+                // Verify shape matches inner type
+                if !inner_shape.is_shape(mov.shape()) {
+                    return Err(self.error(ReflectErrorKind::ShapeMismatch {
+                        expected: inner_shape,
+                        actual: mov.shape(),
+                    }));
+                }
+
+                // Initialize as Ok or Err with the moved value
+                if variant_idx == 0 {
+                    let init_ok_fn = result_def.vtable.init_ok;
+                    unsafe {
+                        init_ok_fn(frame.data, mov.ptr_mut());
+                    }
+                } else {
+                    let init_err_fn = result_def.vtable.init_err;
+                    unsafe {
+                        init_err_fn(frame.data, mov.ptr_mut());
+                    }
+                }
+
+                let frame = self.arena.get_mut(self.current);
+                frame.flags |= FrameFlags::INIT;
+                if let FrameKind::Result(r) = &mut frame.kind {
+                    r.selected = Some(variant_idx);
+                    r.inner = Idx::COMPLETE;
+                }
+            }
+            Source::Build(_build) => {
+                // Allocate temporary space for the inner value
+                let layout = inner_shape
+                    .layout
+                    .sized_layout()
+                    .map_err(|_| self.error(ReflectErrorKind::Unsized { shape: inner_shape }))?;
+
+                let temp_ptr = if layout.size() == 0 {
+                    PtrUninit::new(std::ptr::NonNull::<u8>::dangling().as_ptr())
+                } else {
+                    let ptr = unsafe { std::alloc::alloc(layout) };
+                    if ptr.is_null() {
+                        return Err(self.error(ReflectErrorKind::AllocFailed { layout }));
+                    }
+                    PtrUninit::new(ptr)
+                };
+
+                // Create appropriate frame based on inner shape
+                // Check Def first because Option/Result have Def::Option/Result
+                // but are also UserType::Enum at the ty level
+                let mut inner_frame = match &inner_shape.def {
+                    Def::Option(_) => Frame::new_option(temp_ptr, inner_shape),
+                    Def::Result(_) => Frame::new_result(temp_ptr, inner_shape),
+                    _ => match inner_shape.ty {
+                        Type::User(UserType::Struct(ref s)) => {
+                            Frame::new_struct(temp_ptr, inner_shape, s.fields.len())
+                        }
+                        Type::User(UserType::Enum(_)) => Frame::new_enum(temp_ptr, inner_shape),
+                        _ => Frame::new(temp_ptr, inner_shape),
+                    },
+                };
+                inner_frame.flags |= FrameFlags::OWNS_ALLOC;
+                inner_frame.parent = Some((self.current, variant_idx));
+
+                let inner_idx = self.arena.alloc(inner_frame);
+
+                // Record in Result frame
+                let frame = self.arena.get_mut(self.current);
+                if let FrameKind::Result(r) = &mut frame.kind {
+                    r.selected = Some(variant_idx);
+                    r.inner = inner_idx;
+                }
+
+                self.current = inner_idx;
+            }
+        }
+        Ok(())
+    }
+
     /// Apply a Push operation to add an element to the current list or set.
     fn apply_push(&mut self, source: &Source<'_>) -> Result<(), ReflectError> {
         // Verify we're in a list or set frame
@@ -1068,30 +1524,35 @@ impl<'facet> Partial<'facet> {
                 };
 
                 // Create appropriate frame based on element shape
-                let mut element_frame = if let Def::List(inner_list_def) = &element_shape.def {
-                    // Element is itself a list - initialize it
-                    let init_fn =
-                        inner_list_def
-                            .init_in_place_with_capacity()
-                            .ok_or_else(|| {
-                                self.error(ReflectErrorKind::ListDoesNotSupportOp {
-                                    shape: element_shape,
-                                })
-                            })?;
-                    let capacity = build.len_hint.unwrap_or(0);
-                    // SAFETY: temp_ptr points to uninitialized memory of the correct layout
-                    let inner_list_ptr = unsafe { init_fn(temp_ptr, capacity) };
-                    let mut frame = Frame::new_list(temp_ptr, element_shape, inner_list_ptr);
-                    frame.flags |= FrameFlags::INIT; // List is initialized (empty but valid)
-                    frame
-                } else {
-                    match element_shape.ty {
+                // Check Def first because Option/Result have Def::Option/Result
+                // but are also UserType::Enum at the ty level
+                let mut element_frame = match &element_shape.def {
+                    Def::List(inner_list_def) => {
+                        // Element is itself a list - initialize it
+                        let init_fn =
+                            inner_list_def
+                                .init_in_place_with_capacity()
+                                .ok_or_else(|| {
+                                    self.error(ReflectErrorKind::ListDoesNotSupportOp {
+                                        shape: element_shape,
+                                    })
+                                })?;
+                        let capacity = build.len_hint.unwrap_or(0);
+                        // SAFETY: temp_ptr points to uninitialized memory of the correct layout
+                        let inner_list_ptr = unsafe { init_fn(temp_ptr, capacity) };
+                        let mut frame = Frame::new_list(temp_ptr, element_shape, inner_list_ptr);
+                        frame.flags |= FrameFlags::INIT; // List is initialized (empty but valid)
+                        frame
+                    }
+                    Def::Option(_) => Frame::new_option(temp_ptr, element_shape),
+                    Def::Result(_) => Frame::new_result(temp_ptr, element_shape),
+                    _ => match element_shape.ty {
                         Type::User(UserType::Struct(ref s)) => {
                             Frame::new_struct(temp_ptr, element_shape, s.fields.len())
                         }
                         Type::User(UserType::Enum(_)) => Frame::new_enum(temp_ptr, element_shape),
                         _ => Frame::new(temp_ptr, element_shape),
-                    }
+                    },
                 };
 
                 // Mark that this frame owns its allocation (for cleanup on End)
@@ -1251,37 +1712,43 @@ impl<'facet> Partial<'facet> {
                 let value_ptr = value_alloc.ptr();
 
                 // Create appropriate frame based on value shape
-                let mut value_frame = if let Def::List(inner_list_def) = &value_shape.def {
-                    // Value is a list - initialize it
-                    let init_fn =
-                        inner_list_def
-                            .init_in_place_with_capacity()
-                            .ok_or_else(|| {
-                                self.error(ReflectErrorKind::ListDoesNotSupportOp {
-                                    shape: value_shape,
-                                })
-                            })?;
-                    let capacity = build.len_hint.unwrap_or(0);
-                    let inner_list_ptr = unsafe { init_fn(value_ptr, capacity) };
-                    let mut frame = Frame::new_list(value_ptr, value_shape, inner_list_ptr);
-                    frame.flags |= FrameFlags::INIT;
-                    frame
-                } else if let Def::Map(inner_map_def) = &value_shape.def {
-                    // Value is a map - initialize it
-                    let init_fn = inner_map_def.vtable.init_in_place_with_capacity;
-                    let capacity = build.len_hint.unwrap_or(0);
-                    let inner_map_ptr = unsafe { init_fn(value_ptr, capacity) };
-                    let mut frame = Frame::new_map(value_ptr, value_shape, inner_map_ptr);
-                    frame.flags |= FrameFlags::INIT;
-                    frame
-                } else {
-                    match value_shape.ty {
+                // Check Def first because Option/Result have Def::Option/Result
+                // but are also UserType::Enum at the ty level
+                let mut value_frame = match &value_shape.def {
+                    Def::List(inner_list_def) => {
+                        // Value is a list - initialize it
+                        let init_fn =
+                            inner_list_def
+                                .init_in_place_with_capacity()
+                                .ok_or_else(|| {
+                                    self.error(ReflectErrorKind::ListDoesNotSupportOp {
+                                        shape: value_shape,
+                                    })
+                                })?;
+                        let capacity = build.len_hint.unwrap_or(0);
+                        let inner_list_ptr = unsafe { init_fn(value_ptr, capacity) };
+                        let mut frame = Frame::new_list(value_ptr, value_shape, inner_list_ptr);
+                        frame.flags |= FrameFlags::INIT;
+                        frame
+                    }
+                    Def::Map(inner_map_def) => {
+                        // Value is a map - initialize it
+                        let init_fn = inner_map_def.vtable.init_in_place_with_capacity;
+                        let capacity = build.len_hint.unwrap_or(0);
+                        let inner_map_ptr = unsafe { init_fn(value_ptr, capacity) };
+                        let mut frame = Frame::new_map(value_ptr, value_shape, inner_map_ptr);
+                        frame.flags |= FrameFlags::INIT;
+                        frame
+                    }
+                    Def::Option(_) => Frame::new_option(value_ptr, value_shape),
+                    Def::Result(_) => Frame::new_result(value_ptr, value_shape),
+                    _ => match value_shape.ty {
                         Type::User(UserType::Struct(ref s)) => {
                             Frame::new_struct(value_ptr, value_shape, s.fields.len())
                         }
                         Type::User(UserType::Enum(_)) => Frame::new_enum(value_ptr, value_shape),
                         _ => Frame::new(value_ptr, value_shape),
-                    }
+                    },
                 };
 
                 // Mark that this frame owns its allocation (for cleanup on End)
@@ -1404,7 +1871,32 @@ impl<'facet> Partial<'facet> {
                     unsafe { PtrUninit::new(frame.data.as_mut_byte_ptr().add(offset)) };
                 Ok(Frame::new(element_ptr, element_shape))
             }
-            _ => Err(self.error(ReflectErrorKind::NotAStruct)),
+            _ => {
+                // Check for Option/Result types (they have special Def but not a special Type)
+                match &frame.shape.def {
+                    Def::Option(_) => {
+                        // Validate variant index: 0 = None, 1 = Some
+                        if index > 1 {
+                            return Err(
+                                self.error(ReflectErrorKind::OptionVariantOutOfBounds { index })
+                            );
+                        }
+                        // Return shape of the whole Option (like enums)
+                        Ok(Frame::new(frame.data, frame.shape))
+                    }
+                    Def::Result(_) => {
+                        // Validate variant index: 0 = Ok, 1 = Err
+                        if index > 1 {
+                            return Err(
+                                self.error(ReflectErrorKind::ResultVariantOutOfBounds { index })
+                            );
+                        }
+                        // Return shape of the whole Result (like enums)
+                        Ok(Frame::new(frame.data, frame.shape))
+                    }
+                    _ => Err(self.error(ReflectErrorKind::NotAStruct)),
+                }
+            }
         }
     }
 

@@ -46,9 +46,7 @@ struct ErrorData {
     details: String,
 }
 
-// TODO: RustNPO enum representation not yet implemented
 #[test]
-#[ignore]
 fn build_result_ok_struct_with_build() {
     let mut partial = Partial::alloc::<Result<SuccessData, ErrorData>>().unwrap();
 
@@ -64,6 +62,9 @@ fn build_result_ok_struct_with_build() {
         ])
         .unwrap();
 
+    // Imm moves the value - prevent double-free
+    std::mem::forget(message);
+
     let result: Result<SuccessData, ErrorData> = partial.build().unwrap();
     assert_eq!(
         result,
@@ -75,7 +76,6 @@ fn build_result_ok_struct_with_build() {
 }
 
 #[test]
-#[ignore]
 fn build_result_err_struct_with_build() {
     let mut partial = Partial::alloc::<Result<SuccessData, ErrorData>>().unwrap();
 
@@ -90,6 +90,9 @@ fn build_result_err_struct_with_build() {
             Op::end(),
         ])
         .unwrap();
+
+    // Imm moves the value - prevent double-free
+    std::mem::forget(details);
 
     let result: Result<SuccessData, ErrorData> = partial.build().unwrap();
     assert_eq!(
@@ -106,7 +109,6 @@ fn build_result_err_struct_with_build() {
 // =============================================================================
 
 #[test]
-#[ignore]
 fn build_result_ok_scalar_with_build() {
     let mut partial = Partial::alloc::<Result<i32, String>>().unwrap();
 
@@ -125,7 +127,6 @@ fn build_result_ok_scalar_with_build() {
 }
 
 #[test]
-#[ignore]
 fn build_result_err_string_with_build() {
     let mut partial = Partial::alloc::<Result<i32, String>>().unwrap();
 
@@ -138,6 +139,9 @@ fn build_result_err_string_with_build() {
             Op::end(),
         ])
         .unwrap();
+
+    // Imm moves the value - prevent double-free
+    std::mem::forget(err);
 
     let result: Result<i32, String> = partial.build().unwrap();
     assert_eq!(result, Err(String::from("error message")));
@@ -154,7 +158,6 @@ struct ApiResponse {
 }
 
 #[test]
-#[ignore]
 fn build_struct_with_result_field_ok() {
     let mut partial = Partial::alloc::<ApiResponse>().unwrap();
 
@@ -172,6 +175,10 @@ fn build_struct_with_result_field_ok() {
         ])
         .unwrap();
 
+    // Imm moves the values - prevent double-free
+    std::mem::forget(request_id);
+    std::mem::forget(data);
+
     let result: ApiResponse = partial.build().unwrap();
     assert_eq!(
         result,
@@ -183,7 +190,6 @@ fn build_struct_with_result_field_ok() {
 }
 
 #[test]
-#[ignore]
 fn build_struct_with_result_field_err() {
     let mut partial = Partial::alloc::<ApiResponse>().unwrap();
 
@@ -201,6 +207,10 @@ fn build_struct_with_result_field_err() {
         ])
         .unwrap();
 
+    // Imm moves the values - prevent double-free
+    std::mem::forget(request_id);
+    std::mem::forget(error);
+
     let result: ApiResponse = partial.build().unwrap();
     assert_eq!(
         result,
@@ -216,7 +226,6 @@ fn build_struct_with_result_field_err() {
 // =============================================================================
 
 #[test]
-#[ignore]
 fn build_nested_result_ok_ok() {
     let mut partial = Partial::alloc::<Result<Result<u32, String>, String>>().unwrap();
 
@@ -237,7 +246,6 @@ fn build_nested_result_ok_ok() {
 }
 
 #[test]
-#[ignore]
 fn build_nested_result_ok_err() {
     let mut partial = Partial::alloc::<Result<Result<u32, String>, String>>().unwrap();
 
@@ -253,12 +261,14 @@ fn build_nested_result_ok_err() {
         ])
         .unwrap();
 
+    // Imm moves the value - prevent double-free
+    std::mem::forget(err);
+
     let result: Result<Result<u32, String>, String> = partial.build().unwrap();
     assert_eq!(result, Ok(Err(String::from("inner error"))));
 }
 
 #[test]
-#[ignore]
 fn build_nested_result_err() {
     let mut partial = Partial::alloc::<Result<Result<u32, String>, String>>().unwrap();
 
@@ -272,6 +282,9 @@ fn build_nested_result_err() {
         ])
         .unwrap();
 
+    // Imm moves the value - prevent double-free
+    std::mem::forget(err);
+
     let result: Result<Result<u32, String>, String> = partial.build().unwrap();
     assert_eq!(result, Err(String::from("outer error")));
 }
@@ -281,7 +294,6 @@ fn build_nested_result_err() {
 // =============================================================================
 
 #[test]
-#[ignore]
 fn build_vec_of_results_with_build() {
     let mut partial = Partial::alloc::<Vec<Result<i32, String>>>().unwrap();
 
@@ -312,6 +324,9 @@ fn build_vec_of_results_with_build() {
             Op::end(), // end Result
         ])
         .unwrap();
+
+    // Imm moves the value - prevent double-free
+    std::mem::forget(err);
 
     let result: Vec<Result<i32, String>> = partial.build().unwrap();
     assert_eq!(result, vec![Ok(1), Err(String::from("failed")), Ok(3)]);

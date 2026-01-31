@@ -214,6 +214,70 @@ impl SetFrame {
     }
 }
 
+/// Option frame data (building Option<T>).
+/// Tracks whether None or Some is selected and if we're building the inner value.
+pub struct OptionFrame {
+    /// The selected variant: None = 0, Some = 1 (or None if not yet selected)
+    pub selected: Option<u32>,
+    /// Frame index for the inner value being built (for Some)
+    pub inner: Idx<Frame>,
+}
+
+impl OptionFrame {
+    pub fn new() -> Self {
+        Self {
+            selected: None,
+            inner: Idx::NOT_STARTED,
+        }
+    }
+
+    pub fn is_complete(&self) -> bool {
+        match self.selected {
+            None => false,
+            Some(0) => true,                     // None variant is always complete
+            Some(1) => self.inner.is_complete(), // Some needs inner to be complete
+            Some(_) => false,                    // Invalid
+        }
+    }
+}
+
+impl Default for OptionFrame {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Result frame data (building Result<T, E>).
+/// Tracks whether Ok or Err is selected and if we're building the inner value.
+pub struct ResultFrame {
+    /// The selected variant: Ok = 0, Err = 1 (or None if not yet selected)
+    pub selected: Option<u32>,
+    /// Frame index for the inner value being built
+    pub inner: Idx<Frame>,
+}
+
+impl ResultFrame {
+    pub fn new() -> Self {
+        Self {
+            selected: None,
+            inner: Idx::NOT_STARTED,
+        }
+    }
+
+    pub fn is_complete(&self) -> bool {
+        match self.selected {
+            None => false,
+            Some(_) => self.inner.is_complete(), // Both Ok and Err need inner to be complete
+        }
+    }
+}
+
+impl Default for ResultFrame {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// What kind of value this frame is building.
 pub enum FrameKind {
     /// Scalar or opaque value - no children.
@@ -239,6 +303,12 @@ pub enum FrameKind {
 
     /// Building a set (HashSet, BTreeSet, etc.).
     Set(SetFrame),
+
+    /// Building an Option<T>.
+    Option(OptionFrame),
+
+    /// Building a Result<T, E>.
+    Result(ResultFrame),
 }
 
 impl FrameKind {
@@ -253,6 +323,8 @@ impl FrameKind {
             FrameKind::List(l) => l.is_complete(),
             FrameKind::Map(m) => m.is_complete(),
             FrameKind::Set(s) => s.is_complete(),
+            FrameKind::Option(o) => o.is_complete(),
+            FrameKind::Result(r) => r.is_complete(),
         }
     }
 
@@ -435,6 +507,30 @@ impl Frame {
             data,
             shape,
             kind: FrameKind::Set(SetFrame::new(set_ptr)),
+            flags: FrameFlags::empty(),
+            parent: None,
+            pending_key: None,
+        }
+    }
+
+    /// Create a frame for an Option<T>.
+    pub fn new_option(data: PtrUninit, shape: &'static Shape) -> Self {
+        Frame {
+            data,
+            shape,
+            kind: FrameKind::Option(OptionFrame::new()),
+            flags: FrameFlags::empty(),
+            parent: None,
+            pending_key: None,
+        }
+    }
+
+    /// Create a frame for a Result<T, E>.
+    pub fn new_result(data: PtrUninit, shape: &'static Shape) -> Self {
+        Frame {
+            data,
+            shape,
+            kind: FrameKind::Result(ResultFrame::new()),
             flags: FrameFlags::empty(),
             parent: None,
             pending_key: None,

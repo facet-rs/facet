@@ -46,7 +46,9 @@ pub type OptionGetValueFn = unsafe fn(option: PtrConst) -> Option<PtrConst>;
 /// The function must properly initialize the memory.
 /// `value` is moved out of (with [`core::ptr::read`]) — it should be deallocated afterwards (e.g.
 /// with [`core::mem::forget`]) but NOT dropped.
-pub type OptionInitSomeFn = unsafe fn(option: PtrUninit, value: PtrConst) -> PtrMut;
+/// Note: `value` must be PtrMut (not PtrConst) because ownership is transferred and the value
+/// may be dropped later, which requires mutable access.
+pub type OptionInitSomeFn = unsafe fn(option: PtrUninit, value: PtrMut) -> PtrMut;
 
 /// Initialize an option with None
 ///
@@ -64,7 +66,9 @@ pub type OptionInitNoneFn = unsafe fn(option: PtrUninit) -> PtrMut;
 /// The old value will be dropped.
 /// If replacing with Some, `value` is moved out of (with [`core::ptr::read`]) —
 /// it should be deallocated afterwards but NOT dropped.
-pub type OptionReplaceWithFn = unsafe fn(option: PtrMut, value: Option<PtrConst>);
+/// Note: `value` must be PtrMut (not PtrConst) because ownership is transferred and the value
+/// may be dropped later, which requires mutable access.
+pub type OptionReplaceWithFn = unsafe fn(option: PtrMut, value: Option<PtrMut>);
 
 vtable_def! {
     /// Virtual table for `Option<T>`

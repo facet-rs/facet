@@ -48,9 +48,7 @@ struct Point {
     y: i32,
 }
 
-// TODO: RustNPO enum representation not yet implemented
 #[test]
-#[ignore]
 fn build_option_some_struct_with_build() {
     let mut partial = Partial::alloc::<Option<Point>>().unwrap();
 
@@ -72,7 +70,6 @@ fn build_option_some_struct_with_build() {
 }
 
 #[test]
-#[ignore]
 fn build_option_some_string_with_build() {
     let mut partial = Partial::alloc::<Option<String>>().unwrap();
 
@@ -86,6 +83,9 @@ fn build_option_some_string_with_build() {
         ])
         .unwrap();
 
+    // Imm moves the value - prevent double-free
+    std::mem::forget(s);
+
     let result: Option<String> = partial.build().unwrap();
     assert_eq!(result, Some(String::from("hello")));
 }
@@ -97,7 +97,6 @@ struct Server {
 }
 
 #[test]
-#[ignore]
 fn build_option_some_server_with_build() {
     let mut partial = Partial::alloc::<Option<Server>>().unwrap();
 
@@ -112,6 +111,9 @@ fn build_option_some_server_with_build() {
             Op::end(),
         ])
         .unwrap();
+
+    // Imm moves the value - prevent double-free
+    std::mem::forget(host);
 
     let result: Option<Server> = partial.build().unwrap();
     assert_eq!(
@@ -134,7 +136,6 @@ struct Config {
 }
 
 #[test]
-#[ignore]
 fn build_struct_with_option_field_some_via_build() {
     let mut partial = Partial::alloc::<Config>().unwrap();
 
@@ -154,6 +155,10 @@ fn build_struct_with_option_field_some_via_build() {
         ])
         .unwrap();
 
+    // Imm moves the values - prevent double-free
+    std::mem::forget(name);
+    std::mem::forget(host);
+
     let result: Config = partial.build().unwrap();
     assert_eq!(
         result,
@@ -168,7 +173,6 @@ fn build_struct_with_option_field_some_via_build() {
 }
 
 #[test]
-#[ignore]
 fn build_struct_with_option_field_none_via_default() {
     let mut partial = Partial::alloc::<Config>().unwrap();
 
@@ -180,6 +184,9 @@ fn build_struct_with_option_field_none_via_default() {
             Op::set().at(1).default(), // Option's default is None
         ])
         .unwrap();
+
+    // Imm moves the value - prevent double-free
+    std::mem::forget(name);
 
     let result: Config = partial.build().unwrap();
     assert_eq!(
@@ -196,7 +203,6 @@ fn build_struct_with_option_field_none_via_default() {
 // =============================================================================
 
 #[test]
-#[ignore]
 fn build_nested_option_some_some() {
     let mut partial = Partial::alloc::<Option<Option<u32>>>().unwrap();
 
@@ -217,7 +223,6 @@ fn build_nested_option_some_some() {
 }
 
 #[test]
-#[ignore]
 fn build_nested_option_some_none() {
     let mut partial = Partial::alloc::<Option<Option<u32>>>().unwrap();
 
@@ -238,7 +243,6 @@ fn build_nested_option_some_none() {
 // =============================================================================
 
 #[test]
-#[ignore]
 fn build_vec_of_option_structs_with_build() {
     let mut partial = Partial::alloc::<Vec<Option<Point>>>().unwrap();
 

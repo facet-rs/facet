@@ -61,7 +61,9 @@ pub type ResultGetErrFn = unsafe fn(result: PtrConst) -> Option<PtrConst>;
 /// The function must properly initialize the memory.
 /// `value` is moved out of (with [`core::ptr::read`]) — it should be deallocated afterwards (e.g.
 /// with [`core::mem::forget`]) but NOT dropped.
-pub type ResultInitOkFn = unsafe fn(result: PtrUninit, value: PtrConst) -> PtrMut;
+/// Note: `value` must be PtrMut (not PtrConst) because ownership is transferred and the value
+/// may be dropped later, which requires mutable access.
+pub type ResultInitOkFn = unsafe fn(result: PtrUninit, value: PtrMut) -> PtrMut;
 
 /// Initialize a result with Err(value)
 ///
@@ -71,7 +73,9 @@ pub type ResultInitOkFn = unsafe fn(result: PtrUninit, value: PtrConst) -> PtrMu
 /// The function must properly initialize the memory.
 /// `value` is moved out of (with [`core::ptr::read`]) — it should be deallocated afterwards (e.g.
 /// with [`core::mem::forget`]) but NOT dropped.
-pub type ResultInitErrFn = unsafe fn(result: PtrUninit, value: PtrConst) -> PtrMut;
+/// Note: `value` must be PtrMut (not PtrConst) because ownership is transferred and the value
+/// may be dropped later, which requires mutable access.
+pub type ResultInitErrFn = unsafe fn(result: PtrUninit, value: PtrMut) -> PtrMut;
 
 vtable_def! {
     /// Virtual table for `Result<T, E>`

@@ -915,15 +915,15 @@ pub unsafe extern "C" fn jit_option_init_none(out: *mut u8, init_none_fn: *const
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn jit_option_init_some_from_value(
     out: *mut u8,
-    value_ptr: *const u8,
+    value_ptr: *mut u8,
     init_some_fn: *const u8,
 ) {
     // Call init_some(option, value_ptr)
     // OptionInitSomeFn uses Rust ABI, not extern "C" - matters on Windows x64
-    use facet_core::{PtrConst, PtrUninit};
-    type InitSomeFn = unsafe fn(PtrUninit, PtrConst) -> facet_core::PtrMut;
+    use facet_core::{PtrMut, PtrUninit};
+    type InitSomeFn = unsafe fn(PtrUninit, PtrMut) -> facet_core::PtrMut;
     let init_some: InitSomeFn = unsafe { std::mem::transmute(init_some_fn) };
-    unsafe { init_some(PtrUninit::new(out), PtrConst::new(value_ptr)) };
+    unsafe { init_some(PtrUninit::new(out), PtrMut::new(value_ptr)) };
 }
 
 /// Initialize a Result field to Ok(value) where value is in a stack buffer.
@@ -935,15 +935,15 @@ pub unsafe extern "C" fn jit_option_init_some_from_value(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn jit_result_init_ok_from_value(
     out: *mut u8,
-    value_ptr: *const u8,
+    value_ptr: *mut u8,
     init_ok_fn: *const u8,
 ) {
     // Call init_ok(result, value_ptr)
     // ResultInitOkFn uses Rust ABI, not extern "C" - matters on Windows x64
-    use facet_core::{PtrConst, PtrUninit};
-    type InitOkFn = unsafe fn(PtrUninit, PtrConst) -> facet_core::PtrMut;
+    use facet_core::{PtrMut, PtrUninit};
+    type InitOkFn = unsafe fn(PtrUninit, PtrMut) -> facet_core::PtrMut;
     let init_ok: InitOkFn = unsafe { std::mem::transmute(init_ok_fn) };
-    unsafe { init_ok(PtrUninit::new(out), PtrConst::new(value_ptr)) };
+    unsafe { init_ok(PtrUninit::new(out), PtrMut::new(value_ptr)) };
 }
 
 /// Initialize a Result field to Err(value) where value is in a stack buffer.
@@ -955,15 +955,15 @@ pub unsafe extern "C" fn jit_result_init_ok_from_value(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn jit_result_init_err_from_value(
     out: *mut u8,
-    value_ptr: *const u8,
+    value_ptr: *mut u8,
     init_err_fn: *const u8,
 ) {
     // Call init_err(result, value_ptr)
     // ResultInitErrFn uses Rust ABI, not extern "C" - matters on Windows x64
-    use facet_core::{PtrConst, PtrUninit};
-    type InitErrFn = unsafe fn(PtrUninit, PtrConst) -> facet_core::PtrMut;
+    use facet_core::{PtrMut, PtrUninit};
+    type InitErrFn = unsafe fn(PtrUninit, PtrMut) -> facet_core::PtrMut;
     let init_err: InitErrFn = unsafe { std::mem::transmute(init_err_fn) };
-    unsafe { init_err(PtrUninit::new(out), PtrConst::new(value_ptr)) };
+    unsafe { init_err(PtrUninit::new(out), PtrMut::new(value_ptr)) };
 }
 
 /// Initialize a Vec field with the given capacity.

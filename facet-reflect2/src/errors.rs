@@ -101,6 +101,14 @@ pub enum ReflectErrorKind {
     EndWithIncomplete,
     /// Variant index out of bounds.
     VariantIndexOutOfBounds { index: u32, variant_count: usize },
+    /// Option variant index out of bounds (must be 0 or 1).
+    OptionVariantOutOfBounds { index: u32 },
+    /// Result variant index out of bounds (must be 0 or 1).
+    ResultVariantOutOfBounds { index: u32 },
+    /// Type is not an Option.
+    NotAnOption,
+    /// Type is not a Result.
+    NotAResult,
     /// Type is not an enum.
     NotAnEnum,
     /// Enum has unsupported representation (RustNPO).
@@ -192,6 +200,22 @@ impl fmt::Display for ReflectErrorKind {
                     index, variant_count
                 )
             }
+            ReflectErrorKind::OptionVariantOutOfBounds { index } => {
+                write!(
+                    f,
+                    "Option variant index {} out of bounds (must be 0 for None or 1 for Some)",
+                    index
+                )
+            }
+            ReflectErrorKind::ResultVariantOutOfBounds { index } => {
+                write!(
+                    f,
+                    "Result variant index {} out of bounds (must be 0 for Ok or 1 for Err)",
+                    index
+                )
+            }
+            ReflectErrorKind::NotAnOption => write!(f, "Type is not an Option"),
+            ReflectErrorKind::NotAResult => write!(f, "Type is not a Result"),
             ReflectErrorKind::NotAnEnum => write!(f, "Type is not an enum"),
             ReflectErrorKind::UnsupportedEnumRepr => {
                 write!(f, "Enum has unsupported representation")
