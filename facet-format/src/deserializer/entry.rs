@@ -8,6 +8,18 @@ use crate::{
     FormatDeserializer, ParseEventKind, ScalarTypeHint, ScalarValue, SpanGuard, current_doc,
 };
 
+/// Metadata associated with a value being deserialized.
+///
+/// This includes documentation comments and type tags from formats that support them
+/// (like Styx). For formats that don't provide metadata (like JSON), these are `None`.
+#[derive(Debug, Clone, Default)]
+pub struct ValueMeta<'a> {
+    /// Documentation comments (lines without the `///` prefix).
+    pub doc: Option<Vec<Cow<'a, str>>>,
+    /// Type tag (e.g., `@string` in Styx).
+    pub tag: Option<Cow<'a, str>>,
+}
+
 impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BORROW> {
     /// Main deserialization entry point - deserialize into a Partial.
     ///
@@ -197,7 +209,25 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     /// metadata fields are populated from parser state.
     fn deserialize_metadata_container(
         &mut self,
+        wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        // Build ValueMeta from thread-local (set by DocGuard in struct_simple.rs)
+        let meta = ValueMeta {
+            doc: current_doc(),
+            tag: None, // TODO: add tag support via thread-local or pass-through
+        };
+        self.deserialize_metadata_container_with_meta(wip, &meta)
+    }
+
+    /// Deserialize a metadata container with explicit metadata.
+    ///
+    /// This is the shared implementation used by both struct field deserialization
+    /// (via `deserialize_metadata_container`) and map key deserialization
+    /// (via `deserialize_map_key`).
+    fn deserialize_metadata_container_with_meta(
+        &mut self,
         mut wip: Partial<'input, BORROW>,
+        meta: &ValueMeta<'input>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         let shape = wip.shape();
         trace!(%shape, "deserialize_into: metadata container detected");
@@ -205,46 +235,10 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         if let Type::User(UserType::Struct(st)) = &shape.ty {
             for field in st.fields {
                 match field.metadata_kind() {
-                    Some("span") => {
-                        // Populate span from parser's current position
-                        let span = self.last_span;
-                        wip = wip
-                            .begin_field(field.effective_name())?
-                            .begin_some()?
-                            .begin_field("offset")?
-                            .set(span.offset)?
-                            .end()?
-                            .begin_field("len")?
-                            .set(span.len)?
-                            .end()?
-                            .end()?
-                            .end()?;
-                    }
-                    Some("doc") => {
-                        // Populate doc from thread-local set by DocGuard
+                    Some(kind) => {
                         wip = wip.begin_field(field.effective_name())?;
-                        if let Some(doc_lines) = current_doc() {
-                            // Set as Some(Vec<String>)
-                            wip = wip.begin_some()?.init_list()?;
-                            for line in doc_lines {
-                                wip = wip
-                                    .begin_list_item()?
-                                    .with(|w| self.set_string_value(w, line))?
-                                    .end()?;
-                            }
-                            wip = wip.end()?;
-                        } else {
-                            // Set as None
-                            wip = wip.set_default()?;
-                        }
+                        wip = self.populate_metadata_field(wip, kind, meta)?;
                         wip = wip.end()?;
-                    }
-                    Some(_other) => {
-                        // Other metadata types (tag) - set to default for now
-                        wip = wip
-                            .begin_field(field.effective_name())?
-                            .set_default()?
-                            .end()?;
                     }
                     None => {
                         // This is the value field - recurse into it
@@ -254,6 +248,60 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                             .end()?;
                     }
                 }
+            }
+        }
+        Ok(wip)
+    }
+
+    /// Populate a single metadata field on a metadata container.
+    fn populate_metadata_field(
+        &mut self,
+        mut wip: Partial<'input, BORROW>,
+        kind: &str,
+        meta: &ValueMeta<'input>,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        match kind {
+            "span" => {
+                // Populate span from parser's current position
+                let span = self.last_span;
+                wip = wip
+                    .begin_some()?
+                    .begin_field("offset")?
+                    .set(span.offset)?
+                    .end()?
+                    .begin_field("len")?
+                    .set(span.len)?
+                    .end()?
+                    .end()?;
+            }
+            "doc" => {
+                if let Some(ref doc_lines) = meta.doc {
+                    // Set as Some(Vec<String>)
+                    wip = wip.begin_some()?.init_list()?;
+                    for line in doc_lines {
+                        wip = wip
+                            .begin_list_item()?
+                            .with(|w| self.set_string_value(w, line.clone()))?
+                            .end()?;
+                    }
+                    wip = wip.end()?;
+                } else {
+                    wip = wip.set_default()?;
+                }
+            }
+            "tag" => {
+                if let Some(ref tag_name) = meta.tag {
+                    wip = wip
+                        .begin_some()?
+                        .with(|w| self.set_string_value(w, tag_name.clone()))?
+                        .end()?;
+                } else {
+                    wip = wip.set_default()?;
+                }
+            }
+            _ => {
+                // Unknown metadata kind - set to default
+                wip = wip.set_default()?;
             }
         }
         Ok(wip)
@@ -1061,49 +1109,31 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         if shape.is_metadata_container() {
             trace!("deserialize_map_key: metadata container detected");
 
+            let meta = ValueMeta {
+                doc: doc.clone(),
+                tag: tag.clone(),
+            };
+
             // Find field info from the shape's struct type
             if let Type::User(UserType::Struct(st)) = &shape.ty {
                 for field in st.fields {
-                    if field.metadata_kind() == Some("doc") {
-                        // This is the doc field - set it from the doc parameter
-                        wip = wip.begin_field(field.effective_name())?;
-                        if let Some(ref doc_lines) = doc {
-                            // Set as Some(Vec<String>)
-                            wip = wip.begin_some()?.init_list()?;
-                            for line in doc_lines {
-                                wip = wip
-                                    .begin_list_item()?
-                                    .with(|w| self.set_string_value(w, line.clone()))?
-                                    .end()?;
-                            }
+                    match field.metadata_kind() {
+                        Some(kind) => {
+                            wip = wip.begin_field(field.effective_name())?;
+                            wip = self.populate_metadata_field(wip, kind, &meta)?;
                             wip = wip.end()?;
-                        } else {
-                            // Set as None
-                            wip = wip.set_default()?;
                         }
-                        wip = wip.end()?;
-                    } else if field.metadata_kind() == Some("tag") {
-                        // This is the tag field - set it from the tag parameter
-                        wip = wip.begin_field(field.effective_name())?;
-                        if let Some(ref tag_name) = tag {
-                            // Set as Some(String)
+                        None => {
+                            // This is the value field - recurse with the key and tag.
+                            // Doc is already consumed by this container, but tag may be needed
+                            // by a nested metadata container (e.g., Documented<ObjectKey>).
                             wip = wip
-                                .begin_some()?
-                                .with(|w| self.set_string_value(w, tag_name.clone()))?
+                                .begin_field(field.effective_name())?
+                                .with(|w| {
+                                    self.deserialize_map_key(w, key.clone(), None, tag.clone())
+                                })?
                                 .end()?;
-                        } else {
-                            // Set as None (not a tagged key)
-                            wip = wip.set_default()?;
                         }
-                        wip = wip.end()?;
-                    } else if field.metadata_kind().is_none() {
-                        // This is the value field - recurse with the key and tag.
-                        // Doc is already consumed by this container, but tag may be needed
-                        // by a nested metadata container (e.g., Documented<ObjectKey>).
-                        wip = wip
-                            .begin_field(field.effective_name())?
-                            .with(|w| self.deserialize_map_key(w, key.clone(), None, tag.clone()))?
-                            .end()?;
                     }
                 }
             }
