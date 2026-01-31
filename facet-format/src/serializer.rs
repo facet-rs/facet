@@ -5,10 +5,46 @@ use alloc::string::String;
 use core::fmt::Debug;
 use core::fmt::Write as _;
 
-use facet_core::{Def, DynDateTimeKind, DynValueKind, ScalarType, Shape, StructKind, Type};
+use facet_core::{
+    Def, DynDateTimeKind, DynValueKind, ScalarType, Shape, StructKind, Type, UserType,
+};
 use facet_reflect::{HasFields as _, Peek, ReflectError};
 
 use crate::ScalarValue;
+
+/// Extract a string from a Peek value, handling metadata containers.
+///
+/// For metadata containers like `Spanned<String>` or `Documented<String>`,
+/// this unwraps to find the inner value field and extracts the string from it.
+fn extract_string_from_peek<'mem, 'facet>(peek: Peek<'mem, 'facet>) -> Option<&'mem str> {
+    // First try direct string extraction
+    if let Some(s) = peek.as_str() {
+        return Some(s);
+    }
+
+    // Check if this is a metadata container
+    if peek.shape().is_metadata_container()
+        && let Type::User(UserType::Struct(st)) = &peek.shape().ty
+    {
+        // Find the non-metadata field (the value field)
+        for field in st.fields {
+            if field.metadata_kind().is_none() {
+                // This is the value field - try to get the string from it
+                if let Ok(container) = peek.into_struct() {
+                    for (f, field_value) in container.fields() {
+                        if f.metadata_kind().is_none() {
+                            // Recursively extract - the value might also be a metadata container
+                            return extract_string_from_peek(field_value);
+                        }
+                    }
+                }
+                break;
+            }
+        }
+    }
+
+    None
+}
 
 /// Field ordering preference for serialization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -820,7 +856,8 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
                             .serialize_map_key(key)
                             .map_err(SerializeError::Backend)?
                         {
-                            let key_str = if let Some(s) = key.as_str() {
+                            // Use extract_string_from_peek to handle metadata containers
+                            let key_str = if let Some(s) = extract_string_from_peek(key) {
                                 Cow::Borrowed(s)
                             } else {
                                 Cow::Owned(alloc::format!("{}", key))
@@ -829,8 +866,8 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
                                 .field_key(&key_str)
                                 .map_err(SerializeError::Backend)?;
                         }
-                        let key_str = key
-                            .as_str()
+                        // Use extract_string_from_peek for path tracking too
+                        let key_str = extract_string_from_peek(key)
                             .map(|s| Cow::Owned(s.to_string()))
                             .unwrap_or_else(|| Cow::Owned(alloc::format!("{}", key)));
                         self.push(PathSegment::Field(key_str));

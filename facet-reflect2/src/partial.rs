@@ -639,12 +639,14 @@ impl<'facet> Partial<'facet> {
                     }
                 }
 
+                // Drop any existing value at the field before overwriting
+                let field_idx = path.as_slice()[0];
+                let frame = self.arena.get_mut(self.current);
+                frame.prepare_field_for_overwrite(field_idx as usize);
+
                 // Resolve path to get target shape and pointer
                 let frame = self.arena.get(self.current);
                 let target = self.resolve_path(frame, path)?;
-
-                // Create a new frame for the nested value
-                let field_idx = path.as_slice()[0];
 
                 // Check if target is a list - needs special initialization
                 if let Def::List(list_def) = &target.shape.def {

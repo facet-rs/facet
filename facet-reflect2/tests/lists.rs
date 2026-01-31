@@ -491,3 +491,31 @@ fn push_wrong_element_type_errors() {
         facet_reflect2::ReflectErrorKind::ShapeMismatch { .. }
     ));
 }
+
+// Regression test for double-free bug found by AFL fuzzer.
+// When overwriting a Vec field with Build, we must drop the old Vec first.
+// The bug was: Source::Build didn't call prepare_field_for_overwrite(),
+// so the old Vec wasn't dropped before creating the new one. Then when
+// dropping the partial, both the old and new Vec would be dropped.
+#[test]
+fn overwrite_vec_field_with_build_no_double_free() {
+    #[derive(Debug, Facet)]
+    struct HasVec {
+        items: Vec<u32>,
+    }
+
+    let mut partial = Partial::alloc::<HasVec>().unwrap();
+
+    // Step 1: Build the Vec field and complete it
+    partial
+        .apply(&[Op::set().at(0).build(), Op::end()])
+        .unwrap();
+
+    // Step 2: Build the same field again - this should drop the old Vec
+    partial
+        .apply(&[Op::set().at(0).build(), Op::end()])
+        .unwrap();
+
+    // Step 3: Drop - should not double-free
+    drop(partial);
+}

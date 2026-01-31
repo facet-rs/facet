@@ -2716,8 +2716,11 @@ impl SchemaBuilder {
             _ => {
                 // Check if this is a Map type - if so, it becomes a catch-all for unknown fields
                 if let Def::Map(map_def) = &shape.def {
-                    // Validate: key must be String for catch-all maps
-                    if map_def.k.scalar_type() == Some(facet_core::ScalarType::String) {
+                    // Validate: key must be String (or metadata container wrapping String) for catch-all maps
+                    // For metadata containers like Spanned<String> or Documented<String>, check the inner type
+                    let key_shape = facet_reflect::get_metadata_container_value_shape(map_def.k)
+                        .unwrap_or(map_def.k);
+                    if key_shape.scalar_type() == Some(facet_core::ScalarType::String) {
                         // This is a valid catch-all map
                         let field_info = FieldInfo {
                             serialized_name: field.effective_name(),
