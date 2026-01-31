@@ -15,7 +15,7 @@ impl fmt::Display for ErrorLocation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.shape.type_identifier)?;
         if !self.path.is_empty() {
-            write!(f, " at path {:?}", self.path.as_slice())?;
+            write!(f, " at path {:?}", self.path.segments())?;
         }
         Ok(())
     }
@@ -135,6 +135,18 @@ pub enum ReflectErrorKind {
         expected: &'static Shape,
         actual: &'static Shape,
     },
+    /// Root segment not at start of path.
+    RootNotAtStart,
+    /// Append segment found in resolve_path (should use apply_append_set).
+    AppendInResolvePath,
+    /// Append on non-collection frame.
+    AppendRequiresCollection,
+    /// Map entry incomplete (missing key or value).
+    MapEntryIncomplete,
+    /// Required field not initialized and has no default.
+    MissingRequiredField { index: usize },
+    /// Map append requires Stage source (to build key+value fields).
+    MapAppendRequiresStage,
 }
 
 impl fmt::Display for ReflectErrorKind {
@@ -248,6 +260,31 @@ impl fmt::Display for ReflectErrorKind {
                     f,
                     "Value shape mismatch: expected {}, got {}",
                     expected.type_identifier, actual.type_identifier
+                )
+            }
+            ReflectErrorKind::RootNotAtStart => {
+                write!(f, "Root segment must be at start of path")
+            }
+            ReflectErrorKind::AppendInResolvePath => {
+                write!(f, "Append segment cannot be used in field path resolution")
+            }
+            ReflectErrorKind::AppendRequiresCollection => {
+                write!(f, "Append requires a collection (list, set, or map)")
+            }
+            ReflectErrorKind::MapEntryIncomplete => {
+                write!(f, "Map entry incomplete (missing key or value)")
+            }
+            ReflectErrorKind::MissingRequiredField { index } => {
+                write!(
+                    f,
+                    "Required field {} not initialized and has no default",
+                    index
+                )
+            }
+            ReflectErrorKind::MapAppendRequiresStage => {
+                write!(
+                    f,
+                    "Map append requires Stage source to build key and value fields"
                 )
             }
         }

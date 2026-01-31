@@ -103,60 +103,6 @@ impl<'facet> Partial<'facet> {
                 self.current = parent_idx;
             }
 
-            ParentLink::MapValue { .. } => {
-                // Get insert function from parent's MapFrame
-                let parent = self.arena.get(parent_idx);
-                let FrameKind::Map(ref map_frame) = parent.kind else {
-                    unreachable!("MapValue parent must be a Map frame")
-                };
-                let insert_fn = map_frame.def.vtable.insert;
-
-                // Get the value data pointer (our current frame's data, now initialized)
-                let frame = self.arena.get(self.current);
-                let value_ptr = unsafe { frame.data.assume_init() };
-
-                // Get the map pointer from parent's data (it's initialized)
-                let parent = self.arena.get(parent_idx);
-                let map_ptr = unsafe { parent.data.assume_init() };
-
-                // Free the frame to get ownership of the ParentLink (and thus the key)
-                let frame = self.arena.get_mut(self.current);
-                frame.flags.remove(FrameFlags::INIT);
-                let mut freed_frame = self.arena.free(self.current);
-
-                // Extract the key from the parent_link by replacing with Root
-                let old_parent_link =
-                    std::mem::replace(&mut freed_frame.parent_link, ParentLink::Root);
-                let ParentLink::MapValue { mut key, .. } = old_parent_link else {
-                    unreachable!()
-                };
-                let key_ptr = key.ptr();
-
-                // Insert the key-value pair (moves both out)
-                unsafe {
-                    insert_fn(
-                        map_ptr,
-                        PtrMut::new(key_ptr.as_mut_byte_ptr()),
-                        PtrMut::new(value_ptr.as_mut_byte_ptr()),
-                    );
-                }
-
-                // Mark key as moved so TempAlloc doesn't drop it
-                key.mark_moved();
-                // key drops here, deallocating storage
-
-                // Deallocate our staging memory for the value
-                freed_frame.dealloc_if_owned();
-
-                // Increment entry count in parent map
-                let parent = self.arena.get_mut(parent_idx);
-                if let FrameKind::Map(ref mut m) = parent.kind {
-                    m.len += 1;
-                }
-
-                self.current = parent_idx;
-            }
-
             ParentLink::SetElement { .. } => {
                 // Get insert function from parent's SetFrame
                 let parent = self.arena.get(parent_idx);
@@ -322,6 +268,68 @@ impl<'facet> Partial<'facet> {
                 let parent = self.arena.get_mut(parent_idx);
                 if let FrameKind::Enum(ref mut e) = parent.kind {
                     e.selected = Some((variant_idx, Idx::COMPLETE));
+                }
+
+                self.current = parent_idx;
+            }
+
+            ParentLink::MapEntry { .. } => {
+                // This is a map entry frame completing.
+                // The parent is a Map frame. We need to insert the (key, value) pair.
+
+                // Get the MapEntryFrame to access the map_def
+                let frame = self.arena.get(self.current);
+                let FrameKind::MapEntry(ref entry_frame) = frame.kind else {
+                    unreachable!("MapEntry parent_link must have MapEntry frame kind")
+                };
+                let insert_fn = entry_frame.map_def.vtable.insert;
+                let key_shape = entry_frame.map_def.k;
+                let value_shape = entry_frame.map_def.v;
+
+                // Get the key and value pointers from the entry's staging buffer
+                // The entry frame's data points to contiguous memory for key + value
+                let key_layout = key_shape.layout.sized_layout().unwrap();
+                let value_layout = value_shape.layout.sized_layout().unwrap();
+
+                // Calculate offsets - key is at offset 0, value at aligned offset after key
+                let key_ptr = frame.data;
+                let value_offset = key_layout.size().max(value_layout.align());
+                let value_ptr =
+                    unsafe { PtrMut::new(frame.data.as_mut_byte_ptr().add(value_offset)) };
+
+                // Get the map pointer from parent's data (it's initialized)
+                let parent = self.arena.get(parent_idx);
+                let map_ptr = unsafe { parent.data.assume_init() };
+
+                // Insert the key-value pair (moves both out)
+                unsafe {
+                    insert_fn(map_ptr, PtrMut::new(key_ptr.as_mut_byte_ptr()), value_ptr);
+                }
+
+                // Free the entry frame and deallocate its staging memory
+                let frame = self.arena.get_mut(self.current);
+                frame.flags.remove(FrameFlags::INIT);
+                let freed_frame = self.arena.free(self.current);
+                freed_frame.dealloc_if_owned();
+
+                // Increment entry count in parent map
+                let parent = self.arena.get_mut(parent_idx);
+                if let FrameKind::Map(ref mut m) = parent.kind {
+                    m.len += 1;
+                }
+
+                self.current = parent_idx;
+            }
+
+            ParentLink::MapEntryField { field_idx, .. } => {
+                let field_idx = *field_idx;
+
+                // Free the current frame and mark the field complete in parent entry
+                let _ = self.arena.free(self.current);
+
+                let parent = self.arena.get_mut(parent_idx);
+                if let FrameKind::MapEntry(ref mut e) = parent.kind {
+                    e.mark_field_complete(field_idx as usize);
                 }
 
                 self.current = parent_idx;

@@ -11,7 +11,37 @@ use crate::frame::{
     Frame, FrameFlags, FrameKind, ListFrame, MapFrame, ParentLink, PointerFrame, SetFrame,
     StructFrame, absolute_path,
 };
-use crate::ops::{Path, Source};
+use crate::ops::{Path, PathSegment, Source};
+
+/// Helper to extract the first field index from a path.
+/// Returns the index if the path starts with a Field segment.
+fn first_field_idx(path: &Path) -> Option<u32> {
+    match path.segments().first() {
+        Some(PathSegment::Field(n)) => Some(*n),
+        _ => None,
+    }
+}
+
+/// Determine the appropriate parent link for a field being set.
+/// Returns MapEntryField if parent is a MapEntry frame, otherwise StructField.
+fn make_field_parent_link(
+    parent_kind: &FrameKind,
+    parent_idx: Idx<Frame>,
+    field_idx: u32,
+) -> ParentLink {
+    if matches!(parent_kind, FrameKind::MapEntry(_)) {
+        ParentLink::MapEntryField {
+            parent: parent_idx,
+            field_idx,
+        }
+    } else {
+        ParentLink::StructField {
+            parent: parent_idx,
+            field_idx,
+        }
+    }
+}
+
 use facet_core::{Def, PtrUninit, SequenceType, Type, UserType};
 
 impl<'facet> Partial<'facet> {
@@ -42,7 +72,8 @@ impl<'facet> Partial<'facet> {
                 } else {
                     // Setting a field - need to handle already-INIT structs/tuples
                     let frame = self.arena.get_mut(self.current);
-                    let field_idx = path.as_slice()[0] as usize;
+                    let field_idx =
+                        first_field_idx(path).expect("path must have field index") as usize;
                     frame.prepare_field_for_overwrite(field_idx);
                 }
 
@@ -94,11 +125,12 @@ impl<'facet> Partial<'facet> {
                     }
                 } else {
                     // Mark child as complete
-                    let field_idx = path.as_slice()[0] as usize;
+                    let field_idx =
+                        first_field_idx(path).expect("path must have field index") as usize;
                     frame.kind.mark_field_complete(field_idx);
                 }
             }
-            Source::Build(_build) => {
+            Source::Stage(_capacity) => {
                 // Build pushes a new frame for incremental construction
                 let frame = self.arena.get(self.current);
 
@@ -202,7 +234,7 @@ impl<'facet> Partial<'facet> {
                 }
 
                 // Drop any existing value at the field before overwriting
-                let field_idx = path.as_slice()[0];
+                let field_idx = first_field_idx(path).expect("path must have field index");
                 let frame = self.arena.get_mut(self.current);
                 frame.prepare_field_for_overwrite(field_idx as usize);
 
@@ -210,53 +242,41 @@ impl<'facet> Partial<'facet> {
                 let frame = self.arena.get(self.current);
                 let target = self.resolve_path(frame, path)?;
 
+                // Get parent link based on current frame kind
+                let parent_link = make_field_parent_link(&frame.kind, self.current, field_idx);
+
                 // Check if target is a list - create frame, lazy init on first Push
                 if let Def::List(list_def) = &target.shape.def {
                     let mut new_frame = Frame::new_list(target.data, target.shape, list_def);
-                    new_frame.parent_link = ParentLink::StructField {
-                        parent: self.current,
-                        field_idx,
-                    };
+                    new_frame.parent_link = parent_link;
 
                     let new_idx = self.arena.alloc(new_frame);
                     self.current = new_idx;
                 } else if let Def::Map(map_def) = &target.shape.def {
                     // Create frame, lazy init on first Insert
                     let mut new_frame = Frame::new_map(target.data, target.shape, map_def);
-                    new_frame.parent_link = ParentLink::StructField {
-                        parent: self.current,
-                        field_idx,
-                    };
+                    new_frame.parent_link = parent_link;
 
                     let new_idx = self.arena.alloc(new_frame);
                     self.current = new_idx;
                 } else if let Def::Set(set_def) = &target.shape.def {
                     // Create frame, lazy init on first Push
                     let mut new_frame = Frame::new_set(target.data, target.shape, set_def);
-                    new_frame.parent_link = ParentLink::StructField {
-                        parent: self.current,
-                        field_idx,
-                    };
+                    new_frame.parent_link = parent_link;
 
                     let new_idx = self.arena.alloc(new_frame);
                     self.current = new_idx;
                 } else if let Def::Option(_) = &target.shape.def {
                     // Create Option frame
                     let mut new_frame = Frame::new_option(target.data, target.shape);
-                    new_frame.parent_link = ParentLink::StructField {
-                        parent: self.current,
-                        field_idx,
-                    };
+                    new_frame.parent_link = parent_link;
 
                     let new_idx = self.arena.alloc(new_frame);
                     self.current = new_idx;
                 } else if let Def::Result(_) = &target.shape.def {
                     // Create Result frame
                     let mut new_frame = Frame::new_result(target.data, target.shape);
-                    new_frame.parent_link = ParentLink::StructField {
-                        parent: self.current,
-                        field_idx,
-                    };
+                    new_frame.parent_link = parent_link;
 
                     let new_idx = self.arena.alloc(new_frame);
                     self.current = new_idx;
@@ -271,10 +291,7 @@ impl<'facet> Partial<'facet> {
                         }
                         _ => Frame::new(target.data, target.shape),
                     };
-                    new_frame.parent_link = ParentLink::StructField {
-                        parent: self.current,
-                        field_idx,
-                    };
+                    new_frame.parent_link = parent_link;
 
                     // Store in arena and make it current
                     let new_idx = self.arena.alloc(new_frame);
@@ -289,7 +306,8 @@ impl<'facet> Partial<'facet> {
                 } else {
                     // Setting a field - need to handle already-INIT structs/tuples
                     let frame = self.arena.get_mut(self.current);
-                    let field_idx = path.as_slice()[0] as usize;
+                    let field_idx =
+                        first_field_idx(path).expect("path must have field index") as usize;
                     frame.prepare_field_for_overwrite(field_idx);
                 }
 
@@ -314,7 +332,8 @@ impl<'facet> Partial<'facet> {
                     frame.flags |= FrameFlags::INIT;
                 } else {
                     // Mark child as complete
-                    let field_idx = path.as_slice()[0] as usize;
+                    let field_idx =
+                        first_field_idx(path).expect("path must have field index") as usize;
                     frame.kind.mark_field_complete(field_idx);
                 }
             }
@@ -328,13 +347,13 @@ impl<'facet> Partial<'facet> {
         path: &Path,
         source: &Source<'_>,
     ) -> Result<(), ReflectError> {
-        let indices = path.as_slice();
-        if indices.len() != 1 {
+        let segments = path.segments();
+        if segments.len() != 1 {
             return Err(self.error(ReflectErrorKind::MultiLevelPathNotSupported {
-                depth: indices.len(),
+                depth: segments.len(),
             }));
         }
-        let variant_idx = indices[0];
+        let variant_idx = first_field_idx(path).expect("path must have field index");
 
         // Get enum type and variant
         let frame = self.arena.get(self.current);
@@ -424,7 +443,7 @@ impl<'facet> Partial<'facet> {
                 };
                 e.selected = Some((variant_idx, Idx::COMPLETE));
             }
-            Source::Build(_build) => {
+            Source::Stage(_capacity) => {
                 // Push a frame for the variant's fields
                 let frame = self.arena.get(self.current);
                 let mut new_frame = Frame::new_variant(frame.data, frame.shape, new_variant);
@@ -455,13 +474,13 @@ impl<'facet> Partial<'facet> {
         path: &Path,
         source: &Source<'_>,
     ) -> Result<(), ReflectError> {
-        let indices = path.as_slice();
-        if indices.len() != 1 {
+        let segments = path.segments();
+        if segments.len() != 1 {
             return Err(self.error(ReflectErrorKind::MultiLevelPathNotSupported {
-                depth: indices.len(),
+                depth: segments.len(),
             }));
         }
-        let variant_idx = indices[0];
+        let variant_idx = first_field_idx(path).expect("path must have field index");
 
         // Validate variant index: 0 = None, 1 = Some
         if variant_idx > 1 {
@@ -563,7 +582,7 @@ impl<'facet> Partial<'facet> {
                             o.inner = Idx::COMPLETE;
                         }
                     }
-                    Source::Build(_build) => {
+                    Source::Stage(_capacity) => {
                         // Allocate temporary space for the inner value
                         let layout = inner_shape.layout.sized_layout().map_err(|_| {
                             self.error(ReflectErrorKind::Unsized { shape: inner_shape })
@@ -624,13 +643,13 @@ impl<'facet> Partial<'facet> {
         path: &Path,
         source: &Source<'_>,
     ) -> Result<(), ReflectError> {
-        let indices = path.as_slice();
-        if indices.len() != 1 {
+        let segments = path.segments();
+        if segments.len() != 1 {
             return Err(self.error(ReflectErrorKind::MultiLevelPathNotSupported {
-                depth: indices.len(),
+                depth: segments.len(),
             }));
         }
-        let variant_idx = indices[0];
+        let variant_idx = first_field_idx(path).expect("path must have field index");
 
         // Validate variant index: 0 = Ok, 1 = Err
         if variant_idx > 1 {
@@ -725,7 +744,7 @@ impl<'facet> Partial<'facet> {
                     r.inner = Idx::COMPLETE;
                 }
             }
-            Source::Build(_build) => {
+            Source::Stage(_capacity) => {
                 // Allocate temporary space for the inner value
                 let layout = inner_shape
                     .layout

@@ -10,8 +10,8 @@ use std::collections::HashMap;
 fn build_empty_map() {
     let mut partial = Partial::alloc::<HashMap<String, u32>>().unwrap();
 
-    // For root-level maps, no End needed - Build initializes the map
-    partial.apply(&[Op::set().build()]).unwrap();
+    // For root-level maps, no End needed - Stage initializes the map
+    partial.apply(&[Op::set().stage()]).unwrap();
 
     let result: HashMap<String, u32> = partial.build().unwrap();
     assert!(result.is_empty());
@@ -28,9 +28,17 @@ fn build_map_with_imm_values() {
 
     partial
         .apply(&[
-            Op::set().build_with_len_hint(2),
-            Op::insert(&mut key1).imm(&mut val1),
-            Op::insert(&mut key2).imm(&mut val2),
+            Op::set().stage_with_capacity(2),
+            // Entry 1: key="one", value=1
+            Op::set().append().stage(),
+            Op::set().at(0).imm(&mut key1),
+            Op::set().at(1).imm(&mut val1),
+            Op::End,
+            // Entry 2: key="two", value=2
+            Op::set().append().stage(),
+            Op::set().at(0).imm(&mut key2),
+            Op::set().at(1).imm(&mut val2),
+            Op::End,
         ])
         .unwrap();
     std::mem::forget(key1);
@@ -51,9 +59,17 @@ fn build_map_with_default_values() {
 
     partial
         .apply(&[
-            Op::set().build(),
-            Op::insert(&mut key1).default(),
-            Op::insert(&mut key2).default(),
+            Op::set().stage(),
+            // Entry 1: key="first", value=default
+            Op::set().append().stage(),
+            Op::set().at(0).imm(&mut key1),
+            Op::set().at(1).default(),
+            Op::End,
+            // Entry 2: key="second", value=default
+            Op::set().append().stage(),
+            Op::set().at(0).imm(&mut key2),
+            Op::set().at(1).default(),
+            Op::End,
         ])
         .unwrap();
     std::mem::forget(key1);
@@ -66,7 +82,7 @@ fn build_map_with_default_values() {
 }
 
 // =============================================================================
-// HashMap with complex values (Insert with Build)
+// HashMap with complex values (using Stage for complex values)
 // =============================================================================
 
 #[derive(Debug, PartialEq, Facet)]
@@ -85,12 +101,15 @@ fn build_map_with_struct_values() {
 
     partial
         .apply(&[
-            Op::set().build_with_len_hint(1),
-            // Insert with Build for complex value
-            Op::insert(&mut key).build(),
-            Op::set().at(0).imm(&mut host),
-            Op::set().at(1).imm(&mut port),
-            Op::End,
+            Op::set().stage_with_capacity(1),
+            // Entry with key and struct value
+            Op::set().append().stage(),
+            Op::set().at(0).imm(&mut key),  // key
+            Op::set().at(1).stage(),        // value (struct) - push frame for struct
+            Op::set().at(0).imm(&mut host), // Server.host
+            Op::set().at(1).imm(&mut port), // Server.port
+            Op::End,                        // End Server
+            Op::End,                        // End entry
         ])
         .unwrap();
     std::mem::forget(key);
@@ -120,17 +139,23 @@ fn build_map_with_multiple_struct_values() {
 
     partial
         .apply(&[
-            Op::set().build_with_len_hint(2),
+            Op::set().stage_with_capacity(2),
             // First entry
-            Op::insert(&mut key1).build(),
+            Op::set().append().stage(),
+            Op::set().at(0).imm(&mut key1),
+            Op::set().at(1).stage(),
             Op::set().at(0).imm(&mut host1),
             Op::set().at(1).imm(&mut port1),
-            Op::End,
+            Op::End, // End Server
+            Op::End, // End entry
             // Second entry
-            Op::insert(&mut key2).build(),
+            Op::set().append().stage(),
+            Op::set().at(0).imm(&mut key2),
+            Op::set().at(1).stage(),
             Op::set().at(0).imm(&mut host2),
             Op::set().at(1).imm(&mut port2),
-            Op::End,
+            Op::End, // End Server
+            Op::End, // End entry
         ])
         .unwrap();
     std::mem::forget(key1);
@@ -179,9 +204,13 @@ fn build_struct_with_map_field() {
             // Set name field
             Op::set().at(0).imm(&mut name),
             // Build env field
-            Op::set().at(1).build_with_len_hint(1),
-            Op::insert(&mut env_key).imm(&mut env_value),
-            Op::End,
+            Op::set().at(1).stage_with_capacity(1),
+            // Entry
+            Op::set().append().stage(),
+            Op::set().at(0).imm(&mut env_key),
+            Op::set().at(1).imm(&mut env_value),
+            Op::End, // End entry
+            Op::End, // End map
         ])
         .unwrap();
     std::mem::forget(name);
@@ -203,7 +232,7 @@ fn build_struct_with_empty_map_field() {
     partial
         .apply(&[
             Op::set().at(0).imm(&mut name),
-            Op::set().at(1).build(), // empty map
+            Op::set().at(1).stage(), // empty map
             Op::End,
         ])
         .unwrap();
@@ -229,12 +258,16 @@ fn build_map_with_vec_values() {
 
     partial
         .apply(&[
-            Op::set().build(),
-            Op::insert(&mut key).build(),
-            Op::push().imm(&mut a),
-            Op::push().imm(&mut b),
-            Op::push().imm(&mut c),
-            Op::End,
+            Op::set().stage(),
+            // Entry
+            Op::set().append().stage(),
+            Op::set().at(0).imm(&mut key), // key
+            Op::set().at(1).stage(),       // value (Vec)
+            Op::set().append().imm(&mut a),
+            Op::set().append().imm(&mut b),
+            Op::set().append().imm(&mut c),
+            Op::End, // End Vec
+            Op::End, // End entry
         ])
         .unwrap();
     std::mem::forget(key);
@@ -259,9 +292,17 @@ fn build_map_with_integer_keys() {
 
     partial
         .apply(&[
-            Op::set().build(),
-            Op::insert(&mut key1).imm(&mut val1),
-            Op::insert(&mut key2).imm(&mut val2),
+            Op::set().stage(),
+            // Entry 1
+            Op::set().append().stage(),
+            Op::set().at(0).imm(&mut key1),
+            Op::set().at(1).imm(&mut val1),
+            Op::End,
+            // Entry 2
+            Op::set().append().stage(),
+            Op::set().at(0).imm(&mut key2),
+            Op::set().at(1).imm(&mut val2),
+            Op::End,
         ])
         .unwrap();
     std::mem::forget(val1);
@@ -278,51 +319,53 @@ fn build_map_with_integer_keys() {
 // =============================================================================
 
 #[test]
-fn insert_on_non_map_errors() {
+fn append_on_non_collection_errors() {
     let mut partial = Partial::alloc::<u32>().unwrap();
 
-    let mut key = String::from("key");
-    let mut val = 42u32;
-    let err = partial
-        .apply(&[Op::insert(&mut key).imm(&mut val)])
-        .unwrap_err();
+    let err = partial.apply(&[Op::set().append().stage()]).unwrap_err();
+    // Should error because u32 is not a collection
     assert!(matches!(
         err.kind,
-        facet_reflect2::ReflectErrorKind::NotAMap
+        facet_reflect2::ReflectErrorKind::NotAList
     ));
 }
 
 #[test]
-fn insert_wrong_key_type_errors() {
+fn map_entry_wrong_key_type_errors() {
     let mut partial = Partial::alloc::<HashMap<String, u32>>().unwrap();
 
     let mut wrong_key = 42u32; // Should be String
-    let mut val = 1u32;
+    let _val = 1u32; // unused after API change
 
-    partial.apply(&[Op::set().build()]).unwrap();
+    partial.apply(&[Op::set().stage()]).unwrap();
+    partial.apply(&[Op::set().append().stage()]).unwrap();
     let err = partial
-        .apply(&[Op::insert(&mut wrong_key).imm(&mut val)])
+        .apply(&[Op::set().at(0).imm(&mut wrong_key)])
         .unwrap_err();
     assert!(matches!(
         err.kind,
-        facet_reflect2::ReflectErrorKind::KeyShapeMismatch { .. }
+        facet_reflect2::ReflectErrorKind::ShapeMismatch { .. }
     ));
 }
 
 #[test]
-fn insert_wrong_value_type_errors() {
+fn map_entry_wrong_value_type_errors() {
     let mut partial = Partial::alloc::<HashMap<String, u32>>().unwrap();
 
     let mut key = String::from("key");
     let mut wrong_val = String::from("not a u32");
 
-    partial.apply(&[Op::set().build()]).unwrap();
+    partial.apply(&[Op::set().stage()]).unwrap();
+    partial.apply(&[Op::set().append().stage()]).unwrap();
+    partial.apply(&[Op::set().at(0).imm(&mut key)]).unwrap();
+    std::mem::forget(key);
+
     let err = partial
-        .apply(&[Op::insert(&mut key).imm(&mut wrong_val)])
+        .apply(&[Op::set().at(1).imm(&mut wrong_val)])
         .unwrap_err();
     assert!(matches!(
         err.kind,
-        facet_reflect2::ReflectErrorKind::ValueShapeMismatch { .. }
+        facet_reflect2::ReflectErrorKind::ShapeMismatch { .. }
     ));
 }
 
@@ -339,7 +382,13 @@ fn drop_partial_map_mid_construction() {
     let mut val = String::from("value");
 
     partial
-        .apply(&[Op::set().build(), Op::insert(&mut key).imm(&mut val)])
+        .apply(&[
+            Op::set().stage(),
+            Op::set().append().stage(),
+            Op::set().at(0).imm(&mut key),
+            Op::set().at(1).imm(&mut val),
+            Op::End,
+        ])
         .unwrap();
     std::mem::forget(key);
     std::mem::forget(val);
@@ -358,8 +407,10 @@ fn drop_partial_map_mid_value_build() {
     let mut host = String::from("localhost");
 
     let result = partial.apply(&[
-        Op::set().build(),
-        Op::insert(&mut key).build(),
+        Op::set().stage(),
+        Op::set().append().stage(),
+        Op::set().at(0).imm(&mut key),
+        Op::set().at(1).stage(),
         Op::set().at(0).imm(&mut host),
         // Don't set port, don't End - just drop
     ]);

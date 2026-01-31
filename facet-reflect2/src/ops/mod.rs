@@ -6,16 +6,63 @@ use std::collections::VecDeque;
 use std::marker::PhantomData;
 
 use facet_core::{Facet, PtrConst, PtrMut, Shape};
-use smallvec::SmallVec;
+use smallvec::{SmallVec, smallvec};
+
+/// A segment in a path through a nested structure.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PathSegment {
+    /// Struct field, tuple element, array index, enum variant.
+    Field(u32),
+    /// New list/set element or map entry.
+    Append,
+    /// Jump to root (only valid as first segment).
+    Root,
+}
 
 /// A path into a nested structure.
 #[derive(Clone, Debug, Default)]
-pub struct Path(SmallVec<u32, 2>);
+pub struct Path(SmallVec<PathSegment, 4>);
 
 impl Path {
-    /// Push an index onto the path.
-    pub fn push(&mut self, index: u32) {
-        self.0.push(index);
+    /// Create an empty path.
+    pub fn empty() -> Self {
+        Self(SmallVec::new())
+    }
+
+    /// Create a path with a single field segment.
+    pub fn field(n: u32) -> Self {
+        Self(smallvec![PathSegment::Field(n)])
+    }
+
+    /// Create a path with a single append segment.
+    pub fn append() -> Self {
+        Self(smallvec![PathSegment::Append])
+    }
+
+    /// Create a path starting from root.
+    pub fn root() -> Self {
+        Self(smallvec![PathSegment::Root])
+    }
+
+    /// Add a segment to the path.
+    pub fn then(mut self, seg: PathSegment) -> Self {
+        self.0.push(seg);
+        self
+    }
+
+    /// Add a field segment to the path.
+    pub fn then_field(self, n: u32) -> Self {
+        self.then(PathSegment::Field(n))
+    }
+
+    /// Add an append segment to the path.
+    pub fn then_append(self) -> Self {
+        self.then(PathSegment::Append)
+    }
+
+    /// Returns the path segments as a slice.
+    pub fn segments(&self) -> &[PathSegment] {
+        &self.0
     }
 
     /// Returns true if the path is empty.
@@ -23,14 +70,41 @@ impl Path {
         self.0.is_empty()
     }
 
-    /// Returns the path indices as a slice.
-    pub fn as_slice(&self) -> &[u32] {
-        &self.0
-    }
-
-    /// Returns the number of elements in the path.
+    /// Returns the number of segments in the path.
     pub fn len(&self) -> usize {
         self.0.len()
+    }
+
+    // --- Deprecated methods for migration ---
+
+    /// Push a field index onto the path (deprecated: use then_field).
+    #[deprecated(note = "Use Path::field(n) or path.then_field(n) instead")]
+    pub fn push(&mut self, index: u32) {
+        self.0.push(PathSegment::Field(index));
+    }
+
+    /// Returns the path as field indices.
+    /// Panics if any segment is not a Field.
+    /// (deprecated: use segments() instead)
+    #[deprecated(note = "Use segments() instead")]
+    pub fn as_slice(&self) -> Vec<u32> {
+        self.0
+            .iter()
+            .map(|seg| match seg {
+                PathSegment::Field(n) => *n,
+                _ => panic!("as_slice() requires all segments to be Field"),
+            })
+            .collect()
+    }
+
+    /// Returns the first field index, if the path starts with a Field.
+    /// Panics if path is empty or starts with non-Field.
+    /// (deprecated: use segments() instead)
+    pub fn first_field_index(&self) -> Option<u32> {
+        match self.0.first() {
+            Some(PathSegment::Field(n)) => Some(*n),
+            _ => None,
+        }
     }
 }
 
@@ -38,10 +112,6 @@ impl Path {
 pub enum Op<'a> {
     /// Set a value at a path relative to the current frame.
     Set { dst: Path, src: Source<'a> },
-    /// Push an element onto the current list frame.
-    Push { src: Source<'a> },
-    /// Insert a key-value pair into the current map frame.
-    Insert { key: Imm<'a>, value: Source<'a> },
     /// End the current frame and pop back to parent.
     End,
 }
@@ -50,8 +120,9 @@ pub enum Op<'a> {
 pub enum Source<'a> {
     /// Move a complete value from ptr into destination.
     Imm(Imm<'a>),
-    /// Build incrementally - pushes a frame.
-    Build(Build),
+    /// Stage for incremental construction - pushes a frame.
+    /// Optional capacity hint for collections.
+    Stage(Option<usize>),
     /// Use the type's default value.
     Default,
 }
@@ -118,11 +189,6 @@ impl<'a> Imm<'a> {
     pub fn shape(&self) -> &'static Shape {
         self.shape
     }
-}
-
-/// Build a value incrementally.
-pub struct Build {
-    pub len_hint: Option<usize>,
 }
 
 /// A batch of operations to apply to a [`Partial`](crate::Partial).

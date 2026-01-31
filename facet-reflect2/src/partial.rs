@@ -2,7 +2,6 @@
 
 // Ops appliers
 mod end;
-mod insert;
 mod push;
 mod set;
 
@@ -13,7 +12,7 @@ use std::ptr::NonNull;
 use crate::arena::{Arena, Idx};
 use crate::errors::{ReflectError, ReflectErrorKind};
 use crate::frame::{Frame, FrameFlags, FrameKind, absolute_path};
-use crate::ops::{Op, OpBatch, Path};
+use crate::ops::{Op, OpBatch, Path, PathSegment};
 use facet_core::{
     Def, EnumType, Facet, Field, PtrUninit, SequenceType, Shape, Type, UserType, Variant,
 };
@@ -125,8 +124,7 @@ impl<'facet> Partial<'facet> {
             frame.uninit();
 
             // Free the frame and deallocate if it owns its allocation
-            // Note: If this is a MapValue frame, the key TempAlloc in ParentLink
-            // will be dropped when the frame is freed (ParentLink is moved out).
+            // Free the frame and deallocate if it owns its allocation
             let frame = self.arena.free(idx);
             frame.dealloc_if_owned();
 
@@ -178,20 +176,7 @@ impl<'facet> Partial<'facet> {
                 Op::Set {
                     dst: path,
                     src: source,
-                } => {
-                    let frame = self.arena.get(self.current);
-                    let is_enum_variant_selection = !path.is_empty()
-                        && matches!(frame.kind, FrameKind::Enum(_))
-                        && matches!(frame.shape.ty, Type::User(UserType::Enum(_)));
-
-                    if is_enum_variant_selection {
-                        self.apply_enum_variant_set(path, source)
-                    } else {
-                        self.apply_regular_set(path, source)
-                    }
-                }
-                Op::Push { src } => self.apply_push(src),
-                Op::Insert { key, value } => self.apply_insert(key, value),
+                } => self.apply_set(path, source),
                 Op::End => self.apply_end(),
             };
 
@@ -214,37 +199,7 @@ impl<'facet> Partial<'facet> {
                     dst: path,
                     src: source,
                 } => {
-                    // Check if current frame is an enum frame (not inside a variant's fields)
-                    // and path is non-empty - that means we're selecting a variant
-                    let frame = self.arena.get(self.current);
-                    let is_enum_variant_selection = !path.is_empty()
-                        && matches!(frame.kind, FrameKind::Enum(_))
-                        && matches!(frame.shape.ty, Type::User(UserType::Enum(_)));
-
-                    // Check if current frame is an Option/Result frame with variant selection
-                    let is_option_variant_selection = !path.is_empty()
-                        && matches!(frame.kind, FrameKind::Option(_))
-                        && matches!(frame.shape.def, Def::Option(_));
-
-                    let is_result_variant_selection = !path.is_empty()
-                        && matches!(frame.kind, FrameKind::Result(_))
-                        && matches!(frame.shape.def, Def::Result(_));
-
-                    if is_enum_variant_selection {
-                        self.apply_enum_variant_set(path, source)?;
-                    } else if is_option_variant_selection {
-                        self.apply_option_variant_set(path, source)?;
-                    } else if is_result_variant_selection {
-                        self.apply_result_variant_set(path, source)?;
-                    } else {
-                        self.apply_regular_set(path, source)?;
-                    }
-                }
-                Op::Push { src } => {
-                    self.apply_push(src)?;
-                }
-                Op::Insert { key, value } => {
-                    self.apply_insert(key, value)?;
+                    self.apply_set(path, source)?;
                 }
                 Op::End => {
                     self.apply_end()?;
@@ -252,6 +207,142 @@ impl<'facet> Partial<'facet> {
             }
         }
         Ok(())
+    }
+
+    /// Apply a Set operation, dispatching based on path and current frame type.
+    fn apply_set(
+        &mut self,
+        path: &Path,
+        source: &crate::ops::Source<'_>,
+    ) -> Result<(), ReflectError> {
+        // Check for Append segment - dispatch to collection handling
+        if let Some(PathSegment::Append) = path.segments().first() {
+            return self.apply_append_set(path, source);
+        }
+
+        // Check if current frame is an enum frame (not inside a variant's fields)
+        // and path starts with a Field - that means we're selecting a variant
+        let frame = self.arena.get(self.current);
+
+        // Get the first field index if path starts with Field
+        let first_field = match path.segments().first() {
+            Some(PathSegment::Field(n)) => Some(*n),
+            _ => None,
+        };
+
+        let is_enum_variant_selection = first_field.is_some()
+            && matches!(frame.kind, FrameKind::Enum(_))
+            && matches!(frame.shape.ty, Type::User(UserType::Enum(_)));
+
+        // Check if current frame is an Option/Result frame with variant selection
+        let is_option_variant_selection = first_field.is_some()
+            && matches!(frame.kind, FrameKind::Option(_))
+            && matches!(frame.shape.def, Def::Option(_));
+
+        let is_result_variant_selection = first_field.is_some()
+            && matches!(frame.kind, FrameKind::Result(_))
+            && matches!(frame.shape.def, Def::Result(_));
+
+        if is_enum_variant_selection {
+            self.apply_enum_variant_set(path, source)
+        } else if is_option_variant_selection {
+            self.apply_option_variant_set(path, source)
+        } else if is_result_variant_selection {
+            self.apply_result_variant_set(path, source)
+        } else {
+            self.apply_regular_set(path, source)
+        }
+    }
+
+    /// Apply a Set operation with Append path segment (for lists, sets, maps).
+    fn apply_append_set(
+        &mut self,
+        path: &Path,
+        source: &crate::ops::Source<'_>,
+    ) -> Result<(), ReflectError> {
+        use crate::frame::{Frame, FrameFlags, ParentLink};
+        use crate::ops::Source;
+
+        // For now, we only support single-segment Append paths
+        // Multi-level Append paths will be implemented in Phase 3
+        let segments = path.segments();
+        if segments.len() != 1 {
+            return Err(self.error(ReflectErrorKind::MultiLevelPathNotSupported {
+                depth: segments.len(),
+            }));
+        }
+
+        // Check if we're appending to a map - if so, create a MapEntryFrame
+        let frame = self.arena.get(self.current);
+        if let FrameKind::Map(ref _map_frame) = frame.kind {
+            // Ensure map is initialized first
+            self.ensure_collection_initialized()?;
+
+            // For maps, only Stage is supported (we need to build key+value fields)
+            let Source::Stage(_capacity) = source else {
+                return Err(self.error(ReflectErrorKind::MapAppendRequiresStage));
+            };
+
+            // Get map def for key/value shapes
+            let frame = self.arena.get(self.current);
+            let FrameKind::Map(ref map_frame) = frame.kind else {
+                unreachable!()
+            };
+            let map_def = map_frame.def;
+            let key_shape = map_def.k;
+            let value_shape = map_def.v;
+
+            // Allocate staging memory for key + value
+            let key_layout = key_shape
+                .layout
+                .sized_layout()
+                .map_err(|_| self.error(ReflectErrorKind::Unsized { shape: key_shape }))?;
+            let value_layout = value_shape
+                .layout
+                .sized_layout()
+                .map_err(|_| self.error(ReflectErrorKind::Unsized { shape: value_shape }))?;
+
+            // Calculate total size: key at offset 0, value at aligned offset
+            let value_offset = key_layout.size().max(value_layout.align());
+            let total_size = value_offset + value_layout.size();
+            let total_align = key_layout.align().max(value_layout.align());
+
+            let entry_layout = std::alloc::Layout::from_size_align(total_size, total_align)
+                .map_err(|_| {
+                    self.error(ReflectErrorKind::AllocFailed {
+                        layout: std::alloc::Layout::new::<u8>(),
+                    })
+                })?;
+
+            let entry_ptr = if entry_layout.size() == 0 {
+                PtrUninit::new(std::ptr::NonNull::<u8>::dangling().as_ptr())
+            } else {
+                let ptr = unsafe { alloc(entry_layout) };
+                if ptr.is_null() {
+                    return Err(self.error(ReflectErrorKind::AllocFailed {
+                        layout: entry_layout,
+                    }));
+                }
+                PtrUninit::new(ptr)
+            };
+
+            // Create MapEntryFrame
+            let frame = self.arena.get(self.current);
+            let mut entry_frame = Frame::new_map_entry(entry_ptr, frame.shape, map_def);
+            entry_frame.flags |= FrameFlags::OWNS_ALLOC;
+            entry_frame.parent_link = ParentLink::MapEntry {
+                parent: self.current,
+            };
+
+            // Push frame and make it current
+            let entry_idx = self.arena.alloc(entry_frame);
+            self.current = entry_idx;
+
+            Ok(())
+        } else {
+            // Delegate to the existing push logic for lists/sets
+            self.apply_push(source)
+        }
     }
 
     /// Ensure the current collection (list, map, or set) is initialized.
@@ -318,15 +409,25 @@ impl<'facet> Partial<'facet> {
             return Ok(Frame::new(frame.data, frame.shape));
         }
 
-        // For now, only support single-level paths
-        let indices = path.as_slice();
-        if indices.len() != 1 {
+        let segments = path.segments();
+
+        // For now, only support single-level Field paths
+        if segments.len() != 1 {
             return Err(self.error(ReflectErrorKind::MultiLevelPathNotSupported {
-                depth: indices.len(),
+                depth: segments.len(),
             }));
         }
 
-        let index = indices[0];
+        // Extract field index from the first segment
+        let index = match &segments[0] {
+            PathSegment::Field(n) => *n,
+            PathSegment::Append => {
+                return Err(self.error(ReflectErrorKind::AppendInResolvePath));
+            }
+            PathSegment::Root => {
+                return Err(self.error(ReflectErrorKind::RootNotAtStart));
+            }
+        };
 
         // Check if we're inside a variant - use variant's fields for resolution
         if let FrameKind::VariantData(v) = &frame.kind {
@@ -334,6 +435,39 @@ impl<'facet> Partial<'facet> {
             let field_ptr =
                 unsafe { PtrUninit::new(frame.data.as_mut_byte_ptr().add(field.offset)) };
             return Ok(Frame::new(field_ptr, field.shape()));
+        }
+
+        // Check if we're inside a MapEntry - use key/value shapes
+        if let FrameKind::MapEntry(ref entry) = frame.kind {
+            let (shape, offset) = match index {
+                0 => {
+                    // Key at offset 0
+                    (entry.map_def.k, 0)
+                }
+                1 => {
+                    // Value at aligned offset after key
+                    let key_layout = entry.map_def.k.layout.sized_layout().map_err(|_| {
+                        self.error(ReflectErrorKind::Unsized {
+                            shape: entry.map_def.k,
+                        })
+                    })?;
+                    let value_layout = entry.map_def.v.layout.sized_layout().map_err(|_| {
+                        self.error(ReflectErrorKind::Unsized {
+                            shape: entry.map_def.v,
+                        })
+                    })?;
+                    let value_offset = key_layout.size().max(value_layout.align());
+                    (entry.map_def.v, value_offset)
+                }
+                _ => {
+                    return Err(self.error(ReflectErrorKind::FieldIndexOutOfBounds {
+                        index,
+                        field_count: 2, // MapEntry has 2 fields: key and value
+                    }));
+                }
+            };
+            let field_ptr = unsafe { PtrUninit::new(frame.data.as_mut_byte_ptr().add(offset)) };
+            return Ok(Frame::new(field_ptr, shape));
         }
 
         match frame.shape.ty {
@@ -492,8 +626,7 @@ impl<'facet> Drop for Partial<'facet> {
             frame.uninit();
 
             // Free the frame and deallocate if it owns its allocation
-            // Note: If this is a MapValue frame, the key TempAlloc in ParentLink
-            // will be dropped when the frame is freed (ParentLink is moved out).
+            // Free the frame and deallocate if it owns its allocation
             let frame = self.arena.free(idx);
             frame.dealloc_if_owned();
 

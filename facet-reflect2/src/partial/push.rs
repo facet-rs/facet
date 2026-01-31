@@ -82,7 +82,7 @@ impl<'facet> Partial<'facet> {
                     }
                 }
             }
-            Source::Build(_build) => {
+            Source::Stage(_capacity) => {
                 let element_shape = match &collection {
                     CollectionKind::List { element_shape, .. } => *element_shape,
                     CollectionKind::Set { element_shape, .. } => *element_shape,

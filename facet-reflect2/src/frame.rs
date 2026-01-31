@@ -3,7 +3,6 @@
 use crate::arena::{Arena, Idx};
 use crate::errors::{ErrorLocation, ReflectError, ReflectErrorKind};
 use crate::ops::Path;
-use crate::temp_alloc::TempAlloc;
 use facet_core::{ListDef, MapDef, PtrConst, PtrUninit, SequenceType, SetDef, Shape, Variant};
 
 bitflags::bitflags! {
@@ -303,6 +302,59 @@ impl Default for ResultFrame {
     }
 }
 
+/// Map entry frame data (building a (Key, Value) tuple for a map entry).
+/// This is created when Append is called on a map frame.
+/// Field 0 = key, Field 1 = value.
+pub struct MapEntryFrame {
+    /// The map definition (for key/value shapes).
+    pub map_def: &'static MapDef,
+    /// Key status: NOT_STARTED, COMPLETE, or valid frame index.
+    pub key: Idx<Frame>,
+    /// Value status: NOT_STARTED, COMPLETE, or valid frame index.
+    pub value: Idx<Frame>,
+}
+
+impl MapEntryFrame {
+    pub fn new(map_def: &'static MapDef) -> Self {
+        Self {
+            map_def,
+            key: Idx::NOT_STARTED,
+            value: Idx::NOT_STARTED,
+        }
+    }
+
+    pub fn is_complete(&self) -> bool {
+        self.key.is_complete() && self.value.is_complete()
+    }
+
+    /// Mark a field (0=key, 1=value) as complete.
+    pub fn mark_field_complete(&mut self, idx: usize) {
+        match idx {
+            0 => self.key = Idx::COMPLETE,
+            1 => self.value = Idx::COMPLETE,
+            _ => {}
+        }
+    }
+
+    /// Mark a field (0=key, 1=value) as not started.
+    pub fn mark_field_not_started(&mut self, idx: usize) {
+        match idx {
+            0 => self.key = Idx::NOT_STARTED,
+            1 => self.value = Idx::NOT_STARTED,
+            _ => {}
+        }
+    }
+
+    /// Check if a field (0=key, 1=value) is complete.
+    pub fn is_field_complete(&self, idx: usize) -> bool {
+        match idx {
+            0 => self.key.is_complete(),
+            1 => self.value.is_complete(),
+            _ => false,
+        }
+    }
+}
+
 /// What kind of value this frame is building.
 pub enum FrameKind {
     /// Scalar or opaque value - no children.
@@ -334,6 +386,10 @@ pub enum FrameKind {
 
     /// Building a Result<T, E>.
     Result(ResultFrame),
+
+    /// Building a map entry (key, value) tuple.
+    /// Created by Append on a map frame.
+    MapEntry(MapEntryFrame),
 }
 
 /// Describes the relationship between a frame and its parent.
@@ -352,10 +408,6 @@ pub enum ParentLink {
     /// Element being pushed to a list.
     /// On End: call push_fn to add element to parent list.
     ListElement { parent: Idx<Frame> },
-
-    /// Value being inserted into a map.
-    /// Owns the key - on End, call insert_fn with key and value.
-    MapValue { parent: Idx<Frame>, key: TempAlloc },
 
     /// Element being inserted into a set.
     /// On End: call set's insert_fn to add element.
@@ -379,6 +431,14 @@ pub enum ParentLink {
         parent: Idx<Frame>,
         variant_idx: u32,
     },
+
+    /// Map entry frame (new API using Append).
+    /// On End: insert the (key, value) pair into parent map.
+    MapEntry { parent: Idx<Frame> },
+
+    /// Field of a map entry (0=key, 1=value).
+    /// On End: mark field complete in parent MapEntryFrame.
+    MapEntryField { parent: Idx<Frame>, field_idx: u32 },
 }
 
 impl ParentLink {
@@ -388,12 +448,13 @@ impl ParentLink {
             ParentLink::Root => None,
             ParentLink::StructField { parent, .. } => Some(*parent),
             ParentLink::ListElement { parent } => Some(*parent),
-            ParentLink::MapValue { parent, .. } => Some(*parent),
             ParentLink::SetElement { parent } => Some(*parent),
             ParentLink::PointerInner { parent } => Some(*parent),
             ParentLink::OptionInner { parent } => Some(*parent),
             ParentLink::ResultInner { parent, .. } => Some(*parent),
             ParentLink::EnumVariant { parent, .. } => Some(*parent),
+            ParentLink::MapEntry { parent } => Some(*parent),
+            ParentLink::MapEntryField { parent, .. } => Some(*parent),
         }
     }
 
@@ -404,12 +465,13 @@ impl ParentLink {
             ParentLink::Root => None,
             ParentLink::StructField { field_idx, .. } => Some(*field_idx),
             ParentLink::ListElement { .. } => None, // Lists don't use indexed paths
-            ParentLink::MapValue { .. } => None,    // Maps don't use indexed paths
             ParentLink::SetElement { .. } => None,  // Sets don't use indexed paths
             ParentLink::PointerInner { .. } => Some(0), // Pointer inner is "field 0"
             ParentLink::OptionInner { .. } => Some(1), // Some is variant 1
             ParentLink::ResultInner { is_ok, .. } => Some(if *is_ok { 0 } else { 1 }),
             ParentLink::EnumVariant { variant_idx, .. } => Some(*variant_idx),
+            ParentLink::MapEntry { .. } => None, // Map entries don't use indexed paths
+            ParentLink::MapEntryField { field_idx, .. } => Some(*field_idx),
         }
     }
 }
@@ -428,14 +490,16 @@ impl FrameKind {
             FrameKind::Set(s) => s.is_complete(),
             FrameKind::Option(o) => o.is_complete(),
             FrameKind::Result(r) => r.is_complete(),
+            FrameKind::MapEntry(e) => e.is_complete(),
         }
     }
 
-    /// Mark a child field as complete (for Struct and VariantData).
+    /// Mark a child field as complete (for Struct, VariantData, and MapEntry).
     pub fn mark_field_complete(&mut self, idx: usize) {
         match self {
             FrameKind::Struct(s) => s.mark_field_complete(idx),
             FrameKind::VariantData(v) => v.mark_field_complete(idx),
+            FrameKind::MapEntry(e) => e.mark_field_complete(idx),
             _ => {}
         }
     }
@@ -445,15 +509,17 @@ impl FrameKind {
         match self {
             FrameKind::Struct(s) => s.mark_field_not_started(idx),
             FrameKind::VariantData(v) => v.mark_field_not_started(idx),
+            FrameKind::MapEntry(e) => e.mark_field_not_started(idx),
             _ => {}
         }
     }
 
-    /// Check if a child field is complete (for Struct and VariantData).
+    /// Check if a child field is complete (for Struct, VariantData, and MapEntry).
     pub fn is_field_complete(&self, idx: usize) -> bool {
         match self {
             FrameKind::Struct(s) => s.fields.is_complete(idx),
             FrameKind::VariantData(v) => v.fields.is_complete(idx),
+            FrameKind::MapEntry(e) => e.is_field_complete(idx),
             _ => false,
         }
     }
@@ -499,9 +565,9 @@ pub fn absolute_path(arena: &Arena<Frame>, mut idx: Idx<Frame>) -> Path {
         }
     }
     indices.reverse();
-    let mut path = Path::default();
+    let mut path = Path::empty();
     for i in indices {
-        path.push(i);
+        path = path.then_field(i);
     }
     path
 }
@@ -618,6 +684,19 @@ impl Frame {
             data,
             shape,
             kind: FrameKind::Result(ResultFrame::new()),
+            flags: FrameFlags::empty(),
+            parent_link: ParentLink::Root,
+        }
+    }
+
+    /// Create a frame for a map entry (key, value) tuple.
+    /// `data` points to temporary memory for key and value staging.
+    /// `shape` is the parent map's shape (for error reporting).
+    pub fn new_map_entry(data: PtrUninit, shape: &'static Shape, map_def: &'static MapDef) -> Self {
+        Frame {
+            data,
+            shape,
+            kind: FrameKind::MapEntry(MapEntryFrame::new(map_def)),
             flags: FrameFlags::empty(),
             parent_link: ParentLink::Root,
         }
@@ -852,27 +931,33 @@ mod tests {
 
     #[test]
     fn absolute_path_one_level() {
+        use crate::ops::PathSegment;
         let mut arena = Arena::new();
         let root = arena.alloc(dummy_frame());
         let child = arena.alloc(dummy_frame_with_parent(root, 3));
 
         let path = absolute_path(&arena, child);
-        assert_eq!(path.as_slice(), &[3]);
+        assert_eq!(path.segments(), &[PathSegment::Field(3)]);
     }
 
     #[test]
     fn absolute_path_two_levels() {
+        use crate::ops::PathSegment;
         let mut arena = Arena::new();
         let root = arena.alloc(dummy_frame());
         let child = arena.alloc(dummy_frame_with_parent(root, 1));
         let grandchild = arena.alloc(dummy_frame_with_parent(child, 2));
 
         let path = absolute_path(&arena, grandchild);
-        assert_eq!(path.as_slice(), &[1, 2]);
+        assert_eq!(
+            path.segments(),
+            &[PathSegment::Field(1), PathSegment::Field(2)]
+        );
     }
 
     #[test]
     fn absolute_path_three_levels() {
+        use crate::ops::PathSegment;
         let mut arena = Arena::new();
         let root = arena.alloc(dummy_frame());
         let a = arena.alloc(dummy_frame_with_parent(root, 0));
@@ -880,24 +965,42 @@ mod tests {
         let c = arena.alloc(dummy_frame_with_parent(b, 10));
 
         let path = absolute_path(&arena, c);
-        assert_eq!(path.as_slice(), &[0, 5, 10]);
+        assert_eq!(
+            path.segments(),
+            &[
+                PathSegment::Field(0),
+                PathSegment::Field(5),
+                PathSegment::Field(10)
+            ]
+        );
     }
 
     #[test]
     fn absolute_path_sibling_frames() {
+        use crate::ops::PathSegment;
         let mut arena = Arena::new();
         let root = arena.alloc(dummy_frame());
         let child0 = arena.alloc(dummy_frame_with_parent(root, 0));
         let child1 = arena.alloc(dummy_frame_with_parent(root, 1));
         let child2 = arena.alloc(dummy_frame_with_parent(root, 2));
 
-        assert_eq!(absolute_path(&arena, child0).as_slice(), &[0]);
-        assert_eq!(absolute_path(&arena, child1).as_slice(), &[1]);
-        assert_eq!(absolute_path(&arena, child2).as_slice(), &[2]);
+        assert_eq!(
+            absolute_path(&arena, child0).segments(),
+            &[PathSegment::Field(0)]
+        );
+        assert_eq!(
+            absolute_path(&arena, child1).segments(),
+            &[PathSegment::Field(1)]
+        );
+        assert_eq!(
+            absolute_path(&arena, child2).segments(),
+            &[PathSegment::Field(2)]
+        );
     }
 
     #[test]
     fn absolute_path_deep_nesting() {
+        use crate::ops::PathSegment;
         let mut arena = Arena::new();
         let mut current = arena.alloc(dummy_frame());
 
@@ -906,6 +1009,7 @@ mod tests {
         }
 
         let path = absolute_path(&arena, current);
-        assert_eq!(path.as_slice(), &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+        let expected: Vec<PathSegment> = (0..10).map(PathSegment::Field).collect();
+        assert_eq!(path.segments(), expected.as_slice());
     }
 }
