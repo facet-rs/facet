@@ -4,6 +4,7 @@ use arbitrary::Arbitrary;
 use facet::Facet;
 use facet_core::{PtrConst, Shape};
 use facet_reflect2::{Build, Imm, Op, Partial, Path, Source};
+use std::collections::HashMap;
 
 // ============================================================================
 // Compound types for fuzzing (these need Facet derive)
@@ -359,6 +360,14 @@ fuzz_types! {
         NestedEnumU32 => NestedEnumU32,
         NestedEnumI32 => NestedEnumI32,
         DeepEnum => DeepEnum,
+
+        // HashMaps
+        HashMapStringU32 => HashMap<String, u32>,
+        HashMapStringString => HashMap<String, String>,
+        HashMapU32String => HashMap<u32, String>,
+        HashMapStringPoint => HashMap<String, Point>,
+        HashMapStringVecU32 => HashMap<String, Vec<u32>>,
+        HashMapStringBoxU32 => HashMap<String, Box<u32>>,
     }
     targets_only {
         // Mutex (no Clone/Arbitrary)
@@ -439,6 +448,8 @@ pub enum FuzzOp {
     Set { path: FuzzPath, source: FuzzSource },
     /// Push an element to the current list.
     Push { source: FuzzSource },
+    /// Insert a key-value pair into the current map.
+    Insert { key: FuzzValue, value: FuzzSource },
     /// End the current frame.
     End,
 }
@@ -612,6 +623,78 @@ fn run_fuzz(input: FuzzInput, log: bool) {
                         let result = partial.apply(&[op]);
                         if log {
                             eprintln!("    result: {result:?}");
+                        }
+                        result
+                    }
+                }
+            }
+            FuzzOp::Insert { key, value } => {
+                let (key_ptr, key_shape) = key.as_ptr_and_shape();
+                // SAFETY: key_ptr points to key which is valid and initialized
+                let key_imm = unsafe { Imm::new(key_ptr, key_shape) };
+
+                match value {
+                    FuzzSource::Imm(val) => {
+                        if log {
+                            eprintln!("  [{i}] Insert key={:?} value=Imm({:?})", key, val);
+                        }
+                        let (val_ptr, val_shape) = val.as_ptr_and_shape();
+                        // SAFETY: val_ptr points to val which is valid and initialized
+                        let val_imm = unsafe { Imm::new(val_ptr, val_shape) };
+                        let op = Op::Insert {
+                            key: key_imm,
+                            value: Source::Imm(val_imm),
+                        };
+
+                        let result = partial.apply(&[op]);
+
+                        if log {
+                            eprintln!("    result: {result:?}");
+                        }
+
+                        if result.is_ok() {
+                            // Success! Both key and value bytes have been copied into the map.
+                            // We must forget the originals to avoid double-free.
+                            std::mem::forget(key);
+                            std::mem::forget(val);
+                        }
+                        result
+                    }
+                    FuzzSource::Default => {
+                        if log {
+                            eprintln!("  [{i}] Insert key={:?} value=Default", key);
+                        }
+                        let op = Op::Insert {
+                            key: key_imm,
+                            value: Source::Default,
+                        };
+                        let result = partial.apply(&[op]);
+                        if log {
+                            eprintln!("    result: {result:?}");
+                        }
+                        if result.is_ok() {
+                            // Key was copied into the map
+                            std::mem::forget(key);
+                        }
+                        result
+                    }
+                    FuzzSource::Build { len_hint } => {
+                        if log {
+                            eprintln!("  [{i}] Insert key={:?} value=Build({:?})", key, len_hint);
+                        }
+                        let op = Op::Insert {
+                            key: key_imm,
+                            value: Source::Build(Build {
+                                len_hint: len_hint.map(|h| h as usize),
+                            }),
+                        };
+                        let result = partial.apply(&[op]);
+                        if log {
+                            eprintln!("    result: {result:?}");
+                        }
+                        if result.is_ok() {
+                            // Key was copied into the pending key storage
+                            std::mem::forget(key);
                         }
                         result
                     }
