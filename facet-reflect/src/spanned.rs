@@ -1,6 +1,6 @@
 //! Types for tracking source span information during deserialization.
 
-use core::mem;
+use core::{fmt, mem};
 
 use facet_core::{
     Def, Facet, FieldBuilder, Shape, StructKind, TypeOpsDirect, type_ops_direct, vtable_direct,
@@ -32,6 +32,13 @@ pub struct Span {
     pub offset: u32,
     /// Length in bytes (max 4GB).
     pub len: u32,
+}
+
+impl fmt::Display for Span {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // use half-closed notation
+        write!(f, "[{}..{})", self.offset, self.offset + self.len)
+    }
 }
 
 impl Span {

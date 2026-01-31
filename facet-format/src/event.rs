@@ -350,7 +350,7 @@ pub enum ParseEventKind<'de> {
 impl<'de> fmt::Debug for ParseEvent<'de> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Delegate to kind's debug, span is secondary
-        write!(f, "{:?}@{:?}", self.kind, self.span)
+        write!(f, "{:?}@{}", self.kind, self.span)
     }
 }
 
