@@ -386,10 +386,10 @@ impl<'a> ValueMetaBuilder<'a> {
     /// Set the documentation comments if present.
     #[inline]
     pub fn maybe_doc(mut self, doc: Option<Vec<Cow<'a, str>>>) -> Self {
-        if let Some(d) = doc {
-            if !d.is_empty() {
-                self.doc = Some(d);
-            }
+        if let Some(d) = doc
+            && !d.is_empty()
+        {
+            self.doc = Some(d);
         }
         self
     }
