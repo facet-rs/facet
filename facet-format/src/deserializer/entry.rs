@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use facet_core::{Def, ScalarType, Shape, StructKind, Type, UserType};
-use facet_reflect::{DeserStrategy, Partial};
+use facet_reflect::{DeserStrategy, Partial, Span};
 
 use crate::{
     ContainerKind, DeserializeError, DeserializeErrorKind, FieldEvidence, FieldLocationHint,
@@ -199,31 +199,77 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     ///
     /// These require special handling - the value field gets the data,
     /// metadata fields are populated from the passed `meta`.
+    ///
+    /// VariantTag events (like `@tag"hello"` in Styx) are already consumed by
+    /// `deserialize_into` and passed down via `meta`.
     fn deserialize_metadata_container(
         &mut self,
         mut wip: Partial<'input, BORROW>,
         meta: Option<&ValueMeta<'input>>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
-        let empty_meta = ValueMeta::default();
-        let meta = meta.unwrap_or(&empty_meta);
+        // Check for VariantTag at the start - this handles tagged values like `@tag"hello"`.
+        // We consume it here and merge it into meta.
+        let event = self.expect_peek("value for metadata container")?;
+        let (meta_owned, tag_span) = if let ParseEventKind::VariantTag(tag) = &event.kind {
+            let tag_span = event.span;
+            let tag = tag.map(Cow::Borrowed);
+            let _ = self.expect_event("variant tag")?; // consume it
+
+            // Merge tag with any existing meta (preserving doc comments)
+            let mut builder = ValueMeta::builder().span(tag_span);
+            if let Some(m) = meta {
+                if let Some(doc) = m.doc() {
+                    builder = builder.doc(doc.to_vec());
+                }
+            }
+            if let Some(tag) = tag {
+                builder = builder.tag(tag);
+            }
+            (Some(builder.build()), Some(tag_span))
+        } else {
+            (None, None)
+        };
+
+        static EMPTY_META: ValueMeta<'static> = ValueMeta::empty();
+        let meta = meta_owned.as_ref().or(meta).unwrap_or(&EMPTY_META);
+
         let shape = wip.shape();
         trace!(%shape, "deserialize_into: metadata container detected");
 
+        // Deserialize the value field and track its span
+        let mut value_span = Span::default();
         if let Type::User(UserType::Struct(st)) = &shape.ty {
             for field in st.fields {
-                match field.metadata_kind() {
-                    Some(kind) => {
-                        wip = wip.begin_field(field.effective_name())?;
-                        wip = self.populate_metadata_field(wip, kind, meta)?;
-                        wip = wip.end()?;
-                    }
-                    None => {
-                        // This is the value field - recurse into it (no meta for inner value)
-                        wip = wip
-                            .begin_field(field.effective_name())?
-                            .with(|w| self.deserialize_into(w, None))?
-                            .end()?;
-                    }
+                if field.metadata_kind().is_none() {
+                    // This is the value field - recurse into it (no meta for inner value)
+                    wip = wip
+                        .begin_field(field.effective_name())?
+                        .with(|w| self.deserialize_into(w, None))?
+                        .end()?;
+                    value_span = self.last_span;
+                    break;
+                }
+            }
+        }
+
+        // Compute the full span: if we have a tag span, extend from tag start to value end.
+        // Otherwise, just use the value's span.
+        let full_span = if let Some(tag_span) = tag_span {
+            Span {
+                offset: tag_span.offset,
+                len: (value_span.offset + value_span.len).saturating_sub(tag_span.offset),
+            }
+        } else {
+            value_span
+        };
+
+        // Populate metadata fields
+        if let Type::User(UserType::Struct(st)) = &shape.ty {
+            for field in st.fields {
+                if let Some(kind) = field.metadata_kind() {
+                    wip = wip.begin_field(field.effective_name())?;
+                    wip = self.populate_metadata_field_with_span(wip, kind, meta, full_span)?;
+                    wip = wip.end()?;
                 }
             }
         }
@@ -233,14 +279,23 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     /// Populate a single metadata field on a metadata container.
     fn populate_metadata_field(
         &mut self,
-        mut wip: Partial<'input, BORROW>,
+        wip: Partial<'input, BORROW>,
         kind: &str,
         meta: &ValueMeta<'input>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        self.populate_metadata_field_with_span(wip, kind, meta, self.last_span)
+    }
+
+    /// Populate a single metadata field on a metadata container with an explicit span.
+    fn populate_metadata_field_with_span(
+        &mut self,
+        mut wip: Partial<'input, BORROW>,
+        kind: &str,
+        meta: &ValueMeta<'input>,
+        span: Span,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         match kind {
             "span" => {
-                // Populate span from parser's current position
-                let span = self.last_span;
                 wip = wip
                     .begin_some()?
                     .begin_field("offset")?

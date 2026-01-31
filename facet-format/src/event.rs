@@ -4,6 +4,7 @@ use alloc::borrow::Cow;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::fmt;
+use facet_reflect::Span;
 
 /// Location hint for a serialized field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -338,9 +339,19 @@ impl<'de> ScalarValue<'de> {
 pub struct ValueMeta<'a> {
     doc: Option<Vec<Cow<'a, str>>>,
     tag: Option<Cow<'a, str>>,
+    span: Option<Span>,
 }
 
 impl<'a> ValueMeta<'a> {
+    /// A const empty `ValueMeta` for use as a default reference.
+    pub const fn empty() -> Self {
+        Self {
+            doc: None,
+            tag: None,
+            span: None,
+        }
+    }
+
     /// Create a new builder for `ValueMeta`.
     #[inline]
     pub fn builder() -> ValueMetaBuilder<'a> {
@@ -359,10 +370,16 @@ impl<'a> ValueMeta<'a> {
         self.tag.as_ref()
     }
 
+    /// Get the span where this value starts (e.g., where a VariantTag was found).
+    #[inline]
+    pub fn span(&self) -> Option<Span> {
+        self.span
+    }
+
     /// Returns `true` if this metadata has no content.
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.doc.is_none() && self.tag.is_none()
+        self.doc.is_none() && self.tag.is_none() && self.span.is_none()
     }
 }
 
@@ -371,6 +388,7 @@ impl<'a> ValueMeta<'a> {
 pub struct ValueMetaBuilder<'a> {
     doc: Option<Vec<Cow<'a, str>>>,
     tag: Option<Cow<'a, str>>,
+    span: Option<Span>,
 }
 
 impl<'a> ValueMetaBuilder<'a> {
@@ -410,12 +428,20 @@ impl<'a> ValueMetaBuilder<'a> {
         self
     }
 
+    /// Set the span where this value starts.
+    #[inline]
+    pub fn span(mut self, span: Span) -> Self {
+        self.span = Some(span);
+        self
+    }
+
     /// Build the `ValueMeta`.
     #[inline]
     pub fn build(self) -> ValueMeta<'a> {
         ValueMeta {
             doc: self.doc,
             tag: self.tag,
+            span: self.span,
         }
     }
 }
