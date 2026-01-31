@@ -4,6 +4,207 @@ use facet_format::DeserializeErrorKind;
 use facet_testhelpers::test;
 use styx_testhelpers::{ActualError, assert_annotated_errors, source_without_annotations};
 
+mod event_assert {
+    use ariadne::{Color, Label, Report, ReportKind, Source};
+    use facet_format::{ContainerKind, FormatParser, ParseEvent, ParseEventKind, ScalarValue};
+    use similar::{ChangeTag, TextDiff};
+
+    use crate::StyxParser;
+
+    /// Format a ParseEvent to a string representation, ignoring spans.
+    fn format_event(event: &ParseEvent<'_>) -> String {
+        match &event.kind {
+            ParseEventKind::StructStart(ContainerKind::Object) => "StructStart".to_string(),
+            ParseEventKind::StructStart(kind) => format!("StructStart({:?})", kind),
+            ParseEventKind::StructEnd => "StructEnd".to_string(),
+            ParseEventKind::SequenceStart(ContainerKind::Array) => "SequenceStart".to_string(),
+            ParseEventKind::SequenceStart(kind) => format!("SequenceStart({:?})", kind),
+            ParseEventKind::SequenceEnd => "SequenceEnd".to_string(),
+            ParseEventKind::FieldKey(key) => {
+                if let Some(name) = key.name() {
+                    format!("FieldKey({:?})", name.as_ref())
+                } else if let Some(tag) = key.tag() {
+                    if tag.is_empty() {
+                        "FieldKey(@)".to_string()
+                    } else {
+                        format!("FieldKey(@{})", tag)
+                    }
+                } else {
+                    "FieldKey(unit)".to_string()
+                }
+            }
+            ParseEventKind::OrderedField => "OrderedField".to_string(),
+            ParseEventKind::Scalar(ScalarValue::Unit) => "Scalar(unit)".to_string(),
+            ParseEventKind::Scalar(ScalarValue::Null) => "Scalar(null)".to_string(),
+            ParseEventKind::Scalar(ScalarValue::Bool(b)) => format!("Scalar({})", b),
+            ParseEventKind::Scalar(ScalarValue::Char(c)) => format!("Scalar({:?})", c),
+            ParseEventKind::Scalar(ScalarValue::I64(n)) => format!("Scalar({})", n),
+            ParseEventKind::Scalar(ScalarValue::U64(n)) => format!("Scalar({}u)", n),
+            ParseEventKind::Scalar(ScalarValue::I128(n)) => format!("Scalar({}i128)", n),
+            ParseEventKind::Scalar(ScalarValue::U128(n)) => format!("Scalar({}u128)", n),
+            ParseEventKind::Scalar(ScalarValue::F64(f)) => format!("Scalar({}f)", f),
+            ParseEventKind::Scalar(ScalarValue::Str(s)) => format!("Scalar({:?})", s.as_ref()),
+            ParseEventKind::Scalar(ScalarValue::Bytes(_)) => "Scalar(bytes)".to_string(),
+            ParseEventKind::VariantTag(Some(name)) => format!("VariantTag({})", name),
+            ParseEventKind::VariantTag(None) => "VariantTag(@)".to_string(),
+        }
+    }
+
+    /// Collected event with owned data for storage.
+    struct CollectedEvent {
+        label: String,
+        start: usize,
+        end: usize,
+    }
+
+    /// Collect all events from a source string.
+    fn collect_events(source: &str) -> Vec<CollectedEvent> {
+        let mut parser = StyxParser::new(source);
+        let mut events = Vec::new();
+        loop {
+            match parser.next_event() {
+                Ok(Some(event)) => {
+                    let label = format_event(&event);
+                    let start = event.span.offset as usize;
+                    let end = start + event.span.len as usize;
+                    events.push(CollectedEvent { label, start, end });
+                }
+                Ok(None) => break,
+                Err(e) => {
+                    panic!("Parser error: {:?}", e);
+                }
+            }
+        }
+        events
+    }
+
+    /// Format a list of collected events to a multi-line string.
+    fn format_events(events: &[CollectedEvent]) -> String {
+        events
+            .iter()
+            .map(|e| e.label.clone())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Normalize expected string: trim, dedent, remove empty lines at start/end.
+    fn normalize_expected(expected: &str) -> String {
+        let lines: Vec<&str> = expected.lines().collect();
+
+        // Find minimum indentation (ignoring empty lines)
+        let min_indent = lines
+            .iter()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| l.len() - l.trim_start().len())
+            .min()
+            .unwrap_or(0);
+
+        // Dedent and filter empty lines at start/end
+        let dedented: Vec<&str> = lines
+            .iter()
+            .map(|l| {
+                if l.len() >= min_indent {
+                    &l[min_indent..]
+                } else {
+                    l.trim()
+                }
+            })
+            .collect();
+
+        // Trim empty lines from start and end
+        let start = dedented.iter().position(|l| !l.is_empty()).unwrap_or(0);
+        let end = dedented
+            .iter()
+            .rposition(|l| !l.is_empty())
+            .map(|i| i + 1)
+            .unwrap_or(0);
+
+        dedented[start..end].join("\n")
+    }
+
+    /// Print each event with its span annotated on the source using ariadne.
+    fn print_events_with_spans(source: &str, events: &[CollectedEvent]) {
+        eprintln!("\n=== Events with spans ===\n");
+
+        for (i, event) in events.iter().enumerate() {
+            eprintln!("Event {}: {}", i + 1, event.label);
+
+            if event.end > event.start {
+                let mut buf = Vec::new();
+                Report::build(
+                    ReportKind::Custom("", Color::Cyan),
+                    ("", event.start..event.end),
+                )
+                .with_label(
+                    Label::new(("", event.start..event.end))
+                        .with_message(&event.label)
+                        .with_color(Color::Cyan),
+                )
+                .finish()
+                .write(("", Source::from(source)), &mut buf)
+                .unwrap();
+                eprintln!("{}", String::from_utf8_lossy(&buf));
+            } else {
+                eprintln!("  (no span)\n");
+            }
+        }
+    }
+
+    fn indent(s: &str, prefix: &str) -> String {
+        s.lines()
+            .map(|l| format!("{}{}", prefix, l))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Assert that parse events match the expected string representation.
+    /// On mismatch, shows expected, actual, and a diff.
+    /// Set STYX_SHOW_SPANS=1 to see each event with its span annotated on the source.
+    pub fn assert_events_eq_impl(source: &str, expected: &str) {
+        let events = collect_events(source);
+        let actual = format_events(&events);
+        let expected_normalized = normalize_expected(expected);
+
+        if actual == expected_normalized {
+            return;
+        }
+
+        eprintln!("\n╭─ Events mismatch! ─────────────────────────────────────────╮\n");
+
+        eprintln!("Expected:\n{}\n", indent(&expected_normalized, "    "));
+        eprintln!("Actual:\n{}\n", indent(&actual, "    "));
+
+        eprintln!("Diff:");
+        let diff = TextDiff::from_lines(&expected_normalized, &actual);
+        for change in diff.iter_all_changes() {
+            let (sign, color) = match change.tag() {
+                ChangeTag::Delete => ("-", "\x1b[31m"),
+                ChangeTag::Insert => ("+", "\x1b[32m"),
+                ChangeTag::Equal => (" ", ""),
+            };
+            let reset = if color.is_empty() { "" } else { "\x1b[0m" };
+            eprint!("  {}{}{}{}", color, sign, change, reset);
+        }
+        eprintln!();
+
+        if std::env::var("STYX_SHOW_SPANS").is_ok() {
+            print_events_with_spans(source, &events);
+        } else {
+            eprintln!("Hint: rerun with STYX_SHOW_SPANS=1 to see spans annotated on source\n");
+        }
+
+        eprintln!("╰────────────────────────────────────────────────────────────╯\n");
+
+        panic!("Events do not match expected");
+    }
+}
+
+macro_rules! assert_events_eq {
+    ($source:expr, $expected:expr) => {
+        event_assert::assert_events_eq_impl($source, $expected)
+    };
+}
+
 #[derive(Facet, Debug, PartialEq)]
 struct Simple {
     name: String,
@@ -409,6 +610,39 @@ fn test_spanned_as_flattened_map_key() {
             );
         }
     }
+}
+
+// =========================================================================
+// Event assertion tests
+// =========================================================================
+
+#[test]
+fn test_simple_key_value_events() {
+    assert_events_eq!(
+        "name hello",
+        "
+        StructStart
+        FieldKey(\"name\")
+        Scalar(\"hello\")
+        StructEnd
+        "
+    );
+}
+
+#[test]
+fn test_nested_object_events() {
+    assert_events_eq!(
+        "outer { inner value }",
+        "
+        StructStart
+        FieldKey(\"outer\")
+        StructStart
+        FieldKey(\"inner\")
+        Scalar(\"value\")
+        StructEnd
+        StructEnd
+        "
+    );
 }
 
 /// Test metadata container with both span and doc metadata as map key.

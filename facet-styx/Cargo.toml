@@ -38,6 +38,7 @@ facet-format = { workspace = true, features = ["tracing"] }
 facet-reflect = { workspace = true, features = ["tracing"] }
 figue.workspace = true
 indexmap = "2.13.0"
+similar.workspace = true
 
 [features]
 tracing = ["dep:tracing", "facet-format/tracing", "facet-reflect/tracing"]
