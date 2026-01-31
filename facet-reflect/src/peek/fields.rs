@@ -1,12 +1,46 @@
 use core::ops::Range;
 
 use alloc::borrow::Cow;
-use facet_core::{Field, Variant};
+use facet_core::{Field, Type, UserType, Variant};
 
 use crate::Peek;
 use alloc::{string::String, vec, vec::Vec};
 
 use super::{PeekEnum, PeekStruct, PeekTuple};
+
+/// Extract a string from a Peek value, handling metadata containers.
+///
+/// For metadata containers like `Spanned<String>` or `Documented<String>`,
+/// this unwraps to find the inner value field and extracts the string from it.
+fn extract_string_from_peek<'mem, 'facet>(peek: Peek<'mem, 'facet>) -> Option<String> {
+    // First try direct string extraction
+    if let Some(s) = peek.as_str() {
+        return Some(s.into());
+    }
+
+    // Check if this is a metadata container
+    if peek.shape().is_metadata_container()
+        && let Type::User(UserType::Struct(st)) = &peek.shape().ty
+    {
+        // Find the non-metadata field (the value field)
+        for field in st.fields {
+            if field.metadata_kind().is_none() {
+                // This is the value field - try to get the string from it
+                if let Ok(container) = peek.into_struct() {
+                    for (f, field_value) in container.fields() {
+                        if f.metadata_kind().is_none() {
+                            // Recursively extract - the value might also be a metadata container
+                            return extract_string_from_peek(field_value);
+                        }
+                    }
+                }
+                break;
+            }
+        }
+    }
+
+    None
+}
 
 /// A field item with runtime state for serialization.
 ///
@@ -290,8 +324,13 @@ impl<'mem, 'facet> Iterator for FieldsForSerializeIter<'mem, 'facet> {
                         // Push iterator back for more entries
                         self.stack
                             .push(FieldsForSerializeIterState::FlattenedMap { map_iter });
-                        // Get the key as a string using Display trait
-                        // This works for String, SmolStr, SmartString, CompactString, etc.
+                        // Extract the key string, handling metadata containers like Spanned<String>
+                        if let Some(key_str) = extract_string_from_peek(key_peek) {
+                            let field_item = FieldItem::flattened_map_entry(key_str);
+                            return Some((field_item, value_peek));
+                        }
+                        // Fallback: use Display trait for other string-like types
+                        // (SmolStr, SmartString, CompactString, etc.)
                         if key_peek.shape().vtable.has_display() {
                             use alloc::string::ToString;
                             let key_str = key_peek.to_string();

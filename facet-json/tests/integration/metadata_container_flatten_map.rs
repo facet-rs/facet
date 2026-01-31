@@ -9,6 +9,7 @@ use std::collections::HashMap;
 
 use facet::Facet;
 use facet_reflect::Span;
+use facet_testhelpers::test;
 
 /// A metadata container that captures span information.
 #[derive(Debug, Clone, Facet)]
