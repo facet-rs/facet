@@ -11,7 +11,9 @@ use crate::enum_helpers::{
 use crate::errors::{ReflectError, ReflectErrorKind};
 use crate::frame::{Frame, FrameFlags, FrameKind, absolute_path};
 use crate::ops::{Imm, Op, Path, Source};
-use facet_core::{Def, EnumType, Facet, Field, PtrMut, PtrUninit, Shape, Type, UserType, Variant};
+use facet_core::{
+    Def, EnumType, Facet, Field, PtrMut, PtrUninit, SequenceType, Shape, Type, UserType, Variant,
+};
 
 /// Manages incremental construction of a value.
 pub struct Partial<'facet> {
@@ -68,6 +70,10 @@ impl<'facet> Partial<'facet> {
         let mut frame = match shape.ty {
             Type::User(UserType::Struct(ref s)) => Frame::new_struct(data, shape, s.fields.len()),
             Type::User(UserType::Enum(_)) => Frame::new_enum(data, shape),
+            Type::Sequence(SequenceType::Array(ref a)) => {
+                // Arrays are like structs with N indexed elements
+                Frame::new_struct(data, shape, a.n)
+            }
             _ => {
                 // Check for list type
                 if let Def::List(_) = &shape.def {
@@ -634,9 +640,18 @@ impl<'facet> Partial<'facet> {
 
                         self.current = new_idx;
                         return Ok(());
-                    } else {
-                        return Err(self.error(ReflectErrorKind::BuildAtEmptyPath));
                     }
+
+                    // Handle array types
+                    if let Def::Array(array_def) = &frame.shape.def {
+                        // Arrays don't need initialization - memory is already allocated
+                        // Just convert to struct frame for element tracking (arrays are like structs)
+                        let frame = self.arena.get_mut(self.current);
+                        frame.kind = FrameKind::Struct(crate::frame::StructFrame::new(array_def.n));
+                        return Ok(());
+                    }
+
+                    return Err(self.error(ReflectErrorKind::BuildAtEmptyPath));
                 }
 
                 // Drop any existing value at the field before overwriting
@@ -691,6 +706,9 @@ impl<'facet> Partial<'facet> {
                             Frame::new_struct(target.data, target.shape, s.fields.len())
                         }
                         Type::User(UserType::Enum(_)) => Frame::new_enum(target.data, target.shape),
+                        Type::Sequence(SequenceType::Array(ref a)) => {
+                            Frame::new_struct(target.data, target.shape, a.n)
+                        }
                         _ => Frame::new(target.data, target.shape),
                     };
                     new_frame.parent = Some((self.current, field_idx));
@@ -1232,6 +1250,27 @@ impl<'facet> Partial<'facet> {
                 // For enums, we return the shape of the whole enum (not the variant)
                 // The variant's fields will be accessed in a nested frame after Build
                 Ok(Frame::new(frame.data, frame.shape))
+            }
+            Type::Sequence(SequenceType::Array(ref a)) => {
+                // Validate array index
+                if index as usize >= a.n {
+                    return Err(self.error(ReflectErrorKind::ArrayIndexOutOfBounds {
+                        index,
+                        array_len: a.n,
+                    }));
+                }
+                // Calculate element offset: index * element_size
+                // Note: Layout::size() includes trailing padding, so it equals the stride
+                let element_shape = a.t;
+                let element_layout = element_shape.layout.sized_layout().map_err(|_| {
+                    self.error(ReflectErrorKind::Unsized {
+                        shape: element_shape,
+                    })
+                })?;
+                let offset = (index as usize) * element_layout.size();
+                let element_ptr =
+                    unsafe { PtrUninit::new(frame.data.as_mut_byte_ptr().add(offset)) };
+                Ok(Frame::new(element_ptr, element_shape))
             }
             _ => Err(self.error(ReflectErrorKind::NotAStruct)),
         }

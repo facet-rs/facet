@@ -52,6 +52,10 @@ fn build_array_of_strings() {
         .apply(&[Op::set().at(0).imm(&mut a), Op::set().at(1).imm(&mut b)])
         .unwrap();
 
+    // After apply(), the strings have been moved - must forget to avoid double-free
+    std::mem::forget(a);
+    std::mem::forget(b);
+
     let result: [String; 2] = partial.build().unwrap();
     assert_eq!(result, [String::from("hello"), String::from("world")]);
 }
@@ -231,7 +235,7 @@ fn build_struct_with_array_of_structs_field_via_build() {
 
 #[test]
 fn build_empty_array() {
-    let mut partial = Partial::alloc::<[u32; 0]>().unwrap();
+    let partial = Partial::alloc::<[u32; 0]>().unwrap();
 
     // No operations needed for empty array
     let result: [u32; 0] = partial.build().unwrap();
@@ -249,6 +253,9 @@ fn build_single_element_array() {
     let mut s = String::from("only one");
 
     partial.apply(&[Op::set().at(0).imm(&mut s)]).unwrap();
+
+    // After apply(), the string has been moved - must forget to avoid double-free
+    std::mem::forget(s);
 
     let result: [String; 1] = partial.build().unwrap();
     assert_eq!(result, [String::from("only one")]);

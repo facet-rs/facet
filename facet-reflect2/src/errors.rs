@@ -75,6 +75,8 @@ pub enum ReflectErrorKind {
     AllocFailed { layout: core::alloc::Layout },
     /// Field index out of bounds.
     FieldIndexOutOfBounds { index: u32, field_count: usize },
+    /// Array index out of bounds.
+    ArrayIndexOutOfBounds { index: u32, array_len: usize },
     /// Type is not a struct (cannot navigate into fields).
     NotAStruct,
     /// Multi-level paths are not yet supported.
@@ -152,6 +154,13 @@ impl fmt::Display for ReflectErrorKind {
                     f,
                     "Field index {} out of bounds (type has {} fields)",
                     index, field_count
+                )
+            }
+            ReflectErrorKind::ArrayIndexOutOfBounds { index, array_len } => {
+                write!(
+                    f,
+                    "Array index {} out of bounds (array has {} elements)",
+                    index, array_len
                 )
             }
             ReflectErrorKind::NotAStruct => write!(f, "Type is not a struct"),

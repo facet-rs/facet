@@ -3,7 +3,7 @@
 use crate::arena::{Arena, Idx};
 use crate::errors::{ErrorLocation, ReflectError, ReflectErrorKind};
 use crate::ops::Path;
-use facet_core::{PtrConst, PtrMut, PtrUninit, Shape, Variant};
+use facet_core::{PtrConst, PtrMut, PtrUninit, SequenceType, Shape, Variant};
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -442,7 +442,7 @@ impl Frame {
                 e.selected = None;
             }
         } else if let FrameKind::Struct(ref mut s) = self.kind {
-            // Struct may have some fields initialized - drop them individually
+            // Struct or array may have some fields/elements initialized - drop them individually
             if let Type::User(UserType::Struct(ref struct_type)) = self.shape.ty {
                 for (idx, field) in struct_type.fields.iter().enumerate() {
                     if s.fields.is_complete(idx) {
@@ -455,6 +455,28 @@ impl Frame {
                 }
                 // Reset all fields to NOT_STARTED
                 s.fields = IndexedFields::new(struct_type.fields.len());
+            } else if let Type::Sequence(SequenceType::Array(ref array_type)) = self.shape.ty {
+                // Array elements - all have the same shape
+                // Note: Layout::size() includes trailing padding, so it equals the stride
+                let element_shape = array_type.t;
+                // Arrays of unsized types can't exist, so this unwrap_or is just defensive
+                let element_size = element_shape
+                    .layout
+                    .sized_layout()
+                    .map(|l| l.size())
+                    .unwrap_or(0);
+                for idx in 0..array_type.n {
+                    if s.fields.is_complete(idx) {
+                        // SAFETY: element is marked complete, so it's initialized
+                        unsafe {
+                            let offset = idx * element_size;
+                            let element_ptr = self.data.assume_init().field(offset);
+                            element_shape.call_drop_in_place(element_ptr);
+                        }
+                    }
+                }
+                // Reset all elements to NOT_STARTED
+                s.fields = IndexedFields::new(array_type.n);
             }
         } else if let FrameKind::Enum(ref mut e) = self.kind {
             // Enum variant may be complete even if INIT flag isn't set
