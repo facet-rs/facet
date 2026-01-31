@@ -155,6 +155,27 @@ impl ListFrame {
     }
 }
 
+/// Map frame data (building a HashMap, BTreeMap, etc.).
+/// Tracks the initialized map and count of inserted entries.
+pub struct MapFrame {
+    /// Pointer to the initialized map (after init_in_place_with_capacity).
+    pub map_ptr: PtrMut,
+    /// Number of entries that have been inserted.
+    pub len: usize,
+}
+
+impl MapFrame {
+    pub fn new(map_ptr: PtrMut) -> Self {
+        Self { map_ptr, len: 0 }
+    }
+
+    /// Maps are always "complete" since they have variable size.
+    /// Completion just means End was called.
+    pub fn is_complete(&self) -> bool {
+        true
+    }
+}
+
 /// What kind of value this frame is building.
 pub enum FrameKind {
     /// Scalar or opaque value - no children.
@@ -174,6 +195,9 @@ pub enum FrameKind {
 
     /// Building a list (Vec, etc.).
     List(ListFrame),
+
+    /// Building a map (HashMap, BTreeMap, etc.).
+    Map(MapFrame),
 }
 
 impl FrameKind {
@@ -186,6 +210,7 @@ impl FrameKind {
             FrameKind::VariantData(v) => v.is_complete(),
             FrameKind::Pointer(p) => p.is_complete(),
             FrameKind::List(l) => l.is_complete(),
+            FrameKind::Map(m) => m.is_complete(),
         }
     }
 
@@ -216,6 +241,11 @@ impl FrameKind {
     }
 }
 
+/// Pending key for map insertion.
+/// When building a value for a map insert, this holds the key until End.
+/// Uses TempAlloc which handles cleanup automatically.
+pub type PendingKey = crate::temp_alloc::TempAlloc;
+
 /// A frame tracking construction of a single value.
 pub struct Frame {
     /// Pointer to the memory being written.
@@ -232,6 +262,9 @@ pub struct Frame {
 
     /// Parent frame (if any) and our index within it.
     pub parent: Option<(Idx<Frame>, u32)>,
+
+    /// Pending key for map insertion (only set when building a value for Insert).
+    pub pending_key: Option<PendingKey>,
 }
 
 /// Build the absolute path from root to the given frame by walking up the parent chain.
@@ -262,6 +295,7 @@ impl Frame {
             kind: FrameKind::Scalar,
             flags: FrameFlags::empty(),
             parent: None,
+            pending_key: None,
         }
     }
 
@@ -273,6 +307,7 @@ impl Frame {
             kind: FrameKind::Struct(StructFrame::new(field_count)),
             flags: FrameFlags::empty(),
             parent: None,
+            pending_key: None,
         }
     }
 
@@ -284,6 +319,7 @@ impl Frame {
             kind: FrameKind::Enum(EnumFrame::new()),
             flags: FrameFlags::empty(),
             parent: None,
+            pending_key: None,
         }
     }
 
@@ -295,6 +331,7 @@ impl Frame {
             kind: FrameKind::VariantData(VariantFrame::new(variant)),
             flags: FrameFlags::empty(),
             parent: None,
+            pending_key: None,
         }
     }
 
@@ -307,6 +344,7 @@ impl Frame {
             kind: FrameKind::Pointer(PointerFrame::new()),
             flags: FrameFlags::empty(),
             parent: None,
+            pending_key: None,
         }
     }
 
@@ -320,6 +358,21 @@ impl Frame {
             kind: FrameKind::List(ListFrame::new(list_ptr)),
             flags: FrameFlags::empty(),
             parent: None,
+            pending_key: None,
+        }
+    }
+
+    /// Create a frame for a map (HashMap, BTreeMap, etc.).
+    /// `data` points to the map memory, `map_ptr` is the initialized map,
+    /// `shape` is the map's shape.
+    pub fn new_map(data: PtrUninit, shape: &'static Shape, map_ptr: PtrMut) -> Self {
+        Frame {
+            data,
+            shape,
+            kind: FrameKind::Map(MapFrame::new(map_ptr)),
+            flags: FrameFlags::empty(),
+            parent: None,
+            pending_key: None,
         }
     }
 
@@ -347,6 +400,9 @@ impl Frame {
     pub fn uninit(&mut self) {
         use crate::enum_helpers::drop_variant_fields;
         use facet_core::{Type, UserType};
+
+        // Clean up pending key if present (TempAlloc handles drop + dealloc)
+        let _ = self.pending_key.take();
 
         if self.flags.contains(FrameFlags::INIT) {
             // SAFETY: INIT flag means the value is fully initialized

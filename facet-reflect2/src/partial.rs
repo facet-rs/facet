@@ -10,8 +10,8 @@ use crate::enum_helpers::{
 };
 use crate::errors::{ReflectError, ReflectErrorKind};
 use crate::frame::{Frame, FrameFlags, FrameKind, absolute_path};
-use crate::ops::{Op, Path, Source};
-use facet_core::{Def, EnumType, Facet, Field, PtrUninit, Shape, Type, UserType, Variant};
+use crate::ops::{Imm, Op, Path, Source};
+use facet_core::{Def, EnumType, Facet, Field, PtrMut, PtrUninit, Shape, Type, UserType, Variant};
 
 /// Manages incremental construction of a value.
 pub struct Partial<'facet> {
@@ -155,6 +155,9 @@ impl<'facet> Partial<'facet> {
                 Op::Push { src } => {
                     self.apply_push(src)?;
                 }
+                Op::Insert { key, value } => {
+                    self.apply_insert(key, value)?;
+                }
                 Op::End => {
                     // Pop back to parent frame
                     let frame = self.arena.get(self.current);
@@ -173,12 +176,72 @@ impl<'facet> Partial<'facet> {
                         return Err(self.error(ReflectErrorKind::EndWithIncomplete));
                     }
 
-                    // Check if parent is a pointer or list frame - special finalization needed
+                    // Check if parent is a pointer, list, or map frame - special finalization needed
                     let parent = self.arena.get(parent_idx);
                     let is_pointer_parent = matches!(parent.kind, FrameKind::Pointer(_));
                     let is_list_parent = matches!(parent.kind, FrameKind::List(_));
+                    let is_map_parent = matches!(parent.kind, FrameKind::Map(_));
 
-                    if is_list_parent {
+                    // Check if current frame has a pending key (value frame for map insert)
+                    let frame = self.arena.get(self.current);
+                    let has_pending_key = frame.pending_key.is_some();
+
+                    if has_pending_key && is_map_parent {
+                        // We're completing a value frame that was started by Insert with Build
+                        // Get map def and insert function from parent's shape
+                        let parent = self.arena.get(parent_idx);
+                        let Def::Map(map_def) = &parent.shape.def else {
+                            return Err(self.error_at(parent_idx, ReflectErrorKind::NotAMap));
+                        };
+                        let insert_fn = map_def.vtable.insert;
+
+                        // Get the value data pointer (our current frame's data, now initialized)
+                        let frame = self.arena.get(self.current);
+                        let value_ptr = unsafe { frame.data.assume_init() };
+
+                        // Get the pending key
+                        let pending_key = frame.pending_key.as_ref().unwrap();
+                        let key_ptr = pending_key.ptr();
+
+                        // Get the map pointer from parent's MapFrame
+                        let parent = self.arena.get(parent_idx);
+                        let FrameKind::Map(ref map_frame) = parent.kind else {
+                            unreachable!()
+                        };
+                        let map_ptr = map_frame.map_ptr;
+
+                        // Insert the key-value pair (moves both out)
+                        // SAFETY: both pointers point to initialized data
+                        unsafe {
+                            insert_fn(
+                                map_ptr,
+                                PtrMut::new(key_ptr.as_mut_byte_ptr()),
+                                PtrMut::new(value_ptr.as_mut_byte_ptr()),
+                            );
+                        }
+
+                        // The value has been moved into the map. Now deallocate temp memory.
+                        let frame = self.arena.get_mut(self.current);
+                        // Don't drop the value - it was moved out by insert_fn
+                        frame.flags.remove(FrameFlags::INIT);
+                        // Clear the pending key and mark it moved (TempAlloc will dealloc but not drop)
+                        let mut pending_key = frame.pending_key.take().unwrap();
+                        pending_key.mark_moved();
+                        // pending_key drops here, deallocating storage
+
+                        // Deallocate our staging memory for the value
+                        let freed_frame = self.arena.free(self.current);
+                        freed_frame.dealloc_if_owned();
+
+                        // Increment entry count in parent map
+                        let parent = self.arena.get_mut(parent_idx);
+                        if let FrameKind::Map(ref mut m) = parent.kind {
+                            m.len += 1;
+                        }
+
+                        // Pop back to parent
+                        self.current = parent_idx;
+                    } else if is_list_parent {
                         // Get list def and push function from parent's shape
                         let parent = self.arena.get(parent_idx);
                         let Def::List(list_def) = &parent.shape.def else {
@@ -295,6 +358,13 @@ impl<'facet> Partial<'facet> {
                             FrameKind::List(_) => {
                                 // List elements don't have indexed tracking - the list itself tracks length
                                 // This shouldn't happen with current implementation (list elements are pushed directly)
+                                return Err(
+                                    self.error_at(parent_idx, ReflectErrorKind::NotIndexedChildren)
+                                );
+                            }
+                            FrameKind::Map(_) => {
+                                // Map entries should have pending_key set and use the map insert path
+                                // This shouldn't happen with current implementation
                                 return Err(
                                     self.error_at(parent_idx, ReflectErrorKind::NotIndexedChildren)
                                 );
@@ -463,6 +533,25 @@ impl<'facet> Partial<'facet> {
                         return Ok(());
                     }
 
+                    // Handle map types (HashMap, BTreeMap, etc.)
+                    if let Def::Map(map_def) = &frame.shape.def {
+                        // Get the init function
+                        let init_fn = map_def.vtable.init_in_place_with_capacity;
+
+                        // Initialize the map with capacity hint
+                        let capacity = build.len_hint.unwrap_or(0);
+                        // SAFETY: frame.data points to uninitialized memory of the correct layout
+                        let map_ptr = unsafe { init_fn(frame.data, capacity) };
+
+                        // Convert to map frame
+                        let frame = self.arena.get_mut(self.current);
+                        frame.kind = FrameKind::Map(crate::frame::MapFrame::new(map_ptr));
+                        // The map is now initialized (empty, but valid)
+                        frame.flags |= FrameFlags::INIT;
+
+                        return Ok(());
+                    }
+
                     // Handle pointer types (Box/Rc/Arc)
                     if let Def::Pointer(ptr_def) = &frame.shape.def {
                         // Get pointee shape
@@ -546,6 +635,22 @@ impl<'facet> Partial<'facet> {
                     let mut new_frame = Frame::new_list(target.data, target.shape, list_ptr);
                     new_frame.parent = Some((self.current, field_idx));
                     new_frame.flags |= FrameFlags::INIT; // List is initialized (empty but valid)
+
+                    let new_idx = self.arena.alloc(new_frame);
+                    self.current = new_idx;
+                } else if let Def::Map(map_def) = &target.shape.def {
+                    // Get the init function
+                    let init_fn = map_def.vtable.init_in_place_with_capacity;
+
+                    // Initialize the map with capacity hint
+                    let capacity = build.len_hint.unwrap_or(0);
+                    // SAFETY: target.data points to uninitialized memory of the correct layout
+                    let map_ptr = unsafe { init_fn(target.data, capacity) };
+
+                    // Create map frame
+                    let mut new_frame = Frame::new_map(target.data, target.shape, map_ptr);
+                    new_frame.parent = Some((self.current, field_idx));
+                    new_frame.flags |= FrameFlags::INIT; // Map is initialized (empty but valid)
 
                     let new_idx = self.arena.alloc(new_frame);
                     self.current = new_idx;
@@ -912,6 +1017,183 @@ impl<'facet> Partial<'facet> {
                 let frame = self.arena.get_mut(self.current);
                 if let FrameKind::List(ref mut l) = frame.kind {
                     l.len += 1;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Apply an Insert operation to add a key-value pair to the current map.
+    fn apply_insert(&mut self, key: &Imm<'_>, value: &Source<'_>) -> Result<(), ReflectError> {
+        // Verify we're in a map frame
+        let frame = self.arena.get(self.current);
+        let FrameKind::Map(ref map_frame) = frame.kind else {
+            return Err(self.error(ReflectErrorKind::NotAMap));
+        };
+
+        // Get the map def and key/value shapes
+        let Def::Map(map_def) = &frame.shape.def else {
+            return Err(self.error(ReflectErrorKind::NotAMap));
+        };
+        let key_shape = map_def.k;
+        let value_shape = map_def.v;
+
+        // Verify key shape matches
+        if !key_shape.is_shape(key.shape()) {
+            return Err(self.error(ReflectErrorKind::KeyShapeMismatch {
+                expected: key_shape,
+                actual: key.shape(),
+            }));
+        }
+
+        let map_ptr = map_frame.map_ptr;
+        let insert_fn = map_def.vtable.insert;
+
+        match value {
+            Source::Imm(mov) => {
+                use crate::temp_alloc::TempAlloc;
+
+                // Verify value shape matches
+                if !value_shape.is_shape(mov.shape()) {
+                    return Err(self.error(ReflectErrorKind::ValueShapeMismatch {
+                        expected: value_shape,
+                        actual: mov.shape(),
+                    }));
+                }
+
+                // Allocate and copy key
+                let mut key_alloc = TempAlloc::new(key_shape).map_err(|kind| self.error(kind))?;
+                unsafe {
+                    key_alloc.copy_from(key.ptr());
+                }
+
+                // Allocate and copy value
+                let mut value_alloc =
+                    TempAlloc::new(value_shape).map_err(|kind| self.error(kind))?;
+                unsafe {
+                    value_alloc.copy_from(mov.ptr());
+                }
+
+                // Insert the key-value pair (moves both out)
+                // SAFETY: both pointers point to valid initialized data
+                unsafe {
+                    insert_fn(
+                        map_ptr,
+                        PtrMut::new(key_alloc.ptr().as_mut_byte_ptr()),
+                        PtrMut::new(value_alloc.ptr().as_mut_byte_ptr()),
+                    );
+                }
+
+                // Mark as moved so TempAlloc doesn't drop the values
+                key_alloc.mark_moved();
+                value_alloc.mark_moved();
+                // TempAlloc drops here, deallocating storage
+
+                // Increment entry count
+                let frame = self.arena.get_mut(self.current);
+                if let FrameKind::Map(ref mut m) = frame.kind {
+                    m.len += 1;
+                }
+            }
+            Source::Build(build) => {
+                use crate::temp_alloc::TempAlloc;
+
+                // Allocate temp storage for key and copy it
+                let mut key_alloc = TempAlloc::new(key_shape).map_err(|kind| self.error(kind))?;
+                unsafe {
+                    key_alloc.copy_from(key.ptr());
+                }
+
+                // Allocate temporary space for the value
+                let value_alloc = TempAlloc::new(value_shape).map_err(|kind| self.error(kind))?;
+                let value_ptr = value_alloc.ptr();
+
+                // Create appropriate frame based on value shape
+                let mut value_frame = if let Def::List(inner_list_def) = &value_shape.def {
+                    // Value is a list - initialize it
+                    let init_fn =
+                        inner_list_def
+                            .init_in_place_with_capacity()
+                            .ok_or_else(|| {
+                                self.error(ReflectErrorKind::ListDoesNotSupportOp {
+                                    shape: value_shape,
+                                })
+                            })?;
+                    let capacity = build.len_hint.unwrap_or(0);
+                    let inner_list_ptr = unsafe { init_fn(value_ptr, capacity) };
+                    let mut frame = Frame::new_list(value_ptr, value_shape, inner_list_ptr);
+                    frame.flags |= FrameFlags::INIT;
+                    frame
+                } else if let Def::Map(inner_map_def) = &value_shape.def {
+                    // Value is a map - initialize it
+                    let init_fn = inner_map_def.vtable.init_in_place_with_capacity;
+                    let capacity = build.len_hint.unwrap_or(0);
+                    let inner_map_ptr = unsafe { init_fn(value_ptr, capacity) };
+                    let mut frame = Frame::new_map(value_ptr, value_shape, inner_map_ptr);
+                    frame.flags |= FrameFlags::INIT;
+                    frame
+                } else {
+                    match value_shape.ty {
+                        Type::User(UserType::Struct(ref s)) => {
+                            Frame::new_struct(value_ptr, value_shape, s.fields.len())
+                        }
+                        Type::User(UserType::Enum(_)) => Frame::new_enum(value_ptr, value_shape),
+                        _ => Frame::new(value_ptr, value_shape),
+                    }
+                };
+
+                // Mark that this frame owns its allocation (for cleanup on End)
+                value_frame.flags |= FrameFlags::OWNS_ALLOC;
+
+                // Set parent to current map frame
+                value_frame.parent = Some((self.current, 0));
+
+                // Store the pending key (transfer ownership to the frame)
+                value_frame.pending_key = Some(key_alloc);
+
+                // Transfer value allocation ownership to frame (don't drop/dealloc here)
+                std::mem::forget(value_alloc);
+
+                // Push frame and make it current
+                let value_idx = self.arena.alloc(value_frame);
+                self.current = value_idx;
+            }
+            Source::Default => {
+                use crate::temp_alloc::TempAlloc;
+
+                // Allocate and copy key
+                let mut key_alloc = TempAlloc::new(key_shape).map_err(|kind| self.error(kind))?;
+                unsafe {
+                    key_alloc.copy_from(key.ptr());
+                }
+
+                // Allocate and initialize value with default
+                let mut value_alloc =
+                    TempAlloc::new(value_shape).map_err(|kind| self.error(kind))?;
+                if value_alloc.init_default().is_none() {
+                    return Err(self.error(ReflectErrorKind::NoDefault { shape: value_shape }));
+                }
+
+                // Insert the key-value pair (moves both out)
+                // SAFETY: both pointers point to valid initialized data
+                unsafe {
+                    insert_fn(
+                        map_ptr,
+                        PtrMut::new(key_alloc.ptr().as_mut_byte_ptr()),
+                        PtrMut::new(value_alloc.ptr().as_mut_byte_ptr()),
+                    );
+                }
+
+                // Mark as moved so TempAlloc doesn't drop the values
+                key_alloc.mark_moved();
+                value_alloc.mark_moved();
+                // TempAlloc drops here, deallocating storage
+
+                // Increment entry count
+                let frame = self.arena.get_mut(self.current);
+                if let FrameKind::Map(ref mut m) = frame.kind {
+                    m.len += 1;
                 }
             }
         }

@@ -15,6 +15,9 @@ pub(crate) mod frame;
 // --- enum helpers ---
 pub(crate) mod enum_helpers;
 
+// --- temp alloc ---
+pub(crate) mod temp_alloc;
+
 // --- ops ---
 mod ops;
 pub use ops::{Build, Imm, Op, Path, Source};

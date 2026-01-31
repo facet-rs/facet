@@ -39,6 +39,8 @@ pub enum Op<'a> {
     Set { dst: Path, src: Source<'a> },
     /// Push an element onto the current list frame.
     Push { src: Source<'a> },
+    /// Insert a key-value pair into the current map frame.
+    Insert { key: Imm<'a>, value: Source<'a> },
     /// End the current frame and pop back to parent.
     End,
 }

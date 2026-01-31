@@ -111,6 +111,18 @@ pub enum ReflectErrorKind {
     ListDoesNotSupportOp { shape: &'static Shape },
     /// Push operation requires a list frame.
     NotAList,
+    /// Insert operation requires a map frame.
+    NotAMap,
+    /// Key shape mismatch.
+    KeyShapeMismatch {
+        expected: &'static Shape,
+        actual: &'static Shape,
+    },
+    /// Value shape mismatch.
+    ValueShapeMismatch {
+        expected: &'static Shape,
+        actual: &'static Shape,
+    },
 }
 
 impl fmt::Display for ReflectErrorKind {
@@ -187,6 +199,21 @@ impl fmt::Display for ReflectErrorKind {
                 )
             }
             ReflectErrorKind::NotAList => write!(f, "Push requires a list frame"),
+            ReflectErrorKind::NotAMap => write!(f, "Insert requires a map frame"),
+            ReflectErrorKind::KeyShapeMismatch { expected, actual } => {
+                write!(
+                    f,
+                    "Key shape mismatch: expected {}, got {}",
+                    expected.type_identifier, actual.type_identifier
+                )
+            }
+            ReflectErrorKind::ValueShapeMismatch { expected, actual } => {
+                write!(
+                    f,
+                    "Value shape mismatch: expected {}, got {}",
+                    expected.type_identifier, actual.type_identifier
+                )
+            }
         }
     }
 }

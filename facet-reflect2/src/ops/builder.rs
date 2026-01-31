@@ -11,6 +11,11 @@ pub struct SetBuilder {
 /// Builder for Push operations.
 pub struct PushBuilder;
 
+/// Builder for Insert operations (maps).
+pub struct InsertBuilder<'a> {
+    key: Imm<'a>,
+}
+
 impl Op<'_> {
     /// Start building a Set operation.
     pub fn set() -> SetBuilder {
@@ -22,6 +27,13 @@ impl Op<'_> {
     /// Start building a Push operation.
     pub fn push() -> PushBuilder {
         PushBuilder
+    }
+
+    /// Start building an Insert operation with an immediate key.
+    pub fn insert<'a, 'f, K: Facet<'f>>(key: &'a K) -> InsertBuilder<'a> {
+        InsertBuilder {
+            key: Imm::from_ref(key),
+        }
     }
 
     /// Create an End operation.
@@ -99,6 +111,32 @@ impl PushBuilder {
     pub fn build(self) -> Op<'static> {
         Op::Push {
             src: Source::Build(Build { len_hint: None }),
+        }
+    }
+}
+
+impl<'a> InsertBuilder<'a> {
+    /// Insert with an immediate value.
+    pub fn imm<'f, V: Facet<'f>>(self, value: &'a V) -> Op<'a> {
+        Op::Insert {
+            key: self.key,
+            value: Source::Imm(Imm::from_ref(value)),
+        }
+    }
+
+    /// Insert with a default value.
+    pub fn default(self) -> Op<'a> {
+        Op::Insert {
+            key: self.key,
+            value: Source::Default,
+        }
+    }
+
+    /// Insert with build (for complex values).
+    pub fn build(self) -> Op<'a> {
+        Op::Insert {
+            key: self.key,
+            value: Source::Build(Build { len_hint: None }),
         }
     }
 }
