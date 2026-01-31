@@ -132,6 +132,67 @@ impl<'facet> Partial<'facet> {
         result
     }
 
+    /// Apply a batch of operations with proper ownership tracking.
+    ///
+    /// Unlike `apply()`, this method updates the batch's consumption tracking
+    /// so that unconsumed `Imm` values are properly dropped when the batch is dropped.
+    ///
+    /// The caller must `mem::forget` all source values after adding them to the batch.
+    /// The batch takes ownership and handles cleanup of both consumed and unconsumed values.
+    pub fn apply_batch(&mut self, batch: &crate::ops::OpBatch<'_>) -> Result<(), ReflectError> {
+        if self.poisoned {
+            return Err(ReflectError::at_root(
+                self.root_shape,
+                ReflectErrorKind::Poisoned,
+            ));
+        }
+
+        let result = self.apply_batch_inner(batch);
+        if result.is_err() {
+            self.poison();
+        }
+        result
+    }
+
+    fn apply_batch_inner(&mut self, batch: &crate::ops::OpBatch<'_>) -> Result<(), ReflectError> {
+        let ops = batch.ops();
+        for (i, op) in ops.iter().enumerate() {
+            // Mark this op as consumed BEFORE processing it.
+            // If processing fails after copying Imm bytes, those bytes are now
+            // owned by the partial (or a TempAlloc that will clean them up).
+            // The batch should NOT drop them again.
+            batch.mark_consumed_up_to(i + 1);
+
+            match op {
+                Op::Set {
+                    dst: path,
+                    src: source,
+                } => {
+                    let frame = self.arena.get(self.current);
+                    let is_enum_variant_selection = !path.is_empty()
+                        && matches!(frame.kind, FrameKind::Enum(_))
+                        && matches!(frame.shape.ty, Type::User(UserType::Enum(_)));
+
+                    if is_enum_variant_selection {
+                        self.apply_enum_variant_set(path, source)?;
+                    } else {
+                        self.apply_regular_set(path, source)?;
+                    }
+                }
+                Op::Push { src } => {
+                    self.apply_push(src)?;
+                }
+                Op::Insert { key, value } => {
+                    self.apply_insert(key, value)?;
+                }
+                Op::End => {
+                    self.apply_end()?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn apply_inner(&mut self, ops: &[Op<'_>]) -> Result<(), ReflectError> {
         for op in ops {
             match op {
@@ -159,229 +220,228 @@ impl<'facet> Partial<'facet> {
                     self.apply_insert(key, value)?;
                 }
                 Op::End => {
-                    // Pop back to parent frame
-                    let frame = self.arena.get(self.current);
-                    let Some((parent_idx, field_idx)) = frame.parent else {
-                        return Err(self.error(ReflectErrorKind::EndAtRoot));
-                    };
-
-                    // Check if current frame is complete
-                    let is_complete = if frame.flags.contains(FrameFlags::INIT) {
-                        true
-                    } else {
-                        frame.kind.is_complete()
-                    };
-
-                    if !is_complete {
-                        return Err(self.error(ReflectErrorKind::EndWithIncomplete));
-                    }
-
-                    // Check if parent is a pointer, list, or map frame - special finalization needed
-                    let parent = self.arena.get(parent_idx);
-                    let is_pointer_parent = matches!(parent.kind, FrameKind::Pointer(_));
-                    let is_list_parent = matches!(parent.kind, FrameKind::List(_));
-                    let is_map_parent = matches!(parent.kind, FrameKind::Map(_));
-
-                    // Check if current frame has a pending key (value frame for map insert)
-                    let frame = self.arena.get(self.current);
-                    let has_pending_key = frame.pending_key.is_some();
-
-                    if has_pending_key && is_map_parent {
-                        // We're completing a value frame that was started by Insert with Build
-                        // Get map def and insert function from parent's shape
-                        let parent = self.arena.get(parent_idx);
-                        let Def::Map(map_def) = &parent.shape.def else {
-                            return Err(self.error_at(parent_idx, ReflectErrorKind::NotAMap));
-                        };
-                        let insert_fn = map_def.vtable.insert;
-
-                        // Get the value data pointer (our current frame's data, now initialized)
-                        let frame = self.arena.get(self.current);
-                        let value_ptr = unsafe { frame.data.assume_init() };
-
-                        // Get the pending key
-                        let pending_key = frame.pending_key.as_ref().unwrap();
-                        let key_ptr = pending_key.ptr();
-
-                        // Get the map pointer from parent's MapFrame
-                        let parent = self.arena.get(parent_idx);
-                        let FrameKind::Map(ref map_frame) = parent.kind else {
-                            unreachable!()
-                        };
-                        let map_ptr = map_frame.map_ptr;
-
-                        // Insert the key-value pair (moves both out)
-                        // SAFETY: both pointers point to initialized data
-                        unsafe {
-                            insert_fn(
-                                map_ptr,
-                                PtrMut::new(key_ptr.as_mut_byte_ptr()),
-                                PtrMut::new(value_ptr.as_mut_byte_ptr()),
-                            );
-                        }
-
-                        // The value has been moved into the map. Now deallocate temp memory.
-                        let frame = self.arena.get_mut(self.current);
-                        // Don't drop the value - it was moved out by insert_fn
-                        frame.flags.remove(FrameFlags::INIT);
-                        // Clear the pending key and mark it moved (TempAlloc will dealloc but not drop)
-                        let mut pending_key = frame.pending_key.take().unwrap();
-                        pending_key.mark_moved();
-                        // pending_key drops here, deallocating storage
-
-                        // Deallocate our staging memory for the value
-                        let freed_frame = self.arena.free(self.current);
-                        freed_frame.dealloc_if_owned();
-
-                        // Increment entry count in parent map
-                        let parent = self.arena.get_mut(parent_idx);
-                        if let FrameKind::Map(ref mut m) = parent.kind {
-                            m.len += 1;
-                        }
-
-                        // Pop back to parent
-                        self.current = parent_idx;
-                    } else if is_list_parent {
-                        // Get list def and push function from parent's shape
-                        let parent = self.arena.get(parent_idx);
-                        let Def::List(list_def) = &parent.shape.def else {
-                            return Err(self.error_at(parent_idx, ReflectErrorKind::NotAList));
-                        };
-                        let push_fn = list_def.push().ok_or_else(|| {
-                            self.error_at(
-                                parent_idx,
-                                ReflectErrorKind::ListDoesNotSupportOp {
-                                    shape: parent.shape,
-                                },
-                            )
-                        })?;
-
-                        // Get the element data pointer (our current frame's data, now initialized)
-                        let frame = self.arena.get(self.current);
-                        let element_ptr = unsafe { frame.data.assume_init() };
-
-                        // Get the list pointer from parent's ListFrame
-                        let parent = self.arena.get(parent_idx);
-                        let FrameKind::List(ref list_frame) = parent.kind else {
-                            unreachable!()
-                        };
-                        let list_ptr = list_frame.list_ptr;
-
-                        // Push the element to the list (moves the value)
-                        // SAFETY: element_ptr points to initialized data of the correct element type
-                        unsafe {
-                            push_fn(list_ptr, element_ptr.as_const());
-                        }
-
-                        // The value has been moved into the list. Now deallocate our temp memory.
-                        let frame = self.arena.get_mut(self.current);
-                        // Don't drop the value - it was moved out by push_fn
-                        frame.flags.remove(FrameFlags::INIT);
-                        // Deallocate our staging memory
-                        let freed_frame = self.arena.free(self.current);
-                        freed_frame.dealloc_if_owned();
-
-                        // Increment element count in parent list
-                        let parent = self.arena.get_mut(parent_idx);
-                        if let FrameKind::List(ref mut l) = parent.kind {
-                            l.len += 1;
-                        }
-
-                        // Pop back to parent
-                        self.current = parent_idx;
-                    } else if is_pointer_parent {
-                        // Get pointer vtable from parent's shape
-                        let parent = self.arena.get(parent_idx);
-                        let Def::Pointer(ptr_def) = &parent.shape.def else {
-                            return Err(
-                                self.error_at(parent_idx, ReflectErrorKind::UnsupportedPointerType)
-                            );
-                        };
-                        let new_into_fn = ptr_def.vtable.new_into_fn.ok_or_else(|| {
-                            self.error_at(parent_idx, ReflectErrorKind::UnsupportedPointerType)
-                        })?;
-
-                        // Get the pointee data pointer (our current frame's data, now initialized)
-                        let frame = self.arena.get(self.current);
-                        let pointee_ptr = unsafe { frame.data.assume_init() };
-
-                        // Get the parent's data pointer (where the pointer will be written)
-                        let parent = self.arena.get(parent_idx);
-                        let ptr_dest = parent.data;
-
-                        // Call new_into_fn to create the pointer (Box/Rc/Arc) from the pointee.
-                        // This reads the value from pointee_ptr and creates a proper pointer.
-                        // SAFETY: pointee_ptr points to initialized data of the correct type.
-                        let _result = unsafe { new_into_fn(ptr_dest, pointee_ptr) };
-
-                        // The value has been moved into the pointer. Now we need to deallocate
-                        // our temporary staging memory (the pointer now owns its own allocation).
-                        let frame = self.arena.get_mut(self.current);
-                        // Don't drop the value - it was moved out by new_into_fn
-                        frame.flags.remove(FrameFlags::INIT);
-                        // But DO deallocate our staging memory
-                        let freed_frame = self.arena.free(self.current);
-                        freed_frame.dealloc_if_owned();
-
-                        // Mark parent as initialized and complete
-                        let parent = self.arena.get_mut(parent_idx);
-                        parent.flags |= FrameFlags::INIT;
-                        if let FrameKind::Pointer(ref mut p) = parent.kind {
-                            p.inner = Idx::COMPLETE;
-                        }
-
-                        // Pop back to parent
-                        self.current = parent_idx;
-                    } else {
-                        // Normal (non-pointer) End handling
-                        // Free the current frame (memory stays - it's part of parent's allocation)
-                        let _ = self.arena.free(self.current);
-
-                        // Mark field/variant complete in parent
-                        let parent = self.arena.get_mut(parent_idx);
-                        match &mut parent.kind {
-                            FrameKind::Struct(s) => {
-                                s.mark_field_complete(field_idx as usize);
-                            }
-                            FrameKind::VariantData(v) => {
-                                v.mark_field_complete(field_idx as usize);
-                            }
-                            FrameKind::Enum(e) => {
-                                // Mark the variant as complete
-                                if let Some((variant_idx, _)) = e.selected {
-                                    e.selected = Some((variant_idx, Idx::COMPLETE));
-                                }
-                            }
-                            FrameKind::Pointer(p) => {
-                                p.inner = Idx::COMPLETE;
-                            }
-                            FrameKind::List(_) => {
-                                // List elements don't have indexed tracking - the list itself tracks length
-                                // This shouldn't happen with current implementation (list elements are pushed directly)
-                                return Err(
-                                    self.error_at(parent_idx, ReflectErrorKind::NotIndexedChildren)
-                                );
-                            }
-                            FrameKind::Map(_) => {
-                                // Map entries should have pending_key set and use the map insert path
-                                // This shouldn't happen with current implementation
-                                return Err(
-                                    self.error_at(parent_idx, ReflectErrorKind::NotIndexedChildren)
-                                );
-                            }
-                            FrameKind::Scalar => {
-                                return Err(
-                                    self.error_at(parent_idx, ReflectErrorKind::NotIndexedChildren)
-                                );
-                            }
-                        }
-
-                        // Pop back to parent
-                        self.current = parent_idx;
-                    }
+                    self.apply_end()?;
                 }
             }
         }
+        Ok(())
+    }
+
+    /// Apply an End operation - pop back to parent frame.
+    fn apply_end(&mut self) -> Result<(), ReflectError> {
+        // Pop back to parent frame
+        let frame = self.arena.get(self.current);
+        let Some((parent_idx, field_idx)) = frame.parent else {
+            return Err(self.error(ReflectErrorKind::EndAtRoot));
+        };
+
+        // Check if current frame is complete
+        let is_complete = if frame.flags.contains(FrameFlags::INIT) {
+            true
+        } else {
+            frame.kind.is_complete()
+        };
+
+        if !is_complete {
+            return Err(self.error(ReflectErrorKind::EndWithIncomplete));
+        }
+
+        // Check if parent is a pointer, list, or map frame - special finalization needed
+        let parent = self.arena.get(parent_idx);
+        let is_pointer_parent = matches!(parent.kind, FrameKind::Pointer(_));
+        let is_list_parent = matches!(parent.kind, FrameKind::List(_));
+        let is_map_parent = matches!(parent.kind, FrameKind::Map(_));
+
+        // Check if current frame has a pending key (value frame for map insert)
+        let frame = self.arena.get(self.current);
+        let has_pending_key = frame.pending_key.is_some();
+
+        if has_pending_key && is_map_parent {
+            // We're completing a value frame that was started by Insert with Build
+            // Get map def and insert function from parent's shape
+            let parent = self.arena.get(parent_idx);
+            let Def::Map(map_def) = &parent.shape.def else {
+                return Err(self.error_at(parent_idx, ReflectErrorKind::NotAMap));
+            };
+            let insert_fn = map_def.vtable.insert;
+
+            // Get the value data pointer (our current frame's data, now initialized)
+            let frame = self.arena.get(self.current);
+            let value_ptr = unsafe { frame.data.assume_init() };
+
+            // Get the pending key
+            let pending_key = frame.pending_key.as_ref().unwrap();
+            let key_ptr = pending_key.ptr();
+
+            // Get the map pointer from parent's MapFrame
+            let parent = self.arena.get(parent_idx);
+            let FrameKind::Map(ref map_frame) = parent.kind else {
+                unreachable!()
+            };
+            let map_ptr = map_frame.map_ptr;
+
+            // Insert the key-value pair (moves both out)
+            // SAFETY: both pointers point to initialized data
+            unsafe {
+                insert_fn(
+                    map_ptr,
+                    PtrMut::new(key_ptr.as_mut_byte_ptr()),
+                    PtrMut::new(value_ptr.as_mut_byte_ptr()),
+                );
+            }
+
+            // The value has been moved into the map. Now deallocate temp memory.
+            let frame = self.arena.get_mut(self.current);
+            // Don't drop the value - it was moved out by insert_fn
+            frame.flags.remove(FrameFlags::INIT);
+            // Clear the pending key and mark it moved (TempAlloc will dealloc but not drop)
+            let mut pending_key = frame.pending_key.take().unwrap();
+            pending_key.mark_moved();
+            // pending_key drops here, deallocating storage
+
+            // Deallocate our staging memory for the value
+            let freed_frame = self.arena.free(self.current);
+            freed_frame.dealloc_if_owned();
+
+            // Increment entry count in parent map
+            let parent = self.arena.get_mut(parent_idx);
+            if let FrameKind::Map(ref mut m) = parent.kind {
+                m.len += 1;
+            }
+
+            // Pop back to parent
+            self.current = parent_idx;
+        } else if is_list_parent {
+            // Get list def and push function from parent's shape
+            let parent = self.arena.get(parent_idx);
+            let Def::List(list_def) = &parent.shape.def else {
+                return Err(self.error_at(parent_idx, ReflectErrorKind::NotAList));
+            };
+            let push_fn = list_def.push().ok_or_else(|| {
+                self.error_at(
+                    parent_idx,
+                    ReflectErrorKind::ListDoesNotSupportOp {
+                        shape: parent.shape,
+                    },
+                )
+            })?;
+
+            // Get the element data pointer (our current frame's data, now initialized)
+            let frame = self.arena.get(self.current);
+            let element_ptr = unsafe { frame.data.assume_init() };
+
+            // Get the list pointer from parent's ListFrame
+            let parent = self.arena.get(parent_idx);
+            let FrameKind::List(ref list_frame) = parent.kind else {
+                unreachable!()
+            };
+            let list_ptr = list_frame.list_ptr;
+
+            // Push the element to the list (moves the value)
+            // SAFETY: element_ptr points to initialized data of the correct element type
+            unsafe {
+                push_fn(list_ptr, element_ptr.as_const());
+            }
+
+            // The value has been moved into the list. Now deallocate our temp memory.
+            let frame = self.arena.get_mut(self.current);
+            // Don't drop the value - it was moved out by push_fn
+            frame.flags.remove(FrameFlags::INIT);
+            // Deallocate our staging memory
+            let freed_frame = self.arena.free(self.current);
+            freed_frame.dealloc_if_owned();
+
+            // Increment element count in parent list
+            let parent = self.arena.get_mut(parent_idx);
+            if let FrameKind::List(ref mut l) = parent.kind {
+                l.len += 1;
+            }
+
+            // Pop back to parent
+            self.current = parent_idx;
+        } else if is_pointer_parent {
+            // Get pointer vtable from parent's shape
+            let parent = self.arena.get(parent_idx);
+            let Def::Pointer(ptr_def) = &parent.shape.def else {
+                return Err(self.error_at(parent_idx, ReflectErrorKind::UnsupportedPointerType));
+            };
+            let new_into_fn = ptr_def.vtable.new_into_fn.ok_or_else(|| {
+                self.error_at(parent_idx, ReflectErrorKind::UnsupportedPointerType)
+            })?;
+
+            // Get the pointee data pointer (our current frame's data, now initialized)
+            let frame = self.arena.get(self.current);
+            let pointee_ptr = unsafe { frame.data.assume_init() };
+
+            // Get the parent's data pointer (where the pointer will be written)
+            let parent = self.arena.get(parent_idx);
+            let ptr_dest = parent.data;
+
+            // Call new_into_fn to create the pointer (Box/Rc/Arc) from the pointee.
+            // This reads the value from pointee_ptr and creates a proper pointer.
+            // SAFETY: pointee_ptr points to initialized data of the correct type.
+            let _result = unsafe { new_into_fn(ptr_dest, pointee_ptr) };
+
+            // The value has been moved into the pointer. Now we need to deallocate
+            // our temporary staging memory (the pointer now owns its own allocation).
+            let frame = self.arena.get_mut(self.current);
+            // Don't drop the value - it was moved out by new_into_fn
+            frame.flags.remove(FrameFlags::INIT);
+            // But DO deallocate our staging memory
+            let freed_frame = self.arena.free(self.current);
+            freed_frame.dealloc_if_owned();
+
+            // Mark parent as initialized and complete
+            let parent = self.arena.get_mut(parent_idx);
+            parent.flags |= FrameFlags::INIT;
+            if let FrameKind::Pointer(ref mut p) = parent.kind {
+                p.inner = Idx::COMPLETE;
+            }
+
+            // Pop back to parent
+            self.current = parent_idx;
+        } else {
+            // Normal (non-pointer) End handling
+            // Free the current frame (memory stays - it's part of parent's allocation)
+            let _ = self.arena.free(self.current);
+
+            // Mark field/variant complete in parent
+            let parent = self.arena.get_mut(parent_idx);
+            match &mut parent.kind {
+                FrameKind::Struct(s) => {
+                    s.mark_field_complete(field_idx as usize);
+                }
+                FrameKind::VariantData(v) => {
+                    v.mark_field_complete(field_idx as usize);
+                }
+                FrameKind::Enum(e) => {
+                    // Mark the variant as complete
+                    if let Some((variant_idx, _)) = e.selected {
+                        e.selected = Some((variant_idx, Idx::COMPLETE));
+                    }
+                }
+                FrameKind::Pointer(p) => {
+                    p.inner = Idx::COMPLETE;
+                }
+                FrameKind::List(_) => {
+                    // List elements don't have indexed tracking - the list itself tracks length
+                    // This shouldn't happen with current implementation (list elements are pushed directly)
+                    return Err(self.error_at(parent_idx, ReflectErrorKind::NotIndexedChildren));
+                }
+                FrameKind::Map(_) => {
+                    // Map entries should have pending_key set and use the map insert path
+                    // This shouldn't happen with current implementation
+                    return Err(self.error_at(parent_idx, ReflectErrorKind::NotIndexedChildren));
+                }
+                FrameKind::Scalar => {
+                    return Err(self.error_at(parent_idx, ReflectErrorKind::NotIndexedChildren));
+                }
+            }
+
+            // Pop back to parent
+            self.current = parent_idx;
+        }
+
         Ok(())
     }
 

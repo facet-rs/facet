@@ -20,17 +20,17 @@ fn build_empty_vec() {
 fn build_vec_with_imm_elements() {
     let mut partial = Partial::alloc::<Vec<u32>>().unwrap();
 
-    let a = 1u32;
-    let b = 2u32;
-    let c = 3u32;
+    let mut a = 1u32;
+    let mut b = 2u32;
+    let mut c = 3u32;
 
     // For root-level lists, no End needed
     partial
         .apply(&[
             Op::set().build_with_len_hint(3),
-            Op::push().imm(&a),
-            Op::push().imm(&b),
-            Op::push().imm(&c),
+            Op::push().imm(&mut a),
+            Op::push().imm(&mut b),
+            Op::push().imm(&mut c),
         ])
         .unwrap();
 
@@ -64,8 +64,8 @@ fn build_vec_of_strings() {
     partial
         .apply(&[
             Op::set().build_with_len_hint(2),
-            Op::push().imm(&hello),
-            Op::push().imm(&world),
+            Op::push().imm(&mut hello),
+            Op::push().imm(&mut world),
         ])
         .unwrap();
     std::mem::forget(hello);
@@ -89,23 +89,23 @@ struct Point {
 fn build_vec_of_structs_with_build() {
     let mut partial = Partial::alloc::<Vec<Point>>().unwrap();
 
-    let x1 = 1i32;
-    let y1 = 2i32;
-    let x2 = 3i32;
-    let y2 = 4i32;
+    let mut x1 = 1i32;
+    let mut y1 = 2i32;
+    let mut x2 = 3i32;
+    let mut y2 = 4i32;
 
     partial
         .apply(&[
             Op::set().build_with_len_hint(2),
             // First Point - build field by field
             Op::push().build(),
-            Op::set().at(0).imm(&x1),
-            Op::set().at(1).imm(&y1),
+            Op::set().at(0).imm(&mut x1),
+            Op::set().at(1).imm(&mut y1),
             Op::End,
             // Second Point - build field by field
             Op::push().build(),
-            Op::set().at(0).imm(&x2),
-            Op::set().at(1).imm(&y2),
+            Op::set().at(0).imm(&mut x2),
+            Op::set().at(1).imm(&mut y2),
             Op::End,
             // No End for root-level Vec
         ])
@@ -158,11 +158,11 @@ fn build_struct_with_vec_field() {
     partial
         .apply(&[
             // Set name field
-            Op::set().at(0).imm(&name),
+            Op::set().at(0).imm(&mut name),
             // Build servers field
             Op::set().at(1).build_with_len_hint(2),
-            Op::push().imm(&server1),
-            Op::push().imm(&server2),
+            Op::push().imm(&mut server1),
+            Op::push().imm(&mut server2),
             Op::End,
         ])
         .unwrap();
@@ -191,7 +191,7 @@ fn build_struct_with_empty_vec_field() {
 
     partial
         .apply(&[
-            Op::set().at(0).imm(&name),
+            Op::set().at(0).imm(&mut name),
             Op::set().at(1).build(), // empty vec
             Op::End,
         ])
@@ -232,17 +232,17 @@ fn build_struct_with_vec_of_structs() {
 
     partial
         .apply(&[
-            Op::set().at(0).imm(&team_name),
+            Op::set().at(0).imm(&mut team_name),
             Op::set().at(1).build_with_len_hint(2),
             // First person - build field by field
             Op::push().build(),
-            Op::set().at(0).imm(&alice),
-            Op::set().at(1).imm(&age1),
+            Op::set().at(0).imm(&mut alice),
+            Op::set().at(1).imm(&mut age1),
             Op::End,
             // Second person - build field by field
             Op::push().build(),
-            Op::set().at(0).imm(&bob),
-            Op::set().at(1).imm(&age2),
+            Op::set().at(0).imm(&mut bob),
+            Op::set().at(1).imm(&mut age2),
             Op::End,
             Op::End,
         ])
@@ -278,23 +278,23 @@ fn build_struct_with_vec_of_structs() {
 fn build_vec_of_vecs() {
     let mut partial = Partial::alloc::<Vec<Vec<u32>>>().unwrap();
 
-    let a = 1u32;
-    let b = 2u32;
-    let c = 3u32;
-    let d = 4u32;
+    let mut a = 1u32;
+    let mut b = 2u32;
+    let mut c = 3u32;
+    let mut d = 4u32;
 
     partial
         .apply(&[
             Op::set().build_with_len_hint(2),
             // First inner vec
             Op::push().build(),
-            Op::push().imm(&a),
-            Op::push().imm(&b),
+            Op::push().imm(&mut a),
+            Op::push().imm(&mut b),
             Op::End,
             // Second inner vec
             Op::push().build(),
-            Op::push().imm(&c),
-            Op::push().imm(&d),
+            Op::push().imm(&mut c),
+            Op::push().imm(&mut d),
             Op::End,
             // No End for root-level Vec
         ])
@@ -308,7 +308,7 @@ fn build_vec_of_vecs() {
 fn build_vec_of_vecs_empty_inner() {
     let mut partial = Partial::alloc::<Vec<Vec<u32>>>().unwrap();
 
-    let a = 1u32;
+    let mut a = 1u32;
 
     partial
         .apply(&[
@@ -318,7 +318,7 @@ fn build_vec_of_vecs_empty_inner() {
             Op::End,
             // Second inner vec - one element
             Op::push().build(),
-            Op::push().imm(&a),
+            Op::push().imm(&mut a),
             Op::End,
             // Third inner vec - empty
             Op::push().build(),
@@ -345,9 +345,9 @@ fn build_vec_of_options_with_imm() {
     partial
         .apply(&[
             Op::set().build(),
-            Op::push().imm(&some_val),
-            Op::push().imm(&none_val),
-            Op::push().imm(&some_val),
+            Op::push().imm(&mut some_val),
+            Op::push().imm(&mut none_val),
+            Op::push().imm(&mut some_val),
         ])
         .unwrap();
 
@@ -377,8 +377,8 @@ fn build_vec_of_enums_with_imm() {
     partial
         .apply(&[
             Op::set().build(),
-            Op::push().imm(&active),
-            Op::push().imm(&pending),
+            Op::push().imm(&mut active),
+            Op::push().imm(&mut pending),
         ])
         .unwrap();
 
@@ -401,7 +401,7 @@ fn build_vec_of_enums_with_build() {
             Op::End,
             // Pending variant with data
             Op::push().build(),
-            Op::set().at(2).imm(&count), // Select variant 2, set field
+            Op::set().at(2).imm(&mut count), // Select variant 2, set field
             Op::End,
             // No End for root-level Vec
         ])
@@ -426,8 +426,8 @@ fn drop_partial_vec_mid_construction() {
     partial
         .apply(&[
             Op::set().build(),
-            Op::push().imm(&hello),
-            Op::push().imm(&world),
+            Op::push().imm(&mut hello),
+            Op::push().imm(&mut world),
             // Don't call End - just drop
         ])
         .unwrap();
@@ -444,12 +444,12 @@ fn drop_partial_vec_of_structs_mid_element() {
     // Start building a Vec<Point>, start building an element, then drop
     let mut partial = Partial::alloc::<Vec<Point>>().unwrap();
 
-    let x = 1i32;
+    let mut x = 1i32;
 
     let result = partial.apply(&[
         Op::set().build(),
         Op::push().build(),
-        Op::set().at(0).imm(&x),
+        Op::set().at(0).imm(&mut x),
         // Don't set y, don't End - just drop
     ]);
 
@@ -467,8 +467,8 @@ fn drop_partial_vec_of_structs_mid_element() {
 fn push_on_non_list_errors() {
     let mut partial = Partial::alloc::<u32>().unwrap();
 
-    let val = 42u32;
-    let err = partial.apply(&[Op::push().imm(&val)]).unwrap_err();
+    let mut val = 42u32;
+    let err = partial.apply(&[Op::push().imm(&mut val)]).unwrap_err();
     assert!(matches!(
         err.kind,
         facet_reflect2::ReflectErrorKind::NotAList
@@ -479,10 +479,12 @@ fn push_on_non_list_errors() {
 fn push_wrong_element_type_errors() {
     let mut partial = Partial::alloc::<Vec<u32>>().unwrap();
 
-    let wrong_type = String::from("not a u32");
+    let mut wrong_type = String::from("not a u32");
 
     partial.apply(&[Op::set().build()]).unwrap();
-    let err = partial.apply(&[Op::push().imm(&wrong_type)]).unwrap_err();
+    let err = partial
+        .apply(&[Op::push().imm(&mut wrong_type)])
+        .unwrap_err();
     assert!(matches!(
         err.kind,
         facet_reflect2::ReflectErrorKind::ShapeMismatch { .. }

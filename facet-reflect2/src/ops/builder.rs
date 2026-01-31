@@ -30,7 +30,7 @@ impl Op<'_> {
     }
 
     /// Start building an Insert operation with an immediate key.
-    pub fn insert<'a, 'f, K: Facet<'f>>(key: &'a K) -> InsertBuilder<'a> {
+    pub fn insert<'a, 'f, K: Facet<'f>>(key: &'a mut K) -> InsertBuilder<'a> {
         InsertBuilder {
             key: Imm::from_ref(key),
         }
@@ -58,7 +58,7 @@ impl SetBuilder {
     }
 
     /// Complete with an immediate value
-    pub fn imm<'a, 'f, T: Facet<'f>>(self, value: &'a T) -> Op<'a> {
+    pub fn imm<'a, 'f, T: Facet<'f>>(self, value: &'a mut T) -> Op<'a> {
         Op::Set {
             dst: self.path,
             src: Source::Imm(Imm::from_ref(value)),
@@ -94,7 +94,7 @@ impl SetBuilder {
 
 impl PushBuilder {
     /// Push an immediate value.
-    pub fn imm<'a, 'f, T: Facet<'f>>(self, value: &'a T) -> Op<'a> {
+    pub fn imm<'a, 'f, T: Facet<'f>>(self, value: &'a mut T) -> Op<'a> {
         Op::Push {
             src: Source::Imm(Imm::from_ref(value)),
         }
@@ -117,7 +117,7 @@ impl PushBuilder {
 
 impl<'a> InsertBuilder<'a> {
     /// Insert with an immediate value.
-    pub fn imm<'f, V: Facet<'f>>(self, value: &'a V) -> Op<'a> {
+    pub fn imm<'f, V: Facet<'f>>(self, value: &'a mut V) -> Op<'a> {
         Op::Insert {
             key: self.key,
             value: Source::Imm(Imm::from_ref(value)),

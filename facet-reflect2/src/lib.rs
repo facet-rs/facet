@@ -20,7 +20,7 @@ pub(crate) mod temp_alloc;
 
 // --- ops ---
 mod ops;
-pub use ops::{Build, Imm, Op, Path, Source};
+pub use ops::{Build, Imm, Op, OpBatch, Path, Source};
 
 // --- partial ---
 mod partial;

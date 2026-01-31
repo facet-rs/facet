@@ -21,16 +21,16 @@ fn build_empty_map() {
 fn build_map_with_imm_values() {
     let mut partial = Partial::alloc::<HashMap<String, u32>>().unwrap();
 
-    let key1 = String::from("one");
-    let key2 = String::from("two");
-    let val1 = 1u32;
-    let val2 = 2u32;
+    let mut key1 = String::from("one");
+    let mut key2 = String::from("two");
+    let mut val1 = 1u32;
+    let mut val2 = 2u32;
 
     partial
         .apply(&[
             Op::set().build_with_len_hint(2),
-            Op::insert(&key1).imm(&val1),
-            Op::insert(&key2).imm(&val2),
+            Op::insert(&mut key1).imm(&mut val1),
+            Op::insert(&mut key2).imm(&mut val2),
         ])
         .unwrap();
     std::mem::forget(key1);
@@ -46,14 +46,14 @@ fn build_map_with_imm_values() {
 fn build_map_with_default_values() {
     let mut partial = Partial::alloc::<HashMap<String, u32>>().unwrap();
 
-    let key1 = String::from("first");
-    let key2 = String::from("second");
+    let mut key1 = String::from("first");
+    let mut key2 = String::from("second");
 
     partial
         .apply(&[
             Op::set().build(),
-            Op::insert(&key1).default(),
-            Op::insert(&key2).default(),
+            Op::insert(&mut key1).default(),
+            Op::insert(&mut key2).default(),
         ])
         .unwrap();
     std::mem::forget(key1);
@@ -79,7 +79,7 @@ struct Server {
 fn build_map_with_struct_values() {
     let mut partial = Partial::alloc::<HashMap<String, Server>>().unwrap();
 
-    let key = String::from("primary");
+    let mut key = String::from("primary");
     let host = String::from("localhost");
     let port = 8080u16;
 
@@ -87,9 +87,9 @@ fn build_map_with_struct_values() {
         .apply(&[
             Op::set().build_with_len_hint(1),
             // Insert with Build for complex value
-            Op::insert(&key).build(),
-            Op::set().at(0).imm(&host),
-            Op::set().at(1).imm(&port),
+            Op::insert(&mut key).build(),
+            Op::set().at(0).imm(&mut host),
+            Op::set().at(1).imm(&mut port),
             Op::End,
         ])
         .unwrap();
@@ -111,8 +111,8 @@ fn build_map_with_struct_values() {
 fn build_map_with_multiple_struct_values() {
     let mut partial = Partial::alloc::<HashMap<String, Server>>().unwrap();
 
-    let key1 = String::from("primary");
-    let key2 = String::from("secondary");
+    let mut key1 = String::from("primary");
+    let mut key2 = String::from("secondary");
     let host1 = String::from("host1.example.com");
     let host2 = String::from("host2.example.com");
     let port1 = 8080u16;
@@ -122,14 +122,14 @@ fn build_map_with_multiple_struct_values() {
         .apply(&[
             Op::set().build_with_len_hint(2),
             // First entry
-            Op::insert(&key1).build(),
-            Op::set().at(0).imm(&host1),
-            Op::set().at(1).imm(&port1),
+            Op::insert(&mut key1).build(),
+            Op::set().at(0).imm(&mut host1),
+            Op::set().at(1).imm(&mut port1),
             Op::End,
             // Second entry
-            Op::insert(&key2).build(),
-            Op::set().at(0).imm(&host2),
-            Op::set().at(1).imm(&port2),
+            Op::insert(&mut key2).build(),
+            Op::set().at(0).imm(&mut host2),
+            Op::set().at(1).imm(&mut port2),
             Op::End,
         ])
         .unwrap();
@@ -177,10 +177,10 @@ fn build_struct_with_map_field() {
     partial
         .apply(&[
             // Set name field
-            Op::set().at(0).imm(&name),
+            Op::set().at(0).imm(&mut name),
             // Build env field
             Op::set().at(1).build_with_len_hint(1),
-            Op::insert(&env_key).imm(&env_value),
+            Op::insert(&mut env_key).imm(&mut env_value),
             Op::End,
         ])
         .unwrap();
@@ -202,7 +202,7 @@ fn build_struct_with_empty_map_field() {
 
     partial
         .apply(&[
-            Op::set().at(0).imm(&name),
+            Op::set().at(0).imm(&mut name),
             Op::set().at(1).build(), // empty map
             Op::End,
         ])
@@ -222,18 +222,18 @@ fn build_struct_with_empty_map_field() {
 fn build_map_with_vec_values() {
     let mut partial = Partial::alloc::<HashMap<String, Vec<u32>>>().unwrap();
 
-    let key = String::from("numbers");
-    let a = 1u32;
-    let b = 2u32;
-    let c = 3u32;
+    let mut key = String::from("numbers");
+    let mut a = 1u32;
+    let mut b = 2u32;
+    let mut c = 3u32;
 
     partial
         .apply(&[
             Op::set().build(),
-            Op::insert(&key).build(),
-            Op::push().imm(&a),
-            Op::push().imm(&b),
-            Op::push().imm(&c),
+            Op::insert(&mut key).build(),
+            Op::push().imm(&mut a),
+            Op::push().imm(&mut b),
+            Op::push().imm(&mut c),
             Op::End,
         ])
         .unwrap();
@@ -252,16 +252,16 @@ fn build_map_with_vec_values() {
 fn build_map_with_integer_keys() {
     let mut partial = Partial::alloc::<HashMap<u32, String>>().unwrap();
 
-    let key1 = 1u32;
-    let key2 = 2u32;
-    let val1 = String::from("one");
-    let val2 = String::from("two");
+    let mut key1 = 1u32;
+    let mut key2 = 2u32;
+    let mut val1 = String::from("one");
+    let mut val2 = String::from("two");
 
     partial
         .apply(&[
             Op::set().build(),
-            Op::insert(&key1).imm(&val1),
-            Op::insert(&key2).imm(&val2),
+            Op::insert(&mut key1).imm(&mut val1),
+            Op::insert(&mut key2).imm(&mut val2),
         ])
         .unwrap();
     std::mem::forget(val1);
@@ -281,9 +281,11 @@ fn build_map_with_integer_keys() {
 fn insert_on_non_map_errors() {
     let mut partial = Partial::alloc::<u32>().unwrap();
 
-    let key = String::from("key");
-    let val = 42u32;
-    let err = partial.apply(&[Op::insert(&key).imm(&val)]).unwrap_err();
+    let mut key = String::from("key");
+    let mut val = 42u32;
+    let err = partial
+        .apply(&[Op::insert(&mut key).imm(&mut val)])
+        .unwrap_err();
     assert!(matches!(
         err.kind,
         facet_reflect2::ReflectErrorKind::NotAMap
@@ -294,12 +296,12 @@ fn insert_on_non_map_errors() {
 fn insert_wrong_key_type_errors() {
     let mut partial = Partial::alloc::<HashMap<String, u32>>().unwrap();
 
-    let wrong_key = 42u32; // Should be String
-    let val = 1u32;
+    let mut wrong_key = 42u32; // Should be String
+    let mut val = 1u32;
 
     partial.apply(&[Op::set().build()]).unwrap();
     let err = partial
-        .apply(&[Op::insert(&wrong_key).imm(&val)])
+        .apply(&[Op::insert(&mut wrong_key).imm(&mut val)])
         .unwrap_err();
     assert!(matches!(
         err.kind,
@@ -311,12 +313,12 @@ fn insert_wrong_key_type_errors() {
 fn insert_wrong_value_type_errors() {
     let mut partial = Partial::alloc::<HashMap<String, u32>>().unwrap();
 
-    let key = String::from("key");
-    let wrong_val = String::from("not a u32");
+    let mut key = String::from("key");
+    let mut wrong_val = String::from("not a u32");
 
     partial.apply(&[Op::set().build()]).unwrap();
     let err = partial
-        .apply(&[Op::insert(&key).imm(&wrong_val)])
+        .apply(&[Op::insert(&mut key).imm(&mut wrong_val)])
         .unwrap_err();
     assert!(matches!(
         err.kind,
@@ -333,11 +335,11 @@ fn drop_partial_map_mid_construction() {
     // Start building a HashMap, insert some entries, then drop without finishing
     let mut partial = Partial::alloc::<HashMap<String, String>>().unwrap();
 
-    let key = String::from("key");
-    let val = String::from("value");
+    let mut key = String::from("key");
+    let mut val = String::from("value");
 
     partial
-        .apply(&[Op::set().build(), Op::insert(&key).imm(&val)])
+        .apply(&[Op::set().build(), Op::insert(&mut key).imm(&mut val)])
         .unwrap();
     std::mem::forget(key);
     std::mem::forget(val);
@@ -352,13 +354,13 @@ fn drop_partial_map_mid_value_build() {
     // Start building a HashMap, start building a value, then drop
     let mut partial = Partial::alloc::<HashMap<String, Server>>().unwrap();
 
-    let key = String::from("server");
+    let mut key = String::from("server");
     let host = String::from("localhost");
 
     let result = partial.apply(&[
         Op::set().build(),
-        Op::insert(&key).build(),
-        Op::set().at(0).imm(&host),
+        Op::insert(&mut key).build(),
+        Op::set().at(0).imm(&mut host),
         // Don't set port, don't End - just drop
     ]);
     std::mem::forget(key);

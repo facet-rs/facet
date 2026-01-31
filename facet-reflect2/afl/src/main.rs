@@ -2,8 +2,8 @@
 use afl::fuzz;
 use arbitrary::Arbitrary;
 use facet::Facet;
-use facet_core::{PtrConst, Shape};
-use facet_reflect2::{Build, Imm, Op, Partial, Path, Source};
+use facet_core::{PtrMut, Shape};
+use facet_reflect2::{Build, Imm, Op, OpBatch, Partial, Path, Source};
 use std::collections::HashMap;
 
 // ============================================================================
@@ -237,11 +237,11 @@ macro_rules! fuzz_types {
         }
 
         impl FuzzValue {
-            /// Get a pointer and shape for this value.
+            /// Get a mutable pointer and shape for this value.
             /// The pointer is only valid while self is alive.
-            fn as_ptr_and_shape(&self) -> (PtrConst, &'static Shape) {
+            fn as_ptr_and_shape(&mut self) -> (PtrMut, &'static Shape) {
                 match self {
-                    $( FuzzValue::$val_variant(v) => (PtrConst::new(v), <$val_type>::SHAPE), )*
+                    $( FuzzValue::$val_variant(v) => (PtrMut::new(v), <$val_type>::SHAPE), )*
                 }
             }
         }
@@ -508,16 +508,15 @@ fn run_fuzz(input: FuzzInput, log: bool) {
     };
 
     // Process each batch
-    for (batch_idx, batch) in input.batches.into_iter().enumerate() {
+    for (batch_idx, mut batch) in input.batches.into_iter().enumerate() {
         if log {
             eprintln!("  [batch {batch_idx}] {} ops", batch.len());
         }
 
-        // Build the ops for this batch
-        // The Imms reference data inside `batch`, so batch must stay alive until after apply()
-        let mut ops: Vec<Op<'_>> = Vec::new();
+        // Build the OpBatch - it takes ownership of Imm values and handles cleanup
+        let mut op_batch = OpBatch::with_capacity(batch.len());
 
-        for (i, fuzz_op) in batch.iter().enumerate() {
+        for (i, fuzz_op) in batch.iter_mut().enumerate() {
             match fuzz_op {
                 FuzzOp::Set { path, source } => match source {
                     FuzzSource::Imm(value) => {
@@ -526,7 +525,7 @@ fn run_fuzz(input: FuzzInput, log: bool) {
                         }
                         let (ptr, shape) = value.as_ptr_and_shape();
                         let imm = unsafe { Imm::new(ptr, shape) };
-                        ops.push(Op::Set {
+                        op_batch.push(Op::Set {
                             dst: path.to_path(),
                             src: Source::Imm(imm),
                         });
@@ -535,7 +534,7 @@ fn run_fuzz(input: FuzzInput, log: bool) {
                         if log {
                             eprintln!("    [{i}] Set dst={:?} src=Default", path);
                         }
-                        ops.push(Op::Set {
+                        op_batch.push(Op::Set {
                             dst: path.to_path(),
                             src: Source::Default,
                         });
@@ -544,7 +543,7 @@ fn run_fuzz(input: FuzzInput, log: bool) {
                         if log {
                             eprintln!("    [{i}] Set dst={:?} src=Build({:?})", path, len_hint);
                         }
-                        ops.push(Op::Set {
+                        op_batch.push(Op::Set {
                             dst: path.to_path(),
                             src: Source::Build(Build {
                                 len_hint: len_hint.as_ref().map(|&h| h as usize),
@@ -559,7 +558,7 @@ fn run_fuzz(input: FuzzInput, log: bool) {
                         }
                         let (ptr, shape) = value.as_ptr_and_shape();
                         let imm = unsafe { Imm::new(ptr, shape) };
-                        ops.push(Op::Push {
+                        op_batch.push(Op::Push {
                             src: Source::Imm(imm),
                         });
                     }
@@ -567,7 +566,7 @@ fn run_fuzz(input: FuzzInput, log: bool) {
                         if log {
                             eprintln!("    [{i}] Push src=Default");
                         }
-                        ops.push(Op::Push {
+                        op_batch.push(Op::Push {
                             src: Source::Default,
                         });
                     }
@@ -575,7 +574,7 @@ fn run_fuzz(input: FuzzInput, log: bool) {
                         if log {
                             eprintln!("    [{i}] Push src=Build({:?})", len_hint);
                         }
-                        ops.push(Op::Push {
+                        op_batch.push(Op::Push {
                             src: Source::Build(Build {
                                 len_hint: len_hint.as_ref().map(|&h| h as usize),
                             }),
@@ -593,7 +592,7 @@ fn run_fuzz(input: FuzzInput, log: bool) {
                             }
                             let (val_ptr, val_shape) = val.as_ptr_and_shape();
                             let val_imm = unsafe { Imm::new(val_ptr, val_shape) };
-                            ops.push(Op::Insert {
+                            op_batch.push(Op::Insert {
                                 key: key_imm,
                                 value: Source::Imm(val_imm),
                             });
@@ -602,7 +601,7 @@ fn run_fuzz(input: FuzzInput, log: bool) {
                             if log {
                                 eprintln!("    [{i}] Insert key={:?} value=Default", key);
                             }
-                            ops.push(Op::Insert {
+                            op_batch.push(Op::Insert {
                                 key: key_imm,
                                 value: Source::Default,
                             });
@@ -614,7 +613,7 @@ fn run_fuzz(input: FuzzInput, log: bool) {
                                     key, len_hint
                                 );
                             }
-                            ops.push(Op::Insert {
+                            op_batch.push(Op::Insert {
                                 key: key_imm,
                                 value: Source::Build(Build {
                                     len_hint: len_hint.as_ref().map(|&h| h as usize),
@@ -627,21 +626,23 @@ fn run_fuzz(input: FuzzInput, log: bool) {
                     if log {
                         eprintln!("    [{i}] End");
                     }
-                    ops.push(Op::End);
+                    op_batch.push(Op::End);
                 }
             }
         }
 
-        // Apply the batch
-        let result = partial.apply(&ops);
+        // Apply the batch - OpBatch tracks which ops were consumed
+        let result = partial.apply_batch(&op_batch);
         if log {
             eprintln!("    batch result: {result:?}");
         }
 
-        // Forget the entire batch - apply() takes ownership of all Imm sources
-        // regardless of success or failure. We can't selectively forget individual
-        // FuzzValues because the batch owns them and we need to prevent their Drop.
+        // Forget the FuzzValue containers - OpBatch's Drop will handle the Imm cleanup.
+        // We must forget the batch because OpBatch now "owns" the Imm pointers and will
+        // drop unconsumed ones. If we let batch drop, we'd double-free consumed values.
         std::mem::forget(batch);
+
+        // OpBatch drops here - it will drop any unconsumed Imm values
 
         // Stop on first error (partial is poisoned)
         if result.is_err() {
