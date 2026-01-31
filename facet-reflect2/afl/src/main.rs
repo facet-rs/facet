@@ -513,12 +513,8 @@ fn run_fuzz(input: FuzzInput, log: bool) {
             eprintln!("  [batch {batch_idx}] {} ops", batch.len());
         }
 
-        // Collect values that need to be forgotten after apply().
-        // apply() takes ownership of all Imm sources - we must forget them
-        // regardless of success or failure.
-        let mut values_to_forget: Vec<FuzzValue> = Vec::new();
-
         // Build the ops for this batch
+        // The Imms reference data inside `batch`, so batch must stay alive until after apply()
         let mut ops: Vec<Op<'_>> = Vec::new();
 
         for (i, fuzz_op) in batch.iter().enumerate() {
@@ -636,41 +632,16 @@ fn run_fuzz(input: FuzzInput, log: bool) {
             }
         }
 
-        // Collect all values that will have their bytes copied.
-        // We need to forget these AFTER apply() returns, regardless of success/failure.
-        for fuzz_op in batch {
-            match fuzz_op {
-                FuzzOp::Set {
-                    source: FuzzSource::Imm(value),
-                    ..
-                } => {
-                    values_to_forget.push(value);
-                }
-                FuzzOp::Push {
-                    source: FuzzSource::Imm(value),
-                } => {
-                    values_to_forget.push(value);
-                }
-                FuzzOp::Insert { key, value } => {
-                    values_to_forget.push(key);
-                    if let FuzzSource::Imm(val) = value {
-                        values_to_forget.push(val);
-                    }
-                }
-                _ => {}
-            }
-        }
-
         // Apply the batch
         let result = partial.apply(&ops);
         if log {
             eprintln!("    batch result: {result:?}");
         }
 
-        // Forget all Imm sources - apply() takes ownership regardless of success/failure
-        for value in values_to_forget {
-            std::mem::forget(value);
-        }
+        // Forget the entire batch - apply() takes ownership of all Imm sources
+        // regardless of success or failure. We can't selectively forget individual
+        // FuzzValues because the batch owns them and we need to prevent their Drop.
+        std::mem::forget(batch);
 
         // Stop on first error (partial is poisoned)
         if result.is_err() {
