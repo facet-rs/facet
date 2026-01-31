@@ -102,18 +102,27 @@ impl<'facet> Partial<'facet> {
         }
         self.poisoned = true;
 
-        // Clean up if root is valid
-        if self.root.is_valid() {
-            // Drop any initialized value
-            self.arena.get_mut(self.root).uninit();
+        // Walk from current frame up to root, cleaning up each frame.
+        // This handles in-progress child frames (e.g., list elements being built).
+        let mut idx = self.current;
+        while idx.is_valid() {
+            let frame = self.arena.get_mut(idx);
+            let parent = frame.parent.map(|(p, _)| p);
 
-            // Free the frame and deallocate if we own the allocation
-            let frame = self.arena.free(self.root);
+            // Drop any initialized data in this frame
+            frame.uninit();
+
+            // Free the frame and deallocate if it owns its allocation
+            let frame = self.arena.free(idx);
             frame.dealloc_if_owned();
 
-            // Mark root as invalid
-            self.root = Idx::COMPLETE;
+            // Move to parent
+            idx = parent.unwrap_or(Idx::COMPLETE);
         }
+
+        // Mark as cleaned up
+        self.current = Idx::COMPLETE;
+        self.root = Idx::COMPLETE;
     }
 
     /// Apply a sequence of operations.
@@ -1295,8 +1304,9 @@ impl<'facet> Partial<'facet> {
         // Free the frame from arena and deallocate its memory
         let frame = self.arena.free(self.root);
 
-        // Mark root as invalid so Drop doesn't try to free it again
+        // Mark as invalid so Drop doesn't try to free again
         self.root = Idx::COMPLETE;
+        self.current = Idx::COMPLETE;
 
         frame.dealloc_if_owned();
 
@@ -1306,14 +1316,22 @@ impl<'facet> Partial<'facet> {
 
 impl<'facet> Drop for Partial<'facet> {
     fn drop(&mut self) {
-        // If root is valid, we need to clean up
-        if self.root.is_valid() {
-            // Drop any initialized value
-            self.arena.get_mut(self.root).uninit();
+        // Walk from current frame up to root, cleaning up each frame.
+        // This handles in-progress child frames (e.g., list elements being built).
+        let mut idx = self.current;
+        while idx.is_valid() {
+            let frame = self.arena.get_mut(idx);
+            let parent = frame.parent.map(|(p, _)| p);
 
-            // Free the frame and deallocate if we own the allocation
-            let frame = self.arena.free(self.root);
+            // Drop any initialized data in this frame
+            frame.uninit();
+
+            // Free the frame and deallocate if it owns its allocation
+            let frame = self.arena.free(idx);
             frame.dealloc_if_owned();
+
+            // Move to parent
+            idx = parent.unwrap_or(Idx::COMPLETE);
         }
     }
 }
