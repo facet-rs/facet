@@ -271,15 +271,21 @@ End
 struct Point3D { coords: [f32; 3] }
 ```
 
-Arrays are fixed-size. Set elements by index:
+Arrays are fixed-size. Push a frame for the array, then set elements by index:
 
 ```rust
-Set { dst: &[0, 0], src: Imm(&1.0f32) }  // coords[0]
-Set { dst: &[0, 1], src: Imm(&2.0f32) }  // coords[1]
-Set { dst: &[0, 2], src: Imm(&3.0f32) }  // coords[2]
+Set { dst: &[0], src: Build }  // push frame for coords
+  Set { dst: &[0], src: Imm(&1.0f32) }  // coords[0]
+  Set { dst: &[1], src: Imm(&2.0f32) }  // coords[1]
+  Set { dst: &[2], src: Imm(&3.0f32) }  // coords[2]
+End
 ```
 
-**Note**: Multi-level paths required. Not yet implemented.
+Or set the whole array at once:
+
+```rust
+Set { dst: &[0], src: Imm(&[1.0f32, 2.0f32, 3.0f32]) }
+```
 
 ### Sets (HashSet, etc.)
 
