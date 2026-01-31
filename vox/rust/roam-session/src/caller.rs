@@ -655,7 +655,7 @@ unsafe fn deserialize_into_ptr(
     let mut deserializer: FormatDeserializer<'_, '_, false> =
         FormatDeserializer::new_owned(&mut parser);
     let partial = deserializer
-        .deserialize_into(partial)
+        .deserialize_into(partial, None)
         .map_err(|e| e.to_string())?;
 
     partial.finish_in_place().map_err(|e| e.to_string())?;

@@ -558,7 +558,7 @@ pub unsafe fn deserialize_into(
     let mut deserializer: FormatDeserializer<'_, '_, false> =
         FormatDeserializer::new_owned(&mut parser);
     let partial = deserializer
-        .deserialize_into(partial)
+        .deserialize_into(partial, None)
         .map_err(|e| PrepareError::Deserialize(e.to_string()))?;
 
     // Validate the value is fully initialized and leave it in place.
