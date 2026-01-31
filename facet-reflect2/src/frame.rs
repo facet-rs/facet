@@ -3,7 +3,7 @@
 use crate::arena::{Arena, Idx};
 use crate::errors::{ErrorLocation, ReflectError, ReflectErrorKind};
 use crate::ops::Path;
-use facet_core::{PtrConst, PtrMut, PtrUninit, SequenceType, Shape, Variant};
+use facet_core::{ListDef, MapDef, PtrConst, PtrUninit, SequenceType, SetDef, Shape, Variant};
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -150,17 +150,25 @@ impl Default for PointerFrame {
 }
 
 /// List frame data (building a Vec or similar).
-/// Tracks the initialized list and count of pushed elements.
+/// Tracks whether the list is initialized and count of pushed elements.
 pub struct ListFrame {
-    /// Pointer to the initialized list (after init_in_place_with_capacity).
-    pub list_ptr: PtrMut,
+    /// The list definition (element type, vtable).
+    pub def: &'static ListDef,
+    /// Whether the list has been initialized (via init_in_place_with_capacity).
+    /// The actual pointer is always frame.data.
+    pub initialized: bool,
     /// Number of elements that have been pushed.
     pub len: usize,
 }
 
 impl ListFrame {
-    pub fn new(list_ptr: PtrMut) -> Self {
-        Self { list_ptr, len: 0 }
+    /// Create an uninitialized list frame.
+    pub fn new(def: &'static ListDef) -> Self {
+        Self {
+            def,
+            initialized: false,
+            len: 0,
+        }
     }
 
     /// Lists are always "complete" since they have variable size.
@@ -173,17 +181,25 @@ impl ListFrame {
 }
 
 /// Map frame data (building a HashMap, BTreeMap, etc.).
-/// Tracks the initialized map and count of inserted entries.
+/// Tracks whether the map is initialized and count of inserted entries.
 pub struct MapFrame {
-    /// Pointer to the initialized map (after init_in_place_with_capacity).
-    pub map_ptr: PtrMut,
+    /// The map definition (key/value types, vtable).
+    pub def: &'static MapDef,
+    /// Whether the map has been initialized (via init_in_place_with_capacity).
+    /// The actual pointer is always frame.data.
+    pub initialized: bool,
     /// Number of entries that have been inserted.
     pub len: usize,
 }
 
 impl MapFrame {
-    pub fn new(map_ptr: PtrMut) -> Self {
-        Self { map_ptr, len: 0 }
+    /// Create an uninitialized map frame.
+    pub fn new(def: &'static MapDef) -> Self {
+        Self {
+            def,
+            initialized: false,
+            len: 0,
+        }
     }
 
     /// Maps are always "complete" since they have variable size.
@@ -194,17 +210,25 @@ impl MapFrame {
 }
 
 /// Set frame data (building a HashSet, BTreeSet, etc.).
-/// Tracks the initialized set and count of inserted elements.
+/// Tracks whether the set is initialized and count of inserted elements.
 pub struct SetFrame {
-    /// Pointer to the initialized set (after init_in_place_with_capacity).
-    pub set_ptr: PtrMut,
+    /// The set definition (element type, vtable).
+    pub def: &'static SetDef,
+    /// Whether the set has been initialized (via init_in_place_with_capacity).
+    /// The actual pointer is always frame.data.
+    pub initialized: bool,
     /// Number of elements that have been inserted.
     pub len: usize,
 }
 
 impl SetFrame {
-    pub fn new(set_ptr: PtrMut) -> Self {
-        Self { set_ptr, len: 0 }
+    /// Create an uninitialized set frame.
+    pub fn new(def: &'static SetDef) -> Self {
+        Self {
+            def,
+            initialized: false,
+            len: 0,
+        }
     }
 
     /// Sets are always "complete" since they have variable size.
@@ -472,13 +496,13 @@ impl Frame {
     }
 
     /// Create a frame for a list (Vec, etc.).
-    /// `data` points to the list memory, `list_ptr` is the initialized list,
-    /// `shape` is the list's shape.
-    pub fn new_list(data: PtrUninit, shape: &'static Shape, list_ptr: PtrMut) -> Self {
+    /// `data` points to the list memory (uninitialized).
+    /// The list will be lazily initialized on first Push.
+    pub fn new_list(data: PtrUninit, shape: &'static Shape, def: &'static ListDef) -> Self {
         Frame {
             data,
             shape,
-            kind: FrameKind::List(ListFrame::new(list_ptr)),
+            kind: FrameKind::List(ListFrame::new(def)),
             flags: FrameFlags::empty(),
             parent: None,
             pending_key: None,
@@ -486,13 +510,13 @@ impl Frame {
     }
 
     /// Create a frame for a map (HashMap, BTreeMap, etc.).
-    /// `data` points to the map memory, `map_ptr` is the initialized map,
-    /// `shape` is the map's shape.
-    pub fn new_map(data: PtrUninit, shape: &'static Shape, map_ptr: PtrMut) -> Self {
+    /// `data` points to the map memory (uninitialized).
+    /// The map will be lazily initialized on first Insert.
+    pub fn new_map(data: PtrUninit, shape: &'static Shape, def: &'static MapDef) -> Self {
         Frame {
             data,
             shape,
-            kind: FrameKind::Map(MapFrame::new(map_ptr)),
+            kind: FrameKind::Map(MapFrame::new(def)),
             flags: FrameFlags::empty(),
             parent: None,
             pending_key: None,
@@ -500,13 +524,13 @@ impl Frame {
     }
 
     /// Create a frame for a set (HashSet, BTreeSet, etc.).
-    /// `data` points to the set memory, `set_ptr` is the initialized set,
-    /// `shape` is the set's shape.
-    pub fn new_set(data: PtrUninit, shape: &'static Shape, set_ptr: PtrMut) -> Self {
+    /// `data` points to the set memory (uninitialized).
+    /// The set will be lazily initialized on first Push.
+    pub fn new_set(data: PtrUninit, shape: &'static Shape, def: &'static SetDef) -> Self {
         Frame {
             data,
             shape,
-            kind: FrameKind::Set(SetFrame::new(set_ptr)),
+            kind: FrameKind::Set(SetFrame::new(def)),
             flags: FrameFlags::empty(),
             parent: None,
             pending_key: None,

@@ -9,7 +9,10 @@ use crate::enum_helpers::{
     drop_variant_fields, read_discriminant, variant_index_from_discriminant, write_discriminant,
 };
 use crate::errors::{ReflectError, ReflectErrorKind};
-use crate::frame::{Frame, FrameFlags, FrameKind, absolute_path};
+use crate::frame::{
+    Frame, FrameFlags, FrameKind, ListFrame, MapFrame, PointerFrame, SetFrame, StructFrame,
+    absolute_path,
+};
 use crate::ops::{Imm, Op, Path, Source};
 use facet_core::{
     Def, EnumType, Facet, Field, PtrMut, PtrUninit, SequenceType, Shape, Type, UserType, Variant,
@@ -260,6 +263,10 @@ impl<'facet> Partial<'facet> {
 
     /// Apply an End operation - pop back to parent frame.
     fn apply_end(&mut self) -> Result<(), ReflectError> {
+        // If current frame is a collection, ensure it's initialized before ending
+        // (handles empty collections that never had Push/Insert called)
+        self.ensure_collection_initialized()?;
+
         // Pop back to parent frame
         let frame = self.arena.get(self.current);
         let Some((parent_idx, field_idx)) = frame.parent else {
@@ -294,10 +301,11 @@ impl<'facet> Partial<'facet> {
             // We're completing a value frame that was started by Insert with Build
             // Get map def and insert function from parent's shape
             let parent = self.arena.get(parent_idx);
-            let Def::Map(map_def) = &parent.shape.def else {
-                return Err(self.error_at(parent_idx, ReflectErrorKind::NotAMap));
+            // Get insert function from parent's MapFrame
+            let FrameKind::Map(ref map_frame) = parent.kind else {
+                unreachable!()
             };
-            let insert_fn = map_def.vtable.insert;
+            let insert_fn = map_frame.def.vtable.insert;
 
             // Get the value data pointer (our current frame's data, now initialized)
             let frame = self.arena.get(self.current);
@@ -307,12 +315,10 @@ impl<'facet> Partial<'facet> {
             let pending_key = frame.pending_key.as_ref().unwrap();
             let key_ptr = pending_key.ptr();
 
-            // Get the map pointer from parent's MapFrame
+            // Get the map pointer from parent's data (it's initialized)
             let parent = self.arena.get(parent_idx);
-            let FrameKind::Map(ref map_frame) = parent.kind else {
-                unreachable!()
-            };
-            let map_ptr = map_frame.map_ptr;
+            // SAFETY: parent map is initialized (we pushed elements into it)
+            let map_ptr = unsafe { parent.data.assume_init() };
 
             // Insert the key-value pair (moves both out)
             // SAFETY: both pointers point to initialized data
@@ -346,12 +352,12 @@ impl<'facet> Partial<'facet> {
             // Pop back to parent
             self.current = parent_idx;
         } else if is_list_parent {
-            // Get list def and push function from parent's shape
+            // Get push function from parent's ListFrame
             let parent = self.arena.get(parent_idx);
-            let Def::List(list_def) = &parent.shape.def else {
-                return Err(self.error_at(parent_idx, ReflectErrorKind::NotAList));
+            let FrameKind::List(ref list_frame) = parent.kind else {
+                unreachable!()
             };
-            let push_fn = list_def.push().ok_or_else(|| {
+            let push_fn = list_frame.def.push().ok_or_else(|| {
                 self.error_at(
                     parent_idx,
                     ReflectErrorKind::ListDoesNotSupportOp {
@@ -364,12 +370,10 @@ impl<'facet> Partial<'facet> {
             let frame = self.arena.get(self.current);
             let element_ptr = unsafe { frame.data.assume_init() };
 
-            // Get the list pointer from parent's ListFrame
+            // Get the list pointer from parent's data (it's initialized)
             let parent = self.arena.get(parent_idx);
-            let FrameKind::List(ref list_frame) = parent.kind else {
-                unreachable!()
-            };
-            let list_ptr = list_frame.list_ptr;
+            // SAFETY: parent list is initialized (we pushed elements into it)
+            let list_ptr = unsafe { parent.data.assume_init() };
 
             // Push the element to the list (moves the value)
             // SAFETY: element_ptr points to initialized data of the correct element type
@@ -394,23 +398,21 @@ impl<'facet> Partial<'facet> {
             // Pop back to parent
             self.current = parent_idx;
         } else if is_set_parent {
-            // Get set def and insert function from parent's shape
+            // Get insert function from parent's SetFrame
             let parent = self.arena.get(parent_idx);
-            let Def::Set(set_def) = &parent.shape.def else {
-                return Err(self.error_at(parent_idx, ReflectErrorKind::NotASet));
+            let FrameKind::Set(ref set_frame) = parent.kind else {
+                unreachable!()
             };
-            let insert_fn = set_def.vtable.insert;
+            let insert_fn = set_frame.def.vtable.insert;
 
             // Get the element data pointer (our current frame's data, now initialized)
             let frame = self.arena.get(self.current);
             let element_ptr = unsafe { frame.data.assume_init() };
 
-            // Get the set pointer from parent's SetFrame
+            // Get the set pointer from parent's data (it's initialized)
             let parent = self.arena.get(parent_idx);
-            let FrameKind::Set(ref set_frame) = parent.kind else {
-                unreachable!()
-            };
-            let set_ptr = set_frame.set_ptr;
+            // SAFETY: parent set is initialized (we pushed elements into it)
+            let set_ptr = unsafe { parent.data.assume_init() };
 
             // Insert the element into the set (moves the value)
             // SAFETY: element_ptr points to initialized data of the correct element type
@@ -700,70 +702,33 @@ impl<'facet> Partial<'facet> {
                     frame.kind.mark_field_complete(field_idx);
                 }
             }
-            Source::Build(build) => {
+            Source::Build(_build) => {
                 // Build pushes a new frame for incremental construction
                 let frame = self.arena.get(self.current);
 
                 // Check for special types at empty path
                 if path.is_empty() {
                     // Handle list types (Vec, etc.)
+                    // Just switch to list frame - initialization is deferred to first Push
                     if let Def::List(list_def) = &frame.shape.def {
-                        // Get the init function
-                        let init_fn = list_def.init_in_place_with_capacity().ok_or_else(|| {
-                            self.error(ReflectErrorKind::ListDoesNotSupportOp {
-                                shape: frame.shape,
-                            })
-                        })?;
-
-                        // Initialize the list with capacity hint
-                        let capacity = build.len_hint.unwrap_or(0);
-                        // SAFETY: frame.data points to uninitialized memory of the correct layout
-                        let list_ptr = unsafe { init_fn(frame.data, capacity) };
-
-                        // Convert to list frame
                         let frame = self.arena.get_mut(self.current);
-                        frame.kind = FrameKind::List(crate::frame::ListFrame::new(list_ptr));
-                        // The list is now initialized (empty, but valid)
-                        frame.flags |= FrameFlags::INIT;
-
+                        frame.kind = FrameKind::List(ListFrame::new(list_def));
                         return Ok(());
                     }
 
                     // Handle map types (HashMap, BTreeMap, etc.)
+                    // Just switch to map frame - initialization is deferred to first Insert
                     if let Def::Map(map_def) = &frame.shape.def {
-                        // Get the init function
-                        let init_fn = map_def.vtable.init_in_place_with_capacity;
-
-                        // Initialize the map with capacity hint
-                        let capacity = build.len_hint.unwrap_or(0);
-                        // SAFETY: frame.data points to uninitialized memory of the correct layout
-                        let map_ptr = unsafe { init_fn(frame.data, capacity) };
-
-                        // Convert to map frame
                         let frame = self.arena.get_mut(self.current);
-                        frame.kind = FrameKind::Map(crate::frame::MapFrame::new(map_ptr));
-                        // The map is now initialized (empty, but valid)
-                        frame.flags |= FrameFlags::INIT;
-
+                        frame.kind = FrameKind::Map(MapFrame::new(map_def));
                         return Ok(());
                     }
 
                     // Handle set types (HashSet, BTreeSet, etc.)
+                    // Just switch to set frame - initialization is deferred to first Push
                     if let Def::Set(set_def) = &frame.shape.def {
-                        // Get the init function
-                        let init_fn = set_def.vtable.init_in_place_with_capacity;
-
-                        // Initialize the set with capacity hint
-                        let capacity = build.len_hint.unwrap_or(0);
-                        // SAFETY: frame.data points to uninitialized memory of the correct layout
-                        let set_ptr = unsafe { init_fn(frame.data, capacity) };
-
-                        // Convert to set frame
                         let frame = self.arena.get_mut(self.current);
-                        frame.kind = FrameKind::Set(crate::frame::SetFrame::new(set_ptr));
-                        // The set is now initialized (empty, but valid)
-                        frame.flags |= FrameFlags::INIT;
-
+                        frame.kind = FrameKind::Set(SetFrame::new(set_def));
                         return Ok(());
                     }
 
@@ -820,8 +785,7 @@ impl<'facet> Partial<'facet> {
 
                         // Update parent to track this as a pointer frame
                         let frame = self.arena.get_mut(self.current);
-                        frame.kind =
-                            FrameKind::Pointer(crate::frame::PointerFrame { inner: new_idx });
+                        frame.kind = FrameKind::Pointer(PointerFrame { inner: new_idx });
 
                         self.current = new_idx;
                         return Ok(());
@@ -832,7 +796,7 @@ impl<'facet> Partial<'facet> {
                         // Arrays don't need initialization - memory is already allocated
                         // Just convert to struct frame for element tracking (arrays are like structs)
                         let frame = self.arena.get_mut(self.current);
-                        frame.kind = FrameKind::Struct(crate::frame::StructFrame::new(array_def.n));
+                        frame.kind = FrameKind::Struct(StructFrame::new(array_def.n));
                         return Ok(());
                     }
 
@@ -848,56 +812,24 @@ impl<'facet> Partial<'facet> {
                 let frame = self.arena.get(self.current);
                 let target = self.resolve_path(frame, path)?;
 
-                // Check if target is a list - needs special initialization
+                // Check if target is a list - create frame, lazy init on first Push
                 if let Def::List(list_def) = &target.shape.def {
-                    // Get the init function
-                    let init_fn = list_def.init_in_place_with_capacity().ok_or_else(|| {
-                        self.error(ReflectErrorKind::ListDoesNotSupportOp {
-                            shape: target.shape,
-                        })
-                    })?;
-
-                    // Initialize the list with capacity hint
-                    let capacity = build.len_hint.unwrap_or(0);
-                    // SAFETY: target.data points to uninitialized memory of the correct layout
-                    let list_ptr = unsafe { init_fn(target.data, capacity) };
-
-                    // Create list frame
-                    let mut new_frame = Frame::new_list(target.data, target.shape, list_ptr);
+                    let mut new_frame = Frame::new_list(target.data, target.shape, list_def);
                     new_frame.parent = Some((self.current, field_idx));
-                    new_frame.flags |= FrameFlags::INIT; // List is initialized (empty but valid)
 
                     let new_idx = self.arena.alloc(new_frame);
                     self.current = new_idx;
                 } else if let Def::Map(map_def) = &target.shape.def {
-                    // Get the init function
-                    let init_fn = map_def.vtable.init_in_place_with_capacity;
-
-                    // Initialize the map with capacity hint
-                    let capacity = build.len_hint.unwrap_or(0);
-                    // SAFETY: target.data points to uninitialized memory of the correct layout
-                    let map_ptr = unsafe { init_fn(target.data, capacity) };
-
-                    // Create map frame
-                    let mut new_frame = Frame::new_map(target.data, target.shape, map_ptr);
+                    // Create frame, lazy init on first Insert
+                    let mut new_frame = Frame::new_map(target.data, target.shape, map_def);
                     new_frame.parent = Some((self.current, field_idx));
-                    new_frame.flags |= FrameFlags::INIT; // Map is initialized (empty but valid)
 
                     let new_idx = self.arena.alloc(new_frame);
                     self.current = new_idx;
                 } else if let Def::Set(set_def) = &target.shape.def {
-                    // Get the init function
-                    let init_fn = set_def.vtable.init_in_place_with_capacity;
-
-                    // Initialize the set with capacity hint
-                    let capacity = build.len_hint.unwrap_or(0);
-                    // SAFETY: target.data points to uninitialized memory of the correct layout
-                    let set_ptr = unsafe { init_fn(target.data, capacity) };
-
-                    // Create set frame
-                    let mut new_frame = Frame::new_set(target.data, target.shape, set_ptr);
+                    // Create frame, lazy init on first Push
+                    let mut new_frame = Frame::new_set(target.data, target.shape, set_def);
                     new_frame.parent = Some((self.current, field_idx));
-                    new_frame.flags |= FrameFlags::INIT; // Set is initialized (empty but valid)
 
                     let new_idx = self.arena.alloc(new_frame);
                     self.current = new_idx;
@@ -1421,83 +1353,131 @@ impl<'facet> Partial<'facet> {
         Ok(())
     }
 
-    /// Apply a Push operation to add an element to the current list or set.
-    fn apply_push(&mut self, source: &Source<'_>) -> Result<(), ReflectError> {
-        // Verify we're in a list or set frame
+    /// Ensure the current collection (list, map, or set) is initialized.
+    /// This is called lazily on first Push/Insert.
+    fn ensure_collection_initialized(&mut self) -> Result<(), ReflectError> {
         let frame = self.arena.get(self.current);
 
-        // Determine if we're in a list or set frame and extract the relevant info
+        let needs_init = match &frame.kind {
+            FrameKind::List(l) => !l.initialized,
+            FrameKind::Map(m) => !m.initialized,
+            FrameKind::Set(s) => !s.initialized,
+            _ => return Ok(()), // Not a collection, nothing to do
+        };
+
+        if !needs_init {
+            return Ok(());
+        }
+
+        // Initialize based on frame kind (which has the def)
+        let frame = self.arena.get(self.current);
+        match &frame.kind {
+            FrameKind::List(list_frame) => {
+                let init_fn = list_frame
+                    .def
+                    .init_in_place_with_capacity()
+                    .ok_or_else(|| {
+                        self.error(ReflectErrorKind::ListDoesNotSupportOp { shape: frame.shape })
+                    })?;
+                // SAFETY: frame.data points to uninitialized list memory
+                unsafe { init_fn(frame.data, 0) };
+            }
+            FrameKind::Map(map_frame) => {
+                let init_fn = map_frame.def.vtable.init_in_place_with_capacity;
+                // SAFETY: frame.data points to uninitialized map memory
+                unsafe { init_fn(frame.data, 0) };
+            }
+            FrameKind::Set(set_frame) => {
+                let init_fn = set_frame.def.vtable.init_in_place_with_capacity;
+                // SAFETY: frame.data points to uninitialized set memory
+                unsafe { init_fn(frame.data, 0) };
+            }
+            _ => unreachable!(),
+        }
+
+        // Mark as initialized
+        let frame = self.arena.get_mut(self.current);
+        match &mut frame.kind {
+            FrameKind::List(l) => l.initialized = true,
+            FrameKind::Map(m) => m.initialized = true,
+            FrameKind::Set(s) => s.initialized = true,
+            _ => unreachable!(),
+        }
+        frame.flags |= FrameFlags::INIT;
+
+        Ok(())
+    }
+
+    /// Apply a Push operation to add an element to the current list or set.
+    fn apply_push(&mut self, source: &Source<'_>) -> Result<(), ReflectError> {
+        // Ensure collection is initialized (lazy init on first push)
+        self.ensure_collection_initialized()?;
+
+        // Get the collection info from the frame kind
+        let frame = self.arena.get(self.current);
+        let collection_ptr = unsafe { frame.data.assume_init() };
+
         enum CollectionKind {
             List {
-                ptr: PtrMut,
                 push_fn: facet_core::ListPushFn,
+                element_shape: &'static Shape,
             },
             Set {
-                ptr: PtrMut,
                 insert_fn: facet_core::SetInsertFn,
+                element_shape: &'static Shape,
             },
         }
 
-        let (element_shape, collection) = match &frame.kind {
+        let collection = match &frame.kind {
             FrameKind::List(list_frame) => {
-                let Def::List(list_def) = &frame.shape.def else {
-                    return Err(self.error(ReflectErrorKind::NotAList));
-                };
-                let push_fn = list_def.push().ok_or_else(|| {
+                let push_fn = list_frame.def.push().ok_or_else(|| {
                     self.error(ReflectErrorKind::ListDoesNotSupportOp { shape: frame.shape })
                 })?;
-                (
-                    list_def.t,
-                    CollectionKind::List {
-                        ptr: list_frame.list_ptr,
-                        push_fn,
-                    },
-                )
+                CollectionKind::List {
+                    push_fn,
+                    element_shape: list_frame.def.t,
+                }
             }
-            FrameKind::Set(set_frame) => {
-                let Def::Set(set_def) = &frame.shape.def else {
-                    return Err(self.error(ReflectErrorKind::NotASet));
-                };
-                let insert_fn = set_def.vtable.insert;
-                (
-                    set_def.t,
-                    CollectionKind::Set {
-                        ptr: set_frame.set_ptr,
-                        insert_fn,
-                    },
-                )
-            }
-            _ => {
-                return Err(self.error(ReflectErrorKind::NotAList));
-            }
+            FrameKind::Set(set_frame) => CollectionKind::Set {
+                insert_fn: set_frame.def.vtable.insert,
+                element_shape: set_frame.def.t,
+            },
+            _ => return Err(self.error(ReflectErrorKind::NotAList)),
         };
 
         match source {
             Source::Imm(mov) => {
-                // Verify element shape matches
-                if !element_shape.is_shape(mov.shape()) {
-                    return Err(self.error(ReflectErrorKind::ShapeMismatch {
-                        expected: element_shape,
-                        actual: mov.shape(),
-                    }));
-                }
-
-                // Push/insert the element - the function moves the value out
-                // SAFETY: mov.ptr() points to valid initialized data of the element type
+                // Verify element shape matches and push
                 match collection {
-                    CollectionKind::List { ptr, push_fn } => {
-                        unsafe { push_fn(ptr, mov.ptr()) };
-                        // Increment element count
+                    CollectionKind::List {
+                        push_fn,
+                        element_shape,
+                    } => {
+                        if !element_shape.is_shape(mov.shape()) {
+                            return Err(self.error(ReflectErrorKind::ShapeMismatch {
+                                expected: element_shape,
+                                actual: mov.shape(),
+                            }));
+                        }
+                        // SAFETY: mov.ptr() points to valid initialized data of the element type
+                        unsafe { push_fn(collection_ptr, mov.ptr()) };
                         let frame = self.arena.get_mut(self.current);
                         if let FrameKind::List(ref mut l) = frame.kind {
                             l.len += 1;
                         }
                     }
-                    CollectionKind::Set { ptr, insert_fn } => {
-                        // insert returns bool (true if inserted, false if duplicate)
-                        // We don't care about the return value for now
-                        unsafe { insert_fn(ptr, mov.ptr_mut()) };
-                        // Increment element count
+                    CollectionKind::Set {
+                        insert_fn,
+                        element_shape,
+                    } => {
+                        if !element_shape.is_shape(mov.shape()) {
+                            return Err(self.error(ReflectErrorKind::ShapeMismatch {
+                                expected: element_shape,
+                                actual: mov.shape(),
+                            }));
+                        }
+                        // SAFETY: mov.ptr() points to valid initialized data of the element type
+                        unsafe { insert_fn(collection_ptr, mov.ptr_mut()) };
                         let frame = self.arena.get_mut(self.current);
                         if let FrameKind::Set(ref mut s) = frame.kind {
                             s.len += 1;
@@ -1505,7 +1485,12 @@ impl<'facet> Partial<'facet> {
                     }
                 }
             }
-            Source::Build(build) => {
+            Source::Build(_build) => {
+                let element_shape = match &collection {
+                    CollectionKind::List { element_shape, .. } => *element_shape,
+                    CollectionKind::Set { element_shape, .. } => *element_shape,
+                };
+
                 // Allocate temporary space for the element
                 let layout = element_shape.layout.sized_layout().map_err(|_| {
                     self.error(ReflectErrorKind::Unsized {
@@ -1524,26 +1509,10 @@ impl<'facet> Partial<'facet> {
                 };
 
                 // Create appropriate frame based on element shape
-                // Check Def first because Option/Result have Def::Option/Result
-                // but are also UserType::Enum at the ty level
                 let mut element_frame = match &element_shape.def {
-                    Def::List(inner_list_def) => {
-                        // Element is itself a list - initialize it
-                        let init_fn =
-                            inner_list_def
-                                .init_in_place_with_capacity()
-                                .ok_or_else(|| {
-                                    self.error(ReflectErrorKind::ListDoesNotSupportOp {
-                                        shape: element_shape,
-                                    })
-                                })?;
-                        let capacity = build.len_hint.unwrap_or(0);
-                        // SAFETY: temp_ptr points to uninitialized memory of the correct layout
-                        let inner_list_ptr = unsafe { init_fn(temp_ptr, capacity) };
-                        let mut frame = Frame::new_list(temp_ptr, element_shape, inner_list_ptr);
-                        frame.flags |= FrameFlags::INIT; // List is initialized (empty but valid)
-                        frame
-                    }
+                    Def::List(list_def) => Frame::new_list(temp_ptr, element_shape, list_def),
+                    Def::Map(map_def) => Frame::new_map(temp_ptr, element_shape, map_def),
+                    Def::Set(set_def) => Frame::new_set(temp_ptr, element_shape, set_def),
                     Def::Option(_) => Frame::new_option(temp_ptr, element_shape),
                     Def::Result(_) => Frame::new_result(temp_ptr, element_shape),
                     _ => match element_shape.ty {
@@ -1566,6 +1535,11 @@ impl<'facet> Partial<'facet> {
                 self.current = element_idx;
             }
             Source::Default => {
+                let element_shape = match &collection {
+                    CollectionKind::List { element_shape, .. } => *element_shape,
+                    CollectionKind::Set { element_shape, .. } => *element_shape,
+                };
+
                 // Allocate temporary space for the default value
                 let layout = element_shape.layout.sized_layout().map_err(|_| {
                     self.error(ReflectErrorKind::Unsized {
@@ -1598,17 +1572,15 @@ impl<'facet> Partial<'facet> {
                 // Push/insert the element
                 // SAFETY: temp_ptr now contains initialized data
                 match collection {
-                    CollectionKind::List { ptr, push_fn } => {
-                        unsafe { push_fn(ptr, temp_ptr.assume_init().as_const()) };
-                        // Increment element count
+                    CollectionKind::List { push_fn, .. } => {
+                        unsafe { push_fn(collection_ptr, temp_ptr.assume_init().as_const()) };
                         let frame = self.arena.get_mut(self.current);
                         if let FrameKind::List(ref mut l) = frame.kind {
                             l.len += 1;
                         }
                     }
-                    CollectionKind::Set { ptr, insert_fn } => {
-                        unsafe { insert_fn(ptr, temp_ptr.assume_init()) };
-                        // Increment element count
+                    CollectionKind::Set { insert_fn, .. } => {
+                        unsafe { insert_fn(collection_ptr, temp_ptr.assume_init()) };
                         let frame = self.arena.get_mut(self.current);
                         if let FrameKind::Set(ref mut s) = frame.kind {
                             s.len += 1;
@@ -1628,18 +1600,19 @@ impl<'facet> Partial<'facet> {
 
     /// Apply an Insert operation to add a key-value pair to the current map.
     fn apply_insert(&mut self, key: &Imm<'_>, value: &Source<'_>) -> Result<(), ReflectError> {
-        // Verify we're in a map frame
+        // Ensure map is initialized (lazy init on first insert)
+        self.ensure_collection_initialized()?;
+
+        // Verify we're in a map frame and get the def
         let frame = self.arena.get(self.current);
         let FrameKind::Map(ref map_frame) = frame.kind else {
             return Err(self.error(ReflectErrorKind::NotAMap));
         };
 
-        // Get the map def and key/value shapes
-        let Def::Map(map_def) = &frame.shape.def else {
-            return Err(self.error(ReflectErrorKind::NotAMap));
-        };
+        let map_def = map_frame.def;
         let key_shape = map_def.k;
         let value_shape = map_def.v;
+        let insert_fn = map_def.vtable.insert;
 
         // Verify key shape matches
         if !key_shape.is_shape(key.shape()) {
@@ -1649,8 +1622,8 @@ impl<'facet> Partial<'facet> {
             }));
         }
 
-        let map_ptr = map_frame.map_ptr;
-        let insert_fn = map_def.vtable.insert;
+        // SAFETY: we just ensured the map is initialized
+        let map_ptr = unsafe { frame.data.assume_init() };
 
         match value {
             Source::Imm(mov) => {
@@ -1698,7 +1671,7 @@ impl<'facet> Partial<'facet> {
                     m.len += 1;
                 }
             }
-            Source::Build(build) => {
+            Source::Build(_build) => {
                 use crate::temp_alloc::TempAlloc;
 
                 // Allocate temp storage for key and copy it
@@ -1712,34 +1685,10 @@ impl<'facet> Partial<'facet> {
                 let value_ptr = value_alloc.ptr();
 
                 // Create appropriate frame based on value shape
-                // Check Def first because Option/Result have Def::Option/Result
-                // but are also UserType::Enum at the ty level
                 let mut value_frame = match &value_shape.def {
-                    Def::List(inner_list_def) => {
-                        // Value is a list - initialize it
-                        let init_fn =
-                            inner_list_def
-                                .init_in_place_with_capacity()
-                                .ok_or_else(|| {
-                                    self.error(ReflectErrorKind::ListDoesNotSupportOp {
-                                        shape: value_shape,
-                                    })
-                                })?;
-                        let capacity = build.len_hint.unwrap_or(0);
-                        let inner_list_ptr = unsafe { init_fn(value_ptr, capacity) };
-                        let mut frame = Frame::new_list(value_ptr, value_shape, inner_list_ptr);
-                        frame.flags |= FrameFlags::INIT;
-                        frame
-                    }
-                    Def::Map(inner_map_def) => {
-                        // Value is a map - initialize it
-                        let init_fn = inner_map_def.vtable.init_in_place_with_capacity;
-                        let capacity = build.len_hint.unwrap_or(0);
-                        let inner_map_ptr = unsafe { init_fn(value_ptr, capacity) };
-                        let mut frame = Frame::new_map(value_ptr, value_shape, inner_map_ptr);
-                        frame.flags |= FrameFlags::INIT;
-                        frame
-                    }
+                    Def::List(list_def) => Frame::new_list(value_ptr, value_shape, list_def),
+                    Def::Map(map_def) => Frame::new_map(value_ptr, value_shape, map_def),
+                    Def::Set(set_def) => Frame::new_set(value_ptr, value_shape, set_def),
                     Def::Option(_) => Frame::new_option(value_ptr, value_shape),
                     Def::Result(_) => Frame::new_result(value_ptr, value_shape),
                     _ => match value_shape.ty {

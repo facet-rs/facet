@@ -290,14 +290,13 @@ Set { dst: &[0], src: Imm(&[1.0f32, 2.0f32, 3.0f32]) }
 ### Sets (HashSet, etc.)
 
 ```rust
-Set { dst: &[], src: Build }
-  Push { src: Imm(&"tag1") }
-  Push { src: Imm(&"tag2") }
+Push { src: Imm(&"tag1") }
+Push { src: Imm(&"tag2") }
 ```
 
 Sets use `Push` like lists. The implementation hashes and inserts.
 
-**Important**: Set elements cannot be partially completed. They have no identity until hashed. `Push { src: Build }` for a set element must complete before `End`.
+**Important**: Set elements cannot be partially constructed. They have no identity until hashed. `Push { src: Build }` for a set element must complete before `End`.
 
 ### Option
 
