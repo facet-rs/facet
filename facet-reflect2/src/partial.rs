@@ -1,5 +1,7 @@
 //! Partial value construction.
 
+mod set;
+
 use std::alloc::alloc;
 use std::marker::PhantomData;
 use std::ptr::NonNull;
