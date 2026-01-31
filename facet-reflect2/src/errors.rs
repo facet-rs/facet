@@ -115,6 +115,8 @@ pub enum ReflectErrorKind {
     NotAList,
     /// Insert operation requires a map frame.
     NotAMap,
+    /// Push operation requires a set frame.
+    NotASet,
     /// Key shape mismatch.
     KeyShapeMismatch {
         expected: &'static Shape,
@@ -209,6 +211,7 @@ impl fmt::Display for ReflectErrorKind {
             }
             ReflectErrorKind::NotAList => write!(f, "Push requires a list frame"),
             ReflectErrorKind::NotAMap => write!(f, "Insert requires a map frame"),
+            ReflectErrorKind::NotASet => write!(f, "Push requires a set frame"),
             ReflectErrorKind::KeyShapeMismatch { expected, actual } => {
                 write!(
                     f,

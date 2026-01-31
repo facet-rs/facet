@@ -75,6 +75,11 @@ fn build_hashset_of_strings() {
         ])
         .unwrap();
 
+    // Imm moves the values - prevent double-free
+    std::mem::forget(a);
+    std::mem::forget(b);
+    std::mem::forget(c);
+
     let result: HashSet<String> = partial.build().unwrap();
     assert_eq!(result.len(), 3);
     assert!(result.contains("apple"));
@@ -160,6 +165,11 @@ fn build_btreeset_of_strings() {
         ])
         .unwrap();
 
+    // Imm moves the values - prevent double-free
+    std::mem::forget(a);
+    std::mem::forget(b);
+    std::mem::forget(c);
+
     let result: BTreeSet<String> = partial.build().unwrap();
     assert_eq!(result.len(), 3);
     // BTreeSet maintains sorted order
@@ -194,6 +204,11 @@ fn build_struct_with_hashset_field() {
             Op::end(),
         ])
         .unwrap();
+
+    // Imm moves the values - prevent double-free
+    std::mem::forget(name);
+    std::mem::forget(tag1);
+    std::mem::forget(tag2);
 
     let result: TaggedItem = partial.build().unwrap();
     assert_eq!(result.name, "item1");

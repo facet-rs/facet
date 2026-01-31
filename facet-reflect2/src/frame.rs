@@ -193,6 +193,27 @@ impl MapFrame {
     }
 }
 
+/// Set frame data (building a HashSet, BTreeSet, etc.).
+/// Tracks the initialized set and count of inserted elements.
+pub struct SetFrame {
+    /// Pointer to the initialized set (after init_in_place_with_capacity).
+    pub set_ptr: PtrMut,
+    /// Number of elements that have been inserted.
+    pub len: usize,
+}
+
+impl SetFrame {
+    pub fn new(set_ptr: PtrMut) -> Self {
+        Self { set_ptr, len: 0 }
+    }
+
+    /// Sets are always "complete" since they have variable size.
+    /// Completion just means End was called.
+    pub fn is_complete(&self) -> bool {
+        true
+    }
+}
+
 /// What kind of value this frame is building.
 pub enum FrameKind {
     /// Scalar or opaque value - no children.
@@ -215,6 +236,9 @@ pub enum FrameKind {
 
     /// Building a map (HashMap, BTreeMap, etc.).
     Map(MapFrame),
+
+    /// Building a set (HashSet, BTreeSet, etc.).
+    Set(SetFrame),
 }
 
 impl FrameKind {
@@ -228,6 +252,7 @@ impl FrameKind {
             FrameKind::Pointer(p) => p.is_complete(),
             FrameKind::List(l) => l.is_complete(),
             FrameKind::Map(m) => m.is_complete(),
+            FrameKind::Set(s) => s.is_complete(),
         }
     }
 
@@ -396,6 +421,20 @@ impl Frame {
             data,
             shape,
             kind: FrameKind::Map(MapFrame::new(map_ptr)),
+            flags: FrameFlags::empty(),
+            parent: None,
+            pending_key: None,
+        }
+    }
+
+    /// Create a frame for a set (HashSet, BTreeSet, etc.).
+    /// `data` points to the set memory, `set_ptr` is the initialized set,
+    /// `shape` is the set's shape.
+    pub fn new_set(data: PtrUninit, shape: &'static Shape, set_ptr: PtrMut) -> Self {
+        Frame {
+            data,
+            shape,
+            kind: FrameKind::Set(SetFrame::new(set_ptr)),
             flags: FrameFlags::empty(),
             parent: None,
             pending_key: None,

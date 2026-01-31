@@ -261,11 +261,12 @@ impl<'facet> Partial<'facet> {
             return Err(self.error(ReflectErrorKind::EndWithIncomplete));
         }
 
-        // Check if parent is a pointer, list, or map frame - special finalization needed
+        // Check if parent is a pointer, list, map, or set frame - special finalization needed
         let parent = self.arena.get(parent_idx);
         let is_pointer_parent = matches!(parent.kind, FrameKind::Pointer(_));
         let is_list_parent = matches!(parent.kind, FrameKind::List(_));
         let is_map_parent = matches!(parent.kind, FrameKind::Map(_));
+        let is_set_parent = matches!(parent.kind, FrameKind::Set(_));
 
         // Check if current frame has a pending key (value frame for map insert)
         let frame = self.arena.get(self.current);
@@ -374,6 +375,47 @@ impl<'facet> Partial<'facet> {
 
             // Pop back to parent
             self.current = parent_idx;
+        } else if is_set_parent {
+            // Get set def and insert function from parent's shape
+            let parent = self.arena.get(parent_idx);
+            let Def::Set(set_def) = &parent.shape.def else {
+                return Err(self.error_at(parent_idx, ReflectErrorKind::NotASet));
+            };
+            let insert_fn = set_def.vtable.insert;
+
+            // Get the element data pointer (our current frame's data, now initialized)
+            let frame = self.arena.get(self.current);
+            let element_ptr = unsafe { frame.data.assume_init() };
+
+            // Get the set pointer from parent's SetFrame
+            let parent = self.arena.get(parent_idx);
+            let FrameKind::Set(ref set_frame) = parent.kind else {
+                unreachable!()
+            };
+            let set_ptr = set_frame.set_ptr;
+
+            // Insert the element into the set (moves the value)
+            // SAFETY: element_ptr points to initialized data of the correct element type
+            unsafe {
+                insert_fn(set_ptr, element_ptr);
+            }
+
+            // The value has been moved into the set. Now deallocate our temp memory.
+            let frame = self.arena.get_mut(self.current);
+            // Don't drop the value - it was moved out by insert_fn
+            frame.flags.remove(FrameFlags::INIT);
+            // Deallocate our staging memory
+            let freed_frame = self.arena.free(self.current);
+            freed_frame.dealloc_if_owned();
+
+            // Increment element count in parent set
+            let parent = self.arena.get_mut(parent_idx);
+            if let FrameKind::Set(ref mut s) = parent.kind {
+                s.len += 1;
+            }
+
+            // Pop back to parent
+            self.current = parent_idx;
         } else if is_pointer_parent {
             // Get pointer vtable from parent's shape
             let parent = self.arena.get(parent_idx);
@@ -445,6 +487,11 @@ impl<'facet> Partial<'facet> {
                 }
                 FrameKind::Map(_) => {
                     // Map entries should have pending_key set and use the map insert path
+                    // This shouldn't happen with current implementation
+                    return Err(self.error_at(parent_idx, ReflectErrorKind::NotIndexedChildren));
+                }
+                FrameKind::Set(_) => {
+                    // Set elements are inserted directly via the set insert path
                     // This shouldn't happen with current implementation
                     return Err(self.error_at(parent_idx, ReflectErrorKind::NotIndexedChildren));
                 }
@@ -587,6 +634,25 @@ impl<'facet> Partial<'facet> {
                         return Ok(());
                     }
 
+                    // Handle set types (HashSet, BTreeSet, etc.)
+                    if let Def::Set(set_def) = &frame.shape.def {
+                        // Get the init function
+                        let init_fn = set_def.vtable.init_in_place_with_capacity;
+
+                        // Initialize the set with capacity hint
+                        let capacity = build.len_hint.unwrap_or(0);
+                        // SAFETY: frame.data points to uninitialized memory of the correct layout
+                        let set_ptr = unsafe { init_fn(frame.data, capacity) };
+
+                        // Convert to set frame
+                        let frame = self.arena.get_mut(self.current);
+                        frame.kind = FrameKind::Set(crate::frame::SetFrame::new(set_ptr));
+                        // The set is now initialized (empty, but valid)
+                        frame.flags |= FrameFlags::INIT;
+
+                        return Ok(());
+                    }
+
                     // Handle pointer types (Box/Rc/Arc)
                     if let Def::Pointer(ptr_def) = &frame.shape.def {
                         // Get pointee shape
@@ -697,6 +763,22 @@ impl<'facet> Partial<'facet> {
                     let mut new_frame = Frame::new_map(target.data, target.shape, map_ptr);
                     new_frame.parent = Some((self.current, field_idx));
                     new_frame.flags |= FrameFlags::INIT; // Map is initialized (empty but valid)
+
+                    let new_idx = self.arena.alloc(new_frame);
+                    self.current = new_idx;
+                } else if let Def::Set(set_def) = &target.shape.def {
+                    // Get the init function
+                    let init_fn = set_def.vtable.init_in_place_with_capacity;
+
+                    // Initialize the set with capacity hint
+                    let capacity = build.len_hint.unwrap_or(0);
+                    // SAFETY: target.data points to uninitialized memory of the correct layout
+                    let set_ptr = unsafe { init_fn(target.data, capacity) };
+
+                    // Create set frame
+                    let mut new_frame = Frame::new_set(target.data, target.shape, set_ptr);
+                    new_frame.parent = Some((self.current, field_idx));
+                    new_frame.flags |= FrameFlags::INIT; // Set is initialized (empty but valid)
 
                     let new_idx = self.arena.alloc(new_frame);
                     self.current = new_idx;
@@ -883,26 +965,56 @@ impl<'facet> Partial<'facet> {
         Ok(())
     }
 
-    /// Apply a Push operation to add an element to the current list.
+    /// Apply a Push operation to add an element to the current list or set.
     fn apply_push(&mut self, source: &Source<'_>) -> Result<(), ReflectError> {
-        // Verify we're in a list frame
+        // Verify we're in a list or set frame
         let frame = self.arena.get(self.current);
-        let FrameKind::List(ref list_frame) = frame.kind else {
-            return Err(self.error(ReflectErrorKind::NotAList));
+
+        // Determine if we're in a list or set frame and extract the relevant info
+        enum CollectionKind {
+            List {
+                ptr: PtrMut,
+                push_fn: facet_core::ListPushFn,
+            },
+            Set {
+                ptr: PtrMut,
+                insert_fn: facet_core::SetInsertFn,
+            },
+        }
+
+        let (element_shape, collection) = match &frame.kind {
+            FrameKind::List(list_frame) => {
+                let Def::List(list_def) = &frame.shape.def else {
+                    return Err(self.error(ReflectErrorKind::NotAList));
+                };
+                let push_fn = list_def.push().ok_or_else(|| {
+                    self.error(ReflectErrorKind::ListDoesNotSupportOp { shape: frame.shape })
+                })?;
+                (
+                    list_def.t,
+                    CollectionKind::List {
+                        ptr: list_frame.list_ptr,
+                        push_fn,
+                    },
+                )
+            }
+            FrameKind::Set(set_frame) => {
+                let Def::Set(set_def) = &frame.shape.def else {
+                    return Err(self.error(ReflectErrorKind::NotASet));
+                };
+                let insert_fn = set_def.vtable.insert;
+                (
+                    set_def.t,
+                    CollectionKind::Set {
+                        ptr: set_frame.set_ptr,
+                        insert_fn,
+                    },
+                )
+            }
+            _ => {
+                return Err(self.error(ReflectErrorKind::NotAList));
+            }
         };
-
-        // Get the list def and element shape
-        let Def::List(list_def) = &frame.shape.def else {
-            return Err(self.error(ReflectErrorKind::NotAList));
-        };
-        let element_shape = list_def.t;
-
-        // Get push function
-        let push_fn = list_def.push().ok_or_else(|| {
-            self.error(ReflectErrorKind::ListDoesNotSupportOp { shape: frame.shape })
-        })?;
-
-        let list_ptr = list_frame.list_ptr;
 
         match source {
             Source::Imm(mov) => {
@@ -914,16 +1026,27 @@ impl<'facet> Partial<'facet> {
                     }));
                 }
 
-                // Push the element - the push_fn moves the value out
+                // Push/insert the element - the function moves the value out
                 // SAFETY: mov.ptr() points to valid initialized data of the element type
-                unsafe {
-                    push_fn(list_ptr, mov.ptr());
-                }
-
-                // Increment element count
-                let frame = self.arena.get_mut(self.current);
-                if let FrameKind::List(ref mut l) = frame.kind {
-                    l.len += 1;
+                match collection {
+                    CollectionKind::List { ptr, push_fn } => {
+                        unsafe { push_fn(ptr, mov.ptr()) };
+                        // Increment element count
+                        let frame = self.arena.get_mut(self.current);
+                        if let FrameKind::List(ref mut l) = frame.kind {
+                            l.len += 1;
+                        }
+                    }
+                    CollectionKind::Set { ptr, insert_fn } => {
+                        // insert returns bool (true if inserted, false if duplicate)
+                        // We don't care about the return value for now
+                        unsafe { insert_fn(ptr, mov.ptr_mut()) };
+                        // Increment element count
+                        let frame = self.arena.get_mut(self.current);
+                        if let FrameKind::Set(ref mut s) = frame.kind {
+                            s.len += 1;
+                        }
+                    }
                 }
             }
             Source::Build(build) => {
@@ -1011,21 +1134,30 @@ impl<'facet> Partial<'facet> {
                     }));
                 }
 
-                // Push the element
+                // Push/insert the element
                 // SAFETY: temp_ptr now contains initialized data
-                unsafe {
-                    push_fn(list_ptr, temp_ptr.assume_init().as_const());
+                match collection {
+                    CollectionKind::List { ptr, push_fn } => {
+                        unsafe { push_fn(ptr, temp_ptr.assume_init().as_const()) };
+                        // Increment element count
+                        let frame = self.arena.get_mut(self.current);
+                        if let FrameKind::List(ref mut l) = frame.kind {
+                            l.len += 1;
+                        }
+                    }
+                    CollectionKind::Set { ptr, insert_fn } => {
+                        unsafe { insert_fn(ptr, temp_ptr.assume_init()) };
+                        // Increment element count
+                        let frame = self.arena.get_mut(self.current);
+                        if let FrameKind::Set(ref mut s) = frame.kind {
+                            s.len += 1;
+                        }
+                    }
                 }
 
-                // Deallocate temp storage (value was moved out by push_fn)
+                // Deallocate temp storage (value was moved out by push/insert)
                 if layout.size() > 0 {
                     unsafe { std::alloc::dealloc(temp_ptr.as_mut_byte_ptr(), layout) };
-                }
-
-                // Increment element count
-                let frame = self.arena.get_mut(self.current);
-                if let FrameKind::List(ref mut l) = frame.kind {
-                    l.len += 1;
                 }
             }
         }
