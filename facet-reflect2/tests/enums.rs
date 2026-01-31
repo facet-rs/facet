@@ -28,10 +28,10 @@ fn enum_struct_variant() {
     partial.apply(&[Op::set().at(1).build()]).unwrap();
 
     // Inside the variant frame, set x and y
-    let x = 10i32;
-    let y = 20i32;
+    let mut x = 10i32;
+    let mut y = 20i32;
     partial
-        .apply(&[Op::set().at(0).mov(&x), Op::set().at(1).mov(&y)])
+        .apply(&[Op::set().at(0).imm(&mut x), Op::set().at(1).imm(&mut y)])
         .unwrap();
 
     // End the variant frame
@@ -46,8 +46,8 @@ fn enum_tuple_variant() {
     let mut partial = Partial::alloc::<Message>().unwrap();
 
     // Select Write variant (index 2) with Move (complete value)
-    let msg = String::from("hello");
-    partial.apply(&[Op::set().at(2).mov(&msg)]).unwrap();
+    let mut msg = String::from("hello");
+    partial.apply(&[Op::set().at(2).imm(&mut msg)]).unwrap();
     std::mem::forget(msg);
 
     let result: Message = partial.build().unwrap();
@@ -121,8 +121,8 @@ fn nested_enum_in_struct() {
     let mut partial = Partial::alloc::<Event>().unwrap();
 
     // Set id
-    let id = 42u32;
-    partial.apply(&[Op::set().at(0).mov(&id)]).unwrap();
+    let mut id = 42u32;
+    partial.apply(&[Op::set().at(0).imm(&mut id)]).unwrap();
 
     // Build message field, select Move variant
     partial.apply(&[Op::set().at(1).build()]).unwrap();
@@ -131,10 +131,10 @@ fn nested_enum_in_struct() {
     partial.apply(&[Op::set().at(1).build()]).unwrap();
 
     // Set Move's fields
-    let x = 100i32;
-    let y = 200i32;
+    let mut x = 100i32;
+    let mut y = 200i32;
     partial
-        .apply(&[Op::set().at(0).mov(&x), Op::set().at(1).mov(&y)])
+        .apply(&[Op::set().at(0).imm(&mut x), Op::set().at(1).imm(&mut y)])
         .unwrap();
 
     // End Move variant frame
@@ -161,8 +161,8 @@ fn enum_incomplete_variant_fails() {
     partial.apply(&[Op::set().at(1).build()]).unwrap();
 
     // Only set x, not y
-    let x = 10i32;
-    partial.apply(&[Op::set().at(0).mov(&x)]).unwrap();
+    let mut x = 10i32;
+    partial.apply(&[Op::set().at(0).imm(&mut x)]).unwrap();
 
     // Try to end - should fail because y is not set
     let err = partial.apply(&[Op::end()]).unwrap_err();
@@ -175,10 +175,66 @@ fn drop_partially_initialized_enum() {
     let mut partial = Partial::alloc::<Message>().unwrap();
 
     // Select Write variant and set the string
-    let msg = String::from("will be dropped");
-    partial.apply(&[Op::set().at(2).mov(&msg)]).unwrap();
+    let mut msg = String::from("will be dropped");
+    partial.apply(&[Op::set().at(2).imm(&mut msg)]).unwrap();
     std::mem::forget(msg);
 
     // Drop without building - must clean up the string
     drop(partial);
+}
+
+// ============================================================================
+// Bug regression tests (run under Miri to detect memory issues)
+// ============================================================================
+
+// Enum with heap-allocated variant for testing memory safety
+#[derive(Debug, PartialEq, Facet)]
+#[repr(u8)]
+enum MaybeBox {
+    Empty,
+    Boxed(Box<u32>),
+    Named { value: Option<String> },
+}
+
+#[test]
+fn enum_switch_variant_drops_old_value() {
+    // Bug: When switching enum variants, the old variant's data must be dropped.
+    // After Move of enum at [], FrameKind::Enum { selected } must track the
+    // active variant (by reading the discriminant), so subsequent variant
+    // switches know what to drop.
+
+    let mut partial = Partial::alloc::<MaybeBox>().unwrap();
+
+    // Move a complete enum value with heap allocation
+    let mut value = MaybeBox::Boxed(Box::new(42));
+    partial.apply(&[Op::set().imm(&mut value)]).unwrap();
+    std::mem::forget(value);
+
+    // Switch to a different variant - this must:
+    // 1. Read the discriminant to know Boxed variant is active
+    // 2. Drop the Box<u32> before switching variants
+    // 3. Write the new discriminant
+    partial.apply(&[Op::set().at(0).default()]).unwrap(); // Select Empty
+
+    let result: MaybeBox = partial.build().unwrap();
+    assert_eq!(result, MaybeBox::Empty);
+}
+
+#[test]
+fn enum_reselect_variant_with_wrong_type_fails() {
+    // AFL crash case: Set variant 1 with correct type, then try to set
+    // variant 1 again with wrong type. Should fail with shape mismatch,
+    // not hang or crash.
+
+    let mut partial = Partial::alloc::<MaybeBox>().unwrap();
+
+    // Set variant 1 (Boxed) with a Box<u32>
+    let mut boxed = Box::new(42u32);
+    partial.apply(&[Op::set().at(1).imm(&mut boxed)]).unwrap();
+    std::mem::forget(boxed);
+
+    // Try to set variant 1 again with wrong type (bool instead of Box<u32>)
+    let mut b = false;
+    let err = partial.apply(&[Op::set().at(1).imm(&mut b)]).unwrap_err();
+    assert!(matches!(err.kind, ReflectErrorKind::ShapeMismatch { .. }));
 }

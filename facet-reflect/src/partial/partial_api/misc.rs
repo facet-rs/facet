@@ -1582,7 +1582,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                             unsafe {
                                 push_fn(
                                     PtrMut::new(parent_frame.data.as_mut_byte_ptr()),
-                                    element_ptr,
+                                    element_ptr.into(),
                                 );
                             }
 
@@ -1926,7 +1926,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     crate::trace!("Pushing element to slice builder");
                     unsafe {
                         let parent_ptr = parent_frame.data.assume_init();
-                        (vtable.push_fn)(parent_ptr, element_ptr);
+                        (vtable.push_fn)(parent_ptr, element_ptr.into());
                     }
 
                     popped_frame.tracker = Tracker::Scalar;

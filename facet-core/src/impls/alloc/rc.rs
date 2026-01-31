@@ -262,7 +262,7 @@ fn slice_builder_new<'a, U: Facet<'a>>() -> PtrMut {
     PtrMut::new(unsafe { NonNull::new_unchecked(raw as *mut u8) }.as_ptr())
 }
 
-fn slice_builder_push<'a, U: Facet<'a>>(builder: PtrMut, item: PtrMut) {
+fn slice_builder_push<'a, U: Facet<'a>>(builder: PtrMut, item: PtrConst) {
     unsafe {
         let vec = builder.as_mut::<Vec<U>>();
         let value = item.read::<U>();

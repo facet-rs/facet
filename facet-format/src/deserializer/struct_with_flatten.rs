@@ -321,9 +321,11 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             nav.return_wip(wip);
         } else {
             // Map uses begin_key() + set value + end() + begin_value() + deserialize + end()
+            // Use deserialize_map_key to properly handle metadata containers (like Spanned<String>)
             let wip = nav.take_wip();
             let wip = wip.begin_key()?;
-            let wip = self.set_string_value(wip, Cow::Owned(key.to_owned()))?;
+            let wip =
+                self.deserialize_map_key(wip, Some(Cow::Owned(key.to_owned())), None, None)?;
             let wip = wip.end()?;
             let wip = wip
                 .begin_value()?

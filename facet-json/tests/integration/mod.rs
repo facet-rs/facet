@@ -11,6 +11,7 @@ mod issue_1896;
 mod issue_1900;
 mod issue_1904;
 mod jit_deserialize;
+mod metadata_container_flatten_map;
 mod nan_infinity;
 mod nested_flatten_map;
 mod nested_internal_tagging;

@@ -286,7 +286,7 @@ unsafe fn vec_init_in_place_with_capacity<T>(uninit: PtrUninit, capacity: usize)
     unsafe { uninit.put(Vec::<T>::with_capacity(capacity)) }
 }
 
-unsafe fn vec_push<T>(ptr: PtrMut, item: PtrMut) {
+unsafe fn vec_push<T>(ptr: PtrMut, item: PtrConst) {
     unsafe {
         let vec = ptr.as_mut::<Vec<T>>();
         let item = item.read::<T>();

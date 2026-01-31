@@ -217,7 +217,7 @@ unsafe fn smallvec_init_in_place_with_capacity<A: Array>(
     unsafe { uninit.put(SmallVec::<A>::with_capacity(capacity)) }
 }
 
-unsafe fn smallvec_push<A: Array>(ptr: PtrMut, item: PtrMut) {
+unsafe fn smallvec_push<A: Array>(ptr: PtrMut, item: PtrConst) {
     unsafe {
         let sv = ptr.as_mut::<SmallVec<A>>();
         let item = item.read::<A::Item>();

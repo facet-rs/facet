@@ -3,7 +3,7 @@
 use crate::arena::{Arena, Idx};
 use crate::errors::{ErrorLocation, ReflectError, ReflectErrorKind};
 use crate::ops::Path;
-use facet_core::{PtrConst, PtrUninit, Shape, Variant};
+use facet_core::{PtrConst, PtrMut, PtrUninit, Shape, Variant};
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -30,9 +30,166 @@ impl IndexedFields {
         self.0[idx] = Idx::COMPLETE;
     }
 
+    /// Mark a field as not started (e.g., after dropping it before overwriting).
+    pub fn mark_not_started(&mut self, idx: usize) {
+        self.0[idx] = Idx::NOT_STARTED;
+    }
+
     /// Check if all fields are complete.
     pub fn all_complete(&self) -> bool {
         self.0.iter().all(|id| id.is_complete())
+    }
+
+    /// Check if a field is complete.
+    pub fn is_complete(&self, idx: usize) -> bool {
+        self.0[idx].is_complete()
+    }
+}
+
+/// Struct frame data.
+pub struct StructFrame {
+    pub fields: IndexedFields,
+}
+
+impl StructFrame {
+    pub fn new(field_count: usize) -> Self {
+        Self {
+            fields: IndexedFields::new(field_count),
+        }
+    }
+
+    pub fn is_complete(&self) -> bool {
+        self.fields.all_complete()
+    }
+
+    pub fn mark_field_complete(&mut self, idx: usize) {
+        self.fields.mark_complete(idx);
+    }
+
+    /// Mark a field as not started (after dropping it before overwriting).
+    ///
+    /// NOTE: This "leaks" an arena slot if the field was an in-progress child frame.
+    /// TODO: Add tests for frame arena leaking scenarios.
+    pub fn mark_field_not_started(&mut self, idx: usize) {
+        self.fields.mark_not_started(idx);
+    }
+}
+
+/// Enum frame data.
+/// `selected` is None if no variant selected yet,
+/// or Some((variant_idx, state)) where state is NOT_STARTED/COMPLETE/valid frame idx.
+pub struct EnumFrame {
+    pub selected: Option<(u32, Idx<Frame>)>,
+}
+
+impl EnumFrame {
+    pub fn new() -> Self {
+        Self { selected: None }
+    }
+
+    pub fn is_complete(&self) -> bool {
+        matches!(self.selected, Some((_, idx)) if idx.is_complete())
+    }
+}
+
+impl Default for EnumFrame {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Variant data frame (inside an enum variant, building its fields).
+pub struct VariantFrame {
+    pub variant: &'static Variant,
+    pub fields: IndexedFields,
+}
+
+impl VariantFrame {
+    pub fn new(variant: &'static Variant) -> Self {
+        Self {
+            variant,
+            fields: IndexedFields::new(variant.data.fields.len()),
+        }
+    }
+
+    pub fn is_complete(&self) -> bool {
+        self.fields.all_complete()
+    }
+
+    pub fn mark_field_complete(&mut self, idx: usize) {
+        self.fields.mark_complete(idx);
+    }
+
+    pub fn mark_field_not_started(&mut self, idx: usize) {
+        self.fields.mark_not_started(idx);
+    }
+}
+
+/// Pointer frame data (inside a Box/Rc/Arc, building the pointee).
+/// `inner` is NOT_STARTED, COMPLETE, or a valid frame index for the inner value.
+pub struct PointerFrame {
+    pub inner: Idx<Frame>,
+}
+
+impl PointerFrame {
+    pub fn new() -> Self {
+        Self {
+            inner: Idx::NOT_STARTED,
+        }
+    }
+
+    pub fn is_complete(&self) -> bool {
+        self.inner.is_complete()
+    }
+}
+
+impl Default for PointerFrame {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// List frame data (building a Vec or similar).
+/// Tracks the initialized list and count of pushed elements.
+pub struct ListFrame {
+    /// Pointer to the initialized list (after init_in_place_with_capacity).
+    pub list_ptr: PtrMut,
+    /// Number of elements that have been pushed.
+    pub len: usize,
+}
+
+impl ListFrame {
+    pub fn new(list_ptr: PtrMut) -> Self {
+        Self { list_ptr, len: 0 }
+    }
+
+    /// Lists are always "complete" since they have variable size.
+    /// Completion just means End was called.
+    pub fn is_complete(&self) -> bool {
+        // Lists don't have a fixed number of elements to track,
+        // they're complete when End is called
+        true
+    }
+}
+
+/// Map frame data (building a HashMap, BTreeMap, etc.).
+/// Tracks the initialized map and count of inserted entries.
+pub struct MapFrame {
+    /// Pointer to the initialized map (after init_in_place_with_capacity).
+    pub map_ptr: PtrMut,
+    /// Number of entries that have been inserted.
+    pub len: usize,
+}
+
+impl MapFrame {
+    pub fn new(map_ptr: PtrMut) -> Self {
+        Self { map_ptr, len: 0 }
+    }
+
+    /// Maps are always "complete" since they have variable size.
+    /// Completion just means End was called.
+    pub fn is_complete(&self) -> bool {
+        true
     }
 }
 
@@ -42,18 +199,22 @@ pub enum FrameKind {
     Scalar,
 
     /// Struct with indexed fields.
-    Struct { fields: IndexedFields },
+    Struct(StructFrame),
 
     /// Enum - variant may or may not be selected.
-    /// None = no variant selected yet.
-    /// Some((variant_idx, state)) where state is NOT_STARTED/COMPLETE/valid frame idx.
-    Enum { selected: Option<(u32, Idx<Frame>)> },
+    Enum(EnumFrame),
 
     /// Inside a variant, building its fields.
-    VariantData {
-        variant: &'static Variant,
-        fields: IndexedFields,
-    },
+    VariantData(VariantFrame),
+
+    /// Inside a pointer (Box/Rc/Arc), building the pointee.
+    Pointer(PointerFrame),
+
+    /// Building a list (Vec, etc.).
+    List(ListFrame),
+
+    /// Building a map (HashMap, BTreeMap, etc.).
+    Map(MapFrame),
 }
 
 impl FrameKind {
@@ -61,24 +222,55 @@ impl FrameKind {
     pub fn is_complete(&self) -> bool {
         match self {
             FrameKind::Scalar => false, // scalars use INIT flag instead
-            FrameKind::Struct { fields } => fields.all_complete(),
-            FrameKind::Enum { selected } => {
-                matches!(selected, Some((_, idx)) if idx.is_complete())
-            }
-            FrameKind::VariantData { fields, .. } => fields.all_complete(),
+            FrameKind::Struct(s) => s.is_complete(),
+            FrameKind::Enum(e) => e.is_complete(),
+            FrameKind::VariantData(v) => v.is_complete(),
+            FrameKind::Pointer(p) => p.is_complete(),
+            FrameKind::List(l) => l.is_complete(),
+            FrameKind::Map(m) => m.is_complete(),
         }
     }
 
     /// Mark a child field as complete (for Struct and VariantData).
     pub fn mark_field_complete(&mut self, idx: usize) {
         match self {
-            FrameKind::Struct { fields } | FrameKind::VariantData { fields, .. } => {
-                fields.mark_complete(idx);
-            }
+            FrameKind::Struct(s) => s.mark_field_complete(idx),
+            FrameKind::VariantData(v) => v.mark_field_complete(idx),
             _ => {}
         }
     }
+
+    /// Mark a child field as not started (after dropping it before overwriting).
+    pub fn mark_field_not_started(&mut self, idx: usize) {
+        match self {
+            FrameKind::Struct(s) => s.mark_field_not_started(idx),
+            FrameKind::VariantData(v) => v.mark_field_not_started(idx),
+            _ => {}
+        }
+    }
+
+    /// Check if a child field is complete (for Struct and VariantData).
+    pub fn is_field_complete(&self, idx: usize) -> bool {
+        match self {
+            FrameKind::Struct(s) => s.fields.is_complete(idx),
+            FrameKind::VariantData(v) => v.fields.is_complete(idx),
+            _ => false,
+        }
+    }
+
+    /// Get as mutable enum frame, if this is an enum.
+    pub fn as_enum_mut(&mut self) -> Option<&mut EnumFrame> {
+        match self {
+            FrameKind::Enum(e) => Some(e),
+            _ => None,
+        }
+    }
 }
+
+/// Pending key for map insertion.
+/// When building a value for a map insert, this holds the key until End.
+/// Uses TempAlloc which handles cleanup automatically.
+pub type PendingKey = crate::temp_alloc::TempAlloc;
 
 /// A frame tracking construction of a single value.
 pub struct Frame {
@@ -96,6 +288,9 @@ pub struct Frame {
 
     /// Parent frame (if any) and our index within it.
     pub parent: Option<(Idx<Frame>, u32)>,
+
+    /// Pending key for map insertion (only set when building a value for Insert).
+    pub pending_key: Option<PendingKey>,
 }
 
 /// Build the absolute path from root to the given frame by walking up the parent chain.
@@ -126,6 +321,7 @@ impl Frame {
             kind: FrameKind::Scalar,
             flags: FrameFlags::empty(),
             parent: None,
+            pending_key: None,
         }
     }
 
@@ -134,11 +330,10 @@ impl Frame {
         Frame {
             data,
             shape,
-            kind: FrameKind::Struct {
-                fields: IndexedFields::new(field_count),
-            },
+            kind: FrameKind::Struct(StructFrame::new(field_count)),
             flags: FrameFlags::empty(),
             parent: None,
+            pending_key: None,
         }
     }
 
@@ -147,9 +342,10 @@ impl Frame {
         Frame {
             data,
             shape,
-            kind: FrameKind::Enum { selected: None },
+            kind: FrameKind::Enum(EnumFrame::new()),
             flags: FrameFlags::empty(),
             parent: None,
+            pending_key: None,
         }
     }
 
@@ -158,12 +354,51 @@ impl Frame {
         Frame {
             data,
             shape,
-            kind: FrameKind::VariantData {
-                variant,
-                fields: IndexedFields::new(variant.data.fields.len()),
-            },
+            kind: FrameKind::VariantData(VariantFrame::new(variant)),
             flags: FrameFlags::empty(),
             parent: None,
+            pending_key: None,
+        }
+    }
+
+    /// Create a frame for a pointer's pointee (Box, Rc, Arc, etc.).
+    /// `data` points to the allocated pointee memory, `shape` is the pointee's shape.
+    pub fn new_pointer(data: PtrUninit, shape: &'static Shape) -> Self {
+        Frame {
+            data,
+            shape,
+            kind: FrameKind::Pointer(PointerFrame::new()),
+            flags: FrameFlags::empty(),
+            parent: None,
+            pending_key: None,
+        }
+    }
+
+    /// Create a frame for a list (Vec, etc.).
+    /// `data` points to the list memory, `list_ptr` is the initialized list,
+    /// `shape` is the list's shape.
+    pub fn new_list(data: PtrUninit, shape: &'static Shape, list_ptr: PtrMut) -> Self {
+        Frame {
+            data,
+            shape,
+            kind: FrameKind::List(ListFrame::new(list_ptr)),
+            flags: FrameFlags::empty(),
+            parent: None,
+            pending_key: None,
+        }
+    }
+
+    /// Create a frame for a map (HashMap, BTreeMap, etc.).
+    /// `data` points to the map memory, `map_ptr` is the initialized map,
+    /// `shape` is the map's shape.
+    pub fn new_map(data: PtrUninit, shape: &'static Shape, map_ptr: PtrMut) -> Self {
+        Frame {
+            data,
+            shape,
+            kind: FrameKind::Map(MapFrame::new(map_ptr)),
+            flags: FrameFlags::empty(),
+            parent: None,
+            pending_key: None,
         }
     }
 
@@ -189,12 +424,110 @@ impl Frame {
     ///
     /// This is idempotent - calling on an uninitialized frame is a no-op.
     pub fn uninit(&mut self) {
+        use crate::enum_helpers::drop_variant_fields;
+        use facet_core::{Type, UserType};
+
+        // Clean up pending key if present (TempAlloc handles drop + dealloc)
+        let _ = self.pending_key.take();
+
         if self.flags.contains(FrameFlags::INIT) {
             // SAFETY: INIT flag means the value is fully initialized
             unsafe {
                 self.shape.call_drop_in_place(self.data.assume_init());
             }
             self.flags.remove(FrameFlags::INIT);
+
+            // Also clear enum selected state
+            if let FrameKind::Enum(ref mut e) = self.kind {
+                e.selected = None;
+            }
+        } else if let FrameKind::Struct(ref mut s) = self.kind {
+            // Struct may have some fields initialized - drop them individually
+            if let Type::User(UserType::Struct(ref struct_type)) = self.shape.ty {
+                for (idx, field) in struct_type.fields.iter().enumerate() {
+                    if s.fields.is_complete(idx) {
+                        // SAFETY: field is marked complete, so it's initialized
+                        unsafe {
+                            let field_ptr = self.data.assume_init().field(field.offset);
+                            field.shape().call_drop_in_place(field_ptr);
+                        }
+                    }
+                }
+                // Reset all fields to NOT_STARTED
+                s.fields = IndexedFields::new(struct_type.fields.len());
+            }
+        } else if let FrameKind::Enum(ref mut e) = self.kind {
+            // Enum variant may be complete even if INIT flag isn't set
+            // (e.g., when variant was set via apply_enum_variant_set)
+            if let Some((variant_idx, status)) = e.selected {
+                if status.is_complete()
+                    && let Type::User(UserType::Enum(ref enum_type)) = self.shape.ty
+                {
+                    let variant = &enum_type.variants[variant_idx as usize];
+                    // SAFETY: the variant was marked complete, so its fields are initialized
+                    unsafe {
+                        drop_variant_fields(self.data.assume_init().as_const(), variant);
+                    }
+                }
+                e.selected = None;
+            }
+        }
+    }
+
+    /// Prepare a struct field for overwriting by dropping any existing value.
+    ///
+    /// This handles two cases:
+    /// 1. If the whole struct has INIT flag (set via Imm move): drop the field,
+    ///    clear INIT, and mark all OTHER fields as complete.
+    /// 2. If just this field was previously set individually: drop it and mark
+    ///    as not started (so uninit() won't try to drop again on failure).
+    ///
+    /// NOTE: This may "leak" an arena slot if the field was an in-progress child frame.
+    /// TODO: Add tests for frame arena leaking scenarios.
+    pub fn prepare_field_for_overwrite(&mut self, field_idx: usize) {
+        use facet_core::{Type, UserType};
+
+        if self.flags.contains(FrameFlags::INIT) {
+            // The whole struct was previously initialized via Imm.
+            // We need to:
+            // 1. Drop the old field value
+            // 2. Clear INIT flag
+            // 3. Mark all OTHER fields as complete (they're still valid)
+
+            if let Type::User(UserType::Struct(ref struct_type)) = self.shape.ty {
+                // Drop the old field value
+                let field = &struct_type.fields[field_idx];
+                // SAFETY: INIT means field is initialized
+                unsafe {
+                    let field_ptr = self.data.assume_init().field(field.offset);
+                    field.shape().call_drop_in_place(field_ptr);
+                }
+
+                // Clear INIT and switch to field tracking
+                self.flags.remove(FrameFlags::INIT);
+
+                // Mark all OTHER fields as complete
+                if let FrameKind::Struct(ref mut s) = self.kind {
+                    for i in 0..struct_type.fields.len() {
+                        if i != field_idx {
+                            s.mark_field_complete(i);
+                        }
+                    }
+                }
+            }
+        } else if self.kind.is_field_complete(field_idx) {
+            // Field was previously set individually - drop the old value
+            if let Type::User(UserType::Struct(ref struct_type)) = self.shape.ty {
+                let field = &struct_type.fields[field_idx];
+                // SAFETY: field is marked complete, so it's initialized
+                unsafe {
+                    let field_ptr = self.data.assume_init().field(field.offset);
+                    field.shape().call_drop_in_place(field_ptr);
+                }
+                // Mark the field as not started - if we fail before completing,
+                // uninit() shouldn't try to drop it again
+                self.kind.mark_field_not_started(field_idx);
+            }
         }
     }
 

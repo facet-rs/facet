@@ -5,7 +5,9 @@ publish = false
 edition = "2024"
 
 [features]
-cov = []
+# Standalone mode: builds without AFL integration for reproducing crashes,
+# running under Miri, or generating coverage reports
+standalone = []
 
 [dependencies]
 afl = "0.15"

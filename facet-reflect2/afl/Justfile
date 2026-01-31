@@ -29,13 +29,21 @@ resume: build
         -w target/debug/facet-reflect2-afl-msan \
         -- target/debug/facet-reflect2-afl
 
-# Run a single input file
-run file:
-    target/debug/facet-reflect2-afl < {{ file }}
+# Build standalone binary (for reproducing crashes, running under Miri, etc.)
+build-standalone:
+    cargo build --features standalone --target-dir target-standalone
+
+# Run a single input file (standalone mode)
+run file: build-standalone
+    target-standalone/debug/facet-reflect2-afl < {{ file }}
 
 # Run with backtrace
-run-bt file:
-    RUST_BACKTRACE=1 target/debug/facet-reflect2-afl < {{ file }}
+run-bt file: build-standalone
+    RUST_BACKTRACE=1 target-standalone/debug/facet-reflect2-afl < {{ file }}
+
+# Run under Miri
+run-miri file:
+    MIRIFLAGS="-Zmiri-disable-isolation" cargo +nightly miri run --features standalone --target-dir target-miri < {{ file }}
 
 # Minimize a crash input
 minimize file:
@@ -56,9 +64,9 @@ reproduce-all:
 edges: build-native
     cargo afl showmap -C -i out/default/queue -o /dev/stdout -- target/debug/facet-reflect2-afl
 
-# Build with LLVM source coverage (non-AFL binary)
+# Build with LLVM source coverage (standalone binary with instrumentation)
 build-cov:
-    CARGO_INCREMENTAL=0 RUSTFLAGS="-C instrument-coverage" cargo build --features cov
+    CARGO_INCREMENTAL=0 RUSTFLAGS="-C instrument-coverage" cargo build --features standalone --target-dir target-cov
 
 # Generate source coverage report from corpus
 # Usage: just cov [format]
@@ -73,27 +81,27 @@ cov format="report": build-cov
     for f in "${files[@]}"; do
         i=$((i + 1))
         printf "\r%d/%d" "$i" "$total"
-        target/debug/facet-reflect2-afl < "$f" 2>/dev/null || true
+        target-cov/debug/facet-reflect2-afl < "$f" 2>/dev/null || true
     done
     echo
     llvm-profdata merge -sparse *.profraw -o default.profdata
     ignore='/.cargo/|/rustc/|afl/src|/facet-(core|macro|macros|reflect[^2])'
     if [ "{{ format }}" = "html" ]; then
-        llvm-cov show target/debug/facet-reflect2-afl \
+        llvm-cov show target-cov/debug/facet-reflect2-afl \
             --instr-profile=default.profdata \
             --ignore-filename-regex="$ignore" \
             --format=html --output-dir=coverage
         echo "Coverage report written to coverage/"
         open coverage/index.html 2>/dev/null || true
     elif [ "{{ format }}" = "uncovered" ]; then
-        llvm-cov show target/debug/facet-reflect2-afl \
+        llvm-cov show target-cov/debug/facet-reflect2-afl \
             --instr-profile=default.profdata \
             --ignore-filename-regex="$ignore" \
             --show-line-counts-or-regions \
             --format=text \
             | awk '/\|[[:space:]]+0\|/'
     else
-        llvm-cov report target/debug/facet-reflect2-afl \
+        llvm-cov report target-cov/debug/facet-reflect2-afl \
             --instr-profile=default.profdata \
             --ignore-filename-regex="$ignore"
     fi
@@ -101,4 +109,4 @@ cov format="report": build-cov
 
 # Clean build artifacts and output
 clean:
-    rm -rf target out minimized.bin
+    rm -rf target target-standalone target-cov target-miri out minimized.bin coverage
