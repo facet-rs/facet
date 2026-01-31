@@ -458,8 +458,9 @@ impl Frame {
             } else if let Type::Sequence(SequenceType::Array(ref array_type)) = self.shape.ty {
                 // Array elements - all have the same shape
                 // Note: Layout::size() includes trailing padding, so it equals the stride
+                // For ZSTs, size=0, so all elements have offset 0 (correct for ZSTs)
                 let element_shape = array_type.t;
-                // Arrays of unsized types can't exist, so this unwrap_or is just defensive
+                // Arrays of unsized types (!Sized) can't exist in Rust, so unwrap_or is defensive
                 let element_size = element_shape
                     .layout
                     .sized_layout()

@@ -243,6 +243,44 @@ fn build_empty_array() {
 }
 
 // =============================================================================
+// Zero-sized type (ZST) arrays
+// =============================================================================
+
+#[derive(Debug, PartialEq, Facet, Clone, Copy, Default)]
+struct Zst;
+
+#[test]
+fn build_array_of_zst() {
+    let mut partial = Partial::alloc::<[Zst; 3]>().unwrap();
+
+    partial
+        .apply(&[
+            Op::set().at(0).default(),
+            Op::set().at(1).default(),
+            Op::set().at(2).default(),
+        ])
+        .unwrap();
+
+    let result: [Zst; 3] = partial.build().unwrap();
+    assert_eq!(result, [Zst, Zst, Zst]);
+}
+
+#[test]
+fn build_array_of_zst_with_imm() {
+    let mut partial = Partial::alloc::<[Zst; 2]>().unwrap();
+
+    let mut a = Zst;
+    let mut b = Zst;
+
+    partial
+        .apply(&[Op::set().at(0).imm(&mut a), Op::set().at(1).imm(&mut b)])
+        .unwrap();
+
+    let result: [Zst; 2] = partial.build().unwrap();
+    assert_eq!(result, [Zst, Zst]);
+}
+
+// =============================================================================
 // Single-element array
 // =============================================================================
 
