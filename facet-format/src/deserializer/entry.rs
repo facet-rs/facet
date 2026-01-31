@@ -5,20 +5,8 @@ use facet_reflect::{DeserStrategy, Partial};
 
 use crate::{
     ContainerKind, DeserializeError, DeserializeErrorKind, FieldEvidence, FieldLocationHint,
-    FormatDeserializer, ParseEventKind, ScalarTypeHint, ScalarValue, SpanGuard,
+    FormatDeserializer, ParseEventKind, ScalarTypeHint, ScalarValue, SpanGuard, ValueMeta,
 };
-
-/// Metadata associated with a value being deserialized.
-///
-/// This includes documentation comments and type tags from formats that support them
-/// (like Styx). For formats that don't provide metadata (like JSON), these are `None`.
-#[derive(Debug, Clone, Default)]
-pub struct ValueMeta<'a> {
-    /// Documentation comments (lines without the `///` prefix).
-    pub doc: Option<Vec<Cow<'a, str>>>,
-    /// Type tag (e.g., `@string` in Styx).
-    pub tag: Option<Cow<'a, str>>,
-}
 
 impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BORROW> {
     /// Main deserialization entry point - deserialize into a Partial.
@@ -264,7 +252,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                     .end()?;
             }
             "doc" => {
-                if let Some(ref doc_lines) = meta.doc {
+                if let Some(doc_lines) = meta.doc() {
                     // Set as Some(Vec<String>)
                     wip = wip.begin_some()?.init_list()?;
                     for line in doc_lines {
@@ -279,7 +267,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 }
             }
             "tag" => {
-                if let Some(ref tag_name) = meta.tag {
+                if let Some(tag_name) = meta.tag() {
                     wip = wip
                         .begin_some()?
                         .with(|w| self.set_string_value(w, tag_name.clone()))?
@@ -1101,10 +1089,14 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         if shape.is_metadata_container() {
             trace!("deserialize_map_key: metadata container detected");
 
-            let meta = ValueMeta {
-                doc: doc.clone(),
-                tag: tag.clone(),
-            };
+            let mut meta_builder = ValueMeta::builder();
+            if let Some(d) = doc.clone() {
+                meta_builder = meta_builder.doc(d);
+            }
+            if let Some(t) = tag.clone() {
+                meta_builder = meta_builder.tag(t);
+            }
+            let meta = meta_builder.build();
 
             // Find field info from the shape's struct type
             if let Type::User(UserType::Struct(st)) = &shape.ty {

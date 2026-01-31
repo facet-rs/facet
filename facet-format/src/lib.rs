@@ -55,11 +55,11 @@ mod visitor;
 pub mod jit;
 
 pub use deserializer::{
-    DeserializeError, DeserializeErrorKind, FormatDeserializer, ParseError, SpanGuard, ValueMeta,
+    DeserializeError, DeserializeErrorKind, FormatDeserializer, ParseError, SpanGuard,
 };
 pub use event::{
-    ContainerKind, FieldKey, FieldLocationHint, ParseEvent, ParseEventKind, ScalarValue,
-    ValueTypeHint,
+    ContainerKind, FieldKey, FieldLocationHint, ParseEvent, ParseEventKind, ScalarValue, ValueMeta,
+    ValueMetaBuilder, ValueTypeHint,
 };
 pub use evidence::FieldEvidence;
 #[cfg(feature = "jit")]

@@ -299,6 +299,79 @@ impl<'de> ScalarValue<'de> {
     }
 }
 
+/// Metadata associated with a value being deserialized.
+///
+/// This includes documentation comments and type tags from formats that support them
+/// (like Styx). For formats that don't provide metadata (like JSON), these will be empty/none.
+///
+/// Use [`ValueMeta::builder()`] to construct instances.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ValueMeta<'a> {
+    doc: Option<Vec<Cow<'a, str>>>,
+    tag: Option<Cow<'a, str>>,
+}
+
+impl<'a> ValueMeta<'a> {
+    /// Create a new builder for `ValueMeta`.
+    #[inline]
+    pub fn builder() -> ValueMetaBuilder<'a> {
+        ValueMetaBuilder::default()
+    }
+
+    /// Get the documentation comments, if any.
+    #[inline]
+    pub fn doc(&self) -> Option<&[Cow<'a, str>]> {
+        self.doc.as_deref()
+    }
+
+    /// Get the type tag, if any (e.g., `@string` in Styx).
+    #[inline]
+    pub fn tag(&self) -> Option<&Cow<'a, str>> {
+        self.tag.as_ref()
+    }
+
+    /// Returns `true` if this metadata has no content.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.doc.is_none() && self.tag.is_none()
+    }
+}
+
+/// Builder for [`ValueMeta`].
+#[derive(Debug, Clone, Default)]
+pub struct ValueMetaBuilder<'a> {
+    doc: Option<Vec<Cow<'a, str>>>,
+    tag: Option<Cow<'a, str>>,
+}
+
+impl<'a> ValueMetaBuilder<'a> {
+    /// Set the documentation comments.
+    #[inline]
+    pub fn doc(mut self, doc: Vec<Cow<'a, str>>) -> Self {
+        if !doc.is_empty() {
+            self.doc = Some(doc);
+        }
+        self
+    }
+
+    /// Set the type tag.
+    #[inline]
+    pub fn tag(mut self, tag: Cow<'a, str>) -> Self {
+        self.tag = Some(tag);
+        self
+    }
+
+    /// Build the `ValueMeta`.
+    #[inline]
+    pub fn build(self) -> ValueMeta<'a> {
+        ValueMeta {
+            doc: self.doc,
+            tag: self.tag,
+        }
+    }
+}
+
 /// Event emitted by a format parser while streaming through input.
 #[derive(Clone, PartialEq)]
 pub struct ParseEvent<'de> {
@@ -306,13 +379,40 @@ pub struct ParseEvent<'de> {
     pub kind: ParseEventKind<'de>,
     /// Source span of this event in the input.
     pub span: facet_reflect::Span,
+    /// Optional metadata (doc comments, type tags) attached to this value.
+    ///
+    /// For most formats (JSON, TOML, etc.) this will be `None`. Formats like Styx
+    /// that support documentation comments and type tags on values will populate this.
+    pub meta: Option<ValueMeta<'de>>,
 }
 
 impl<'de> ParseEvent<'de> {
     /// Create a new event with the given kind and span.
     #[inline]
     pub fn new(kind: ParseEventKind<'de>, span: facet_reflect::Span) -> Self {
-        Self { kind, span }
+        Self {
+            kind,
+            span,
+            meta: None,
+        }
+    }
+
+    /// Attach metadata to this event using a builder.
+    ///
+    /// # Example
+    /// ```ignore
+    /// ParseEvent::new(kind, span).with_meta(|m| m.doc(lines).tag(tag))
+    /// ```
+    #[inline]
+    pub fn with_meta(
+        mut self,
+        f: impl FnOnce(ValueMetaBuilder<'de>) -> ValueMetaBuilder<'de>,
+    ) -> Self {
+        let meta = f(ValueMetaBuilder::default()).build();
+        if !meta.is_empty() {
+            self.meta = Some(meta);
+        }
+        self
     }
 }
 

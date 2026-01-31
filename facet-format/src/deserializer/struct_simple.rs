@@ -146,15 +146,19 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                         );
 
                         // Extract metadata from key for metadata containers
-                        let meta = ValueMeta {
-                            doc: key.doc().map(|lines| {
+                        let mut meta_builder = ValueMeta::builder();
+                        if let Some(lines) = key.doc() {
+                            meta_builder = meta_builder.doc(
                                 lines
                                     .iter()
                                     .map(|s| std::borrow::Cow::Owned(s.to_string()))
-                                    .collect()
-                            }),
-                            tag: key.tag().map(|t| std::borrow::Cow::Owned(t.to_string())),
-                        };
+                                    .collect(),
+                            );
+                        }
+                        if let Some(t) = key.tag() {
+                            meta_builder = meta_builder.tag(std::borrow::Cow::Owned(t.to_string()));
+                        }
+                        let meta = meta_builder.build();
 
                         wip = wip.begin_nth_field(idx)?;
                         wip = self.deserialize_into(wip, Some(&meta))?;

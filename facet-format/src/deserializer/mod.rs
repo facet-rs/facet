@@ -141,7 +141,6 @@ mod setters;
 
 /// Entry point for deserialization
 mod entry;
-pub use entry::ValueMeta;
 
 /// Deserialization of dynamic values
 mod dynamic;
