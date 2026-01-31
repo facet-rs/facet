@@ -17,8 +17,8 @@ use styx_lsp_ext::{
     Capability, CodeAction, CodeActionKind, CodeActionParams, CompletionItem, CompletionKind,
     CompletionParams, DefinitionParams, Diagnostic, DiagnosticParams, DiagnosticSeverity,
     DocumentEdit, HoverParams, HoverResult, InitializeParams, InitializeResult, InlayHint,
-    InlayHintKind, InlayHintParams, Location, OffsetToPositionParams, Position, Range,
-    StyxLspExtension, StyxLspExtensionDispatcher, StyxLspHostClient, TextEdit, WorkspaceEdit,
+    InlayHintKind, InlayHintParams, Location, OffsetToPositionParams, Position, StyxLspExtension,
+    StyxLspExtensionDispatcher, StyxLspHostClient, TextEdit, WorkspaceEdit,
 };
 use tokio::io::{stdin, stdout};
 use tokio::sync::RwLock;
@@ -375,7 +375,7 @@ impl DibsExtension {
                                 && let Some(span) = &entry.value.span
                             {
                                 diagnostics.push(Diagnostic {
-                                                range: Range::from_span(content, span),
+                                                span: *span,
                                                 severity: DiagnosticSeverity::Warning,
                                                 message: format!(
                                                     "large offset ({}) may cause performance issues - consider cursor pagination",
@@ -398,7 +398,7 @@ impl DibsExtension {
                                 if !schema.tables.iter().any(|t| t.name == name) {
                                     if let Some(span) = &entry.value.span {
                                         diagnostics.push(Diagnostic {
-                                            range: Range::from_span(content, span),
+                                            span: *span,
                                             severity: DiagnosticSeverity::Error,
                                             message: format!("Unknown table '{}'", name),
                                             source: Some("dibs".to_string()),
@@ -437,7 +437,7 @@ impl DibsExtension {
                     && let Some(span) = offset_span
                 {
                     diagnostics.push(Diagnostic {
-                        range: Range::from_span(content, span),
+                        span: *span,
                         severity: DiagnosticSeverity::Warning,
                         message: "'offset' without 'limit' - did you forget limit?".to_string(),
                         source: Some("dibs".to_string()),
@@ -453,7 +453,7 @@ impl DibsExtension {
                     && let Some(span) = limit_span
                 {
                     diagnostics.push(Diagnostic {
-                        range: Range::from_span(content, span),
+                        span: *span,
                         severity: DiagnosticSeverity::Warning,
                         message: "'limit' without 'order-by' returns arbitrary rows".to_string(),
                         source: Some("dibs".to_string()),
@@ -469,7 +469,7 @@ impl DibsExtension {
                     && let Some(span) = first_span
                 {
                     diagnostics.push(Diagnostic {
-                        range: Range::from_span(content, span),
+                        span: *span,
                         severity: DiagnosticSeverity::Warning,
                         message: "'first' without 'order-by' returns arbitrary row".to_string(),
                         source: Some("dibs".to_string()),
@@ -484,7 +484,7 @@ impl DibsExtension {
                     && let Some(span) = &tag.span
                 {
                     diagnostics.push(Diagnostic {
-                        range: Range::from_span(content, span),
+                        span: *span,
                         severity: DiagnosticSeverity::Error,
                         message: format!(
                             "@{} without 'where' affects all rows - add 'where' or 'all true'",
@@ -504,7 +504,7 @@ impl DibsExtension {
                             && let Some(span) = param_span
                         {
                             diagnostics.push(Diagnostic {
-                                range: Range::from_span(content, span),
+                                span: *span,
                                 severity: DiagnosticSeverity::Warning,
                                 message: format!(
                                     "param '{}' is declared but never used",
@@ -544,7 +544,7 @@ impl DibsExtension {
                         if entry.key.as_str() == Some("from") {
                             if let Some(span) = &entry.value.span {
                                 diagnostics.push(Diagnostic {
-                                    range: Range::from_span(content, span),
+                                    span: *span,
                                     severity: DiagnosticSeverity::Warning,
                                     message: format!(
                                         "query on '{}' doesn't filter 'deleted_at' - add 'deleted_at @null' to exclude soft-deleted rows",
@@ -566,7 +566,7 @@ impl DibsExtension {
                     && let Some(span) = &tag.span
                 {
                     diagnostics.push(Diagnostic {
-                            range: Range::from_span(content, span),
+                            span: *span,
                             severity: DiagnosticSeverity::Warning,
                             message: "@delete on table with 'deleted_at' column - consider soft delete with @update instead".to_string(),
                             source: Some("dibs".to_string()),
@@ -581,7 +581,7 @@ impl DibsExtension {
                         let key = entry.key.as_str().unwrap_or("");
                         // Check for empty select block
                         if key == "select" {
-                            Self::validate_select_block(content, &entry.value, diagnostics);
+                            Self::validate_select_block(&entry.value, diagnostics);
                         }
                         // Note: Conflicting WHERE conditions (duplicate keys) are caught by styx parser
                     }
@@ -594,12 +594,11 @@ impl DibsExtension {
                     for entry in &obj.entries {
                         let key = entry.key.as_str().unwrap_or("");
                         if matches!(key, "select" | "where" | "order-by" | "group-by") {
-                            Self::validate_columns(content, &entry.value, table, diagnostics);
+                            Self::validate_columns(&entry.value, table, diagnostics);
                         }
                         // Type check param usages in where clause
                         if key == "where" {
                             Self::validate_param_types(
-                                content,
                                 &entry.value,
                                 table,
                                 &declared_params,
@@ -615,7 +614,7 @@ impl DibsExtension {
                     if matches!(key, "values" | "set" | "where") {
                         for redundant in Self::find_redundant_param_refs(&entry.value) {
                             diagnostics.push(Diagnostic {
-                                range: Range::from_span(content, &redundant.value_span),
+                                span: redundant.value_span,
                                 severity: DiagnosticSeverity::Hint,
                                 message: format!(
                                     "'{} ${}' can be shortened to just '{}' (implicit @param)",
@@ -637,7 +636,7 @@ impl DibsExtension {
                                     Self::find_redundant_param_refs(&conflict_entry.value)
                                 {
                                     diagnostics.push(Diagnostic {
-                                        range: Range::from_span(content, &redundant.value_span),
+                                        span: redundant.value_span,
                                         severity: DiagnosticSeverity::Hint,
                                         message: format!(
                                             "'{} ${}' can be shortened to just '{}' (implicit @param)",
@@ -663,7 +662,6 @@ impl DibsExtension {
                                     && tag.name == "rel"
                                 {
                                     self.lint_relation(
-                                        content,
                                         &select_entry.value,
                                         table_name.as_deref(),
                                         &schema,
@@ -704,7 +702,6 @@ impl DibsExtension {
 
     /// Validate column references in a select/where/etc block.
     fn validate_columns(
-        content: &str,
         value: &styx_tree::Value,
         table: &TableInfo,
         diagnostics: &mut Vec<Diagnostic>,
@@ -722,7 +719,7 @@ impl DibsExtension {
                     // Unknown column
                     if let Some(span) = &entry.key.span {
                         diagnostics.push(Diagnostic {
-                            range: Range::from_span(content, span),
+                            span: *span,
                             severity: DiagnosticSeverity::Error,
                             message: format!(
                                 "Unknown column '{}' in table '{}'",
@@ -739,11 +736,7 @@ impl DibsExtension {
     }
 
     /// Validate select block for empty selects and duplicate columns.
-    fn validate_select_block(
-        content: &str,
-        value: &styx_tree::Value,
-        diagnostics: &mut Vec<Diagnostic>,
-    ) {
+    fn validate_select_block(value: &styx_tree::Value, diagnostics: &mut Vec<Diagnostic>) {
         if let Some(styx_tree::Payload::Object(obj)) = &value.payload {
             // Check for empty select (no columns, only @rel or truly empty)
             let non_rel_entries: Vec<_> = obj
@@ -763,7 +756,7 @@ impl DibsExtension {
                 && let Some(span) = &value.span
             {
                 diagnostics.push(Diagnostic {
-                    range: Range::from_span(content, span),
+                    span: *span,
                     severity: DiagnosticSeverity::Warning,
                     message: "empty select block - no columns selected".to_string(),
                     source: Some("dibs".to_string()),
@@ -780,7 +773,6 @@ impl DibsExtension {
 
     /// Validate param types against column types in a where clause.
     fn validate_param_types(
-        content: &str,
         where_value: &styx_tree::Value,
         table: &TableInfo,
         declared_params: &[(String, Option<String>, Option<styx_tree::Span>)],
@@ -796,7 +788,6 @@ impl DibsExtension {
                     // Pattern 1: `column $param` (direct)
                     // Pattern 2: `column @op($param)` (with operator)
                     Self::check_param_type_in_value(
-                        content,
                         &entry.value,
                         column,
                         declared_params,
@@ -809,7 +800,6 @@ impl DibsExtension {
 
     /// Check param and literal type compatibility in a value.
     fn check_param_type_in_value(
-        content: &str,
         value: &styx_tree::Value,
         column: &dibs_proto::ColumnInfo,
         declared_params: &[(String, Option<String>, Option<styx_tree::Span>)],
@@ -829,7 +819,6 @@ impl DibsExtension {
             // Check for $param reference
             if let Some(param_name) = text.strip_prefix('$') {
                 Self::emit_type_mismatch_if_needed(
-                    content,
                     value.span.as_ref(),
                     param_name,
                     column,
@@ -846,7 +835,7 @@ impl DibsExtension {
                 && let Some(span) = &value.span
             {
                 diagnostics.push(Diagnostic {
-                    range: Range::from_span(content, span),
+                    span: *span,
                     severity: DiagnosticSeverity::Error,
                     message: format!(
                         "type mismatch: {} literal '{}' for column '{}' ({})",
@@ -866,7 +855,7 @@ impl DibsExtension {
                     && let Some(span) = &value.span
                 {
                     diagnostics.push(Diagnostic {
-                        range: Range::from_span(content, span),
+                        span: *span,
                         severity: DiagnosticSeverity::Error,
                         message: format!(
                             "invalid enum value '{}' for column '{}' - expected one of: {}",
@@ -888,13 +877,7 @@ impl DibsExtension {
             if let Some(styx_tree::Payload::Sequence(seq)) = &value.payload {
                 for item in &seq.items {
                     // Recurse to check each item
-                    Self::check_param_type_in_value(
-                        content,
-                        item,
-                        column,
-                        declared_params,
-                        diagnostics,
-                    );
+                    Self::check_param_type_in_value(item, column, declared_params, diagnostics);
                 }
             }
         }
@@ -962,7 +945,6 @@ impl DibsExtension {
 
     /// Emit a type mismatch diagnostic if param type doesn't match column type.
     fn emit_type_mismatch_if_needed(
-        content: &str,
         span: Option<&styx_tree::Span>,
         param_name: &str,
         column: &dibs_proto::ColumnInfo,
@@ -979,7 +961,7 @@ impl DibsExtension {
             && let Some(span) = span
         {
             diagnostics.push(Diagnostic {
-                range: Range::from_span(content, span),
+                span: *span,
                 severity: DiagnosticSeverity::Error,
                 message: format!(
                     "type mismatch: param '{}' is @{} but column '{}' is {}",
@@ -1028,7 +1010,6 @@ impl DibsExtension {
     /// Lint a @rel block for relation-specific issues.
     fn lint_relation(
         &self,
-        content: &str,
         rel_value: &styx_tree::Value,
         parent_table: Option<&str>,
         schema: &SchemaInfo,
@@ -1063,7 +1044,7 @@ impl DibsExtension {
                 && let Some(span) = first_span
             {
                 diagnostics.push(Diagnostic {
-                    range: Range::from_span(content, span),
+                    span: *span,
                     severity: DiagnosticSeverity::Warning,
                     message: "'first' in @rel without 'order-by' returns arbitrary row".to_string(),
                     source: Some("dibs".to_string()),
@@ -1078,7 +1059,7 @@ impl DibsExtension {
                 && !self.has_fk_relationship(parent, rel, schema)
             {
                 diagnostics.push(Diagnostic {
-                    range: Range::from_span(content, span),
+                    span: *span,
                     severity: DiagnosticSeverity::Error,
                     message: format!("no FK relationship between '{}' and '{}'", parent, rel),
                     source: Some("dibs".to_string()),
@@ -1695,7 +1676,7 @@ impl StyxLspExtension for DibsExtension {
                             changes: vec![DocumentEdit {
                                 uri: params.document_uri.clone(),
                                 edits: vec![TextEdit {
-                                    range: diag.range,
+                                    span: diag.span,
                                     new_text: String::new(), // Just delete the $param part
                                 }],
                             }],
@@ -1776,19 +1757,10 @@ impl StyxLspExtension for DibsExtension {
                                     if param_entry.key.as_str() == Some(&param_name) {
                                         debug!(%param_name, "Found param declaration");
                                         // Found it! Return its location
-                                        if let Some(span) = &param_entry.key.span {
-                                            let start = self
-                                                .offset_to_position(
-                                                    &params.document_uri,
-                                                    span.start,
-                                                )
-                                                .await;
-                                            let end = self
-                                                .offset_to_position(&params.document_uri, span.end)
-                                                .await;
+                                        if let Some(span) = param_entry.key.span {
                                             return vec![Location {
                                                 uri: params.document_uri.clone(),
-                                                range: Range { start, end },
+                                                span,
                                             }];
                                         }
                                     }
