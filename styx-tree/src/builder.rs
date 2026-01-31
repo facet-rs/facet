@@ -205,12 +205,13 @@ impl Default for TreeBuilder {
 impl TreeBuilder {
     /// Process a parse event.
     pub fn event(&mut self, event: Event<'_>) {
-        match event {
-            Event::DocumentStart | Event::DocumentEnd => {
+        let span = event.span;
+        match event.kind {
+            styx_parse::EventKind::DocumentStart | styx_parse::EventKind::DocumentEnd => {
                 // No-op for tree building
             }
 
-            Event::ObjectStart { span } => {
+            styx_parse::EventKind::ObjectStart => {
                 self.stack.push(BuilderFrame::Object {
                     entries: Vec::new(),
                     span,
@@ -218,7 +219,7 @@ impl TreeBuilder {
                 });
             }
 
-            Event::ObjectEnd { span } => {
+            styx_parse::EventKind::ObjectEnd => {
                 if let Some(BuilderFrame::Object {
                     entries,
                     span: start_span,
@@ -248,14 +249,14 @@ impl TreeBuilder {
                 }
             }
 
-            Event::SequenceStart { span } => {
+            styx_parse::EventKind::SequenceStart => {
                 self.stack.push(BuilderFrame::Sequence {
                     items: Vec::new(),
                     span,
                 });
             }
 
-            Event::SequenceEnd { span } => {
+            styx_parse::EventKind::SequenceEnd => {
                 if let Some(BuilderFrame::Sequence {
                     items,
                     span: start_span,
@@ -279,7 +280,7 @@ impl TreeBuilder {
                 }
             }
 
-            Event::EntryStart => {
+            styx_parse::EventKind::EntryStart => {
                 let doc_comment = match self.stack.last_mut() {
                     Some(BuilderFrame::Object {
                         pending_doc_comment,
@@ -293,7 +294,7 @@ impl TreeBuilder {
                 });
             }
 
-            Event::EntryEnd => {
+            styx_parse::EventKind::EntryEnd => {
                 if let Some(BuilderFrame::Entry { key, doc_comment }) = self.stack.pop()
                     && let Some(key) = key
                 {
@@ -336,12 +337,7 @@ impl TreeBuilder {
                 }
             }
 
-            Event::Key {
-                span,
-                tag,
-                payload,
-                kind,
-            } => {
+            styx_parse::EventKind::Key { tag, payload, kind } => {
                 let key_value = Value {
                     tag: tag.map(|name| Tag {
                         name: name.to_string(),
@@ -361,7 +357,7 @@ impl TreeBuilder {
                 }
             }
 
-            Event::Scalar { span, value, kind } => {
+            styx_parse::EventKind::Scalar { value, kind } => {
                 let scalar = Value {
                     tag: None,
                     payload: Some(Payload::Scalar(Scalar {
@@ -411,7 +407,7 @@ impl TreeBuilder {
                 self.push_value(scalar);
             }
 
-            Event::Unit { span } => {
+            styx_parse::EventKind::Unit => {
                 let unit = Value {
                     tag: None,
                     payload: None,
@@ -452,14 +448,14 @@ impl TreeBuilder {
                 self.push_value(unit);
             }
 
-            Event::TagStart { span, name } => {
+            styx_parse::EventKind::TagStart { name } => {
                 self.stack.push(BuilderFrame::Tag {
                     name: name.to_string(),
                     span,
                 });
             }
 
-            Event::TagEnd => {
+            styx_parse::EventKind::TagEnd => {
                 // Only pop if the top frame is a Tag - otherwise the tag was already
                 // consumed when its payload was processed
                 if !matches!(self.stack.last(), Some(BuilderFrame::Tag { .. })) {
@@ -511,7 +507,7 @@ impl TreeBuilder {
                 }
             }
 
-            Event::DocComment { lines, .. } => {
+            styx_parse::EventKind::DocComment { lines } => {
                 // Lines are already stripped of `/// ` prefix by the parser
                 let comment = lines.join("\n");
                 match self.stack.last_mut() {
@@ -527,11 +523,11 @@ impl TreeBuilder {
                 }
             }
 
-            Event::Comment { .. } => {
+            styx_parse::EventKind::Comment { .. } => {
                 // Ignore regular comments for tree building
             }
 
-            Event::Error { span, kind } => {
+            styx_parse::EventKind::Error { kind } => {
                 self.errors.push((kind, span));
             }
         }

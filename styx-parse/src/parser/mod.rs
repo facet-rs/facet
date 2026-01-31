@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use styx_tokenizer::Span;
 
-use crate::events::{ParseErrorKind, ScalarKind};
+use crate::events::{EventKind, ParseErrorKind, ScalarKind};
 use crate::{Event, Lexeme, Lexer};
 
 /// Wraps lexer with a single pending slot for stashing boundary lexemes.
@@ -136,7 +136,10 @@ impl<'src> Parser<'src> {
                     path_state: PathState::default(),
                     emitted_object_start: false,
                 };
-                Some(Event::DocumentStart)
+                Some(Event {
+                    span: Span::empty(0),
+                    kind: EventKind::DocumentStart,
+                })
             }
             ParserState::BeforeExpression => self.advance_expression(),
             ParserState::AfterExpression => None,
@@ -188,9 +191,11 @@ impl<'src> Parser<'src> {
                             lex => end = lex.span().end,
                         }
                     }
-                    return Some(Event::Error {
+                    return Some(Event {
                         span: Span::new(span.start, end),
-                        kind: ParseErrorKind::TrailingContent,
+                        kind: EventKind::Error {
+                            kind: ParseErrorKind::TrailingContent,
+                        },
                     });
                 }
             }
@@ -210,25 +215,34 @@ impl<'src> Parser<'src> {
                     } = &mut self.state
                     {
                         if let Some(span) = pending_doc_comment.take() {
-                            self.event_queue.push_back(Event::Error {
+                            self.event_queue.push_back(Event {
                                 span,
-                                kind: ParseErrorKind::DanglingDocComment,
+                                kind: EventKind::Error {
+                                    kind: ParseErrorKind::DanglingDocComment,
+                                },
                             });
                         }
                         // Close implicit root object if we opened it
                         if *emitted_object_start {
-                            self.event_queue.push_back(Event::ObjectEnd {
+                            self.event_queue.push_back(Event {
                                 span: Span::empty(0),
+                                kind: EventKind::ObjectEnd,
                             });
                         }
                     }
-                    self.event_queue.push_back(Event::DocumentEnd);
+                    self.event_queue.push_back(Event {
+                        span: Span::empty(self.input.len() as u32),
+                        kind: EventKind::DocumentEnd,
+                    });
                     self.state = ParserState::AfterDocument;
                     return self.event_queue.pop_front();
                 }
                 Lexeme::Newline { .. } | Lexeme::Comma { .. } => continue,
                 Lexeme::Comment { span, text } => {
-                    return Some(Event::Comment { span, text });
+                    return Some(Event {
+                        span,
+                        kind: EventKind::Comment { text },
+                    });
                 }
                 Lexeme::DocComment { span, text } => {
                     if let ParserState::DocumentRoot {
@@ -241,8 +255,9 @@ impl<'src> Parser<'src> {
                         // Doc comments are content, so emit implicit ObjectStart first
                         if !*emitted_object_start {
                             *emitted_object_start = true;
-                            self.event_queue.push_back(Event::ObjectStart {
+                            self.event_queue.push_back(Event {
                                 span: Span::empty(0),
+                                kind: EventKind::ObjectStart,
                             });
                         }
                     }
@@ -251,9 +266,9 @@ impl<'src> Parser<'src> {
                         .strip_prefix("/// ")
                         .or_else(|| text.strip_prefix("///"))
                         .unwrap_or(text);
-                    self.event_queue.push_back(Event::DocComment {
+                    self.event_queue.push_back(Event {
                         span,
-                        lines: vec![line],
+                        kind: EventKind::DocComment { lines: vec![line] },
                     });
                     return self.event_queue.pop_front();
                 }
@@ -265,7 +280,10 @@ impl<'src> Parser<'src> {
                         pending_doc_comment: None,
                         parent: Box::new(ParserState::AfterDocument),
                     };
-                    return Some(Event::ObjectStart { span });
+                    return Some(Event {
+                        span,
+                        kind: EventKind::ObjectStart,
+                    });
                 }
                 _ => {
                     // Emit implicit ObjectStart on first content
@@ -278,8 +296,9 @@ impl<'src> Parser<'src> {
                         *pending_doc_comment = None;
                         if !*emitted_object_start {
                             *emitted_object_start = true;
-                            self.event_queue.push_back(Event::ObjectStart {
+                            self.event_queue.push_back(Event {
                                 span: Span::empty(0),
+                                kind: EventKind::ObjectStart,
                             });
                         }
                     }
@@ -312,20 +331,30 @@ impl<'src> Parser<'src> {
                     } = &mut self.state
                     {
                         if let Some(span) = pending_doc_comment.take() {
-                            self.event_queue.push_back(Event::Error {
+                            self.event_queue.push_back(Event {
                                 span,
-                                kind: ParseErrorKind::DanglingDocComment,
+                                kind: EventKind::Error {
+                                    kind: ParseErrorKind::DanglingDocComment,
+                                },
                             });
                         }
-                        self.event_queue.push_back(Event::Error {
+                        self.event_queue.push_back(Event {
                             span: start,
-                            kind: ParseErrorKind::UnclosedObject,
+                            kind: EventKind::Error {
+                                kind: ParseErrorKind::UnclosedObject,
+                            },
                         });
-                        self.event_queue.push_back(Event::ObjectEnd { span: start });
+                        self.event_queue.push_back(Event {
+                            span: start,
+                            kind: EventKind::ObjectEnd,
+                        });
                         // If parent is AfterDocument, this was a top-level explicit object.
                         // We need to emit DocumentEnd before transitioning to AfterDocument.
                         if matches!(parent.as_ref(), ParserState::AfterDocument) {
-                            self.event_queue.push_back(Event::DocumentEnd);
+                            self.event_queue.push_back(Event {
+                                span: Span::empty(self.input.len() as u32),
+                                kind: EventKind::DocumentEnd,
+                            });
                         }
                     }
                     self.pop_state();
@@ -339,23 +368,34 @@ impl<'src> Parser<'src> {
                     } = &mut self.state
                     {
                         if let Some(doc_span) = pending_doc_comment.take() {
-                            self.event_queue.push_back(Event::Error {
+                            self.event_queue.push_back(Event {
                                 span: doc_span,
-                                kind: ParseErrorKind::DanglingDocComment,
+                                kind: EventKind::Error {
+                                    kind: ParseErrorKind::DanglingDocComment,
+                                },
                             });
                         }
                         // If parent is AfterDocument, this was a top-level explicit object.
                         // We need to emit DocumentEnd after ObjectEnd.
                         if matches!(parent.as_ref(), ParserState::AfterDocument) {
-                            self.event_queue.push_back(Event::DocumentEnd);
+                            self.event_queue.push_back(Event {
+                                span: Span::empty(self.input.len() as u32),
+                                kind: EventKind::DocumentEnd,
+                            });
                         }
                     }
                     self.pop_state();
-                    return Some(Event::ObjectEnd { span });
+                    return Some(Event {
+                        span,
+                        kind: EventKind::ObjectEnd,
+                    });
                 }
                 Lexeme::Newline { .. } | Lexeme::Comma { .. } => continue,
                 Lexeme::Comment { span, text } => {
-                    return Some(Event::Comment { span, text });
+                    return Some(Event {
+                        span,
+                        kind: EventKind::Comment { text },
+                    });
                 }
                 Lexeme::DocComment { span, text } => {
                     if let ParserState::InObject {
@@ -370,9 +410,9 @@ impl<'src> Parser<'src> {
                         .strip_prefix("/// ")
                         .or_else(|| text.strip_prefix("///"))
                         .unwrap_or(text);
-                    return Some(Event::DocComment {
+                    return Some(Event {
                         span,
-                        lines: vec![line],
+                        kind: EventKind::DocComment { lines: vec![line] },
                     });
                 }
                 _ => {
@@ -420,9 +460,11 @@ impl<'src> Parser<'src> {
         {
             // For heredocs, point at just the opening marker (<<TAG), not the whole content
             let error_span = self.heredoc_start_span(key_atom.span);
-            self.event_queue.push_back(Event::Error {
+            self.event_queue.push_back(Event {
                 span: error_span,
-                kind: ParseErrorKind::InvalidKey,
+                kind: EventKind::Error {
+                    kind: ParseErrorKind::InvalidKey,
+                },
             });
         }
 
@@ -478,9 +520,11 @@ impl<'src> Parser<'src> {
             ..
         } = &key_atom.content
         {
-            self.event_queue.push_back(Event::Error {
+            self.event_queue.push_back(Event {
                 span: key_atom.span,
-                kind: ParseErrorKind::InvalidKey,
+                kind: EventKind::Error {
+                    kind: ParseErrorKind::InvalidKey,
+                },
             });
         }
 
@@ -500,10 +544,12 @@ impl<'src> Parser<'src> {
 
         if let ParserState::InObject { seen_keys, .. } = &mut self.state {
             if let Some(&original_span) = seen_keys.get(&key_value) {
-                self.event_queue.push_back(Event::Error {
+                self.event_queue.push_back(Event {
                     span: key_atom.span,
-                    kind: ParseErrorKind::DuplicateKey {
-                        original: original_span,
+                    kind: EventKind::Error {
+                        kind: ParseErrorKind::DuplicateKey {
+                            original: original_span,
+                        },
                     },
                 });
             } else {
@@ -518,25 +564,34 @@ impl<'src> Parser<'src> {
     fn emit_simple_entry(&mut self, atoms: &[Atom<'src>]) {
         let key_atom = &atoms[0];
 
-        self.event_queue.push_back(Event::EntryStart);
+        self.event_queue.push_back(Event {
+            span: key_atom.span,
+            kind: EventKind::EntryStart,
+        });
         self.emit_atom_as_key(key_atom);
 
         if atoms.len() == 1 {
-            self.event_queue.push_back(Event::Unit {
+            self.event_queue.push_back(Event {
                 span: key_atom.span,
+                kind: EventKind::Unit,
             });
         } else if atoms.len() >= 2 {
             self.emit_atom_as_value(&atoms[1]);
         }
 
         if atoms.len() > 2 {
-            self.event_queue.push_back(Event::Error {
+            self.event_queue.push_back(Event {
                 span: atoms[2].span,
-                kind: ParseErrorKind::TooManyAtoms,
+                kind: EventKind::Error {
+                    kind: ParseErrorKind::TooManyAtoms,
+                },
             });
         }
 
-        self.event_queue.push_back(Event::EntryEnd);
+        self.event_queue.push_back(Event {
+            span: atoms.last().map(|a| a.span).unwrap_or(key_atom.span),
+            kind: EventKind::EntryEnd,
+        });
     }
 
     /// Collect atoms for an entry.
@@ -565,7 +620,10 @@ impl<'src> Parser<'src> {
                     break;
                 }
                 Lexeme::Comment { span, text } => {
-                    self.event_queue.push_back(Event::Comment { span, text });
+                    self.event_queue.push_back(Event {
+                        span,
+                        kind: EventKind::Comment { text },
+                    });
                     break;
                 }
                 Lexeme::DocComment { span, text } => {
@@ -574,9 +632,9 @@ impl<'src> Parser<'src> {
                         .strip_prefix("/// ")
                         .or_else(|| text.strip_prefix("///"))
                         .unwrap_or(text);
-                    self.event_queue.push_back(Event::DocComment {
+                    self.event_queue.push_back(Event {
                         span,
-                        lines: vec![line],
+                        kind: EventKind::DocComment { lines: vec![line] },
                     });
                     break;
                 }
@@ -584,9 +642,11 @@ impl<'src> Parser<'src> {
                     // Check for MissingWhitespaceBeforeBlock: bare scalar immediately
                     // followed by { or ( with no whitespace
                     if atoms.len() == 1 && first_is_bare && first_atom_end == span.start {
-                        self.event_queue.push_back(Event::Error {
+                        self.event_queue.push_back(Event {
                             span,
-                            kind: ParseErrorKind::MissingWhitespaceBeforeBlock,
+                            kind: EventKind::Error {
+                                kind: ParseErrorKind::MissingWhitespaceBeforeBlock,
+                            },
                         });
                     }
                     let atom = self.parse_atom(lexeme);
@@ -944,12 +1004,20 @@ impl<'src> Parser<'src> {
         let segments: Vec<&str> = path_text.split('.').collect();
 
         if segments.is_empty() || segments.iter().any(|s| s.is_empty()) {
-            self.event_queue.push_back(Event::Error {
+            self.event_queue.push_back(Event {
                 span: path_span,
-                kind: ParseErrorKind::InvalidKey,
+                kind: EventKind::Error {
+                    kind: ParseErrorKind::InvalidKey,
+                },
             });
-            self.event_queue.push_back(Event::EntryStart);
-            self.event_queue.push_back(Event::EntryEnd);
+            self.event_queue.push_back(Event {
+                span: path_span,
+                kind: EventKind::EntryStart,
+            });
+            self.event_queue.push_back(Event {
+                span: path_span,
+                kind: EventKind::EntryEnd,
+            });
             return;
         }
 
@@ -989,17 +1057,24 @@ impl<'src> Parser<'src> {
             let segment_len = segment.len() as u32;
             let segment_span = Span::new(current_offset, current_offset + segment_len);
 
-            self.event_queue.push_back(Event::EntryStart);
-            self.event_queue.push_back(Event::Key {
+            self.event_queue.push_back(Event {
                 span: segment_span,
-                tag: None,
-                payload: Some(Cow::Owned(segment.to_string())),
-                kind: ScalarKind::Bare,
+                kind: EventKind::EntryStart,
+            });
+            self.event_queue.push_back(Event {
+                span: segment_span,
+                kind: EventKind::Key {
+                    tag: None,
+                    payload: Some(Cow::Owned(segment.to_string())),
+                    kind: ScalarKind::Bare,
+                },
             });
 
             if i < depth - 1 {
-                self.event_queue
-                    .push_back(Event::ObjectStart { span: segment_span });
+                self.event_queue.push_back(Event {
+                    span: segment_span,
+                    kind: EventKind::ObjectStart,
+                });
             }
 
             current_offset += segment_len + 1;
@@ -1007,25 +1082,35 @@ impl<'src> Parser<'src> {
 
         // Emit value
         if atoms.len() == 1 {
-            self.event_queue.push_back(Event::Unit { span: path_span });
+            self.event_queue.push_back(Event {
+                span: path_span,
+                kind: EventKind::Unit,
+            });
         } else if atoms.len() >= 2 {
             self.emit_atom_as_value(&atoms[1]);
         }
 
         if atoms.len() > 2 {
-            self.event_queue.push_back(Event::Error {
+            self.event_queue.push_back(Event {
                 span: atoms[2].span,
-                kind: ParseErrorKind::TooManyAtoms,
+                kind: EventKind::Error {
+                    kind: ParseErrorKind::TooManyAtoms,
+                },
             });
         }
 
         // Close nested structures
         for i in (0..depth).rev() {
             if i < depth - 1 {
-                self.event_queue
-                    .push_back(Event::ObjectEnd { span: path_span });
+                self.event_queue.push_back(Event {
+                    span: path_span,
+                    kind: EventKind::ObjectEnd,
+                });
             }
-            self.event_queue.push_back(Event::EntryEnd);
+            self.event_queue.push_back(Event {
+                span: path_span,
+                kind: EventKind::EntryEnd,
+            });
         }
     }
 
@@ -1038,7 +1123,10 @@ impl<'src> Parser<'src> {
                 ParseErrorKind::NestIntoTerminal { terminal_path }
             }
         };
-        self.event_queue.push_back(Event::Error { span, kind });
+        self.event_queue.push_back(Event {
+            span,
+            kind: EventKind::Error { kind },
+        });
     }
 
     /// Get the span of just the heredoc opening marker (<<TAG\n).
@@ -1054,19 +1142,23 @@ impl<'src> Parser<'src> {
         match &atom.content {
             AtomContent::Scalar { value, kind } => {
                 // The lexer already processed escape sequences.
-                self.event_queue.push_back(Event::Key {
+                self.event_queue.push_back(Event {
                     span: atom.span,
-                    tag: None,
-                    payload: Some(value.clone()),
-                    kind: *kind,
+                    kind: EventKind::Key {
+                        tag: None,
+                        payload: Some(value.clone()),
+                        kind: *kind,
+                    },
                 });
             }
             AtomContent::Unit => {
-                self.event_queue.push_back(Event::Key {
+                self.event_queue.push_back(Event {
                     span: atom.span,
-                    tag: None,
-                    payload: None,
-                    kind: ScalarKind::Bare,
+                    kind: EventKind::Key {
+                        tag: None,
+                        payload: None,
+                        kind: ScalarKind::Bare,
+                    },
                 });
             }
             AtomContent::Tag {
@@ -1076,18 +1168,22 @@ impl<'src> Parser<'src> {
                 error_span,
             } => {
                 if *invalid_name {
-                    self.event_queue.push_back(Event::Error {
+                    self.event_queue.push_back(Event {
                         span: error_span.unwrap_or(atom.span),
-                        kind: ParseErrorKind::InvalidTagName,
+                        kind: EventKind::Error {
+                            kind: ParseErrorKind::InvalidTagName,
+                        },
                     });
                 }
                 match payload {
                     None => {
-                        self.event_queue.push_back(Event::Key {
+                        self.event_queue.push_back(Event {
                             span: atom.span,
-                            tag: Some(name),
-                            payload: None,
-                            kind: ScalarKind::Bare,
+                            kind: EventKind::Key {
+                                tag: Some(name),
+                                payload: None,
+                                kind: ScalarKind::Bare,
+                            },
                         });
                     }
                     Some(inner) => match &inner.content {
@@ -1095,25 +1191,31 @@ impl<'src> Parser<'src> {
                             if *kind == ScalarKind::Quoted {
                                 self.emit_escape_errors(value, inner.span);
                             }
-                            self.event_queue.push_back(Event::Key {
+                            self.event_queue.push_back(Event {
                                 span: atom.span,
-                                tag: Some(name),
-                                payload: Some(value.clone()),
-                                kind: *kind,
+                                kind: EventKind::Key {
+                                    tag: Some(name),
+                                    payload: Some(value.clone()),
+                                    kind: *kind,
+                                },
                             });
                         }
                         AtomContent::Unit => {
-                            self.event_queue.push_back(Event::Key {
+                            self.event_queue.push_back(Event {
                                 span: atom.span,
-                                tag: Some(name),
-                                payload: None,
-                                kind: ScalarKind::Bare,
+                                kind: EventKind::Key {
+                                    tag: Some(name),
+                                    payload: None,
+                                    kind: ScalarKind::Bare,
+                                },
                             });
                         }
                         _ => {
-                            self.event_queue.push_back(Event::Error {
+                            self.event_queue.push_back(Event {
                                 span: inner.span,
-                                kind: ParseErrorKind::InvalidKey,
+                                kind: EventKind::Error {
+                                    kind: ParseErrorKind::InvalidKey,
+                                },
                             });
                         }
                     },
@@ -1125,17 +1227,21 @@ impl<'src> Parser<'src> {
                 for (offset, seq) in validate_escapes(raw_inner) {
                     let error_start = inner_start + offset as u32;
                     let error_span = Span::new(error_start, error_start + seq.len() as u32);
-                    self.event_queue.push_back(Event::Error {
+                    self.event_queue.push_back(Event {
                         span: error_span,
-                        kind: ParseErrorKind::InvalidEscape(seq),
+                        kind: EventKind::Error {
+                            kind: ParseErrorKind::InvalidEscape(seq),
+                        },
                     });
                 }
                 // Still emit a key event (with the partially-processed value)
-                self.event_queue.push_back(Event::Key {
+                self.event_queue.push_back(Event {
                     span: atom.span,
-                    tag: None,
-                    payload: Some(Cow::Owned(unescape_quoted(raw_inner).into_owned())),
-                    kind: ScalarKind::Quoted,
+                    kind: EventKind::Key {
+                        tag: None,
+                        payload: Some(Cow::Owned(unescape_quoted(raw_inner).into_owned())),
+                        kind: ScalarKind::Quoted,
+                    },
                 });
             }
             AtomContent::Error { message } => {
@@ -1144,15 +1250,17 @@ impl<'src> Parser<'src> {
                 } else {
                     ParseErrorKind::InvalidKey
                 };
-                self.event_queue.push_back(Event::Error {
+                self.event_queue.push_back(Event {
                     span: atom.span,
-                    kind,
+                    kind: EventKind::Error { kind },
                 });
             }
             _ => {
-                self.event_queue.push_back(Event::Error {
+                self.event_queue.push_back(Event {
                     span: atom.span,
-                    kind: ParseErrorKind::InvalidKey,
+                    kind: EventKind::Error {
+                        kind: ParseErrorKind::InvalidKey,
+                    },
                 });
             }
         }
@@ -1163,14 +1271,19 @@ impl<'src> Parser<'src> {
         match &atom.content {
             AtomContent::Scalar { value, kind } => {
                 // The lexer already processed escape sequences.
-                self.event_queue.push_back(Event::Scalar {
+                self.event_queue.push_back(Event {
                     span: atom.span,
-                    value: value.clone(),
-                    kind: *kind,
+                    kind: EventKind::Scalar {
+                        value: value.clone(),
+                        kind: *kind,
+                    },
                 });
             }
             AtomContent::Unit => {
-                self.event_queue.push_back(Event::Unit { span: atom.span });
+                self.event_queue.push_back(Event {
+                    span: atom.span,
+                    kind: EventKind::Unit,
+                });
             }
             AtomContent::Tag {
                 name,
@@ -1179,19 +1292,24 @@ impl<'src> Parser<'src> {
                 error_span,
             } => {
                 if *invalid_name {
-                    self.event_queue.push_back(Event::Error {
+                    self.event_queue.push_back(Event {
                         span: error_span.unwrap_or(atom.span),
-                        kind: ParseErrorKind::InvalidTagName,
+                        kind: EventKind::Error {
+                            kind: ParseErrorKind::InvalidTagName,
+                        },
                     });
                 }
-                self.event_queue.push_back(Event::TagStart {
+                self.event_queue.push_back(Event {
                     span: atom.span,
-                    name,
+                    kind: EventKind::TagStart { name },
                 });
                 if let Some(inner) = payload {
                     self.emit_atom_as_value(inner);
                 }
-                self.event_queue.push_back(Event::TagEnd);
+                self.event_queue.push_back(Event {
+                    span: atom.span,
+                    kind: EventKind::TagEnd,
+                });
             }
             AtomContent::Object {
                 entries,
@@ -1199,73 +1317,102 @@ impl<'src> Parser<'src> {
                 dangling_doc_comment_spans,
                 unclosed,
             } => {
-                self.event_queue
-                    .push_back(Event::ObjectStart { span: atom.span });
+                self.event_queue.push_back(Event {
+                    span: atom.span,
+                    kind: EventKind::ObjectStart,
+                });
 
                 if *unclosed {
-                    self.event_queue.push_back(Event::Error {
+                    self.event_queue.push_back(Event {
                         span: atom.span,
-                        kind: ParseErrorKind::UnclosedObject,
+                        kind: EventKind::Error {
+                            kind: ParseErrorKind::UnclosedObject,
+                        },
                     });
                 }
 
                 for (original, dup) in duplicate_key_spans {
-                    self.event_queue.push_back(Event::Error {
+                    self.event_queue.push_back(Event {
                         span: *dup,
-                        kind: ParseErrorKind::DuplicateKey {
-                            original: *original,
+                        kind: EventKind::Error {
+                            kind: ParseErrorKind::DuplicateKey {
+                                original: *original,
+                            },
                         },
                     });
                 }
 
                 for span in dangling_doc_comment_spans {
-                    self.event_queue.push_back(Event::Error {
+                    self.event_queue.push_back(Event {
                         span: *span,
-                        kind: ParseErrorKind::DanglingDocComment,
+                        kind: EventKind::Error {
+                            kind: ParseErrorKind::DanglingDocComment,
+                        },
                     });
                 }
 
                 for entry in entries {
                     if let Some((span, lines)) = &entry.doc_comment {
-                        self.event_queue.push_back(Event::DocComment {
+                        self.event_queue.push_back(Event {
                             span: *span,
-                            lines: lines.clone(),
+                            kind: EventKind::DocComment {
+                                lines: lines.clone(),
+                            },
                         });
                     }
-                    self.event_queue.push_back(Event::EntryStart);
+                    self.event_queue.push_back(Event {
+                        span: entry.key.span,
+                        kind: EventKind::EntryStart,
+                    });
                     self.emit_atom_as_key(&entry.key);
                     self.emit_atom_as_value(&entry.value);
+
+                    let mut end_span = entry.value.span;
                     if let Some(span) = entry.too_many_atoms_span {
-                        self.event_queue.push_back(Event::Error {
+                        self.event_queue.push_back(Event {
                             span,
-                            kind: ParseErrorKind::TooManyAtoms,
+                            kind: EventKind::Error {
+                                kind: ParseErrorKind::TooManyAtoms,
+                            },
                         });
+                        end_span = span;
                     }
-                    self.event_queue.push_back(Event::EntryEnd);
+                    self.event_queue.push_back(Event {
+                        span: end_span,
+                        kind: EventKind::EntryEnd,
+                    });
                 }
 
-                self.event_queue
-                    .push_back(Event::ObjectEnd { span: atom.span });
+                self.event_queue.push_back(Event {
+                    span: atom.span,
+                    kind: EventKind::ObjectEnd,
+                });
             }
             AtomContent::Sequence {
                 elements,
                 unclosed,
                 comma_spans,
             } => {
-                self.event_queue
-                    .push_back(Event::SequenceStart { span: atom.span });
+                self.event_queue.push_back(Event {
+                    span: atom.span,
+                    kind: EventKind::SequenceStart,
+                });
 
                 if *unclosed {
-                    self.event_queue.push_back(Event::Error {
+                    self.event_queue.push_back(Event {
                         span: atom.span,
-                        kind: ParseErrorKind::UnclosedSequence,
+                        kind: EventKind::Error {
+                            kind: ParseErrorKind::UnclosedSequence,
+                        },
                     });
                 }
 
                 for span in comma_spans {
-                    self.event_queue.push_back(Event::Error {
+                    self.event_queue.push_back(Event {
                         span: *span,
-                        kind: ParseErrorKind::CommaInSequence,
+                        kind: EventKind::Error {
+                            kind: ParseErrorKind::CommaInSequence,
+                        },
                     });
                 }
 
@@ -1273,27 +1420,41 @@ impl<'src> Parser<'src> {
                     self.emit_atom_as_value(elem);
                 }
 
-                self.event_queue
-                    .push_back(Event::SequenceEnd { span: atom.span });
+                self.event_queue.push_back(Event {
+                    span: atom.span,
+                    kind: EventKind::SequenceEnd,
+                });
             }
             AtomContent::Attributes(attrs) => {
-                self.event_queue
-                    .push_back(Event::ObjectStart { span: atom.span });
+                self.event_queue.push_back(Event {
+                    span: atom.span,
+                    kind: EventKind::ObjectStart,
+                });
 
                 for attr in attrs {
-                    self.event_queue.push_back(Event::EntryStart);
-                    self.event_queue.push_back(Event::Key {
+                    self.event_queue.push_back(Event {
                         span: attr.key_span,
-                        tag: None,
-                        payload: Some(Cow::Borrowed(attr.key)),
-                        kind: ScalarKind::Bare,
+                        kind: EventKind::EntryStart,
+                    });
+                    self.event_queue.push_back(Event {
+                        span: attr.key_span,
+                        kind: EventKind::Key {
+                            tag: None,
+                            payload: Some(Cow::Borrowed(attr.key)),
+                            kind: ScalarKind::Bare,
+                        },
                     });
                     self.emit_atom_as_value(&attr.value);
-                    self.event_queue.push_back(Event::EntryEnd);
+                    self.event_queue.push_back(Event {
+                        span: attr.value.span,
+                        kind: EventKind::EntryEnd,
+                    });
                 }
 
-                self.event_queue
-                    .push_back(Event::ObjectEnd { span: atom.span });
+                self.event_queue.push_back(Event {
+                    span: atom.span,
+                    kind: EventKind::ObjectEnd,
+                });
             }
             AtomContent::InvalidEscapeScalar { raw_inner } => {
                 // Emit the escape errors at their specific positions
@@ -1302,16 +1463,20 @@ impl<'src> Parser<'src> {
                 for (offset, seq) in validate_escapes(raw_inner) {
                     let error_start = inner_start + offset as u32;
                     let error_span = Span::new(error_start, error_start + seq.len() as u32);
-                    self.event_queue.push_back(Event::Error {
+                    self.event_queue.push_back(Event {
                         span: error_span,
-                        kind: ParseErrorKind::InvalidEscape(seq),
+                        kind: EventKind::Error {
+                            kind: ParseErrorKind::InvalidEscape(seq),
+                        },
                     });
                 }
                 // Also emit the scalar value (with invalid escapes replaced/kept)
-                self.event_queue.push_back(Event::Scalar {
+                self.event_queue.push_back(Event {
                     span: atom.span,
-                    value: Cow::Owned(unescape_quoted(raw_inner).into_owned()),
-                    kind: ScalarKind::Quoted,
+                    kind: EventKind::Scalar {
+                        value: Cow::Owned(unescape_quoted(raw_inner).into_owned()),
+                        kind: ScalarKind::Quoted,
+                    },
                 });
             }
             AtomContent::Error { message } => {
@@ -1322,9 +1487,9 @@ impl<'src> Parser<'src> {
                 } else {
                     ParseErrorKind::UnexpectedToken
                 };
-                self.event_queue.push_back(Event::Error {
+                self.event_queue.push_back(Event {
                     span: atom.span,
-                    kind,
+                    kind: EventKind::Error { kind },
                 });
             }
         }
@@ -1335,9 +1500,11 @@ impl<'src> Parser<'src> {
         for (offset, seq) in validate_escapes(text) {
             let error_start = span.start + offset as u32;
             let error_span = Span::new(error_start, error_start + seq.len() as u32);
-            self.event_queue.push_back(Event::Error {
+            self.event_queue.push_back(Event {
                 span: error_span,
-                kind: ParseErrorKind::InvalidEscape(seq),
+                kind: EventKind::Error {
+                    kind: ParseErrorKind::InvalidEscape(seq),
+                },
             });
         }
     }

@@ -47,7 +47,11 @@ pub fn parse(source: &str) -> JsValue {
     let mut diagnostics = Vec::new();
 
     while let Some(event) = parser.next_event() {
-        if let styx_parse::Event::Error { span, kind } = event {
+        if let styx_parse::Event {
+            kind: styx_parse::EventKind::Error { kind },
+            span,
+        } = event
+        {
             diagnostics.push(Diagnostic {
                 message: format_error(&kind),
                 start: span.start,
@@ -204,7 +208,13 @@ fn format_error(kind: &styx_parse::ParseErrorKind) -> String {
 pub fn validate(source: &str) -> bool {
     let mut parser = styx_parse::Parser::new(source);
     while let Some(event) = parser.next_event() {
-        if matches!(event, styx_parse::Event::Error { .. }) {
+        if matches!(
+            event,
+            styx_parse::Event {
+                kind: styx_parse::EventKind::Error { .. },
+                ..
+            }
+        ) {
             return false;
         }
     }

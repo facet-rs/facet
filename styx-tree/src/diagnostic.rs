@@ -261,7 +261,11 @@ mod tests {
         let mut parser = styx_parse::Parser::new(source);
         let mut errors = Vec::new();
         while let Some(event) = parser.next_event() {
-            if let styx_parse::Event::Error { span, kind } = event {
+            if let styx_parse::Event {
+                kind: styx_parse::EventKind::Error { kind },
+                span,
+            } = event
+            {
                 errors.push(ParseError::new(kind, span));
             }
         }

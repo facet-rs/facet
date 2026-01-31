@@ -1,6 +1,7 @@
 //! DO NOT DELETE ANY TESTS OR WEAKEN THEM IN ANY WAY
 
 use super::*;
+use crate::events::EventKind;
 use crate::{ParseErrorKind, ScalarKind};
 use facet_testhelpers::test;
 use styx_testhelpers::{ActualError, assert_annotated_errors, source_without_annotations};
@@ -14,18 +15,16 @@ mod event_assert {
 
     /// Format an event to a string representation, ignoring spans.
     fn format_event(event: &Event<'_>) -> String {
-        match event {
-            Event::DocumentStart => "DocumentStart".to_string(),
-            Event::DocumentEnd => "DocumentEnd".to_string(),
-            Event::ObjectStart { .. } => "ObjectStart".to_string(),
-            Event::ObjectEnd { .. } => "ObjectEnd".to_string(),
-            Event::SequenceStart { .. } => "SequenceStart".to_string(),
-            Event::SequenceEnd { .. } => "SequenceEnd".to_string(),
-            Event::EntryStart => "EntryStart".to_string(),
-            Event::EntryEnd => "EntryEnd".to_string(),
-            Event::Key {
-                tag, payload, kind, ..
-            } => {
+        match &event.kind {
+            EventKind::DocumentStart => "DocumentStart".to_string(),
+            EventKind::DocumentEnd => "DocumentEnd".to_string(),
+            EventKind::ObjectStart => "ObjectStart".to_string(),
+            EventKind::ObjectEnd => "ObjectEnd".to_string(),
+            EventKind::SequenceStart => "SequenceStart".to_string(),
+            EventKind::SequenceEnd => "SequenceEnd".to_string(),
+            EventKind::EntryStart => "EntryStart".to_string(),
+            EventKind::EntryEnd => "EntryEnd".to_string(),
+            EventKind::Key { tag, payload, kind } => {
                 let mut s = String::from("Key(");
                 if let Some(t) = tag {
                     write!(s, "@{} ", t).unwrap();
@@ -40,7 +39,7 @@ mod event_assert {
                 s.push(')');
                 s
             }
-            Event::Scalar { value, kind, .. } => {
+            EventKind::Scalar { value, kind } => {
                 let mut s = String::from("Scalar(");
                 write!(s, "{:?}", value.as_ref()).unwrap();
                 if *kind != ScalarKind::Bare {
@@ -49,12 +48,12 @@ mod event_assert {
                 s.push(')');
                 s
             }
-            Event::Unit { .. } => "Unit".to_string(),
-            Event::TagStart { name, .. } => format!("TagStart(@{})", name),
-            Event::TagEnd => "TagEnd".to_string(),
-            Event::Comment { text, .. } => format!("Comment({:?})", text),
-            Event::DocComment { lines, .. } => format!("DocComment({:?})", lines),
-            Event::Error { kind, .. } => format!("Error({:?})", kind),
+            EventKind::Unit => "Unit".to_string(),
+            EventKind::TagStart { name } => format!("TagStart(@{})", name),
+            EventKind::TagEnd => "TagEnd".to_string(),
+            EventKind::Comment { text } => format!("Comment({:?})", text),
+            EventKind::DocComment { lines } => format!("DocComment({:?})", lines),
+            EventKind::Error { kind } => format!("Error({:?})", kind),
         }
     }
 
@@ -108,46 +107,27 @@ mod event_assert {
 
         for (i, event) in events.iter().enumerate() {
             let label = format_event(event);
-            let span = event_span(event);
+            let (start, end) = event_span(event);
 
             eprintln!("Event {}: {}", i + 1, label);
 
-            if let Some((start, end)) = span {
-                let mut buf = Vec::new();
-                Report::build(ReportKind::Custom("", Color::Cyan), ("", start..end))
-                    .with_label(
-                        Label::new(("", start..end))
-                            .with_message(&label)
-                            .with_color(Color::Cyan),
-                    )
-                    .finish()
-                    .write(("", Source::from(source)), &mut buf)
-                    .unwrap();
-                eprintln!("{}", String::from_utf8_lossy(&buf));
-            } else {
-                eprintln!("  (no span)\n");
-            }
+            let mut buf = Vec::new();
+            Report::build(ReportKind::Custom("", Color::Cyan), ("", start..end))
+                .with_label(
+                    Label::new(("", start..end))
+                        .with_message(&label)
+                        .with_color(Color::Cyan),
+                )
+                .finish()
+                .write(("", Source::from(source)), &mut buf)
+                .unwrap();
+            eprintln!("{}", String::from_utf8_lossy(&buf));
         }
     }
 
-    /// Extract span from an event, if it has one.
-    fn event_span(event: &Event<'_>) -> Option<(usize, usize)> {
-        match event {
-            Event::DocumentStart | Event::DocumentEnd => None,
-            Event::ObjectStart { span } => Some((span.start as usize, span.end as usize)),
-            Event::ObjectEnd { span } => Some((span.start as usize, span.end as usize)),
-            Event::SequenceStart { span } => Some((span.start as usize, span.end as usize)),
-            Event::SequenceEnd { span } => Some((span.start as usize, span.end as usize)),
-            Event::EntryStart | Event::EntryEnd => None,
-            Event::Key { span, .. } => Some((span.start as usize, span.end as usize)),
-            Event::Scalar { span, .. } => Some((span.start as usize, span.end as usize)),
-            Event::Unit { span } => Some((span.start as usize, span.end as usize)),
-            Event::TagStart { span, .. } => Some((span.start as usize, span.end as usize)),
-            Event::TagEnd => None,
-            Event::Comment { span, .. } => Some((span.start as usize, span.end as usize)),
-            Event::DocComment { span, .. } => Some((span.start as usize, span.end as usize)),
-            Event::Error { span, .. } => Some((span.start as usize, span.end as usize)),
-        }
+    /// Extract span from an event.
+    fn event_span(event: &Event<'_>) -> (usize, usize) {
+        (event.span.start as usize, event.span.end as usize)
     }
 
     /// Assert that events match the expected string representation.
@@ -236,7 +216,10 @@ fn assert_parse_errors(annotated_source: &str) {
     let actual_errors: Vec<_> = events
         .iter()
         .filter_map(|e| match e {
-            Event::Error { span, kind } => Some(ActualError {
+            Event {
+                kind: EventKind::Error { kind },
+                span,
+            } => Some(ActualError {
                 span: (*span).into(),
                 kind: error_kind_name(kind).to_string(),
             }),
@@ -249,8 +232,16 @@ fn assert_parse_errors(annotated_source: &str) {
 #[test]
 fn test_empty_document() {
     let events = parse("");
-    assert!(events.contains(&Event::DocumentStart));
-    assert!(events.contains(&Event::DocumentEnd));
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e.kind, EventKind::DocumentStart))
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e.kind, EventKind::DocumentEnd))
+    );
 }
 
 #[test]
@@ -259,12 +250,12 @@ fn test_simple_entry() {
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, Event::Key { payload: Some(v), .. } if v == "foo"))
+            .any(|e| matches!(&e.kind, EventKind::Key { payload: Some(v), .. } if v == "foo"))
     );
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, Event::Scalar { value, .. } if value == "bar"))
+            .any(|e| matches!(&e.kind, EventKind::Scalar { value, .. } if value == "bar"))
     );
 }
 
@@ -274,9 +265,9 @@ fn test_key_only() {
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, Event::Key { payload: Some(v), .. } if v == "foo"))
+            .any(|e| matches!(&e.kind, EventKind::Key { payload: Some(v), .. } if v == "foo"))
     );
-    assert!(events.iter().any(|e| matches!(e, Event::Unit { .. })));
+    assert!(events.iter().any(|e| matches!(e.kind, EventKind::Unit)));
 }
 
 #[test]
@@ -284,8 +275,8 @@ fn test_multiple_entries() {
     let events = parse("foo bar\nbaz qux");
     let keys: Vec<_> = events
         .iter()
-        .filter_map(|e| match e {
-            Event::Key {
+        .filter_map(|e| match &e.kind {
+            EventKind::Key {
                 payload: Some(v), ..
             } => Some(v.as_ref()),
             _ => None,
@@ -299,7 +290,7 @@ fn test_quoted_string() {
     let events = parse(r#"name "hello world""#);
     assert!(events
             .iter()
-            .any(|e| matches!(e, Event::Scalar { value, kind: ScalarKind::Quoted, .. } if value == "hello world")));
+            .any(|e| matches!(&e.kind, EventKind::Scalar { value, kind: ScalarKind::Quoted, .. } if value == "hello world")));
 }
 
 #[test]
@@ -308,7 +299,7 @@ fn test_quoted_escape() {
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, Event::Scalar { value, .. } if value == "hello\nworld"))
+            .any(|e| matches!(&e.kind, EventKind::Scalar { value, .. } if value == "hello\nworld"))
     );
 }
 
@@ -343,15 +334,15 @@ fn test_unit_value() {
     for _e in &events {
         trace!(?_e, "event");
     }
-    assert!(events.iter().any(|e| matches!(e, Event::Unit { .. })));
+    assert!(events.iter().any(|e| matches!(e.kind, EventKind::Unit)));
 }
 
 #[test]
 fn test_unit_key() {
     let events = parse("@ value");
     assert!(events.iter().any(|e| matches!(
-        e,
-        Event::Key {
+        &e.kind,
+        EventKind::Key {
             payload: None,
             tag: None,
             ..
@@ -365,20 +356,28 @@ fn test_tag() {
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, Event::TagStart { name, .. } if *name == "user"))
+            .any(|e| matches!(&e.kind, EventKind::TagStart { name, .. } if *name == "user"))
     );
 }
 
 #[test]
 fn test_comments() {
     let events = parse("// comment\nfoo bar");
-    assert!(events.iter().any(|e| matches!(e, Event::Comment { .. })));
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e.kind, EventKind::Comment { .. }))
+    );
 }
 
 #[test]
 fn test_doc_comments() {
     let events = parse("/// doc\nfoo bar");
-    assert!(events.iter().any(|e| matches!(e, Event::DocComment { .. })));
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e.kind, EventKind::DocComment { .. }))
+    );
 }
 
 #[test]
@@ -397,7 +396,7 @@ fn test_nested_object() {
     let events = parse("outer {inner {x 1}}");
     let obj_starts = events
         .iter()
-        .filter(|e| matches!(e, Event::ObjectStart { .. }))
+        .filter(|e| matches!(e.kind, EventKind::ObjectStart))
         .count();
     assert!(obj_starts >= 2);
 }
@@ -407,8 +406,8 @@ fn test_sequence_elements() {
     let events = parse("items (a b c)");
     let scalars: Vec<_> = events
         .iter()
-        .filter_map(|e| match e {
-            Event::Scalar { value, .. } => Some(value.as_ref()),
+        .filter_map(|e| match &e.kind {
+            EventKind::Scalar { value, .. } => Some(value.as_ref()),
             _ => None,
         })
         .collect();
@@ -423,7 +422,7 @@ fn test_tagged_object() {
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, Event::TagStart { name, .. } if *name == "err"))
+            .any(|e| matches!(&e.kind, EventKind::TagStart { name, .. } if *name == "err"))
     );
 }
 
@@ -433,7 +432,7 @@ fn test_tagged_explicit_unit() {
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, Event::TagStart { name, .. } if *name == "empty"))
+            .any(|e| matches!(&e.kind, EventKind::TagStart { name, .. } if *name == "empty"))
     );
 }
 
@@ -442,8 +441,8 @@ fn test_simple_attribute() {
     let events = parse("server host>localhost");
     let keys: Vec<_> = events
         .iter()
-        .filter_map(|e| match e {
-            Event::Key {
+        .filter_map(|e| match &e.kind {
+            EventKind::Key {
                 payload: Some(v), ..
             } => Some(v.as_ref()),
             _ => None,
@@ -458,8 +457,8 @@ fn test_multiple_attributes() {
     let events = parse("server host>localhost port>8080");
     let keys: Vec<_> = events
         .iter()
-        .filter_map(|e| match e {
-            Event::Key {
+        .filter_map(|e| match &e.kind {
+            EventKind::Key {
                 payload: Some(v), ..
             } => Some(v.as_ref()),
             _ => None,
@@ -475,8 +474,8 @@ fn test_attribute_with_object_value() {
     let events = parse("config opts>{x 1}");
     let keys: Vec<_> = events
         .iter()
-        .filter_map(|e| match e {
-            Event::Key {
+        .filter_map(|e| match &e.kind {
+            EventKind::Key {
                 payload: Some(v), ..
             } => Some(v.as_ref()),
             _ => None,
@@ -493,7 +492,7 @@ fn test_attribute_with_sequence_value() {
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, Event::SequenceStart { .. }))
+            .any(|e| matches!(e.kind, EventKind::SequenceStart))
     );
 }
 
@@ -503,7 +502,7 @@ fn test_attribute_with_tag_value() {
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, Event::TagStart { name, .. } if *name == "ok"))
+            .any(|e| matches!(&e.kind, EventKind::TagStart { name, .. } if *name == "ok"))
     );
 }
 
@@ -533,7 +532,7 @@ fn test_unicode_escape_braces() {
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, Event::Scalar { value, .. } if value == "😀"))
+            .any(|e| matches!(&e.kind, EventKind::Scalar { value, .. } if value == "😀"))
     );
 }
 
@@ -543,7 +542,7 @@ fn test_unicode_escape_4digit() {
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, Event::Scalar { value, .. } if value == "A"))
+            .any(|e| matches!(&e.kind, EventKind::Scalar { value, .. } if value == "A"))
     );
 }
 
@@ -576,7 +575,7 @@ fn test_bare_scalar_is_string() {
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, Event::Scalar { value, .. } if value == "8080"))
+            .any(|e| matches!(&e.kind, EventKind::Scalar { value, .. } if value == "8080"))
     );
 }
 
@@ -586,7 +585,7 @@ fn test_bool_like_is_string() {
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, Event::Scalar { value, .. } if value == "true"))
+            .any(|e| matches!(&e.kind, EventKind::Scalar { value, .. } if value == "true"))
     );
 }
 
@@ -621,8 +620,8 @@ fn test_multiline_doc_comment_in_object() {
     let events = parse(source);
     let doc_comments: Vec<_> = events
         .iter()
-        .filter_map(|e| match e {
-            Event::DocComment { lines, .. } => Some(lines.clone()),
+        .filter_map(|e| match &e.kind {
+            EventKind::DocComment { lines, .. } => Some(lines.clone()),
             _ => None,
         })
         .collect();
@@ -639,8 +638,8 @@ fn test_object_with_entries() {
     let events = parse("config {host localhost, port 8080}");
     let keys: Vec<_> = events
         .iter()
-        .filter_map(|e| match e {
-            Event::Key {
+        .filter_map(|e| match &e.kind {
+            EventKind::Key {
                 payload: Some(value),
                 ..
             } => Some(value.as_ref()),
@@ -657,7 +656,7 @@ fn test_nested_sequences() {
     let events = parse("matrix ((1 2) (3 4))");
     let seq_starts = events
         .iter()
-        .filter(|e| matches!(e, Event::SequenceStart { .. }))
+        .filter(|e| matches!(e.kind, EventKind::SequenceStart))
         .count();
     assert_eq!(seq_starts, 3);
 }
@@ -668,12 +667,12 @@ fn test_tagged_sequence() {
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, Event::TagStart { name, .. } if *name == "rgb"))
+            .any(|e| matches!(&e.kind, EventKind::TagStart { name, .. } if *name == "rgb"))
     );
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, Event::SequenceStart { .. }))
+            .any(|e| matches!(e.kind, EventKind::SequenceStart))
     );
 }
 
@@ -683,12 +682,12 @@ fn test_tagged_scalar() {
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, Event::TagStart { name, .. } if *name == "nickname"))
+            .any(|e| matches!(&e.kind, EventKind::TagStart { name, .. } if *name == "nickname"))
     );
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, Event::Scalar { value, .. } if value == "Bob"))
+            .any(|e| matches!(&e.kind, EventKind::Scalar { value, .. } if value == "Bob"))
     );
 }
 
@@ -697,13 +696,13 @@ fn test_tag_whitespace_gap() {
     let events = parse("x @tag\ny {a b}");
     let tag_events: Vec<_> = events
         .iter()
-        .filter(|e| matches!(e, Event::TagStart { .. } | Event::TagEnd))
+        .filter(|e| matches!(e.kind, EventKind::TagStart { .. } | EventKind::TagEnd))
         .collect();
     assert_eq!(tag_events.len(), 2);
     let keys: Vec<_> = events
         .iter()
-        .filter_map(|e| match e {
-            Event::Key {
+        .filter_map(|e| match &e.kind {
+            EventKind::Key {
                 payload: Some(value),
                 ..
             } => Some(value.as_ref()),
@@ -719,7 +718,7 @@ fn test_object_in_sequence() {
     let events = parse("servers ({host a} {host b})");
     let obj_starts = events
         .iter()
-        .filter(|e| matches!(e, Event::ObjectStart { .. }))
+        .filter(|e| matches!(e.kind, EventKind::ObjectStart))
         .count();
     // 3 = implicit root object + 2 objects in sequence
     assert_eq!(obj_starts, 3);
@@ -730,8 +729,8 @@ fn test_attribute_values() {
     let events = parse("config name>app tags>(a b) opts>{x 1}");
     let keys: Vec<_> = events
         .iter()
-        .filter_map(|e| match e {
-            Event::Key {
+        .filter_map(|e| match &e.kind {
+            EventKind::Key {
                 payload: Some(value),
                 ..
             } => Some(value.as_ref()),
@@ -745,7 +744,7 @@ fn test_attribute_values() {
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, Event::SequenceStart { .. }))
+            .any(|e| matches!(e.kind, EventKind::SequenceStart))
     );
 }
 
@@ -764,8 +763,8 @@ fn test_attribute_no_spaces() {
     let events = parse("x > y");
     let keys: Vec<_> = events
         .iter()
-        .filter_map(|e| match e {
-            Event::Key {
+        .filter_map(|e| match &e.kind {
+            EventKind::Key {
                 payload: Some(value),
                 ..
             } => Some(value.as_ref()),
@@ -781,23 +780,27 @@ fn test_explicit_root_after_comment() {
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, Event::ObjectStart { .. }))
+            .any(|e| matches!(e.kind, EventKind::ObjectStart))
     );
     assert!(
-        events
-            .iter()
-            .any(|e| matches!(e, Event::Key { payload: Some(value), .. } if value == "a"))
+        events.iter().any(
+            |e| matches!(&e.kind, EventKind::Key { payload: Some(value), .. } if value == "a")
+        )
     );
 }
 
 #[test]
 fn test_explicit_root_after_doc_comment() {
     let events = parse("/// doc comment\n{a 1}");
-    assert!(events.iter().any(|e| matches!(e, Event::DocComment { .. })));
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, Event::ObjectStart { .. }))
+            .any(|e| matches!(&e.kind, EventKind::DocComment { .. }))
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(&e.kind, EventKind::ObjectStart))
     );
 }
 
@@ -932,7 +935,7 @@ fn test_unicode_escape_4digit_accented() {
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, Event::Scalar { value, .. } if value == "é"))
+            .any(|e| matches!(&e.kind, EventKind::Scalar { value, .. } if value == "é"))
     );
 }
 
@@ -942,7 +945,7 @@ fn test_unicode_escape_mixed() {
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, Event::Scalar { value, .. } if value == "Hello"))
+            .any(|e| matches!(&e.kind, EventKind::Scalar { value, .. } if value == "Hello"))
     );
 }
 
@@ -982,9 +985,9 @@ x "\0\q\?"
 fn test_valid_escapes_still_work() {
     let events = parse(r#"x "a\nb\tc\\d\"e""#);
     assert!(
-        events
-            .iter()
-            .any(|e| matches!(e, Event::Scalar { value, .. } if value == "a\nb\tc\\d\"e"))
+        events.iter().any(
+            |e| matches!(&e.kind, EventKind::Scalar { value, .. } if value == "a\nb\tc\\d\"e")
+        )
     );
     assert_parse_errors(r#"x "a\nb\tc\\d\"e""#);
 }
@@ -1004,8 +1007,8 @@ fn test_simple_key_value_with_attributes() {
     let events = parse("server host>localhost port>8080");
     let keys: Vec<_> = events
         .iter()
-        .filter_map(|e| match e {
-            Event::Key {
+        .filter_map(|e| match &e.kind {
+            EventKind::Key {
                 payload: Some(value),
                 ..
             } => Some(value.as_ref()),
@@ -1023,8 +1026,8 @@ fn test_dotted_path_simple() {
     let events = parse("a.b value");
     let keys: Vec<_> = events
         .iter()
-        .filter_map(|e| match e {
-            Event::Key {
+        .filter_map(|e| match &e.kind {
+            EventKind::Key {
                 payload: Some(value),
                 ..
             } => Some(value.as_ref()),
@@ -1035,12 +1038,12 @@ fn test_dotted_path_simple() {
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, Event::ObjectStart { .. }))
+            .any(|e| matches!(&e.kind, EventKind::ObjectStart))
     );
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, Event::Scalar { value, .. } if value == "value"))
+            .any(|e| matches!(&e.kind, EventKind::Scalar { value, .. } if value == "value"))
     );
     assert_parse_errors(r#"a.b value"#);
 }
@@ -1050,8 +1053,8 @@ fn test_dotted_path_three_segments() {
     let events = parse("a.b.c deep");
     let keys: Vec<_> = events
         .iter()
-        .filter_map(|e| match e {
-            Event::Key {
+        .filter_map(|e| match &e.kind {
+            EventKind::Key {
                 payload: Some(value),
                 ..
             } => Some(value.as_ref()),
@@ -1061,7 +1064,7 @@ fn test_dotted_path_three_segments() {
     assert_eq!(keys, vec!["a", "b", "c"]);
     let obj_starts: Vec<_> = events
         .iter()
-        .filter(|e| matches!(e, Event::ObjectStart { .. }))
+        .filter(|e| matches!(&e.kind, EventKind::ObjectStart))
         .collect();
     // 3 = implicit root object + 2 from dotted path (a { b { c deep } })
     assert_eq!(obj_starts.len(), 3);
@@ -1073,8 +1076,8 @@ fn test_dotted_path_with_implicit_unit() {
     let events = parse("a.b");
     let keys: Vec<_> = events
         .iter()
-        .filter_map(|e| match e {
-            Event::Key {
+        .filter_map(|e| match &e.kind {
+            EventKind::Key {
                 payload: Some(value),
                 ..
             } => Some(value.as_ref()),
@@ -1082,7 +1085,7 @@ fn test_dotted_path_with_implicit_unit() {
         })
         .collect();
     assert_eq!(keys, vec!["a", "b"]);
-    assert!(events.iter().any(|e| matches!(e, Event::Unit { .. })));
+    assert!(events.iter().any(|e| matches!(&e.kind, EventKind::Unit)));
 }
 
 #[test]
@@ -1120,8 +1123,8 @@ fn test_dotted_path_with_object_value() {
     let events = parse("a.b { c d }");
     let keys: Vec<_> = events
         .iter()
-        .filter_map(|e| match e {
-            Event::Key {
+        .filter_map(|e| match &e.kind {
+            EventKind::Key {
                 payload: Some(value),
                 ..
             } => Some(value.as_ref()),
@@ -1139,8 +1142,8 @@ fn test_dotted_path_with_attributes_value() {
     let events = parse("selector.matchLabels app>web");
     let keys: Vec<_> = events
         .iter()
-        .filter_map(|e| match e {
-            Event::Key {
+        .filter_map(|e| match &e.kind {
+            EventKind::Key {
                 payload: Some(value),
                 ..
             } => Some(value.as_ref()),
@@ -1158,8 +1161,8 @@ fn test_dot_in_value_is_literal() {
     let events = parse("key example.com");
     let keys: Vec<_> = events
         .iter()
-        .filter_map(|e| match e {
-            Event::Key {
+        .filter_map(|e| match &e.kind {
+            EventKind::Key {
                 payload: Some(value),
                 ..
             } => Some(value.as_ref()),
@@ -1170,7 +1173,7 @@ fn test_dot_in_value_is_literal() {
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, Event::Scalar { value, .. } if value == "example.com"))
+            .any(|e| matches!(&e.kind, EventKind::Scalar { value, .. } if value == "example.com"))
     );
     assert_parse_errors(r#"key example.com"#);
 }
@@ -1185,8 +1188,8 @@ foo.baz value3"#,
     );
     let keys: Vec<_> = events
         .iter()
-        .filter_map(|e| match e {
-            Event::Key {
+        .filter_map(|e| match &e.kind {
+            EventKind::Key {
                 payload: Some(value),
                 ..
             } => Some(value.as_ref()),
@@ -1332,7 +1335,7 @@ schema {
     let events = parse(input);
     let errors: Vec<_> = events
         .iter()
-        .filter(|e| matches!(e, Event::Error { .. }))
+        .filter(|e| matches!(e.kind, EventKind::Error { .. }))
         .collect();
     assert!(errors.is_empty(), "Unexpected errors: {:?}", errors);
 }
@@ -1344,7 +1347,7 @@ fn test_tag_with_seq_containing_tag() {
     let events = parse(input);
     let errors: Vec<_> = events
         .iter()
-        .filter(|e| matches!(e, Event::Error { .. }))
+        .filter(|e| matches!(e.kind, EventKind::Error { .. }))
         .collect();
     assert!(errors.is_empty(), "Unexpected errors: {:?}", errors);
 }
@@ -1358,7 +1361,7 @@ fn test_tag_with_typed_literal_in_seq() {
     let events = parse(input);
     let errors: Vec<_> = events
         .iter()
-        .filter(|e| matches!(e, Event::Error { .. }))
+        .filter(|e| matches!(e.kind, EventKind::Error { .. }))
         .collect();
     assert!(errors.is_empty(), "Unexpected errors: {:?}", errors);
 }
@@ -1373,7 +1376,7 @@ fn test_schema_with_comma_separated_entries() {
     }
     let errors: Vec<_> = events
         .iter()
-        .filter(|e| matches!(e, Event::Error { .. }))
+        .filter(|e| matches!(e.kind, EventKind::Error { .. }))
         .collect();
     assert!(errors.is_empty(), "Unexpected errors: {:?}", errors);
 }
@@ -1387,8 +1390,8 @@ fn test_tag_unit_object_is_too_many_atoms() {
 
     let errors: Vec<_> = events
         .iter()
-        .filter_map(|e| match e {
-            Event::Error { kind, .. } => Some(kind),
+        .filter_map(|e| match &e.kind {
+            EventKind::Error { kind } => Some(kind),
             _ => None,
         })
         .collect();

@@ -4,9 +4,18 @@ use std::borrow::Cow;
 
 use styx_tokenizer::Span;
 
-/// Events emitted by the parser.
+/// An event emitted by the parser, with its source location.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Event<'src> {
+pub struct Event<'src> {
+    /// The source location associated with this event.
+    pub span: Span,
+    /// The kind of event.
+    pub kind: EventKind<'src>,
+}
+
+/// The kind of event emitted by the parser.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EventKind<'src> {
     // Document boundaries
     /// Start of document.
     DocumentStart,
@@ -15,27 +24,15 @@ pub enum Event<'src> {
 
     // Objects
     /// Start of an object `{ ... }`.
-    ObjectStart {
-        /// Span of the opening brace.
-        span: Span,
-    },
+    ObjectStart,
     /// End of an object.
-    ObjectEnd {
-        /// Span of the closing brace.
-        span: Span,
-    },
+    ObjectEnd,
 
     // Sequences
     /// Start of a sequence `( ... )`.
-    SequenceStart {
-        /// Span of the opening paren.
-        span: Span,
-    },
+    SequenceStart,
     /// End of a sequence.
-    SequenceEnd {
-        /// Span of the closing paren.
-        span: Span,
-    },
+    SequenceEnd,
 
     // Entry structure (within objects)
     /// Start of an entry (key-value pair).
@@ -45,8 +42,6 @@ pub enum Event<'src> {
     /// Keys can be scalars or unit, optionally tagged.
     /// Objects, sequences, and heredocs are not allowed as keys.
     Key {
-        /// Span of the key.
-        span: Span,
         /// Tag name if this key is tagged (without @).
         tag: Option<&'src str>,
         /// Scalar payload after escape processing. None means unit.
@@ -60,24 +55,17 @@ pub enum Event<'src> {
     // Values
     /// A scalar value.
     Scalar {
-        /// Span of the scalar.
-        span: Span,
         /// Value after escape processing.
         value: Cow<'src, str>,
         /// Kind of scalar.
         kind: ScalarKind,
     },
     /// Unit value `@`.
-    Unit {
-        /// Span of the unit.
-        span: Span,
-    },
+    Unit,
 
     // Tags
     /// Start of a tag `@name`.
     TagStart {
-        /// Span of the tag (including @).
-        span: Span,
         /// Tag name (without @).
         name: &'src str,
     },
@@ -87,15 +75,11 @@ pub enum Event<'src> {
     // Comments
     /// Line comment `// ...`.
     Comment {
-        /// Span of the comment.
-        span: Span,
         /// Comment text (including //).
         text: &'src str,
     },
     /// Doc comment `/// ...`.
     DocComment {
-        /// Span of the doc comment (covers all consecutive doc comment lines).
-        span: Span,
         /// Doc comment lines (without `/// ` prefix).
         lines: Vec<&'src str>,
     },
@@ -103,8 +87,6 @@ pub enum Event<'src> {
     // Errors
     /// Parse error.
     Error {
-        /// Span where error occurred.
-        span: Span,
         /// Kind of error.
         kind: ParseErrorKind,
     },
