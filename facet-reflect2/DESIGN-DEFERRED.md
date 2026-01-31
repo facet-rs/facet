@@ -61,7 +61,19 @@ Parsing left-to-right:
 
 Without deferred mode, the deserializer must buffer all flattened fields until it's seen them all.
 
-Deferred mode allows incomplete frames to persist, with validation deferred to `build()`.
+Deferred mode allows incomplete frames to persist, with validation deferred until the deferred subtree is finalized.
+
+## When is a Frame Deferred?
+
+A struct frame is deferred if it has any `#[facet(flatten)]` fields.
+
+That's it. The deserializer can determine this from the schema before parsing begins.
+
+When a deferred frame is `End`ed:
+- If incomplete → frame stays in arena, can be re-entered later
+- When finally complete and `End`ed → subtree is validated, parent's slot becomes COMPLETE
+
+For TOML's reopened tables, the root itself would be marked deferred (or the deserializer uses deferred mode globally).
 
 ## Multi-Level Paths
 
@@ -162,9 +174,11 @@ At `build()` time, we validate the entire tree is complete.
 
 ## Parent-Child Linking
 
-Currently, `IndexedFields` stores `Idx<Frame>` per slot but only uses sentinels:
-- `NOT_STARTED` (0)
-- `COMPLETE` (u32::MAX)
+`IndexedFields` is a `Vec<Idx<Frame>>` - it could store frame indices, but today we only use sentinels:
+- `NOT_STARTED` (0) - via `mark_not_started()`
+- `COMPLETE` (u32::MAX) - via `mark_complete()`
+
+When we `Build` into a field, we allocate a child frame but never store its index in the parent. We only store `COMPLETE` after `End` succeeds.
 
 For deferred mode, we use the full range:
 - `NOT_STARTED` → field not touched
@@ -173,39 +187,15 @@ For deferred mode, we use the full range:
 
 ### Creating Deferred Frames
 
-When navigating path `&[a, b]`:
+When navigating into a child:
 
-```rust
-fn ensure_child_frame(&mut self, field_idx: u32) -> Idx<Frame> {
-    let frame = self.arena.get(self.current);
+```
+ensure_child_frame(field_idx):
+    child_idx = parent.fields[field_idx]
     
-    match &frame.kind {
-        FrameKind::Struct(s) => {
-            let child_idx = s.fields.0[field_idx as usize];
-            
-            if child_idx.is_valid() {
-                // Re-enter existing frame
-                child_idx
-            } else if child_idx.is_not_started() {
-                // Create new deferred frame
-                let child_frame = /* create frame for field */;
-                let new_idx = self.arena.alloc(child_frame);
-                
-                // Link parent to child
-                let frame = self.arena.get_mut(self.current);
-                if let FrameKind::Struct(s) = &mut frame.kind {
-                    s.fields.0[field_idx as usize] = new_idx;
-                }
-                
-                new_idx
-            } else {
-                // COMPLETE - field already done, error or overwrite?
-                todo!()
-            }
-        }
-        // ... other frame kinds
-    }
-}
+    if child_idx is valid     → re-enter existing frame
+    if child_idx is NOT_STARTED → create frame, store index in parent
+    if child_idx is COMPLETE  → field already done (error? overwrite?)
 ```
 
 ### End Behavior
@@ -216,18 +206,10 @@ In deferred mode, `End` on an incomplete frame:
 3. Parent's `IndexedFields` keeps the valid frame index
 4. Returns to parent
 
-```rust
-fn apply_end_deferred(&mut self) -> Result<(), ReflectError> {
-    let frame = self.arena.get(self.current);
-    let parent_idx = frame.parent_link.parent_idx()
-        .ok_or_else(|| self.error(ReflectErrorKind::EndAtRoot))?;
-    
-    // Don't check completeness - just pop
-    // Frame stays in arena, parent still references it
-    
-    self.current = parent_idx;
-    Ok(())
-}
+```
+apply_end_deferred():
+    if at root → error
+    pop to parent (frame stays in arena, parent keeps reference)
 ```
 
 ## Map Re-entry
@@ -251,45 +233,19 @@ This requires:
 
 ### DynKey
 
-```rust
-struct DynKey {
-    data: TempAlloc,
-    // For lookup, we need hash + eq from the shape's vtable
-}
-
-impl DynKey {
-    fn eq(&self, other: &DynKey) -> bool {
-        // Use shape vtable for comparison
-        todo!()
-    }
-    
-    fn hash(&self) -> u64 {
-        // Use shape vtable for hashing
-        todo!()
-    }
-}
-```
+Type-erased key that can hash and compare using the shape's vtable. Wraps a `TempAlloc` with the key data.
 
 ### MapFrame Changes
 
-```rust
-struct MapFrame {
-    def: &'static MapDef,
-    initialized: bool,
-    len: usize,
-    // NEW: track in-progress value frames by key
-    pending: HashMap<DynKey, Idx<Frame>>,
-}
-```
+Add a `pending: HashMap<DynKey, Idx<Frame>>` to track in-progress value frames by key.
 
 On `Insert { key, value: Build }`:
-1. Check if `pending` has an entry for this key
-2. If yes, re-enter that frame
-3. If no, create new frame and add to `pending`
+- If `pending` has this key → re-enter that frame
+- Otherwise → create new frame, add to `pending`
 
 On `End` of a map value frame:
-1. If complete, call `insert_fn` and remove from `pending`
-2. If incomplete (deferred), keep in `pending`
+- If complete → call `insert_fn`, remove from `pending`
+- If incomplete → keep in `pending` for re-entry
 
 ## What Cannot Be Deferred
 
@@ -307,30 +263,14 @@ End  // element gets hashed and inserted here
 
 In deferred mode, `build()` must recursively validate:
 
-```rust
-fn validate_complete(&self, idx: Idx<Frame>) -> Result<(), ReflectError> {
-    let frame = self.arena.get(idx);
+```
+validate_complete(frame):
+    if frame.INIT → ok
     
-    if frame.flags.contains(FrameFlags::INIT) {
-        return Ok(());
-    }
-    
-    match &frame.kind {
-        FrameKind::Struct(s) => {
-            for (i, child_idx) in s.fields.0.iter().enumerate() {
-                if child_idx.is_not_started() {
-                    return Err(/* field i not initialized */);
-                } else if child_idx.is_valid() {
-                    // Recurse into child frame
-                    self.validate_complete(*child_idx)?;
-                }
-                // COMPLETE is fine
-            }
-            Ok(())
-        }
-        // ... other kinds
-    }
-}
+    for each child slot:
+        if NOT_STARTED → error (missing field)
+        if valid index → recurse into child frame
+        if COMPLETE   → ok
 ```
 
 ## Mode Selection
