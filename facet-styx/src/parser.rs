@@ -162,12 +162,7 @@ impl<'de> StyxParser<'de> {
         match event {
             Event::DocumentStart => {
                 if self.at_implicit_root {
-                    // Parser no longer emits ObjectStart for implicit root,
-                    // so we synthesize StructStart here for the implicit root object.
-                    self.depth += 1;
-                    Ok(Some(
-                        self.event(ParseEventKind::StructStart(ContainerKind::Object)),
-                    ))
+                    Ok(None)
                 } else {
                     // Expression mode - no implicit root, skip DocumentStart
                     Ok(None)
@@ -176,13 +171,7 @@ impl<'de> StyxParser<'de> {
 
             Event::DocumentEnd => {
                 if self.at_implicit_root {
-                    // Parser no longer emits ObjectEnd for implicit root,
-                    // so we synthesize StructEnd here for the implicit root object.
-                    self.depth -= 1;
-                    if self.depth == 0 {
-                        self.at_implicit_root = false;
-                    }
-                    Ok(Some(self.event(ParseEventKind::StructEnd)))
+                    Ok(None)
                 } else {
                     // Expression mode - no implicit root, skip DocumentEnd
                     Ok(None)

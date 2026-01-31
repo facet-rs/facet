@@ -3,11 +3,11 @@ source: crates/facet-styx/src/error.rs
 expression: stripped
 ---
 Error: missing required field 'age'
-   ╭─[ test.styx:1:6 ]
+   ╭─[ test.styx:1:1 ]
    │
  1 │ name Alice
-   │      ──┬──  
-   │        ╰──── in Person
+   │ │ 
+   │ ╰─ in Person
    │ 
    │ Help: age <value>
 ───╯

@@ -233,20 +233,29 @@ impl<'src> Parser<'src> {
                 Lexeme::DocComment { span, text } => {
                     if let ParserState::DocumentRoot {
                         pending_doc_comment,
+                        emitted_object_start,
                         ..
                     } = &mut self.state
                     {
                         *pending_doc_comment = Some(span);
+                        // Doc comments are content, so emit implicit ObjectStart first
+                        if !*emitted_object_start {
+                            *emitted_object_start = true;
+                            self.event_queue.push_back(Event::ObjectStart {
+                                span: Span::empty(0),
+                            });
+                        }
                     }
                     // Strip `/// ` or `///` prefix
                     let line = text
                         .strip_prefix("/// ")
                         .or_else(|| text.strip_prefix("///"))
                         .unwrap_or(text);
-                    return Some(Event::DocComment {
+                    self.event_queue.push_back(Event::DocComment {
                         span,
                         lines: vec![line],
                     });
+                    return self.event_queue.pop_front();
                 }
                 Lexeme::ObjectStart { span } => {
                     // Explicit root object - after it closes, document is done

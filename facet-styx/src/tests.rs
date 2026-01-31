@@ -645,6 +645,19 @@ fn test_nested_object_events() {
     );
 }
 
+#[test]
+fn test_explicit_root_object_only_one_structstart() {
+    assert_events_eq!(
+        "{key val}",
+        "
+        StructStart
+        FieldKey(\"key\")
+        Scalar(\"val\")
+        StructEnd
+        "
+    );
+}
+
 /// Test metadata container with both span and doc metadata as map key.
 #[test]
 fn test_metadata_container_with_span_and_doc_as_map_key() {
