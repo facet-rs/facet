@@ -9,8 +9,12 @@ use crate::errors::ReflectErrorKind;
 
 /// A temporary allocation for a value of a given shape.
 ///
-/// This owns the memory and will deallocate it on drop.
-/// The value may or may not be initialized - tracked by the `initialized` flag.
+/// This owns both:
+/// - The allocated memory buffer (always deallocated on drop)
+/// - The value inside, if initialized (dropped on drop, unless `mark_moved` was called)
+///
+/// When you copy a value into a `TempAlloc` via `copy_from`, ownership transfers
+/// immediately - the original must be forgotten with `mem::forget` right after the copy.
 pub struct TempAlloc {
     ptr: PtrUninit,
     shape: &'static Shape,
@@ -52,7 +56,16 @@ impl TempAlloc {
         self.ptr
     }
 
-    /// Copy a value into the allocation, marking it as initialized.
+    /// Copy a value into the allocation, taking ownership.
+    ///
+    /// This performs a bitwise copy. After this call, `TempAlloc` owns the value
+    /// and will drop it when dropped (unless `mark_moved` is called first).
+    ///
+    /// # Ownership
+    ///
+    /// **The caller must `mem::forget` the source value immediately after this call.**
+    /// The source and the copy share heap allocations - if both are dropped, you get
+    /// a double-free. The `TempAlloc` now owns the value; the source must be forgotten.
     ///
     /// # Safety
     ///
@@ -68,6 +81,9 @@ impl TempAlloc {
 
     /// Initialize the allocation with the type's default value.
     ///
+    /// Creates a new value via `Default` - no external ownership transfer.
+    /// The `TempAlloc` owns the newly created value.
+    ///
     /// Returns `None` if the type has no default.
     pub fn init_default(&mut self) -> Option<()> {
         debug_assert!(!self.initialized, "already initialized");
@@ -81,7 +97,9 @@ impl TempAlloc {
 
     /// Mark the value as moved out (will not be dropped on deallocation).
     ///
-    /// Call this after the value has been consumed by a move operation.
+    /// Call this after the value's bytes have been moved elsewhere (e.g., into a map).
+    /// The new location now owns the value; `TempAlloc` will only deallocate its
+    /// memory buffer, not drop the value.
     pub fn mark_moved(&mut self) {
         self.initialized = false;
     }

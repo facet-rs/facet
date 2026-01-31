@@ -72,13 +72,16 @@ pub struct Imm<'a> {
 }
 
 impl<'a> Imm<'a> {
-    /// Create a Move from a reference to a value.
+    /// Create an Imm from a reference to a value.
     ///
-    /// This is the safe way to create a Move - the lifetime ensures the
-    /// source value remains valid.
+    /// This is the safe way to create an Imm - the lifetime ensures the
+    /// source value remains valid until `apply()` is called.
     ///
-    /// After `apply()` returns successfully, the value's bytes have been copied
-    /// and the caller must not drop the source value (use `mem::forget`).
+    /// # Ownership
+    ///
+    /// After `apply()` is called (whether it succeeds or fails), the value's bytes
+    /// may have been copied and the caller must not drop the source value. Use
+    /// `mem::forget` on the source immediately after calling `apply()`.
     #[inline]
     pub fn from_ref<'facet, T: Facet<'facet>>(value: &'a T) -> Self {
         Self {

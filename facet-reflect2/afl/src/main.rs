@@ -463,8 +463,9 @@ pub enum FuzzOp {
 pub struct FuzzInput {
     /// The type to allocate.
     pub target: FuzzTargetType,
-    /// Operations to apply.
-    pub ops: Vec<FuzzOp>,
+    /// Batches of operations to apply.
+    /// Each inner Vec is applied as a single `apply()` call.
+    pub batches: Vec<Vec<FuzzOp>>,
 }
 
 // ============================================================================
@@ -506,212 +507,172 @@ fn run_fuzz(input: FuzzInput, log: bool) {
         }
     };
 
-    // Apply operations (stop on first error)
-    for (i, fuzz_op) in input.ops.into_iter().enumerate() {
-        let result = match fuzz_op {
-            FuzzOp::Set { path, source } => {
-                match source {
+    // Process each batch
+    for (batch_idx, batch) in input.batches.into_iter().enumerate() {
+        if log {
+            eprintln!("  [batch {batch_idx}] {} ops", batch.len());
+        }
+
+        // Collect values that need to be forgotten after apply().
+        // apply() takes ownership of all Imm sources - we must forget them
+        // regardless of success or failure.
+        let mut values_to_forget: Vec<FuzzValue> = Vec::new();
+
+        // Build the ops for this batch
+        let mut ops: Vec<Op<'_>> = Vec::new();
+
+        for (i, fuzz_op) in batch.iter().enumerate() {
+            match fuzz_op {
+                FuzzOp::Set { path, source } => match source {
                     FuzzSource::Imm(value) => {
                         if log {
-                            eprintln!("  [{i}] Set dst={:?} src=Imm({:?})", path, value);
+                            eprintln!("    [{i}] Set dst={:?} src=Imm({:?})", path, value);
                         }
                         let (ptr, shape) = value.as_ptr_and_shape();
-                        // SAFETY: ptr points to value which is valid and initialized,
-                        // and remains valid until apply() returns
                         let imm = unsafe { Imm::new(ptr, shape) };
-                        let op = Op::Set {
+                        ops.push(Op::Set {
                             dst: path.to_path(),
                             src: Source::Imm(imm),
-                        };
-
-                        let result = partial.apply(&[op]);
-
-                        if log {
-                            eprintln!("    result: {result:?}");
-                        }
-
-                        if result.is_ok() {
-                            // Success! The value's bytes have been copied into the Partial.
-                            // We must forget the original to avoid double-free.
-                            std::mem::forget(value);
-                        }
-                        // On failure, value is dropped normally (no bytes were copied)
-                        result
+                        });
                     }
                     FuzzSource::Default => {
                         if log {
-                            eprintln!("  [{i}] Set dst={:?} src=Default", path);
+                            eprintln!("    [{i}] Set dst={:?} src=Default", path);
                         }
-                        let op = Op::Set {
+                        ops.push(Op::Set {
                             dst: path.to_path(),
                             src: Source::Default,
-                        };
-                        let result = partial.apply(&[op]);
-                        if log {
-                            eprintln!("    result: {result:?}");
-                        }
-                        result
+                        });
                     }
                     FuzzSource::Build { len_hint } => {
                         if log {
-                            eprintln!("  [{i}] Set dst={:?} src=Build({:?})", path, len_hint);
+                            eprintln!("    [{i}] Set dst={:?} src=Build({:?})", path, len_hint);
                         }
-                        let op = Op::Set {
+                        ops.push(Op::Set {
                             dst: path.to_path(),
                             src: Source::Build(Build {
-                                len_hint: len_hint.map(|h| h as usize),
+                                len_hint: len_hint.as_ref().map(|&h| h as usize),
                             }),
-                        };
-                        let result = partial.apply(&[op]);
-                        if log {
-                            eprintln!("    result: {result:?}");
-                        }
-                        result
+                        });
                     }
-                }
-            }
-            FuzzOp::Push { source } => {
-                match source {
+                },
+                FuzzOp::Push { source } => match source {
                     FuzzSource::Imm(value) => {
                         if log {
-                            eprintln!("  [{i}] Push src=Imm({:?})", value);
+                            eprintln!("    [{i}] Push src=Imm({:?})", value);
                         }
                         let (ptr, shape) = value.as_ptr_and_shape();
-                        // SAFETY: ptr points to value which is valid and initialized,
-                        // and remains valid until apply() returns
                         let imm = unsafe { Imm::new(ptr, shape) };
-                        let op = Op::Push {
+                        ops.push(Op::Push {
                             src: Source::Imm(imm),
-                        };
-
-                        let result = partial.apply(&[op]);
-
-                        if log {
-                            eprintln!("    result: {result:?}");
-                        }
-
-                        if result.is_ok() {
-                            // Success! The value's bytes have been copied into the list.
-                            // We must forget the original to avoid double-free.
-                            std::mem::forget(value);
-                        }
-                        // On failure, value is dropped normally (no bytes were copied)
-                        result
+                        });
                     }
                     FuzzSource::Default => {
                         if log {
-                            eprintln!("  [{i}] Push src=Default");
+                            eprintln!("    [{i}] Push src=Default");
                         }
-                        let op = Op::Push {
+                        ops.push(Op::Push {
                             src: Source::Default,
-                        };
-                        let result = partial.apply(&[op]);
-                        if log {
-                            eprintln!("    result: {result:?}");
-                        }
-                        result
+                        });
                     }
                     FuzzSource::Build { len_hint } => {
                         if log {
-                            eprintln!("  [{i}] Push src=Build({:?})", len_hint);
+                            eprintln!("    [{i}] Push src=Build({:?})", len_hint);
                         }
-                        let op = Op::Push {
+                        ops.push(Op::Push {
                             src: Source::Build(Build {
-                                len_hint: len_hint.map(|h| h as usize),
+                                len_hint: len_hint.as_ref().map(|&h| h as usize),
                             }),
-                        };
-                        let result = partial.apply(&[op]);
-                        if log {
-                            eprintln!("    result: {result:?}");
-                        }
-                        result
+                        });
                     }
+                },
+                FuzzOp::Insert { key, value } => {
+                    let (key_ptr, key_shape) = key.as_ptr_and_shape();
+                    let key_imm = unsafe { Imm::new(key_ptr, key_shape) };
+
+                    match value {
+                        FuzzSource::Imm(val) => {
+                            if log {
+                                eprintln!("    [{i}] Insert key={:?} value=Imm({:?})", key, val);
+                            }
+                            let (val_ptr, val_shape) = val.as_ptr_and_shape();
+                            let val_imm = unsafe { Imm::new(val_ptr, val_shape) };
+                            ops.push(Op::Insert {
+                                key: key_imm,
+                                value: Source::Imm(val_imm),
+                            });
+                        }
+                        FuzzSource::Default => {
+                            if log {
+                                eprintln!("    [{i}] Insert key={:?} value=Default", key);
+                            }
+                            ops.push(Op::Insert {
+                                key: key_imm,
+                                value: Source::Default,
+                            });
+                        }
+                        FuzzSource::Build { len_hint } => {
+                            if log {
+                                eprintln!(
+                                    "    [{i}] Insert key={:?} value=Build({:?})",
+                                    key, len_hint
+                                );
+                            }
+                            ops.push(Op::Insert {
+                                key: key_imm,
+                                value: Source::Build(Build {
+                                    len_hint: len_hint.as_ref().map(|&h| h as usize),
+                                }),
+                            });
+                        }
+                    }
+                }
+                FuzzOp::End => {
+                    if log {
+                        eprintln!("    [{i}] End");
+                    }
+                    ops.push(Op::End);
                 }
             }
-            FuzzOp::Insert { key, value } => {
-                let (key_ptr, key_shape) = key.as_ptr_and_shape();
-                // SAFETY: key_ptr points to key which is valid and initialized
-                let key_imm = unsafe { Imm::new(key_ptr, key_shape) };
+        }
 
-                match value {
-                    FuzzSource::Imm(val) => {
-                        if log {
-                            eprintln!("  [{i}] Insert key={:?} value=Imm({:?})", key, val);
-                        }
-                        let (val_ptr, val_shape) = val.as_ptr_and_shape();
-                        // SAFETY: val_ptr points to val which is valid and initialized
-                        let val_imm = unsafe { Imm::new(val_ptr, val_shape) };
-                        let op = Op::Insert {
-                            key: key_imm,
-                            value: Source::Imm(val_imm),
-                        };
-
-                        let result = partial.apply(&[op]);
-
-                        if log {
-                            eprintln!("    result: {result:?}");
-                        }
-
-                        if result.is_ok() {
-                            // Success! Both key and value bytes have been copied into the map.
-                            // We must forget the originals to avoid double-free.
-                            std::mem::forget(key);
-                            std::mem::forget(val);
-                        }
-                        result
-                    }
-                    FuzzSource::Default => {
-                        if log {
-                            eprintln!("  [{i}] Insert key={:?} value=Default", key);
-                        }
-                        let op = Op::Insert {
-                            key: key_imm,
-                            value: Source::Default,
-                        };
-                        let result = partial.apply(&[op]);
-                        if log {
-                            eprintln!("    result: {result:?}");
-                        }
-                        if result.is_ok() {
-                            // Key was copied into the map
-                            std::mem::forget(key);
-                        }
-                        result
-                    }
-                    FuzzSource::Build { len_hint } => {
-                        if log {
-                            eprintln!("  [{i}] Insert key={:?} value=Build({:?})", key, len_hint);
-                        }
-                        let op = Op::Insert {
-                            key: key_imm,
-                            value: Source::Build(Build {
-                                len_hint: len_hint.map(|h| h as usize),
-                            }),
-                        };
-                        let result = partial.apply(&[op]);
-                        if log {
-                            eprintln!("    result: {result:?}");
-                        }
-                        if result.is_ok() {
-                            // Key was copied into the pending key storage
-                            std::mem::forget(key);
-                        }
-                        result
+        // Collect all values that will have their bytes copied.
+        // We need to forget these AFTER apply() returns, regardless of success/failure.
+        for fuzz_op in batch {
+            match fuzz_op {
+                FuzzOp::Set {
+                    source: FuzzSource::Imm(value),
+                    ..
+                } => {
+                    values_to_forget.push(value);
+                }
+                FuzzOp::Push {
+                    source: FuzzSource::Imm(value),
+                } => {
+                    values_to_forget.push(value);
+                }
+                FuzzOp::Insert { key, value } => {
+                    values_to_forget.push(key);
+                    if let FuzzSource::Imm(val) = value {
+                        values_to_forget.push(val);
                     }
                 }
+                _ => {}
             }
-            FuzzOp::End => {
-                if log {
-                    eprintln!("  [{i}] End");
-                }
-                let result = partial.apply(&[Op::End]);
-                if log {
-                    eprintln!("    result: {result:?}");
-                }
-                result
-            }
-        };
+        }
 
+        // Apply the batch
+        let result = partial.apply(&ops);
+        if log {
+            eprintln!("    batch result: {result:?}");
+        }
+
+        // Forget all Imm sources - apply() takes ownership regardless of success/failure
+        for value in values_to_forget {
+            std::mem::forget(value);
+        }
+
+        // Stop on first error (partial is poisoned)
         if result.is_err() {
             break;
         }
