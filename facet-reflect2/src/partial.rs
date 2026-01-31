@@ -155,38 +155,31 @@ impl<'facet> Partial<'facet> {
         result
     }
 
-    /// Apply a batch of operations with proper ownership tracking.
+    /// Apply a batch of operations.
     ///
-    /// Unlike `apply()`, this method updates the batch's consumption tracking
-    /// so that unconsumed `Imm` values are properly dropped when the batch is dropped.
+    /// Returns an [`ApplyBatchResult`](crate::ops::ApplyBatchResult) indicating how many
+    /// operations were consumed. The caller is responsible for cleanup:
     ///
-    /// The caller must `mem::forget` all source values after adding them to the batch.
-    /// The batch takes ownership and handles cleanup of both consumed and unconsumed values.
-    pub fn apply_batch(&mut self, batch: &crate::ops::OpBatch<'_>) -> Result<(), ReflectError> {
+    /// - For ops `0..result.consumed_count`: `Imm` data was moved into the Partial.
+    ///   The caller must NOT drop the source values (use `mem::forget`).
+    /// - For ops `result.consumed_count..`: `Imm` data was NOT consumed.
+    ///   The caller should drop the source values normally.
+    pub fn apply_batch(&mut self, batch: &crate::ops::OpBatch<'_>) -> crate::ops::ApplyBatchResult {
+        use crate::ops::ApplyBatchResult;
+
         if self.poisoned {
-            return Err(ReflectError::at_root(
-                self.root_shape,
-                ReflectErrorKind::Poisoned,
-            ));
+            return ApplyBatchResult {
+                consumed_count: 0,
+                error: Some(ReflectError::at_root(
+                    self.root_shape,
+                    ReflectErrorKind::Poisoned,
+                )),
+            };
         }
 
-        let result = self.apply_batch_inner(batch);
-        if result.is_err() {
-            self.poison();
-        }
-        result
-    }
-
-    fn apply_batch_inner(&mut self, batch: &crate::ops::OpBatch<'_>) -> Result<(), ReflectError> {
         let ops = batch.ops();
         for (i, op) in ops.iter().enumerate() {
-            // Mark this op as consumed BEFORE processing it.
-            // If processing fails after copying Imm bytes, those bytes are now
-            // owned by the partial (or a TempAlloc that will clean them up).
-            // The batch should NOT drop them again.
-            batch.mark_consumed_up_to(i + 1);
-
-            match op {
+            let result = match op {
                 Op::Set {
                     dst: path,
                     src: source,
@@ -197,23 +190,29 @@ impl<'facet> Partial<'facet> {
                         && matches!(frame.shape.ty, Type::User(UserType::Enum(_)));
 
                     if is_enum_variant_selection {
-                        self.apply_enum_variant_set(path, source)?;
+                        self.apply_enum_variant_set(path, source)
                     } else {
-                        self.apply_regular_set(path, source)?;
+                        self.apply_regular_set(path, source)
                     }
                 }
-                Op::Push { src } => {
-                    self.apply_push(src)?;
-                }
-                Op::Insert { key, value } => {
-                    self.apply_insert(key, value)?;
-                }
-                Op::End => {
-                    self.apply_end()?;
-                }
+                Op::Push { src } => self.apply_push(src),
+                Op::Insert { key, value } => self.apply_insert(key, value),
+                Op::End => self.apply_end(),
+            };
+
+            if let Err(e) = result {
+                self.poison();
+                return ApplyBatchResult {
+                    consumed_count: i,
+                    error: Some(e),
+                };
             }
         }
-        Ok(())
+
+        ApplyBatchResult {
+            consumed_count: ops.len(),
+            error: None,
+        }
     }
 
     fn apply_inner(&mut self, ops: &[Op<'_>]) -> Result<(), ReflectError> {

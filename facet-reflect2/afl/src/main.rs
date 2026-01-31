@@ -733,21 +733,48 @@ fn run_fuzz(input: FuzzInput, log: bool) {
             }
         }
 
-        // Apply the batch - OpBatch tracks which ops were consumed
+        // Apply the batch
         let result = partial.apply_batch(&op_batch);
         if log {
             eprintln!("    batch result: {result:?}");
         }
 
-        // Forget the FuzzValue containers - OpBatch's Drop will handle the Imm cleanup.
-        // We must forget the batch because OpBatch now "owns" the Imm pointers and will
-        // drop unconsumed ones. If we let batch drop, we'd double-free consumed values.
-        std::mem::forget(batch);
-
-        // OpBatch drops here - it will drop any unconsumed Imm values
+        // Handle cleanup based on what was consumed:
+        // - ops 0..consumed_count: data moved to Partial → forget source values
+        // - ops consumed_count..: data NOT moved → let source values drop normally
+        for (i, fuzz_op) in batch.into_iter().enumerate() {
+            let consumed = i < result.consumed_count;
+            match fuzz_op {
+                FuzzOp::Set { source, .. } => {
+                    if let FuzzSource::Imm(value) = source {
+                        if consumed {
+                            std::mem::forget(value);
+                        }
+                        // else: let value drop normally
+                    }
+                }
+                FuzzOp::Push { source } => {
+                    if let FuzzSource::Imm(value) = source {
+                        if consumed {
+                            std::mem::forget(value);
+                        }
+                    }
+                }
+                FuzzOp::Insert { key, value } => {
+                    if consumed {
+                        std::mem::forget(key);
+                        if let FuzzSource::Imm(value) = value {
+                            std::mem::forget(value);
+                        }
+                    }
+                    // else: let key and value drop normally
+                }
+                FuzzOp::End => {}
+            }
+        }
 
         // Stop on first error (partial is poisoned)
-        if result.is_err() {
+        if result.error.is_some() {
             break;
         }
     }

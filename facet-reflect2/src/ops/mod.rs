@@ -2,7 +2,6 @@
 
 mod builder;
 
-use std::cell::Cell;
 use std::marker::PhantomData;
 
 use facet_core::{Facet, PtrConst, PtrMut, Shape};
@@ -61,9 +60,6 @@ pub enum Source<'a> {
 /// The lifetime `'a` ensures the source pointer remains valid until the
 /// operation is applied.
 ///
-/// This holds a `PtrMut` because dropping the value (if unconsumed) requires
-/// mutable access - `Drop::drop` takes `&mut self`.
-///
 /// # Safety invariant
 ///
 /// `ptr` must point to a valid, initialized value whose type matches `shape`.
@@ -79,13 +75,7 @@ impl<'a> Imm<'a> {
     /// Create an Imm from a mutable reference to a value.
     ///
     /// This is the safe way to create an Imm - the lifetime ensures the
-    /// source value remains valid until `apply()` is called.
-    ///
-    /// # Ownership
-    ///
-    /// After `apply()` is called (whether it succeeds or fails), the value's bytes
-    /// may have been copied and the caller must not drop the source value. Use
-    /// `mem::forget` on the source immediately after calling `apply()`.
+    /// source value remains valid until `apply_batch()` is called.
     #[inline]
     pub fn from_ref<'facet, T: Facet<'facet>>(value: &'a mut T) -> Self {
         Self {
@@ -101,8 +91,6 @@ impl<'a> Imm<'a> {
     ///
     /// - `ptr` must point to a valid, initialized value whose type matches `shape`
     /// - `ptr` must remain valid for lifetime `'a`
-    /// - After `apply()` returns successfully, the value has been moved and the
-    ///   caller must not drop or use the source value (e.g., use `mem::forget`)
     #[inline]
     pub unsafe fn new(ptr: PtrMut, shape: &'static Shape) -> Self {
         Self {
@@ -136,34 +124,25 @@ pub struct Build {
     pub len_hint: Option<usize>,
 }
 
-/// A batch of operations with ownership tracking.
+/// A batch of operations to apply to a [`Partial`](crate::Partial).
 ///
-/// When you create an `OpBatch`, ownership of all `Imm` values transfers to the batch.
-/// The caller must `mem::forget` all source values immediately after adding them.
-///
-/// When `apply()` processes ops, it marks each one as consumed. On drop, the batch
-/// drops any unconsumed `Imm` values (those that were never copied into the partial).
+/// `OpBatch` does NOT take ownership of the data pointed to by `Imm` values.
+/// The caller retains ownership and is responsible for cleanup based on the
+/// [`ApplyBatchResult`] returned by [`Partial::apply_batch`](crate::Partial::apply_batch).
 pub struct OpBatch<'a> {
     ops: Vec<Op<'a>>,
-    /// Index of the first unconsumed op. Everything before this was consumed.
-    /// Use Cell for interior mutability so apply() can update it.
-    consumed_up_to: Cell<usize>,
 }
 
 impl<'a> OpBatch<'a> {
     /// Create a new empty batch.
     pub fn new() -> Self {
-        Self {
-            ops: Vec::new(),
-            consumed_up_to: Cell::new(0),
-        }
+        Self { ops: Vec::new() }
     }
 
     /// Create a batch with the given capacity.
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             ops: Vec::with_capacity(capacity),
-            consumed_up_to: Cell::new(0),
         }
     }
 
@@ -177,15 +156,14 @@ impl<'a> OpBatch<'a> {
         &self.ops
     }
 
-    /// Mark that ops up to (but not including) `index` have been consumed.
-    /// Called by `Partial::apply()` as it processes each op.
-    pub fn mark_consumed_up_to(&self, index: usize) {
-        self.consumed_up_to.set(index);
+    /// Get the number of operations in the batch.
+    pub fn len(&self) -> usize {
+        self.ops.len()
     }
 
-    /// Get the current consumed index.
-    pub fn consumed_up_to(&self) -> usize {
-        self.consumed_up_to.get()
+    /// Returns true if the batch is empty.
+    pub fn is_empty(&self) -> bool {
+        self.ops.is_empty()
     }
 }
 
@@ -195,41 +173,19 @@ impl Default for OpBatch<'_> {
     }
 }
 
-impl Drop for OpBatch<'_> {
-    fn drop(&mut self) {
-        // Drop any Imm values that were NOT consumed (from consumed_up_to onwards)
-        let start = self.consumed_up_to.get();
-        for op in &self.ops[start..] {
-            // Drop Imm values in this op
-            match op {
-                Op::Set {
-                    src: Source::Imm(imm),
-                    ..
-                } => {
-                    // SAFETY: This Imm was never copied, so we own it and must drop it
-                    unsafe {
-                        imm.shape.call_drop_in_place(imm.ptr);
-                    }
-                }
-                Op::Push {
-                    src: Source::Imm(imm),
-                } => unsafe {
-                    imm.shape.call_drop_in_place(imm.ptr);
-                },
-                Op::Insert { key, value } => {
-                    // Always drop the key
-                    unsafe {
-                        key.shape.call_drop_in_place(key.ptr);
-                    }
-                    // Drop value if it's an Imm
-                    if let Source::Imm(imm) = value {
-                        unsafe {
-                            imm.shape.call_drop_in_place(imm.ptr);
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
+/// Result of applying a batch of operations.
+///
+/// This tells the caller which operations were consumed so they can handle cleanup:
+/// - Operations `0..consumed_count` were fully processed - their `Imm` data was moved
+///   into the `Partial` and the caller should NOT drop the source values
+/// - If `error` is `Some`, operation at index `consumed_count` failed - its `Imm` data
+///   was NOT moved and the caller should drop the source value normally
+/// - Operations after `consumed_count` were never processed - the caller should drop
+///   their source values normally
+#[derive(Debug)]
+pub struct ApplyBatchResult {
+    /// Number of operations that were fully consumed (data moved into Partial).
+    pub consumed_count: usize,
+    /// The error that stopped processing, if any.
+    pub error: Option<crate::errors::ReflectError>,
 }
