@@ -469,47 +469,7 @@ impl<'facet> Partial<'facet> {
                     // Setting a field - need to handle already-INIT structs/tuples
                     let frame = self.arena.get_mut(self.current);
                     let field_idx = path.as_slice()[0] as usize;
-
-                    if frame.flags.contains(FrameFlags::INIT) {
-                        // The whole struct was previously initialized via Imm.
-                        // We need to:
-                        // 1. Drop the old field value
-                        // 2. Clear INIT flag
-                        // 3. Mark all OTHER fields as complete (they're still valid)
-
-                        // Get the struct type to access field info
-                        if let Type::User(UserType::Struct(ref struct_type)) = frame.shape.ty {
-                            // Drop the old field value
-                            let field = &struct_type.fields[field_idx];
-                            // SAFETY: INIT means field is initialized
-                            unsafe {
-                                let field_ptr = frame.data.assume_init().field(field.offset);
-                                field.shape().call_drop_in_place(field_ptr);
-                            }
-
-                            // Clear INIT and switch to field tracking
-                            frame.flags.remove(FrameFlags::INIT);
-
-                            // Mark all OTHER fields as complete
-                            if let FrameKind::Struct(ref mut s) = frame.kind {
-                                for i in 0..struct_type.fields.len() {
-                                    if i != field_idx {
-                                        s.mark_field_complete(i);
-                                    }
-                                }
-                            }
-                        }
-                    } else if frame.kind.is_field_complete(field_idx) {
-                        // Field was previously set individually - drop the old value
-                        if let Type::User(UserType::Struct(ref struct_type)) = frame.shape.ty {
-                            let field = &struct_type.fields[field_idx];
-                            // SAFETY: field is marked complete, so it's initialized
-                            unsafe {
-                                let field_ptr = frame.data.assume_init().field(field.offset);
-                                field.shape().call_drop_in_place(field_ptr);
-                            }
-                        }
-                    }
+                    frame.prepare_field_for_overwrite(field_idx);
                 }
 
                 // Re-resolve path after potential mutation
@@ -738,47 +698,7 @@ impl<'facet> Partial<'facet> {
                     // Setting a field - need to handle already-INIT structs/tuples
                     let frame = self.arena.get_mut(self.current);
                     let field_idx = path.as_slice()[0] as usize;
-
-                    if frame.flags.contains(FrameFlags::INIT) {
-                        // The whole struct was previously initialized via Imm.
-                        // We need to:
-                        // 1. Drop the old field value
-                        // 2. Clear INIT flag
-                        // 3. Mark all OTHER fields as complete (they're still valid)
-
-                        // Get the struct type to access field info
-                        if let Type::User(UserType::Struct(ref struct_type)) = frame.shape.ty {
-                            // Drop the old field value
-                            let field = &struct_type.fields[field_idx];
-                            // SAFETY: INIT means field is initialized
-                            unsafe {
-                                let field_ptr = frame.data.assume_init().field(field.offset);
-                                field.shape().call_drop_in_place(field_ptr);
-                            }
-
-                            // Clear INIT and switch to field tracking
-                            frame.flags.remove(FrameFlags::INIT);
-
-                            // Mark all OTHER fields as complete
-                            if let FrameKind::Struct(ref mut s) = frame.kind {
-                                for i in 0..struct_type.fields.len() {
-                                    if i != field_idx {
-                                        s.mark_field_complete(i);
-                                    }
-                                }
-                            }
-                        }
-                    } else if frame.kind.is_field_complete(field_idx) {
-                        // Field was previously set individually - drop the old value
-                        if let Type::User(UserType::Struct(ref struct_type)) = frame.shape.ty {
-                            let field = &struct_type.fields[field_idx];
-                            // SAFETY: field is marked complete, so it's initialized
-                            unsafe {
-                                let field_ptr = frame.data.assume_init().field(field.offset);
-                                field.shape().call_drop_in_place(field_ptr);
-                            }
-                        }
-                    }
+                    frame.prepare_field_for_overwrite(field_idx);
                 }
 
                 // Re-resolve path after potential mutation

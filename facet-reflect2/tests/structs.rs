@@ -37,6 +37,37 @@ fn set_field_on_init_struct_then_error_no_double_free() {
     // The partial is now poisoned, which is fine - but we shouldn't have UB
 }
 
+// Regression test for double-free bug found by AFL fuzzer.
+// When overwriting a field that was previously set individually (not via whole-struct Imm),
+// we drop the old value but don't mark it incomplete. Then if the operation fails,
+// poison() -> uninit() sees the field as complete and tries to drop it again.
+#[test]
+fn overwrite_field_then_fail_no_double_free() {
+    #[derive(Debug, Facet)]
+    struct HasBox {
+        value: Box<i32>,
+        other: i32,
+    }
+
+    let mut partial = Partial::alloc::<HasBox>().unwrap();
+
+    // Step 1: Set field 0 (Box<i32>) via Imm
+    let mut boxed = Box::new(42i32);
+    partial.apply(&[Op::set().at(0).imm(&mut boxed)]).unwrap();
+    std::mem::forget(boxed); // Ownership transferred
+
+    // Step 2: Try to overwrite field 0 with Default - this should:
+    // 1. Drop the old Box<i32>
+    // 2. Try to call default (Box<i32> has no default without T: Default)
+    // 3. Fail and poison the partial
+    // The bug was: after dropping the old value, we didn't mark the field incomplete,
+    // so poison() -> uninit() would try to drop it again (use-after-free).
+    let err = partial.apply(&[Op::set().at(0).default()]).unwrap_err();
+    assert!(matches!(err.kind, ReflectErrorKind::NoDefault { .. }));
+
+    // If we get here without crashing, the bug is fixed
+}
+
 #[derive(Debug, PartialEq, Facet)]
 struct Point {
     x: i32,

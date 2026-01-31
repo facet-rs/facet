@@ -30,6 +30,11 @@ impl IndexedFields {
         self.0[idx] = Idx::COMPLETE;
     }
 
+    /// Mark a field as not started (e.g., after dropping it before overwriting).
+    pub fn mark_not_started(&mut self, idx: usize) {
+        self.0[idx] = Idx::NOT_STARTED;
+    }
+
     /// Check if all fields are complete.
     pub fn all_complete(&self) -> bool {
         self.0.iter().all(|id| id.is_complete())
@@ -59,6 +64,14 @@ impl StructFrame {
 
     pub fn mark_field_complete(&mut self, idx: usize) {
         self.fields.mark_complete(idx);
+    }
+
+    /// Mark a field as not started (after dropping it before overwriting).
+    ///
+    /// NOTE: This "leaks" an arena slot if the field was an in-progress child frame.
+    /// TODO: Add tests for frame arena leaking scenarios.
+    pub fn mark_field_not_started(&mut self, idx: usize) {
+        self.fields.mark_not_started(idx);
     }
 }
 
@@ -105,6 +118,10 @@ impl VariantFrame {
 
     pub fn mark_field_complete(&mut self, idx: usize) {
         self.fields.mark_complete(idx);
+    }
+
+    pub fn mark_field_not_started(&mut self, idx: usize) {
+        self.fields.mark_not_started(idx);
     }
 }
 
@@ -219,6 +236,15 @@ impl FrameKind {
         match self {
             FrameKind::Struct(s) => s.mark_field_complete(idx),
             FrameKind::VariantData(v) => v.mark_field_complete(idx),
+            _ => {}
+        }
+    }
+
+    /// Mark a child field as not started (after dropping it before overwriting).
+    pub fn mark_field_not_started(&mut self, idx: usize) {
+        match self {
+            FrameKind::Struct(s) => s.mark_field_not_started(idx),
+            FrameKind::VariantData(v) => v.mark_field_not_started(idx),
             _ => {}
         }
     }
@@ -444,6 +470,63 @@ impl Frame {
                     }
                 }
                 e.selected = None;
+            }
+        }
+    }
+
+    /// Prepare a struct field for overwriting by dropping any existing value.
+    ///
+    /// This handles two cases:
+    /// 1. If the whole struct has INIT flag (set via Imm move): drop the field,
+    ///    clear INIT, and mark all OTHER fields as complete.
+    /// 2. If just this field was previously set individually: drop it and mark
+    ///    as not started (so uninit() won't try to drop again on failure).
+    ///
+    /// NOTE: This may "leak" an arena slot if the field was an in-progress child frame.
+    /// TODO: Add tests for frame arena leaking scenarios.
+    pub fn prepare_field_for_overwrite(&mut self, field_idx: usize) {
+        use facet_core::{Type, UserType};
+
+        if self.flags.contains(FrameFlags::INIT) {
+            // The whole struct was previously initialized via Imm.
+            // We need to:
+            // 1. Drop the old field value
+            // 2. Clear INIT flag
+            // 3. Mark all OTHER fields as complete (they're still valid)
+
+            if let Type::User(UserType::Struct(ref struct_type)) = self.shape.ty {
+                // Drop the old field value
+                let field = &struct_type.fields[field_idx];
+                // SAFETY: INIT means field is initialized
+                unsafe {
+                    let field_ptr = self.data.assume_init().field(field.offset);
+                    field.shape().call_drop_in_place(field_ptr);
+                }
+
+                // Clear INIT and switch to field tracking
+                self.flags.remove(FrameFlags::INIT);
+
+                // Mark all OTHER fields as complete
+                if let FrameKind::Struct(ref mut s) = self.kind {
+                    for i in 0..struct_type.fields.len() {
+                        if i != field_idx {
+                            s.mark_field_complete(i);
+                        }
+                    }
+                }
+            }
+        } else if self.kind.is_field_complete(field_idx) {
+            // Field was previously set individually - drop the old value
+            if let Type::User(UserType::Struct(ref struct_type)) = self.shape.ty {
+                let field = &struct_type.fields[field_idx];
+                // SAFETY: field is marked complete, so it's initialized
+                unsafe {
+                    let field_ptr = self.data.assume_init().field(field.offset);
+                    field.shape().call_drop_in_place(field_ptr);
+                }
+                // Mark the field as not started - if we fail before completing,
+                // uninit() shouldn't try to drop it again
+                self.kind.mark_field_not_started(field_idx);
             }
         }
     }
