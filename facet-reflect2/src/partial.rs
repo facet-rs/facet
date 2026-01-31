@@ -119,12 +119,14 @@ impl<'facet> Partial<'facet> {
         let mut idx = self.current;
         while idx.is_valid() {
             let frame = self.arena.get_mut(idx);
-            let parent = frame.parent.map(|(p, _)| p);
+            let parent = frame.parent_link.parent_idx();
 
             // Drop any initialized data in this frame
             frame.uninit();
 
             // Free the frame and deallocate if it owns its allocation
+            // Note: If this is a MapValue frame, the key TempAlloc in ParentLink
+            // will be dropped when the frame is freed (ParentLink is moved out).
             let frame = self.arena.free(idx);
             frame.dealloc_if_owned();
 
@@ -493,12 +495,14 @@ impl<'facet> Drop for Partial<'facet> {
         let mut idx = self.current;
         while idx.is_valid() {
             let frame = self.arena.get_mut(idx);
-            let parent = frame.parent.map(|(p, _)| p);
+            let parent = frame.parent_link.parent_idx();
 
             // Drop any initialized data in this frame
             frame.uninit();
 
             // Free the frame and deallocate if it owns its allocation
+            // Note: If this is a MapValue frame, the key TempAlloc in ParentLink
+            // will be dropped when the frame is freed (ParentLink is moved out).
             let frame = self.arena.free(idx);
             frame.dealloc_if_owned();
 

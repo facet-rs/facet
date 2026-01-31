@@ -3,6 +3,7 @@
 use crate::arena::{Arena, Idx};
 use crate::errors::{ErrorLocation, ReflectError, ReflectErrorKind};
 use crate::ops::Path;
+use crate::temp_alloc::TempAlloc;
 use facet_core::{ListDef, MapDef, PtrConst, PtrUninit, SequenceType, SetDef, Shape, Variant};
 
 bitflags::bitflags! {
@@ -335,6 +336,84 @@ pub enum FrameKind {
     Result(ResultFrame),
 }
 
+/// Describes the relationship between a frame and its parent.
+///
+/// This captures not just "who is my parent" but also "what to do when this frame completes".
+/// Each variant knows exactly what completion action is needed, eliminating the need for
+/// runtime checks like `has_pending_key && is_map_parent`.
+pub enum ParentLink {
+    /// Root frame - no parent.
+    Root,
+
+    /// Field of a struct, tuple, or array.
+    /// On End: mark field complete in parent.
+    StructField { parent: Idx<Frame>, field_idx: u32 },
+
+    /// Element being pushed to a list.
+    /// On End: call push_fn to add element to parent list.
+    ListElement { parent: Idx<Frame> },
+
+    /// Value being inserted into a map.
+    /// Owns the key - on End, call insert_fn with key and value.
+    MapValue { parent: Idx<Frame>, key: TempAlloc },
+
+    /// Element being inserted into a set.
+    /// On End: call set's insert_fn to add element.
+    SetElement { parent: Idx<Frame> },
+
+    /// Pointee of a smart pointer (Box/Rc/Arc).
+    /// On End: call new_into_fn to create the pointer.
+    PointerInner { parent: Idx<Frame> },
+
+    /// Inner value of Option (always the Some case).
+    /// On End: call init_some to wrap the value.
+    OptionInner { parent: Idx<Frame> },
+
+    /// Inner value of Result (Ok or Err).
+    /// On End: call init_ok or init_err based on is_ok.
+    ResultInner { parent: Idx<Frame>, is_ok: bool },
+
+    /// Variant data frame for an enum.
+    /// On End: mark variant complete in parent enum frame.
+    EnumVariant {
+        parent: Idx<Frame>,
+        variant_idx: u32,
+    },
+}
+
+impl ParentLink {
+    /// Get the parent frame index, if any.
+    pub fn parent_idx(&self) -> Option<Idx<Frame>> {
+        match self {
+            ParentLink::Root => None,
+            ParentLink::StructField { parent, .. } => Some(*parent),
+            ParentLink::ListElement { parent } => Some(*parent),
+            ParentLink::MapValue { parent, .. } => Some(*parent),
+            ParentLink::SetElement { parent } => Some(*parent),
+            ParentLink::PointerInner { parent } => Some(*parent),
+            ParentLink::OptionInner { parent } => Some(*parent),
+            ParentLink::ResultInner { parent, .. } => Some(*parent),
+            ParentLink::EnumVariant { parent, .. } => Some(*parent),
+        }
+    }
+
+    /// Get the field index for path building (only meaningful for some variants).
+    /// Returns the index used in error paths.
+    pub fn field_idx_for_path(&self) -> Option<u32> {
+        match self {
+            ParentLink::Root => None,
+            ParentLink::StructField { field_idx, .. } => Some(*field_idx),
+            ParentLink::ListElement { .. } => None, // Lists don't use indexed paths
+            ParentLink::MapValue { .. } => None,    // Maps don't use indexed paths
+            ParentLink::SetElement { .. } => None,  // Sets don't use indexed paths
+            ParentLink::PointerInner { .. } => Some(0), // Pointer inner is "field 0"
+            ParentLink::OptionInner { .. } => Some(1), // Some is variant 1
+            ParentLink::ResultInner { is_ok, .. } => Some(if *is_ok { 0 } else { 1 }),
+            ParentLink::EnumVariant { variant_idx, .. } => Some(*variant_idx),
+        }
+    }
+}
+
 impl FrameKind {
     /// Check if this frame is complete.
     pub fn is_complete(&self) -> bool {
@@ -388,11 +467,6 @@ impl FrameKind {
     }
 }
 
-/// Pending key for map insertion.
-/// When building a value for a map insert, this holds the key until End.
-/// Uses TempAlloc which handles cleanup automatically.
-pub type PendingKey = crate::temp_alloc::TempAlloc;
-
 /// A frame tracking construction of a single value.
 pub struct Frame {
     /// Pointer to the memory being written.
@@ -407,11 +481,8 @@ pub struct Frame {
     /// State flags.
     pub flags: FrameFlags,
 
-    /// Parent frame (if any) and our index within it.
-    pub parent: Option<(Idx<Frame>, u32)>,
-
-    /// Pending key for map insertion (only set when building a value for Insert).
-    pub pending_key: Option<PendingKey>,
+    /// Relationship to parent frame (or Root if this is the root).
+    pub parent_link: ParentLink,
 }
 
 /// Build the absolute path from root to the given frame by walking up the parent chain.
@@ -419,11 +490,12 @@ pub fn absolute_path(arena: &Arena<Frame>, mut idx: Idx<Frame>) -> Path {
     let mut indices = Vec::new();
     while idx.is_valid() {
         let frame = arena.get(idx);
-        if let Some((parent_idx, field_idx)) = frame.parent {
+        if let Some(field_idx) = frame.parent_link.field_idx_for_path() {
             indices.push(field_idx);
-            idx = parent_idx;
-        } else {
-            break;
+        }
+        match frame.parent_link.parent_idx() {
+            Some(parent_idx) => idx = parent_idx,
+            None => break,
         }
     }
     indices.reverse();
@@ -441,8 +513,7 @@ impl Frame {
             shape,
             kind: FrameKind::Scalar,
             flags: FrameFlags::empty(),
-            parent: None,
-            pending_key: None,
+            parent_link: ParentLink::Root,
         }
     }
 
@@ -453,8 +524,7 @@ impl Frame {
             shape,
             kind: FrameKind::Struct(StructFrame::new(field_count)),
             flags: FrameFlags::empty(),
-            parent: None,
-            pending_key: None,
+            parent_link: ParentLink::Root,
         }
     }
 
@@ -465,8 +535,7 @@ impl Frame {
             shape,
             kind: FrameKind::Enum(EnumFrame::new()),
             flags: FrameFlags::empty(),
-            parent: None,
-            pending_key: None,
+            parent_link: ParentLink::Root,
         }
     }
 
@@ -477,8 +546,7 @@ impl Frame {
             shape,
             kind: FrameKind::VariantData(VariantFrame::new(variant)),
             flags: FrameFlags::empty(),
-            parent: None,
-            pending_key: None,
+            parent_link: ParentLink::Root,
         }
     }
 
@@ -490,8 +558,7 @@ impl Frame {
             shape,
             kind: FrameKind::Pointer(PointerFrame::new()),
             flags: FrameFlags::empty(),
-            parent: None,
-            pending_key: None,
+            parent_link: ParentLink::Root,
         }
     }
 
@@ -504,8 +571,7 @@ impl Frame {
             shape,
             kind: FrameKind::List(ListFrame::new(def)),
             flags: FrameFlags::empty(),
-            parent: None,
-            pending_key: None,
+            parent_link: ParentLink::Root,
         }
     }
 
@@ -518,8 +584,7 @@ impl Frame {
             shape,
             kind: FrameKind::Map(MapFrame::new(def)),
             flags: FrameFlags::empty(),
-            parent: None,
-            pending_key: None,
+            parent_link: ParentLink::Root,
         }
     }
 
@@ -532,8 +597,7 @@ impl Frame {
             shape,
             kind: FrameKind::Set(SetFrame::new(def)),
             flags: FrameFlags::empty(),
-            parent: None,
-            pending_key: None,
+            parent_link: ParentLink::Root,
         }
     }
 
@@ -544,8 +608,7 @@ impl Frame {
             shape,
             kind: FrameKind::Option(OptionFrame::new()),
             flags: FrameFlags::empty(),
-            parent: None,
-            pending_key: None,
+            parent_link: ParentLink::Root,
         }
     }
 
@@ -556,8 +619,7 @@ impl Frame {
             shape,
             kind: FrameKind::Result(ResultFrame::new()),
             flags: FrameFlags::empty(),
-            parent: None,
-            pending_key: None,
+            parent_link: ParentLink::Root,
         }
     }
 
@@ -582,12 +644,12 @@ impl Frame {
     /// Drop any initialized value, returning frame to uninitialized state.
     ///
     /// This is idempotent - calling on an uninitialized frame is a no-op.
+    ///
+    /// Note: This does NOT clean up the ParentLink. If this frame is a MapValue child,
+    /// the key in ParentLink::MapValue will be cleaned up when the frame is freed.
     pub fn uninit(&mut self) {
         use crate::enum_helpers::drop_variant_fields;
         use facet_core::{Type, UserType};
-
-        // Clean up pending key if present (TempAlloc handles drop + dealloc)
-        let _ = self.pending_key.take();
 
         if self.flags.contains(FrameFlags::INIT) {
             // SAFETY: INIT flag means the value is fully initialized
@@ -772,7 +834,10 @@ mod tests {
 
     fn dummy_frame_with_parent(parent: Idx<Frame>, index: u32) -> Frame {
         let mut frame = dummy_frame();
-        frame.parent = Some((parent, index));
+        frame.parent_link = ParentLink::StructField {
+            parent,
+            field_idx: index,
+        };
         frame
     }
 

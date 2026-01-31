@@ -1,6 +1,6 @@
 use super::Partial;
 use crate::errors::{ReflectError, ReflectErrorKind};
-use crate::frame::{Frame, FrameFlags, FrameKind};
+use crate::frame::{Frame, FrameFlags, FrameKind, ParentLink};
 use crate::ops::{Imm, Source};
 use facet_core::{Def, PtrMut, Type, UserType};
 
@@ -114,11 +114,11 @@ impl<'facet> Partial<'facet> {
                 // Mark that this frame owns its allocation (for cleanup on End)
                 value_frame.flags |= FrameFlags::OWNS_ALLOC;
 
-                // Set parent to current map frame
-                value_frame.parent = Some((self.current, 0));
-
-                // Store the pending key (transfer ownership to the frame)
-                value_frame.pending_key = Some(key_alloc);
+                // Set parent link with the key - key ownership transfers to ParentLink
+                value_frame.parent_link = ParentLink::MapValue {
+                    parent: self.current,
+                    key: key_alloc,
+                };
 
                 // Transfer value allocation ownership to frame (don't drop/dealloc here)
                 std::mem::forget(value_alloc);

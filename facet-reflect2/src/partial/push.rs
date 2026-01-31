@@ -1,6 +1,6 @@
 use super::Partial;
 use crate::errors::{ReflectError, ReflectErrorKind};
-use crate::frame::{Frame, FrameFlags, FrameKind};
+use crate::frame::{Frame, FrameFlags, FrameKind, ParentLink};
 use crate::ops::Source;
 use facet_core::{Def, PtrUninit, Shape, Type, UserType};
 
@@ -124,8 +124,15 @@ impl<'facet> Partial<'facet> {
                 // Mark that this frame owns its allocation (for cleanup on End)
                 element_frame.flags |= FrameFlags::OWNS_ALLOC;
 
-                // Set parent to current list frame (field_idx doesn't matter for lists)
-                element_frame.parent = Some((self.current, 0));
+                // Set parent link based on collection type
+                element_frame.parent_link = match &collection {
+                    CollectionKind::List { .. } => ParentLink::ListElement {
+                        parent: self.current,
+                    },
+                    CollectionKind::Set { .. } => ParentLink::SetElement {
+                        parent: self.current,
+                    },
+                };
 
                 // Push frame and make it current
                 let element_idx = self.arena.alloc(element_frame);

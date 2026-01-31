@@ -8,8 +8,8 @@ use crate::enum_helpers::{
 };
 use crate::errors::{ReflectError, ReflectErrorKind};
 use crate::frame::{
-    Frame, FrameFlags, FrameKind, ListFrame, MapFrame, PointerFrame, SetFrame, StructFrame,
-    absolute_path,
+    Frame, FrameFlags, FrameKind, ListFrame, MapFrame, ParentLink, PointerFrame, SetFrame,
+    StructFrame, absolute_path,
 };
 use crate::ops::{Path, Source};
 use facet_core::{Def, PtrUninit, SequenceType, Type, UserType};
@@ -171,10 +171,12 @@ impl<'facet> Partial<'facet> {
                                 _ => Frame::new_pointer(pointee_data, pointee_shape),
                             },
                         };
-                        // For pointer frames, parent is current and index is 0 (the pointee)
-                        new_frame.parent = Some((self.current, 0));
                         // Mark that this frame owns its allocation (for cleanup on error)
                         new_frame.flags |= FrameFlags::OWNS_ALLOC;
+                        // Link to parent as a pointer inner
+                        new_frame.parent_link = ParentLink::PointerInner {
+                            parent: self.current,
+                        };
 
                         // Record the frame in parent's pointer state
                         let new_idx = self.arena.alloc(new_frame);
@@ -211,35 +213,50 @@ impl<'facet> Partial<'facet> {
                 // Check if target is a list - create frame, lazy init on first Push
                 if let Def::List(list_def) = &target.shape.def {
                     let mut new_frame = Frame::new_list(target.data, target.shape, list_def);
-                    new_frame.parent = Some((self.current, field_idx));
+                    new_frame.parent_link = ParentLink::StructField {
+                        parent: self.current,
+                        field_idx,
+                    };
 
                     let new_idx = self.arena.alloc(new_frame);
                     self.current = new_idx;
                 } else if let Def::Map(map_def) = &target.shape.def {
                     // Create frame, lazy init on first Insert
                     let mut new_frame = Frame::new_map(target.data, target.shape, map_def);
-                    new_frame.parent = Some((self.current, field_idx));
+                    new_frame.parent_link = ParentLink::StructField {
+                        parent: self.current,
+                        field_idx,
+                    };
 
                     let new_idx = self.arena.alloc(new_frame);
                     self.current = new_idx;
                 } else if let Def::Set(set_def) = &target.shape.def {
                     // Create frame, lazy init on first Push
                     let mut new_frame = Frame::new_set(target.data, target.shape, set_def);
-                    new_frame.parent = Some((self.current, field_idx));
+                    new_frame.parent_link = ParentLink::StructField {
+                        parent: self.current,
+                        field_idx,
+                    };
 
                     let new_idx = self.arena.alloc(new_frame);
                     self.current = new_idx;
                 } else if let Def::Option(_) = &target.shape.def {
                     // Create Option frame
                     let mut new_frame = Frame::new_option(target.data, target.shape);
-                    new_frame.parent = Some((self.current, field_idx));
+                    new_frame.parent_link = ParentLink::StructField {
+                        parent: self.current,
+                        field_idx,
+                    };
 
                     let new_idx = self.arena.alloc(new_frame);
                     self.current = new_idx;
                 } else if let Def::Result(_) = &target.shape.def {
                     // Create Result frame
                     let mut new_frame = Frame::new_result(target.data, target.shape);
-                    new_frame.parent = Some((self.current, field_idx));
+                    new_frame.parent_link = ParentLink::StructField {
+                        parent: self.current,
+                        field_idx,
+                    };
 
                     let new_idx = self.arena.alloc(new_frame);
                     self.current = new_idx;
@@ -254,7 +271,10 @@ impl<'facet> Partial<'facet> {
                         }
                         _ => Frame::new(target.data, target.shape),
                     };
-                    new_frame.parent = Some((self.current, field_idx));
+                    new_frame.parent_link = ParentLink::StructField {
+                        parent: self.current,
+                        field_idx,
+                    };
 
                     // Store in arena and make it current
                     let new_idx = self.arena.alloc(new_frame);
@@ -408,7 +428,10 @@ impl<'facet> Partial<'facet> {
                 // Push a frame for the variant's fields
                 let frame = self.arena.get(self.current);
                 let mut new_frame = Frame::new_variant(frame.data, frame.shape, new_variant);
-                new_frame.parent = Some((self.current, variant_idx));
+                new_frame.parent_link = ParentLink::EnumVariant {
+                    parent: self.current,
+                    variant_idx,
+                };
 
                 // Store in arena and make it current
                 let new_idx = self.arena.alloc(new_frame);
@@ -573,7 +596,9 @@ impl<'facet> Partial<'facet> {
                             },
                         };
                         inner_frame.flags |= FrameFlags::OWNS_ALLOC;
-                        inner_frame.parent = Some((self.current, variant_idx));
+                        inner_frame.parent_link = ParentLink::OptionInner {
+                            parent: self.current,
+                        };
 
                         let inner_idx = self.arena.alloc(inner_frame);
 
@@ -732,7 +757,10 @@ impl<'facet> Partial<'facet> {
                     },
                 };
                 inner_frame.flags |= FrameFlags::OWNS_ALLOC;
-                inner_frame.parent = Some((self.current, variant_idx));
+                inner_frame.parent_link = ParentLink::ResultInner {
+                    parent: self.current,
+                    is_ok: variant_idx == 0,
+                };
 
                 let inner_idx = self.arena.alloc(inner_frame);
 
