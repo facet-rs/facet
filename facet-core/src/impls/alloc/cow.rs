@@ -205,7 +205,7 @@ where
             ///
             /// # Safety
             /// dst must be valid for writes
-            unsafe fn default_in_place<T: ?Sized + ToOwned + 'static>(dst: OxPtrUninit)
+            unsafe fn default_in_place<T: ?Sized + ToOwned + 'static>(dst: OxPtrUninit) -> bool
             where
                 T::Owned: Facet<'static> + 'static,
             {
@@ -213,7 +213,7 @@ where
                 let cow_shape = dst.shape();
                 let type_params = cow_shape.type_params;
                 if type_params.len() < 2 {
-                    return;
+                    return false;
                 }
 
                 let owned_shape = type_params[1].shape;
@@ -221,19 +221,19 @@ where
                 // Allocate space for T::Owned and call default_in_place
                 let owned_layout = match owned_shape.layout.sized_layout() {
                     Ok(layout) => layout,
-                    Err(_) => return,
+                    Err(_) => return false,
                 };
 
                 let owned_ptr = unsafe { alloc::alloc::alloc(owned_layout) };
                 if owned_ptr.is_null() {
-                    return;
+                    return false;
                 }
 
                 let owned_uninit = crate::PtrUninit::new(owned_ptr);
                 if unsafe { owned_shape.call_default_in_place(owned_uninit) }.is_none() {
                     // Default not supported, deallocate and return
                     unsafe { alloc::alloc::dealloc(owned_ptr, owned_layout) };
-                    return;
+                    return false;
                 }
 
                 // Move the constructed T::Owned out of the temporary allocation.
@@ -244,6 +244,7 @@ where
 
                 // Write the Cow::Owned to uninitialized memory
                 unsafe { dst.put(Cow::<'static, T>::Owned(owned_value)) };
+                true
             }
 
             unsafe fn truthy<'facet, T>(ptr: PtrConst) -> bool

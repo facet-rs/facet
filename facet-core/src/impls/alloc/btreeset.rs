@@ -72,8 +72,9 @@ unsafe fn btreeset_drop<T>(ox: OxPtrMut) {
 }
 
 /// Default implementation for `BTreeSet<T>`
-unsafe fn btreeset_default<T>(ox: OxPtrUninit) {
+unsafe fn btreeset_default<T>(ox: OxPtrUninit) -> bool {
     unsafe { ox.put(BTreeSet::<T>::new()) };
+    true
 }
 
 unsafe impl<'a, T> Facet<'a> for BTreeSet<T>

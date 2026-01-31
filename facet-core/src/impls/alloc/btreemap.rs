@@ -118,8 +118,9 @@ unsafe fn btreemap_drop<K: 'static, V: 'static>(ox: OxPtrMut) {
 }
 
 /// Default for BTreeMap<K, V>
-unsafe fn btreemap_default<K: 'static, V: 'static>(ox: OxPtrUninit) {
+unsafe fn btreemap_default<K: 'static, V: 'static>(ox: OxPtrUninit) -> bool {
     unsafe { ox.put(BTreeMap::<K, V>::new()) };
+    true
 }
 
 // TODO: Debug, Hash, PartialEq, Eq, PartialOrd, Ord, for BTreeMap, BTreeSet

@@ -97,8 +97,11 @@ unsafe fn id_hash_map_drop<T: IdHashItem, S>(ox: OxPtrMut) {
     }
 }
 
-unsafe fn id_hash_map_default<T: IdHashItem, S: Clone + Default + BuildHasher>(ox: OxPtrUninit) {
+unsafe fn id_hash_map_default<T: IdHashItem, S: Clone + Default + BuildHasher>(
+    ox: OxPtrUninit,
+) -> bool {
     unsafe { ox.put(IdHashMap::<T, S>::default()) };
+    true
 }
 
 unsafe impl<'a, T, S> Facet<'a> for IdHashMap<T, S>
@@ -242,8 +245,9 @@ unsafe fn id_ord_map_drop<T: IdOrdItem>(ox: OxPtrMut) {
 }
 
 #[cfg(feature = "std")]
-unsafe fn id_ord_map_default<T: IdOrdItem>(ox: OxPtrUninit) {
+unsafe fn id_ord_map_default<T: IdOrdItem>(ox: OxPtrUninit) -> bool {
     unsafe { ox.put(IdOrdMap::<T>::new()) };
+    true
 }
 
 #[cfg(feature = "std")]
@@ -390,8 +394,11 @@ unsafe fn bi_hash_map_drop<T: BiHashItem, S>(ox: OxPtrMut) {
     }
 }
 
-unsafe fn bi_hash_map_default<T: BiHashItem, S: Clone + Default + BuildHasher>(ox: OxPtrUninit) {
+unsafe fn bi_hash_map_default<T: BiHashItem, S: Clone + Default + BuildHasher>(
+    ox: OxPtrUninit,
+) -> bool {
     unsafe { ox.put(BiHashMap::<T, S>::default()) };
+    true
 }
 
 unsafe impl<'a, T, S> Facet<'a> for BiHashMap<T, S>
@@ -542,8 +549,11 @@ unsafe fn tri_hash_map_drop<T: TriHashItem, S>(ox: OxPtrMut) {
     }
 }
 
-unsafe fn tri_hash_map_default<T: TriHashItem, S: Clone + Default + BuildHasher>(ox: OxPtrUninit) {
+unsafe fn tri_hash_map_default<T: TriHashItem, S: Clone + Default + BuildHasher>(
+    ox: OxPtrUninit,
+) -> bool {
     unsafe { ox.put(TriHashMap::<T, S>::default()) };
+    true
 }
 
 unsafe impl<'a, T, S> Facet<'a> for TriHashMap<T, S>

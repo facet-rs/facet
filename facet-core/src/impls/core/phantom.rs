@@ -7,8 +7,9 @@ const unsafe fn phantom_drop(_ptr: OxPtrMut) {
     // PhantomData is zero-sized, nothing to drop
 }
 
-const unsafe fn phantom_default(_dst: OxPtrUninit) {
+const unsafe fn phantom_default(_dst: OxPtrUninit) -> bool {
     // PhantomData is zero-sized, nothing to write
+    true
 }
 
 // Shared vtable for all PhantomData<T> - the implementations don't depend on T

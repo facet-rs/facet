@@ -158,10 +158,11 @@ unsafe fn weak_clone<T: Clone>(src: OxPtrConst, dst: OxPtrMut) {
 }
 
 // Default functions for Weak
-unsafe fn weak_default<T>(target: OxPtrUninit) {
+unsafe fn weak_default<T>(target: OxPtrUninit) -> bool {
     unsafe {
         target.put(Weak::<T>::new());
     }
+    true
 }
 
 // Upgrade functions for Weak

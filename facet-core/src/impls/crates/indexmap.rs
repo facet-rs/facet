@@ -96,8 +96,9 @@ unsafe fn indexmap_drop<K, V, S>(target: OxPtrMut) {
     }
 }
 
-unsafe fn indexmap_default<K, V, S: Default + BuildHasher>(ox: OxPtrUninit) {
+unsafe fn indexmap_default<K, V, S: Default + BuildHasher>(ox: OxPtrUninit) -> bool {
     unsafe { ox.put(IndexMap::<K, V, S>::default()) };
+    true
 }
 
 /// Build an IndexMap from a contiguous slice of (K, V) pairs.

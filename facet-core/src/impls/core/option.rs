@@ -164,8 +164,9 @@ unsafe fn option_drop_inner(ptr: crate::PtrMut, def: &OptionDef) {
 }
 
 /// Default for `Option<T>` - always None (no `T::Default` requirement)
-unsafe fn option_default<T>(ox: OxPtrUninit) {
+unsafe fn option_default<T>(ox: OxPtrUninit) -> bool {
     unsafe { ox.put(Option::<T>::None) };
+    true
 }
 
 /// Check if `Option<T>` is Some

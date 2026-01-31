@@ -51,6 +51,11 @@ Under Miri (catches undefined behavior, memory safety issues):
 just run-miri out/default/crashes/id:000000*
 ```
 
+**CRUCIAL**: Always run crashes under Miri first. Miri provides precise diagnostics
+about what memory safety violation occurred (use-after-free, uninitialized reads,
+invalid pointer arithmetic, etc.), while a raw segfault gives you almost nothing.
+GDB backtraces show where it crashed, not what went wrong.
+
 ## Minimizing Crash Inputs
 
 To get a minimal reproducer:

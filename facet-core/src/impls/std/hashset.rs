@@ -193,8 +193,9 @@ unsafe fn hashset_drop<T: 'static, S: 'static>(ox: OxPtrMut) {
 }
 
 /// Default for HashSet<T, S>
-unsafe fn hashset_default<T: 'static, S: Default + BuildHasher + 'static>(ox: OxPtrUninit) {
+unsafe fn hashset_default<T: 'static, S: Default + BuildHasher + 'static>(ox: OxPtrUninit) -> bool {
     unsafe { ox.put(HashSet::<T, S>::default()) };
+    true
 }
 
 unsafe impl<'a, T, S> Facet<'a> for HashSet<T, S>
