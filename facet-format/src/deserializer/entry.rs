@@ -883,12 +883,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                             wip = wip
                                 .begin_key()?
                                 .with(|w| {
-                                    self.deserialize_map_key(
-                                        w,
-                                        key.name().cloned(),
-                                        key.doc().map(|d| d.to_vec()),
-                                        key.tag().cloned(),
-                                    )
+                                    self.deserialize_map_key(w, key.name().cloned(), key.meta())
                                 })?
                                 .end()?;
 
@@ -1071,32 +1066,24 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     /// - Option types: None key becomes None, Some(key) recurses into inner type
     /// - Metadata containers (like `Documented<T>`): populate doc/tag metadata and recurse into value
     ///
-    /// The `tag` parameter is for formats like Styx where keys can be type patterns (e.g., `@string`).
+    /// The `meta.tag` is for formats like Styx where keys can be type patterns (e.g., `@string`).
     /// When present, it indicates the key was a tag rather than a bare identifier.
     pub(crate) fn deserialize_map_key(
         &mut self,
         mut wip: Partial<'input, BORROW>,
         key: Option<Cow<'input, str>>,
-        doc: Option<Vec<Cow<'input, str>>>,
-        tag: Option<Cow<'input, str>>,
+        meta: Option<&ValueMeta<'input>>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
         let shape = wip.shape();
 
-        trace!(shape_name = %shape, shape_def = ?shape.def, ?key, ?doc, ?tag, "deserialize_map_key");
+        trace!(shape_name = %shape, shape_def = ?shape.def, ?key, ?meta, "deserialize_map_key");
 
         // Handle metadata containers (like `Documented<T>` or `ObjectKey`): populate metadata and recurse into value
         if shape.is_metadata_container() {
             trace!("deserialize_map_key: metadata container detected");
-
-            let mut meta_builder = ValueMeta::builder();
-            if let Some(d) = doc.clone() {
-                meta_builder = meta_builder.doc(d);
-            }
-            if let Some(t) = tag.clone() {
-                meta_builder = meta_builder.tag(t);
-            }
-            let meta = meta_builder.build();
+            let empty_meta = ValueMeta::default();
+            let meta = meta.unwrap_or(&empty_meta);
 
             // Find field info from the shape's struct type
             if let Type::User(UserType::Struct(st)) = &shape.ty {
@@ -1104,17 +1091,19 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                     match field.metadata_kind() {
                         Some(kind) => {
                             wip = wip.begin_field(field.effective_name())?;
-                            wip = self.populate_metadata_field(wip, kind, &meta)?;
+                            wip = self.populate_metadata_field(wip, kind, meta)?;
                             wip = wip.end()?;
                         }
                         None => {
                             // This is the value field - recurse with the key and tag.
                             // Doc is already consumed by this container, but tag may be needed
                             // by a nested metadata container (e.g., Documented<ObjectKey>).
+                            let inner_meta =
+                                ValueMeta::builder().maybe_tag(meta.tag().cloned()).build();
                             wip = wip
                                 .begin_field(field.effective_name())?
                                 .with(|w| {
-                                    self.deserialize_map_key(w, key.clone(), None, tag.clone())
+                                    self.deserialize_map_key(w, key.clone(), Some(&inner_meta))
                                 })?
                                 .end()?;
                         }
@@ -1137,7 +1126,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                     // Named key -> Some(inner)
                     return Ok(wip
                         .begin_some()?
-                        .with(|w| self.deserialize_map_key(w, Some(inner_key), None, None))?
+                        .with(|w| self.deserialize_map_key(w, Some(inner_key), None))?
                         .end()?);
                 }
             }
@@ -1147,7 +1136,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         // For tagged keys (e.g., @schema in Styx), use the tag (with @ prefix) as the key.
         let key = key
             .or_else(|| {
-                tag.as_ref()
+                meta.and_then(|m| m.tag())
                     .filter(|t| !t.is_empty())
                     .map(|t| Cow::Owned(format!("@{}", t)))
             })
@@ -1167,7 +1156,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         if shape.inner.is_some() && !is_pointer {
             return Ok(wip
                 .begin_inner()?
-                .with(|w| self.deserialize_map_key(w, Some(key), None, None))?
+                .with(|w| self.deserialize_map_key(w, Some(key), None))?
                 .end()?);
         }
 

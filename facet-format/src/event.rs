@@ -41,22 +41,8 @@ pub struct FullFieldKey<'de> {
     pub name: Option<Cow<'de, str>>,
     /// Location hint.
     pub location: FieldLocationHint,
-    /// Documentation comments attached to this field (for formats that support them).
-    ///
-    /// Used by formats like Styx where `/// comment` before a field is preserved.
-    /// When deserializing into a `metadata_container` type like `Documented<T>`,
-    /// these doc lines are used to populate the metadata.
-    pub doc: Option<Vec<Cow<'de, str>>>,
-    /// Tag name for tagged keys (for formats that support them).
-    ///
-    /// Used by formats like Styx where `@string` in key position represents a type pattern.
-    /// When deserializing into a `metadata_container` type with `#[facet(metadata = "tag")]`,
-    /// this tag name is used to populate the metadata.
-    ///
-    /// - `None`: not a tagged key (bare identifier like `name`)
-    /// - `Some("")`: unit tag (`@` alone)
-    /// - `Some("string")`: named tag (`@string`)
-    pub tag: Option<Cow<'de, str>>,
+    /// Metadata (doc comments, type tags) attached to this field.
+    pub meta: ValueMeta<'de>,
 }
 
 impl<'de> FieldKey<'de> {
@@ -78,8 +64,7 @@ impl<'de> FieldKey<'de> {
             FieldKey::Full(Box::new(FullFieldKey {
                 name: Some(name.into()),
                 location,
-                doc: Some(doc),
-                tag: None,
+                meta: ValueMeta::builder().doc(doc).build(),
             }))
         }
     }
@@ -91,8 +76,7 @@ impl<'de> FieldKey<'de> {
         FieldKey::Full(Box::new(FullFieldKey {
             name: None,
             location,
-            doc: None,
-            tag: Some(tag.into()),
+            meta: ValueMeta::builder().tag(tag.into()).build(),
         }))
     }
 
@@ -105,8 +89,42 @@ impl<'de> FieldKey<'de> {
         FieldKey::Full(Box::new(FullFieldKey {
             name: None,
             location,
-            doc: if doc.is_empty() { None } else { Some(doc) },
-            tag: Some(tag.into()),
+            meta: ValueMeta::builder()
+                .tag(tag.into())
+                .maybe_doc(Some(doc))
+                .build(),
+        }))
+    }
+
+    /// Create a tagged field key with a name (e.g., `@string"mykey"` in Styx).
+    ///
+    /// Used for type pattern keys that also have an associated name/payload.
+    pub fn tagged_with_name(
+        tag: impl Into<Cow<'de, str>>,
+        name: impl Into<Cow<'de, str>>,
+        location: FieldLocationHint,
+    ) -> Self {
+        FieldKey::Full(Box::new(FullFieldKey {
+            name: Some(name.into()),
+            location,
+            meta: ValueMeta::builder().tag(tag.into()).build(),
+        }))
+    }
+
+    /// Create a tagged field key with a name and documentation.
+    pub fn tagged_with_name_and_doc(
+        tag: impl Into<Cow<'de, str>>,
+        name: impl Into<Cow<'de, str>>,
+        location: FieldLocationHint,
+        doc: Vec<Cow<'de, str>>,
+    ) -> Self {
+        FieldKey::Full(Box::new(FullFieldKey {
+            name: Some(name.into()),
+            location,
+            meta: ValueMeta::builder()
+                .tag(tag.into())
+                .maybe_doc(Some(doc))
+                .build(),
         }))
     }
 
@@ -118,8 +136,7 @@ impl<'de> FieldKey<'de> {
         FieldKey::Full(Box::new(FullFieldKey {
             name: None,
             location,
-            doc: None,
-            tag: Some(Cow::Borrowed("")),
+            meta: ValueMeta::builder().tag(Cow::Borrowed("")).build(),
         }))
     }
 
@@ -128,8 +145,10 @@ impl<'de> FieldKey<'de> {
         FieldKey::Full(Box::new(FullFieldKey {
             name: None,
             location,
-            doc: if doc.is_empty() { None } else { Some(doc) },
-            tag: Some(Cow::Borrowed("")),
+            meta: ValueMeta::builder()
+                .tag(Cow::Borrowed(""))
+                .maybe_doc(Some(doc))
+                .build(),
         }))
     }
 
@@ -147,7 +166,7 @@ impl<'de> FieldKey<'de> {
     pub fn doc(&self) -> Option<&[Cow<'de, str>]> {
         match self {
             FieldKey::Name(_) => None,
-            FieldKey::Full(full) => full.doc.as_deref(),
+            FieldKey::Full(full) => full.meta.doc(),
         }
     }
 
@@ -156,7 +175,16 @@ impl<'de> FieldKey<'de> {
     pub fn tag(&self) -> Option<&Cow<'de, str>> {
         match self {
             FieldKey::Name(_) => None,
-            FieldKey::Full(full) => full.tag.as_ref(),
+            FieldKey::Full(full) => full.meta.tag(),
+        }
+    }
+
+    /// Get the metadata, if any.
+    #[inline]
+    pub fn meta(&self) -> Option<&ValueMeta<'de>> {
+        match self {
+            FieldKey::Name(_) => None,
+            FieldKey::Full(full) => Some(&full.meta),
         }
     }
 
@@ -355,10 +383,30 @@ impl<'a> ValueMetaBuilder<'a> {
         self
     }
 
+    /// Set the documentation comments if present.
+    #[inline]
+    pub fn maybe_doc(mut self, doc: Option<Vec<Cow<'a, str>>>) -> Self {
+        if let Some(d) = doc {
+            if !d.is_empty() {
+                self.doc = Some(d);
+            }
+        }
+        self
+    }
+
     /// Set the type tag.
     #[inline]
     pub fn tag(mut self, tag: Cow<'a, str>) -> Self {
         self.tag = Some(tag);
+        self
+    }
+
+    /// Set the type tag if present.
+    #[inline]
+    pub fn maybe_tag(mut self, tag: Option<Cow<'a, str>>) -> Self {
+        if tag.is_some() {
+            self.tag = tag;
+        }
         self
     }
 

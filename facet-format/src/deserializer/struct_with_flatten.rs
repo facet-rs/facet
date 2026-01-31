@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use std::collections::BTreeSet;
 
 use facet_core::{Characteristic, Def};
@@ -7,8 +6,8 @@ use facet_solver::PathSegment;
 
 use super::path_navigator::PathNavigator;
 use crate::{
-    DeserializeError, DeserializeErrorKind, FormatDeserializer, ParseEventKind, ScalarValue,
-    SpanGuard,
+    DeserializeError, DeserializeErrorKind, FieldKey, FormatDeserializer, ParseEventKind,
+    ScalarValue, SpanGuard,
 };
 
 impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BORROW> {
@@ -233,7 +232,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                         self.insert_into_catch_all_map(
                             &mut nav,
                             catch_all_info,
-                            key_name,
+                            &key,
                             &mut fields_set,
                             variant_selections,
                         )?;
@@ -291,7 +290,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         &mut self,
         nav: &mut PathNavigator<'input, BORROW>,
         catch_all_info: &FieldInfo,
-        key: &str,
+        key: &FieldKey<'input>,
         fields_set: &mut BTreeSet<&'static str>,
         variant_selections: &[VariantSelection],
     ) -> Result<(), DeserializeError> {
@@ -312,10 +311,11 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         // Insert the key-value pair
         let _guard = SpanGuard::new(self.last_span);
         if is_dynamic_value {
-            let key_owned = key.to_owned();
+            // Dynamic values use begin_object_entry which takes just the key name
+            let key_name = key.name().map(|n| n.as_ref()).unwrap_or("");
             let wip = nav.take_wip();
             let wip = wip
-                .begin_object_entry(&key_owned)?
+                .begin_object_entry(key_name)?
                 .with(|w| self.deserialize_into(w, None))?
                 .end()?;
             nav.return_wip(wip);
@@ -324,8 +324,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             // Use deserialize_map_key to properly handle metadata containers (like Spanned<String>)
             let wip = nav.take_wip();
             let wip = wip.begin_key()?;
-            let wip =
-                self.deserialize_map_key(wip, Some(Cow::Owned(key.to_owned())), None, None)?;
+            let wip = self.deserialize_map_key(wip, key.name().cloned(), key.meta())?;
             let wip = wip.end()?;
             let wip = wip
                 .begin_value()?
