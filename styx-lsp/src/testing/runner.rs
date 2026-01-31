@@ -367,16 +367,12 @@ async fn run_test_case(harness: &TestHarness, test_case: &TestCase, index: usize
                     eprintln!("[DEBUG] Got {} diagnostics:", diagnostics.len());
                     for (i, d) in diagnostics.iter().enumerate() {
                         eprintln!(
-                            "  [{}] line={}, cols={}-{}, msg='{}'",
-                            i,
-                            d.range.start.line,
-                            d.range.start.character,
-                            d.range.end.character,
-                            d.message
+                            "  [{}] span={}-{}, msg='{}'",
+                            i, d.span.start, d.span.end, d.message
                         );
                     }
                 }
-                check_diagnostics(&diagnostics, expected, &mut errors);
+                check_diagnostics(&diagnostics, expected, &cleaned_input, &mut errors);
             }
             Err(e) => {
                 errors.push(format!("diagnostics request failed: {}", e));
@@ -403,7 +399,7 @@ async fn run_test_case(harness: &TestHarness, test_case: &TestCase, index: usize
         } else {
             match harness.definition(&uri).await {
                 Ok(locations) => {
-                    check_definition(&locations, expected, &mut errors);
+                    check_definition(&locations, expected, &cleaned_input, &mut errors);
                 }
                 Err(e) => {
                     errors.push(format!("definition request failed: {}", e));
@@ -559,9 +555,26 @@ fn check_hover(
     }
 }
 
+/// Convert byte offset to line/character position
+fn offset_to_position(content: &str, offset: u32) -> (u32, u32) {
+    let offset = offset as usize;
+    if offset > content.len() {
+        let line = content.chars().filter(|&c| c == '\n').count() as u32;
+        let last_newline = content.rfind('\n').map(|i| i + 1).unwrap_or(0);
+        let character = (content.len() - last_newline) as u32;
+        return (line, character);
+    }
+    let before = &content[..offset];
+    let line = before.chars().filter(|&c| c == '\n').count() as u32;
+    let last_newline = before.rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let character = (offset - last_newline) as u32;
+    (line, character)
+}
+
 fn check_diagnostics(
     diagnostics: &[styx_lsp_ext::Diagnostic],
     expected: &DiagnosticExpectations,
+    content: &str,
     errors: &mut Vec<String>,
 ) {
     // Check count if specified
@@ -582,21 +595,24 @@ fn check_diagnostics(
             if !exp.message.is_empty() && !d.message.contains(&exp.message) {
                 return false;
             }
+            // Convert span to line/col for comparison
+            let (start_line, start_char) = offset_to_position(content, d.span.start);
+            let (_end_line, end_char) = offset_to_position(content, d.span.end);
             // Check line if specified (convert from 1-indexed to 0-indexed)
             if let Some(line) = exp.line
-                && d.range.start.line != line - 1
+                && start_line != line - 1
             {
                 return false;
             }
             // Check start column if specified
             if let Some(start_col) = exp.start_col
-                && d.range.start.character != start_col
+                && start_char != start_col
             {
                 return false;
             }
             // Check end column if specified
             if let Some(end_col) = exp.end_col
-                && d.range.end.character != end_col
+                && end_char != end_col
             {
                 return false;
             }
@@ -626,12 +642,9 @@ fn check_diagnostics(
                     let actual_spans: Vec<_> = matching_by_message
                         .iter()
                         .map(|d| {
-                            format!(
-                                "line {}:{}-{}",
-                                d.range.start.line + 1,
-                                d.range.start.character,
-                                d.range.end.character
-                            )
+                            let (line, start_char) = offset_to_position(content, d.span.start);
+                            let (_end_line, end_char) = offset_to_position(content, d.span.end);
+                            format!("line {}:{}-{}", line + 1, start_char, end_char)
                         })
                         .collect();
 
@@ -649,7 +662,10 @@ fn check_diagnostics(
                 let actual_positions: Vec<_> = diagnostics
                     .iter()
                     .filter(|d| d.message.contains(&exp.message))
-                    .map(|d| d.range.start.line + 1) // Convert back to 1-indexed
+                    .map(|d| {
+                        let (start_line, _) = offset_to_position(content, d.span.start);
+                        start_line + 1
+                    }) // Convert back to 1-indexed
                     .collect();
                 if !actual_positions.is_empty() {
                     errors.push(format!(
@@ -752,6 +768,7 @@ fn check_inlay_hints(
 fn check_definition(
     locations: &[styx_lsp_ext::Location],
     expected: &DefinitionExpectations,
+    content: &str,
     errors: &mut Vec<String>,
 ) {
     // Check if we expected empty results
@@ -777,9 +794,11 @@ fn check_definition(
     // Check 'has' expectations
     for exp in &expected.has {
         let found = locations.iter().any(|loc| {
+            // Convert span to line/col for comparison
+            let (start_line, _start_char) = offset_to_position(content, loc.span.start);
             // Check line if specified (convert from 1-indexed to 0-indexed)
             if let Some(line) = exp.line
-                && loc.range.start.line != line - 1
+                && start_line != line - 1
             {
                 return false;
             }

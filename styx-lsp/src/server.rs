@@ -163,14 +163,8 @@ impl StyxLanguageServer {
                             };
                             diagnostics.push(Diagnostic {
                                 range: Range {
-                                    start: Position {
-                                        line: diag.range.start.line,
-                                        character: diag.range.start.character,
-                                    },
-                                    end: Position {
-                                        line: diag.range.end.line,
-                                        character: diag.range.end.character,
-                                    },
+                                    start: offset_to_position(content, diag.span.start as usize),
+                                    end: offset_to_position(content, diag.span.end as usize),
                                 },
                                 severity: Some(severity),
                                 code: diag.code.map(NumberOrString::String),
@@ -763,21 +757,34 @@ impl LanguageServer for StyxLanguageServer {
                         tracing::debug!(count = locations.len(), "Extension returned definitions");
                         let lsp_locations: Vec<Location> = locations
                             .into_iter()
-                            .map(|loc| Location {
-                                uri: Url::parse(&loc.uri).unwrap_or_else(|_| uri.clone()),
-                                range: Range {
-                                    start: Position {
-                                        line: loc.range.start.line,
-                                        character: loc.range.start.character,
+                            .filter_map(|loc| {
+                                let target_uri =
+                                    Url::parse(&loc.uri).unwrap_or_else(|_| uri.clone());
+                                // Get content for span→range conversion
+                                let content = if target_uri == uri {
+                                    &doc.content
+                                } else if let Some(target_doc) = docs.get(&target_uri) {
+                                    &target_doc.content
+                                } else {
+                                    // Can't convert span without content
+                                    tracing::warn!(
+                                        uri = %target_uri,
+                                        "Cannot convert span to range: document not open"
+                                    );
+                                    return None;
+                                };
+                                Some(Location {
+                                    uri: target_uri,
+                                    range: Range {
+                                        start: offset_to_position(content, loc.span.start as usize),
+                                        end: offset_to_position(content, loc.span.end as usize),
                                     },
-                                    end: Position {
-                                        line: loc.range.end.line,
-                                        character: loc.range.end.character,
-                                    },
-                                },
+                                })
                             })
                             .collect();
-                        if lsp_locations.len() == 1 {
+                        if lsp_locations.is_empty() {
+                            return Ok(None);
+                        } else if lsp_locations.len() == 1 {
                             return Ok(Some(GotoDefinitionResponse::Scalar(
                                 lsp_locations.into_iter().next().unwrap(),
                             )));
@@ -1292,21 +1299,15 @@ impl LanguageServer for StyxLanguageServer {
         {
             let schema_id = &schema_file.meta.id;
             if let Some(client) = self.extensions.get_client(schema_id).await {
-                // Convert diagnostics to extension format
+                // Convert diagnostics to extension format (Range → Span)
                 let ext_diagnostics: Vec<ext::Diagnostic> = params
                     .context
                     .diagnostics
                     .iter()
                     .map(|d| ext::Diagnostic {
-                        range: ext::Range {
-                            start: ext::Position {
-                                line: d.range.start.line,
-                                character: d.range.start.character,
-                            },
-                            end: ext::Position {
-                                line: d.range.end.line,
-                                character: d.range.end.character,
-                            },
+                        span: styx_tree::Span {
+                            start: position_to_offset(&doc.content, d.range.start) as u32,
+                            end: position_to_offset(&doc.content, d.range.end) as u32,
                         },
                         severity: match d.severity {
                             Some(DiagnosticSeverity::ERROR) => ext::DiagnosticSeverity::Error,
@@ -1327,15 +1328,9 @@ impl LanguageServer for StyxLanguageServer {
 
                 let ext_params = ext::CodeActionParams {
                     document_uri: uri.to_string(),
-                    range: ext::Range {
-                        start: ext::Position {
-                            line: params.range.start.line,
-                            character: params.range.start.character,
-                        },
-                        end: ext::Position {
-                            line: params.range.end.line,
-                            character: params.range.end.character,
-                        },
+                    span: styx_tree::Span {
+                        start: position_to_offset(&doc.content, params.range.start) as u32,
+                        end: position_to_offset(&doc.content, params.range.end) as u32,
                     },
                     diagnostics: ext_diagnostics,
                 };
@@ -1357,27 +1352,39 @@ impl LanguageServer for StyxLanguageServer {
                                 let changes: std::collections::HashMap<_, _> = we
                                     .changes
                                     .into_iter()
-                                    .map(|doc_edit| {
+                                    .filter_map(|doc_edit| {
                                         let doc_uri = Url::parse(&doc_edit.uri)
                                             .unwrap_or_else(|_| uri.clone());
+                                        // Get content for span→range conversion
+                                        let content = if doc_uri == uri {
+                                            &doc.content
+                                        } else if let Some(target_doc) = docs.get(&doc_uri) {
+                                            &target_doc.content
+                                        } else {
+                                            tracing::warn!(
+                                                uri = %doc_uri,
+                                                "Cannot convert span to range: document not open"
+                                            );
+                                            return None;
+                                        };
                                         let edits: Vec<TextEdit> = doc_edit
                                             .edits
                                             .into_iter()
                                             .map(|e| TextEdit {
                                                 range: Range {
-                                                    start: Position {
-                                                        line: e.range.start.line,
-                                                        character: e.range.start.character,
-                                                    },
-                                                    end: Position {
-                                                        line: e.range.end.line,
-                                                        character: e.range.end.character,
-                                                    },
+                                                    start: offset_to_position(
+                                                        content,
+                                                        e.span.start as usize,
+                                                    ),
+                                                    end: offset_to_position(
+                                                        content,
+                                                        e.span.end as usize,
+                                                    ),
                                                 },
                                                 new_text: e.new_text,
                                             })
                                             .collect();
-                                        (doc_uri, edits)
+                                        Some((doc_uri, edits))
                                     })
                                     .collect();
                                 WorkspaceEdit {

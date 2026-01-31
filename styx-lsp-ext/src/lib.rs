@@ -347,8 +347,8 @@ pub struct DiagnosticParams {
 #[derive(Debug, Clone, Facet)]
 #[facet(skip_all_unless_truthy)]
 pub struct Diagnostic {
-    /// Range of the diagnostic.
-    pub range: Range,
+    /// Span of the diagnostic (byte offsets). The LSP host converts to line/character.
+    pub span: styx_tree::Span,
     /// Severity level.
     pub severity: DiagnosticSeverity,
     /// Human-readable message.
@@ -381,9 +381,9 @@ pub enum DiagnosticSeverity {
 pub struct CodeActionParams {
     /// URI of the document.
     pub document_uri: String,
-    /// Range to provide actions for.
-    pub range: Range,
-    /// Diagnostics at this range (for context).
+    /// Span to provide actions for (byte offsets).
+    pub span: styx_tree::Span,
+    /// Diagnostics at this span (for context).
     pub diagnostics: Vec<Diagnostic>,
 }
 
@@ -423,10 +423,11 @@ pub struct DocumentEdit {
     pub edits: Vec<TextEdit>,
 }
 
-/// A text edit (replace a range with new text).
+/// A text edit (replace a span with new text).
 #[derive(Debug, Clone, Facet)]
 pub struct TextEdit {
-    pub range: Range,
+    /// Span to replace (byte offsets). The LSP host converts to line/character.
+    pub span: styx_tree::Span,
     pub new_text: String,
 }
 
@@ -450,13 +451,13 @@ pub struct DefinitionParams {
     pub tagged_context: Option<Value>,
 }
 
-/// A location in a document (URI + range).
+/// A location in a document (URI + span).
 #[derive(Debug, Clone, Facet)]
 pub struct Location {
     /// URI of the target document.
     pub uri: String,
-    /// Range within the document.
-    pub range: Range,
+    /// Span within the document (byte offsets). The LSP host converts to line/character.
+    pub span: styx_tree::Span,
 }
 
 // =============================================================================

@@ -460,32 +460,23 @@ impl TestHarness {
             .await
             .map_err(|e| HarnessError::CallFailed(e.to_string()))?;
 
-        // Filter diagnostics to those that overlap with cursor
+        // Filter diagnostics to those that overlap with cursor offset
+        let cursor_offset = cursor_info.offset as u32;
         let cursor_diagnostics: Vec<_> = all_diagnostics
             .into_iter()
-            .filter(|d| {
-                d.range.start.line == cursor_info.line
-                    && d.range.start.character <= cursor_info.character
-                    && d.range.end.character >= cursor_info.character
-            })
+            .filter(|d| d.span.start <= cursor_offset && d.span.end >= cursor_offset)
             .collect();
 
-        // Create a single-character range at cursor
-        let range = Range {
-            start: Position {
-                line: cursor_info.line,
-                character: cursor_info.character,
-            },
-            end: Position {
-                line: cursor_info.line,
-                character: cursor_info.character + 1,
-            },
+        // Create a single-character span at cursor
+        let span = styx_tree::Span {
+            start: cursor_offset,
+            end: cursor_offset + 1,
         };
 
         self.client
             .code_actions(CodeActionParams {
                 document_uri: document_uri.to_string(),
-                range,
+                span,
                 diagnostics: cursor_diagnostics,
             })
             .await
