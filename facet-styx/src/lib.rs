@@ -510,4 +510,132 @@ db {
             output
         );
     }
+
+    /// Test that Documented<String> works as a flattened map key (baseline).
+    #[test]
+    fn test_documented_as_flattened_map_key() {
+        use indexmap::IndexMap;
+
+        #[derive(Facet, Debug)]
+        struct DocMap {
+            #[facet(flatten)]
+            items: IndexMap<Documented<String>, String>,
+        }
+
+        let source = r#"{foo bar, baz qux}"#;
+        let result: Result<DocMap, _> = from_str(source);
+        match &result {
+            Ok(map) => {
+                assert_eq!(map.items.len(), 2);
+            }
+            Err(e) => {
+                panic!(
+                    "Documented<String> as map key failed: {}",
+                    e.render("<test>", source)
+                );
+            }
+        }
+    }
+
+    /// Test that Spanned<String> works as a flattened map key.
+    ///
+    /// This is a regression test for an issue where metadata containers with
+    /// span metadata failed to work as map keys in flattened maps.
+    #[test]
+    fn test_spanned_as_flattened_map_key() {
+        use facet_reflect::Span;
+        use indexmap::IndexMap;
+
+        #[derive(Debug, Clone, Facet)]
+        #[facet(metadata_container)]
+        struct Spanned<T> {
+            pub value: T,
+            #[facet(metadata = "span")]
+            pub span: Option<Span>,
+        }
+
+        impl<T: PartialEq> PartialEq for Spanned<T> {
+            fn eq(&self, other: &Self) -> bool {
+                self.value == other.value
+            }
+        }
+        impl<T: Eq> Eq for Spanned<T> {}
+        impl<T: std::hash::Hash> std::hash::Hash for Spanned<T> {
+            fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+                self.value.hash(state);
+            }
+        }
+
+        #[derive(Facet, Debug)]
+        struct SpannedMap {
+            #[facet(flatten)]
+            items: IndexMap<Spanned<String>, String>,
+        }
+
+        let source = r#"{foo bar, baz qux}"#;
+        let result: Result<SpannedMap, _> = from_str(source);
+        match &result {
+            Ok(map) => {
+                assert_eq!(map.items.len(), 2);
+                let keys: Vec<_> = map.items.keys().map(|k| k.value.as_str()).collect();
+                assert!(keys.contains(&"foo"));
+                assert!(keys.contains(&"baz"));
+            }
+            Err(e) => {
+                panic!(
+                    "Spanned<String> as map key failed: {}",
+                    e.render("<test>", source)
+                );
+            }
+        }
+    }
+
+    /// Test metadata container with both span and doc metadata as map key.
+    #[test]
+    fn test_metadata_container_with_span_and_doc_as_map_key() {
+        use facet_reflect::Span;
+        use indexmap::IndexMap;
+
+        #[derive(Debug, Clone, Facet)]
+        #[facet(metadata_container)]
+        struct SpannedDoc<T> {
+            pub value: T,
+            #[facet(metadata = "span")]
+            pub span: Option<Span>,
+            #[facet(metadata = "doc")]
+            pub doc: Option<Vec<String>>,
+        }
+
+        impl<T: PartialEq> PartialEq for SpannedDoc<T> {
+            fn eq(&self, other: &Self) -> bool {
+                self.value == other.value
+            }
+        }
+        impl<T: Eq> Eq for SpannedDoc<T> {}
+        impl<T: std::hash::Hash> std::hash::Hash for SpannedDoc<T> {
+            fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+                self.value.hash(state);
+            }
+        }
+
+        #[derive(Facet, Debug)]
+        struct SpannedDocMap {
+            #[facet(flatten)]
+            items: IndexMap<SpannedDoc<String>, String>,
+        }
+
+        let source = r#"{foo bar, baz qux}"#;
+        let result: Result<SpannedDocMap, _> = from_str(source);
+        match &result {
+            Ok(map) => {
+                assert_eq!(map.items.len(), 2);
+            }
+            Err(e) => {
+                panic!(
+                    "SpannedDoc<String> as map key failed: {}",
+                    e.render("<test>", source)
+                );
+            }
+        }
+    }
 }

@@ -24,3 +24,5 @@ styx-tokenizer = { workspace = true }
 tracing.workspace = true
 facet-testhelpers.workspace = true
 styx-testhelpers.workspace = true
+similar.workspace = true
+ariadne.workspace = true

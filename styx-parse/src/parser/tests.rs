@@ -6,6 +6,204 @@ use facet_testhelpers::test;
 use styx_testhelpers::{ActualError, assert_annotated_errors, source_without_annotations};
 use tracing::trace;
 
+mod event_assert {
+    use super::*;
+    use ariadne::{Color, Label, Report, ReportKind, Source};
+    use similar::{ChangeTag, TextDiff};
+    use std::fmt::Write;
+
+    /// Format an event to a string representation, ignoring spans.
+    fn format_event(event: &Event<'_>) -> String {
+        match event {
+            Event::DocumentStart => "DocumentStart".to_string(),
+            Event::DocumentEnd => "DocumentEnd".to_string(),
+            Event::ObjectStart { .. } => "ObjectStart".to_string(),
+            Event::ObjectEnd { .. } => "ObjectEnd".to_string(),
+            Event::SequenceStart { .. } => "SequenceStart".to_string(),
+            Event::SequenceEnd { .. } => "SequenceEnd".to_string(),
+            Event::EntryStart => "EntryStart".to_string(),
+            Event::EntryEnd => "EntryEnd".to_string(),
+            Event::Key {
+                tag, payload, kind, ..
+            } => {
+                let mut s = String::from("Key(");
+                if let Some(t) = tag {
+                    write!(s, "@{} ", t).unwrap();
+                }
+                match payload {
+                    Some(p) => write!(s, "{:?}", p.as_ref()).unwrap(),
+                    None => s.push_str("unit"),
+                }
+                if *kind != ScalarKind::Bare {
+                    write!(s, ", {:?}", kind).unwrap();
+                }
+                s.push(')');
+                s
+            }
+            Event::Scalar { value, kind, .. } => {
+                let mut s = String::from("Scalar(");
+                write!(s, "{:?}", value.as_ref()).unwrap();
+                if *kind != ScalarKind::Bare {
+                    write!(s, ", {:?}", kind).unwrap();
+                }
+                s.push(')');
+                s
+            }
+            Event::Unit { .. } => "Unit".to_string(),
+            Event::TagStart { name, .. } => format!("TagStart(@{})", name),
+            Event::TagEnd => "TagEnd".to_string(),
+            Event::Comment { text, .. } => format!("Comment({:?})", text),
+            Event::DocComment { lines, .. } => format!("DocComment({:?})", lines),
+            Event::Error { kind, .. } => format!("Error({:?})", kind),
+        }
+    }
+
+    /// Format a list of events to a multi-line string.
+    fn format_events(events: &[Event<'_>]) -> String {
+        events
+            .iter()
+            .map(format_event)
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Normalize expected string: trim, dedent, remove empty lines at start/end.
+    fn normalize_expected(expected: &str) -> String {
+        let lines: Vec<&str> = expected.lines().collect();
+
+        // Find minimum indentation (ignoring empty lines)
+        let min_indent = lines
+            .iter()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| l.len() - l.trim_start().len())
+            .min()
+            .unwrap_or(0);
+
+        // Dedent and filter empty lines at start/end
+        let dedented: Vec<&str> = lines
+            .iter()
+            .map(|l| {
+                if l.len() >= min_indent {
+                    &l[min_indent..]
+                } else {
+                    l.trim()
+                }
+            })
+            .collect();
+
+        // Trim empty lines from start and end
+        let start = dedented.iter().position(|l| !l.is_empty()).unwrap_or(0);
+        let end = dedented
+            .iter()
+            .rposition(|l| !l.is_empty())
+            .map(|i| i + 1)
+            .unwrap_or(0);
+
+        dedented[start..end].join("\n")
+    }
+
+    /// Print each event with its span annotated on the source using ariadne.
+    fn print_events_with_spans(source: &str, events: &[Event<'_>]) {
+        eprintln!("\n=== Events with spans ===\n");
+
+        for (i, event) in events.iter().enumerate() {
+            let label = format_event(event);
+            let span = event_span(event);
+
+            eprintln!("Event {}: {}", i + 1, label);
+
+            if let Some((start, end)) = span {
+                let mut buf = Vec::new();
+                Report::build(ReportKind::Custom("", Color::Cyan), ("", start..end))
+                    .with_label(
+                        Label::new(("", start..end))
+                            .with_message(&label)
+                            .with_color(Color::Cyan),
+                    )
+                    .finish()
+                    .write(("", Source::from(source)), &mut buf)
+                    .unwrap();
+                eprintln!("{}", String::from_utf8_lossy(&buf));
+            } else {
+                eprintln!("  (no span)\n");
+            }
+        }
+    }
+
+    /// Extract span from an event, if it has one.
+    fn event_span(event: &Event<'_>) -> Option<(usize, usize)> {
+        match event {
+            Event::DocumentStart | Event::DocumentEnd => None,
+            Event::ObjectStart { span } => Some((span.start as usize, span.end as usize)),
+            Event::ObjectEnd { span } => Some((span.start as usize, span.end as usize)),
+            Event::SequenceStart { span } => Some((span.start as usize, span.end as usize)),
+            Event::SequenceEnd { span } => Some((span.start as usize, span.end as usize)),
+            Event::EntryStart | Event::EntryEnd => None,
+            Event::Key { span, .. } => Some((span.start as usize, span.end as usize)),
+            Event::Scalar { span, .. } => Some((span.start as usize, span.end as usize)),
+            Event::Unit { span } => Some((span.start as usize, span.end as usize)),
+            Event::TagStart { span, .. } => Some((span.start as usize, span.end as usize)),
+            Event::TagEnd => None,
+            Event::Comment { span, .. } => Some((span.start as usize, span.end as usize)),
+            Event::DocComment { span, .. } => Some((span.start as usize, span.end as usize)),
+            Event::Error { span, .. } => Some((span.start as usize, span.end as usize)),
+        }
+    }
+
+    /// Assert that events match the expected string representation.
+    /// On mismatch, shows expected, actual, and a diff.
+    /// Set STYX_SHOW_SPANS=1 to see each event with its span annotated on the source.
+    pub fn assert_events_eq_impl(source: &str, events: &[Event<'_>], expected: &str) {
+        let actual = format_events(events);
+        let expected = normalize_expected(expected);
+
+        if actual == expected {
+            return;
+        }
+
+        eprintln!("\n╭─ Events mismatch! ─────────────────────────────────────────╮\n");
+
+        eprintln!("Expected:\n{}\n", indent(&expected, "    "));
+        eprintln!("Actual:\n{}\n", indent(&actual, "    "));
+
+        eprintln!("Diff:");
+        let diff = TextDiff::from_lines(&expected, &actual);
+        for change in diff.iter_all_changes() {
+            let (sign, color) = match change.tag() {
+                ChangeTag::Delete => ("-", "\x1b[31m"),
+                ChangeTag::Insert => ("+", "\x1b[32m"),
+                ChangeTag::Equal => (" ", ""),
+            };
+            let reset = if color.is_empty() { "" } else { "\x1b[0m" };
+            eprint!("  {}{}{}{}", color, sign, change, reset);
+        }
+        eprintln!();
+
+        if std::env::var("STYX_SHOW_SPANS").is_ok() {
+            print_events_with_spans(source, events);
+        } else {
+            eprintln!("Hint: rerun with STYX_SHOW_SPANS=1 to see spans annotated on source\n");
+        }
+
+        eprintln!("╰────────────────────────────────────────────────────────────╯\n");
+
+        panic!("Events do not match expected");
+    }
+
+    fn indent(s: &str, prefix: &str) -> String {
+        s.lines()
+            .map(|l| format!("{}{}", prefix, l))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+macro_rules! assert_events_eq {
+    ($source:expr, $events:expr, $expected:expr) => {
+        event_assert::assert_events_eq_impl($source, &$events, $expected)
+    };
+}
+
 fn parse(source: &str) -> Vec<Event<'_>> {
     Parser::new(source).parse_to_vec()
 }
@@ -1196,4 +1394,23 @@ fn test_tag_unit_object_is_too_many_atoms() {
         .collect();
     assert_eq!(errors.len(), 1);
     assert!(matches!(errors[0], ParseErrorKind::TooManyAtoms));
+}
+
+#[test]
+fn test_explicit_object_is_only_one_struct_start() {
+    let input = "{key val}";
+    let events = parse(input);
+    assert_events_eq!(
+        input,
+        events,
+        "
+        DocumentStart
+        ObjectStart
+        EntryStart
+        Key(\"key\")
+        Scalar(\"val\")
+        EntryEnd
+        ObjectEnd
+        "
+    );
 }
