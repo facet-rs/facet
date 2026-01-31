@@ -998,8 +998,8 @@ tests (
         inlay_hints {
             count 2
             has (
-                {label ": BIGINT", line 4, col 22}
-                {label ": TEXT", line 5, col 26}
+                {label ": BIGINT", line 4, col 10}
+                {label ": TEXT", line 5, col 14}
             )
         }
     }
@@ -1278,4 +1278,3 @@ tests (
         }
     }
 )
-
