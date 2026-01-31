@@ -3,7 +3,7 @@ use afl::fuzz;
 use arbitrary::Arbitrary;
 use facet::Facet;
 use facet_core::{PtrMut, Shape};
-use facet_reflect2::{Build, Imm, Op, OpBatch, Partial, Path, Source};
+use facet_reflect2::{Imm, Op, OpBatch, Partial, Path, Source};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 // ============================================================================
@@ -495,8 +495,8 @@ pub enum FuzzSource {
     Imm(FuzzValue),
     /// Use the type's default value.
     Default,
-    /// Build incrementally - pushes a frame.
-    Build { len_hint: Option<u8> },
+    /// Stage for incremental construction - pushes a frame.
+    Stage { len_hint: Option<u8> },
 }
 
 impl std::fmt::Debug for FuzzSource {
@@ -504,7 +504,7 @@ impl std::fmt::Debug for FuzzSource {
         match self {
             FuzzSource::Imm(v) => write!(f, "Imm({:?})", v),
             FuzzSource::Default => write!(f, "Default"),
-            FuzzSource::Build { len_hint } => write!(f, "Build({:?})", len_hint),
+            FuzzSource::Stage { len_hint } => write!(f, "Stage({:?})", len_hint),
         }
     }
 }
@@ -530,12 +530,17 @@ impl std::fmt::Debug for FuzzPath {
 
 impl FuzzPath {
     fn to_path(&self) -> Path {
-        let mut path = Path::default();
         // Limit path depth to avoid pathological cases
-        for &idx in self.indices.iter().take(4) {
-            path.push(idx as u32);
+        let mut iter = self.indices.iter().take(4);
+        if let Some(&first) = iter.next() {
+            let mut path = Path::field(first as u32);
+            for &idx in iter {
+                path = path.then_field(idx as u32);
+            }
+            path
+        } else {
+            Path::empty()
         }
-        path
     }
 }
 
@@ -548,10 +553,8 @@ impl FuzzPath {
 pub enum FuzzOp {
     /// Set a value at a path.
     Set { path: FuzzPath, source: FuzzSource },
-    /// Push an element to the current list.
-    Push { source: FuzzSource },
-    /// Insert a key-value pair into the current map.
-    Insert { key: FuzzValue, value: FuzzSource },
+    /// Append an element (list/set element or map entry).
+    Append { source: FuzzSource },
     /// End the current frame.
     End,
 }
@@ -641,89 +644,47 @@ fn run_fuzz(input: FuzzInput, log: bool) {
                             src: Source::Default,
                         });
                     }
-                    FuzzSource::Build { len_hint } => {
+                    FuzzSource::Stage { len_hint } => {
                         if log {
-                            eprintln!("    [{i}] Set dst={:?} src=Build({:?})", path, len_hint);
+                            eprintln!("    [{i}] Set dst={:?} src=Stage({:?})", path, len_hint);
                         }
                         op_batch.push(Op::Set {
                             dst: path.to_path(),
-                            src: Source::Build(Build {
-                                len_hint: len_hint.as_ref().map(|&h| h as usize),
-                            }),
+                            src: Source::Stage(len_hint.as_ref().map(|&h| h as usize)),
                         });
                     }
                 },
-                FuzzOp::Push { source } => match source {
+                FuzzOp::Append { source } => match source {
                     FuzzSource::Imm(value) => {
                         if log {
-                            eprintln!("    [{i}] Push src=Imm({:?})", value);
+                            eprintln!("    [{i}] Append src=Imm({:?})", value);
                         }
                         let (ptr, shape) = value.as_ptr_and_shape();
                         let imm = unsafe { Imm::new(ptr, shape) };
-                        op_batch.push(Op::Push {
+                        op_batch.push(Op::Set {
+                            dst: Path::append(),
                             src: Source::Imm(imm),
                         });
                     }
                     FuzzSource::Default => {
                         if log {
-                            eprintln!("    [{i}] Push src=Default");
+                            eprintln!("    [{i}] Append src=Default");
                         }
-                        op_batch.push(Op::Push {
+                        op_batch.push(Op::Set {
+                            dst: Path::append(),
                             src: Source::Default,
                         });
                     }
-                    FuzzSource::Build { len_hint } => {
+                    FuzzSource::Stage { len_hint } => {
                         if log {
-                            eprintln!("    [{i}] Push src=Build({:?})", len_hint);
+                            eprintln!("    [{i}] Append src=Stage({:?})", len_hint);
                         }
-                        op_batch.push(Op::Push {
-                            src: Source::Build(Build {
-                                len_hint: len_hint.as_ref().map(|&h| h as usize),
-                            }),
+                        op_batch.push(Op::Set {
+                            dst: Path::append(),
+                            src: Source::Stage(len_hint.as_ref().map(|&h| h as usize)),
                         });
                     }
                 },
-                FuzzOp::Insert { key, value } => {
-                    let (key_ptr, key_shape) = key.as_ptr_and_shape();
-                    let key_imm = unsafe { Imm::new(key_ptr, key_shape) };
-
-                    match value {
-                        FuzzSource::Imm(val) => {
-                            if log {
-                                eprintln!("    [{i}] Insert key={:?} value=Imm({:?})", key, val);
-                            }
-                            let (val_ptr, val_shape) = val.as_ptr_and_shape();
-                            let val_imm = unsafe { Imm::new(val_ptr, val_shape) };
-                            op_batch.push(Op::Insert {
-                                key: key_imm,
-                                value: Source::Imm(val_imm),
-                            });
-                        }
-                        FuzzSource::Default => {
-                            if log {
-                                eprintln!("    [{i}] Insert key={:?} value=Default", key);
-                            }
-                            op_batch.push(Op::Insert {
-                                key: key_imm,
-                                value: Source::Default,
-                            });
-                        }
-                        FuzzSource::Build { len_hint } => {
-                            if log {
-                                eprintln!(
-                                    "    [{i}] Insert key={:?} value=Build({:?})",
-                                    key, len_hint
-                                );
-                            }
-                            op_batch.push(Op::Insert {
-                                key: key_imm,
-                                value: Source::Build(Build {
-                                    len_hint: len_hint.as_ref().map(|&h| h as usize),
-                                }),
-                            });
-                        }
-                    }
-                }
                 FuzzOp::End => {
                     if log {
                         eprintln!("    [{i}] End");
@@ -748,24 +709,9 @@ fn run_fuzz(input: FuzzInput, log: bool) {
         for (i, fuzz_op) in batch.into_iter().enumerate() {
             let consumed = i < consumed_count;
             match fuzz_op {
-                FuzzOp::Set { source, .. } => {
+                FuzzOp::Set { source, .. } | FuzzOp::Append { source } => {
                     if let FuzzSource::Imm(value) = source {
                         if consumed {
-                            std::mem::forget(value);
-                        }
-                    }
-                }
-                FuzzOp::Push { source } => {
-                    if let FuzzSource::Imm(value) = source {
-                        if consumed {
-                            std::mem::forget(value);
-                        }
-                    }
-                }
-                FuzzOp::Insert { key, value } => {
-                    if consumed {
-                        std::mem::forget(key);
-                        if let FuzzSource::Imm(value) = value {
                             std::mem::forget(value);
                         }
                     }
