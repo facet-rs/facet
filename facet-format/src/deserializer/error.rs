@@ -2,7 +2,7 @@ use facet_core::Shape;
 use facet_path::Path;
 use facet_reflect::{AllocError, ReflectError, ReflectErrorKind, ShapeMismatchError, Span};
 use std::borrow::Cow;
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 use std::fmt;
 
 thread_local! {
@@ -10,11 +10,6 @@ thread_local! {
     /// This is set by SpanGuard before calling Partial methods,
     /// allowing the From<ReflectError> impl to capture the span automatically.
     static CURRENT_SPAN: Cell<Option<Span>> = const { Cell::new(None) };
-
-    /// Thread-local storage for the current doc during deserialization.
-    /// This is set by DocGuard before deserializing a field value,
-    /// allowing metadata containers to access the doc from the field key.
-    static CURRENT_DOC: RefCell<Option<Vec<Cow<'static, str>>>> = const { RefCell::new(None) };
 }
 
 /// RAII guard that sets the current span for error reporting.
@@ -49,36 +44,6 @@ fn current_span() -> Span {
             "current_span called without an active SpanGuard - this is a bug in the deserializer",
         )
     })
-}
-
-/// RAII guard that sets the current doc for metadata containers.
-///
-/// When dropped, restores the previous doc value.
-pub struct DocGuard {
-    prev: Option<Vec<Cow<'static, str>>>,
-}
-
-impl DocGuard {
-    /// Create a new doc guard, setting the current doc.
-    #[inline]
-    pub fn new(doc: Option<Vec<Cow<'static, str>>>) -> Self {
-        let prev = CURRENT_DOC.with(|cell| cell.borrow_mut().take());
-        CURRENT_DOC.with(|cell| *cell.borrow_mut() = doc);
-        Self { prev }
-    }
-}
-
-impl Drop for DocGuard {
-    fn drop(&mut self) {
-        CURRENT_DOC.with(|cell| *cell.borrow_mut() = self.prev.take());
-    }
-}
-
-/// Get the current doc for metadata containers.
-/// Returns None if no doc is set.
-#[inline]
-pub fn current_doc() -> Option<Vec<Cow<'static, str>>> {
-    CURRENT_DOC.with(|cell| cell.borrow_mut().take())
 }
 
 /// Error produced by a format parser (JSON, TOML, etc.).

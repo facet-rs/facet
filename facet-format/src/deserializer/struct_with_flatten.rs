@@ -218,7 +218,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                         } else {
                             // Regular field: deserialize into it
                             let wip = nav.take_wip();
-                            let wip = self.deserialize_into(wip)?;
+                            let wip = self.deserialize_into(wip, None)?;
                             nav.return_wip(wip);
                         }
 
@@ -316,7 +316,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             let wip = nav.take_wip();
             let wip = wip
                 .begin_object_entry(&key_owned)?
-                .with(|w| self.deserialize_into(w))?
+                .with(|w| self.deserialize_into(w, None))?
                 .end()?;
             nav.return_wip(wip);
         } else {
@@ -329,7 +329,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             let wip = wip.end()?;
             let wip = wip
                 .begin_value()?
-                .with(|w| self.deserialize_into(w))?
+                .with(|w| self.deserialize_into(w, None))?
                 .end()?;
             nav.return_wip(wip);
         }

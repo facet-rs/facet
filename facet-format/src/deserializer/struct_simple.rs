@@ -2,8 +2,8 @@ use facet_core::{StructType, Type, UserType};
 use facet_reflect::Partial;
 
 use crate::{
-    DeserializeError, DeserializeErrorKind, DocGuard, FormatDeserializer, ParseEventKind,
-    ScalarValue, SpanGuard,
+    DeserializeError, DeserializeErrorKind, FormatDeserializer, ParseEventKind, ScalarValue,
+    SpanGuard, ValueMeta,
 };
 
 /// Look up a field by name using precomputed TypePlan if available, otherwise linear scan.
@@ -120,7 +120,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                     if idx < struct_def.fields.len() {
                         wip = wip
                             .begin_nth_field(idx)?
-                            .with(|w| self.deserialize_into(w))?
+                            .with(|w| self.deserialize_into(w, None))?
                             .end()?;
                     }
                 }
@@ -145,17 +145,19 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                             "deserialize_struct_simple: matched field"
                         );
 
-                        // Extract doc from key and set up DocGuard for metadata containers
-                        let doc = key.doc().map(|lines| {
-                            lines
-                                .iter()
-                                .map(|s| std::borrow::Cow::Owned(s.to_string()))
-                                .collect()
-                        });
-                        let _doc_guard = DocGuard::new(doc);
+                        // Extract metadata from key for metadata containers
+                        let meta = ValueMeta {
+                            doc: key.doc().map(|lines| {
+                                lines
+                                    .iter()
+                                    .map(|s| std::borrow::Cow::Owned(s.to_string()))
+                                    .collect()
+                            }),
+                            tag: key.tag().map(|t| std::borrow::Cow::Owned(t.to_string())),
+                        };
 
                         wip = wip.begin_nth_field(idx)?;
-                        wip = self.deserialize_into(wip)?;
+                        wip = self.deserialize_into(wip, Some(&meta))?;
 
                         let _guard = SpanGuard::new(self.last_span);
                         wip = wip.end()?;
