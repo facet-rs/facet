@@ -62,6 +62,8 @@ enum ParserState {
         seen_keys: HashMap<KeyValue, Span>,
         pending_doc_comment: Option<Span>,
         path_state: PathState,
+        /// Whether we've emitted ObjectStart for the implicit root object.
+        emitted_object_start: bool,
     },
 
     /// Inside explicit object { ... }.
@@ -132,6 +134,7 @@ impl<'src> Parser<'src> {
                     seen_keys: HashMap::new(),
                     pending_doc_comment: None,
                     path_state: PathState::default(),
+                    emitted_object_start: false,
                 };
                 Some(Event::DocumentStart)
             }
@@ -202,14 +205,22 @@ impl<'src> Parser<'src> {
                 Lexeme::Eof => {
                     if let ParserState::DocumentRoot {
                         pending_doc_comment,
+                        emitted_object_start,
                         ..
                     } = &mut self.state
-                        && let Some(span) = pending_doc_comment.take()
                     {
-                        self.event_queue.push_back(Event::Error {
-                            span,
-                            kind: ParseErrorKind::DanglingDocComment,
-                        });
+                        if let Some(span) = pending_doc_comment.take() {
+                            self.event_queue.push_back(Event::Error {
+                                span,
+                                kind: ParseErrorKind::DanglingDocComment,
+                            });
+                        }
+                        // Close implicit root object if we opened it
+                        if *emitted_object_start {
+                            self.event_queue.push_back(Event::ObjectEnd {
+                                span: Span::empty(0),
+                            });
+                        }
                     }
                     self.event_queue.push_back(Event::DocumentEnd);
                     self.state = ParserState::AfterDocument;
@@ -248,12 +259,20 @@ impl<'src> Parser<'src> {
                     return Some(Event::ObjectStart { span });
                 }
                 _ => {
+                    // Emit implicit ObjectStart on first content
                     if let ParserState::DocumentRoot {
                         pending_doc_comment,
+                        emitted_object_start,
                         ..
                     } = &mut self.state
                     {
                         *pending_doc_comment = None;
+                        if !*emitted_object_start {
+                            *emitted_object_start = true;
+                            self.event_queue.push_back(Event::ObjectStart {
+                                span: Span::empty(0),
+                            });
+                        }
                     }
                     let atoms = self.collect_entry_atoms(lexeme);
                     if !atoms.is_empty() {
@@ -279,34 +298,48 @@ impl<'src> Parser<'src> {
                 Lexeme::Eof => {
                     if let ParserState::InObject {
                         pending_doc_comment,
+                        parent,
                         ..
                     } = &mut self.state
-                        && let Some(span) = pending_doc_comment.take()
                     {
+                        if let Some(span) = pending_doc_comment.take() {
+                            self.event_queue.push_back(Event::Error {
+                                span,
+                                kind: ParseErrorKind::DanglingDocComment,
+                            });
+                        }
                         self.event_queue.push_back(Event::Error {
-                            span,
-                            kind: ParseErrorKind::DanglingDocComment,
+                            span: start,
+                            kind: ParseErrorKind::UnclosedObject,
                         });
+                        self.event_queue.push_back(Event::ObjectEnd { span: start });
+                        // If parent is AfterDocument, this was a top-level explicit object.
+                        // We need to emit DocumentEnd before transitioning to AfterDocument.
+                        if matches!(parent.as_ref(), ParserState::AfterDocument) {
+                            self.event_queue.push_back(Event::DocumentEnd);
+                        }
                     }
-                    self.event_queue.push_back(Event::Error {
-                        span: start,
-                        kind: ParseErrorKind::UnclosedObject,
-                    });
-                    self.event_queue.push_back(Event::ObjectEnd { span: start });
                     self.pop_state();
                     return self.event_queue.pop_front();
                 }
                 Lexeme::ObjectEnd { span } => {
                     if let ParserState::InObject {
                         pending_doc_comment,
+                        parent,
                         ..
                     } = &mut self.state
-                        && let Some(doc_span) = pending_doc_comment.take()
                     {
-                        self.event_queue.push_back(Event::Error {
-                            span: doc_span,
-                            kind: ParseErrorKind::DanglingDocComment,
-                        });
+                        if let Some(doc_span) = pending_doc_comment.take() {
+                            self.event_queue.push_back(Event::Error {
+                                span: doc_span,
+                                kind: ParseErrorKind::DanglingDocComment,
+                            });
+                        }
+                        // If parent is AfterDocument, this was a top-level explicit object.
+                        // We need to emit DocumentEnd after ObjectEnd.
+                        if matches!(parent.as_ref(), ParserState::AfterDocument) {
+                            self.event_queue.push_back(Event::DocumentEnd);
+                        }
                     }
                     self.pop_state();
                     return Some(Event::ObjectEnd { span });

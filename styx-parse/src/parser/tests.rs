@@ -721,8 +721,8 @@ fn test_object_in_sequence() {
         .iter()
         .filter(|e| matches!(e, Event::ObjectStart { .. }))
         .count();
-    // 2 = 2 objects in sequence (implicit root doesn't emit ObjectStart)
-    assert_eq!(obj_starts, 2);
+    // 3 = implicit root object + 2 objects in sequence
+    assert_eq!(obj_starts, 3);
 }
 
 #[test]
@@ -1063,8 +1063,8 @@ fn test_dotted_path_three_segments() {
         .iter()
         .filter(|e| matches!(e, Event::ObjectStart { .. }))
         .collect();
-    // 2 = 2 from dotted path (a { b { c deep } }) - implicit root doesn't emit ObjectStart
-    assert_eq!(obj_starts.len(), 2);
+    // 3 = implicit root object + 2 from dotted path (a { b { c deep } })
+    assert_eq!(obj_starts.len(), 3);
     assert_parse_errors(r#"a.b.c deep"#);
 }
 
@@ -1411,6 +1411,48 @@ fn test_explicit_object_is_only_one_struct_start() {
         Scalar(\"val\")
         EntryEnd
         ObjectEnd
+        DocumentEnd
+        "
+    );
+}
+
+#[test]
+fn test_unclosed_explicit_object() {
+    let input = "{key val";
+    let events = parse(input);
+    assert_events_eq!(
+        input,
+        events,
+        "
+        DocumentStart
+        ObjectStart
+        EntryStart
+        Key(\"key\")
+        Scalar(\"val\")
+        EntryEnd
+        Error(UnclosedObject)
+        ObjectEnd
+        DocumentEnd
+        "
+    );
+}
+
+#[test]
+fn test_implicit_object_has_object_start() {
+    let input = "key val";
+    let events = parse(input);
+    assert_events_eq!(
+        input,
+        events,
+        "
+        DocumentStart
+        ObjectStart
+        EntryStart
+        Key(\"key\")
+        Scalar(\"val\")
+        EntryEnd
+        ObjectEnd
+        DocumentEnd
         "
     );
 }
