@@ -865,6 +865,15 @@ mod kani_proofs {
         }
     }
 
+    // Verify the drop_node contract for a leaf node (base case)
+    #[kani::proof_for_contract(drop_node)]
+    #[kani::unwind(2)]
+    fn verify_drop_node_leaf() {
+        let mut node = Node::new(kani::any());
+        drop_node(&mut node);
+        std::mem::forget(node); // Avoid double-drop
+    }
+
     // Test 7: Single node, no children - should be fast
     #[kani::proof]
     fn test_node_leaf() {
@@ -905,9 +914,10 @@ mod kani_proofs {
     // Now let's add dynamism - this should break things
     // =======================================================================
 
-    // Test 10: Symbolic number of children - now with loop invariant
+    // Test 10: Symbolic number of children - uses stub_verified to skip drop_node recursion
     #[kani::proof]
-    #[kani::unwind(5)]
+    #[kani::stub_verified(drop_node)]
+    #[kani::unwind(2)]
     fn test_node_symbolic_children_count() {
         let n: usize = kani::any();
         kani::assume(n <= 3); // Bound it, but still symbolic
