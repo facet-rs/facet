@@ -38,6 +38,39 @@ impl<T> Deref for Spanned<T> {
 }
 
 // ============================================================================
+// Non-optional span field (issue #1993)
+// ============================================================================
+
+/// A metadata container with a non-optional span field.
+/// When parsing, we're always in the document, so there's always a span.
+#[derive(Debug, Clone, Facet)]
+#[facet(metadata_container)]
+pub struct RequiredSpanned<T> {
+    /// The wrapped value.
+    pub value: T,
+    /// The source span - non-optional because spans always exist when parsing.
+    #[facet(metadata = "span")]
+    pub span: Span,
+}
+
+#[test]
+fn non_optional_span_field() {
+    #[derive(Facet, Debug)]
+    struct Config {
+        name: RequiredSpanned<String>,
+    }
+
+    let input = r#"name = "foo""#;
+    let config: Config = toml::from_str(input).unwrap();
+    assert_eq!(config.name.value, "foo");
+
+    // Span should be populated and point to the value
+    let span = config.name.span;
+    let spanned_text = &input[span.offset as usize..span.offset as usize + span.len as usize];
+    assert_eq!(spanned_text, r#""foo""#);
+}
+
+// ============================================================================
 // Basic Spanned types
 // ============================================================================
 
