@@ -126,6 +126,7 @@ where
                     size_hint: None,
                     dealloc: id_hash_map_iter_dealloc::<T>,
                 })
+                .from_slice(None)
                 .build()
         }
 
@@ -269,6 +270,7 @@ where
                     size_hint: None,
                     dealloc: id_ord_map_iter_dealloc::<T>,
                 })
+                .from_slice(None)
                 .build()
         }
 
@@ -423,6 +425,7 @@ where
                     size_hint: None,
                     dealloc: bi_hash_map_iter_dealloc::<T>,
                 })
+                .from_slice(None)
                 .build()
         }
 
@@ -578,6 +581,7 @@ where
                     size_hint: None,
                     dealloc: tri_hash_map_iter_dealloc::<T>,
                 })
+                .from_slice(None)
                 .build()
         }
 

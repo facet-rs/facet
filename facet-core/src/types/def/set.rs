@@ -56,6 +56,19 @@ pub type SetLenFn = unsafe fn(set: PtrConst) -> usize;
 /// The `set` parameter must point to aligned, initialized memory of the correct type.
 pub type SetContainsFn = unsafe fn(set: PtrConst, value: PtrConst) -> bool;
 
+/// Build a set from a contiguous slice of elements.
+///
+/// This is an optimization for batch construction - instead of calling `insert`
+/// N times, collect elements in a buffer and build the set in one shot.
+///
+/// # Safety
+///
+/// - `set` must point to uninitialized memory of sufficient size for the set type
+/// - `elements_ptr` must point to `count` consecutive initialized elements
+/// - Each element has size `T::SHAPE.layout.size()` (the element stride)
+/// - After this call, the elements have been moved into the set and should NOT be dropped
+pub type SetFromSliceFn = unsafe fn(set: PtrUninit, elements_ptr: *mut u8, count: usize) -> PtrMut;
+
 vtable_def! {
     /// Virtual table for a `Set<T>`
     #[derive(Clone, Copy, Debug)]
@@ -75,5 +88,8 @@ vtable_def! {
 
         /// Virtual table for set iterator operations
         pub iter_vtable: IterVTable<PtrConst>,
+
+        /// cf. [`SetFromSliceFn`] - optional optimization for batch construction
+        pub from_slice: Option<SetFromSliceFn>,
     }
 }

@@ -66,6 +66,31 @@ unsafe fn hashset_iter_dealloc<T>(iter_ptr: PtrMut) {
     }
 }
 
+/// Build a HashSet from a contiguous slice of elements.
+///
+/// # Safety
+/// - `set` must point to uninitialized memory
+/// - `elements_ptr` must point to `count` consecutive initialized T values
+/// - Elements are moved out and should not be dropped by caller
+unsafe fn hashset_from_slice<
+    T: Eq + core::hash::Hash + 'static,
+    S: Default + BuildHasher + 'static,
+>(
+    set: PtrUninit,
+    elements_ptr: *mut u8,
+    count: usize,
+) -> PtrMut {
+    unsafe {
+        let elements = elements_ptr as *mut T;
+        let mut hashset = HashSet::<T, S>::with_capacity_and_hasher(count, S::default());
+        for i in 0..count {
+            let elem = core::ptr::read(elements.add(i));
+            hashset.insert(elem);
+        }
+        set.put(hashset)
+    }
+}
+
 /// Extract the SetDef from a shape, returns None if not a Set
 #[inline]
 const fn get_set_def(shape: &'static Shape) -> Option<&'static SetDef> {
@@ -220,6 +245,7 @@ where
                     size_hint: None,
                     dealloc: hashset_iter_dealloc::<T>,
                 })
+                .from_slice(Some(hashset_from_slice::<T, S>))
                 .build()
         }
 

@@ -151,6 +151,8 @@ pub enum ReflectErrorKind {
     CannotSetEntireMapEntry,
     /// Map type doesn't support from_pair_slice (needed for batch construction).
     MapDoesNotSupportFromPairSlice { shape: ShapeDesc },
+    /// Set type doesn't support from_slice (needed for batch construction).
+    SetDoesNotSupportFromSlice { shape: ShapeDesc },
 }
 
 impl fmt::Display for ReflectErrorKind {
@@ -308,6 +310,13 @@ impl fmt::Display for ReflectErrorKind {
                 write!(
                     f,
                     "Map type {} doesn't support from_pair_slice",
+                    shape.type_identifier()
+                )
+            }
+            ReflectErrorKind::SetDoesNotSupportFromSlice { shape } => {
+                write!(
+                    f,
+                    "Set type {} doesn't support from_slice",
                     shape.type_identifier()
                 )
             }

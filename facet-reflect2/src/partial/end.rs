@@ -22,6 +22,7 @@ impl<'facet> Partial<'facet> {
 
         // Special handling for collections: commit staged elements before ending
         self.finalize_list_if_needed()?;
+        self.finalize_set_if_needed()?;
         self.finalize_map_if_needed()?;
 
         // Check if we're at root
@@ -141,35 +142,17 @@ impl<'facet> Partial<'facet> {
             }
 
             ParentLink::SetElement { .. } => {
-                // Get insert function from parent's SetFrame
-                let parent = self.arena.get(parent_idx);
-                let FrameKind::Set(ref set_frame) = parent.kind else {
-                    unreachable!("SetElement parent must be a Set frame")
-                };
-                let insert_fn = set_frame.def.vtable.insert;
+                // Set element completing - element is in the slab.
+                // Just increment count and free the frame.
+                // The actual set construction happens when the Set frame ends
+                // (via finalize_set_if_needed which calls from_slice).
 
-                // Get the element data pointer (our current frame's data, now initialized)
-                let frame = self.arena.get(self.current);
-                let element_ptr = unsafe { frame.data.assume_init() };
-
-                // Get the set pointer from parent's data (it's initialized)
-                let parent = self.arena.get(parent_idx);
-                let set_ptr = unsafe { parent.data.assume_init() };
-
-                // Insert the element into the set (moves the value)
-                unsafe {
-                    insert_fn(set_ptr, element_ptr);
-                }
-
-                // The value has been moved into the set. Now deallocate our temp memory.
-                let frame = self.arena.get_mut(self.current);
-                frame.flags.remove(FrameFlags::INIT);
-                let freed_frame = self.arena.free(self.current);
-                freed_frame.dealloc_if_owned();
+                // Free the element frame - do NOT deallocate since slab owns the memory
+                let _ = self.arena.free(self.current);
 
                 // Increment element count in parent set
                 let parent = self.arena.get_mut(parent_idx);
-                if let FrameKind::Set(ref mut s) = parent.kind {
+                if let FrameKind::Set(s) = &mut parent.kind {
                     s.len += 1;
                 }
 
@@ -433,6 +416,52 @@ impl<'facet> Partial<'facet> {
         drop(slab);
 
         // Mark map as initialized
+        let frame = self.arena.get_mut(self.current);
+        frame.flags |= FrameFlags::INIT;
+
+        Ok(())
+    }
+
+    /// If current frame is a Set with a slab, build the set using from_slice.
+    pub(crate) fn finalize_set_if_needed(&mut self) -> Result<(), ReflectError> {
+        let frame = self.arena.get(self.current);
+        let FrameKind::Set(ref set_frame) = frame.kind else {
+            return Ok(()); // Not a set, nothing to do
+        };
+
+        // Check if there's a slab to finalize
+        if set_frame.slab.is_none() {
+            return Ok(()); // No slab = no elements were staged
+        }
+
+        // Get from_slice function
+        let from_slice = set_frame.def.vtable.from_slice.ok_or_else(|| {
+            self.error(ReflectErrorKind::SetDoesNotSupportFromSlice { shape: frame.shape })
+        })?;
+
+        // Get the data we need before taking the slab
+        let set_ptr = frame.data;
+        let len = set_frame.len;
+
+        // Take the slab out of the frame
+        let frame = self.arena.get_mut(self.current);
+        let FrameKind::Set(ref mut set_frame) = frame.kind else {
+            unreachable!()
+        };
+        let slab = set_frame.slab.take().expect("slab exists");
+        let elements_ptr = slab.as_mut_ptr();
+
+        // Build the set using from_slice
+        // SAFETY: set_ptr is uninitialized memory, elements_ptr points to len initialized elements
+        unsafe {
+            from_slice(set_ptr, elements_ptr, len);
+        }
+
+        // Slab is dropped here - deallocates buffer but doesn't drop elements
+        // (elements were moved out by from_slice)
+        drop(slab);
+
+        // Mark set as initialized
         let frame = self.arena.get_mut(self.current);
         frame.flags |= FrameFlags::INIT;
 

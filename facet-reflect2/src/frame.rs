@@ -239,14 +239,19 @@ impl MapFrame {
 }
 
 /// Set frame data (building a HashSet, BTreeSet, etc.).
-/// Tracks whether the set is initialized and count of inserted elements.
+///
+/// Sets use a two-phase construction (like maps):
+/// 1. Stage: Create a Slab to collect elements
+/// 2. End: Call `from_slice` to build the set in one shot
+///
+/// This avoids per-element insert calls and enables optimal initial capacity.
 pub struct SetFrame {
     /// The set definition (element type, vtable). Stored by value since SetDef is Copy.
     pub def: SetDef,
-    /// Whether the set has been initialized (via init_in_place_with_capacity).
-    /// The actual pointer is always frame.data.
-    pub initialized: bool,
-    /// Number of elements that have been inserted.
+    /// Slab for collecting elements. None until Stage, then Some.
+    /// The set memory (frame.data) stays uninitialized until End.
+    pub slab: Option<Slab>,
+    /// Number of committed elements in the slab.
     pub len: usize,
 }
 
@@ -255,9 +260,14 @@ impl SetFrame {
     pub fn new(def: SetDef) -> Self {
         Self {
             def,
-            initialized: false,
+            slab: None,
             len: 0,
         }
+    }
+
+    /// Check if the slab has been initialized (Stage was called).
+    pub fn is_staged(&self) -> bool {
+        self.slab.is_some()
     }
 
     /// Sets are always "complete" since they have variable size.

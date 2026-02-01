@@ -345,15 +345,17 @@ impl<'facet> Partial<'facet> {
         Ok(())
     }
 
-    /// Push to a set (unchanged from original).
+    /// Push to a set using slab-based collection.
+    ///
+    /// Sets use a slab to collect elements, then build the set at End via `from_slice`.
     fn apply_push_to_set(&mut self, source: &Source<'_>) -> Result<(), ReflectError> {
         let frame = self.arena.get(self.current);
         let FrameKind::Set(set_frame) = &frame.kind else {
             unreachable!()
         };
-        let insert_fn = set_frame.def.vtable.insert;
-        let element_shape = set_frame.def.t;
-        let set_ptr = unsafe { frame.data.assume_init() };
+        let def = set_frame.def;
+        let element_shape = def.t;
+        let current_len = set_frame.len;
 
         match source {
             Source::Imm(mov) => {
@@ -363,32 +365,54 @@ impl<'facet> Partial<'facet> {
                         actual: ShapeDesc::Static(mov.shape()),
                     }));
                 }
-                // SAFETY: mov.ptr() points to valid initialized data
-                unsafe { insert_fn(set_ptr, mov.ptr_mut()) };
+
+                // Get element size for copying
+                let element_size = element_shape
+                    .layout
+                    .sized_layout()
+                    .map(|l| l.size())
+                    .unwrap_or(0);
+
+                // Get a slot from the slab
                 let frame = self.arena.get_mut(self.current);
-                if let FrameKind::Set(ref mut s) = frame.kind {
-                    s.len += 1;
+                let FrameKind::Set(ref mut set_frame) = frame.kind else {
+                    unreachable!()
+                };
+                let slab = set_frame
+                    .slab
+                    .as_mut()
+                    .expect("slab must exist after ensure_collection_initialized");
+                let slot = slab.nth_slot(current_len);
+
+                // Copy the element into the slab
+                if element_size > 0 {
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(
+                            mov.ptr().as_byte_ptr(),
+                            slot.as_mut_byte_ptr(),
+                            element_size,
+                        );
+                    }
                 }
+
+                // Increment element count
+                set_frame.len += 1;
             }
             Source::Stage(_capacity) => {
-                let layout = element_shape.layout.sized_layout().map_err(|_| {
-                    self.error(ReflectErrorKind::Unsized {
-                        shape: ShapeDesc::Static(element_shape),
-                    })
-                })?;
-
-                let temp_ptr = if layout.size() == 0 {
-                    PtrUninit::new(std::ptr::NonNull::<u8>::dangling().as_ptr())
-                } else {
-                    let ptr = unsafe { std::alloc::alloc(layout) };
-                    if ptr.is_null() {
-                        return Err(self.error(ReflectErrorKind::AllocFailed { layout }));
-                    }
-                    PtrUninit::new(ptr)
+                // Get a slot from the slab
+                let frame = self.arena.get_mut(self.current);
+                let FrameKind::Set(ref mut set_frame) = frame.kind else {
+                    unreachable!()
                 };
+                let slab = set_frame
+                    .slab
+                    .as_mut()
+                    .expect("slab must exist after ensure_collection_initialized");
+                let slot = slab.nth_slot(current_len);
 
-                let mut element_frame = Self::create_frame_for_shape(temp_ptr, element_shape);
-                element_frame.flags |= FrameFlags::OWNS_ALLOC;
+                // Create frame pointing into the slab
+                // Do NOT set OWNS_ALLOC - the slab owns this memory
+                let mut element_frame = Self::create_frame_for_shape(slot, element_shape);
                 element_frame.parent_link = ParentLink::SetElement {
                     parent: self.current,
                 };
@@ -397,41 +421,27 @@ impl<'facet> Partial<'facet> {
                 self.current = element_idx;
             }
             Source::Default => {
-                let layout = element_shape.layout.sized_layout().map_err(|_| {
-                    self.error(ReflectErrorKind::Unsized {
-                        shape: ShapeDesc::Static(element_shape),
-                    })
-                })?;
-
-                let temp_ptr = if layout.size() == 0 {
-                    PtrUninit::new(std::ptr::NonNull::<u8>::dangling().as_ptr())
-                } else {
-                    let ptr = unsafe { std::alloc::alloc(layout) };
-                    if ptr.is_null() {
-                        return Err(self.error(ReflectErrorKind::AllocFailed { layout }));
-                    }
-                    PtrUninit::new(ptr)
+                // Get a slot from the slab
+                let frame = self.arena.get_mut(self.current);
+                let FrameKind::Set(ref mut set_frame) = frame.kind else {
+                    unreachable!()
                 };
+                let slab = set_frame
+                    .slab
+                    .as_mut()
+                    .expect("slab must exist after ensure_collection_initialized");
+                let slot = slab.nth_slot(current_len);
 
-                let ok = unsafe { element_shape.call_default_in_place(temp_ptr) };
+                // Initialize with default directly into slab
+                let ok = unsafe { element_shape.call_default_in_place(slot) };
                 if ok.is_none() {
-                    if layout.size() > 0 {
-                        unsafe { std::alloc::dealloc(temp_ptr.as_mut_byte_ptr(), layout) };
-                    }
                     return Err(self.error(ReflectErrorKind::NoDefault {
                         shape: ShapeDesc::Static(element_shape),
                     }));
                 }
 
-                unsafe { insert_fn(set_ptr, temp_ptr.assume_init()) };
-                let frame = self.arena.get_mut(self.current);
-                if let FrameKind::Set(ref mut s) = frame.kind {
-                    s.len += 1;
-                }
-
-                if layout.size() > 0 {
-                    unsafe { std::alloc::dealloc(temp_ptr.as_mut_byte_ptr(), layout) };
-                }
+                // Increment element count
+                set_frame.len += 1;
             }
         }
 

@@ -381,7 +381,7 @@ impl<'facet> Partial<'facet> {
         let needs_init = match &frame.kind {
             FrameKind::List(l) => !l.initialized,
             FrameKind::Map(m) => !m.is_staged(),
-            FrameKind::Set(s) => !s.initialized,
+            FrameKind::Set(s) => !s.is_staged(),
             _ => return Ok(()), // Not a collection, nothing to do
         };
 
@@ -433,16 +433,19 @@ impl<'facet> Partial<'facet> {
                 // Note: Do NOT set INIT flag - map memory is still uninitialized
             }
             FrameKind::Set(set_frame) => {
-                let init_fn = set_frame.def.vtable.init_in_place_with_capacity;
-                // SAFETY: frame.data points to uninitialized set memory
-                unsafe { init_fn(frame.data, capacity) };
+                // For sets, create a Slab to collect elements.
+                // The set itself stays uninitialized until End.
+                let element_shape = set_frame.def.t;
+                let slab = crate::slab::Slab::new(
+                    ShapeDesc::Static(element_shape),
+                    if capacity > 0 { Some(capacity) } else { None },
+                );
 
-                // Mark set as initialized
                 let frame = self.arena.get_mut(self.current);
                 if let FrameKind::Set(s) = &mut frame.kind {
-                    s.initialized = true;
+                    s.slab = Some(slab);
                 }
-                frame.flags |= FrameFlags::INIT;
+                // Note: Do NOT set INIT flag - set memory is still uninitialized
             }
             _ => unreachable!(),
         }

@@ -1,3 +1,6 @@
+list:
+	just --list
+
 # Build and run the fuzzer with SAND (decoupled sanitizers)
 fuzz: build
     cargo afl fuzz -i in -o out \
