@@ -123,7 +123,7 @@ libtest-mimic = "^0.8.1"
 # Allow the facet_no_doc cfg in generated code
 # See: https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html
 [workspace.lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(facet_no_doc)"] }
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(facet_no_doc)", "cfg(kani)"] }
 
 [workspace.lints.clippy]
 # Box::leak is always a bug in this codebase - it hides lifetime problems instead of solving them
