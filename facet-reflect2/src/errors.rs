@@ -3,17 +3,17 @@
 use std::fmt;
 
 use crate::ops::Path;
-use facet_core::Shape;
+use crate::shape_desc::ShapeDesc;
 
 /// Location where an error occurred.
 pub struct ErrorLocation {
-    pub shape: &'static Shape,
+    pub shape: ShapeDesc,
     pub path: Path,
 }
 
 impl fmt::Display for ErrorLocation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.shape.type_identifier)?;
+        write!(f, "{}", self.shape.type_identifier())?;
         if !self.path.is_empty() {
             write!(f, " at path {:?}", self.path.segments())?;
         }
@@ -47,7 +47,7 @@ impl fmt::Debug for ReflectError {
 
 impl ReflectError {
     /// Create a new error at the given shape and path.
-    pub fn new(shape: &'static Shape, path: Path, kind: ReflectErrorKind) -> Self {
+    pub fn new(shape: ShapeDesc, path: Path, kind: ReflectErrorKind) -> Self {
         Self {
             location: ErrorLocation { shape, path },
             kind,
@@ -55,7 +55,7 @@ impl ReflectError {
     }
 
     /// Create a new error at the root (empty path).
-    pub fn at_root(shape: &'static Shape, kind: ReflectErrorKind) -> Self {
+    pub fn at_root(shape: ShapeDesc, kind: ReflectErrorKind) -> Self {
         Self::new(shape, Path::default(), kind)
     }
 }
@@ -64,13 +64,13 @@ impl ReflectError {
 pub enum ReflectErrorKind {
     /// Shape mismatch during set operation.
     ShapeMismatch {
-        expected: &'static Shape,
-        actual: &'static Shape,
+        expected: ShapeDesc,
+        actual: ShapeDesc,
     },
     /// Tried to build an uninitialized value.
     NotInitialized,
     /// Cannot allocate unsized type.
-    Unsized { shape: &'static Shape },
+    Unsized { shape: ShapeDesc },
     /// Memory allocation failed.
     AllocFailed { layout: core::alloc::Layout },
     /// Field index out of bounds.
@@ -92,7 +92,7 @@ pub enum ReflectErrorKind {
     /// Partial is poisoned after a previous error.
     Poisoned,
     /// Type does not implement Default.
-    NoDefault { shape: &'static Shape },
+    NoDefault { shape: ShapeDesc },
     /// Cannot use Build with empty path.
     BuildAtEmptyPath,
     /// Cannot End at root frame.
@@ -118,7 +118,7 @@ pub enum ReflectErrorKind {
     /// Pointer type doesn't have a pointee shape.
     UnsupportedPointerType,
     /// List type doesn't support the required operation.
-    ListDoesNotSupportOp { shape: &'static Shape },
+    ListDoesNotSupportOp { shape: ShapeDesc },
     /// Push operation requires a list frame.
     NotAList,
     /// Insert operation requires a map frame.
@@ -127,13 +127,13 @@ pub enum ReflectErrorKind {
     NotASet,
     /// Key shape mismatch.
     KeyShapeMismatch {
-        expected: &'static Shape,
-        actual: &'static Shape,
+        expected: ShapeDesc,
+        actual: ShapeDesc,
     },
     /// Value shape mismatch.
     ValueShapeMismatch {
-        expected: &'static Shape,
-        actual: &'static Shape,
+        expected: ShapeDesc,
+        actual: ShapeDesc,
     },
     /// Root segment not at start of path.
     RootNotAtStart,
@@ -147,6 +147,8 @@ pub enum ReflectErrorKind {
     MissingRequiredField { index: usize },
     /// Map append requires Stage source (to build key+value fields).
     MapAppendRequiresStage,
+    /// Cannot operate on entire map entry - use [0] for key, [1] for value.
+    CannotSetEntireMapEntry,
 }
 
 impl fmt::Display for ReflectErrorKind {
@@ -156,12 +158,17 @@ impl fmt::Display for ReflectErrorKind {
                 write!(
                     f,
                     "Shape mismatch: expected {}, got {}",
-                    expected.type_identifier, actual.type_identifier
+                    expected.type_identifier(),
+                    actual.type_identifier()
                 )
             }
             ReflectErrorKind::NotInitialized => write!(f, "Value not initialized"),
             ReflectErrorKind::Unsized { shape } => {
-                write!(f, "Cannot allocate unsized type {}", shape.type_identifier)
+                write!(
+                    f,
+                    "Cannot allocate unsized type {}",
+                    shape.type_identifier()
+                )
             }
             ReflectErrorKind::AllocFailed { layout } => {
                 write!(
@@ -195,7 +202,7 @@ impl fmt::Display for ReflectErrorKind {
             ReflectErrorKind::SlotEmpty => write!(f, "Arena slot is empty"),
             ReflectErrorKind::Poisoned => write!(f, "Partial is poisoned"),
             ReflectErrorKind::NoDefault { shape } => {
-                write!(f, "No default for {}", shape.type_identifier)
+                write!(f, "No default for {}", shape.type_identifier())
             }
             ReflectErrorKind::BuildAtEmptyPath => write!(f, "Cannot build at empty path"),
             ReflectErrorKind::EndAtRoot => write!(f, "Cannot end at root frame"),
@@ -242,7 +249,7 @@ impl fmt::Display for ReflectErrorKind {
                 write!(
                     f,
                     "List type {} doesn't support the required operation",
-                    shape.type_identifier
+                    shape.type_identifier()
                 )
             }
             ReflectErrorKind::NotAList => write!(f, "Push requires a list frame"),
@@ -252,14 +259,16 @@ impl fmt::Display for ReflectErrorKind {
                 write!(
                     f,
                     "Key shape mismatch: expected {}, got {}",
-                    expected.type_identifier, actual.type_identifier
+                    expected.type_identifier(),
+                    actual.type_identifier()
                 )
             }
             ReflectErrorKind::ValueShapeMismatch { expected, actual } => {
                 write!(
                     f,
                     "Value shape mismatch: expected {}, got {}",
-                    expected.type_identifier, actual.type_identifier
+                    expected.type_identifier(),
+                    actual.type_identifier()
                 )
             }
             ReflectErrorKind::RootNotAtStart => {
@@ -285,6 +294,12 @@ impl fmt::Display for ReflectErrorKind {
                 write!(
                     f,
                     "Map append requires Stage source to build key and value fields"
+                )
+            }
+            ReflectErrorKind::CannotSetEntireMapEntry => {
+                write!(
+                    f,
+                    "Cannot operate on entire map entry - use [0] for key, [1] for value"
                 )
             }
         }

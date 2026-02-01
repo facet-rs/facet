@@ -12,6 +12,7 @@ use crate::frame::{
     StructFrame, absolute_path,
 };
 use crate::ops::{Path, PathSegment, Source};
+use crate::shape_desc::ShapeDesc;
 
 /// Helper to extract the first field index from a path.
 /// Returns the index if the path starts with a Field segment.
@@ -63,7 +64,7 @@ impl<'facet> Partial<'facet> {
         match source {
             Source::Imm(mov) => {
                 // Verify shape matches
-                target.assert_shape(mov.shape(), path)?;
+                target.assert_shape(ShapeDesc::Static(mov.shape()), path)?;
 
                 // Drop any existing value before overwriting
                 if path.is_empty() {
@@ -97,7 +98,7 @@ impl<'facet> Partial<'facet> {
                     frame.flags |= FrameFlags::INIT;
 
                     // For enums, read the discriminant and update selected variant
-                    if let Type::User(UserType::Enum(ref enum_type)) = frame.shape.ty
+                    if let Type::User(UserType::Enum(ref enum_type)) = *frame.shape.ty()
                         && let FrameKind::Enum(ref mut e) = frame.kind
                     {
                         // SAFETY: we just copied a valid enum value, so discriminant is valid
@@ -133,12 +134,14 @@ impl<'facet> Partial<'facet> {
             Source::Stage(_capacity) => {
                 // Build pushes a new frame for incremental construction
                 let frame = self.arena.get(self.current);
+                // Copy shape to break borrow - ShapeDesc is Copy
+                let shape = frame.shape;
 
                 // Check for special types at empty path
                 if path.is_empty() {
                     // Handle list types (Vec, etc.)
                     // Just switch to list frame - initialization is deferred to first Push
-                    if let Def::List(list_def) = &frame.shape.def {
+                    if let Def::List(list_def) = *shape.def() {
                         let frame = self.arena.get_mut(self.current);
                         frame.kind = FrameKind::List(ListFrame::new(list_def));
                         return Ok(());
@@ -146,7 +149,7 @@ impl<'facet> Partial<'facet> {
 
                     // Handle map types (HashMap, BTreeMap, etc.)
                     // Just switch to map frame - initialization is deferred to first Insert
-                    if let Def::Map(map_def) = &frame.shape.def {
+                    if let Def::Map(map_def) = *shape.def() {
                         let frame = self.arena.get_mut(self.current);
                         frame.kind = FrameKind::Map(MapFrame::new(map_def));
                         return Ok(());
@@ -154,14 +157,14 @@ impl<'facet> Partial<'facet> {
 
                     // Handle set types (HashSet, BTreeSet, etc.)
                     // Just switch to set frame - initialization is deferred to first Push
-                    if let Def::Set(set_def) = &frame.shape.def {
+                    if let Def::Set(set_def) = *shape.def() {
                         let frame = self.arena.get_mut(self.current);
                         frame.kind = FrameKind::Set(SetFrame::new(set_def));
                         return Ok(());
                     }
 
                     // Handle pointer types (Box/Rc/Arc)
-                    if let Def::Pointer(ptr_def) = &frame.shape.def {
+                    if let Def::Pointer(ptr_def) = *shape.def() {
                         // Get pointee shape
                         let pointee_shape = ptr_def
                             .pointee
@@ -170,7 +173,7 @@ impl<'facet> Partial<'facet> {
                         // Allocate memory for the pointee
                         let pointee_layout = pointee_shape.layout.sized_layout().map_err(|_| {
                             self.error(ReflectErrorKind::Unsized {
-                                shape: pointee_shape,
+                                shape: ShapeDesc::Static(pointee_shape),
                             })
                         })?;
 
@@ -222,7 +225,7 @@ impl<'facet> Partial<'facet> {
                     }
 
                     // Handle array types
-                    if let Def::Array(array_def) = &frame.shape.def {
+                    if let Def::Array(array_def) = *shape.def() {
                         // Arrays don't need initialization - memory is already allocated
                         // Just convert to struct frame for element tracking (arrays are like structs)
                         let frame = self.arena.get_mut(self.current);
@@ -246,34 +249,35 @@ impl<'facet> Partial<'facet> {
                 let parent_link = make_field_parent_link(&frame.kind, self.current, field_idx);
 
                 // Check if target is a list - create frame, lazy init on first Push
-                if let Def::List(list_def) = &target.shape.def {
+                let target_def = *target.shape.def();
+                if let Def::List(list_def) = target_def {
                     let mut new_frame = Frame::new_list(target.data, target.shape, list_def);
                     new_frame.parent_link = parent_link;
 
                     let new_idx = self.arena.alloc(new_frame);
                     self.current = new_idx;
-                } else if let Def::Map(map_def) = &target.shape.def {
+                } else if let Def::Map(map_def) = target_def {
                     // Create frame, lazy init on first Insert
                     let mut new_frame = Frame::new_map(target.data, target.shape, map_def);
                     new_frame.parent_link = parent_link;
 
                     let new_idx = self.arena.alloc(new_frame);
                     self.current = new_idx;
-                } else if let Def::Set(set_def) = &target.shape.def {
+                } else if let Def::Set(set_def) = target_def {
                     // Create frame, lazy init on first Push
                     let mut new_frame = Frame::new_set(target.data, target.shape, set_def);
                     new_frame.parent_link = parent_link;
 
                     let new_idx = self.arena.alloc(new_frame);
                     self.current = new_idx;
-                } else if let Def::Option(_) = &target.shape.def {
+                } else if let Def::Option(_) = target_def {
                     // Create Option frame
                     let mut new_frame = Frame::new_option(target.data, target.shape);
                     new_frame.parent_link = parent_link;
 
                     let new_idx = self.arena.alloc(new_frame);
                     self.current = new_idx;
-                } else if let Def::Result(_) = &target.shape.def {
+                } else if let Def::Result(_) = target_def {
                     // Create Result frame
                     let mut new_frame = Frame::new_result(target.data, target.shape);
                     new_frame.parent_link = parent_link;
@@ -281,7 +285,7 @@ impl<'facet> Partial<'facet> {
                     let new_idx = self.arena.alloc(new_frame);
                     self.current = new_idx;
                 } else {
-                    let mut new_frame = match target.shape.ty {
+                    let mut new_frame = match *target.shape.ty() {
                         Type::User(UserType::Struct(ref s)) => {
                             Frame::new_struct(target.data, target.shape, s.fields.len())
                         }
@@ -357,7 +361,7 @@ impl<'facet> Partial<'facet> {
 
         // Get enum type and variant
         let frame = self.arena.get(self.current);
-        let Type::User(UserType::Enum(ref enum_type)) = frame.shape.ty else {
+        let Type::User(UserType::Enum(ref enum_type)) = *frame.shape.ty() else {
             return Err(self.error(ReflectErrorKind::NotAnEnum));
         };
         let new_variant = self.get_enum_variant(enum_type, variant_idx)?;
@@ -417,15 +421,15 @@ impl<'facet> Partial<'facet> {
                 if new_variant.data.fields.len() != 1 {
                     return Err(self.error(ReflectErrorKind::ShapeMismatch {
                         expected: frame.shape,
-                        actual: mov.shape(),
+                        actual: ShapeDesc::Static(mov.shape()),
                     }));
                 }
 
                 let field = &new_variant.data.fields[0];
                 if !field.shape().is_shape(mov.shape()) {
                     return Err(self.error(ReflectErrorKind::ShapeMismatch {
-                        expected: field.shape(),
-                        actual: mov.shape(),
+                        expected: ShapeDesc::Static(field.shape()),
+                        actual: ShapeDesc::Static(mov.shape()),
                     }));
                 }
 
@@ -491,7 +495,7 @@ impl<'facet> Partial<'facet> {
 
         // Get Option def
         let frame = self.arena.get(self.current);
-        let Def::Option(_option_def) = &frame.shape.def else {
+        let Def::Option(_option_def) = frame.shape.def() else {
             return Err(self.error(ReflectErrorKind::NotAnOption));
         };
 
@@ -511,7 +515,7 @@ impl<'facet> Partial<'facet> {
 
         // Re-get frame and option_def
         let frame = self.arena.get(self.current);
-        let Def::Option(option_def) = &frame.shape.def else {
+        let Def::Option(option_def) = frame.shape.def() else {
             return Err(self.error(ReflectErrorKind::NotAnOption));
         };
         let inner_shape = option_def.t;
@@ -660,7 +664,7 @@ impl<'facet> Partial<'facet> {
 
         // Get Result def
         let frame = self.arena.get(self.current);
-        let Def::Result(_result_def) = &frame.shape.def else {
+        let Def::Result(_result_def) = frame.shape.def() else {
             return Err(self.error(ReflectErrorKind::NotAResult));
         };
 
@@ -675,7 +679,7 @@ impl<'facet> Partial<'facet> {
 
         // Re-get frame and result_def
         let frame = self.arena.get(self.current);
-        let Def::Result(result_def) = &frame.shape.def else {
+        let Def::Result(result_def) = frame.shape.def() else {
             return Err(self.error(ReflectErrorKind::NotAResult));
         };
 

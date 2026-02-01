@@ -3,6 +3,7 @@
 use crate::arena::{Arena, Idx};
 use crate::errors::{ErrorLocation, ReflectError, ReflectErrorKind};
 use crate::ops::Path;
+use crate::shape_desc::ShapeDesc;
 use facet_core::{ListDef, MapDef, PtrConst, PtrUninit, SequenceType, SetDef, Shape, Variant};
 
 bitflags::bitflags! {
@@ -152,8 +153,8 @@ impl Default for PointerFrame {
 /// List frame data (building a Vec or similar).
 /// Tracks whether the list is initialized and count of pushed elements.
 pub struct ListFrame {
-    /// The list definition (element type, vtable).
-    pub def: &'static ListDef,
+    /// The list definition (element type, vtable). Stored by value since ListDef is Copy.
+    pub def: ListDef,
     /// Whether the list has been initialized (via init_in_place_with_capacity).
     /// The actual pointer is always frame.data.
     pub initialized: bool,
@@ -163,7 +164,7 @@ pub struct ListFrame {
 
 impl ListFrame {
     /// Create an uninitialized list frame.
-    pub fn new(def: &'static ListDef) -> Self {
+    pub fn new(def: ListDef) -> Self {
         Self {
             def,
             initialized: false,
@@ -183,8 +184,8 @@ impl ListFrame {
 /// Map frame data (building a HashMap, BTreeMap, etc.).
 /// Tracks whether the map is initialized and count of inserted entries.
 pub struct MapFrame {
-    /// The map definition (key/value types, vtable).
-    pub def: &'static MapDef,
+    /// The map definition (key/value types, vtable). Stored by value since MapDef is Copy.
+    pub def: MapDef,
     /// Whether the map has been initialized (via init_in_place_with_capacity).
     /// The actual pointer is always frame.data.
     pub initialized: bool,
@@ -194,7 +195,7 @@ pub struct MapFrame {
 
 impl MapFrame {
     /// Create an uninitialized map frame.
-    pub fn new(def: &'static MapDef) -> Self {
+    pub fn new(def: MapDef) -> Self {
         Self {
             def,
             initialized: false,
@@ -212,8 +213,8 @@ impl MapFrame {
 /// Set frame data (building a HashSet, BTreeSet, etc.).
 /// Tracks whether the set is initialized and count of inserted elements.
 pub struct SetFrame {
-    /// The set definition (element type, vtable).
-    pub def: &'static SetDef,
+    /// The set definition (element type, vtable). Stored by value since SetDef is Copy.
+    pub def: SetDef,
     /// Whether the set has been initialized (via init_in_place_with_capacity).
     /// The actual pointer is always frame.data.
     pub initialized: bool,
@@ -223,7 +224,7 @@ pub struct SetFrame {
 
 impl SetFrame {
     /// Create an uninitialized set frame.
-    pub fn new(def: &'static SetDef) -> Self {
+    pub fn new(def: SetDef) -> Self {
         Self {
             def,
             initialized: false,
@@ -305,6 +306,9 @@ impl Default for ResultFrame {
 /// Map entry frame data (building a (Key, Value) tuple for a map entry).
 /// This is created when Append is called on a map frame.
 /// Field 0 = key, Field 1 = value.
+///
+/// Note: The layout for the entry is stored in the frame's `shape` (a ShapeDesc::Tuple2),
+/// not in this struct.
 pub struct MapEntryFrame {
     /// The map definition (for key/value shapes).
     pub map_def: &'static MapDef,
@@ -539,7 +543,9 @@ pub struct Frame {
     pub data: PtrUninit,
 
     /// Shape (type metadata) of the value.
-    pub shape: &'static Shape,
+    /// For most types, this is `ShapeDesc::Static(shape)`.
+    /// For map entries, this is `ShapeDesc::Tuple2(tuple2)` with layout and field info.
+    pub shape: ShapeDesc,
 
     /// What kind of value we're building.
     pub kind: FrameKind,
@@ -573,10 +579,10 @@ pub fn absolute_path(arena: &Arena<Frame>, mut idx: Idx<Frame>) -> Path {
 }
 
 impl Frame {
-    pub fn new(data: PtrUninit, shape: &'static Shape) -> Self {
+    pub fn new(data: PtrUninit, shape: impl Into<ShapeDesc>) -> Self {
         Frame {
             data,
-            shape,
+            shape: shape.into(),
             kind: FrameKind::Scalar,
             flags: FrameFlags::empty(),
             parent_link: ParentLink::Root,
@@ -584,10 +590,10 @@ impl Frame {
     }
 
     /// Create a frame for a struct with the given number of fields.
-    pub fn new_struct(data: PtrUninit, shape: &'static Shape, field_count: usize) -> Self {
+    pub fn new_struct(data: PtrUninit, shape: impl Into<ShapeDesc>, field_count: usize) -> Self {
         Frame {
             data,
-            shape,
+            shape: shape.into(),
             kind: FrameKind::Struct(StructFrame::new(field_count)),
             flags: FrameFlags::empty(),
             parent_link: ParentLink::Root,
@@ -595,10 +601,10 @@ impl Frame {
     }
 
     /// Create a frame for an enum (variant not yet selected).
-    pub fn new_enum(data: PtrUninit, shape: &'static Shape) -> Self {
+    pub fn new_enum(data: PtrUninit, shape: impl Into<ShapeDesc>) -> Self {
         Frame {
             data,
-            shape,
+            shape: shape.into(),
             kind: FrameKind::Enum(EnumFrame::new()),
             flags: FrameFlags::empty(),
             parent_link: ParentLink::Root,
@@ -606,10 +612,14 @@ impl Frame {
     }
 
     /// Create a frame for an enum variant's fields.
-    pub fn new_variant(data: PtrUninit, shape: &'static Shape, variant: &'static Variant) -> Self {
+    pub fn new_variant(
+        data: PtrUninit,
+        shape: impl Into<ShapeDesc>,
+        variant: &'static Variant,
+    ) -> Self {
         Frame {
             data,
-            shape,
+            shape: shape.into(),
             kind: FrameKind::VariantData(VariantFrame::new(variant)),
             flags: FrameFlags::empty(),
             parent_link: ParentLink::Root,
@@ -618,10 +628,10 @@ impl Frame {
 
     /// Create a frame for a pointer's pointee (Box, Rc, Arc, etc.).
     /// `data` points to the allocated pointee memory, `shape` is the pointee's shape.
-    pub fn new_pointer(data: PtrUninit, shape: &'static Shape) -> Self {
+    pub fn new_pointer(data: PtrUninit, shape: impl Into<ShapeDesc>) -> Self {
         Frame {
             data,
-            shape,
+            shape: shape.into(),
             kind: FrameKind::Pointer(PointerFrame::new()),
             flags: FrameFlags::empty(),
             parent_link: ParentLink::Root,
@@ -631,10 +641,10 @@ impl Frame {
     /// Create a frame for a list (Vec, etc.).
     /// `data` points to the list memory (uninitialized).
     /// The list will be lazily initialized on first Push.
-    pub fn new_list(data: PtrUninit, shape: &'static Shape, def: &'static ListDef) -> Self {
+    pub fn new_list(data: PtrUninit, shape: impl Into<ShapeDesc>, def: ListDef) -> Self {
         Frame {
             data,
-            shape,
+            shape: shape.into(),
             kind: FrameKind::List(ListFrame::new(def)),
             flags: FrameFlags::empty(),
             parent_link: ParentLink::Root,
@@ -644,10 +654,10 @@ impl Frame {
     /// Create a frame for a map (HashMap, BTreeMap, etc.).
     /// `data` points to the map memory (uninitialized).
     /// The map will be lazily initialized on first Insert.
-    pub fn new_map(data: PtrUninit, shape: &'static Shape, def: &'static MapDef) -> Self {
+    pub fn new_map(data: PtrUninit, shape: impl Into<ShapeDesc>, def: MapDef) -> Self {
         Frame {
             data,
-            shape,
+            shape: shape.into(),
             kind: FrameKind::Map(MapFrame::new(def)),
             flags: FrameFlags::empty(),
             parent_link: ParentLink::Root,
@@ -657,10 +667,10 @@ impl Frame {
     /// Create a frame for a set (HashSet, BTreeSet, etc.).
     /// `data` points to the set memory (uninitialized).
     /// The set will be lazily initialized on first Push.
-    pub fn new_set(data: PtrUninit, shape: &'static Shape, def: &'static SetDef) -> Self {
+    pub fn new_set(data: PtrUninit, shape: impl Into<ShapeDesc>, def: SetDef) -> Self {
         Frame {
             data,
-            shape,
+            shape: shape.into(),
             kind: FrameKind::Set(SetFrame::new(def)),
             flags: FrameFlags::empty(),
             parent_link: ParentLink::Root,
@@ -668,10 +678,10 @@ impl Frame {
     }
 
     /// Create a frame for an Option<T>.
-    pub fn new_option(data: PtrUninit, shape: &'static Shape) -> Self {
+    pub fn new_option(data: PtrUninit, shape: impl Into<ShapeDesc>) -> Self {
         Frame {
             data,
-            shape,
+            shape: shape.into(),
             kind: FrameKind::Option(OptionFrame::new()),
             flags: FrameFlags::empty(),
             parent_link: ParentLink::Root,
@@ -679,10 +689,10 @@ impl Frame {
     }
 
     /// Create a frame for a Result<T, E>.
-    pub fn new_result(data: PtrUninit, shape: &'static Shape) -> Self {
+    pub fn new_result(data: PtrUninit, shape: impl Into<ShapeDesc>) -> Self {
         Frame {
             data,
-            shape,
+            shape: shape.into(),
             kind: FrameKind::Result(ResultFrame::new()),
             flags: FrameFlags::empty(),
             parent_link: ParentLink::Root,
@@ -691,11 +701,15 @@ impl Frame {
 
     /// Create a frame for a map entry (key, value) tuple.
     /// `data` points to temporary memory for key and value staging.
-    /// `shape` is the parent map's shape (for error reporting).
-    pub fn new_map_entry(data: PtrUninit, shape: &'static Shape, map_def: &'static MapDef) -> Self {
+    /// `shape` is now a ShapeDesc::Tuple2 with the actual entry layout.
+    pub fn new_map_entry(
+        data: PtrUninit,
+        shape: impl Into<ShapeDesc>,
+        map_def: &'static MapDef,
+    ) -> Self {
         Frame {
             data,
-            shape,
+            shape: shape.into(),
             kind: FrameKind::MapEntry(MapEntryFrame::new(map_def)),
             flags: FrameFlags::empty(),
             parent_link: ParentLink::Root,
@@ -703,7 +717,7 @@ impl Frame {
     }
 
     /// Assert that the given shape matches this frame's shape.
-    pub fn assert_shape(&self, actual: &'static Shape, path: &Path) -> Result<(), ReflectError> {
+    pub fn assert_shape(&self, actual: ShapeDesc, path: &Path) -> Result<(), ReflectError> {
         if self.shape.is_shape(actual) {
             Ok(())
         } else {
@@ -743,7 +757,7 @@ impl Frame {
             }
         } else if let FrameKind::Struct(ref mut s) = self.kind {
             // Struct or array may have some fields/elements initialized - drop them individually
-            if let Type::User(UserType::Struct(ref struct_type)) = self.shape.ty {
+            if let Type::User(UserType::Struct(struct_type)) = *self.shape.ty() {
                 for (idx, field) in struct_type.fields.iter().enumerate() {
                     if s.fields.is_complete(idx) {
                         // SAFETY: field is marked complete, so it's initialized
@@ -755,7 +769,7 @@ impl Frame {
                 }
                 // Reset all fields to NOT_STARTED
                 s.fields = IndexedFields::new(struct_type.fields.len());
-            } else if let Type::Sequence(SequenceType::Array(ref array_type)) = self.shape.ty {
+            } else if let Type::Sequence(SequenceType::Array(array_type)) = *self.shape.ty() {
                 // Array elements - all have the same shape
                 // Note: Layout::size() includes trailing padding, so it equals the stride
                 // For ZSTs, size=0, so all elements have offset 0 (correct for ZSTs)
@@ -779,17 +793,39 @@ impl Frame {
                 // Reset all elements to NOT_STARTED
                 s.fields = IndexedFields::new(array_type.n);
             }
+        } else if let FrameKind::MapEntry(ref entry) = self.kind {
+            // MapEntry frames: drop completed fields individually
+            // The shape is a Tuple2Shape which knows how to drop both fields
+            if entry.key.is_complete() || entry.value.is_complete() {
+                // Get field info from the Tuple2Shape
+                if let Some((key_offset, key_shape)) = self.shape.field(0) {
+                    if entry.key.is_complete() {
+                        unsafe {
+                            let key_ptr = self.data.assume_init().field(key_offset);
+                            key_shape.call_drop_in_place(key_ptr);
+                        }
+                    }
+                }
+                if let Some((value_offset, value_shape)) = self.shape.field(1) {
+                    if entry.value.is_complete() {
+                        unsafe {
+                            let value_ptr = self.data.assume_init().field(value_offset);
+                            value_shape.call_drop_in_place(value_ptr);
+                        }
+                    }
+                }
+            }
         } else if let FrameKind::Enum(ref mut e) = self.kind {
             // Enum variant may be complete even if INIT flag isn't set
             // (e.g., when variant was set via apply_enum_variant_set)
             if let Some((variant_idx, status)) = e.selected {
-                if status.is_complete()
-                    && let Type::User(UserType::Enum(ref enum_type)) = self.shape.ty
-                {
-                    let variant = &enum_type.variants[variant_idx as usize];
-                    // SAFETY: the variant was marked complete, so its fields are initialized
-                    unsafe {
-                        drop_variant_fields(self.data.assume_init().as_const(), variant);
+                if status.is_complete() {
+                    if let Type::User(UserType::Enum(enum_type)) = *self.shape.ty() {
+                        let variant = &enum_type.variants[variant_idx as usize];
+                        // SAFETY: the variant was marked complete, so its fields are initialized
+                        unsafe {
+                            drop_variant_fields(self.data.assume_init().as_const(), variant);
+                        }
                     }
                 }
                 e.selected = None;
@@ -817,7 +853,7 @@ impl Frame {
             // 2. Clear INIT flag
             // 3. Mark all OTHER fields as complete (they're still valid)
 
-            if let Type::User(UserType::Struct(ref struct_type)) = self.shape.ty {
+            if let Type::User(UserType::Struct(struct_type)) = *self.shape.ty() {
                 // Drop the old field value
                 let field = &struct_type.fields[field_idx];
                 // SAFETY: INIT means field is initialized
@@ -840,7 +876,7 @@ impl Frame {
             }
         } else if self.kind.is_field_complete(field_idx) {
             // Field was previously set individually - drop the old value
-            if let Type::User(UserType::Struct(ref struct_type)) = self.shape.ty {
+            if let Type::User(UserType::Struct(struct_type)) = *self.shape.ty() {
                 let field = &struct_type.fields[field_idx];
                 // SAFETY: field is marked complete, so it's initialized
                 unsafe {
@@ -871,12 +907,15 @@ impl Frame {
         if self.flags.contains(FrameFlags::INIT) {
             return Err(ReflectErrorKind::AlreadyInitialized);
         }
-        debug_assert!(self.shape.is_shape(shape), "shape mismatch");
+        debug_assert!(
+            self.shape.is_shape(ShapeDesc::Static(shape)),
+            "shape mismatch"
+        );
 
         // SAFETY: caller guarantees src points to valid data matching shape,
         // and shape matches self.shape (debug_assert above)
         unsafe {
-            self.data.copy_from(src, self.shape).unwrap();
+            self.data.copy_from(src, shape).unwrap();
         }
         self.flags |= FrameFlags::INIT;
         Ok(())
@@ -887,7 +926,7 @@ impl Frame {
     /// This should be called after the value has been moved out or dropped.
     pub fn dealloc_if_owned(self) {
         if self.flags.contains(FrameFlags::OWNS_ALLOC) {
-            let layout = self.shape.layout.sized_layout().unwrap();
+            let layout = self.shape.layout();
             if layout.size() > 0 {
                 // SAFETY: we allocated this memory with this layout
                 unsafe {

@@ -142,7 +142,7 @@ impl<'facet> Partial<'facet> {
             ParentLink::PointerInner { .. } => {
                 // Get pointer vtable from parent's shape
                 let parent = self.arena.get(parent_idx);
-                let Def::Pointer(ptr_def) = &parent.shape.def else {
+                let Def::Pointer(ptr_def) = parent.shape.def() else {
                     return Err(self.error_at(parent_idx, ReflectErrorKind::UnsupportedPointerType));
                 };
                 let new_into_fn = ptr_def.vtable.new_into_fn.ok_or_else(|| {
@@ -179,7 +179,7 @@ impl<'facet> Partial<'facet> {
             ParentLink::OptionInner { .. } => {
                 // Get Option def and init_some function from parent's shape
                 let parent = self.arena.get(parent_idx);
-                let Def::Option(option_def) = &parent.shape.def else {
+                let Def::Option(option_def) = parent.shape.def() else {
                     return Err(self.error_at(parent_idx, ReflectErrorKind::NotAnOption));
                 };
                 let init_some_fn = option_def.vtable.init_some;
@@ -218,7 +218,7 @@ impl<'facet> Partial<'facet> {
 
                 // Get Result def from parent's shape
                 let parent = self.arena.get(parent_idx);
-                let Def::Result(result_def) = &parent.shape.def else {
+                let Def::Result(result_def) = parent.shape.def() else {
                     return Err(self.error_at(parent_idx, ReflectErrorKind::NotAResult));
                 };
 

@@ -2,6 +2,7 @@ use super::Partial;
 use crate::errors::{ReflectError, ReflectErrorKind};
 use crate::frame::{Frame, FrameFlags, FrameKind, ParentLink};
 use crate::ops::Source;
+use crate::shape_desc::ShapeDesc;
 use facet_core::{Def, PtrUninit, Shape, Type, UserType};
 
 impl<'facet> Partial<'facet> {
@@ -52,8 +53,8 @@ impl<'facet> Partial<'facet> {
                     } => {
                         if !element_shape.is_shape(mov.shape()) {
                             return Err(self.error(ReflectErrorKind::ShapeMismatch {
-                                expected: element_shape,
-                                actual: mov.shape(),
+                                expected: ShapeDesc::Static(element_shape),
+                                actual: ShapeDesc::Static(mov.shape()),
                             }));
                         }
                         // SAFETY: mov.ptr() points to valid initialized data of the element type
@@ -69,8 +70,8 @@ impl<'facet> Partial<'facet> {
                     } => {
                         if !element_shape.is_shape(mov.shape()) {
                             return Err(self.error(ReflectErrorKind::ShapeMismatch {
-                                expected: element_shape,
-                                actual: mov.shape(),
+                                expected: ShapeDesc::Static(element_shape),
+                                actual: ShapeDesc::Static(mov.shape()),
                             }));
                         }
                         // SAFETY: mov.ptr() points to valid initialized data of the element type
@@ -89,9 +90,10 @@ impl<'facet> Partial<'facet> {
                 };
 
                 // Allocate temporary space for the element
+                let element_shape_desc = ShapeDesc::Static(element_shape);
                 let layout = element_shape.layout.sized_layout().map_err(|_| {
                     self.error(ReflectErrorKind::Unsized {
-                        shape: element_shape,
+                        shape: element_shape_desc,
                     })
                 })?;
 
@@ -106,7 +108,7 @@ impl<'facet> Partial<'facet> {
                 };
 
                 // Create appropriate frame based on element shape
-                let mut element_frame = match &element_shape.def {
+                let mut element_frame = match element_shape.def {
                     Def::List(list_def) => Frame::new_list(temp_ptr, element_shape, list_def),
                     Def::Map(map_def) => Frame::new_map(temp_ptr, element_shape, map_def),
                     Def::Set(set_def) => Frame::new_set(temp_ptr, element_shape, set_def),
@@ -143,11 +145,12 @@ impl<'facet> Partial<'facet> {
                     CollectionKind::List { element_shape, .. } => *element_shape,
                     CollectionKind::Set { element_shape, .. } => *element_shape,
                 };
+                let element_shape_desc = ShapeDesc::Static(element_shape);
 
                 // Allocate temporary space for the default value
                 let layout = element_shape.layout.sized_layout().map_err(|_| {
                     self.error(ReflectErrorKind::Unsized {
-                        shape: element_shape,
+                        shape: element_shape_desc,
                     })
                 })?;
 
@@ -169,7 +172,7 @@ impl<'facet> Partial<'facet> {
                         unsafe { std::alloc::dealloc(temp_ptr.as_mut_byte_ptr(), layout) };
                     }
                     return Err(self.error(ReflectErrorKind::NoDefault {
-                        shape: element_shape,
+                        shape: element_shape_desc,
                     }));
                 }
 

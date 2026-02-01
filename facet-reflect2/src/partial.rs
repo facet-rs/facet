@@ -406,6 +406,10 @@ impl<'facet> Partial<'facet> {
     /// For a non-empty path, returns a frame pointing to the field's memory.
     fn resolve_path(&self, frame: &Frame, path: &Path) -> Result<Frame, ReflectError> {
         if path.is_empty() {
+            // MapEntry frames have no single shape - must use [0] for key, [1] for value
+            if matches!(frame.kind, FrameKind::MapEntry(_)) {
+                return Err(self.error(ReflectErrorKind::CannotSetEntireMapEntry));
+            }
             return Ok(Frame::new(frame.data, frame.shape));
         }
 

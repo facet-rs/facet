@@ -5,6 +5,10 @@
 // --- arena ---
 pub(crate) mod arena;
 
+// --- shape_desc ---
+pub(crate) mod shape_desc;
+pub use shape_desc::{ShapeDesc, Tuple2Shape, get_or_leak_tuple2};
+
 // --- errors ---
 mod errors;
 pub use errors::{ErrorLocation, ReflectError, ReflectErrorKind};
