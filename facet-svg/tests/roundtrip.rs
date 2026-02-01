@@ -2,6 +2,8 @@ use facet_svg::Svg;
 use std::path::Path;
 
 fn svg_roundtrip_test(path: &Path) -> datatest_stable::Result<()> {
+    facet_testhelpers::setup();
+
     let fixture_path = path;
     let svg_str = std::fs::read_to_string(fixture_path)?;
 
