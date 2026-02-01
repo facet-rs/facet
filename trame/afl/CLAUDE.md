@@ -1,6 +1,6 @@
-# AFL Fuzzing for facet-reflect2
+# AFL Fuzzing for trame
 
-This directory contains an AFL fuzzing harness for facet-reflect2.
+This directory contains an AFL fuzzing harness for trame.
 
 ## Directory Structure
 
@@ -37,6 +37,6 @@ just clean          # Remove all build artifacts
 
 1. Minimize the crash: `just minimize out/default/crashes/id:...`
 2. Run under Miri to understand the issue: `just run-miri minimized.bin`
-3. Fix the bug in facet-reflect2
+3. Fix the bug in trame
 4. Verify the fix: `just run minimized.bin` (should no longer crash)
 5. Keep the minimized input as a regression test if appropriate

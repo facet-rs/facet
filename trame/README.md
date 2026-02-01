@@ -1,9 +1,9 @@
-# facet-reflect2
+# trame
 
-[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-reflect2/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
-[![crates.io](https://img.shields.io/crates/v/facet-reflect2.svg)](https://crates.io/crates/facet-reflect2)
-[![documentation](https://docs.rs/facet-reflect2/badge.svg)](https://docs.rs/facet-reflect2)
-[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-reflect2.svg)](./LICENSE)
+[![Coverage Status](https://coveralls.io/repos/github/facet-rs/trame/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
+[![crates.io](https://img.shields.io/crates/v/trame.svg)](https://crates.io/crates/trame)
+[![documentation](https://docs.rs/trame/badge.svg)](https://docs.rs/trame)
+[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/trame.svg)](./LICENSE)
 [![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
 
 # {{crate}}

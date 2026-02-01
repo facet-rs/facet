@@ -1,4 +1,4 @@
-# facet-reflect2 Deferred Mode TODO
+# trame Deferred Mode TODO
 
 Deferred mode support for out-of-order construction. This is a separate phase of work.
 

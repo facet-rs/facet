@@ -1,4 +1,4 @@
-# AFL Fuzzing for facet-reflect2
+# AFL Fuzzing for trame
 
 ## Setup
 
@@ -69,7 +69,7 @@ just minimize out/default/crashes/id:000000*
 For hangs (if `tmin` says "Target binary times out"):
 
 ```bash
-cargo afl tmin -H -t 5000 -i out/default/crashes/id:000000* -o minimized.bin -- target/debug/facet-reflect2-afl
+cargo afl tmin -H -t 5000 -i out/default/crashes/id:000000* -o minimized.bin -- target/debug/trame-afl
 ```
 
 ## Source Coverage

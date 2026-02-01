@@ -1,4 +1,4 @@
-//! # facet-reflect2
+//! # trame
 //!
 //! Partial value construction for facet - v2 API with tree-based tracking.
 

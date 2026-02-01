@@ -1,4 +1,4 @@
-# facet-reflect2 Design (Unified Path Model)
+# trame Design (Unified Path Model)
 
 Partial value construction for facet: build values incrementally when data arrives out of order, with a unified path model and explicit frame tracking.
 

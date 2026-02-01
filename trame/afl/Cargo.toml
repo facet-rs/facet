@@ -1,5 +1,5 @@
 [package]
-name = "facet-reflect2-afl"
+name = "trame-afl"
 version = "0.0.0"
 publish = false
 edition = "2024"
@@ -19,7 +19,7 @@ path = "../../facet"
 [dependencies.facet-core]
 path = "../../facet-core"
 
-[dependencies.facet-reflect2]
+[dependencies.trame]
 path = ".."
 
 # Prevent this from interfering with workspaces
