@@ -18,6 +18,7 @@ use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 mod config;
 mod highlight;
+mod lints;
 mod lsp_extension;
 mod service;
 mod tui;

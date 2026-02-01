@@ -46,9 +46,9 @@ fn session() -> &'static Session {
         let id = format!("{}-{}", std::process::id(), timestamp_ms());
 
         // Start reaper container that monitors our stdin
-        // When stdin closes (we die), it cleans up all our containers
+        // When stdin closes (we die), it cleans up all our containers and their volumes
         let reaper_script = format!(
-            r#"cat >/dev/null; docker rm -f $(docker ps -q --filter label=dockside.session={}) 2>/dev/null; true"#,
+            r#"cat >/dev/null; docker rm -fv $(docker ps -q --filter label=dockside.session={}) 2>/dev/null; true"#,
             id
         );
 
@@ -358,10 +358,10 @@ impl Container {
 
 impl Drop for Container {
     fn drop(&mut self) {
-        // Force remove the container
+        // Force remove the container and its volumes
         let _ = Command::new("docker")
             .arg("rm")
-            .arg("-f")
+            .arg("-fv")
             .arg(&self.id)
             .output();
     }

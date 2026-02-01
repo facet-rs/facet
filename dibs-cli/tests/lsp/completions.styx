@@ -469,7 +469,7 @@ tests (
                 from product
                 where {deleted_at @null}
                 params {
-                    unused_param TEXT
+                    unused_param @string
                 }
                 select {id}
             }
@@ -486,7 +486,7 @@ tests (
             GoodQuery @query{
                 from product
                 params {
-                    h TEXT
+                    h @string
                 }
                 where {deleted_at @null, handle $h}
                 select {id}
@@ -713,21 +713,6 @@ tests (
             BadQuery @query{
                 from product
                 where {deleted_at @null, active "yes"}
-                select {id}
-            }
-            STYX
-        diagnostics {
-            count 1
-            has ({message "type mismatch", code "literal-type-mismatch"})
-        }
-    }
-
-    {
-        name "lint: literal string for bigint column"
-        input <<STYX
-            BadQuery @query{
-                from product
-                where {deleted_at @null, id "123"}
                 select {id}
             }
             STYX

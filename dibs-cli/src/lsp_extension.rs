@@ -9,16 +9,17 @@
 use crate::config;
 use crate::service::{self, ServiceConnection};
 use dibs_proto::{SchemaInfo, TableInfo};
+use dibs_query_schema::{Decl, QueryFile};
 use roam_session::HandshakeConfig;
 use roam_stream::CobsFramed;
 use std::path::Path;
 use std::sync::Arc;
 use styx_lsp_ext::{
     Capability, CodeAction, CodeActionKind, CodeActionParams, CompletionItem, CompletionKind,
-    CompletionParams, DefinitionParams, Diagnostic, DiagnosticParams, DiagnosticSeverity,
-    DocumentEdit, HoverParams, HoverResult, InitializeParams, InitializeResult, InlayHint,
-    InlayHintKind, InlayHintParams, Location, OffsetToPositionParams, Position, StyxLspExtension,
-    StyxLspExtensionDispatcher, StyxLspHostClient, TextEdit, WorkspaceEdit,
+    CompletionParams, DefinitionParams, Diagnostic, DiagnosticParams, DocumentEdit, HoverParams,
+    HoverResult, InitializeParams, InitializeResult, InlayHint, InlayHintKind, InlayHintParams,
+    Location, OffsetToPositionParams, Position, StyxLspExtension, StyxLspExtensionDispatcher,
+    StyxLspHostClient, TextEdit, WorkspaceEdit,
 };
 use tokio::io::{stdin, stdout};
 use tokio::sync::RwLock;
@@ -133,18 +134,6 @@ struct ExtensionState {
     connection: ServiceConnection,
 }
 
-/// Info about a redundant param reference like `column $column` that can be shortened to `column`.
-#[derive(Debug, Clone)]
-struct RedundantParamRef {
-    /// The column name (and param name, since they match).
-    name: String,
-    /// Span of the entire entry (key + value), for replacement.
-    #[allow(dead_code)]
-    entry_span: styx_tree::Span,
-    /// Span of just the value ($param), for the diagnostic highlight.
-    value_span: styx_tree::Span,
-}
-
 /// The dibs LSP extension implementation.
 #[derive(Clone)]
 struct DibsExtension {
@@ -226,49 +215,6 @@ impl DibsExtension {
         None
     }
 
-    /// Collect all $param references in a value tree.
-    fn collect_param_refs(&self, value: &styx_tree::Value) -> Vec<String> {
-        let mut params = Vec::new();
-        self.collect_param_refs_inner(value, &mut params);
-        params
-    }
-
-    fn collect_param_refs_inner(&self, value: &styx_tree::Value, params: &mut Vec<String>) {
-        // Check if this value is a scalar that looks like $param
-        if let Some(text) = value.as_str()
-            && let Some(param_name) = text.strip_prefix('$')
-        {
-            params.push(param_name.to_string());
-        }
-
-        // Recurse into object entries (but skip the "params" block itself)
-        if let Some(styx_tree::Payload::Object(obj)) = &value.payload {
-            for entry in &obj.entries {
-                // Skip the params declaration block
-                if entry.key.as_str() != Some("params") {
-                    self.collect_param_refs_inner(&entry.key, params);
-                    self.collect_param_refs_inner(&entry.value, params);
-
-                    // Check for shorthand param references: `column` with no value
-                    // means implicit `column $column`, so the column name is also a param ref
-                    if entry.value.payload.is_none()
-                        && entry.value.tag.is_none()
-                        && let Some(key_name) = entry.key.as_str()
-                    {
-                        params.push(key_name.to_string());
-                    }
-                }
-            }
-        }
-
-        // Recurse into sequences
-        if let Some(styx_tree::Payload::Sequence(seq)) = &value.payload {
-            for item in &seq.items {
-                self.collect_param_refs_inner(item, params);
-            }
-        }
-    }
-
     /// Get the schema, returning an empty schema if not initialized.
     async fn schema(&self) -> SchemaInfo {
         let state = self.state.read().await;
@@ -278,33 +224,10 @@ impl DibsExtension {
             .unwrap_or_else(|| SchemaInfo { tables: vec![] })
     }
 
-    /// Find entries where `column $column` can be shortened to just `column`.
-    fn find_redundant_param_refs(value: &styx_tree::Value) -> Vec<RedundantParamRef> {
-        let mut results = Vec::new();
-
-        // Check entries in values, set, or other column-value blocks
-        if let Some(styx_tree::Payload::Object(obj)) = &value.payload {
-            for entry in &obj.entries {
-                if let Some(col_name) = entry.key.as_str()
-                    && let Some(val_str) = entry.value.as_str()
-                    && let Some(param_name) = val_str.strip_prefix('$')
-                    && col_name == param_name
-                    && let Some(key_span) = &entry.key.span
-                    && let Some(val_span) = &entry.value.span
-                {
-                    results.push(RedundantParamRef {
-                        name: col_name.to_string(),
-                        entry_span: styx_tree::Span {
-                            start: key_span.start,
-                            end: val_span.end,
-                        },
-                        value_span: *val_span,
-                    });
-                }
-            }
-        }
-
-        results
+    /// Parse styx content into typed QueryFile.
+    /// Returns None if parsing fails (syntax errors are handled by styx-lsp itself).
+    fn parse_query_file(content: &str) -> Result<QueryFile, facet_styx::DeserializeError> {
+        facet_styx::from_str(content)
     }
 
     /// Get completions for table names.
@@ -325,775 +248,134 @@ impl DibsExtension {
             .collect()
     }
 
-    /// Collect diagnostics from a value tree.
-    async fn collect_diagnostics(
+    /// Collect diagnostics from the content using typed schema.
+    async fn collect_diagnostics_typed(
         &self,
         content: &str,
-        value: &styx_tree::Value,
         diagnostics: &mut Vec<Diagnostic>,
-    ) {
+    ) -> Result<(), facet_styx::DeserializeError> {
+        use crate::lints::{self, LintContext};
+
         let schema = self.schema().await;
 
-        // Handle tagged objects (@query, @update, @delete, @insert, @upsert, @insert-many, @upsert-many)
-        // Note: @rel blocks are handled separately by lint_relation()
-        if let Some(tag) = &value.tag {
-            let tag_name = tag.name.as_str();
+        // Parse content to typed schema
+        let query_file = Self::parse_query_file(content)?;
 
-            // Skip @rel - handled by lint_relation() called from parent
-            if tag_name == "rel" {
-                return;
-            }
+        let mut ctx = LintContext::new(&schema, diagnostics);
 
-            if let Some(styx_tree::Payload::Object(obj)) = &value.payload {
-                // Collect info about the query structure
-                let mut has_limit = false;
-                let mut has_offset = false;
-                let mut has_order_by = false;
-                let mut has_where = false;
-                let mut has_first = false;
-                let mut offset_span: Option<&styx_tree::Span> = None;
-                let mut limit_span: Option<&styx_tree::Span> = None;
-                let mut first_span: Option<&styx_tree::Span> = None;
-                let mut declared_params: Vec<(String, Option<String>, Option<styx_tree::Span>)> =
-                    Vec::new(); // (name, type, span)
-                let mut table_name = None;
+        for (_name, decl) in &query_file.0 {
+            match decl {
+                Decl::Query(query) => {
+                    lints::lint_unknown_table_query(query, &mut ctx);
+                    lints::lint_pagination_query(query, &mut ctx);
+                    lints::lint_unused_params_query(query, &mut ctx);
+                    lints::lint_missing_deleted_at_filter(query, &mut ctx);
 
-                for entry in &obj.entries {
-                    let key = entry.key.as_str().unwrap_or("");
-                    match key {
-                        "limit" => {
-                            has_limit = true;
-                            limit_span = entry.key.span.as_ref();
-                        }
-                        "offset" => {
-                            has_offset = true;
-                            offset_span = entry.key.span.as_ref();
-                            // Try to parse offset value for large offset warning
-                            if let Some(val_str) = entry.value.as_str()
-                                && let Ok(offset_val) = val_str.parse::<i64>()
-                                && offset_val > 1000
-                                && let Some(span) = &entry.value.span
-                            {
-                                diagnostics.push(Diagnostic {
-                                                span: *span,
-                                                severity: DiagnosticSeverity::Warning,
-                                                message: format!(
-                                                    "large offset ({}) may cause performance issues - consider cursor pagination",
-                                                    offset_val
-                                                ),
-                                                source: Some("dibs".to_string()),
-                                                code: Some("large-offset".to_string()),
-                                                data: None,
-                                            });
-                            }
-                        }
-                        "order-by" => has_order_by = true,
-                        "where" => has_where = true,
-                        "first" => {
-                            has_first = true;
-                            first_span = entry.key.span.as_ref();
-                        }
-                        "from" | "into" | "table" => {
-                            if let Some(name) = entry.value.as_str() {
-                                if !schema.tables.iter().any(|t| t.name == name) {
-                                    if let Some(span) = &entry.value.span {
-                                        diagnostics.push(Diagnostic {
-                                            span: *span,
-                                            severity: DiagnosticSeverity::Error,
-                                            message: format!("Unknown table '{}'", name),
-                                            source: Some("dibs".to_string()),
-                                            code: Some("unknown-table".to_string()),
-                                            data: None,
-                                        });
-                                    }
-                                } else {
-                                    table_name = Some(name.to_string());
-                                }
-                            }
-                        }
-                        "params" => {
-                            // Collect declared param names and types
-                            if let Some(styx_tree::Payload::Object(params_obj)) =
-                                &entry.value.payload
-                            {
-                                for param_entry in &params_obj.entries {
-                                    if let Some(name) = param_entry.key.as_str() {
-                                        // Get the type tag (e.g., @string, @int)
-                                        let param_type =
-                                            param_entry.value.tag.as_ref().map(|t| t.name.clone());
-                                        let span = param_entry.key.span;
-                                        declared_params.push((name.to_string(), param_type, span));
-                                    }
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-
-                // Lint: OFFSET without LIMIT
-                if has_offset
-                    && !has_limit
-                    && let Some(span) = offset_span
-                {
-                    diagnostics.push(Diagnostic {
-                        span: *span,
-                        severity: DiagnosticSeverity::Warning,
-                        message: "'offset' without 'limit' - did you forget limit?".to_string(),
-                        source: Some("dibs".to_string()),
-                        code: Some("offset-without-limit".to_string()),
-                        data: None,
-                    });
-                }
-
-                // Lint: LIMIT without ORDER BY (for @query only)
-                if tag_name == "query"
-                    && has_limit
-                    && !has_order_by
-                    && let Some(span) = limit_span
-                {
-                    diagnostics.push(Diagnostic {
-                        span: *span,
-                        severity: DiagnosticSeverity::Warning,
-                        message: "'limit' without 'order-by' returns arbitrary rows".to_string(),
-                        source: Some("dibs".to_string()),
-                        code: Some("limit-without-order-by".to_string()),
-                        data: None,
-                    });
-                }
-
-                // Lint: first without ORDER BY (for @query only)
-                if tag_name == "query"
-                    && has_first
-                    && !has_order_by
-                    && let Some(span) = first_span
-                {
-                    diagnostics.push(Diagnostic {
-                        span: *span,
-                        severity: DiagnosticSeverity::Warning,
-                        message: "'first' without 'order-by' returns arbitrary row".to_string(),
-                        source: Some("dibs".to_string()),
-                        code: Some("first-without-order-by".to_string()),
-                        data: None,
-                    });
-                }
-
-                // Lint: @update/@delete without WHERE
-                if matches!(tag_name, "update" | "delete")
-                    && !has_where
-                    && let Some(span) = &tag.span
-                {
-                    diagnostics.push(Diagnostic {
-                        span: *span,
-                        severity: DiagnosticSeverity::Error,
-                        message: format!(
-                            "@{} without 'where' affects all rows - add 'where' or 'all true'",
-                            tag_name
-                        ),
-                        source: Some("dibs".to_string()),
-                        code: Some("mutation-without-where".to_string()),
-                        data: None,
-                    });
-                }
-
-                // Lint: unused params - collect used params and compare
-                if !declared_params.is_empty() {
-                    let used_params = self.collect_param_refs(value);
-                    for (param_name, _param_type, param_span) in &declared_params {
-                        if !used_params.contains(param_name)
-                            && let Some(span) = param_span
-                        {
-                            diagnostics.push(Diagnostic {
-                                span: *span,
-                                severity: DiagnosticSeverity::Warning,
-                                message: format!(
-                                    "param '{}' is declared but never used",
-                                    param_name
-                                ),
-                                source: Some("dibs".to_string()),
-                                code: Some("unused-param".to_string()),
-                                data: None,
-                            });
-                        }
-                    }
-                }
-
-                // Get table info for soft delete checks
-                let table_info = table_name
-                    .as_ref()
-                    .and_then(|name| schema.tables.iter().find(|t| &t.name == name));
-
-                // Check if table has deleted_at column (soft delete pattern)
-                let has_deleted_at_column = table_info
-                    .map(|t| t.columns.iter().any(|c| c.name == "deleted_at"))
-                    .unwrap_or(false);
-
-                // Check if where clause filters on deleted_at
-                let filters_deleted_at = obj.entries.iter().any(|entry| {
-                    if entry.key.as_str() == Some("where") {
-                        self.where_filters_deleted_at(&entry.value)
-                    } else {
-                        false
-                    }
-                });
-
-                // Lint: query on soft-delete table without deleted_at filter
-                if tag_name == "query" && has_deleted_at_column && !filters_deleted_at {
-                    // Find the "from" entry for span
-                    for entry in &obj.entries {
-                        if entry.key.as_str() == Some("from") {
-                            if let Some(span) = &entry.value.span {
-                                diagnostics.push(Diagnostic {
-                                    span: *span,
-                                    severity: DiagnosticSeverity::Warning,
-                                    message: format!(
-                                        "query on '{}' doesn't filter 'deleted_at' - add 'deleted_at @null' to exclude soft-deleted rows",
-                                        table_name.as_deref().unwrap_or("table")
-                                    ),
-                                    source: Some("dibs".to_string()),
-                                    code: Some("missing-deleted-at-filter".to_string()),
-                                    data: None,
-                                });
-                            }
-                            break;
-                        }
-                    }
-                }
-
-                // Lint: @delete on table with deleted_at (should use soft delete)
-                if tag_name == "delete"
-                    && has_deleted_at_column
-                    && let Some(span) = &tag.span
-                {
-                    diagnostics.push(Diagnostic {
-                            span: *span,
-                            severity: DiagnosticSeverity::Warning,
-                            message: "@delete on table with 'deleted_at' column - consider soft delete with @update instead".to_string(),
-                            source: Some("dibs".to_string()),
-                            code: Some("hard-delete-on-soft-delete-table".to_string()),
-                            data: None,
-                        });
-                }
-
-                // Validations that don't require table info
-                if tag_name == "query" {
-                    for entry in &obj.entries {
-                        let key = entry.key.as_str().unwrap_or("");
-                        // Check for empty select block
-                        if key == "select" {
-                            Self::validate_select_block(&entry.value, diagnostics);
-                        }
-                        // Note: Conflicting WHERE conditions (duplicate keys) are caught by styx parser
-                    }
-                }
-
-                // Validate column references if we have a valid table
-                if tag_name == "query"
-                    && let Some(table) = table_info
-                {
-                    for entry in &obj.entries {
-                        let key = entry.key.as_str().unwrap_or("");
-                        if matches!(key, "select" | "where" | "order-by" | "group-by") {
-                            Self::validate_columns(&entry.value, table, diagnostics);
-                        }
-                        // Type check param usages in where clause
-                        if key == "where" {
-                            Self::validate_param_types(
-                                &entry.value,
-                                table,
-                                &declared_params,
-                                diagnostics,
-                            );
-                        }
-                    }
-                }
-
-                // Lint: redundant param references like `column $column` -> just `column`
-                for entry in &obj.entries {
-                    let key = entry.key.as_str().unwrap_or("");
-                    if matches!(key, "values" | "set" | "where") {
-                        for redundant in Self::find_redundant_param_refs(&entry.value) {
-                            diagnostics.push(Diagnostic {
-                                span: redundant.value_span,
-                                severity: DiagnosticSeverity::Hint,
-                                message: format!(
-                                    "'{} ${}' can be shortened to just '{}' (implicit @param)",
-                                    redundant.name, redundant.name, redundant.name
-                                ),
-                                source: Some("dibs".to_string()),
-                                code: Some("redundant-param".to_string()),
-                                data: Some(styx_tree::Value::scalar(&redundant.name)),
-                            });
-                        }
-                    }
-                    // Also check inside on-conflict { update { ... } }
-                    if key == "on-conflict"
-                        && let Some(styx_tree::Payload::Object(conflict_obj)) = &entry.value.payload
+                    if let Some(from) = &query.from
+                        && let Some(table) = ctx.find_table(from.as_str())
                     {
-                        for conflict_entry in &conflict_obj.entries {
-                            if conflict_entry.key.as_str() == Some("update") {
-                                for redundant in
-                                    Self::find_redundant_param_refs(&conflict_entry.value)
-                                {
-                                    diagnostics.push(Diagnostic {
-                                        span: redundant.value_span,
-                                        severity: DiagnosticSeverity::Hint,
-                                        message: format!(
-                                            "'{} ${}' can be shortened to just '{}' (implicit @param)",
-                                            redundant.name, redundant.name, redundant.name
-                                        ),
-                                        source: Some("dibs".to_string()),
-                                        code: Some("redundant-param".to_string()),
-                                        data: Some(styx_tree::Value::scalar(&redundant.name)),
-                                    });
-                                }
+                        if let Some(select) = &query.select {
+                            lints::lint_empty_select(select, &mut ctx);
+                            lints::lint_unknown_columns_select(select, table, &mut ctx);
+                            lints::lint_relations_in_select(select, Some(from.as_str()), &mut ctx);
+                        }
+                        if let Some(where_clause) = &query.where_clause {
+                            lints::lint_unknown_columns_where(where_clause, table, &mut ctx);
+                            lints::lint_redundant_params_in_where(where_clause, &mut ctx);
+                            lints::lint_literal_types_in_where(where_clause, table, &mut ctx);
+                            if let Some(params) = &query.params {
+                                lints::lint_param_types_in_where(
+                                    where_clause,
+                                    table,
+                                    params,
+                                    &mut ctx,
+                                );
                             }
+                        }
+                        if let Some(order_by) = &query.order_by {
+                            lints::lint_unknown_columns_order_by(order_by, table, &mut ctx);
                         }
                     }
                 }
+                Decl::Insert(insert) => {
+                    lints::lint_unknown_table_insert(insert, &mut ctx);
+                    lints::lint_unused_params_insert(insert, &mut ctx);
+                    lints::lint_redundant_params_in_values(&insert.values, &mut ctx);
 
-                // Find and lint @rel blocks in select with parent table context
-                for entry in &obj.entries {
-                    if entry.key.as_str() == Some("select") {
-                        // First lint @rel blocks with parent table context for FK validation
-                        if let Some(styx_tree::Payload::Object(select_obj)) = &entry.value.payload {
-                            for select_entry in &select_obj.entries {
-                                if let Some(tag) = &select_entry.value.tag
-                                    && tag.name == "rel"
-                                {
-                                    self.lint_relation(
-                                        &select_entry.value,
-                                        table_name.as_deref(),
-                                        &schema,
-                                        diagnostics,
-                                    );
-                                }
-                            }
-                        }
-                        // Then recurse for other diagnostics
-                        Box::pin(self.collect_diagnostics(content, &entry.value, diagnostics))
-                            .await;
+                    if let Some(table) = ctx.find_table(insert.into.as_str()) {
+                        lints::lint_unknown_columns_values(&insert.values, table, &mut ctx);
                     }
                 }
-            }
+                Decl::InsertMany(insert_many) => {
+                    lints::lint_unknown_table_insert_many(insert_many, &mut ctx);
+                    lints::lint_unused_params_insert_many(insert_many, &mut ctx);
+                    lints::lint_redundant_params_in_values(&insert_many.values, &mut ctx);
 
-            // Don't recurse into tagged blocks - we've handled them
-            return;
-        }
-
-        // Recurse into children
-        // Note: @rel blocks are handled from within query/update handlers with parent table context
-        if let Some(styx_tree::Payload::Object(obj)) = &value.payload {
-            for entry in &obj.entries {
-                Box::pin(self.collect_diagnostics(content, &entry.value, diagnostics)).await;
-            }
-        } else if let Some(obj) = value.as_object() {
-            for entry in &obj.entries {
-                Box::pin(self.collect_diagnostics(content, &entry.value, diagnostics)).await;
-            }
-        }
-
-        if let Some(styx_tree::Payload::Sequence(seq)) = &value.payload {
-            for item in &seq.items {
-                Box::pin(self.collect_diagnostics(content, item, diagnostics)).await;
-            }
-        }
-    }
-
-    /// Validate column references in a select/where/etc block.
-    fn validate_columns(
-        value: &styx_tree::Value,
-        table: &TableInfo,
-        diagnostics: &mut Vec<Diagnostic>,
-    ) {
-        if let Some(styx_tree::Payload::Object(obj)) = &value.payload {
-            for entry in &obj.entries {
-                // Skip entries that are relations (@rel) - they're not column names
-                if entry.value.tag.as_ref().map(|t| t.name.as_str()) == Some("rel") {
-                    continue;
-                }
-
-                if let Some(col_name) = entry.key.as_str()
-                    && !table.columns.iter().any(|c| c.name == col_name)
-                {
-                    // Unknown column
-                    if let Some(span) = &entry.key.span {
-                        diagnostics.push(Diagnostic {
-                            span: *span,
-                            severity: DiagnosticSeverity::Error,
-                            message: format!(
-                                "Unknown column '{}' in table '{}'",
-                                col_name, table.name
-                            ),
-                            source: Some("dibs".to_string()),
-                            code: Some("unknown-column".to_string()),
-                            data: None,
-                        });
+                    if let Some(table) = ctx.find_table(insert_many.into.as_str()) {
+                        lints::lint_unknown_columns_values(&insert_many.values, table, &mut ctx);
                     }
                 }
-            }
-        }
-    }
-
-    /// Validate select block for empty selects and duplicate columns.
-    fn validate_select_block(value: &styx_tree::Value, diagnostics: &mut Vec<Diagnostic>) {
-        if let Some(styx_tree::Payload::Object(obj)) = &value.payload {
-            // Check for empty select (no columns, only @rel or truly empty)
-            let non_rel_entries: Vec<_> = obj
-                .entries
-                .iter()
-                .filter(|e| e.value.tag.as_ref().map(|t| t.name.as_str()) != Some("rel"))
-                .collect();
-
-            let has_rel_entries = obj
-                .entries
-                .iter()
-                .any(|e| e.value.tag.as_ref().map(|t| t.name.as_str()) == Some("rel"));
-
-            // Warn if no columns selected (but having only @rel entries is fine)
-            if non_rel_entries.is_empty()
-                && !has_rel_entries
-                && let Some(span) = &value.span
-            {
-                diagnostics.push(Diagnostic {
-                    span: *span,
-                    severity: DiagnosticSeverity::Warning,
-                    message: "empty select block - no columns selected".to_string(),
-                    source: Some("dibs".to_string()),
-                    code: Some("empty-select".to_string()),
-                    data: None,
-                });
-            }
-            // Note: Duplicate columns are caught by the styx parser itself
-        }
-    }
-
-    // Note: Conflicting WHERE conditions (e.g., status "active", status "draft")
-    // are caught by the styx parser itself as duplicate keys.
-
-    /// Validate param types against column types in a where clause.
-    fn validate_param_types(
-        where_value: &styx_tree::Value,
-        table: &TableInfo,
-        declared_params: &[(String, Option<String>, Option<styx_tree::Span>)],
-        diagnostics: &mut Vec<Diagnostic>,
-    ) {
-        if let Some(styx_tree::Payload::Object(obj)) = &where_value.payload {
-            for entry in &obj.entries {
-                let col_name = entry.key.as_str().unwrap_or("");
-                let column = table.columns.iter().find(|c| c.name == col_name);
-
-                if let Some(column) = column {
-                    // Check for param usage in this entry's value
-                    // Pattern 1: `column $param` (direct)
-                    // Pattern 2: `column @op($param)` (with operator)
-                    Self::check_param_type_in_value(
-                        &entry.value,
-                        column,
-                        declared_params,
-                        diagnostics,
+                Decl::Upsert(upsert) => {
+                    lints::lint_unknown_table_upsert(upsert, &mut ctx);
+                    lints::lint_unused_params_upsert(upsert, &mut ctx);
+                    lints::lint_redundant_params_in_values(&upsert.values, &mut ctx);
+                    lints::lint_redundant_params_in_conflict_update(
+                        &upsert.on_conflict.update,
+                        &mut ctx,
                     );
-                }
-            }
-        }
-    }
 
-    /// Check param and literal type compatibility in a value.
-    fn check_param_type_in_value(
-        value: &styx_tree::Value,
-        column: &dibs_proto::ColumnInfo,
-        declared_params: &[(String, Option<String>, Option<styx_tree::Span>)],
-        diagnostics: &mut Vec<Diagnostic>,
-    ) {
-        // Skip special tags like @null, @now, @default - they're type-flexible
-        if let Some(tag) = &value.tag
-            && matches!(tag.name.as_str(), "null" | "now" | "default")
-        {
-            return;
-        }
-
-        // Check if value is a scalar
-        if let Some(styx_tree::Payload::Scalar(scalar)) = &value.payload {
-            let text = &scalar.text;
-
-            // Check for $param reference
-            if let Some(param_name) = text.strip_prefix('$') {
-                Self::emit_type_mismatch_if_needed(
-                    value.span.as_ref(),
-                    param_name,
-                    column,
-                    declared_params,
-                    diagnostics,
-                );
-                return;
-            }
-
-            // Check literal type vs column type
-            let literal_type = Self::infer_literal_type(text, scalar.kind);
-            if let Some(lit_type) = literal_type
-                && !Self::literal_type_compatible(lit_type, &column.sql_type)
-                && let Some(span) = &value.span
-            {
-                diagnostics.push(Diagnostic {
-                    span: *span,
-                    severity: DiagnosticSeverity::Error,
-                    message: format!(
-                        "type mismatch: {} literal '{}' for column '{}' ({})",
-                        lit_type, text, column.name, column.sql_type
-                    ),
-                    source: Some("dibs".to_string()),
-                    code: Some("literal-type-mismatch".to_string()),
-                    data: None,
-                });
-            }
-
-            // Check enum value if column has enum variants
-            if !column.enum_variants.is_empty() {
-                // Strip quotes from the literal value for comparison
-                let value_to_check = text.trim_matches('"').trim_matches('\'');
-                if !column.enum_variants.iter().any(|v| v == value_to_check)
-                    && let Some(span) = &value.span
-                {
-                    diagnostics.push(Diagnostic {
-                        span: *span,
-                        severity: DiagnosticSeverity::Error,
-                        message: format!(
-                            "invalid enum value '{}' for column '{}' - expected one of: {}",
-                            value_to_check,
-                            column.name,
-                            column.enum_variants.join(", ")
-                        ),
-                        source: Some("dibs".to_string()),
-                        code: Some("invalid-enum-value".to_string()),
-                        data: None,
-                    });
-                }
-            }
-        }
-
-        // Check if value has a tag like @eq, @ilike, etc. with param argument
-        if value.tag.is_some() {
-            // Check sequence payload for params/literals (e.g., @eq($param) or @eq(123))
-            if let Some(styx_tree::Payload::Sequence(seq)) = &value.payload {
-                for item in &seq.items {
-                    // Recurse to check each item
-                    Self::check_param_type_in_value(item, column, declared_params, diagnostics);
-                }
-            }
-        }
-    }
-
-    /// Infer the type of a literal value from its text and scalar kind.
-    fn infer_literal_type(text: &str, kind: styx_tree::ScalarKind) -> Option<&'static str> {
-        use styx_tree::ScalarKind;
-
-        match kind {
-            // Quoted strings are always strings
-            ScalarKind::Quoted | ScalarKind::Raw | ScalarKind::Heredoc => Some("string"),
-            ScalarKind::Bare => {
-                // Check for boolean
-                if text == "true" || text == "false" {
-                    return Some("boolean");
-                }
-                // Check for integer
-                if text.parse::<i64>().is_ok() {
-                    return Some("integer");
-                }
-                // Check for float
-                if text.parse::<f64>().is_ok() {
-                    return Some("float");
-                }
-                // Bare identifiers (like column names) - don't type check these
-                None
-            }
-        }
-    }
-
-    /// Check if a literal type is compatible with a SQL column type.
-    fn literal_type_compatible(literal_type: &str, sql_type: &str) -> bool {
-        let sql_upper = sql_type.to_uppercase();
-        match literal_type {
-            "string" => matches!(
-                sql_upper.as_str(),
-                "TEXT" | "VARCHAR" | "CHAR" | "CHARACTER VARYING" | "JSONB" | "JSON"
-            ),
-            "integer" => matches!(
-                sql_upper.as_str(),
-                "INT"
-                    | "INTEGER"
-                    | "BIGINT"
-                    | "SMALLINT"
-                    | "INT4"
-                    | "INT8"
-                    | "INT2"
-                    | "FLOAT"
-                    | "DOUBLE"
-                    | "REAL"
-                    | "NUMERIC"
-                    | "DECIMAL"
-                    | "FLOAT4"
-                    | "FLOAT8"
-            ),
-            "float" => matches!(
-                sql_upper.as_str(),
-                "FLOAT" | "DOUBLE" | "REAL" | "NUMERIC" | "DECIMAL" | "FLOAT4" | "FLOAT8"
-            ),
-            "boolean" => matches!(sql_upper.as_str(), "BOOLEAN" | "BOOL"),
-            _ => true,
-        }
-    }
-
-    /// Emit a type mismatch diagnostic if param type doesn't match column type.
-    fn emit_type_mismatch_if_needed(
-        span: Option<&styx_tree::Span>,
-        param_name: &str,
-        column: &dibs_proto::ColumnInfo,
-        declared_params: &[(String, Option<String>, Option<styx_tree::Span>)],
-        diagnostics: &mut Vec<Diagnostic>,
-    ) {
-        // Find the param's declared type
-        let param_info = declared_params
-            .iter()
-            .find(|(name, _, _)| name == param_name);
-
-        if let Some((_, Some(param_type), _)) = param_info
-            && !Self::types_compatible(param_type, &column.sql_type)
-            && let Some(span) = span
-        {
-            diagnostics.push(Diagnostic {
-                span: *span,
-                severity: DiagnosticSeverity::Error,
-                message: format!(
-                    "type mismatch: param '{}' is @{} but column '{}' is {}",
-                    param_name, param_type, column.name, column.sql_type
-                ),
-                source: Some("dibs".to_string()),
-                code: Some("param-type-mismatch".to_string()),
-                data: None,
-            });
-        }
-    }
-
-    /// Check if a param type is compatible with a SQL column type.
-    fn types_compatible(param_type: &str, sql_type: &str) -> bool {
-        match param_type {
-            "string" => matches!(
-                sql_type.to_uppercase().as_str(),
-                "TEXT" | "VARCHAR" | "CHAR" | "CHARACTER VARYING"
-            ),
-            "int" => matches!(
-                sql_type.to_uppercase().as_str(),
-                "INT" | "INTEGER" | "BIGINT" | "SMALLINT" | "INT4" | "INT8" | "INT2"
-            ),
-            "bool" | "boolean" => matches!(sql_type.to_uppercase().as_str(), "BOOLEAN" | "BOOL"),
-            "float" => matches!(
-                sql_type.to_uppercase().as_str(),
-                "FLOAT" | "DOUBLE" | "REAL" | "NUMERIC" | "DECIMAL" | "FLOAT4" | "FLOAT8"
-            ),
-            // For unrecognized param types, assume compatible (could be custom)
-            _ => true,
-        }
-    }
-
-    /// Check if a where clause filters on deleted_at.
-    fn where_filters_deleted_at(&self, where_value: &styx_tree::Value) -> bool {
-        if let Some(styx_tree::Payload::Object(obj)) = &where_value.payload {
-            for entry in &obj.entries {
-                if entry.key.as_str() == Some("deleted_at") {
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
-    /// Lint a @rel block for relation-specific issues.
-    fn lint_relation(
-        &self,
-        rel_value: &styx_tree::Value,
-        parent_table: Option<&str>,
-        schema: &SchemaInfo,
-        diagnostics: &mut Vec<Diagnostic>,
-    ) {
-        if let Some(styx_tree::Payload::Object(obj)) = &rel_value.payload {
-            let mut has_first = false;
-            let mut has_order_by = false;
-            let mut first_span: Option<&styx_tree::Span> = None;
-            let mut rel_table: Option<&str> = None;
-            let mut from_span: Option<&styx_tree::Span> = None;
-
-            for entry in &obj.entries {
-                let key = entry.key.as_str().unwrap_or("");
-                match key {
-                    "first" => {
-                        has_first = true;
-                        first_span = entry.key.span.as_ref();
+                    if let Some(table) = ctx.find_table(upsert.into.as_str()) {
+                        lints::lint_unknown_columns_values(&upsert.values, table, &mut ctx);
                     }
-                    "order-by" => has_order_by = true,
-                    "from" => {
-                        rel_table = entry.value.as_str();
-                        from_span = entry.value.span.as_ref();
+                }
+                Decl::UpsertMany(upsert_many) => {
+                    lints::lint_unknown_table_upsert_many(upsert_many, &mut ctx);
+                    lints::lint_unused_params_upsert_many(upsert_many, &mut ctx);
+                    lints::lint_redundant_params_in_values(&upsert_many.values, &mut ctx);
+                    lints::lint_redundant_params_in_conflict_update(
+                        &upsert_many.on_conflict.update,
+                        &mut ctx,
+                    );
+
+                    if let Some(table) = ctx.find_table(upsert_many.into.as_str()) {
+                        lints::lint_unknown_columns_values(&upsert_many.values, table, &mut ctx);
                     }
-                    _ => {}
                 }
-            }
+                Decl::Update(update) => {
+                    lints::lint_unknown_table_update(update, &mut ctx);
+                    lints::lint_update_without_where(update, &mut ctx);
+                    lints::lint_unused_params_update(update, &mut ctx);
+                    lints::lint_redundant_params_in_values(&update.set, &mut ctx);
 
-            // Lint: first without order-by in relation
-            if has_first
-                && !has_order_by
-                && let Some(span) = first_span
-            {
-                diagnostics.push(Diagnostic {
-                    span: *span,
-                    severity: DiagnosticSeverity::Warning,
-                    message: "'first' in @rel without 'order-by' returns arbitrary row".to_string(),
-                    source: Some("dibs".to_string()),
-                    code: Some("rel-first-without-order-by".to_string()),
-                    data: None,
-                });
-            }
+                    if let Some(table) = ctx.find_table(update.table.as_str()) {
+                        lints::lint_unknown_columns_values(&update.set, table, &mut ctx);
+                        if let Some(where_clause) = &update.where_clause {
+                            lints::lint_unknown_columns_where(where_clause, table, &mut ctx);
+                            lints::lint_redundant_params_in_where(where_clause, &mut ctx);
+                        }
+                    }
+                }
+                Decl::Delete(delete) => {
+                    lints::lint_unknown_table_delete(delete, &mut ctx);
+                    lints::lint_delete_without_where(delete, &mut ctx);
+                    lints::lint_hard_delete_on_soft_delete_table(delete, &mut ctx);
+                    lints::lint_unused_params_delete(delete, &mut ctx);
 
-            // Lint: no FK relationship between parent and relation table
-            if let (Some(parent), Some(rel)) = (parent_table, rel_table)
-                && let Some(span) = from_span
-                && !self.has_fk_relationship(parent, rel, schema)
-            {
-                diagnostics.push(Diagnostic {
-                    span: *span,
-                    severity: DiagnosticSeverity::Error,
-                    message: format!("no FK relationship between '{}' and '{}'", parent, rel),
-                    source: Some("dibs".to_string()),
-                    code: Some("no-fk-relationship".to_string()),
-                    data: None,
-                });
-            }
-        }
-    }
-
-    /// Check if there's a FK relationship between two tables (in either direction).
-    fn has_fk_relationship(&self, table_a: &str, table_b: &str, schema: &SchemaInfo) -> bool {
-        // Check if table_a has FK pointing to table_b
-        if let Some(table_info) = schema.tables.iter().find(|t| t.name == table_a) {
-            for fk in &table_info.foreign_keys {
-                if fk.references_table == table_b {
-                    return true;
+                    if let Some(table) = ctx.find_table(delete.from.as_str())
+                        && let Some(where_clause) = &delete.where_clause
+                    {
+                        lints::lint_unknown_columns_where(where_clause, table, &mut ctx);
+                        lints::lint_redundant_params_in_where(where_clause, &mut ctx);
+                    }
                 }
             }
         }
 
-        // Check if table_b has FK pointing to table_a
-        if let Some(table_info) = schema.tables.iter().find(|t| t.name == table_b) {
-            for fk in &table_info.foreign_keys {
-                if fk.references_table == table_a {
-                    return true;
-                }
-            }
-        }
-
-        false
+        Ok(())
     }
 
     /// Collect inlay hints from a value tree.
+    /// Note: Uses styx_tree::Value because InlayHintParams doesn't include content string.
     async fn collect_inlay_hints(
         &self,
         document_uri: &str,
@@ -1207,22 +489,13 @@ impl DibsExtension {
         if let Some(styx_tree::Payload::Object(obj)) = &value.payload {
             for entry in &obj.entries {
                 if let Some(col_name) = entry.key.as_str() {
-                    // Skip if entry value has an explicit type annotation (colon followed by type)
-                    // or if it's a @rel block (nested relation)
+                    // Skip @rel blocks - they're handled separately via recursion
                     if entry.value.tag.as_ref().is_some_and(|t| t.name == "rel") {
-                        // Skip @rel blocks - they're handled separately via recursion
                         continue;
                     }
 
                     // Skip if there's an explicit type annotation like "credential_id: BYTEA"
-                    // Type annotations are bare uppercase words (SQL types).
-                    // Don't skip:
-                    // - Parameter references like "user_id $user_id"
-                    // - Sort directions like "currency_code asc" in order-by
-                    // - Literal values like "true", "false", numbers, quoted strings
                     if let Some(val_str) = entry.value.as_str() {
-                        // Check if it looks like an explicit SQL type annotation (bare uppercase)
-                        // Must start with a letter (to exclude numeric literals like "123")
                         let is_type_annotation = val_str
                             .chars()
                             .next()
@@ -1231,25 +504,22 @@ impl DibsExtension {
                                 .chars()
                                 .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
                         if is_type_annotation {
-                            // Looks like BYTEA, INT, TEXT, etc. - skip
                             continue;
                         }
                     }
 
                     // Find the column in the table
-                    if let Some(col) = table.columns.iter().find(|c| c.name == col_name) {
-                        // Get the position at the end of the column name
-                        if let Some(span) = &entry.key.span {
-                            let position = self.offset_to_position(document_uri, span.end).await;
-
-                            hints.push(InlayHint {
-                                position,
-                                label: format!(": {}", col.sql_type),
-                                kind: Some(InlayHintKind::Type),
-                                padding_left: false,
-                                padding_right: false,
-                            });
-                        }
+                    if let Some(col) = table.columns.iter().find(|c| c.name == col_name)
+                        && let Some(span) = &entry.key.span
+                    {
+                        let position = self.offset_to_position(document_uri, span.end).await;
+                        hints.push(InlayHint {
+                            position,
+                            label: format!(": {}", col.sql_type),
+                            kind: Some(InlayHintKind::Type),
+                            padding_left: false,
+                            padding_right: false,
+                        });
                     }
                 }
             }
@@ -1654,9 +924,27 @@ impl StyxLspExtension for DibsExtension {
 
         let mut diagnostics = Vec::new();
 
-        // Find all @query blocks and validate references
-        self.collect_diagnostics(&params.content, &params.tree, &mut diagnostics)
-            .await;
+        // Use typed schema for diagnostics
+        if let Err(e) = self
+            .collect_diagnostics_typed(&params.content, &mut diagnostics)
+            .await
+        {
+            let span = e
+                .span()
+                .copied()
+                .unwrap_or(dibs_query_schema::Span { offset: 0, len: 0 });
+            diagnostics.push(Diagnostic {
+                span: styx_tree::Span {
+                    start: span.offset,
+                    end: (span.offset + span.len),
+                },
+                severity: styx_lsp_ext::DiagnosticSeverity::Error,
+                message: e.to_string(),
+                source: Some("dibs".to_string()),
+                code: Some("parse-error".to_string()),
+                data: None,
+            });
+        }
 
         diagnostics
     }

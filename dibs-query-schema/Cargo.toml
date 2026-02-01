@@ -11,5 +11,6 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 facet = { workspace = true, features = ["indexmap"] }
+facet-reflect.workspace = true
 facet-styx.workspace = true
 indexmap = "2"
