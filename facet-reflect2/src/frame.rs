@@ -5,7 +5,9 @@ use crate::errors::{ErrorLocation, ReflectError, ReflectErrorKind};
 use crate::ops::Path;
 use crate::shape_desc::ShapeDesc;
 use crate::slab::Slab;
-use facet_core::{ListDef, MapDef, PtrConst, PtrUninit, SequenceType, SetDef, Shape, Variant};
+use facet_core::{
+    ListDef, MapDef, PtrConst, PtrMut, PtrUninit, SequenceType, SetDef, Shape, Variant,
+};
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -152,15 +154,27 @@ impl Default for PointerFrame {
 }
 
 /// List frame data (building a Vec or similar).
-/// Tracks whether the list is initialized and count of pushed elements.
+///
+/// Lists use a "direct-fill" construction pattern:
+/// 1. Initialize with capacity via `init_in_place_with_capacity`
+/// 2. Write elements directly into the buffer via `as_mut_ptr_typed`
+/// 3. Call `set_len` at End to commit the staged elements
+///
+/// This avoids per-element `push` vtable calls.
 pub struct ListFrame {
     /// The list definition (element type, vtable). Stored by value since ListDef is Copy.
     pub def: ListDef,
     /// Whether the list has been initialized (via init_in_place_with_capacity).
     /// The actual pointer is always frame.data.
     pub initialized: bool,
-    /// Number of elements that have been pushed.
+    /// Number of elements committed to the list (after set_len).
     pub len: usize,
+    /// Number of elements written to buffer but not yet committed.
+    /// These are at indices `len..len+staged_len` in the buffer.
+    pub staged_len: usize,
+    /// Cached capacity after init/reserve. Avoids repeated vtable calls.
+    /// When `len + staged_len >= cached_capacity`, we need to reserve more.
+    pub cached_capacity: usize,
 }
 
 impl ListFrame {
@@ -170,6 +184,8 @@ impl ListFrame {
             def,
             initialized: false,
             len: 0,
+            staged_len: 0,
+            cached_capacity: 0,
         }
     }
 
@@ -753,6 +769,37 @@ impl Frame {
         use facet_core::{Type, UserType};
 
         if self.flags.contains(FrameFlags::INIT) {
+            // For List frames with staged elements, drop them before dropping the Vec.
+            // The Vec's len is 0 (before finalize), so it won't drop staged elements itself.
+            if let FrameKind::List(ref mut list_frame) = self.kind
+                && list_frame.staged_len > 0
+            {
+                let element_shape = list_frame.def.t;
+                let element_size = element_shape
+                    .layout
+                    .sized_layout()
+                    .map(|l| l.size())
+                    .unwrap_or(0);
+
+                if element_size > 0
+                    && let Some(as_mut_ptr) = list_frame.def.as_mut_ptr_typed()
+                {
+                    // SAFETY: list is initialized (INIT flag), buffer contains
+                    // staged_len initialized elements starting at index len
+                    unsafe {
+                        let buffer = as_mut_ptr(self.data.assume_init());
+                        let start = list_frame.len;
+                        let end = start + list_frame.staged_len;
+                        for i in start..end {
+                            let elem_ptr = buffer.add(i * element_size);
+                            let elem_ptr = PtrMut::new(elem_ptr);
+                            element_shape.call_drop_in_place(elem_ptr);
+                        }
+                    }
+                }
+                list_frame.staged_len = 0;
+            }
+
             // SAFETY: INIT flag means the value is fully initialized
             unsafe {
                 self.shape.call_drop_in_place(self.data.assume_init());

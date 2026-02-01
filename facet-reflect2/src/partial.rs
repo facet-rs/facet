@@ -393,19 +393,27 @@ impl<'facet> Partial<'facet> {
         let frame = self.arena.get(self.current);
         match &frame.kind {
             FrameKind::List(list_frame) => {
-                let init_fn = list_frame
-                    .def
-                    .init_in_place_with_capacity()
-                    .ok_or_else(|| {
-                        self.error(ReflectErrorKind::ListDoesNotSupportOp { shape: frame.shape })
-                    })?;
+                let def = list_frame.def;
+                let init_fn = def.init_in_place_with_capacity().ok_or_else(|| {
+                    self.error(ReflectErrorKind::ListDoesNotSupportOp { shape: frame.shape })
+                })?;
                 // SAFETY: frame.data points to uninitialized list memory
-                unsafe { init_fn(frame.data, capacity) };
+                let list_ptr = unsafe { init_fn(frame.data, capacity) };
 
-                // Mark list as initialized
+                // Get actual capacity (Vec may allocate more than requested)
+                let cached_capacity = if let Some(capacity_fn) = def.capacity() {
+                    // SAFETY: list_ptr points to initialized list
+                    unsafe { capacity_fn(list_ptr.as_const()) }
+                } else {
+                    // No capacity function - assume we got what we asked for
+                    capacity
+                };
+
+                // Mark list as initialized and cache capacity
                 let frame = self.arena.get_mut(self.current);
                 if let FrameKind::List(l) = &mut frame.kind {
                     l.initialized = true;
+                    l.cached_capacity = cached_capacity;
                 }
                 frame.flags |= FrameFlags::INIT;
             }
