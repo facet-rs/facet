@@ -178,7 +178,7 @@ pub fn from_slice_into<'facet>(
     input: &[u8],
     partial: facet_reflect::Partial<'facet, false>,
 ) -> Result<facet_reflect::Partial<'facet, false>, DeserializeError> {
-    use facet_format::FormatDeserializer;
+    use facet_format::{FormatDeserializer, MetaSource};
     let mut parser = MsgPackParser::new(input);
     let mut de = FormatDeserializer::new_owned(&mut parser);
 
@@ -194,7 +194,7 @@ pub fn from_slice_into<'facet>(
         >(partial)
     };
 
-    let partial = de.deserialize_into(partial, None)?;
+    let partial = de.deserialize_into(partial, MetaSource::FromEvents)?;
 
     // SAFETY: Same reasoning - no borrowed data since BORROW=false.
     #[allow(unsafe_code)]
@@ -245,8 +245,8 @@ pub fn from_slice_into_borrowed<'input, 'facet>(
 where
     'input: 'facet,
 {
-    use facet_format::FormatDeserializer;
+    use facet_format::{FormatDeserializer, MetaSource};
     let mut parser = MsgPackParser::new(input);
     let mut de = FormatDeserializer::new(&mut parser);
-    de.deserialize_into(partial, None)
+    de.deserialize_into(partial, MetaSource::FromEvents)
 }

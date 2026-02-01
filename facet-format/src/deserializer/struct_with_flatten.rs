@@ -4,6 +4,7 @@ use facet_core::{Characteristic, Def};
 use facet_reflect::{FieldCategory, FieldInfo, Partial, VariantSelection};
 use facet_solver::PathSegment;
 
+use super::entry::MetaSource;
 use super::path_navigator::PathNavigator;
 use crate::{
     DeserializeError, DeserializeErrorKind, FieldKey, FormatDeserializer, ParseEventKind,
@@ -217,7 +218,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                         } else {
                             // Regular field: deserialize into it
                             let wip = nav.take_wip();
-                            let wip = self.deserialize_into(wip, None)?;
+                            let wip = self.deserialize_into(wip, MetaSource::FromEvents)?;
                             nav.return_wip(wip);
                         }
 
@@ -316,7 +317,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             let wip = nav.take_wip();
             let wip = wip
                 .begin_object_entry(key_name)?
-                .with(|w| self.deserialize_into(w, None))?
+                .with(|w| self.deserialize_into(w, MetaSource::FromEvents))?
                 .end()?;
             nav.return_wip(wip);
         } else {
@@ -328,7 +329,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             let wip = wip.end()?;
             let wip = wip
                 .begin_value()?
-                .with(|w| self.deserialize_into(w, None))?
+                .with(|w| self.deserialize_into(w, MetaSource::FromEvents))?
                 .end()?;
             nav.return_wip(wip);
         }
