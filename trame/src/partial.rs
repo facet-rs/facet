@@ -769,196 +769,146 @@ mod kani_proofs {
     }
 
     // =======================================================================
-    // Pathological test: minimal recursive drop with loops
-    // This doesn't use Partial - it's a standalone reproduction of the pattern
-    // that makes Kani explode. We'll use this to experiment with contracts.
-    // =======================================================================
-    // Memory model with state tracking for Kani verification
+    // Fresh start: Fixed-arity tree without Vec
     // =======================================================================
 
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
     enum RegionState {
+        Unallocated,
         Initialized,
         Dropped,
     }
 
-    // Global drop counter - tracks total drops across all nodes
-    static mut TOTAL_DROPS: usize = 0;
-
-    /// A node with explicit state tracking for Kani verification
-    struct Node {
+    /// A binary tree node - no Vec, just two optional children
+    struct BinaryNode {
         value: u32,
-        children: Vec<Node>,
+        left: Option<Box<BinaryNode>>,
+        right: Option<Box<BinaryNode>>,
         state: RegionState,
     }
 
-    impl Node {
-        fn new(value: u32) -> Self {
+    impl BinaryNode {
+        fn leaf(value: u32) -> Self {
             Self {
                 value,
-                children: Vec::new(),
+                left: None,
+                right: None,
                 state: RegionState::Initialized,
             }
         }
 
-        fn with_children(value: u32, children: Vec<Node>) -> Self {
+        fn with_left(value: u32, left: BinaryNode) -> Self {
             Self {
                 value,
-                children,
+                left: Some(Box::new(left)),
+                right: None,
                 state: RegionState::Initialized,
             }
         }
 
-        /// Count total nodes in this subtree (including self)
-        fn count_nodes(&self) -> usize {
-            1 + self.children.iter().map(|c| c.count_nodes()).sum::<usize>()
+        fn with_both(value: u32, left: BinaryNode, right: BinaryNode) -> Self {
+            Self {
+                value,
+                left: Some(Box::new(left)),
+                right: Some(Box::new(right)),
+                state: RegionState::Initialized,
+            }
         }
     }
 
-    /// Drop a node and all its children, with loop invariant
-    /// Returns the number of nodes dropped (for verification)
-    #[kani::requires(node.state == RegionState::Initialized)]
-    #[kani::ensures(|_| true)] // Can't easily express postcondition without iteration
-    #[kani::recursion]
-    fn drop_node(node: &mut Node) -> usize {
-        // Precondition: node must be initialized (not already dropped)
+    fn drop_binary(node: &mut BinaryNode) {
         kani::assert(
             node.state == RegionState::Initialized,
             "dropping initialized node",
         );
 
-        let num_children = node.children.len();
-        let mut i: usize = 0;
-        let mut dropped_in_children: usize = 0;
-
-        // Loop invariant:
-        // - i is bounded by num_children
-        // - all children at indices < i have been dropped
-        #[kani::loop_invariant(
-            i <= num_children &&
-            kani::forall!(|j in (0, i)| node.children[j as usize].state == RegionState::Dropped)
-        )]
-        #[kani::loop_modifies(&i, &dropped_in_children, &node.children)]
-        while i < num_children {
-            // Use saturating_add to avoid overflow concerns
-            dropped_in_children =
-                dropped_in_children.saturating_add(drop_node(&mut node.children[i]));
-            i = i.wrapping_add(1);
+        // Drop children first (no loop - just two optional fields)
+        if let Some(ref mut left) = node.left {
+            drop_binary(left);
+        }
+        if let Some(ref mut right) = node.right {
+            drop_binary(right);
         }
 
-        // Mark this node as dropped
         node.state = RegionState::Dropped;
-        unsafe {
-            TOTAL_DROPS = TOTAL_DROPS.wrapping_add(1);
-        }
-
-        // Return total: children + self
-        dropped_in_children.saturating_add(1)
     }
 
-    impl Drop for Node {
+    impl Drop for BinaryNode {
         fn drop(&mut self) {
-            // Only drop if not already dropped (avoid double-drop from explicit + implicit)
             if self.state == RegionState::Initialized {
-                drop_node(self);
+                drop_binary(self);
             }
         }
     }
 
-    // Verify the drop_node contract for a leaf node (base case)
-    #[kani::proof_for_contract(drop_node)]
-    #[kani::unwind(2)]
-    fn verify_drop_node_leaf() {
-        let mut node = Node::new(kani::any());
-        drop_node(&mut node);
-        std::mem::forget(node); // Avoid double-drop
-    }
-
-    // Test 7: Single node, no children - should be fast
+    // Test 7: Leaf node
     #[kani::proof]
-    fn test_node_leaf() {
-        let mut node = Node::new(42);
+    fn test_binary_leaf() {
+        let node = BinaryNode::leaf(42);
         kani::assert(node.value == 42, "value is correct");
-
-        // Explicitly drop and verify count
-        let dropped = drop_node(&mut node);
-        kani::assert(dropped == 1, "dropped exactly 1 node");
-
-        // Forget to avoid double-drop from Drop impl
-        std::mem::forget(node);
+        // Let it drop
     }
 
-    // Test 8: One level of children - will this work?
+    // Test 8: One level - left child only
     #[kani::proof]
-    #[kani::unwind(3)]
-    fn test_node_one_level() {
-        let leaf1 = Node::new(1);
-        let leaf2 = Node::new(2);
-        let parent = Node::with_children(0, vec![leaf1, leaf2]);
-        kani::assert(parent.children.len() == 2, "has 2 children");
-        // Drop - one loop iteration per child, no deeper recursion
+    fn test_binary_one_child() {
+        let child = BinaryNode::leaf(1);
+        let parent = BinaryNode::with_left(0, child);
+        kani::assert(parent.left.is_some(), "has left child");
+        // Drop - one level of recursion
     }
 
-    // Test 9: Two levels - this is where it gets painful
+    // Test 9: Two levels - full binary tree depth 2
     #[kani::proof]
-    #[kani::unwind(5)]
-    fn test_node_two_levels() {
-        let grandchild = Node::new(100);
-        let child = Node::with_children(10, vec![grandchild]);
-        let root = Node::with_children(0, vec![child]);
-        kani::assert(root.children.len() == 1, "has 1 child");
-        // Drop - recursion depth 2, should explode without contracts
+    fn test_binary_two_levels() {
+        let ll = BinaryNode::leaf(3);
+        let lr = BinaryNode::leaf(4);
+        let left = BinaryNode::with_both(1, ll, lr);
+
+        let rl = BinaryNode::leaf(5);
+        let rr = BinaryNode::leaf(6);
+        let right = BinaryNode::with_both(2, rl, rr);
+
+        let root = BinaryNode::with_both(0, left, right);
+        kani::assert(
+            root.left.is_some() && root.right.is_some(),
+            "has both children",
+        );
+        // Drop - two levels of recursion, 7 nodes total
     }
 
-    // =======================================================================
-    // Now let's add dynamism - this should break things
-    // =======================================================================
-
-    // Test 10: Symbolic number of children - uses stub_verified to skip drop_node recursion
+    // Test 10: Symbolic tree structure
     #[kani::proof]
-    #[kani::stub_verified(drop_node)]
-    #[kani::unwind(2)]
-    fn test_node_symbolic_children_count() {
-        let n: usize = kani::any();
-        kani::assume(n <= 3); // Bound it, but still symbolic
+    #[kani::unwind(4)] // root + up to 2 children + 1 for termination check
+    fn test_binary_symbolic() {
+        // Symbolic choice: does root have a left child?
+        let has_left: bool = kani::any();
+        // Symbolic choice: does root have a right child?
+        let has_right: bool = kani::any();
 
-        let mut children = Vec::new();
-        let mut k: usize = 0;
+        let left = if has_left {
+            Some(Box::new(BinaryNode::leaf(1)))
+        } else {
+            None
+        };
 
-        #[kani::loop_invariant(k <= n && children.len() == k)]
-        #[kani::loop_modifies(&k, &children)]
-        while k < n {
-            children.push(Node::new(1));
-            k = k.wrapping_add(1);
-        }
+        let right = if has_right {
+            Some(Box::new(BinaryNode::leaf(2)))
+        } else {
+            None
+        };
 
-        let parent = Node::with_children(0, children);
-        kani::assert(parent.children.len() <= 3, "bounded children");
-        // Drop with symbolic number of children - loop invariant should help!
-    }
+        let root = BinaryNode {
+            value: 0,
+            left,
+            right,
+            state: RegionState::Initialized,
+        };
 
-    // Test 11: Symbolic depth via function pointer (simulating vtable)
-    #[kani::proof]
-    #[kani::unwind(5)]
-    fn test_node_dynamic_drop() {
-        type DropFn = fn(&mut Node);
-
-        fn drop_shallow(node: &mut Node) {
-            // Don't recurse into children
-        }
-
-        fn drop_deep(node: &mut Node) {
-            for child in &mut node.children {
-                drop_deep(child);
-            }
-        }
-
-        // Symbolic choice of drop function - like vtable dispatch
-        let drop_fn: DropFn = if kani::any() { drop_shallow } else { drop_deep };
-
-        let mut root = Node::with_children(0, vec![Node::new(1)]);
-        drop_fn(&mut root);
-        // Now let normal drop run too
+        // Verify the structure matches our choices
+        kani::assert(root.left.is_some() == has_left, "left matches");
+        kani::assert(root.right.is_some() == has_right, "right matches");
+        // Drop - symbolic structure
     }
 }
 
