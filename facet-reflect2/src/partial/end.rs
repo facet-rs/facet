@@ -79,60 +79,8 @@ impl<'facet> Partial<'facet> {
             }
 
             ParentLink::ListElement { .. } => {
-                // Check if this is a direct-fill element (no OWNS_ALLOC = lives in Vec's buffer)
-                let frame = self.arena.get(self.current);
-                let is_direct_fill = !frame.flags.contains(FrameFlags::OWNS_ALLOC);
-
-                if is_direct_fill {
-                    // Direct-fill: element is already in Vec's buffer, just increment staged_len
-                    let _ = self.arena.free(self.current);
-
-                    let parent = self.arena.get_mut(parent_idx);
-                    if let FrameKind::List(ref mut l) = parent.kind {
-                        l.staged_len += 1;
-                    }
-                } else {
-                    // Fallback: use push to add element
-                    let parent = self.arena.get(parent_idx);
-                    let FrameKind::List(ref list_frame) = parent.kind else {
-                        unreachable!("ListElement parent must be a List frame")
-                    };
-                    let push_fn = list_frame.def.push().ok_or_else(|| {
-                        self.error_at(
-                            parent_idx,
-                            ReflectErrorKind::ListDoesNotSupportOp {
-                                shape: parent.shape,
-                            },
-                        )
-                    })?;
-
-                    // Get the element data pointer (our current frame's data, now initialized)
-                    let frame = self.arena.get(self.current);
-                    let element_ptr = unsafe { frame.data.assume_init() };
-
-                    // Get the list pointer from parent's data (it's initialized)
-                    let parent = self.arena.get(parent_idx);
-                    let list_ptr = unsafe { parent.data.assume_init() };
-
-                    // Push the element to the list (moves the value)
-                    unsafe {
-                        push_fn(list_ptr, element_ptr.as_const());
-                    }
-
-                    // The value has been moved into the list. Now deallocate our temp memory.
-                    let frame = self.arena.get_mut(self.current);
-                    frame.flags.remove(FrameFlags::INIT);
-                    let freed_frame = self.arena.free(self.current);
-                    freed_frame.dealloc_if_owned();
-
-                    // Increment element count in parent list
-                    let parent = self.arena.get_mut(parent_idx);
-                    if let FrameKind::List(ref mut l) = parent.kind {
-                        l.len += 1;
-                    }
-                }
-
-                self.current = parent_idx;
+                // Direct-fill only: element is in Vec's buffer, increment staged_len
+                self.list_element_end(parent_idx)?;
             }
 
             ParentLink::SetElement { .. } => {
@@ -326,48 +274,7 @@ impl<'facet> Partial<'facet> {
 
     /// If current frame is a List with staged elements, commit them using set_len.
     pub(crate) fn finalize_list_if_needed(&mut self) -> Result<(), ReflectError> {
-        let frame = self.arena.get(self.current);
-        let FrameKind::List(ref list_frame) = frame.kind else {
-            return Ok(()); // Not a list, nothing to do
-        };
-
-        // Check if there are staged elements to commit
-        if list_frame.staged_len == 0 {
-            return Ok(()); // Nothing staged
-        }
-
-        // Check if we have set_len (direct-fill support)
-        let set_len_fn = match list_frame.def.set_len() {
-            Some(f) => f,
-            None => {
-                // No set_len = not using direct-fill, staged_len shouldn't be > 0
-                // This would be a bug if it happens
-                debug_assert!(
-                    false,
-                    "staged_len > 0 but no set_len function - logic error"
-                );
-                return Ok(());
-            }
-        };
-
-        // Get the data we need
-        let list_ptr = unsafe { frame.data.assume_init() };
-        let new_len = list_frame.len + list_frame.staged_len;
-
-        // Commit the staged elements
-        // SAFETY: list_ptr is initialized, new_len elements are initialized in buffer
-        unsafe {
-            set_len_fn(list_ptr, new_len);
-        }
-
-        // Update the frame
-        let frame = self.arena.get_mut(self.current);
-        if let FrameKind::List(ref mut l) = frame.kind {
-            l.len = new_len;
-            l.staged_len = 0;
-        }
-
-        Ok(())
+        self.list_finalize()
     }
 
     /// If current frame is a Map with a slab, build the map using from_pair_slice.

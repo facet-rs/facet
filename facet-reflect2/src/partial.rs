@@ -2,6 +2,7 @@
 
 // Ops appliers
 mod end;
+mod list;
 mod push;
 mod set;
 

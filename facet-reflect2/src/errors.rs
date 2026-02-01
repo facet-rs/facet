@@ -153,6 +153,10 @@ pub enum ReflectErrorKind {
     MapDoesNotSupportFromPairSlice { shape: ShapeDesc },
     /// Set type doesn't support from_slice (needed for batch construction).
     SetDoesNotSupportFromSlice { shape: ShapeDesc },
+    /// List type doesn't support direct-fill operations.
+    ListDoesNotSupportDirectFill { shape: ShapeDesc },
+    /// Cannot append to a collection that has been finalized.
+    CannotAppendToCompleteCollection,
 }
 
 impl fmt::Display for ReflectErrorKind {
@@ -319,6 +323,16 @@ impl fmt::Display for ReflectErrorKind {
                     "Set type {} doesn't support from_slice",
                     shape.type_identifier()
                 )
+            }
+            ReflectErrorKind::ListDoesNotSupportDirectFill { shape } => {
+                write!(
+                    f,
+                    "List type {} doesn't support direct-fill operations",
+                    shape.type_identifier()
+                )
+            }
+            ReflectErrorKind::CannotAppendToCompleteCollection => {
+                write!(f, "Cannot append to a finalized collection")
             }
         }
     }

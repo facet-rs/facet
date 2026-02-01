@@ -167,6 +167,9 @@ pub struct ListFrame {
     /// Whether the list has been initialized (via init_in_place_with_capacity).
     /// The actual pointer is always frame.data.
     pub initialized: bool,
+    /// Whether the list has been finalized (End called or whole value set via Imm/Default).
+    /// Once finalized, no more elements can be appended.
+    pub finalized: bool,
     /// Number of elements committed to the list (after set_len).
     pub len: usize,
     /// Number of elements written to buffer but not yet committed.
@@ -183,6 +186,7 @@ impl ListFrame {
         Self {
             def,
             initialized: false,
+            finalized: false,
             len: 0,
             staged_len: 0,
             cached_capacity: 0,

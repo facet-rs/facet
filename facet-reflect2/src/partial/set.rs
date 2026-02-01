@@ -90,73 +90,69 @@ impl<'facet> Partial<'facet> {
                         .map_err(|kind| self.error(kind))?;
                 }
 
-                // Now get mutable borrow to update state
-                let frame = self.arena.get_mut(self.current);
-
                 // Mark as initialized
-                if path.is_empty() {
-                    frame.flags |= FrameFlags::INIT;
+                let is_empty_path = path.is_empty();
+                {
+                    let frame = self.arena.get_mut(self.current);
 
-                    // For enums, read the discriminant and update selected variant
-                    if let Type::User(UserType::Enum(ref enum_type)) = *frame.shape.ty()
-                        && let FrameKind::Enum(ref mut e) = frame.kind
-                    {
-                        // SAFETY: we just copied a valid enum value, so discriminant is valid
-                        let discriminant = unsafe {
-                            read_discriminant(frame.data.assume_init().as_const(), enum_type)
-                        };
-                        // Handle error after releasing mutable borrow
-                        let discriminant = match discriminant {
-                            Ok(d) => d,
-                            Err(kind) => {
-                                return Err(ReflectError::new(
-                                    frame.shape,
-                                    absolute_path(&self.arena, self.current),
-                                    kind,
-                                ));
-                            }
-                        };
+                    if is_empty_path {
+                        frame.flags |= FrameFlags::INIT;
 
-                        if let Some(variant_idx) =
-                            variant_index_from_discriminant(enum_type, discriminant)
+                        // For enums, read the discriminant and update selected variant
+                        if let Type::User(UserType::Enum(ref enum_type)) = *frame.shape.ty()
+                            && let FrameKind::Enum(ref mut e) = frame.kind
                         {
-                            // Mark the variant as complete (the whole value was moved in)
-                            e.selected = Some((variant_idx, Idx::COMPLETE));
+                            // SAFETY: we just copied a valid enum value, so discriminant is valid
+                            let discriminant = unsafe {
+                                read_discriminant(frame.data.assume_init().as_const(), enum_type)
+                            };
+                            // Handle error after releasing mutable borrow
+                            let discriminant = match discriminant {
+                                Ok(d) => d,
+                                Err(kind) => {
+                                    return Err(ReflectError::new(
+                                        frame.shape,
+                                        absolute_path(&self.arena, self.current),
+                                        kind,
+                                    ));
+                                }
+                            };
+
+                            if let Some(variant_idx) =
+                                variant_index_from_discriminant(enum_type, discriminant)
+                            {
+                                // Mark the variant as complete (the whole value was moved in)
+                                e.selected = Some((variant_idx, Idx::COMPLETE));
+                            }
                         }
-                    }
 
-                    // For lists, update the ListFrame state to reflect the complete value
-                    if let FrameKind::List(ref mut l) = frame.kind {
-                        // Get actual length from the Vec
-                        let list_ptr = unsafe { frame.data.assume_init() };
-                        l.len = unsafe { (l.def.vtable.len)(list_ptr.as_const()) };
-                        if let Some(cap_fn) = l.def.capacity() {
-                            l.cached_capacity = unsafe { cap_fn(list_ptr.as_const()) };
+                        // For maps, update the MapFrame state
+                        if let FrameKind::Map(ref mut m) = frame.kind {
+                            let map_ptr = unsafe { frame.data.assume_init() };
+                            m.len = unsafe { (m.def.vtable.len)(map_ptr.as_const()) };
+                            // Map is now fully initialized, no slab needed
+                            m.slab = None;
                         }
-                        l.initialized = true;
-                        l.staged_len = 0;
-                    }
 
-                    // For maps, update the MapFrame state
-                    if let FrameKind::Map(ref mut m) = frame.kind {
-                        let map_ptr = unsafe { frame.data.assume_init() };
-                        m.len = unsafe { (m.def.vtable.len)(map_ptr.as_const()) };
-                        // Map is now fully initialized, no slab needed
-                        m.slab = None;
+                        // For sets, update the SetFrame state
+                        if let FrameKind::Set(ref mut s) = frame.kind {
+                            let set_ptr = unsafe { frame.data.assume_init() };
+                            s.len = unsafe { (s.def.vtable.len)(set_ptr.as_const()) };
+                            // Set is now fully initialized, no slab needed
+                            s.slab = None;
+                        }
+                    } else {
+                        // Mark child as complete
+                        let field_idx =
+                            first_field_idx(path).expect("path must have field index") as usize;
+                        frame.kind.mark_field_complete(field_idx);
                     }
+                }
 
-                    // For sets, update the SetFrame state
-                    if let FrameKind::Set(ref mut s) = frame.kind {
-                        let set_ptr = unsafe { frame.data.assume_init() };
-                        s.len = unsafe { (s.def.vtable.len)(set_ptr.as_const()) };
-                        // Set is now fully initialized, no slab needed
-                        s.slab = None;
-                    }
-                } else {
-                    // Mark child as complete
-                    let field_idx =
-                        first_field_idx(path).expect("path must have field index") as usize;
-                    frame.kind.mark_field_complete(field_idx);
+                // For lists, update the ListFrame state to reflect the complete value
+                // (called outside the scope to avoid borrow conflict)
+                if is_empty_path {
+                    self.list_sync_after_set();
                 }
             }
             Source::Stage(_capacity) => {
@@ -360,43 +356,39 @@ impl<'facet> Partial<'facet> {
                     }));
                 }
 
-                // Now get mutable borrow to update state
-                let frame = self.arena.get_mut(self.current);
-
                 // Mark as initialized
-                if path.is_empty() {
-                    frame.flags |= FrameFlags::INIT;
+                let is_empty_path = path.is_empty();
+                {
+                    let frame = self.arena.get_mut(self.current);
 
-                    // For lists, update the ListFrame state to reflect the complete value
-                    if let FrameKind::List(ref mut l) = frame.kind {
-                        // Get actual length from the Vec (default is empty, so len=0)
-                        let list_ptr = unsafe { frame.data.assume_init() };
-                        l.len = unsafe { (l.def.vtable.len)(list_ptr.as_const()) };
-                        if let Some(cap_fn) = l.def.capacity() {
-                            l.cached_capacity = unsafe { cap_fn(list_ptr.as_const()) };
+                    if is_empty_path {
+                        frame.flags |= FrameFlags::INIT;
+
+                        // For maps, update the MapFrame state
+                        if let FrameKind::Map(ref mut m) = frame.kind {
+                            let map_ptr = unsafe { frame.data.assume_init() };
+                            m.len = unsafe { (m.def.vtable.len)(map_ptr.as_const()) };
+                            m.slab = None;
                         }
-                        l.initialized = true;
-                        l.staged_len = 0;
-                    }
 
-                    // For maps, update the MapFrame state
-                    if let FrameKind::Map(ref mut m) = frame.kind {
-                        let map_ptr = unsafe { frame.data.assume_init() };
-                        m.len = unsafe { (m.def.vtable.len)(map_ptr.as_const()) };
-                        m.slab = None;
+                        // For sets, update the SetFrame state
+                        if let FrameKind::Set(ref mut s) = frame.kind {
+                            let set_ptr = unsafe { frame.data.assume_init() };
+                            s.len = unsafe { (s.def.vtable.len)(set_ptr.as_const()) };
+                            s.slab = None;
+                        }
+                    } else {
+                        // Mark child as complete
+                        let field_idx =
+                            first_field_idx(path).expect("path must have field index") as usize;
+                        frame.kind.mark_field_complete(field_idx);
                     }
+                }
 
-                    // For sets, update the SetFrame state
-                    if let FrameKind::Set(ref mut s) = frame.kind {
-                        let set_ptr = unsafe { frame.data.assume_init() };
-                        s.len = unsafe { (s.def.vtable.len)(set_ptr.as_const()) };
-                        s.slab = None;
-                    }
-                } else {
-                    // Mark child as complete
-                    let field_idx =
-                        first_field_idx(path).expect("path must have field index") as usize;
-                    frame.kind.mark_field_complete(field_idx);
+                // For lists, update the ListFrame state to reflect the complete value
+                // (called outside the scope to avoid borrow conflict)
+                if is_empty_path {
+                    self.list_sync_after_set();
                 }
             }
         }
