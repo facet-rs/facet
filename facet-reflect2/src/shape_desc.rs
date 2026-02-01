@@ -35,13 +35,13 @@ pub struct Tuple2Shape {
 static TUPLE2_CACHE: LazyLock<Mutex<HashMap<(ConstTypeId, ConstTypeId), &'static Tuple2Shape>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-/// Get or create a Tuple2Shape for the given key and value shapes.
+/// Get or create a Tuple2Shape for the given map definition.
+/// Uses the vtable's `pair_stride` and `value_offset_in_pair` for correct layout.
 /// The result is cached globally, so repeated calls with the same types return the same shape.
 #[allow(clippy::disallowed_methods)] // Box::leak is intentional here - one leak per (K,V) type pair, cached forever
-pub fn get_or_leak_tuple2(
-    key_shape: &'static Shape,
-    value_shape: &'static Shape,
-) -> &'static Tuple2Shape {
+pub fn tuple2(map_def: &facet_core::MapDef) -> &'static Tuple2Shape {
+    let key_shape = map_def.k;
+    let value_shape = map_def.v;
     let cache_key = (key_shape.id, value_shape.id);
     let mut cache = TUPLE2_CACHE.lock().unwrap();
 
@@ -49,26 +49,22 @@ pub fn get_or_leak_tuple2(
         return cached;
     }
 
-    // Compute layout and offsets
+    // Use vtable values for correct tuple layout
+    let pair_stride = map_def.vtable.pair_stride;
+    let value_offset = map_def.vtable.value_offset_in_pair;
     let key_layout = key_shape
         .layout
         .sized_layout()
         .expect("key shape must be sized");
-    let value_layout = value_shape
-        .layout
-        .sized_layout()
-        .expect("value shape must be sized");
-
-    // Value goes at aligned offset after key
-    let value_offset = {
-        let after_key = key_layout.size();
-        let value_align = value_layout.align();
-        // Round up to value's alignment
-        (after_key + value_align - 1) & !(value_align - 1)
-    };
-    let total_size = value_offset + value_layout.size();
-    let total_align = key_layout.align().max(value_layout.align());
-    let layout = Layout::from_size_align(total_size, total_align).expect("valid layout for tuple2");
+    let total_align = key_layout.align().max(
+        value_shape
+            .layout
+            .sized_layout()
+            .expect("value shape must be sized")
+            .align(),
+    );
+    let layout =
+        Layout::from_size_align(pair_stride, total_align).expect("valid layout for tuple2");
 
     let tuple2 = Box::leak(Box::new(Tuple2Shape {
         layout,
@@ -275,23 +271,46 @@ impl From<&'static Shape> for ShapeDesc {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use facet_core::Facet;
+    use facet_core::{Def, Facet};
+    use std::collections::HashMap;
+
+    /// Helper to extract MapDef from a HashMap shape.
+    fn map_def_for<K: for<'a> Facet<'a> + Eq + std::hash::Hash, V: for<'a> Facet<'a>>()
+    -> &'static facet_core::MapDef {
+        // HashMap::SHAPE.def is Def::Map(MapDef) - we need a reference to the MapDef.
+        // Since SHAPE is 'static, we can take a reference to the embedded MapDef.
+        let shape = HashMap::<K, V>::SHAPE;
+        match &shape.def {
+            Def::Map(map_def) => {
+                // SAFETY: shape is 'static, so the reference to its embedded MapDef is 'static
+                // This transmute converts &'_ MapDef to &'static MapDef
+                // which is safe because shape (and its def field) live for 'static
+                unsafe {
+                    std::mem::transmute::<&facet_core::MapDef, &'static facet_core::MapDef>(map_def)
+                }
+            }
+            _ => panic!("expected Map def"),
+        }
+    }
 
     #[test]
     fn test_tuple2_cache() {
         // Getting the same tuple twice should return the same pointer
-        let t1 = get_or_leak_tuple2(String::SHAPE, i32::SHAPE);
-        let t2 = get_or_leak_tuple2(String::SHAPE, i32::SHAPE);
+        let map_def = map_def_for::<String, i32>();
+        let t1 = tuple2(map_def);
+        let t2 = tuple2(map_def);
         assert!(std::ptr::eq(t1, t2));
 
         // Different types should return different pointers
-        let t3 = get_or_leak_tuple2(i32::SHAPE, String::SHAPE);
+        let map_def2 = map_def_for::<i32, String>();
+        let t3 = tuple2(map_def2);
         assert!(!std::ptr::eq(t1, t3));
     }
 
     #[test]
     fn test_tuple2_layout() {
-        let t = get_or_leak_tuple2(u8::SHAPE, u64::SHAPE);
+        let map_def = map_def_for::<u8, u64>();
+        let t = tuple2(map_def);
 
         // u8 is 1 byte, u64 is 8 bytes with 8-byte alignment
         // So value offset should be 8 (aligned)
@@ -306,7 +325,8 @@ mod tests {
         let desc = ShapeDesc::Static(String::SHAPE);
         assert!(desc.to_string().contains("String"));
 
-        let t = get_or_leak_tuple2(String::SHAPE, i32::SHAPE);
+        let map_def = map_def_for::<String, i32>();
+        let t = tuple2(map_def);
         let desc = ShapeDesc::Tuple2(t);
         assert_eq!(desc.to_string(), "map entry");
     }
@@ -323,9 +343,12 @@ mod tests {
 
     #[test]
     fn test_is_shape_tuple2_vs_tuple2() {
-        let t1 = get_or_leak_tuple2(String::SHAPE, i32::SHAPE);
-        let t2 = get_or_leak_tuple2(String::SHAPE, i32::SHAPE);
-        let t3 = get_or_leak_tuple2(i32::SHAPE, String::SHAPE);
+        let map_def1 = map_def_for::<String, i32>();
+        let map_def2 = map_def_for::<i32, String>();
+
+        let t1 = tuple2(map_def1);
+        let t2 = tuple2(map_def1);
+        let t3 = tuple2(map_def2);
 
         assert!(ShapeDesc::Tuple2(t1).is_shape(ShapeDesc::Tuple2(t2)));
         assert!(!ShapeDesc::Tuple2(t1).is_shape(ShapeDesc::Tuple2(t3)));

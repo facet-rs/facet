@@ -5,9 +5,12 @@
 // --- arena ---
 pub(crate) mod arena;
 
+// --- slab ---
+pub(crate) mod slab;
+
 // --- shape_desc ---
 pub(crate) mod shape_desc;
-pub use shape_desc::{ShapeDesc, Tuple2Shape, get_or_leak_tuple2};
+pub use shape_desc::{ShapeDesc, Tuple2Shape, tuple2};
 
 // --- errors ---
 mod errors;

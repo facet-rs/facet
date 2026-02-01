@@ -4,6 +4,7 @@ use crate::arena::{Arena, Idx};
 use crate::errors::{ErrorLocation, ReflectError, ReflectErrorKind};
 use crate::ops::Path;
 use crate::shape_desc::ShapeDesc;
+use crate::slab::Slab;
 use facet_core::{ListDef, MapDef, PtrConst, PtrUninit, SequenceType, SetDef, Shape, Variant};
 
 bitflags::bitflags! {
@@ -182,14 +183,20 @@ impl ListFrame {
 }
 
 /// Map frame data (building a HashMap, BTreeMap, etc.).
-/// Tracks whether the map is initialized and count of inserted entries.
+///
+/// Maps use a two-phase construction:
+/// 1. Stage: Create a Slab to collect (K, V) tuples
+/// 2. End: Call `from_pair_slice` to build the map in one shot
+///
+/// This avoids per-entry hash lookups and enables optimal initial capacity.
 pub struct MapFrame {
     /// The map definition (key/value types, vtable). Stored by value since MapDef is Copy.
     pub def: MapDef,
-    /// Whether the map has been initialized (via init_in_place_with_capacity).
-    /// The actual pointer is always frame.data.
-    pub initialized: bool,
-    /// Number of entries that have been inserted.
+    /// Slab for collecting (K, V) tuples. None until Stage, then Some.
+    /// The map memory (frame.data) stays uninitialized until End.
+    pub slab: Option<Slab>,
+    /// Number of committed entries in the slab.
+    /// Incremented when a MapEntryFrame completes (or Imm tuple is added).
     pub len: usize,
 }
 
@@ -198,9 +205,14 @@ impl MapFrame {
     pub fn new(def: MapDef) -> Self {
         Self {
             def,
-            initialized: false,
+            slab: None,
             len: 0,
         }
+    }
+
+    /// Check if the slab has been initialized (Stage was called).
+    pub fn is_staged(&self) -> bool {
+        self.slab.is_some()
     }
 
     /// Maps are always "complete" since they have variable size.

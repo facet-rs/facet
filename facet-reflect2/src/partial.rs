@@ -178,7 +178,7 @@ impl<'facet> Partial<'facet> {
                     dst: path,
                     src: source,
                 } => self.apply_set(path, source),
-                Op::End => self.apply_end(),
+                Op::End => self.apply_end(end::EndInitiator::Op),
             };
 
             if let Err(e) = result {
@@ -203,7 +203,7 @@ impl<'facet> Partial<'facet> {
                     self.apply_set(path, source)?;
                 }
                 Op::End => {
-                    self.apply_end()?;
+                    self.apply_end(end::EndInitiator::Op)?;
                 }
             }
         }
@@ -261,7 +261,7 @@ impl<'facet> Partial<'facet> {
         path: &Path,
         source: &crate::ops::Source<'_>,
     ) -> Result<(), ReflectError> {
-        use crate::frame::{Frame, FrameFlags, ParentLink};
+        use crate::frame::{Frame, ParentLink};
         use crate::ops::Source;
 
         // For now, we only support single-segment Append paths
@@ -273,89 +273,114 @@ impl<'facet> Partial<'facet> {
             }));
         }
 
-        // Check if we're appending to a map - if so, create a MapEntryFrame
+        // Check if we're appending to a map
         let frame = self.arena.get(self.current);
         if let FrameKind::Map(ref _map_frame) = frame.kind {
-            // Ensure map is initialized first
+            // Ensure map slab is created first
             self.ensure_collection_initialized()?;
 
-            // For maps, only Stage is supported (we need to build key+value fields)
-            let Source::Stage(_capacity) = source else {
-                return Err(self.error(ReflectErrorKind::MapAppendRequiresStage));
-            };
-
-            // Get map def for key/value shapes
-            let frame = self.arena.get(self.current);
-            let FrameKind::Map(ref map_frame) = frame.kind else {
+            // Get map def and current entry count
+            let frame = self.arena.get_mut(self.current);
+            let FrameKind::Map(ref mut map_frame) = frame.kind else {
                 unreachable!()
             };
             let map_def = map_frame.def;
-            let key_shape = map_def.k;
-            let value_shape = map_def.v;
+            let current_len = map_frame.len;
+            match source {
+                Source::Imm(mov) => {
+                    // Direct tuple insertion: copy (K, V) tuple into slab
+                    // Verify the source shape matches our expected tuple shape
+                    let entry_shape = crate::tuple2(&map_def);
+                    if !ShapeDesc::Tuple2(entry_shape).is_shape(ShapeDesc::Static(mov.shape())) {
+                        return Err(self.error(ReflectErrorKind::ShapeMismatch {
+                            expected: ShapeDesc::Tuple2(entry_shape),
+                            actual: ShapeDesc::Static(mov.shape()),
+                        }));
+                    }
 
-            // Allocate staging memory for key + value
-            let key_layout = key_shape.layout.sized_layout().map_err(|_| {
-                self.error(ReflectErrorKind::Unsized {
-                    shape: ShapeDesc::Static(key_shape),
-                })
-            })?;
-            let value_layout = value_shape.layout.sized_layout().map_err(|_| {
-                self.error(ReflectErrorKind::Unsized {
-                    shape: ShapeDesc::Static(value_shape),
-                })
-            })?;
+                    // Get a slot from the slab for this entry
+                    let frame = self.arena.get_mut(self.current);
+                    let FrameKind::Map(ref mut map_frame) = frame.kind else {
+                        unreachable!()
+                    };
+                    let slab = map_frame
+                        .slab
+                        .as_mut()
+                        .expect("slab must exist after ensure_collection_initialized");
+                    let entry_ptr = slab.nth_slot(current_len);
 
-            // Calculate total size: key at offset 0, value at aligned offset
-            let value_offset = key_layout.size().max(value_layout.align());
-            let total_size = value_offset + value_layout.size();
-            let total_align = key_layout.align().max(value_layout.align());
+                    // Copy the tuple directly into the slab slot
+                    // SAFETY: entry_ptr points to uninitialized memory of correct size,
+                    // mov.ptr() points to valid (K, V) tuple
+                    unsafe {
+                        entry_ptr.copy_from(mov.ptr(), mov.shape()).unwrap();
+                    }
 
-            let entry_layout = std::alloc::Layout::from_size_align(total_size, total_align)
-                .map_err(|_| {
-                    self.error(ReflectErrorKind::AllocFailed {
-                        layout: std::alloc::Layout::new::<u8>(),
-                    })
-                })?;
+                    // Increment entry count
+                    let frame = self.arena.get_mut(self.current);
+                    let FrameKind::Map(ref mut map_frame) = frame.kind else {
+                        unreachable!()
+                    };
+                    map_frame.len += 1;
 
-            let entry_ptr = if entry_layout.size() == 0 {
-                PtrUninit::new(std::ptr::NonNull::<u8>::dangling().as_ptr())
-            } else {
-                let ptr = unsafe { alloc(entry_layout) };
-                if ptr.is_null() {
-                    return Err(self.error(ReflectErrorKind::AllocFailed {
-                        layout: entry_layout,
-                    }));
+                    Ok(())
                 }
-                PtrUninit::new(ptr)
-            };
+                Source::Stage(_capacity) => {
+                    // Get a slot from the slab for this entry
+                    let frame = self.arena.get_mut(self.current);
+                    let FrameKind::Map(ref mut map_frame) = frame.kind else {
+                        unreachable!()
+                    };
+                    let slab = map_frame
+                        .slab
+                        .as_mut()
+                        .expect("slab must exist after ensure_collection_initialized");
+                    let entry_ptr = slab.nth_slot(current_len);
 
-            // Create MapEntryFrame
-            let frame = self.arena.get(self.current);
-            let mut entry_frame = Frame::new_map_entry(entry_ptr, frame.shape, map_def);
-            entry_frame.flags |= FrameFlags::OWNS_ALLOC;
-            entry_frame.parent_link = ParentLink::MapEntry {
-                parent: self.current,
-            };
+                    // Create MapEntryFrame pointing into the slab
+                    // Note: Do NOT set OWNS_ALLOC - the slab owns this memory
+                    let entry_shape = crate::tuple2(&map_def);
+                    let mut entry_frame =
+                        Frame::new_map_entry(entry_ptr, ShapeDesc::Tuple2(entry_shape), map_def);
+                    entry_frame.parent_link = ParentLink::MapEntry {
+                        parent: self.current,
+                    };
 
-            // Push frame and make it current
-            let entry_idx = self.arena.alloc(entry_frame);
-            self.current = entry_idx;
+                    // Push frame and make it current
+                    let entry_idx = self.arena.alloc(entry_frame);
+                    self.current = entry_idx;
 
-            Ok(())
+                    Ok(())
+                }
+                Source::Default => {
+                    // Default doesn't make sense for map entries
+                    Err(self.error(ReflectErrorKind::MapAppendRequiresStage))
+                }
+            }
         } else {
             // Delegate to the existing push logic for lists/sets
             self.apply_push(source)
         }
     }
 
-    /// Ensure the current collection (list, map, or set) is initialized.
-    /// This is called lazily on first Push/Insert.
+    /// Ensure the current collection (list, map, or set) is initialized/staged.
+    ///
+    /// For lists and sets: calls init_in_place_with_capacity immediately.
+    /// For maps: creates a Slab for collecting entries (map stays uninitialized until End).
     fn ensure_collection_initialized(&mut self) -> Result<(), ReflectError> {
+        self.ensure_collection_initialized_with_capacity(0)
+    }
+
+    /// Ensure the current collection is initialized/staged with a capacity hint.
+    fn ensure_collection_initialized_with_capacity(
+        &mut self,
+        capacity: usize,
+    ) -> Result<(), ReflectError> {
         let frame = self.arena.get(self.current);
 
         let needs_init = match &frame.kind {
             FrameKind::List(l) => !l.initialized,
-            FrameKind::Map(m) => !m.initialized,
+            FrameKind::Map(m) => !m.is_staged(),
             FrameKind::Set(s) => !s.initialized,
             _ => return Ok(()), // Not a collection, nothing to do
         };
@@ -375,30 +400,44 @@ impl<'facet> Partial<'facet> {
                         self.error(ReflectErrorKind::ListDoesNotSupportOp { shape: frame.shape })
                     })?;
                 // SAFETY: frame.data points to uninitialized list memory
-                unsafe { init_fn(frame.data, 0) };
+                unsafe { init_fn(frame.data, capacity) };
+
+                // Mark list as initialized
+                let frame = self.arena.get_mut(self.current);
+                if let FrameKind::List(l) = &mut frame.kind {
+                    l.initialized = true;
+                }
+                frame.flags |= FrameFlags::INIT;
             }
             FrameKind::Map(map_frame) => {
-                let init_fn = map_frame.def.vtable.init_in_place_with_capacity;
-                // SAFETY: frame.data points to uninitialized map memory
-                unsafe { init_fn(frame.data, 0) };
+                // For maps, create a Slab to collect (K, V) tuples.
+                // The map itself stays uninitialized until End.
+                let entry_shape = crate::tuple2(&map_frame.def);
+                let slab = crate::slab::Slab::new(
+                    ShapeDesc::Tuple2(entry_shape),
+                    if capacity > 0 { Some(capacity) } else { None },
+                );
+
+                let frame = self.arena.get_mut(self.current);
+                if let FrameKind::Map(m) = &mut frame.kind {
+                    m.slab = Some(slab);
+                }
+                // Note: Do NOT set INIT flag - map memory is still uninitialized
             }
             FrameKind::Set(set_frame) => {
                 let init_fn = set_frame.def.vtable.init_in_place_with_capacity;
                 // SAFETY: frame.data points to uninitialized set memory
-                unsafe { init_fn(frame.data, 0) };
+                unsafe { init_fn(frame.data, capacity) };
+
+                // Mark set as initialized
+                let frame = self.arena.get_mut(self.current);
+                if let FrameKind::Set(s) = &mut frame.kind {
+                    s.initialized = true;
+                }
+                frame.flags |= FrameFlags::INIT;
             }
             _ => unreachable!(),
         }
-
-        // Mark as initialized
-        let frame = self.arena.get_mut(self.current);
-        match &mut frame.kind {
-            FrameKind::List(l) => l.initialized = true,
-            FrameKind::Map(m) => m.initialized = true,
-            FrameKind::Set(s) => s.initialized = true,
-            _ => unreachable!(),
-        }
-        frame.flags |= FrameFlags::INIT;
 
         Ok(())
     }
@@ -452,18 +491,8 @@ impl<'facet> Partial<'facet> {
                     (entry.map_def.k, 0)
                 }
                 1 => {
-                    // Value at aligned offset after key
-                    let key_layout = entry.map_def.k.layout.sized_layout().map_err(|_| {
-                        self.error(ReflectErrorKind::Unsized {
-                            shape: ShapeDesc::Static(entry.map_def.k),
-                        })
-                    })?;
-                    let value_layout = entry.map_def.v.layout.sized_layout().map_err(|_| {
-                        self.error(ReflectErrorKind::Unsized {
-                            shape: ShapeDesc::Static(entry.map_def.v),
-                        })
-                    })?;
-                    let value_offset = key_layout.size().max(value_layout.align());
+                    // Value at vtable-defined offset (matches repr(Rust) tuple layout)
+                    let value_offset = entry.map_def.vtable.value_offset_in_pair;
                     (entry.map_def.v, value_offset)
                 }
                 _ => {
@@ -575,6 +604,12 @@ impl<'facet> Partial<'facet> {
 
     /// Build the final value, consuming the Partial.
     pub fn build<T: Facet<'facet>>(mut self) -> Result<T, ReflectError> {
+        // End all frames up to and including root.
+        // This finalizes collections (maps, lists, etc.) and marks everything complete.
+        while self.current.is_valid() {
+            self.apply_end(end::EndInitiator::Build)?;
+        }
+
         let frame = self.arena.get(self.root);
 
         // Verify shape matches

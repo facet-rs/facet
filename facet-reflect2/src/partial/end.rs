@@ -2,20 +2,42 @@ use super::Partial;
 use crate::arena::Idx;
 use crate::errors::{ReflectError, ReflectErrorKind};
 use crate::frame::{FrameFlags, FrameKind, ParentLink};
-use facet_core::{Def, PtrMut};
+use facet_core::Def;
+
+/// Who initiated the End operation.
+#[derive(Clone, Copy)]
+pub(crate) enum EndInitiator {
+    /// User called Op::End - not allowed to end root frame
+    Op,
+    /// build() is ending frames - allowed to end root frame
+    Build,
+}
 
 impl<'facet> Partial<'facet> {
     /// Apply an End operation - pop back to parent frame.
-    pub(crate) fn apply_end(&mut self) -> Result<(), ReflectError> {
+    pub(crate) fn apply_end(&mut self, initiator: EndInitiator) -> Result<(), ReflectError> {
         // If current frame is a collection, ensure it's initialized before ending
         // (handles empty collections that never had Push/Insert called)
         self.ensure_collection_initialized()?;
 
-        // First check if we're at root - can't end at root regardless of completeness
+        // Special handling for Map frames: build the map from slab before ending
+        self.finalize_map_if_needed()?;
+
+        // Check if we're at root
         let frame = self.arena.get(self.current);
         let parent_idx = match frame.parent_link.parent_idx() {
             Some(idx) => idx,
-            None => return Err(self.error(ReflectErrorKind::EndAtRoot)),
+            None => {
+                // At root - only Build is allowed to end root
+                match initiator {
+                    EndInitiator::Op => return Err(self.error(ReflectErrorKind::EndAtRoot)),
+                    EndInitiator::Build => {
+                        // Root is now complete, mark current as invalid
+                        self.current = Idx::COMPLETE;
+                        return Ok(());
+                    }
+                }
+            }
         };
 
         // Check if current frame is complete
@@ -275,42 +297,13 @@ impl<'facet> Partial<'facet> {
 
             ParentLink::MapEntry { .. } => {
                 // This is a map entry frame completing.
-                // The parent is a Map frame. We need to insert the (key, value) pair.
+                // The entry data is in the parent map's slab - we just need to
+                // increment the count and free this frame.
+                // The actual map construction happens when the Map frame ends
+                // (via finalize_map_if_needed which calls from_pair_slice).
 
-                // Get the MapEntryFrame to access the map_def
-                let frame = self.arena.get(self.current);
-                let FrameKind::MapEntry(ref entry_frame) = frame.kind else {
-                    unreachable!("MapEntry parent_link must have MapEntry frame kind")
-                };
-                let insert_fn = entry_frame.map_def.vtable.insert;
-                let key_shape = entry_frame.map_def.k;
-                let value_shape = entry_frame.map_def.v;
-
-                // Get the key and value pointers from the entry's staging buffer
-                // The entry frame's data points to contiguous memory for key + value
-                let key_layout = key_shape.layout.sized_layout().unwrap();
-                let value_layout = value_shape.layout.sized_layout().unwrap();
-
-                // Calculate offsets - key is at offset 0, value at aligned offset after key
-                let key_ptr = frame.data;
-                let value_offset = key_layout.size().max(value_layout.align());
-                let value_ptr =
-                    unsafe { PtrMut::new(frame.data.as_mut_byte_ptr().add(value_offset)) };
-
-                // Get the map pointer from parent's data (it's initialized)
-                let parent = self.arena.get(parent_idx);
-                let map_ptr = unsafe { parent.data.assume_init() };
-
-                // Insert the key-value pair (moves both out)
-                unsafe {
-                    insert_fn(map_ptr, PtrMut::new(key_ptr.as_mut_byte_ptr()), value_ptr);
-                }
-
-                // Free the entry frame and deallocate its staging memory
-                let frame = self.arena.get_mut(self.current);
-                frame.flags.remove(FrameFlags::INIT);
-                let freed_frame = self.arena.free(self.current);
-                freed_frame.dealloc_if_owned();
+                // Free the entry frame - do NOT deallocate since slab owns the memory
+                let _ = self.arena.free(self.current);
 
                 // Increment entry count in parent map
                 let parent = self.arena.get_mut(parent_idx);
@@ -335,6 +328,52 @@ impl<'facet> Partial<'facet> {
                 self.current = parent_idx;
             }
         }
+
+        Ok(())
+    }
+
+    /// If current frame is a Map with a slab, build the map using from_pair_slice.
+    pub(crate) fn finalize_map_if_needed(&mut self) -> Result<(), ReflectError> {
+        let frame = self.arena.get(self.current);
+        let FrameKind::Map(ref map_frame) = frame.kind else {
+            return Ok(()); // Not a map, nothing to do
+        };
+
+        // Check if there's a slab to finalize
+        if map_frame.slab.is_none() {
+            return Ok(()); // No slab = no entries were staged
+        }
+
+        // Get from_pair_slice function
+        let from_pair_slice = map_frame.def.vtable.from_pair_slice.ok_or_else(|| {
+            self.error(ReflectErrorKind::MapDoesNotSupportFromPairSlice { shape: frame.shape })
+        })?;
+
+        // Get the data we need before taking the slab
+        let map_ptr = frame.data;
+        let len = map_frame.len;
+
+        // Take the slab out of the frame
+        let frame = self.arena.get_mut(self.current);
+        let FrameKind::Map(ref mut map_frame) = frame.kind else {
+            unreachable!()
+        };
+        let slab = map_frame.slab.take().expect("slab exists");
+        let pairs_ptr = slab.as_mut_ptr();
+
+        // Build the map using from_pair_slice
+        // SAFETY: map_ptr is uninitialized memory, pairs_ptr points to len initialized entries
+        unsafe {
+            from_pair_slice(map_ptr, pairs_ptr, len);
+        }
+
+        // Slab is dropped here - deallocates buffer but doesn't drop elements
+        // (elements were moved out by from_pair_slice)
+        drop(slab);
+
+        // Mark map as initialized
+        let frame = self.arena.get_mut(self.current);
+        frame.flags |= FrameFlags::INIT;
 
         Ok(())
     }

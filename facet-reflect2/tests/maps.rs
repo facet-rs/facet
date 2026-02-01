@@ -315,6 +315,31 @@ fn build_map_with_integer_keys() {
 }
 
 // =============================================================================
+// Setting entire map entry as a tuple
+// =============================================================================
+
+#[test]
+fn build_map_with_tuple_entry() {
+    let mut partial = Partial::alloc::<HashMap<String, u32>>().unwrap();
+
+    // Create an entry as a (String, u32) tuple and set it directly
+    let mut entry: (String, u32) = (String::from("answer"), 42);
+
+    partial
+        .apply(&[
+            Op::set().stage(),
+            // Set entire entry at once using Imm with a tuple
+            Op::set().append().imm(&mut entry),
+        ])
+        .unwrap();
+    std::mem::forget(entry);
+
+    let result: HashMap<String, u32> = partial.build().unwrap();
+    assert_eq!(result.len(), 1);
+    assert_eq!(result.get("answer"), Some(&42));
+}
+
+// =============================================================================
 // Error cases
 // =============================================================================
 

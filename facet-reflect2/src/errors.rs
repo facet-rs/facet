@@ -147,8 +147,10 @@ pub enum ReflectErrorKind {
     MissingRequiredField { index: usize },
     /// Map append requires Stage source (to build key+value fields).
     MapAppendRequiresStage,
-    /// Cannot operate on entire map entry - use [0] for key, [1] for value.
+    /// Cannot operate on entire map entry - use `[0]` for key, `[1]` for value.
     CannotSetEntireMapEntry,
+    /// Map type doesn't support from_pair_slice (needed for batch construction).
+    MapDoesNotSupportFromPairSlice { shape: ShapeDesc },
 }
 
 impl fmt::Display for ReflectErrorKind {
@@ -300,6 +302,13 @@ impl fmt::Display for ReflectErrorKind {
                 write!(
                     f,
                     "Cannot operate on entire map entry - use [0] for key, [1] for value"
+                )
+            }
+            ReflectErrorKind::MapDoesNotSupportFromPairSlice { shape } => {
+                write!(
+                    f,
+                    "Map type {} doesn't support from_pair_slice",
+                    shape.type_identifier()
                 )
             }
         }
