@@ -2,6 +2,10 @@
 //!
 //! Partial value construction for facet - v2 API with tree-based tracking.
 
+// Enable experimental features for Kani loop contracts
+#![cfg_attr(kani, feature(stmt_expr_attributes))]
+#![cfg_attr(kani, feature(proc_macro_hygiene))]
+
 // --- arena ---
 pub(crate) mod arena;
 

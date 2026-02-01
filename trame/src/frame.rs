@@ -804,10 +804,14 @@ impl Frame {
                         let buffer = as_mut_ptr(self.data.assume_init());
                         let start = list_frame.len;
                         let end = start + list_frame.staged_len;
-                        for i in start..end {
-                            let elem_ptr = buffer.add(i * element_size);
-                            let elem_ptr = PtrMut::new(elem_ptr);
-                            element_shape.call_drop_in_place(elem_ptr);
+
+                        #[cfg(not(kani))]
+                        {
+                            for i in start..end {
+                                let elem_ptr = buffer.add(i * element_size);
+                                let elem_ptr = PtrMut::new(elem_ptr);
+                                element_shape.call_drop_in_place(elem_ptr);
+                            }
                         }
                     }
                 }

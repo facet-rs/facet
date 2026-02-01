@@ -709,6 +709,247 @@ mod kani_proofs {
 
         unsafe { std::alloc::dealloc(ptr, layout) };
     }
+
+    // Test 4: Can we use the Arena?
+    #[kani::proof]
+    fn test_arena_alloc_free() {
+        use crate::arena::Arena;
+        use crate::frame::Frame;
+
+        let mut arena: Arena<Frame> = Arena::new();
+
+        // Allocate a simple frame
+        let layout = std::alloc::Layout::new::<u32>();
+        let ptr = unsafe { std::alloc::alloc(layout) };
+        kani::assert(!ptr.is_null(), "alloc succeeded");
+
+        let data = facet_core::PtrUninit::new(ptr);
+        let frame = Frame::new(data, u32::SHAPE);
+        let idx = arena.alloc(frame);
+
+        kani::assert(idx.is_valid(), "arena index is valid");
+
+        // Free the frame
+        let freed = arena.free(idx);
+        freed.dealloc_if_owned();
+
+        // Clean up
+        unsafe { std::alloc::dealloc(ptr, layout) };
+    }
+
+    // Test 5: Can we call Partial::alloc? (forget to skip Drop)
+    #[kani::proof]
+    fn test_partial_alloc_u32_forget() {
+        use super::Partial;
+
+        let partial = Partial::alloc::<u32>();
+        kani::assert(partial.is_ok(), "Partial::alloc succeeded");
+        // Forget to avoid Drop - isolate whether alloc or Drop is the problem
+        std::mem::forget(partial);
+    }
+
+    // Test 6: Partial::alloc with Drop, bounded unwind
+    #[kani::proof]
+    #[kani::unwind(2)]
+    fn test_partial_alloc_u32_with_drop() {
+        use super::Partial;
+        use crate::frame::FrameKind;
+
+        let partial = Partial::alloc::<u32>();
+        kani::assert(partial.is_ok(), "Partial::alloc succeeded");
+
+        let partial = partial.unwrap();
+
+        // Tell Kani: this is a scalar, not a list/map/struct/enum
+        // This constrains the paths Kani explores in Drop
+        let frame = partial.arena.get(partial.root);
+        kani::assume(matches!(frame.kind, FrameKind::Scalar));
+
+        // Now let it drop - Kani should only explore the scalar path
+    }
+
+    // =======================================================================
+    // Pathological test: minimal recursive drop with loops
+    // This doesn't use Partial - it's a standalone reproduction of the pattern
+    // that makes Kani explode. We'll use this to experiment with contracts.
+    // =======================================================================
+    // Memory model with state tracking for Kani verification
+    // =======================================================================
+
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    enum RegionState {
+        Initialized,
+        Dropped,
+    }
+
+    // Global drop counter - tracks total drops across all nodes
+    static mut TOTAL_DROPS: usize = 0;
+
+    /// A node with explicit state tracking for Kani verification
+    struct Node {
+        value: u32,
+        children: Vec<Node>,
+        state: RegionState,
+    }
+
+    impl Node {
+        fn new(value: u32) -> Self {
+            Self {
+                value,
+                children: Vec::new(),
+                state: RegionState::Initialized,
+            }
+        }
+
+        fn with_children(value: u32, children: Vec<Node>) -> Self {
+            Self {
+                value,
+                children,
+                state: RegionState::Initialized,
+            }
+        }
+
+        /// Count total nodes in this subtree (including self)
+        fn count_nodes(&self) -> usize {
+            1 + self.children.iter().map(|c| c.count_nodes()).sum::<usize>()
+        }
+    }
+
+    /// Drop a node and all its children, with loop invariant
+    /// Returns the number of nodes dropped (for verification)
+    #[kani::requires(node.state == RegionState::Initialized)]
+    #[kani::ensures(|_| true)] // Can't easily express postcondition without iteration
+    #[kani::recursion]
+    fn drop_node(node: &mut Node) -> usize {
+        // Precondition: node must be initialized (not already dropped)
+        kani::assert(
+            node.state == RegionState::Initialized,
+            "dropping initialized node",
+        );
+
+        let num_children = node.children.len();
+        let mut i: usize = 0;
+        let mut dropped_in_children: usize = 0;
+
+        // Loop invariant:
+        // - i is bounded by num_children
+        // - all children at indices < i have been dropped
+        #[kani::loop_invariant(
+            i <= num_children &&
+            kani::forall!(|j in (0, i)| node.children[j as usize].state == RegionState::Dropped)
+        )]
+        #[kani::loop_modifies(&i, &dropped_in_children, &node.children)]
+        while i < num_children {
+            // Use saturating_add to avoid overflow concerns
+            dropped_in_children =
+                dropped_in_children.saturating_add(drop_node(&mut node.children[i]));
+            i = i.wrapping_add(1);
+        }
+
+        // Mark this node as dropped
+        node.state = RegionState::Dropped;
+        unsafe {
+            TOTAL_DROPS = TOTAL_DROPS.wrapping_add(1);
+        }
+
+        // Return total: children + self
+        dropped_in_children.saturating_add(1)
+    }
+
+    impl Drop for Node {
+        fn drop(&mut self) {
+            // Only drop if not already dropped (avoid double-drop from explicit + implicit)
+            if self.state == RegionState::Initialized {
+                drop_node(self);
+            }
+        }
+    }
+
+    // Test 7: Single node, no children - should be fast
+    #[kani::proof]
+    fn test_node_leaf() {
+        let mut node = Node::new(42);
+        kani::assert(node.value == 42, "value is correct");
+
+        // Explicitly drop and verify count
+        let dropped = drop_node(&mut node);
+        kani::assert(dropped == 1, "dropped exactly 1 node");
+
+        // Forget to avoid double-drop from Drop impl
+        std::mem::forget(node);
+    }
+
+    // Test 8: One level of children - will this work?
+    #[kani::proof]
+    #[kani::unwind(3)]
+    fn test_node_one_level() {
+        let leaf1 = Node::new(1);
+        let leaf2 = Node::new(2);
+        let parent = Node::with_children(0, vec![leaf1, leaf2]);
+        kani::assert(parent.children.len() == 2, "has 2 children");
+        // Drop - one loop iteration per child, no deeper recursion
+    }
+
+    // Test 9: Two levels - this is where it gets painful
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn test_node_two_levels() {
+        let grandchild = Node::new(100);
+        let child = Node::with_children(10, vec![grandchild]);
+        let root = Node::with_children(0, vec![child]);
+        kani::assert(root.children.len() == 1, "has 1 child");
+        // Drop - recursion depth 2, should explode without contracts
+    }
+
+    // =======================================================================
+    // Now let's add dynamism - this should break things
+    // =======================================================================
+
+    // Test 10: Symbolic number of children - now with loop invariant
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn test_node_symbolic_children_count() {
+        let n: usize = kani::any();
+        kani::assume(n <= 3); // Bound it, but still symbolic
+
+        let mut children = Vec::new();
+        let mut k: usize = 0;
+
+        #[kani::loop_invariant(k <= n && children.len() == k)]
+        #[kani::loop_modifies(&k, &children)]
+        while k < n {
+            children.push(Node::new(1));
+            k = k.wrapping_add(1);
+        }
+
+        let parent = Node::with_children(0, children);
+        kani::assert(parent.children.len() <= 3, "bounded children");
+        // Drop with symbolic number of children - loop invariant should help!
+    }
+
+    // Test 11: Symbolic depth via function pointer (simulating vtable)
+    #[kani::proof]
+    #[kani::unwind(5)]
+    fn test_node_dynamic_drop() {
+        type DropFn = fn(&mut Node);
+
+        fn drop_shallow(node: &mut Node) {
+            // Don't recurse into children
+        }
+
+        fn drop_deep(node: &mut Node) {
+            for child in &mut node.children {
+                drop_deep(child);
+            }
+        }
+
+        // Symbolic choice of drop function - like vtable dispatch
+        let drop_fn: DropFn = if kani::any() { drop_shallow } else { drop_deep };
+
+        let mut root = Node::with_children(0, vec![Node::new(1)]);
+        drop_fn(&mut root);
+        // Now let normal drop run too
+    }
 }
 
 impl<'facet> Drop for Partial<'facet> {

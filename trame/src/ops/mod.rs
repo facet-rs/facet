@@ -6,7 +6,26 @@ use std::collections::VecDeque;
 use std::marker::PhantomData;
 
 use facet_core::{Facet, PtrConst, PtrMut, Shape};
-use smallvec::{SmallVec, smallvec};
+
+#[cfg(not(kani))]
+use smallvec::SmallVec;
+
+/// Type alias for small vec - uses Vec under Kani to reduce verification complexity.
+#[cfg(not(kani))]
+type PathVec = SmallVec<PathSegment, 4>;
+
+#[cfg(kani)]
+type PathVec = Vec<PathSegment>;
+
+/// Creates a PathVec with the given elements.
+macro_rules! path_vec {
+    ($($x:expr),* $(,)?) => {{
+        #[cfg(not(kani))]
+        { smallvec::smallvec![$($x),*] }
+        #[cfg(kani)]
+        { vec![$($x),*] }
+    }};
+}
 
 /// A segment in a path through a nested structure.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -21,27 +40,27 @@ pub enum PathSegment {
 
 /// A path into a nested structure.
 #[derive(Clone, Debug, Default)]
-pub struct Path(SmallVec<PathSegment, 4>);
+pub struct Path(PathVec);
 
 impl Path {
     /// Create an empty path.
     pub fn empty() -> Self {
-        Self(SmallVec::new())
+        Self(PathVec::new())
     }
 
     /// Create a path with a single field segment.
     pub fn field(n: u32) -> Self {
-        Self(smallvec![PathSegment::Field(n)])
+        Self(path_vec![PathSegment::Field(n)])
     }
 
     /// Create a path with a single append segment.
     pub fn append() -> Self {
-        Self(smallvec![PathSegment::Append])
+        Self(path_vec![PathSegment::Append])
     }
 
     /// Create a path starting from root.
     pub fn root() -> Self {
-        Self(smallvec![PathSegment::Root])
+        Self(path_vec![PathSegment::Root])
     }
 
     /// Create a path from a slice of segments.
