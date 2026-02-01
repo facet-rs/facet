@@ -124,6 +124,34 @@ impl<'facet> Partial<'facet> {
                             e.selected = Some((variant_idx, Idx::COMPLETE));
                         }
                     }
+
+                    // For lists, update the ListFrame state to reflect the complete value
+                    if let FrameKind::List(ref mut l) = frame.kind {
+                        // Get actual length from the Vec
+                        let list_ptr = unsafe { frame.data.assume_init() };
+                        l.len = unsafe { (l.def.vtable.len)(list_ptr.as_const()) };
+                        if let Some(cap_fn) = l.def.capacity() {
+                            l.cached_capacity = unsafe { cap_fn(list_ptr.as_const()) };
+                        }
+                        l.initialized = true;
+                        l.staged_len = 0;
+                    }
+
+                    // For maps, update the MapFrame state
+                    if let FrameKind::Map(ref mut m) = frame.kind {
+                        let map_ptr = unsafe { frame.data.assume_init() };
+                        m.len = unsafe { (m.def.vtable.len)(map_ptr.as_const()) };
+                        // Map is now fully initialized, no slab needed
+                        m.slab = None;
+                    }
+
+                    // For sets, update the SetFrame state
+                    if let FrameKind::Set(ref mut s) = frame.kind {
+                        let set_ptr = unsafe { frame.data.assume_init() };
+                        s.len = unsafe { (s.def.vtable.len)(set_ptr.as_const()) };
+                        // Set is now fully initialized, no slab needed
+                        s.slab = None;
+                    }
                 } else {
                     // Mark child as complete
                     let field_idx =
@@ -139,6 +167,10 @@ impl<'facet> Partial<'facet> {
 
                 // Check for special types at empty path
                 if path.is_empty() {
+                    // Drop any existing value before re-staging
+                    let frame = self.arena.get_mut(self.current);
+                    frame.uninit();
+
                     // Handle list types (Vec, etc.)
                     // Just switch to list frame - initialization is deferred to first Push
                     if let Def::List(list_def) = *shape.def() {
@@ -334,6 +366,32 @@ impl<'facet> Partial<'facet> {
                 // Mark as initialized
                 if path.is_empty() {
                     frame.flags |= FrameFlags::INIT;
+
+                    // For lists, update the ListFrame state to reflect the complete value
+                    if let FrameKind::List(ref mut l) = frame.kind {
+                        // Get actual length from the Vec (default is empty, so len=0)
+                        let list_ptr = unsafe { frame.data.assume_init() };
+                        l.len = unsafe { (l.def.vtable.len)(list_ptr.as_const()) };
+                        if let Some(cap_fn) = l.def.capacity() {
+                            l.cached_capacity = unsafe { cap_fn(list_ptr.as_const()) };
+                        }
+                        l.initialized = true;
+                        l.staged_len = 0;
+                    }
+
+                    // For maps, update the MapFrame state
+                    if let FrameKind::Map(ref mut m) = frame.kind {
+                        let map_ptr = unsafe { frame.data.assume_init() };
+                        m.len = unsafe { (m.def.vtable.len)(map_ptr.as_const()) };
+                        m.slab = None;
+                    }
+
+                    // For sets, update the SetFrame state
+                    if let FrameKind::Set(ref mut s) = frame.kind {
+                        let set_ptr = unsafe { frame.data.assume_init() };
+                        s.len = unsafe { (s.def.vtable.len)(set_ptr.as_const()) };
+                        s.slab = None;
+                    }
                 } else {
                     // Mark child as complete
                     let field_idx =

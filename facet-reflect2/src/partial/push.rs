@@ -50,11 +50,22 @@ impl ListDirectFill {
     unsafe fn ensure_capacity(&self, list_ptr: PtrMut, list_frame: &mut ListFrame) -> usize {
         let current_len = list_frame.len + list_frame.staged_len;
         if current_len >= list_frame.cached_capacity {
-            // Need to grow - reserve at least 1, or double if we have elements
+            // Need to grow.
+            //
+            // Vec::reserve(n) ensures capacity >= vec.len() + n.
+            // But vec.len() only knows about committed elements (list_frame.len),
+            // not staged elements (written directly to buffer).
+            //
+            // We need capacity >= list_frame.len + list_frame.staged_len + 1
+            // So we need: vec.len() + reserve_amount >= list_frame.len + list_frame.staged_len + 1
+            // => reserve_amount >= list_frame.staged_len + 1
+            let min_reserve = list_frame.staged_len + 1;
+
+            // Also try to double capacity for amortization, or start with 4
             let additional = if list_frame.cached_capacity == 0 {
-                4 // Initial allocation
+                min_reserve.max(4) // Initial allocation of at least 4
             } else {
-                list_frame.cached_capacity // Double
+                min_reserve.max(list_frame.cached_capacity) // Double, but at least min_reserve
             };
             unsafe { (self.reserve)(list_ptr, additional) };
             list_frame.cached_capacity = unsafe { (self.capacity)(list_ptr.as_const()) };

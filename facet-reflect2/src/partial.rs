@@ -74,10 +74,9 @@ impl<'facet> Partial<'facet> {
         let mut frame = match &shape.def {
             Def::Option(_) => Frame::new_option(data, shape),
             Def::Result(_) => Frame::new_result(data, shape),
-            Def::List(_) => {
-                // Lists start uninitialized - Build will initialize them
-                Frame::new(data, shape)
-            }
+            Def::List(list_def) => Frame::new_list(data, shape, *list_def),
+            Def::Map(map_def) => Frame::new_map(data, shape, *map_def),
+            Def::Set(set_def) => Frame::new_set(data, shape, *set_def),
             _ => match shape.ty {
                 Type::User(UserType::Struct(ref s)) => {
                     Frame::new_struct(data, shape, s.fields.len())
