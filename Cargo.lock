@@ -551,9 +551,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.2.54"
+version = "1.2.55"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6354c81bbfd62d9cfa9cb3c773c2b7b2a3a482d569de977fd0e961f6e7c00583"
+checksum = "47b26a0954ae34af09b50f0de26458fa95369a0d478d8236d3f93082b219bd29"
 dependencies = [
  "find-msvc-tools",
  "shlex",
@@ -584,9 +584,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.5.54"
+version = "4.5.56"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6e6ff9dcd79cff5cd969a17a545d79e84ab086e444102a591e288a8aa3ce394"
+checksum = "a75ca66430e33a14957acc24c5077b503e7d374151b2b4b3a10c83b4ceb4be0e"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -594,9 +594,9 @@ dependencies = [
 
 [[package]]
 name = "clap_builder"
-version = "4.5.54"
+version = "4.5.56"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa42cf4d2b7a41bc8f663a7cab4031ebafa1bf3875705bfaf8466dc60ab52c00"
+checksum = "793207c7fa6300a0608d1080b858e5fdbe713cdc1c8db9fb17777d8a13e63df0"
 dependencies = [
  "anstream",
  "anstyle",
@@ -607,9 +607,9 @@ dependencies = [
 
 [[package]]
 name = "clap_derive"
-version = "4.5.49"
+version = "4.5.55"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a0b5487afeab2deb2ff4e03a807ad1a03ac532ff5a2cee5d86884440c7f7671"
+checksum = "a92793da1a46a5f2a02a6f4c46c6496b28c43638adea8306fcb0caa1634f24e5"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -1012,7 +1012,7 @@ dependencies = [
 
 [[package]]
 name = "facet"
-version = "0.43.2"
+version = "0.44.0"
 dependencies = [
  "autocfg",
  "facet-core",
@@ -1030,7 +1030,7 @@ dependencies = [
 
 [[package]]
 name = "facet-asn1"
-version = "0.43.2"
+version = "0.44.0"
 dependencies = [
  "facet",
  "facet-core",
@@ -1043,7 +1043,7 @@ dependencies = [
 
 [[package]]
 name = "facet-core"
-version = "0.43.2"
+version = "0.44.0"
 dependencies = [
  "autocfg",
  "bytes",
@@ -1077,7 +1077,7 @@ dependencies = [
 
 [[package]]
 name = "facet-csv"
-version = "0.43.2"
+version = "0.44.0"
 dependencies = [
  "facet",
  "facet-core",
@@ -1089,14 +1089,14 @@ dependencies = [
 
 [[package]]
 name = "facet-default"
-version = "0.43.2"
+version = "0.44.0"
 dependencies = [
  "facet",
 ]
 
 [[package]]
 name = "facet-dessert"
-version = "0.43.2"
+version = "0.44.0"
 dependencies = [
  "facet-core",
  "facet-reflect",
@@ -1104,14 +1104,14 @@ dependencies = [
 
 [[package]]
 name = "facet-error"
-version = "0.43.2"
+version = "0.44.0"
 dependencies = [
  "facet",
 ]
 
 [[package]]
 name = "facet-format"
-version = "0.43.2"
+version = "0.44.0"
 dependencies = [
  "ariadne",
  "cranelift",
@@ -1131,7 +1131,7 @@ dependencies = [
 
 [[package]]
 name = "facet-format-suite"
-version = "0.43.2"
+version = "0.44.0"
 dependencies = [
  "arborium",
  "bytes",
@@ -1161,7 +1161,7 @@ dependencies = [
 
 [[package]]
 name = "facet-json"
-version = "0.43.2"
+version = "0.44.0"
 dependencies = [
  "axum-core",
  "compact_str",
@@ -1192,14 +1192,14 @@ dependencies = [
 
 [[package]]
 name = "facet-json-classics"
-version = "0.43.2"
+version = "0.44.0"
 dependencies = [
  "brotli",
 ]
 
 [[package]]
 name = "facet-json-schema"
-version = "0.43.2"
+version = "0.44.0"
 dependencies = [
  "facet",
  "facet-core",
@@ -1209,7 +1209,7 @@ dependencies = [
 
 [[package]]
 name = "facet-macro-parse"
-version = "0.43.2"
+version = "0.44.0"
 dependencies = [
  "facet-macro-types",
  "proc-macro2",
@@ -1218,7 +1218,7 @@ dependencies = [
 
 [[package]]
 name = "facet-macro-types"
-version = "0.43.2"
+version = "0.44.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1227,14 +1227,14 @@ dependencies = [
 
 [[package]]
 name = "facet-macros"
-version = "0.43.2"
+version = "0.44.0"
 dependencies = [
  "facet-macros-impl",
 ]
 
 [[package]]
 name = "facet-macros-impl"
-version = "0.43.2"
+version = "0.44.0"
 dependencies = [
  "facet-macro-parse",
  "facet-macro-types",
@@ -1246,7 +1246,7 @@ dependencies = [
 
 [[package]]
 name = "facet-msgpack"
-version = "0.43.2"
+version = "0.44.0"
 dependencies = [
  "axum-core",
  "divan",
@@ -1267,7 +1267,7 @@ dependencies = [
 
 [[package]]
 name = "facet-path"
-version = "0.43.2"
+version = "0.44.0"
 dependencies = [
  "facet",
  "facet-core",
@@ -1277,7 +1277,7 @@ dependencies = [
 
 [[package]]
 name = "facet-postcard"
-version = "0.43.2"
+version = "0.44.0"
 dependencies = [
  "axum-core",
  "bytes",
@@ -1312,7 +1312,7 @@ dependencies = [
 
 [[package]]
 name = "facet-pretty"
-version = "0.43.2"
+version = "0.44.0"
 dependencies = [
  "camino",
  "facet",
@@ -1326,7 +1326,7 @@ dependencies = [
 
 [[package]]
 name = "facet-python"
-version = "0.43.2"
+version = "0.44.0"
 dependencies = [
  "facet",
  "facet-core",
@@ -1335,7 +1335,7 @@ dependencies = [
 
 [[package]]
 name = "facet-reflect"
-version = "0.43.2"
+version = "0.44.0"
 dependencies = [
  "camino",
  "eyre",
@@ -1357,7 +1357,7 @@ dependencies = [
 
 [[package]]
 name = "facet-shapelike"
-version = "0.43.2"
+version = "0.44.0"
 dependencies = [
  "facet",
  "facet-core",
@@ -1377,7 +1377,7 @@ dependencies = [
 
 [[package]]
 name = "facet-solver"
-version = "0.43.2"
+version = "0.44.0"
 dependencies = [
  "divan",
  "facet",
@@ -1391,14 +1391,14 @@ dependencies = [
 
 [[package]]
 name = "facet-testattrs"
-version = "0.43.2"
+version = "0.44.0"
 dependencies = [
  "facet",
 ]
 
 [[package]]
 name = "facet-testhelpers"
-version = "0.43.2"
+version = "0.44.0"
 dependencies = [
  "color-backtrace",
  "facet-testhelpers-macros",
@@ -1409,7 +1409,7 @@ dependencies = [
 
 [[package]]
 name = "facet-testhelpers-macros"
-version = "0.43.2"
+version = "0.44.0"
 dependencies = [
  "quote",
  "unsynn",
@@ -1417,7 +1417,7 @@ dependencies = [
 
 [[package]]
 name = "facet-toml"
-version = "0.43.2"
+version = "0.44.0"
 dependencies = [
  "axum-core",
  "divan",
@@ -1444,7 +1444,7 @@ dependencies = [
 
 [[package]]
 name = "facet-typescript"
-version = "0.43.2"
+version = "0.44.0"
 dependencies = [
  "chrono",
  "facet",
@@ -1454,7 +1454,7 @@ dependencies = [
 
 [[package]]
 name = "facet-urlencoded"
-version = "0.43.2"
+version = "0.44.0"
 dependencies = [
  "axum-core",
  "facet",
@@ -1469,7 +1469,7 @@ dependencies = [
 
 [[package]]
 name = "facet-validate"
-version = "0.43.2"
+version = "0.44.0"
 dependencies = [
  "facet",
  "facet-core",
@@ -1479,7 +1479,7 @@ dependencies = [
 
 [[package]]
 name = "facet-value"
-version = "0.43.2"
+version = "0.44.0"
 dependencies = [
  "bolero",
  "divan",
@@ -1495,7 +1495,7 @@ dependencies = [
 
 [[package]]
 name = "facet-xdr"
-version = "0.43.2"
+version = "0.44.0"
 dependencies = [
  "facet",
  "facet-core",
@@ -1506,7 +1506,7 @@ dependencies = [
 
 [[package]]
 name = "facet-yaml"
-version = "0.43.2"
+version = "0.44.0"
 dependencies = [
  "axum-core",
  "datatest-stable",
@@ -1555,9 +1555,9 @@ checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
 
 [[package]]
 name = "find-msvc-tools"
-version = "0.1.8"
+version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8591b0bcc8a98a64310a2fae1bb3e9b8564dd10e381e6e28010fde8e8e8568db"
+checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "fnv"
@@ -1741,9 +1741,9 @@ dependencies = [
 
 [[package]]
 name = "iana-time-zone"
-version = "0.1.64"
+version = "0.1.65"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "33e57f83510bb73707521ebaffa789ec8caf86f9657cad665b092b581d40e9fb"
+checksum = "e31bc9ad994ba00e440a8aa5c9ef0ec67d5cb5e5cb0cc7f8b744a35b389cc470"
 dependencies = [
  "android_system_properties",
  "core-foundation-sys",
@@ -1913,9 +1913,9 @@ dependencies = [
 
 [[package]]
 name = "insta"
-version = "1.46.1"
+version = "1.46.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "248b42847813a1550dafd15296fd9748c651d0c32194559dbc05d804d54b21e8"
+checksum = "38c91d64f9ad425e80200a50a0e8b8a641680b44e33ce832efe5b8bc65161b07"
 dependencies = [
  "console",
  "once_cell",
@@ -2057,9 +2057,9 @@ checksum = "bcc35a38544a891a5f7c865aca548a982ccb3b8650a5b06d0fd33a10283c56fc"
 
 [[package]]
 name = "libm"
-version = "0.2.15"
+version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9fbbcab51052fe104eb5e5d351cf728d30a5be1fe14d9be8a3b097481fb97de"
+checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "libtest-mimic"
@@ -2259,15 +2259,15 @@ checksum = "3b3cff922bd51709b605d9ead9aa71031d81447142d828eb4a6eba76fe619f9b"
 
 [[package]]
 name = "portable-atomic"
-version = "1.13.0"
+version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f89776e4d69bb58bc6993e99ffa1d11f228b839984854c7daeb5d37f87cbe950"
+checksum = "c33a9471896f1c69cecef8d20cbe2f7accd12527ce60845ff44c153bb2a21b49"
 
 [[package]]
 name = "portable-atomic-util"
-version = "0.2.4"
+version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d8a2f0d8d040d7848a709caf78912debcc3f33ee4b3cac47d73d1e1069e83507"
+checksum = "7a9db96d7fa8782dd8c15ce32ffe8680bbd1e978a43bf51a34d39483540495f5"
 dependencies = [
  "portable-atomic",
 ]
@@ -3800,18 +3800,18 @@ dependencies = [
 
 [[package]]
 name = "zerocopy"
-version = "0.8.33"
+version = "0.8.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "668f5168d10b9ee831de31933dc111a459c97ec93225beb307aed970d1372dfd"
+checksum = "7456cf00f0685ad319c5b1693f291a650eaf345e941d082fc4e03df8a03996ac"
 dependencies = [
  "zerocopy-derive",
 ]
 
 [[package]]
 name = "zerocopy-derive"
-version = "0.8.33"
+version = "0.8.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c7962b26b0a8685668b671ee4b54d007a67d4eaf05fda79ac0ecf41e32270f1"
+checksum = "1328722bbf2115db7e19d69ebcc15e795719e2d66b60827c6a69a117365e37a0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3880,6 +3880,6 @@ dependencies = [
 
 [[package]]
 name = "zmij"
-version = "1.0.17"
+version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02aae0f83f69aafc94776e879363e9771d7ecbffe2c7fbb6c14c5e00dfe88439"
+checksum = "1966f8ac2c1f76987d69a74d0e0f929241c10e78136434e3be70ff7f58f64214"
