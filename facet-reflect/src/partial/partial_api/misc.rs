@@ -830,18 +830,20 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             );
 
             // IMPORTANT: Don't store Field frames whose data lives inside an INTERMEDIATE
-            // Owned or TrackedBuffer frame's memory. When that frame is later moved (e.g., by
-            // complete_option_frame() or map insert), the Field frame's pointer becomes invalid.
+            // Owned, TrackedBuffer, or ListSlot frame's memory. When that frame is later
+            // moved (e.g., by complete_option_frame(), map insert, or Vec reallocation),
+            // the Field frame's pointer becomes invalid.
             //
             // - Owned frames: Option's inner struct gets moved when init_some() is called
             // - TrackedBuffer frames: Map value buffers get moved/deallocated when map insert happens
+            // - ListSlot frames: Vec elements may be invalidated when Vec reallocates during growth
             //
             // The ROOT frame (index 0) is also Owned, but it won't be moved - only
-            // intermediate Owned/TrackedBuffer frames will be moved.
+            // intermediate Owned/TrackedBuffer/ListSlot frames will be moved.
             // So we skip index 0 when checking for ancestors.
             let inside_movable_allocation =
                 if matches!(current_frame.ownership, FrameOwnership::Field { .. }) {
-                    // Skip index 0 (root) and current frame, check remaining for Owned/TrackedBuffer
+                    // Skip index 0 (root) and current frame, check remaining for movable ownerships
                     let frames = self.frames();
                     frames
                         .iter()
@@ -850,7 +852,9 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         .any(|(_, f)| {
                             matches!(
                                 f.ownership,
-                                FrameOwnership::Owned | FrameOwnership::TrackedBuffer
+                                FrameOwnership::Owned
+                                    | FrameOwnership::TrackedBuffer
+                                    | FrameOwnership::ListSlot
                             )
                         })
                 } else {
@@ -1011,18 +1015,20 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             );
 
             // IMPORTANT: Don't store Field frames whose data lives inside an INTERMEDIATE
-            // Owned or TrackedBuffer frame's memory. When that frame is later moved (e.g., by
-            // complete_option_frame() or map insert), the Field frame's pointer becomes invalid.
+            // Owned, TrackedBuffer, or ListSlot frame's memory. When that frame is later
+            // moved (e.g., by complete_option_frame(), map insert, or Vec reallocation),
+            // the Field frame's pointer becomes invalid.
             //
             // - Owned frames: Option's inner struct gets moved when init_some() is called
             // - TrackedBuffer frames: Map value buffers get moved/deallocated when map insert happens
+            // - ListSlot frames: Vec elements may be invalidated when Vec reallocates during growth
             //
             // The ROOT frame (index 0) is also Owned, but it won't be moved - only
-            // intermediate Owned/TrackedBuffer frames will be moved.
+            // intermediate Owned/TrackedBuffer/ListSlot frames will be moved.
             // So we skip index 0 when checking for ancestors.
             let inside_movable_allocation =
                 if matches!(current_frame.ownership, FrameOwnership::Field { .. }) {
-                    // Skip index 0 (root) and current frame, check remaining for Owned/TrackedBuffer
+                    // Skip index 0 (root) and current frame, check remaining for movable ownerships
                     let frames = self.frames();
                     frames
                         .iter()
@@ -1031,7 +1037,9 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         .any(|(_, f)| {
                             matches!(
                                 f.ownership,
-                                FrameOwnership::Owned | FrameOwnership::TrackedBuffer
+                                FrameOwnership::Owned
+                                    | FrameOwnership::TrackedBuffer
+                                    | FrameOwnership::ListSlot
                             )
                         })
                 } else {
