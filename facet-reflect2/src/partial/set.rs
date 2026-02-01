@@ -125,22 +125,6 @@ impl<'facet> Partial<'facet> {
                                 e.selected = Some((variant_idx, Idx::COMPLETE));
                             }
                         }
-
-                        // For maps, update the MapFrame state
-                        if let FrameKind::Map(ref mut m) = frame.kind {
-                            let map_ptr = unsafe { frame.data.assume_init() };
-                            m.len = unsafe { (m.def.vtable.len)(map_ptr.as_const()) };
-                            // Map is now fully initialized, no slab needed
-                            m.slab = None;
-                        }
-
-                        // For sets, update the SetFrame state
-                        if let FrameKind::Set(ref mut s) = frame.kind {
-                            let set_ptr = unsafe { frame.data.assume_init() };
-                            s.len = unsafe { (s.def.vtable.len)(set_ptr.as_const()) };
-                            // Set is now fully initialized, no slab needed
-                            s.slab = None;
-                        }
                     } else {
                         // Mark child as complete
                         let field_idx =
@@ -149,10 +133,12 @@ impl<'facet> Partial<'facet> {
                     }
                 }
 
-                // For lists, update the ListFrame state to reflect the complete value
+                // Sync collection frame states after Imm/Default at empty path
                 // (called outside the scope to avoid borrow conflict)
                 if is_empty_path {
                     self.list_sync_after_set();
+                    self.map_sync_after_set();
+                    self.set_sync_after_set();
                 }
             }
             Source::Stage(_capacity) => {
@@ -365,18 +351,6 @@ impl<'facet> Partial<'facet> {
                         frame.flags |= FrameFlags::INIT;
 
                         // For maps, update the MapFrame state
-                        if let FrameKind::Map(ref mut m) = frame.kind {
-                            let map_ptr = unsafe { frame.data.assume_init() };
-                            m.len = unsafe { (m.def.vtable.len)(map_ptr.as_const()) };
-                            m.slab = None;
-                        }
-
-                        // For sets, update the SetFrame state
-                        if let FrameKind::Set(ref mut s) = frame.kind {
-                            let set_ptr = unsafe { frame.data.assume_init() };
-                            s.len = unsafe { (s.def.vtable.len)(set_ptr.as_const()) };
-                            s.slab = None;
-                        }
                     } else {
                         // Mark child as complete
                         let field_idx =
@@ -385,10 +359,12 @@ impl<'facet> Partial<'facet> {
                     }
                 }
 
-                // For lists, update the ListFrame state to reflect the complete value
+                // Sync collection frame states after Default at empty path
                 // (called outside the scope to avoid borrow conflict)
                 if is_empty_path {
                     self.list_sync_after_set();
+                    self.map_sync_after_set();
+                    self.set_sync_after_set();
                 }
             }
         }

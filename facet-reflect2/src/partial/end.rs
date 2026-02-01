@@ -236,36 +236,13 @@ impl<'facet> Partial<'facet> {
             }
 
             ParentLink::MapEntry { .. } => {
-                // This is a map entry frame completing.
-                // The entry data is in the parent map's slab - we just need to
-                // increment the count and free this frame.
-                // The actual map construction happens when the Map frame ends
-                // (via finalize_map_if_needed which calls from_pair_slice).
-
-                // Free the entry frame - do NOT deallocate since slab owns the memory
-                let _ = self.arena.free(self.current);
-
-                // Increment entry count in parent map
-                let parent = self.arena.get_mut(parent_idx);
-                if let FrameKind::Map(ref mut m) = parent.kind {
-                    m.len += 1;
-                }
-
-                self.current = parent_idx;
+                // Map entry completing - delegate to map module
+                self.map_entry_end(parent_idx)?;
             }
 
             ParentLink::MapEntryField { field_idx, .. } => {
-                let field_idx = *field_idx;
-
-                // Free the current frame and mark the field complete in parent entry
-                let _ = self.arena.free(self.current);
-
-                let parent = self.arena.get_mut(parent_idx);
-                if let FrameKind::MapEntry(ref mut e) = parent.kind {
-                    e.mark_field_complete(field_idx as usize);
-                }
-
-                self.current = parent_idx;
+                // Map entry field completing - delegate to map module
+                self.map_entry_field_end(parent_idx, *field_idx)?;
             }
         }
 
@@ -279,48 +256,7 @@ impl<'facet> Partial<'facet> {
 
     /// If current frame is a Map with a slab, build the map using from_pair_slice.
     pub(crate) fn finalize_map_if_needed(&mut self) -> Result<(), ReflectError> {
-        let frame = self.arena.get(self.current);
-        let FrameKind::Map(ref map_frame) = frame.kind else {
-            return Ok(()); // Not a map, nothing to do
-        };
-
-        // Check if there's a slab to finalize
-        if map_frame.slab.is_none() {
-            return Ok(()); // No slab = no entries were staged
-        }
-
-        // Get from_pair_slice function
-        let from_pair_slice = map_frame.def.vtable.from_pair_slice.ok_or_else(|| {
-            self.error(ReflectErrorKind::MapDoesNotSupportFromPairSlice { shape: frame.shape })
-        })?;
-
-        // Get the data we need before taking the slab
-        let map_ptr = frame.data;
-        let len = map_frame.len;
-
-        // Take the slab out of the frame
-        let frame = self.arena.get_mut(self.current);
-        let FrameKind::Map(ref mut map_frame) = frame.kind else {
-            unreachable!()
-        };
-        let slab = map_frame.slab.take().expect("slab exists");
-        let pairs_ptr = slab.as_mut_ptr();
-
-        // Build the map using from_pair_slice
-        // SAFETY: map_ptr is uninitialized memory, pairs_ptr points to len initialized entries
-        unsafe {
-            from_pair_slice(map_ptr, pairs_ptr, len);
-        }
-
-        // Slab is dropped here - deallocates buffer but doesn't drop elements
-        // (elements were moved out by from_pair_slice)
-        drop(slab);
-
-        // Mark map as initialized
-        let frame = self.arena.get_mut(self.current);
-        frame.flags |= FrameFlags::INIT;
-
-        Ok(())
+        self.map_finalize()
     }
 
     /// If current frame is a Set with a slab, build the set using from_slice.

@@ -3,6 +3,7 @@
 // Ops appliers
 mod end;
 mod list;
+mod map;
 mod push;
 mod set;
 
@@ -328,9 +329,6 @@ impl<'facet> Partial<'facet> {
         path: &Path,
         source: &crate::ops::Source<'_>,
     ) -> Result<(), ReflectError> {
-        use crate::frame::{Frame, ParentLink};
-        use crate::ops::Source;
-
         // For now, we only support single-segment Append paths
         // Multi-level Append paths will be implemented in Phase 3
         let segments = path.segments();
@@ -342,88 +340,8 @@ impl<'facet> Partial<'facet> {
 
         // Check if we're appending to a map
         let frame = self.arena.get(self.current);
-        if let FrameKind::Map(ref _map_frame) = frame.kind {
-            // Ensure map slab is created first
-            self.ensure_collection_initialized()?;
-
-            // Get map def and current entry count
-            let frame = self.arena.get_mut(self.current);
-            let FrameKind::Map(ref mut map_frame) = frame.kind else {
-                unreachable!()
-            };
-            let map_def = map_frame.def;
-            let current_len = map_frame.len;
-            match source {
-                Source::Imm(mov) => {
-                    // Direct tuple insertion: copy (K, V) tuple into slab
-                    // Verify the source shape matches our expected tuple shape
-                    let entry_shape = crate::tuple2(&map_def);
-                    if !ShapeDesc::Tuple2(entry_shape).is_shape(ShapeDesc::Static(mov.shape())) {
-                        return Err(self.error(ReflectErrorKind::ShapeMismatch {
-                            expected: ShapeDesc::Tuple2(entry_shape),
-                            actual: ShapeDesc::Static(mov.shape()),
-                        }));
-                    }
-
-                    // Get a slot from the slab for this entry
-                    let frame = self.arena.get_mut(self.current);
-                    let FrameKind::Map(ref mut map_frame) = frame.kind else {
-                        unreachable!()
-                    };
-                    let slab = map_frame
-                        .slab
-                        .as_mut()
-                        .expect("slab must exist after ensure_collection_initialized");
-                    let entry_ptr = slab.nth_slot(current_len);
-
-                    // Copy the tuple directly into the slab slot
-                    // SAFETY: entry_ptr points to uninitialized memory of correct size,
-                    // mov.ptr() points to valid (K, V) tuple
-                    unsafe {
-                        entry_ptr.copy_from(mov.ptr(), mov.shape()).unwrap();
-                    }
-
-                    // Increment entry count
-                    let frame = self.arena.get_mut(self.current);
-                    let FrameKind::Map(ref mut map_frame) = frame.kind else {
-                        unreachable!()
-                    };
-                    map_frame.len += 1;
-
-                    Ok(())
-                }
-                Source::Stage(_capacity) => {
-                    // Get a slot from the slab for this entry
-                    let frame = self.arena.get_mut(self.current);
-                    let FrameKind::Map(ref mut map_frame) = frame.kind else {
-                        unreachable!()
-                    };
-                    let slab = map_frame
-                        .slab
-                        .as_mut()
-                        .expect("slab must exist after ensure_collection_initialized");
-                    let entry_ptr = slab.nth_slot(current_len);
-
-                    // Create MapEntryFrame pointing into the slab
-                    // Note: Do NOT set OWNS_ALLOC - the slab owns this memory
-                    let entry_shape = crate::tuple2(&map_def);
-                    let mut entry_frame =
-                        Frame::new_map_entry(entry_ptr, ShapeDesc::Tuple2(entry_shape), map_def);
-                    entry_frame.parent_link = ParentLink::MapEntry {
-                        parent: self.current,
-                    };
-
-                    // Push frame and make it current
-                    let entry_idx = self.arena.alloc(entry_frame);
-                    self.current = entry_idx;
-
-                    Ok(())
-                }
-                Source::Default => {
-                    // Default doesn't make sense for map entries
-                    Err(self.error(ReflectErrorKind::MapAppendRequiresStage))
-                }
-            }
+        if matches!(frame.kind, FrameKind::Map(_)) {
+            self.map_append(source)
         } else {
             // Delegate to the existing push logic for lists/sets
             self.apply_push(source)
@@ -682,6 +600,19 @@ impl<'facet> Partial<'facet> {
             }));
         }
         Ok(&enum_type.variants[idx])
+    }
+
+    /// Update SetFrame state after Set at empty path with Imm/Default.
+    ///
+    /// TODO: Move this to a dedicated set_collection.rs module
+    pub(crate) fn set_sync_after_set(&mut self) {
+        let frame = self.arena.get_mut(self.current);
+        if let FrameKind::Set(ref mut s) = frame.kind {
+            let set_ptr = unsafe { frame.data.assume_init() };
+            s.len = unsafe { (s.def.vtable.len)(set_ptr.as_const()) };
+            // Set is now fully initialized, no slab needed
+            s.slab = None;
+        }
     }
 
     /// Build the final value, consuming the Partial.
