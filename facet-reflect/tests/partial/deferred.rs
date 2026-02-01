@@ -2633,3 +2633,207 @@ fn deferred_with_proxy() -> Result<(), IPanic> {
 
     Ok(())
 }
+
+/// Regression test: deferred mode started mid-deserialization with nested list
+#[test]
+fn deferred_started_inside_struct_with_list() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    pub struct Item {
+        value: u32,
+    }
+
+    #[derive(Facet, Debug)]
+    pub struct Container {
+        name: String,
+        items: Vec<Item>,
+    }
+
+    let mut partial: Partial<'_> = Partial::alloc::<Container>()?;
+
+    // Set name first (before deferred mode)
+    partial = partial.set_field("name", String::from("test"))?;
+
+    // Now enter deferred mode (like facet-dom does when it sees flatten)
+    partial = partial.begin_deferred()?;
+
+    // Build the list inside deferred mode
+    partial = partial.begin_field("items")?;
+    partial = partial.init_list()?;
+    partial = partial.begin_list_item()?;
+    partial = partial.set_field("value", 42u32)?;
+    partial = partial.end()?; // end item
+    partial = partial.end()?; // end items
+
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<Container>()?;
+
+    assert_eq!(result.name, "test");
+    assert_eq!(result.items.len(), 1);
+    assert_eq!(result.items[0], Item { value: 42 });
+
+    Ok(())
+}
+
+/// Regression test for use-after-free when Vec reallocates during deferred mode.
+/// This simulates the SVG parsing case where a Vec<Enum> (like Vec<SvgNode>)
+/// grows and reallocates while deferred frames still reference earlier items.
+#[test]
+fn deferred_vec_realloc_with_nested_structs() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Text {
+        content: String,
+        x: i32,
+        y: i32,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Rect {
+        width: i32,
+        height: i32,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(u8)]
+    enum Node {
+        Text(Text),
+        Rect(Rect),
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Container {
+        name: String,
+        children: Vec<Node>,
+    }
+
+    let mut partial: Partial<'_> = Partial::alloc::<Container>()?;
+    partial = partial.begin_deferred()?;
+
+    partial = partial.set_field("name", String::from("test"))?;
+
+    // Start the children list
+    partial = partial.begin_field("children")?;
+    partial = partial.init_list()?;
+
+    // Add multiple items to trigger reallocation (Vec starts small)
+    for i in 0..10i32 {
+        partial = partial.begin_list_item()?;
+        if i % 2 == 0 {
+            // Text variant - it's Text(Text), so we need to access field 0 for the inner struct
+            partial = partial.select_variant_named("Text")?;
+            partial = partial.begin_nth_field(0)?; // enter the Text struct
+            partial = partial.set_field("content", format!("text {}", i))?;
+            partial = partial.set_field("x", i * 10)?;
+            partial = partial.set_field("y", i * 5)?;
+            partial = partial.end()?; // end Text struct
+        } else {
+            // Rect variant
+            partial = partial.select_variant_named("Rect")?;
+            partial = partial.begin_nth_field(0)?; // enter the Rect struct
+            partial = partial.set_field("width", 100 + i)?;
+            partial = partial.set_field("height", 50 + i)?;
+            partial = partial.end()?; // end Rect struct
+        }
+        partial = partial.end()?; // end list item
+    }
+
+    partial = partial.end()?; // end children
+
+    // This is where the bug manifests: finish_deferred tries to access
+    // deferred frames that point to memory from before Vec reallocation
+    partial = partial.finish_deferred()?;
+
+    let result = partial.build()?.materialize::<Container>()?;
+    assert_eq!(result.name, "test");
+    assert_eq!(result.children.len(), 10);
+
+    Ok(())
+}
+
+/// Same as above but with Option fields that need auto-defaulting.
+/// This is closer to the actual SVG case where finish_deferred must fill in None values.
+#[test]
+fn deferred_vec_realloc_with_option_defaults() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Text {
+        content: String,
+        x: Option<i32>,
+        y: Option<i32>,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Rect {
+        width: i32,
+        height: Option<i32>,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(u8)]
+    enum Node {
+        Text(Text),
+        Rect(Rect),
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Container {
+        name: String,
+        children: Vec<Node>,
+    }
+
+    let mut partial: Partial<'_> = Partial::alloc::<Container>()?;
+    partial = partial.begin_deferred()?;
+
+    partial = partial.set_field("name", String::from("test"))?;
+
+    // Start the children list
+    partial = partial.begin_field("children")?;
+    partial = partial.init_list()?;
+
+    // Add multiple items to trigger reallocation (Vec starts small)
+    for i in 0..10i32 {
+        partial = partial.begin_list_item()?;
+        if i % 2 == 0 {
+            // Text variant - only set required content field, leave x and y as None
+            partial = partial.select_variant_named("Text")?;
+            partial = partial.begin_nth_field(0)?; // enter the Text struct
+            partial = partial.set_field("content", format!("text {}", i))?;
+            // x and y are Option<i32>, should default to None
+            partial = partial.end()?; // end Text struct
+        } else {
+            // Rect variant - only set required width field, leave height as None
+            partial = partial.select_variant_named("Rect")?;
+            partial = partial.begin_nth_field(0)?; // enter the Rect struct
+            partial = partial.set_field("width", 100 + i)?;
+            // height is Option<i32>, should default to None
+            partial = partial.end()?; // end Rect struct
+        }
+        partial = partial.end()?; // end list item
+    }
+
+    partial = partial.end()?; // end children
+
+    // This is where the bug manifests: finish_deferred tries to fill defaults
+    // for Option fields (x, y, height) but the Vec has reallocated
+    partial = partial.finish_deferred()?;
+
+    let result = partial.build()?.materialize::<Container>()?;
+    assert_eq!(result.name, "test");
+    assert_eq!(result.children.len(), 10);
+
+    // Verify Option fields were defaulted to None
+    if let Node::Text(ref text) = result.children[0] {
+        assert_eq!(text.content, "text 0");
+        assert_eq!(text.x, None);
+        assert_eq!(text.y, None);
+    } else {
+        panic!("Expected Text variant at index 0");
+    }
+
+    if let Node::Rect(ref rect) = result.children[1] {
+        assert_eq!(rect.width, 101);
+        assert_eq!(rect.height, None);
+    } else {
+        panic!("Expected Rect variant at index 1");
+    }
+
+    Ok(())
+}
