@@ -1,0 +1,27 @@
+[package]
+name = "trame-afl"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[features]
+# Standalone mode: builds without AFL integration for reproducing crashes,
+# running under Miri, or generating coverage reports
+standalone = []
+
+[dependencies]
+afl = "0.15"
+arbitrary = { version = "1", features = ["derive"] }
+
+[dependencies.facet]
+path = "../../facet"
+
+[dependencies.facet-core]
+path = "../../facet-core"
+
+[dependencies.trame]
+path = ".."
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]

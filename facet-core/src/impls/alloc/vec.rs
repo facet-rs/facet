@@ -443,8 +443,9 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Vec<T> {
                     }
                 }
 
-                unsafe fn default_in_place<T>(ox: OxPtrUninit) {
+                unsafe fn default_in_place<T>(ox: OxPtrUninit) -> bool {
                     unsafe { ox.put(Vec::<T>::new()) };
+                    true
                 }
 
                 unsafe fn truthy<T>(ptr: PtrConst) -> bool {

@@ -64,6 +64,28 @@ unsafe fn btreeset_iter_dealloc<T>(iter_ptr: PtrMut) {
     }
 }
 
+/// Build a BTreeSet from a contiguous slice of elements.
+///
+/// # Safety
+/// - `set` must point to uninitialized memory
+/// - `elements_ptr` must point to `count` consecutive initialized T values
+/// - Elements are moved out and should not be dropped by caller
+unsafe fn btreeset_from_slice<T: Eq + Ord + 'static>(
+    set: PtrUninit,
+    elements_ptr: *mut u8,
+    count: usize,
+) -> PtrMut {
+    unsafe {
+        let elements = elements_ptr as *mut T;
+        let mut btreeset = BTreeSet::<T>::new();
+        for i in 0..count {
+            let elem = core::ptr::read(elements.add(i));
+            btreeset.insert(elem);
+        }
+        set.put(btreeset)
+    }
+}
+
 /// Drop implementation for `BTreeSet<T>`
 unsafe fn btreeset_drop<T>(ox: OxPtrMut) {
     unsafe {
@@ -72,8 +94,9 @@ unsafe fn btreeset_drop<T>(ox: OxPtrMut) {
 }
 
 /// Default implementation for `BTreeSet<T>`
-unsafe fn btreeset_default<T>(ox: OxPtrUninit) {
+unsafe fn btreeset_default<T>(ox: OxPtrUninit) -> bool {
     unsafe { ox.put(BTreeSet::<T>::new()) };
+    true
 }
 
 unsafe impl<'a, T> Facet<'a> for BTreeSet<T>
@@ -94,6 +117,7 @@ where
                     size_hint: None,
                     dealloc: btreeset_iter_dealloc::<T>,
                 })
+                .from_slice(Some(btreeset_from_slice::<T>))
                 .build()
         }
 

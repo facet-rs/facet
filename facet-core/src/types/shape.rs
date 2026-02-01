@@ -938,7 +938,9 @@ impl Shape {
             TypeOps::Indirect(ops) => {
                 let default_fn = ops.default_in_place?;
                 let ox = crate::OxPtrUninit::new(ptr, self);
-                unsafe { default_fn(ox) };
+                if !unsafe { default_fn(ox) } {
+                    return None;
+                }
             }
         }
         Some(())

@@ -396,8 +396,9 @@ where
                         }
                     }
 
-                    unsafe fn default_in_place<A: Array>(ox: OxPtrUninit) {
+                    unsafe fn default_in_place<A: Array>(ox: OxPtrUninit) -> bool {
                         unsafe { ox.put(SmallVec::<A>::new()) };
+                        true
                     }
 
                     unsafe fn truthy<A: Array>(ptr: PtrConst) -> bool {

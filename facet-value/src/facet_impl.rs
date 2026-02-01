@@ -369,8 +369,9 @@ unsafe fn value_debug(
     }
 }
 
-unsafe fn value_default_in_place(ox: OxPtrUninit) {
+unsafe fn value_default_in_place(ox: OxPtrUninit) -> bool {
     unsafe { ox.put(Value::default()) };
+    true
 }
 
 unsafe fn value_partial_eq(a: OxPtrConst, b: OxPtrConst) -> Option<bool> {

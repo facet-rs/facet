@@ -161,14 +161,17 @@ unsafe fn array_drop(ox: OxPtrMut) {
 }
 
 /// Default for [T; N] - default-initializes each element
-unsafe fn array_default(ox: OxPtrUninit) {
+unsafe fn array_default(ox: OxPtrUninit) -> bool {
     let shape = ox.shape();
     let Some(def) = get_array_def(shape) else {
-        return;
+        return false;
     };
     let ptr = ox.ptr();
 
-    let slice_ptr = unsafe { (def.vtable.as_mut_ptr)(ptr.assume_init()) };
+    // Arrays are laid out contiguously starting at offset 0, so we can use
+    // the pointer directly without going through the vtable (which requires
+    // initialized memory).
+    let base_ptr = ptr.as_mut_byte_ptr();
     let Some(stride) = def
         .t
         .layout
@@ -176,16 +179,21 @@ unsafe fn array_default(ox: OxPtrUninit) {
         .ok()
         .map(|l| l.pad_to_align().size())
     else {
-        return;
+        return false;
     };
 
     for i in 0..def.n {
-        let elem_ptr =
-            unsafe { PtrUninit::new((slice_ptr.as_byte_ptr() as *mut u8).add(i * stride)) };
+        let elem_ptr = unsafe { PtrUninit::new(base_ptr.add(i * stride)) };
         if unsafe { def.t.call_default_in_place(elem_ptr) }.is_none() {
-            return;
+            // Drop already-initialized elements before returning
+            for j in 0..i {
+                let drop_ptr = unsafe { PtrMut::new(base_ptr.add(j * stride)) };
+                unsafe { def.t.call_drop_in_place(drop_ptr) };
+            }
+            return false;
         }
     }
+    true
 }
 
 /// Clone for [T; N] - clones each element
@@ -195,8 +203,11 @@ unsafe fn array_clone(src: OxPtrConst, dst: OxPtrMut) {
         return;
     };
 
+    // Source is initialized, so we can use the vtable
     let src_ptr = unsafe { (def.vtable.as_ptr)(src.ptr()) };
-    let dst_ptr = unsafe { (def.vtable.as_mut_ptr)(dst.ptr()) };
+    // Destination is uninitialized (clone_into writes to uninit memory),
+    // so use the pointer directly instead of the vtable
+    let dst_base = dst.ptr().as_mut_byte_ptr();
     let Some(stride) = def
         .t
         .layout
@@ -209,7 +220,7 @@ unsafe fn array_clone(src: OxPtrConst, dst: OxPtrMut) {
 
     for i in 0..def.n {
         let src_elem = unsafe { PtrConst::new((src_ptr.as_byte_ptr()).add(i * stride)) };
-        let dst_elem = unsafe { PtrMut::new((dst_ptr.as_byte_ptr() as *mut u8).add(i * stride)) };
+        let dst_elem = unsafe { PtrMut::new(dst_base.add(i * stride)) };
         if unsafe { def.t.call_clone_into(src_elem, dst_elem) }.is_none() {
             return;
         }

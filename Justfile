@@ -104,20 +104,6 @@ miri *args:
     source miri-env.sh
     cargo miri nextest run --target-dir target/miri -p facet-reflect -p facet-core -p facet-value {{ args }}
 
-reflect2:
-    just reflect2-miri
-    just reflect2-cov
-
-reflect2-miri *args:
-    #!/usr/bin/env -S bash -euo pipefail
-    source miri-env.sh
-    cargo miri nextest run --target-dir target/miri -p facet-reflect2 {{ args }}
-
-reflect2-cov *args:
-    #!/usr/bin/env -S bash -euo pipefail
-    source miri-env.sh
-    cargo llvm-cov nextest -p facet-reflect2 --ignore-filename-regex '/facet-(core|macro|macros|reflect[^2])' {{ args }}
-
 miri-json *args:
     #!/usr/bin/env -S bash -euo pipefail
     source miri-env.sh

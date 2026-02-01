@@ -164,8 +164,9 @@ unsafe fn option_drop_inner(ptr: crate::PtrMut, def: &OptionDef) {
 }
 
 /// Default for `Option<T>` - always None (no `T::Default` requirement)
-unsafe fn option_default<T>(ox: OxPtrUninit) {
+unsafe fn option_default<T>(ox: OxPtrUninit) -> bool {
     unsafe { ox.put(Option::<T>::None) };
+    true
 }
 
 /// Check if `Option<T>` is Some
@@ -184,7 +185,7 @@ unsafe fn option_get_value<T>(option: PtrConst) -> Option<PtrConst> {
 }
 
 /// Initialize `Option<T>` with Some(value)
-unsafe fn option_init_some<T>(option: crate::PtrUninit, value: PtrConst) -> crate::PtrMut {
+unsafe fn option_init_some<T>(option: crate::PtrUninit, value: crate::PtrMut) -> crate::PtrMut {
     unsafe { option.put(Option::Some(value.read::<T>())) }
 }
 
@@ -194,7 +195,7 @@ unsafe fn option_init_none<T>(option: crate::PtrUninit) -> crate::PtrMut {
 }
 
 /// Replace `Option<T>` with a new value
-unsafe fn option_replace_with<T>(option: crate::PtrMut, value: Option<PtrConst>) {
+unsafe fn option_replace_with<T>(option: crate::PtrMut, value: Option<crate::PtrMut>) {
     unsafe {
         let option = option.as_mut::<Option<T>>();
         match value {

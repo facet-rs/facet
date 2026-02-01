@@ -1,0 +1,16 @@
+list:
+    just --list
+
+all:
+    just miri
+    just cov
+
+miri *args:
+    #!/usr/bin/env -S bash -euo pipefail
+    source ../miri-env.sh
+    cargo miri nextest run --target-dir target/miri -p trame {{ args }}
+
+cov *args:
+    #!/usr/bin/env -S bash -euo pipefail
+    source ../miri-env.sh
+    cargo llvm-cov nextest --ignore-filename-regex '/facet-(core|macro|macros|reflect)' {{ args }}

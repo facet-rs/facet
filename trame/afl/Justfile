@@ -1,0 +1,115 @@
+list:
+    just --list
+
+# Build and run the fuzzer with SAND (decoupled sanitizers)
+fuzz: build
+    cargo afl fuzz -i in -o out \
+        -w target/debug/trame-afl-asan \
+        -w target/debug/trame-afl-msan \
+        -- target/debug/trame-afl
+
+# Build all binaries: native + sanitizer variants
+build: build-native build-asan build-msan
+
+# Build native binary (no sanitizers, full speed)
+build-native:
+    cargo afl build
+
+# Build with AddressSanitizer + UBSan
+build-asan:
+    AFL_LLVM_ONLY_FSRV=1 AFL_USE_ASAN=1 AFL_USE_UBSAN=1 cargo afl build
+    cp target/debug/trame-afl target/debug/trame-afl-asan
+
+# Build with MemorySanitizer
+build-msan:
+    AFL_LLVM_ONLY_FSRV=1 AFL_USE_MSAN=1 cargo afl build
+    cp target/debug/trame-afl target/debug/trame-afl-msan
+
+# Resume fuzzing from previous state
+resume: build
+    cargo afl fuzz -i- -o out \
+        -w target/debug/trame-afl-asan \
+        -w target/debug/trame-afl-msan \
+        -- target/debug/trame-afl
+
+# Build standalone binary (for reproducing crashes, running under Miri, etc.)
+build-standalone:
+    cargo build --features standalone --target-dir target-standalone
+
+# Run a single input file (standalone mode)
+run file: build-standalone
+    target-standalone/debug/trame-afl < {{ file }}
+
+# Run with backtrace
+run-bt file: build-standalone
+    RUST_BACKTRACE=1 target-standalone/debug/trame-afl < {{ file }}
+
+# Run under Miri
+run-miri file:
+    MIRIFLAGS="-Zmiri-disable-isolation" cargo +nightly miri run --features standalone --target-dir target-miri < {{ file }}
+
+# Minimize a crash input
+minimize file:
+    cargo afl tmin -i {{ file }} -o minimized.bin -- target/debug/trame-afl
+    @echo "Minimized input saved to minimized.bin"
+
+# List all crashes
+crashes:
+    @ls -la out/default/crashes/ 2>/dev/null || echo "No crashes yet"
+
+# Reproduce all crashes and show unique panic messages
+reproduce-all:
+    @for f in out/default/crashes/id:*; do \
+        target/debug/trame-afl < "$$f" 2>&1 | grep -E "^thread.*panicked" || true; \
+    done | sort -u
+
+# Show AFL edge coverage from the corpus
+edges: build-native
+    cargo afl showmap -C -i out/default/queue -o /dev/stdout -- target/debug/trame-afl
+
+# Build with LLVM source coverage (standalone binary with instrumentation)
+build-cov:
+    CARGO_INCREMENTAL=0 RUSTFLAGS="-C instrument-coverage" cargo build --features standalone --target-dir target-cov
+
+# Generate source coverage report from corpus
+# Usage: just cov [format]
+
+# Formats: report (default), html, uncovered
+cov format="report": build-cov
+    #!/usr/bin/env -S bash -euo pipefail
+    rm -f *.profraw default.profdata
+    files=(out/default/queue/*)
+    total=${#files[@]}
+    i=0
+    for f in "${files[@]}"; do
+        i=$((i + 1))
+        printf "\r%d/%d" "$i" "$total"
+        target-cov/debug/trame-afl < "$f" 2>/dev/null || true
+    done
+    echo
+    llvm-profdata merge -sparse *.profraw -o default.profdata
+    ignore='/.cargo/|/rustc/|afl/src|/facet-(core|macro|macros|reflect[^2])'
+    if [ "{{ format }}" = "html" ]; then
+        llvm-cov show target-cov/debug/trame-afl \
+            --instr-profile=default.profdata \
+            --ignore-filename-regex="$ignore" \
+            --format=html --output-dir=coverage
+        echo "Coverage report written to coverage/"
+        open coverage/index.html 2>/dev/null || true
+    elif [ "{{ format }}" = "uncovered" ]; then
+        llvm-cov show target-cov/debug/trame-afl \
+            --instr-profile=default.profdata \
+            --ignore-filename-regex="$ignore" \
+            --show-line-counts-or-regions \
+            --format=text \
+            | awk '/\|[[:space:]]+0\|/'
+    else
+        llvm-cov report target-cov/debug/trame-afl \
+            --instr-profile=default.profdata \
+            --ignore-filename-regex="$ignore"
+    fi
+    rm -f *.profraw default.profdata
+
+# Clean build artifacts and output
+clean:
+    rm -rf target target-standalone target-cov target-miri out minimized.bin coverage

@@ -440,8 +440,9 @@ unsafe fn weak_drop<T>(ox: OxPtrMut) {
 }
 
 /// Default function for `Weak<T>`
-unsafe fn weak_default<T>(ox: OxPtrUninit) {
+unsafe fn weak_default<T>(ox: OxPtrUninit) -> bool {
     unsafe { ox.put(Weak::<T>::new()) };
+    true
 }
 
 /// Clone function for `Weak<T>`

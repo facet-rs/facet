@@ -213,12 +213,12 @@ unsafe fn result_get_err<T, E>(result: PtrConst) -> Option<PtrConst> {
 }
 
 /// Initialize Result<T, E> with Ok(value)
-unsafe fn result_init_ok<T, E>(result: crate::PtrUninit, value: PtrConst) -> PtrMut {
+unsafe fn result_init_ok<T, E>(result: crate::PtrUninit, value: PtrMut) -> PtrMut {
     unsafe { result.put(Result::<T, E>::Ok(value.read::<T>())) }
 }
 
 /// Initialize Result<T, E> with Err(value)
-unsafe fn result_init_err<T, E>(result: crate::PtrUninit, value: PtrConst) -> PtrMut {
+unsafe fn result_init_err<T, E>(result: crate::PtrUninit, value: PtrMut) -> PtrMut {
     unsafe { result.put(Result::<T, E>::Err(value.read::<E>())) }
 }
 

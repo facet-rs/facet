@@ -1356,16 +1356,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "facet-reflect2"
-version = "0.1.0"
-dependencies = [
- "bitflags 2.10.0",
- "facet",
- "facet-core",
- "smallvec 2.0.0-alpha.12",
-]
-
-[[package]]
 name = "facet-shapelike"
 version = "0.43.2"
 dependencies = [
@@ -3239,6 +3229,16 @@ dependencies = [
  "sharded-slab",
  "thread_local",
  "tracing-core",
+]
+
+[[package]]
+name = "trame"
+version = "0.43.0"
+dependencies = [
+ "bitflags 2.10.0",
+ "facet",
+ "facet-core",
+ "smallvec 2.0.0-alpha.12",
 ]
 
 [[package]]

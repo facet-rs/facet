@@ -1281,11 +1281,13 @@ pub struct TypeOpsIndirect {
 
     /// Construct a default value in place.
     ///
-    /// Returns `None` if the type doesn't implement `Default`.
+    /// The outer `Option` is `None` if the type doesn't implement `Default`.
+    /// The function returns `true` on success, `false` if initialization failed
+    /// (e.g., for arrays where an element type doesn't support Default).
     ///
     /// # Safety
     /// The pointer must point to uninitialized memory of sufficient size and alignment.
-    pub default_in_place: Option<unsafe fn(OxPtrUninit)>,
+    pub default_in_place: Option<unsafe fn(OxPtrUninit) -> bool>,
 
     /// Clone a value into uninitialized memory.
     ///

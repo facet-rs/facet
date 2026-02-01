@@ -596,7 +596,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             let init_some_fn = option_def.vtable.init_some;
 
             // The inner frame contains the inner value
-            let inner_value_ptr = unsafe { inner_frame.data.assume_init().as_const() };
+            let inner_value_ptr = unsafe { inner_frame.data.assume_init() };
 
             // Initialize the Option as Some(inner_value)
             unsafe {
@@ -1708,7 +1708,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         let init_some_fn = option_def.vtable.init_some;
 
                         // The popped frame contains the inner value
-                        let inner_value_ptr = unsafe { popped_frame.data.assume_init().as_const() };
+                        let inner_value_ptr = unsafe { popped_frame.data.assume_init() };
 
                         // Initialize the Option as Some(inner_value)
                         unsafe {
@@ -1768,7 +1768,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 if *building_inner {
                     if let Def::Result(result_def) = parent_frame.allocated.shape().def {
                         // The popped frame contains the inner value
-                        let inner_value_ptr = unsafe { popped_frame.data.assume_init().as_const() };
+                        let inner_value_ptr = unsafe { popped_frame.data.assume_init() };
 
                         // Initialize the Result as Ok(inner_value) or Err(inner_value)
                         if *is_ok {
