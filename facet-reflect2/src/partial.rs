@@ -2,6 +2,7 @@
 
 // Ops appliers
 mod end;
+mod enum_variant;
 mod list;
 mod map;
 mod option;

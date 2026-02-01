@@ -3,9 +3,7 @@ use std::ptr::NonNull;
 
 use super::Partial;
 use crate::arena::Idx;
-use crate::enum_helpers::{
-    drop_variant_fields, read_discriminant, variant_index_from_discriminant, write_discriminant,
-};
+use crate::enum_helpers::{read_discriminant, variant_index_from_discriminant};
 use crate::errors::{ReflectError, ReflectErrorKind};
 use crate::frame::{
     Frame, FrameFlags, FrameKind, ListFrame, MapFrame, ParentLink, PointerFrame, SetFrame,
@@ -366,133 +364,6 @@ impl<'facet> Partial<'facet> {
                     self.map_sync_after_set();
                     self.set_sync_after_set();
                 }
-            }
-        }
-        Ok(())
-    }
-
-    /// Apply a Set operation for enum variant selection.
-    pub(crate) fn apply_enum_variant_set(
-        &mut self,
-        path: &Path,
-        source: &Source<'_>,
-    ) -> Result<(), ReflectError> {
-        let segments = path.segments();
-        if segments.len() != 1 {
-            return Err(self.error(ReflectErrorKind::MultiLevelPathNotSupported {
-                depth: segments.len(),
-            }));
-        }
-        let variant_idx = first_field_idx(path).expect("path must have field index");
-
-        // Get enum type and variant
-        let frame = self.arena.get(self.current);
-        let Type::User(UserType::Enum(ref enum_type)) = *frame.shape.ty() else {
-            return Err(self.error(ReflectErrorKind::NotAnEnum));
-        };
-        let new_variant = self.get_enum_variant(enum_type, variant_idx)?;
-
-        // Drop any existing value before switching variants.
-        // If INIT is set, the whole enum was initialized (e.g., via Move at []),
-        // so we use uninit() which calls drop_in_place on the whole shape.
-        // If INIT is not set but selected has a complete variant, we drop just that
-        // variant's fields (the variant was set via apply_enum_variant_set).
-        let frame = self.arena.get_mut(self.current);
-        if frame.flags.contains(FrameFlags::INIT) {
-            frame.uninit();
-        } else if let FrameKind::Enum(e) = &mut frame.kind {
-            if let Some((old_variant_idx, status)) = e.selected
-                && status.is_complete()
-            {
-                let old_variant = &enum_type.variants[old_variant_idx as usize];
-                // SAFETY: the variant was marked complete, so its fields are initialized
-                unsafe {
-                    drop_variant_fields(frame.data.assume_init().as_const(), old_variant);
-                }
-                // TODO: handle partially initialized variants (status is a valid frame idx)
-            }
-            // Clear selected so uninit() won't try to drop again if we error later
-            e.selected = None;
-        }
-
-        // Re-get frame after potential drop/uninit
-        let frame = self.arena.get(self.current);
-
-        // Write the discriminant
-        // SAFETY: frame.data points to valid enum memory
-        unsafe {
-            write_discriminant(frame.data, enum_type, new_variant)
-                .map_err(|kind| self.error(kind))?;
-        }
-
-        match source {
-            Source::Default => {
-                // For unit variants, just writing the discriminant is enough
-                // For struct variants with Default, we'd need to default-initialize fields
-                // For now, only support unit variants with Default
-                if !new_variant.data.fields.is_empty() {
-                    return Err(self.error(ReflectErrorKind::NoDefault { shape: frame.shape }));
-                }
-
-                // Mark variant as complete
-                let frame = self.arena.get_mut(self.current);
-                let Some(e) = frame.kind.as_enum_mut() else {
-                    return Err(self.error(ReflectErrorKind::NotAnEnum));
-                };
-                e.selected = Some((variant_idx, Idx::COMPLETE));
-            }
-            Source::Imm(mov) => {
-                // For tuple variants with a single field, copy the field value
-                // The Move shape should match the tuple field's shape
-                if new_variant.data.fields.len() != 1 {
-                    return Err(self.error(ReflectErrorKind::ShapeMismatch {
-                        expected: frame.shape,
-                        actual: ShapeDesc::Static(mov.shape()),
-                    }));
-                }
-
-                let field = &new_variant.data.fields[0];
-                if !field.shape().is_shape(mov.shape()) {
-                    return Err(self.error(ReflectErrorKind::ShapeMismatch {
-                        expected: ShapeDesc::Static(field.shape()),
-                        actual: ShapeDesc::Static(mov.shape()),
-                    }));
-                }
-
-                // Copy the value into the field
-                let field_ptr =
-                    unsafe { PtrUninit::new(frame.data.as_mut_byte_ptr().add(field.offset)) };
-                unsafe {
-                    field_ptr.copy_from(mov.ptr(), mov.shape()).unwrap();
-                }
-
-                // Mark variant as complete
-                let frame = self.arena.get_mut(self.current);
-                let Some(e) = frame.kind.as_enum_mut() else {
-                    return Err(self.error(ReflectErrorKind::NotAnEnum));
-                };
-                e.selected = Some((variant_idx, Idx::COMPLETE));
-            }
-            Source::Stage(_capacity) => {
-                // Push a frame for the variant's fields
-                let frame = self.arena.get(self.current);
-                let mut new_frame = Frame::new_variant(frame.data, frame.shape, new_variant);
-                new_frame.parent_link = ParentLink::EnumVariant {
-                    parent: self.current,
-                    variant_idx,
-                };
-
-                // Store in arena and make it current
-                let new_idx = self.arena.alloc(new_frame);
-
-                // Record the frame in enum's selected variant
-                let frame = self.arena.get_mut(self.current);
-                let Some(e) = frame.kind.as_enum_mut() else {
-                    return Err(self.error(ReflectErrorKind::NotAnEnum));
-                };
-                e.selected = Some((variant_idx, new_idx));
-
-                self.current = new_idx;
             }
         }
         Ok(())
