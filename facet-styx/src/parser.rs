@@ -11,7 +11,7 @@ use crate::trace;
 use facet_core::Facet;
 use facet_format::{
     ContainerKind, DeserializeErrorKind, FieldKey, FieldLocationHint, FormatParser, ParseError,
-    ParseEvent, ParseEventKind, SavePoint, ScalarValue,
+    ParseEvent, ParseEventKind, SavePoint, ScalarTypeHint, ScalarValue,
 };
 use facet_reflect::Span as ReflectSpan;
 use styx_parse::{Event, ParseErrorKind, Parser, ScalarKind as StyxScalarKind, Span};
@@ -47,6 +47,8 @@ pub struct StyxParser<'de> {
     /// When TagStart is seen, push false. When any payload event is seen, set top to true.
     /// When TagEnd is seen, if top is false, emit Scalar(Unit) for implicit unit.
     tag_has_payload_stack: Vec<bool>,
+    /// Hint for the next scalar type expected by the deserializer.
+    scalar_type_hint: Option<ScalarTypeHint>,
 }
 
 impl<'de> StyxParser<'de> {
@@ -59,6 +61,7 @@ impl<'de> StyxParser<'de> {
             current_span: None,
             complete: false,
             tag_has_payload_stack: Vec::new(),
+            scalar_type_hint: None,
             pending_doc: Vec::new(),
             saved_state: None,
             at_implicit_root: true,
@@ -78,6 +81,7 @@ impl<'de> StyxParser<'de> {
             current_span: None,
             complete: false,
             tag_has_payload_stack: Vec::new(),
+            scalar_type_hint: None,
             pending_doc: Vec::new(),
             saved_state: None,
             at_implicit_root: false, // Expression mode doesn't have implicit root
@@ -127,25 +131,79 @@ impl<'de> StyxParser<'de> {
     }
 
     /// Parse a scalar value from text into a ScalarValue.
-    fn parse_scalar(&self, value: Cow<'de, str>, kind: StyxScalarKind) -> ScalarValue<'de> {
+    /// Uses the scalar_type_hint to determine how to parse bare scalars.
+    fn parse_scalar(&mut self, value: Cow<'de, str>, kind: StyxScalarKind) -> ScalarValue<'de> {
+        // Take the hint (it's consumed after use)
+        let hint = self.scalar_type_hint.take();
+
         match kind {
             StyxScalarKind::Bare => {
-                // Try to parse as number or bool
-                if value == "true" {
-                    ScalarValue::Bool(true)
-                } else if value == "false" {
-                    ScalarValue::Bool(false)
-                } else if value == "null" {
-                    ScalarValue::Null
-                } else if let Ok(n) = value.parse::<i64>() {
-                    ScalarValue::I64(n)
-                } else if let Ok(n) = value.parse::<u64>() {
-                    ScalarValue::U64(n)
-                } else if let Ok(n) = value.parse::<f64>() {
-                    ScalarValue::F64(n)
-                } else {
-                    // Bare identifier - treat as string
-                    ScalarValue::Str(value)
+                // Use the hint to determine the scalar type.
+                // In styx, all bare scalars are syntactically strings - the target type
+                // determines how they're interpreted.
+                match hint {
+                    Some(ScalarTypeHint::String) => ScalarValue::Str(value),
+                    Some(ScalarTypeHint::Bool) => {
+                        if value == "true" {
+                            ScalarValue::Bool(true)
+                        } else if value == "false" {
+                            ScalarValue::Bool(false)
+                        } else {
+                            // Invalid bool, return as string and let deserializer error
+                            ScalarValue::Str(value)
+                        }
+                    }
+                    Some(
+                        ScalarTypeHint::I8
+                        | ScalarTypeHint::I16
+                        | ScalarTypeHint::I32
+                        | ScalarTypeHint::I64
+                        | ScalarTypeHint::I128
+                        | ScalarTypeHint::Isize,
+                    ) => {
+                        if let Ok(n) = value.parse::<i64>() {
+                            ScalarValue::I64(n)
+                        } else {
+                            ScalarValue::Str(value)
+                        }
+                    }
+                    Some(
+                        ScalarTypeHint::U8
+                        | ScalarTypeHint::U16
+                        | ScalarTypeHint::U32
+                        | ScalarTypeHint::U64
+                        | ScalarTypeHint::U128
+                        | ScalarTypeHint::Usize,
+                    ) => {
+                        if let Ok(n) = value.parse::<u64>() {
+                            ScalarValue::U64(n)
+                        } else {
+                            ScalarValue::Str(value)
+                        }
+                    }
+                    Some(ScalarTypeHint::F32 | ScalarTypeHint::F64) => {
+                        if let Ok(n) = value.parse::<f64>() {
+                            ScalarValue::F64(n)
+                        } else {
+                            ScalarValue::Str(value)
+                        }
+                    }
+                    Some(ScalarTypeHint::Char) => {
+                        let mut chars = value.chars();
+                        if let (Some(c), None) = (chars.next(), chars.next()) {
+                            ScalarValue::Char(c)
+                        } else {
+                            ScalarValue::Str(value)
+                        }
+                    }
+                    Some(ScalarTypeHint::Bytes) => {
+                        // Can't parse bytes from bare scalar
+                        ScalarValue::Str(value)
+                    }
+                    None => {
+                        // No hint - fall back to string (styx spec: bare scalars are strings)
+                        ScalarValue::Str(value)
+                    }
                 }
             }
             StyxScalarKind::Quoted | StyxScalarKind::Raw | StyxScalarKind::Heredoc => {
@@ -549,5 +607,9 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
 
     fn input(&self) -> Option<&'de [u8]> {
         Some(self.input.as_bytes())
+    }
+
+    fn hint_scalar_type(&mut self, hint: ScalarTypeHint) {
+        self.scalar_type_hint = Some(hint);
     }
 }

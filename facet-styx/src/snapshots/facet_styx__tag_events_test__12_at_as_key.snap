@@ -5,5 +5,5 @@ expression: "collect_events(\"@ {x 1}\")"
 FieldKey(None)
 StructStart
   FieldKey(Some("x"))
-  Scalar(1)
+  Scalar("1")
 StructEnd

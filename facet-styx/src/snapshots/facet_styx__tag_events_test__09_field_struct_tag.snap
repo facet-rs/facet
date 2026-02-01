@@ -6,5 +6,5 @@ FieldKey(Some("x"))
 VariantTag("Foo")
 StructStart
   FieldKey(Some("y"))
-  Scalar(1)
+  Scalar("1")
 StructEnd

@@ -8,6 +8,6 @@ SequenceStart
   VariantTag("Bar")
   StructStart
     FieldKey(Some("x"))
-    Scalar(1)
+    Scalar("1")
   StructEnd
 SequenceEnd

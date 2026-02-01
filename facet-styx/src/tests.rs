@@ -659,3 +659,41 @@ fn test_explicit_root_object_only_one_structstart() {
         "
     );
 }
+
+#[test]
+fn test_bare_true_is_string() {
+    // In styx, all bare scalars are strings. "true" without quotes is the string "true",
+    // not a boolean. Only the target type determines how it's interpreted.
+    #[derive(Facet, Debug, PartialEq)]
+    struct Config {
+        active: String,
+    }
+
+    let input = "active true";
+    let result: Config = from_str(input).unwrap();
+    assert_eq!(result.active, "true");
+}
+
+#[test]
+fn test_bare_false_is_string() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Config {
+        active: String,
+    }
+
+    let input = "active false";
+    let result: Config = from_str(input).unwrap();
+    assert_eq!(result.active, "false");
+}
+
+#[test]
+fn test_bare_number_is_string() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Config {
+        port: String,
+    }
+
+    let input = "port 8080";
+    let result: Config = from_str(input).unwrap();
+    assert_eq!(result.port, "8080");
+}
