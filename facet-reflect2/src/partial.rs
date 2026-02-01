@@ -444,10 +444,14 @@ impl<'facet> Partial<'facet> {
     ) -> Result<(), ReflectError> {
         let frame = self.arena.get(self.current);
 
+        // Check if collection needs initialization.
+        // For lists: check initialized flag.
+        // For maps/sets: check slab AND frame INIT flag (collection may have been set via Imm/Default).
+        let already_init = frame.flags.contains(FrameFlags::INIT);
         let needs_init = match &frame.kind {
             FrameKind::List(l) => !l.initialized,
-            FrameKind::Map(m) => !m.is_staged(),
-            FrameKind::Set(s) => !s.is_staged(),
+            FrameKind::Map(m) => !m.is_staged() && !already_init,
+            FrameKind::Set(s) => !s.is_staged() && !already_init,
             _ => return Ok(()), // Not a collection, nothing to do
         };
 
