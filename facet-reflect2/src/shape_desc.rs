@@ -37,6 +37,7 @@ static TUPLE2_CACHE: LazyLock<Mutex<HashMap<(ConstTypeId, ConstTypeId), &'static
 
 /// Get or create a Tuple2Shape for the given key and value shapes.
 /// The result is cached globally, so repeated calls with the same types return the same shape.
+#[allow(clippy::disallowed_methods)] // Box::leak is intentional here - one leak per (K,V) type pair, cached forever
 pub fn get_or_leak_tuple2(
     key_shape: &'static Shape,
     value_shape: &'static Shape,

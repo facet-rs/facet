@@ -310,8 +310,8 @@ impl Default for ResultFrame {
 /// Note: The layout for the entry is stored in the frame's `shape` (a ShapeDesc::Tuple2),
 /// not in this struct.
 pub struct MapEntryFrame {
-    /// The map definition (for key/value shapes).
-    pub map_def: &'static MapDef,
+    /// The map definition (for key/value shapes). Stored by value since MapDef is Copy.
+    pub map_def: MapDef,
     /// Key status: NOT_STARTED, COMPLETE, or valid frame index.
     pub key: Idx<Frame>,
     /// Value status: NOT_STARTED, COMPLETE, or valid frame index.
@@ -319,7 +319,7 @@ pub struct MapEntryFrame {
 }
 
 impl MapEntryFrame {
-    pub fn new(map_def: &'static MapDef) -> Self {
+    pub fn new(map_def: MapDef) -> Self {
         Self {
             map_def,
             key: Idx::NOT_STARTED,
@@ -702,11 +702,7 @@ impl Frame {
     /// Create a frame for a map entry (key, value) tuple.
     /// `data` points to temporary memory for key and value staging.
     /// `shape` is now a ShapeDesc::Tuple2 with the actual entry layout.
-    pub fn new_map_entry(
-        data: PtrUninit,
-        shape: impl Into<ShapeDesc>,
-        map_def: &'static MapDef,
-    ) -> Self {
+    pub fn new_map_entry(data: PtrUninit, shape: impl Into<ShapeDesc>, map_def: MapDef) -> Self {
         Frame {
             data,
             shape: shape.into(),
@@ -798,20 +794,20 @@ impl Frame {
             // The shape is a Tuple2Shape which knows how to drop both fields
             if entry.key.is_complete() || entry.value.is_complete() {
                 // Get field info from the Tuple2Shape
-                if let Some((key_offset, key_shape)) = self.shape.field(0) {
-                    if entry.key.is_complete() {
-                        unsafe {
-                            let key_ptr = self.data.assume_init().field(key_offset);
-                            key_shape.call_drop_in_place(key_ptr);
-                        }
+                if let Some((key_offset, key_shape)) = self.shape.field(0)
+                    && entry.key.is_complete()
+                {
+                    unsafe {
+                        let key_ptr = self.data.assume_init().field(key_offset);
+                        key_shape.call_drop_in_place(key_ptr);
                     }
                 }
-                if let Some((value_offset, value_shape)) = self.shape.field(1) {
-                    if entry.value.is_complete() {
-                        unsafe {
-                            let value_ptr = self.data.assume_init().field(value_offset);
-                            value_shape.call_drop_in_place(value_ptr);
-                        }
+                if let Some((value_offset, value_shape)) = self.shape.field(1)
+                    && entry.value.is_complete()
+                {
+                    unsafe {
+                        let value_ptr = self.data.assume_init().field(value_offset);
+                        value_shape.call_drop_in_place(value_ptr);
                     }
                 }
             }
@@ -819,13 +815,13 @@ impl Frame {
             // Enum variant may be complete even if INIT flag isn't set
             // (e.g., when variant was set via apply_enum_variant_set)
             if let Some((variant_idx, status)) = e.selected {
-                if status.is_complete() {
-                    if let Type::User(UserType::Enum(enum_type)) = *self.shape.ty() {
-                        let variant = &enum_type.variants[variant_idx as usize];
-                        // SAFETY: the variant was marked complete, so its fields are initialized
-                        unsafe {
-                            drop_variant_fields(self.data.assume_init().as_const(), variant);
-                        }
+                if status.is_complete()
+                    && let Type::User(UserType::Enum(enum_type)) = *self.shape.ty()
+                {
+                    let variant = &enum_type.variants[variant_idx as usize];
+                    // SAFETY: the variant was marked complete, so its fields are initialized
+                    unsafe {
+                        drop_variant_fields(self.data.assume_init().as_const(), variant);
                     }
                 }
                 e.selected = None;

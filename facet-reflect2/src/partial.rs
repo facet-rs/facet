@@ -13,6 +13,7 @@ use crate::arena::{Arena, Idx};
 use crate::errors::{ReflectError, ReflectErrorKind};
 use crate::frame::{Frame, FrameFlags, FrameKind, absolute_path};
 use crate::ops::{Op, OpBatch, Path, PathSegment};
+use crate::shape_desc::ShapeDesc;
 use facet_core::{
     Def, EnumType, Facet, Field, PtrUninit, SequenceType, Shape, Type, UserType, Variant,
 };
@@ -47,10 +48,10 @@ impl<'facet> Partial<'facet> {
 
     /// Allocate for a dynamic shape.
     pub fn alloc_shape(shape: &'static Shape) -> Result<Self, ReflectError> {
-        let layout = shape
-            .layout
-            .sized_layout()
-            .map_err(|_| ReflectError::at_root(shape, ReflectErrorKind::Unsized { shape }))?;
+        let shape_desc = ShapeDesc::Static(shape);
+        let layout = shape.layout.sized_layout().map_err(|_| {
+            ReflectError::at_root(shape_desc, ReflectErrorKind::Unsized { shape: shape_desc })
+        })?;
 
         // Allocate memory (handle ZST case)
         let data = if layout.size() == 0 {
@@ -60,7 +61,7 @@ impl<'facet> Partial<'facet> {
             let ptr = unsafe { alloc(layout) };
             if ptr.is_null() {
                 return Err(ReflectError::at_root(
-                    shape,
+                    shape_desc,
                     ReflectErrorKind::AllocFailed { layout },
                 ));
             }
@@ -141,7 +142,7 @@ impl<'facet> Partial<'facet> {
     pub fn apply(&mut self, ops: &[Op<'_>]) -> Result<(), ReflectError> {
         if self.poisoned {
             return Err(ReflectError::at_root(
-                self.root_shape,
+                ShapeDesc::Static(self.root_shape),
                 ReflectErrorKind::Poisoned,
             ));
         }
@@ -166,7 +167,7 @@ impl<'facet> Partial<'facet> {
     pub fn apply_batch(&mut self, batch: &mut OpBatch<'_>) -> Result<(), ReflectError> {
         if self.poisoned {
             return Err(ReflectError::at_root(
-                self.root_shape,
+                ShapeDesc::Static(self.root_shape),
                 ReflectErrorKind::Poisoned,
             ));
         }
@@ -232,16 +233,16 @@ impl<'facet> Partial<'facet> {
 
         let is_enum_variant_selection = first_field.is_some()
             && matches!(frame.kind, FrameKind::Enum(_))
-            && matches!(frame.shape.ty, Type::User(UserType::Enum(_)));
+            && matches!(frame.shape.ty(), Type::User(UserType::Enum(_)));
 
         // Check if current frame is an Option/Result frame with variant selection
         let is_option_variant_selection = first_field.is_some()
             && matches!(frame.kind, FrameKind::Option(_))
-            && matches!(frame.shape.def, Def::Option(_));
+            && matches!(frame.shape.def(), Def::Option(_));
 
         let is_result_variant_selection = first_field.is_some()
             && matches!(frame.kind, FrameKind::Result(_))
-            && matches!(frame.shape.def, Def::Result(_));
+            && matches!(frame.shape.def(), Def::Result(_));
 
         if is_enum_variant_selection {
             self.apply_enum_variant_set(path, source)
@@ -293,14 +294,16 @@ impl<'facet> Partial<'facet> {
             let value_shape = map_def.v;
 
             // Allocate staging memory for key + value
-            let key_layout = key_shape
-                .layout
-                .sized_layout()
-                .map_err(|_| self.error(ReflectErrorKind::Unsized { shape: key_shape }))?;
-            let value_layout = value_shape
-                .layout
-                .sized_layout()
-                .map_err(|_| self.error(ReflectErrorKind::Unsized { shape: value_shape }))?;
+            let key_layout = key_shape.layout.sized_layout().map_err(|_| {
+                self.error(ReflectErrorKind::Unsized {
+                    shape: ShapeDesc::Static(key_shape),
+                })
+            })?;
+            let value_layout = value_shape.layout.sized_layout().map_err(|_| {
+                self.error(ReflectErrorKind::Unsized {
+                    shape: ShapeDesc::Static(value_shape),
+                })
+            })?;
 
             // Calculate total size: key at offset 0, value at aligned offset
             let value_offset = key_layout.size().max(value_layout.align());
@@ -452,12 +455,12 @@ impl<'facet> Partial<'facet> {
                     // Value at aligned offset after key
                     let key_layout = entry.map_def.k.layout.sized_layout().map_err(|_| {
                         self.error(ReflectErrorKind::Unsized {
-                            shape: entry.map_def.k,
+                            shape: ShapeDesc::Static(entry.map_def.k),
                         })
                     })?;
                     let value_layout = entry.map_def.v.layout.sized_layout().map_err(|_| {
                         self.error(ReflectErrorKind::Unsized {
-                            shape: entry.map_def.v,
+                            shape: ShapeDesc::Static(entry.map_def.v),
                         })
                     })?;
                     let value_offset = key_layout.size().max(value_layout.align());
@@ -474,7 +477,7 @@ impl<'facet> Partial<'facet> {
             return Ok(Frame::new(field_ptr, shape));
         }
 
-        match frame.shape.ty {
+        match *frame.shape.ty() {
             Type::User(UserType::Struct(ref s)) => {
                 let field = self.get_struct_field(s.fields, index)?;
                 let field_ptr =
@@ -501,7 +504,7 @@ impl<'facet> Partial<'facet> {
                 let element_shape = a.t;
                 let element_layout = element_shape.layout.sized_layout().map_err(|_| {
                     self.error(ReflectErrorKind::Unsized {
-                        shape: element_shape,
+                        shape: ShapeDesc::Static(element_shape),
                     })
                 })?;
                 let offset = (index as usize) * element_layout.size();
@@ -511,7 +514,7 @@ impl<'facet> Partial<'facet> {
             }
             _ => {
                 // Check for Option/Result types (they have special Def but not a special Type)
-                match &frame.shape.def {
+                match frame.shape.def() {
                     Def::Option(_) => {
                         // Validate variant index: 0 = None, 1 = Some
                         if index > 1 {
@@ -575,12 +578,12 @@ impl<'facet> Partial<'facet> {
         let frame = self.arena.get(self.root);
 
         // Verify shape matches
-        if !frame.shape.is_shape(T::SHAPE) {
+        if !frame.shape.is_shape(ShapeDesc::Static(T::SHAPE)) {
             return Err(self.error_at(
                 self.root,
                 ReflectErrorKind::ShapeMismatch {
                     expected: frame.shape,
-                    actual: T::SHAPE,
+                    actual: ShapeDesc::Static(T::SHAPE),
                 },
             ));
         }

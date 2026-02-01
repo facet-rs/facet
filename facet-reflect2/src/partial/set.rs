@@ -545,9 +545,9 @@ impl<'facet> Partial<'facet> {
                         // SAFETY: we'll write through the vtable
                         let ok = unsafe { inner_shape.call_default_in_place(frame.data) };
                         if ok.is_none() {
-                            return Err(
-                                self.error(ReflectErrorKind::NoDefault { shape: inner_shape })
-                            );
+                            return Err(self.error(ReflectErrorKind::NoDefault {
+                                shape: ShapeDesc::Static(inner_shape),
+                            }));
                         }
                         // The default was written to frame.data, now wrap it in Some
                         let init_some_fn = option_def.vtable.init_some;
@@ -567,8 +567,8 @@ impl<'facet> Partial<'facet> {
                         // Verify shape matches inner type
                         if !inner_shape.is_shape(mov.shape()) {
                             return Err(self.error(ReflectErrorKind::ShapeMismatch {
-                                expected: inner_shape,
-                                actual: mov.shape(),
+                                expected: ShapeDesc::Static(inner_shape),
+                                actual: ShapeDesc::Static(mov.shape()),
                             }));
                         }
 
@@ -589,7 +589,9 @@ impl<'facet> Partial<'facet> {
                     Source::Stage(_capacity) => {
                         // Allocate temporary space for the inner value
                         let layout = inner_shape.layout.sized_layout().map_err(|_| {
-                            self.error(ReflectErrorKind::Unsized { shape: inner_shape })
+                            self.error(ReflectErrorKind::Unsized {
+                                shape: ShapeDesc::Static(inner_shape),
+                            })
                         })?;
 
                         let temp_ptr = if layout.size() == 0 {
@@ -696,7 +698,9 @@ impl<'facet> Partial<'facet> {
                 // SAFETY: we'll write through the vtable
                 let ok = unsafe { inner_shape.call_default_in_place(frame.data) };
                 if ok.is_none() {
-                    return Err(self.error(ReflectErrorKind::NoDefault { shape: inner_shape }));
+                    return Err(self.error(ReflectErrorKind::NoDefault {
+                        shape: ShapeDesc::Static(inner_shape),
+                    }));
                 }
 
                 // Wrap in Ok or Err
@@ -723,8 +727,8 @@ impl<'facet> Partial<'facet> {
                 // Verify shape matches inner type
                 if !inner_shape.is_shape(mov.shape()) {
                     return Err(self.error(ReflectErrorKind::ShapeMismatch {
-                        expected: inner_shape,
-                        actual: mov.shape(),
+                        expected: ShapeDesc::Static(inner_shape),
+                        actual: ShapeDesc::Static(mov.shape()),
                     }));
                 }
 
@@ -750,10 +754,11 @@ impl<'facet> Partial<'facet> {
             }
             Source::Stage(_capacity) => {
                 // Allocate temporary space for the inner value
-                let layout = inner_shape
-                    .layout
-                    .sized_layout()
-                    .map_err(|_| self.error(ReflectErrorKind::Unsized { shape: inner_shape }))?;
+                let layout = inner_shape.layout.sized_layout().map_err(|_| {
+                    self.error(ReflectErrorKind::Unsized {
+                        shape: ShapeDesc::Static(inner_shape),
+                    })
+                })?;
 
                 let temp_ptr = if layout.size() == 0 {
                     PtrUninit::new(std::ptr::NonNull::<u8>::dangling().as_ptr())
