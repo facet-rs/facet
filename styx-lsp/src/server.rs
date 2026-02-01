@@ -1322,7 +1322,10 @@ impl LanguageServer for StyxLanguageServer {
                             NumberOrString::String(s) => s.clone(),
                             NumberOrString::Number(n) => n.to_string(),
                         }),
-                        data: None, // We don't convert JSON back to styx Value
+                        data: d.data.as_ref().map(|json_val| {
+                            // Convert JSON Value to styx Value
+                            json_to_styx_value(json_val)
+                        }),
                     })
                     .collect();
 
@@ -3065,6 +3068,82 @@ fn convert_styx_value_to_json(value: &styx_tree::Value) -> serde_json::Value {
 
     // Fallback to null
     serde_json::Value::Null
+}
+
+/// Convert a serde_json::Value to a styx_tree::Value for extension diagnostic data.
+fn json_to_styx_value(json: &serde_json::Value) -> styx_tree::Value {
+    use styx_tree::{Entry, Object, Payload, Scalar, ScalarKind, Sequence, Value};
+
+    match json {
+        serde_json::Value::Null => Value::unit(),
+
+        serde_json::Value::Bool(b) => Value {
+            tag: None,
+            payload: Some(Payload::Scalar(Scalar {
+                text: b.to_string(),
+                kind: ScalarKind::Bare,
+                span: None,
+            })),
+            span: None,
+        },
+
+        serde_json::Value::Number(n) => Value {
+            tag: None,
+            payload: Some(Payload::Scalar(Scalar {
+                text: n.to_string(),
+                kind: ScalarKind::Bare,
+                span: None,
+            })),
+            span: None,
+        },
+
+        serde_json::Value::String(s) => Value {
+            tag: None,
+            payload: Some(Payload::Scalar(Scalar {
+                text: s.clone(),
+                kind: ScalarKind::Bare,
+                span: None,
+            })),
+            span: None,
+        },
+
+        serde_json::Value::Array(arr) => {
+            let items = arr.iter().map(json_to_styx_value).collect();
+            Value {
+                tag: None,
+                payload: Some(Payload::Sequence(Sequence { items, span: None })),
+                span: None,
+            }
+        }
+
+        serde_json::Value::Object(obj) => {
+            let entries = obj
+                .iter()
+                .map(|(k, v)| Entry {
+                    key: Value {
+                        tag: None,
+                        payload: Some(Payload::Scalar(Scalar {
+                            text: k.clone(),
+                            kind: ScalarKind::Bare,
+                            span: None,
+                        })),
+                        span: None,
+                    },
+                    value: json_to_styx_value(v),
+                    doc_comment: None,
+                })
+                .collect();
+
+            Value {
+                tag: None,
+                payload: Some(Payload::Object(Object {
+                    entries,
+                    span: None,
+                })),
+                span: None,
+            }
+        }
+    }
 }
 
 /// Convert an extension completion item to LSP completion item.
