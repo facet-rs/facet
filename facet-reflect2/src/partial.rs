@@ -6,6 +6,7 @@ mod list;
 mod map;
 mod push;
 mod set;
+mod set_collection;
 
 use std::alloc::alloc;
 use std::marker::PhantomData;
@@ -600,19 +601,6 @@ impl<'facet> Partial<'facet> {
             }));
         }
         Ok(&enum_type.variants[idx])
-    }
-
-    /// Update SetFrame state after Set at empty path with Imm/Default.
-    ///
-    /// TODO: Move this to a dedicated set_collection.rs module
-    pub(crate) fn set_sync_after_set(&mut self) {
-        let frame = self.arena.get_mut(self.current);
-        if let FrameKind::Set(ref mut s) = frame.kind {
-            let set_ptr = unsafe { frame.data.assume_init() };
-            s.len = unsafe { (s.def.vtable.len)(set_ptr.as_const()) };
-            // Set is now fully initialized, no slab needed
-            s.slab = None;
-        }
     }
 
     /// Build the final value, consuming the Partial.

@@ -84,21 +84,8 @@ impl<'facet> Partial<'facet> {
             }
 
             ParentLink::SetElement { .. } => {
-                // Set element completing - element is in the slab.
-                // Just increment count and free the frame.
-                // The actual set construction happens when the Set frame ends
-                // (via finalize_set_if_needed which calls from_slice).
-
-                // Free the element frame - do NOT deallocate since slab owns the memory
-                let _ = self.arena.free(self.current);
-
-                // Increment element count in parent set
-                let parent = self.arena.get_mut(parent_idx);
-                if let FrameKind::Set(s) = &mut parent.kind {
-                    s.len += 1;
-                }
-
-                self.current = parent_idx;
+                // Set element completing - delegate to set module
+                self.set_element_end(parent_idx)?;
             }
 
             ParentLink::PointerInner { .. } => {
@@ -261,48 +248,7 @@ impl<'facet> Partial<'facet> {
 
     /// If current frame is a Set with a slab, build the set using from_slice.
     pub(crate) fn finalize_set_if_needed(&mut self) -> Result<(), ReflectError> {
-        let frame = self.arena.get(self.current);
-        let FrameKind::Set(ref set_frame) = frame.kind else {
-            return Ok(()); // Not a set, nothing to do
-        };
-
-        // Check if there's a slab to finalize
-        if set_frame.slab.is_none() {
-            return Ok(()); // No slab = no elements were staged
-        }
-
-        // Get from_slice function
-        let from_slice = set_frame.def.vtable.from_slice.ok_or_else(|| {
-            self.error(ReflectErrorKind::SetDoesNotSupportFromSlice { shape: frame.shape })
-        })?;
-
-        // Get the data we need before taking the slab
-        let set_ptr = frame.data;
-        let len = set_frame.len;
-
-        // Take the slab out of the frame
-        let frame = self.arena.get_mut(self.current);
-        let FrameKind::Set(ref mut set_frame) = frame.kind else {
-            unreachable!()
-        };
-        let slab = set_frame.slab.take().expect("slab exists");
-        let elements_ptr = slab.as_mut_ptr();
-
-        // Build the set using from_slice
-        // SAFETY: set_ptr is uninitialized memory, elements_ptr points to len initialized elements
-        unsafe {
-            from_slice(set_ptr, elements_ptr, len);
-        }
-
-        // Slab is dropped here - deallocates buffer but doesn't drop elements
-        // (elements were moved out by from_slice)
-        drop(slab);
-
-        // Mark set as initialized
-        let frame = self.arena.get_mut(self.current);
-        frame.flags |= FrameFlags::INIT;
-
-        Ok(())
+        self.set_finalize()
     }
 
     /// Apply defaults only for struct-like root frames.
