@@ -637,7 +637,7 @@ unsafe fn deserialize_into_ptr(
     shape: &'static Shape,
     payload: &[u8],
 ) -> Result<(), String> {
-    use facet_format::FormatDeserializer;
+    use facet_format::{FormatDeserializer, MetaSource};
     use facet_postcard::PostcardParser;
     use facet_reflect::{Partial, TypePlanCore};
 
@@ -655,7 +655,7 @@ unsafe fn deserialize_into_ptr(
     let mut deserializer: FormatDeserializer<'_, '_, false> =
         FormatDeserializer::new_owned(&mut parser);
     let partial = deserializer
-        .deserialize_into(partial, None)
+        .deserialize_into(partial, MetaSource::FromEvents)
         .map_err(|e| e.to_string())?;
 
     partial.finish_in_place().map_err(|e| e.to_string())?;

@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use facet::Facet;
 use facet_core::{PtrConst, PtrMut, PtrUninit, Shape};
-use facet_format::FormatDeserializer;
+use facet_format::{FormatDeserializer, MetaSource};
 use facet_postcard::PostcardParser;
 use facet_reflect::{Partial, TypePlanCore};
 
@@ -558,7 +558,7 @@ pub unsafe fn deserialize_into(
     let mut deserializer: FormatDeserializer<'_, '_, false> =
         FormatDeserializer::new_owned(&mut parser);
     let partial = deserializer
-        .deserialize_into(partial, None)
+        .deserialize_into(partial, MetaSource::FromEvents)
         .map_err(|e| PrepareError::Deserialize(e.to_string()))?;
 
     // Validate the value is fully initialized and leave it in place.
