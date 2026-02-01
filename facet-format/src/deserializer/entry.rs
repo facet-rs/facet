@@ -306,15 +306,21 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         match kind {
             "span" => {
+                // Check if the field is Option<Span> or just Span
+                let is_option = matches!(wip.shape().def, Def::Option(_));
+                if is_option {
+                    wip = wip.begin_some()?;
+                }
                 wip = wip
-                    .begin_some()?
                     .begin_field("offset")?
                     .set(span.offset)?
                     .end()?
                     .begin_field("len")?
                     .set(span.len)?
-                    .end()?
                     .end()?;
+                if is_option {
+                    wip = wip.end()?;
+                }
             }
             "doc" => {
                 if let Some(doc_lines) = meta.doc() {
