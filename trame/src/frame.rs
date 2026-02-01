@@ -1006,6 +1006,41 @@ impl Frame {
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    /// Verify IndexedFields::all_complete works correctly.
+    /// Tests that marking fields affects completion status as expected.
+    #[kani::proof]
+    #[kani::unwind(4)]
+    fn indexed_fields_completion() {
+        // Test with a small fixed size to bound the verification
+        let mut fields = IndexedFields::new(3);
+
+        // Initially all fields are NOT_STARTED, so not complete
+        kani::assert(!fields.all_complete(), "new fields are not complete");
+
+        // Mark field 0 complete
+        fields.mark_complete(0);
+        kani::assert(!fields.all_complete(), "partial completion is not complete");
+        kani::assert(fields.is_complete(0), "field 0 should be complete");
+        kani::assert(!fields.is_complete(1), "field 1 should not be complete");
+
+        // Mark field 1 complete
+        fields.mark_complete(1);
+        kani::assert(!fields.all_complete(), "still missing field 2");
+
+        // Mark field 2 complete
+        fields.mark_complete(2);
+        kani::assert(fields.all_complete(), "all fields now complete");
+
+        // Marking as not_started breaks completion
+        fields.mark_not_started(1);
+        kani::assert(!fields.all_complete(), "unmarking breaks completion");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
