@@ -1,5 +1,6 @@
 mod basic;
 mod flatten;
+mod issue_1995;
 mod nested_arrays;
 mod spanned;
 mod tables;

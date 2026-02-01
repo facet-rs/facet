@@ -6,7 +6,7 @@ use facet_solver::VariantsByFormat;
 
 use crate::{
     ContainerKind, DeserializeError, DeserializeErrorKind, EnumVariantHint, FieldEvidence,
-    FormatDeserializer, ParseEventKind, ScalarValue, SpanGuard,
+    FormatDeserializer, ParseEventKind, ScalarValue, SpanGuard, deserializer::entry::MetaSource,
     deserializer::scalar_matches::scalar_matches_shape,
 };
 
@@ -171,22 +171,15 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                     wip = wip.select_variant_named(other_variant.effective_name())?;
                     wip = self.deserialize_other_variant_with_captured_tag(wip, None)?;
                 } else {
-                    self.expect_event("value")?;
+                    // Don't consume the event - let deserialize_into handle it properly
+                    // This ensures metadata containers like Meta<String> work correctly
                     wip = wip.select_variant_named(other_variant.effective_name())?;
-
-                    let scalar_as_string =
-                        scalar.to_string_value().ok_or_else(|| DeserializeError {
-                            span: Some(self.last_span),
-                            path: Some(wip.path()),
-                            kind: DeserializeErrorKind::UnexpectedToken {
-                                expected: "string or struct for enum",
-                                got: "bytes".into(),
-                            },
-                        })?;
-
+                    // Don't consume the event - let deserialize_into handle it properly.
+                    // This ensures metadata containers like Meta<String> work correctly
+                    // by reading metadata fresh from the unconsumed event.
                     wip = wip
                         .begin_nth_field(0)?
-                        .with(|w| self.set_string_value(w, Cow::Owned(scalar_as_string)))?
+                        .with(|w| self.deserialize_into(w, MetaSource::FromEvents))?
                         .end()?;
                 }
                 return Ok(wip);
@@ -533,7 +526,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                             {
                                 wip = wip
                                     .begin_nth_field(idx)?
-                                    .with(|w| self.deserialize_into(w, None))?
+                                    .with(|w| self.deserialize_into(w, MetaSource::FromEvents))?
                                     .end()?;
                             } else {
                                 // Unknown field - skip
@@ -639,7 +632,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                             }
 
                             // Deserialize the value
-                            wip = self.deserialize_into(wip, None)?;
+                            wip = self.deserialize_into(wip, MetaSource::FromEvents)?;
 
                             // Close the leaf field we just deserialized into
                             // (but keep parent segments open for potential sibling fields)
@@ -663,7 +656,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                         {
                             wip = wip
                                 .begin_nth_field(idx)?
-                                .with(|w| self.deserialize_into(w, None))?
+                                .with(|w| self.deserialize_into(w, MetaSource::FromEvents))?
                                 .end()?;
                         } else {
                             // Unknown field - skip
@@ -973,7 +966,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         }
 
         // Deserialize the variant's value (newtype pattern - single field)
-        wip = self.deserialize_into(wip, None)?;
+        wip = self.deserialize_into(wip, MetaSource::FromEvents)?;
         wip = wip.end()?;
 
         // Consume StructEnd
@@ -1018,7 +1011,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 // Single-element tuple variant (newtype): deserialize the inner value directly
                 wip = wip
                     .begin_nth_field(0)?
-                    .with(|w| self.deserialize_into(w, None))?
+                    .with(|w| self.deserialize_into(w, MetaSource::FromEvents))?
                     .end()?;
                 return Ok(wip);
             }
@@ -1079,7 +1072,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                     {
                         wip = wip
                             .begin_nth_field(idx)?
-                            .with(|w| self.deserialize_into(w, None))?
+                            .with(|w| self.deserialize_into(w, MetaSource::FromEvents))?
                             .end()?;
                     } else {
                         // Unknown field - skip
@@ -1292,7 +1285,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                     // Newtype variant - content is the single field's value
                     wip = wip
                         .begin_nth_field(0)?
-                        .with(|w| self.deserialize_into(w, None))?
+                        .with(|w| self.deserialize_into(w, MetaSource::FromEvents))?
                         .end()?;
                 } else {
                     // Multi-field tuple variant - expect array or struct
@@ -1336,7 +1329,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
                         wip = wip
                             .begin_nth_field(idx)?
-                            .with(|w| self.deserialize_into(w, None))?
+                            .with(|w| self.deserialize_into(w, MetaSource::FromEvents))?
                             .end()?;
                         idx += 1;
                     }
@@ -1401,7 +1394,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                             if idx < num_fields {
                                 wip = wip
                                     .begin_nth_field(idx)?
-                                    .with(|w| self.deserialize_into(w, None))?
+                                    .with(|w| self.deserialize_into(w, MetaSource::FromEvents))?
                                     .end()?;
                             }
                         }
@@ -1443,7 +1436,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                                         open_segments.push((field_name, is_option));
                                     }
 
-                                    wip = self.deserialize_into(wip, None)?;
+                                    wip = self.deserialize_into(wip, MetaSource::FromEvents)?;
 
                                     if let Some((_, is_option)) = open_segments.pop() {
                                         if is_option {
@@ -1464,7 +1457,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                                 {
                                     wip = wip
                                         .begin_nth_field(idx)?
-                                        .with(|w| self.deserialize_into(w, None))?
+                                        .with(|w| self.deserialize_into(w, MetaSource::FromEvents))?
                                         .end()?;
                                 } else {
                                     self.skip_value()?;
@@ -1559,7 +1552,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         // Deserialize directly into the variant's single field
         wip = wip
             .begin_nth_field(0)?
-            .with(|w| self.deserialize_into(w, None))?
+            .with(|w| self.deserialize_into(w, MetaSource::FromEvents))?
             .end()?;
 
         Ok(wip)
@@ -1791,7 +1784,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         if let Some(idx) = content_field_idx {
             wip = wip
                 .begin_nth_field(idx)?
-                .with(|w| self.deserialize_into(w, None))?
+                .with(|w| self.deserialize_into(w, MetaSource::FromEvents))?
                 .end()?;
         } else {
             // No content field - the payload must be Unit

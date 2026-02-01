@@ -3,7 +3,7 @@ use facet_reflect::Partial;
 
 use crate::{
     DeserializeError, DeserializeErrorKind, FormatDeserializer, ParseEventKind, ScalarValue,
-    SpanGuard, ValueMeta,
+    SpanGuard, ValueMeta, deserializer::entry::MetaSource,
 };
 
 /// Look up a field by name using precomputed TypePlan if available, otherwise linear scan.
@@ -120,7 +120,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                     if idx < struct_def.fields.len() {
                         wip = wip
                             .begin_nth_field(idx)?
-                            .with(|w| self.deserialize_into(w, None))?
+                            .with(|w| self.deserialize_into(w, MetaSource::FromEvents))?
                             .end()?;
                     }
                 }
@@ -161,7 +161,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                         let meta = meta_builder.build();
 
                         wip = wip.begin_nth_field(idx)?;
-                        wip = self.deserialize_into(wip, Some(&meta))?;
+                        wip = self.deserialize_into(wip, MetaSource::Owned(meta))?;
 
                         let _guard = SpanGuard::new(self.last_span);
                         wip = wip.end()?;

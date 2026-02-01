@@ -8,6 +8,48 @@ use crate::{
     FormatDeserializer, ParseEventKind, ScalarTypeHint, ScalarValue, SpanGuard, ValueMeta,
 };
 
+/// Specifies where metadata should come from during deserialization.
+#[derive(Debug, Clone, Default)]
+pub enum MetaSource<'a> {
+    /// Use explicit metadata from an outer context (borrowed).
+    ///
+    /// Use cases:
+    /// - **Consumed a VariantTag**: We consumed `@tag` before a value and need to pass
+    ///   the tag name (and doc if present) to the inner value so metadata containers
+    ///   can capture it.
+    /// - **Recursive through wrappers**: Going through proxies, transparent converts,
+    ///   pointers, `begin_inner` - same logical value, pass through same metadata.
+    /// - **Merged metadata**: When we've built up metadata from multiple sources
+    ///   (e.g., tag span + value span combined) and need to pass the merged result.
+    Explicit(&'a ValueMeta<'a>),
+
+    /// Use explicit metadata that was constructed locally (owned).
+    ///
+    /// Use cases:
+    /// - **Struct field with attached metadata**: The field key had doc comments or
+    ///   other metadata that should apply to the field value.
+    Owned(ValueMeta<'a>),
+
+    /// Get fresh metadata from the events being parsed.
+    ///
+    /// Use this when deserializing a new value that has no pre-consumed context:
+    /// list items, map keys/values, struct fields without special metadata, etc.
+    #[default]
+    FromEvents,
+}
+
+impl<'a> From<&'a ValueMeta<'a>> for MetaSource<'a> {
+    fn from(meta: &'a ValueMeta<'a>) -> Self {
+        MetaSource::Explicit(meta)
+    }
+}
+
+impl<'a> From<ValueMeta<'a>> for MetaSource<'a> {
+    fn from(meta: ValueMeta<'a>) -> Self {
+        MetaSource::Owned(meta)
+    }
+}
+
 impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BORROW> {
     /// Main deserialization entry point - deserialize into a Partial.
     ///
@@ -15,12 +57,13 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     /// The strategy is computed once at Partial allocation time, eliminating
     /// repeated runtime inspection of Shape/Def/vtable during deserialization.
     ///
-    /// The `meta` parameter carries metadata (doc comments, type tags) from formats
-    /// that support them (like Styx). Pass `None` for formats without metadata.
+    /// The `meta` parameter specifies where metadata should come from:
+    /// - `MetaSource::Explicit(meta)` - use provided metadata from outer context
+    /// - `MetaSource::FromEvents` - read fresh metadata from the events being parsed
     pub fn deserialize_into(
         &mut self,
         wip: Partial<'input, BORROW>,
-        meta: Option<&ValueMeta<'input>>,
+        meta: MetaSource<'input>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
         let shape = wip.shape();
@@ -50,7 +93,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         if shape.builder_shape.is_some() {
             return Ok(wip
                 .begin_inner()?
-                .with(|w| self.deserialize_into(w, None))?
+                .with(|w| self.deserialize_into(w, meta))?
                 .end()?);
         }
 
@@ -67,26 +110,26 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 let format_ns = self.parser.format_namespace();
                 let (wip, _) =
                     wip.begin_custom_deserialization_from_shape_with_format(format_ns)?;
-                Ok(wip.with(|w| self.deserialize_into(w, None))?.end()?)
+                Ok(wip.with(|w| self.deserialize_into(w, meta))?.end()?)
             }
 
             Some(DeserStrategy::FieldProxy) => {
                 // Field-level proxy - the field has #[facet(proxy = X)]
                 let format_ns = self.parser.format_namespace();
                 let wip = wip.begin_custom_deserialization_with_format(format_ns)?;
-                Ok(wip.with(|w| self.deserialize_into(w, None))?.end()?)
+                Ok(wip.with(|w| self.deserialize_into(w, meta))?.end()?)
             }
 
             Some(DeserStrategy::Pointer { .. }) => {
                 trace!("deserialize_into: dispatching to deserialize_pointer");
-                self.deserialize_pointer(wip)
+                self.deserialize_pointer(wip, meta)
             }
 
             Some(DeserStrategy::TransparentConvert { .. }) => {
                 trace!("deserialize_into: dispatching via begin_inner (transparent convert)");
                 Ok(wip
                     .begin_inner()?
-                    .with(|w| self.deserialize_into(w, None))?
+                    .with(|w| self.deserialize_into(w, meta))?
                     .end()?)
             }
 
@@ -205,7 +248,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     fn deserialize_metadata_container(
         &mut self,
         mut wip: Partial<'input, BORROW>,
-        meta: Option<&ValueMeta<'input>>,
+        meta: MetaSource<'input>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         // Check if this metadata container has a "tag" metadata field.
         // Only consume VariantTag events if the container can store them.
@@ -227,8 +270,13 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
                 // Merge tag with any existing meta (preserving doc comments)
                 let mut builder = ValueMeta::builder().span(tag_span);
-                if let Some(m) = meta
-                    && let Some(doc) = m.doc()
+                let existing_meta = match &meta {
+                    MetaSource::Explicit(m) => Some(*m),
+                    MetaSource::Owned(m) => Some(m),
+                    MetaSource::FromEvents => None,
+                };
+                if let Some(existing) = existing_meta
+                    && let Some(doc) = existing.doc()
                 {
                     builder = builder.doc(doc.to_vec());
                 }
@@ -240,8 +288,14 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 (None, None)
             };
 
+        // Resolve meta: use constructed meta from VariantTag, or explicit meta, or empty
         static EMPTY_META: ValueMeta<'static> = ValueMeta::empty();
-        let meta = meta_owned.as_ref().or(meta).unwrap_or(&EMPTY_META);
+        let meta: &ValueMeta<'_> = match (&meta_owned, &meta) {
+            (Some(owned), _) => owned,
+            (None, MetaSource::Explicit(explicit)) => explicit,
+            (None, MetaSource::Owned(owned)) => owned,
+            (None, MetaSource::FromEvents) => &EMPTY_META,
+        };
 
         let shape = wip.shape();
         trace!(%shape, "deserialize_into: metadata container detected");
@@ -251,10 +305,10 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         if let Type::User(UserType::Struct(st)) = &shape.ty {
             for field in st.fields {
                 if field.metadata_kind().is_none() {
-                    // This is the value field - recurse into it (no meta for inner value)
+                    // This is the value field - recurse into it (fresh metadata from events)
                     wip = wip
                         .begin_field(field.effective_name())?
-                        .with(|w| self.deserialize_into(w, None))?
+                        .with(|w| self.deserialize_into(w, MetaSource::FromEvents))?
                         .end()?;
                     value_span = self.last_span;
                     break;
@@ -467,7 +521,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             // Some(value)
             wip = wip
                 .begin_some()?
-                .with(|w| self.deserialize_into(w, None))?
+                .with(|w| self.deserialize_into(w, MetaSource::FromEvents))?
                 .end()?;
         }
         Ok(wip)
@@ -509,7 +563,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             // Unwrap into field 0 and deserialize directly
             return Ok(wip
                 .begin_nth_field(0)?
-                .with(|w| self.deserialize_into(w, None))?
+                .with(|w| self.deserialize_into(w, MetaSource::FromEvents))?
                 .end()?);
         }
 
@@ -589,7 +643,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             // Select field by index
             wip = wip
                 .begin_nth_field(index)?
-                .with(|w| self.deserialize_into(w, None))?
+                .with(|w| self.deserialize_into(w, MetaSource::FromEvents))?
                 .end()?;
             index += 1;
         }
@@ -783,7 +837,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             trace!("deserialize_list: deserializing list item");
             wip = wip
                 .begin_list_item()?
-                .with(|w| self.deserialize_into(w, None))?
+                .with(|w| self.deserialize_into(w, MetaSource::FromEvents))?
                 .end()?;
         }
 
@@ -858,7 +912,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
             wip = wip
                 .begin_nth_field(index)?
-                .with(|w| self.deserialize_into(w, None))?
+                .with(|w| self.deserialize_into(w, MetaSource::FromEvents))?
                 .end()?;
             index += 1;
         }
@@ -918,7 +972,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
             wip = wip
                 .begin_set_item()?
-                .with(|w| self.deserialize_into(w, None))?
+                .with(|w| self.deserialize_into(w, MetaSource::FromEvents))?
                 .end()?;
         }
 
@@ -961,7 +1015,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                             // Begin value
                             wip = wip
                                 .begin_value()?
-                                .with(|w| self.deserialize_into(w, None))?
+                                .with(|w| self.deserialize_into(w, MetaSource::FromEvents))?
                                 .end()?;
                         }
                         _ => {
@@ -992,13 +1046,13 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                             // Deserialize key
                             wip = wip
                                 .begin_key()?
-                                .with(|w| self.deserialize_into(w, None))?
+                                .with(|w| self.deserialize_into(w, MetaSource::FromEvents))?
                                 .end()?;
 
                             // Deserialize value
                             wip = wip
                                 .begin_value()?
-                                .with(|w| self.deserialize_into(w, None))?
+                                .with(|w| self.deserialize_into(w, MetaSource::FromEvents))?
                                 .end()?;
                         }
                         _ => {

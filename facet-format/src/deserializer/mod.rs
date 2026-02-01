@@ -110,7 +110,7 @@
 //! ```ignore
 //! // Instead of:
 //! wip = wip.begin_field("name")?;
-//! wip = self.deserialize_into(wip, None)?;
+//! wip = self.deserialize_into(wip, MetaSource::FromEvents)?;
 //! wip = wip.end()?;
 //!
 //! // Use:
@@ -134,6 +134,7 @@ use facet_solver::{KeyResult, Schema, Solver};
 use crate::{FormatParser, ParseEvent};
 
 mod error;
+pub use entry::MetaSource;
 pub use error::*;
 
 /// Convenience setters for string etc.
@@ -261,7 +262,7 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, true> {
     {
         let plan = TypePlan::<T>::build()?;
         let wip = plan.partial()?;
-        let partial = self.deserialize_into(wip, None)?;
+        let partial = self.deserialize_into(wip, MetaSource::FromEvents)?;
         // SpanGuard must cover build() and materialize() which can fail with ReflectError.
         // Created AFTER deserialize_into so last_span points to the final token.
         let _guard = SpanGuard::new(self.last_span);
@@ -289,7 +290,7 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, true> {
         let plan = TypePlan::<T>::build()?;
         let wip = plan.partial()?;
         let wip = wip.begin_deferred()?;
-        let partial = self.deserialize_into(wip, None)?;
+        let partial = self.deserialize_into(wip, MetaSource::FromEvents)?;
 
         // SpanGuard must cover finish_deferred(), build() and materialize() which can fail with ReflectError.
         // Created AFTER deserialize_into so last_span points to the final token.
@@ -313,7 +314,7 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
         #[allow(unsafe_code)]
         let wip: Partial<'input, false> = unsafe { core::mem::transmute(plan.partial_owned()?) };
 
-        let partial = self.deserialize_into(wip, None)?;
+        let partial = self.deserialize_into(wip, MetaSource::FromEvents)?;
 
         // SpanGuard must cover build() and materialize() which can fail with ReflectError.
         // Created AFTER deserialize_into so last_span points to the final token.
@@ -352,7 +353,7 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
         #[allow(unsafe_code)]
         let wip: Partial<'input, false> = unsafe { core::mem::transmute(plan.partial_owned()?) };
         let wip = wip.begin_deferred()?;
-        let partial = self.deserialize_into(wip, None)?;
+        let partial = self.deserialize_into(wip, MetaSource::FromEvents)?;
 
         // SpanGuard must cover finish_deferred(), build() and materialize() which can fail with ReflectError.
         // Created AFTER deserialize_into so last_span points to the final token.

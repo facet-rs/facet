@@ -260,7 +260,7 @@ pub fn from_str_into<'facet>(
     input: &str,
     partial: Partial<'facet, false>,
 ) -> Result<Partial<'facet, false>, DeserializeError> {
-    use facet_format::FormatDeserializer;
+    use facet_format::{FormatDeserializer, MetaSource};
     // TRUSTED_UTF8 = true: input came from &str, so it's valid UTF-8
     let mut parser = JsonParser::<true>::new(input.as_bytes());
     let mut de = FormatDeserializer::new_owned(&mut parser);
@@ -273,7 +273,7 @@ pub fn from_str_into<'facet>(
     let partial: Partial<'_, false> =
         unsafe { core::mem::transmute::<Partial<'facet, false>, Partial<'_, false>>(partial) };
 
-    let partial = de.deserialize_into(partial, None)?;
+    let partial = de.deserialize_into(partial, MetaSource::FromEvents)?;
 
     // SAFETY: Same reasoning - no borrowed data since BORROW=false.
     #[allow(unsafe_code)]
@@ -316,7 +316,7 @@ pub fn from_slice_into<'facet>(
     input: &[u8],
     partial: Partial<'facet, false>,
 ) -> Result<Partial<'facet, false>, DeserializeError> {
-    use facet_format::FormatDeserializer;
+    use facet_format::{FormatDeserializer, MetaSource};
     let mut parser = JsonParser::<false>::new(input);
     let mut de = FormatDeserializer::new_owned(&mut parser);
 
@@ -328,7 +328,7 @@ pub fn from_slice_into<'facet>(
     let partial: Partial<'_, false> =
         unsafe { core::mem::transmute::<Partial<'facet, false>, Partial<'_, false>>(partial) };
 
-    let partial = de.deserialize_into(partial, None)?;
+    let partial = de.deserialize_into(partial, MetaSource::FromEvents)?;
 
     // SAFETY: Same reasoning - no borrowed data since BORROW=false.
     #[allow(unsafe_code)]
@@ -374,11 +374,11 @@ pub fn from_str_into_borrowed<'input, 'facet>(
 where
     'input: 'facet,
 {
-    use facet_format::FormatDeserializer;
+    use facet_format::{FormatDeserializer, MetaSource};
     // TRUSTED_UTF8 = true: input came from &str, so it's valid UTF-8
     let mut parser = JsonParser::<true>::new(input.as_bytes());
     let mut de = FormatDeserializer::new(&mut parser);
-    de.deserialize_into(partial, None)
+    de.deserialize_into(partial, MetaSource::FromEvents)
 }
 
 /// Deserialize JSON from bytes into an existing Partial, allowing zero-copy borrowing.
@@ -417,8 +417,8 @@ pub fn from_slice_into_borrowed<'input, 'facet>(
 where
     'input: 'facet,
 {
-    use facet_format::FormatDeserializer;
+    use facet_format::{FormatDeserializer, MetaSource};
     let mut parser = JsonParser::<false>::new(input);
     let mut de = FormatDeserializer::new(&mut parser);
-    de.deserialize_into(partial, None)
+    de.deserialize_into(partial, MetaSource::FromEvents)
 }
