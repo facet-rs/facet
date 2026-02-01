@@ -513,34 +513,53 @@ impl std::fmt::Debug for FuzzSource {
 // FuzzPath - path into nested structures
 // ============================================================================
 
+/// A segment in a fuzz path.
+#[derive(Clone, Debug, Arbitrary)]
+pub enum FuzzPathSegment {
+    /// Navigate to a field by index.
+    Field(u8),
+    /// Append to collection.
+    Append,
+    /// Navigate to root first.
+    Root,
+}
+
 /// A path for accessing nested fields.
 /// Uses small indices to keep fuzzing efficient.
 #[derive(Clone, Arbitrary)]
 pub struct FuzzPath {
-    /// Field indices (limited to keep paths reasonable).
-    /// Using u8 since structs rarely have more than 256 fields.
-    pub indices: Vec<u8>,
+    /// Path segments (limited to keep paths reasonable).
+    pub segments: Vec<FuzzPathSegment>,
 }
 
 impl std::fmt::Debug for FuzzPath {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self.indices)
+        write!(f, "{:?}", self.segments)
     }
 }
 
 impl FuzzPath {
     fn to_path(&self) -> Path {
+        use facet_reflect2::PathSegment;
+
         // Limit path depth to avoid pathological cases
-        let mut iter = self.indices.iter().take(4);
-        if let Some(&first) = iter.next() {
-            let mut path = Path::field(first as u32);
-            for &idx in iter {
-                path = path.then_field(idx as u32);
-            }
-            path
-        } else {
-            Path::empty()
+        let segments: Vec<_> = self.segments.iter().take(4).collect();
+
+        if segments.is_empty() {
+            return Path::empty();
         }
+
+        // Build path from segments
+        let mut path_segments = Vec::new();
+        for seg in segments {
+            match seg {
+                FuzzPathSegment::Field(n) => path_segments.push(PathSegment::Field(*n as u32)),
+                FuzzPathSegment::Append => path_segments.push(PathSegment::Append),
+                FuzzPathSegment::Root => path_segments.push(PathSegment::Root),
+            }
+        }
+
+        Path::from_segments(&path_segments)
     }
 }
 
