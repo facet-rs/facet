@@ -164,9 +164,12 @@ fn enum_incomplete_variant_fails() {
     let mut x = 10i32;
     partial.apply(&[Op::set().at(0).imm(&mut x)]).unwrap();
 
-    // Try to end - should fail because y is not set
+    // Try to end - should fail because y (field 1) is not set
     let err = partial.apply(&[Op::end()]).unwrap_err();
-    assert!(matches!(err.kind, ReflectErrorKind::EndWithIncomplete));
+    assert!(matches!(
+        err.kind,
+        ReflectErrorKind::MissingRequiredField { index: 1 }
+    ));
 }
 
 #[test]

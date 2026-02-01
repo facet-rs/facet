@@ -132,23 +132,68 @@ fn set_field_on_non_struct() {
 }
 
 #[test]
-fn multi_level_path_not_supported() {
-    #[derive(Facet)]
+fn multi_level_path_sets_nested_field() {
+    #[derive(Debug, PartialEq, Facet)]
     struct Outer {
         inner: Point,
     }
 
     let mut partial = Partial::alloc::<Outer>().unwrap();
 
-    let mut value = 10i32;
-    // Try to set outer.inner.x with path [0, 0] - multi-level not yet supported
-    let err = partial
-        .apply(&[Op::set().at(0).at(0).imm(&mut value)])
-        .unwrap_err();
-    assert!(matches!(
-        err.kind,
-        ReflectErrorKind::MultiLevelPathNotSupported { depth: 2 }
-    ));
+    // Set outer.inner.x with path at(0).at(0) - creates intermediate frame
+    let mut x = 10i32;
+    partial.apply(&[Op::set().at(0).at(0).imm(&mut x)]).unwrap();
+
+    // Now we're inside the `inner` frame, set y
+    let mut y = 20i32;
+    partial.apply(&[Op::set().at(1).imm(&mut y)]).unwrap();
+
+    // End inner frame, back to Outer (which is now complete)
+    partial.apply(&[Op::end()]).unwrap();
+
+    let result: Outer = partial.build().unwrap();
+    assert_eq!(
+        result,
+        Outer {
+            inner: Point { x: 10, y: 20 }
+        }
+    );
+}
+
+#[test]
+fn multi_level_path_three_levels() {
+    #[derive(Debug, PartialEq, Facet)]
+    struct Outer {
+        middle: Middle,
+    }
+
+    #[derive(Debug, PartialEq, Facet)]
+    struct Middle {
+        inner: Point,
+    }
+
+    let mut partial = Partial::alloc::<Outer>().unwrap();
+
+    // Set outer.middle.inner.x with a 3-level path
+    let mut x = 100i32;
+    partial
+        .apply(&[Op::set().at(0).at(0).at(0).imm(&mut x)])
+        .unwrap();
+
+    // Now in Point frame, set y
+    let mut y = 200i32;
+    partial.apply(&[Op::set().at(1).imm(&mut y)]).unwrap();
+
+    // build() auto-navigates to root
+    let result: Outer = partial.build().unwrap();
+    assert_eq!(
+        result,
+        Outer {
+            middle: Middle {
+                inner: Point { x: 100, y: 200 }
+            }
+        }
+    );
 }
 
 #[test]
@@ -338,9 +383,12 @@ fn end_with_incomplete_fails() {
     let mut x = 10i32;
     partial.apply(&[Op::set().at(0).imm(&mut x)]).unwrap();
 
-    // Try to end - should fail because inner.y is not set
+    // Try to end - should fail because inner.y (field 1) is not set
     let err = partial.apply(&[Op::end()]).unwrap_err();
-    assert!(matches!(err.kind, ReflectErrorKind::EndWithIncomplete));
+    assert!(matches!(
+        err.kind,
+        ReflectErrorKind::MissingRequiredField { index: 1 }
+    ));
 }
 
 #[test]
@@ -461,10 +509,99 @@ fn root_path_fails_with_incomplete_frame() {
     let mut x = 10i32;
     partial.apply(&[Op::set().at(0).imm(&mut x)]).unwrap();
 
-    // Try to use root() - should fail because inner is incomplete
+    // Try to use root() - should fail because inner.y (field 1) is not set
     let mut extra = 42i32;
     let err = partial
         .apply(&[Op::set().root().at(1).imm(&mut extra)])
         .unwrap_err();
-    assert!(matches!(err.kind, ReflectErrorKind::EndWithIncomplete));
+    assert!(matches!(
+        err.kind,
+        ReflectErrorKind::MissingRequiredField { index: 1 }
+    ));
+}
+
+// Struct with a default field
+#[derive(Debug, PartialEq, Facet)]
+struct StructWithDefault {
+    required: i32,
+    #[facet(default)]
+    optional: i32, // defaults to 0
+}
+
+#[test]
+fn end_applies_defaults_for_missing_fields() {
+    let mut partial = Partial::alloc::<StructWithDefault>().unwrap();
+
+    // Only set the required field
+    let mut required = 42i32;
+    partial
+        .apply(&[Op::set().at(0).imm(&mut required)])
+        .unwrap();
+
+    // build() should succeed - optional gets its default (0)
+    let result: StructWithDefault = partial.build().unwrap();
+    assert_eq!(
+        result,
+        StructWithDefault {
+            required: 42,
+            optional: 0
+        }
+    );
+}
+
+// Struct with Option field (auto-defaults to None)
+#[derive(Debug, PartialEq, Facet)]
+struct StructWithOption {
+    required: i32,
+    optional: Option<String>,
+}
+
+#[test]
+fn end_applies_none_for_option_fields() {
+    let mut partial = Partial::alloc::<StructWithOption>().unwrap();
+
+    // Only set the required field
+    let mut required = 42i32;
+    partial
+        .apply(&[Op::set().at(0).imm(&mut required)])
+        .unwrap();
+
+    // build() should succeed - optional gets None
+    let result: StructWithOption = partial.build().unwrap();
+    assert_eq!(
+        result,
+        StructWithOption {
+            required: 42,
+            optional: None
+        }
+    );
+}
+
+// Struct with custom default expression
+#[derive(Debug, PartialEq, Facet)]
+struct StructWithCustomDefault {
+    required: i32,
+    #[facet(default = 999)]
+    custom: i32,
+}
+
+#[test]
+fn end_applies_custom_defaults() {
+    let mut partial = Partial::alloc::<StructWithCustomDefault>().unwrap();
+
+    // Only set the required field
+    let mut required = 42i32;
+    partial
+        .apply(&[Op::set().at(0).imm(&mut required)])
+        .unwrap();
+
+    // build() should succeed - custom gets 999
+    let result: StructWithCustomDefault = partial.build().unwrap();
+    assert_eq!(
+        result,
+        StructWithCustomDefault {
+            required: 42,
+            custom: 999
+        }
+    );
 }

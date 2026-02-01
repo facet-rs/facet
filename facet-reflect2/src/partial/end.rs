@@ -2,7 +2,7 @@ use super::Partial;
 use crate::arena::Idx;
 use crate::errors::{ReflectError, ReflectErrorKind};
 use crate::frame::{FrameFlags, FrameKind, ParentLink};
-use facet_core::Def;
+use facet_core::{Def, DefaultSource, PtrUninit, SequenceType, Type, UserType};
 
 /// Who initiated the End operation.
 #[derive(Clone, Copy)]
@@ -34,6 +34,9 @@ impl<'facet> Partial<'facet> {
                 match initiator {
                     EndInitiator::Op => return Err(self.error(ReflectErrorKind::EndAtRoot)),
                     EndInitiator::Build => {
+                        // For root frame, apply defaults for struct-like types
+                        // build()'s validation will catch other issues
+                        self.apply_defaults_for_struct_fields()?;
                         // Root is now complete, mark current as invalid
                         self.current = Idx::COMPLETE;
                         return Ok(());
@@ -42,17 +45,8 @@ impl<'facet> Partial<'facet> {
             }
         };
 
-        // Check if current frame is complete
-        let frame = self.arena.get(self.current);
-        let is_complete = if frame.flags.contains(FrameFlags::INIT) {
-            true
-        } else {
-            frame.kind.is_complete()
-        };
-
-        if !is_complete {
-            return Err(self.error(ReflectErrorKind::EndWithIncomplete));
-        }
+        // Apply defaults for incomplete fields, then verify completeness (non-root frames)
+        self.apply_defaults_and_ensure_complete()?;
 
         // Now dispatch based on what kind of child this is
         // Re-get frame to check the parent_link variant
@@ -464,6 +458,212 @@ impl<'facet> Partial<'facet> {
         // Mark set as initialized
         let frame = self.arena.get_mut(self.current);
         frame.flags |= FrameFlags::INIT;
+
+        Ok(())
+    }
+
+    /// Apply defaults only for struct-like root frames.
+    ///
+    /// For struct/variant fields that are NOT_STARTED, tries to apply defaults.
+    /// Returns Ok(()) for non-struct types (scalars, options, etc.) - those are
+    /// validated by build() which returns NotInitialized if incomplete.
+    fn apply_defaults_for_struct_fields(&mut self) -> Result<(), ReflectError> {
+        let frame = self.arena.get(self.current);
+
+        // Only handle struct-like types here
+        let (fields_slice, data_ptr) = match &frame.kind {
+            FrameKind::Struct(s) => {
+                if s.is_complete() {
+                    return Ok(());
+                }
+                match frame.shape.ty() {
+                    Type::User(UserType::Struct(struct_type)) => (struct_type.fields, frame.data),
+                    _ => return Ok(()), // Not a struct type - let build() validate
+                }
+            }
+            FrameKind::VariantData(v) => {
+                if v.is_complete() {
+                    return Ok(());
+                }
+                (v.variant.data.fields, frame.data)
+            }
+            // Non-struct types: nothing to do, let build() validate
+            _ => return Ok(()),
+        };
+
+        // Apply defaults to incomplete fields
+        for (i, field) in fields_slice.iter().enumerate() {
+            let is_complete = {
+                let frame = self.arena.get(self.current);
+                match &frame.kind {
+                    FrameKind::Struct(s) => s.fields.is_complete(i),
+                    FrameKind::VariantData(v) => v.fields.is_complete(i),
+                    _ => true,
+                }
+            };
+
+            if is_complete {
+                continue;
+            }
+
+            // Try to apply default
+            let field_ptr = unsafe { PtrUninit::new(data_ptr.as_mut_byte_ptr().add(field.offset)) };
+
+            let applied = if let Some(default_source) = field.default_source() {
+                match default_source {
+                    DefaultSource::FromTrait => {
+                        unsafe { field.shape().call_default_in_place(field_ptr) }.is_some()
+                    }
+                    DefaultSource::Custom(f) => {
+                        unsafe { f(field_ptr) };
+                        true
+                    }
+                }
+            } else if let Def::Option(opt_def) = field.shape().def {
+                // Option<T> without explicit default - init to None
+                unsafe { (opt_def.vtable.init_none)(field_ptr) };
+                true
+            } else {
+                false
+            };
+
+            if applied {
+                // Mark field as complete
+                let frame = self.arena.get_mut(self.current);
+                match &mut frame.kind {
+                    FrameKind::Struct(s) => s.mark_field_complete(i),
+                    FrameKind::VariantData(v) => v.mark_field_complete(i),
+                    _ => {}
+                }
+            }
+            // Note: if we couldn't apply a default, we don't error here.
+            // build() will catch it when it checks if the frame is complete.
+        }
+
+        Ok(())
+    }
+
+    /// Apply defaults for incomplete struct/variant fields, then verify completeness.
+    ///
+    /// For fields that are NOT_STARTED:
+    /// - If field has `#[facet(default)]` or `#[facet(default = expr)]`, apply that default
+    /// - If field is `Option<T>`, initialize to None
+    /// - Otherwise, return MissingRequiredField error
+    fn apply_defaults_and_ensure_complete(&mut self) -> Result<(), ReflectError> {
+        let frame = self.arena.get(self.current);
+
+        // Already fully initialized - nothing to do
+        if frame.flags.contains(FrameFlags::INIT) {
+            return Ok(());
+        }
+
+        // Extract what we need without holding borrows
+        enum FieldSource {
+            Struct(&'static [facet_core::Field]),
+            Variant(&'static [facet_core::Field]),
+            AlreadyComplete,
+            Incomplete,
+        }
+
+        let (field_source, data_ptr) = match &frame.kind {
+            FrameKind::Struct(s) => match frame.shape.ty() {
+                Type::User(UserType::Struct(struct_type)) => {
+                    if s.is_complete() {
+                        (FieldSource::AlreadyComplete, frame.data)
+                    } else {
+                        (FieldSource::Struct(struct_type.fields), frame.data)
+                    }
+                }
+                Type::Sequence(SequenceType::Array(_)) => {
+                    if s.is_complete() {
+                        (FieldSource::AlreadyComplete, frame.data)
+                    } else {
+                        (FieldSource::Incomplete, frame.data)
+                    }
+                }
+                _ => {
+                    if s.is_complete() {
+                        (FieldSource::AlreadyComplete, frame.data)
+                    } else {
+                        (FieldSource::Incomplete, frame.data)
+                    }
+                }
+            },
+            FrameKind::VariantData(v) => {
+                if v.is_complete() {
+                    (FieldSource::AlreadyComplete, frame.data)
+                } else {
+                    (FieldSource::Variant(v.variant.data.fields), frame.data)
+                }
+            }
+            _ => {
+                // Non-struct frames: use INIT flag or kind.is_complete()
+                if frame.flags.contains(FrameFlags::INIT) || frame.kind.is_complete() {
+                    (FieldSource::AlreadyComplete, frame.data)
+                } else {
+                    (FieldSource::Incomplete, frame.data)
+                }
+            }
+        };
+
+        // Handle simple cases
+        let fields_slice = match field_source {
+            FieldSource::AlreadyComplete => return Ok(()),
+            FieldSource::Incomplete => {
+                return Err(self.error(ReflectErrorKind::EndWithIncomplete));
+            }
+            FieldSource::Struct(fields) | FieldSource::Variant(fields) => fields,
+        };
+
+        // Process each field
+        for (i, field) in fields_slice.iter().enumerate() {
+            // Check if already complete (re-borrow each iteration)
+            let is_complete = {
+                let frame = self.arena.get(self.current);
+                match &frame.kind {
+                    FrameKind::Struct(s) => s.fields.is_complete(i),
+                    FrameKind::VariantData(v) => v.fields.is_complete(i),
+                    _ => true,
+                }
+            };
+
+            if is_complete {
+                continue;
+            }
+
+            // Try to apply default
+            let field_ptr = unsafe { PtrUninit::new(data_ptr.as_mut_byte_ptr().add(field.offset)) };
+
+            if let Some(default_source) = field.default_source() {
+                match default_source {
+                    DefaultSource::FromTrait => {
+                        let ok = unsafe { field.shape().call_default_in_place(field_ptr) };
+                        if ok.is_none() {
+                            return Err(
+                                self.error(ReflectErrorKind::MissingRequiredField { index: i })
+                            );
+                        }
+                    }
+                    DefaultSource::Custom(f) => {
+                        unsafe { f(field_ptr) };
+                    }
+                }
+            } else if let Def::Option(opt_def) = field.shape().def {
+                // Option<T> without explicit default - init to None
+                unsafe { (opt_def.vtable.init_none)(field_ptr) };
+            } else {
+                // No default available - this field is required
+                return Err(self.error(ReflectErrorKind::MissingRequiredField { index: i }));
+            }
+
+            // Mark field as complete
+            let frame = self.arena.get_mut(self.current);
+            match &mut frame.kind {
+                FrameKind::Struct(s) => s.mark_field_complete(i),
+                FrameKind::VariantData(v) => v.mark_field_complete(i),
+                _ => {}
+            }
+        }
 
         Ok(())
     }

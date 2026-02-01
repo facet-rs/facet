@@ -241,6 +241,12 @@ impl<'facet> Partial<'facet> {
             return self.apply_append_set(path, source);
         }
 
+        // Multi-level path handling: if path has more than one segment,
+        // create intermediate frames for all but the last segment
+        if segments.len() > 1 {
+            return self.apply_multi_level_set(path, source);
+        }
+
         // Check if current frame is an enum frame (not inside a variant's fields)
         // and path starts with a Field - that means we're selecting a variant
         let frame = self.arena.get(self.current);
@@ -273,6 +279,47 @@ impl<'facet> Partial<'facet> {
         } else {
             self.apply_regular_set(path, source)
         }
+    }
+
+    /// Handle multi-level paths by creating intermediate frames.
+    ///
+    /// For a path like `at(0).at(1).at(2)`, this:
+    /// 1. Applies `at(0)` with `Stage` to create an intermediate frame
+    /// 2. Recursively applies `at(1).at(2)` with the original source
+    fn apply_multi_level_set(
+        &mut self,
+        path: &Path,
+        source: &crate::ops::Source<'_>,
+    ) -> Result<(), ReflectError> {
+        let segments = path.segments();
+        debug_assert!(segments.len() > 1, "multi-level requires > 1 segment");
+
+        // Process all segments except the last as Stage operations
+        for segment in &segments[..segments.len() - 1] {
+            let intermediate_path = match segment {
+                PathSegment::Field(n) => Path::field(*n),
+                PathSegment::Append => Path::append(),
+                PathSegment::Root => {
+                    // Root in the middle of a path is invalid
+                    return Err(self.error(ReflectErrorKind::RootNotAtStart));
+                }
+            };
+
+            // Apply Stage to create intermediate frame
+            self.apply_set(&intermediate_path, &crate::ops::Source::Stage(None))?;
+        }
+
+        // Apply the final segment with the original source
+        let last_segment = &segments[segments.len() - 1];
+        let final_path = match last_segment {
+            PathSegment::Field(n) => Path::field(*n),
+            PathSegment::Append => Path::append(),
+            PathSegment::Root => {
+                return Err(self.error(ReflectErrorKind::RootNotAtStart));
+            }
+        };
+
+        self.apply_set(&final_path, source)
     }
 
     /// Apply a Set operation with Append path segment (for lists, sets, maps).
