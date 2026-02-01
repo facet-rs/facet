@@ -13,6 +13,9 @@ readme = "README.md"
 
 [package.metadata]
 
+[package.metadata.kani]
+default-unwind = 10
+
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 

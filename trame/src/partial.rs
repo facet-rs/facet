@@ -659,6 +659,58 @@ impl<'facet> Partial<'facet> {
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs {
+    use facet_core::Facet;
+
+    // Test 1: Can we use std::alloc?
+    #[kani::proof]
+    fn test_alloc_raw() {
+        let layout = std::alloc::Layout::new::<u32>();
+        let ptr = unsafe { std::alloc::alloc(layout) };
+        kani::assert(!ptr.is_null(), "alloc succeeded");
+        unsafe { std::alloc::dealloc(ptr, layout) };
+    }
+
+    // Test 2: Can we call default_in_place from vtable?
+    #[kani::proof]
+    fn test_vtable_default() {
+        let layout = std::alloc::Layout::new::<u32>();
+        let ptr = unsafe { std::alloc::alloc(layout) };
+        kani::assert(!ptr.is_null(), "alloc succeeded");
+
+        let uninit = facet_core::PtrUninit::new(ptr);
+        let result = unsafe { u32::SHAPE.call_default_in_place(uninit) };
+        kani::assert(result.is_some(), "default_in_place succeeded");
+
+        // Read the value back
+        let value = unsafe { *(ptr as *const u32) };
+        kani::assert(value == 0, "default u32 is 0");
+
+        unsafe { std::alloc::dealloc(ptr, layout) };
+    }
+
+    // Test 3: Can we call drop_in_place from vtable?
+    #[kani::proof]
+    fn test_vtable_drop() {
+        let layout = std::alloc::Layout::new::<u32>();
+        let ptr = unsafe { std::alloc::alloc(layout) };
+        kani::assert(!ptr.is_null(), "alloc succeeded");
+
+        // Initialize
+        unsafe {
+            *(ptr as *mut u32) = 42;
+        }
+
+        // Drop (no-op for u32, but tests the vtable call)
+        let ptr_mut = facet_core::PtrMut::new(ptr);
+        let result = unsafe { u32::SHAPE.call_drop_in_place(ptr_mut) };
+        kani::assert(result.is_some(), "drop_in_place succeeded");
+
+        unsafe { std::alloc::dealloc(ptr, layout) };
+    }
+}
+
 impl<'facet> Drop for Partial<'facet> {
     fn drop(&mut self) {
         // Walk from current frame up to root, cleaning up each frame.
