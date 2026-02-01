@@ -786,3 +786,45 @@ absent @none"#
         },
     );
 }
+
+/// Test that WithMeta<Option<String>> works as a map key in flattened maps.
+/// This reproduces the bug where span field is missing during deserialization
+/// when parsing @schema declarations.
+#[test]
+fn test_parse_schema_declaration() {
+    use std::collections::HashMap;
+
+    #[derive(Debug, Clone, Facet)]
+    #[facet(metadata_container)]
+    pub struct MustSpan<T> {
+        pub value: T,
+
+        #[facet(metadata = "span")]
+        pub span: Span,
+    }
+
+    impl<T: PartialEq> PartialEq for MustSpan<T> {
+        fn eq(&self, other: &Self) -> bool {
+            self.value == other.value
+        }
+    }
+
+    impl<T: Eq> Eq for MustSpan<T> {}
+
+    impl<T: std::hash::Hash> std::hash::Hash for MustSpan<T> {
+        fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+            self.value.hash(state);
+        }
+    }
+
+    #[derive(Debug, Facet)]
+    #[facet(transparent)]
+    pub struct QueryFile(pub HashMap<MustSpan<String>, String>);
+
+    ParseTest::parse(
+        r#"
+@schema blah
+"#,
+        |t, d: QueryFile| {},
+    );
+}
