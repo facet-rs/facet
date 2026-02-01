@@ -210,14 +210,34 @@ impl<'facet> Partial<'facet> {
         Ok(())
     }
 
+    /// Navigate to the root frame by ending all intermediate frames.
+    fn navigate_to_root(&mut self) -> Result<(), ReflectError> {
+        while self.current != self.root {
+            self.apply_end(end::EndInitiator::Op)?;
+        }
+        Ok(())
+    }
+
     /// Apply a Set operation, dispatching based on path and current frame type.
     fn apply_set(
         &mut self,
         path: &Path,
         source: &crate::ops::Source<'_>,
     ) -> Result<(), ReflectError> {
+        let segments = path.segments();
+
+        // Handle Root segment - must be first if present
+        if let Some(PathSegment::Root) = segments.first() {
+            // Navigate to root first
+            self.navigate_to_root()?;
+
+            // Continue with remaining path (without Root segment)
+            let remaining = Path::from_segments(&segments[1..]);
+            return self.apply_set(&remaining, source);
+        }
+
         // Check for Append segment - dispatch to collection handling
-        if let Some(PathSegment::Append) = path.segments().first() {
+        if let Some(PathSegment::Append) = segments.first() {
             return self.apply_append_set(path, source);
         }
 

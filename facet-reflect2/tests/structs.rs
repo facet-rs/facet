@@ -417,3 +417,54 @@ fn build_arc_containing_struct() {
     let result: Arc<Point> = partial.build().unwrap();
     assert_eq!(*result, Point { x: 1000, y: 2000 });
 }
+
+#[test]
+fn root_path_navigates_to_root() {
+    let mut partial = Partial::alloc::<Outer>().unwrap();
+
+    // Enter inner struct
+    partial.apply(&[Op::set().at(0).stage()]).unwrap();
+
+    // Set both fields of inner (must be complete before navigating away)
+    let mut x = 10i32;
+    let mut y = 20i32;
+    partial
+        .apply(&[Op::set().at(0).imm(&mut x), Op::set().at(1).imm(&mut y)])
+        .unwrap();
+
+    // Use root() path to navigate back to root and set outer.extra
+    // This ends the inner frame (which is now complete) and sets extra
+    let mut extra = 42i32;
+    partial
+        .apply(&[Op::set().root().at(1).imm(&mut extra)])
+        .unwrap();
+
+    // We should now be at root with both fields complete
+    let result: Outer = partial.build().unwrap();
+    assert_eq!(
+        result,
+        Outer {
+            inner: Point { x: 10, y: 20 },
+            extra: 42
+        }
+    );
+}
+
+#[test]
+fn root_path_fails_with_incomplete_frame() {
+    let mut partial = Partial::alloc::<Outer>().unwrap();
+
+    // Enter inner struct
+    partial.apply(&[Op::set().at(0).stage()]).unwrap();
+
+    // Set only one field of inner (incomplete)
+    let mut x = 10i32;
+    partial.apply(&[Op::set().at(0).imm(&mut x)]).unwrap();
+
+    // Try to use root() - should fail because inner is incomplete
+    let mut extra = 42i32;
+    let err = partial
+        .apply(&[Op::set().root().at(1).imm(&mut extra)])
+        .unwrap_err();
+    assert!(matches!(err.kind, ReflectErrorKind::EndWithIncomplete));
+}

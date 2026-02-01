@@ -44,6 +44,11 @@ impl Path {
         Self(smallvec![PathSegment::Root])
     }
 
+    /// Create a path from a slice of segments.
+    pub fn from_segments(segments: &[PathSegment]) -> Self {
+        Self(segments.iter().cloned().collect())
+    }
+
     /// Add a segment to the path.
     pub fn then(mut self, seg: PathSegment) -> Self {
         self.0.push(seg);
