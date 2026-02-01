@@ -1,6 +1,6 @@
 use facet::Facet;
-use facet_reflect2::{Op, Partial};
 use std::collections::{BTreeSet, HashSet};
+use trame::{Op, Partial};
 
 // =============================================================================
 // HashSet tests

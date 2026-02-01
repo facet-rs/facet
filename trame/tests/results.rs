@@ -1,5 +1,5 @@
 use facet::Facet;
-use facet_reflect2::{Op, Partial};
+use trame::{Op, Partial};
 
 // =============================================================================
 // Result with Imm (moving complete values)

@@ -1,6 +1,6 @@
 [package]
-name = "facet-reflect2"
-version = "0.1.0"
+name = "trame"
+version = "0.43.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

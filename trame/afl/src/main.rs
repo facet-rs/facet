@@ -3,8 +3,8 @@ use afl::fuzz;
 use arbitrary::Arbitrary;
 use facet::Facet;
 use facet_core::{PtrMut, Shape};
-use facet_reflect2::{Imm, Op, OpBatch, Partial, Path, Source};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use trame::{Imm, Op, OpBatch, Partial, Path, Source};
 
 // ============================================================================
 // Compound types for fuzzing (these need Facet derive)
@@ -540,7 +540,7 @@ impl std::fmt::Debug for FuzzPath {
 
 impl FuzzPath {
     fn to_path(&self) -> Path {
-        use facet_reflect2::PathSegment;
+        use trame::PathSegment;
 
         // Limit path depth to avoid pathological cases
         let segments: Vec<_> = self.segments.iter().take(4).collect();

@@ -1,5 +1,5 @@
 use facet::Facet;
-use facet_reflect2::{Op, Partial, ReflectErrorKind};
+use trame::{Op, Partial, ReflectErrorKind};
 
 #[derive(Debug, PartialEq, Facet)]
 #[repr(u8)]

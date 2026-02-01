@@ -1,5 +1,5 @@
 use facet_core::{Facet, PtrMut};
-use facet_reflect2::{Imm, Op, Partial, ReflectErrorKind, Source};
+use trame::{Imm, Op, Partial, ReflectErrorKind, Source};
 
 #[test]
 fn set_u32_twice() {

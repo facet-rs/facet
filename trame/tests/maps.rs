@@ -1,6 +1,6 @@
 use facet::Facet;
-use facet_reflect2::{Op, Partial};
 use std::collections::HashMap;
+use trame::{Op, Partial};
 
 // =============================================================================
 // Basic HashMap tests
@@ -349,10 +349,7 @@ fn append_on_non_collection_errors() {
 
     let err = partial.apply(&[Op::set().append().stage()]).unwrap_err();
     // Should error because u32 is not a collection
-    assert!(matches!(
-        err.kind,
-        facet_reflect2::ReflectErrorKind::NotAList
-    ));
+    assert!(matches!(err.kind, trame::ReflectErrorKind::NotAList));
 }
 
 #[test]
@@ -369,7 +366,7 @@ fn map_entry_wrong_key_type_errors() {
         .unwrap_err();
     assert!(matches!(
         err.kind,
-        facet_reflect2::ReflectErrorKind::ShapeMismatch { .. }
+        trame::ReflectErrorKind::ShapeMismatch { .. }
     ));
 }
 
@@ -390,7 +387,7 @@ fn map_entry_wrong_value_type_errors() {
         .unwrap_err();
     assert!(matches!(
         err.kind,
-        facet_reflect2::ReflectErrorKind::ShapeMismatch { .. }
+        trame::ReflectErrorKind::ShapeMismatch { .. }
     ));
 }
 
