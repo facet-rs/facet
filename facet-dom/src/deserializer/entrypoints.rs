@@ -45,13 +45,7 @@ where
     where
         T: Facet<'de>,
     {
-        // Get format namespace from parser (e.g., "xml", "html") for format-specific proxy resolution
-        let format_ns = self.parser.format_namespace();
-        let wip: Partial<'de, true> = if let Some(ns) = format_ns {
-            Partial::alloc_for_format::<T>(ns)?
-        } else {
-            Partial::alloc::<T>()?
-        };
+        let wip: Partial<'de, true> = Partial::alloc::<T>()?;
         let partial = self.deserialize_into(wip)?;
         let heap_value: HeapValue<'de, true> = partial.build()?;
         Ok(heap_value.materialize::<T>()?)
@@ -67,9 +61,6 @@ where
     where
         T: Facet<'static>,
     {
-        // Get format namespace from parser (e.g., "xml", "html") for format-specific proxy resolution
-        let format_ns = self.parser.format_namespace();
-
         // SAFETY: When BORROW=false, no references into the input are stored.
         // The Partial only contains owned data (String, Vec, etc.), so the
         // lifetime parameter is purely phantom. We transmute from 'static to 'de
@@ -77,7 +68,7 @@ where
         #[allow(unsafe_code)]
         let wip: Partial<'de, false> = unsafe {
             core::mem::transmute::<Partial<'static, false>, Partial<'de, false>>(
-                Partial::alloc_owned_for_format_opt::<T>(format_ns)?,
+                Partial::alloc_owned::<T>()?,
             )
         };
         let partial = self.deserialize_into(wip)?;

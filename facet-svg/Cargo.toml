@@ -25,11 +25,12 @@ datatest-stable = "0.3"
 rediff = { workspace = true }
 facet-testhelpers = { workspace = true }
 facet-xml = { workspace = true, features = ["tracing"] }
+facet-reflect = { workspace = true, features = ["tracing"] }
 tracing = { workspace = true }
 
 [features]
 default = []
-tracing = ["dep:tracing", "facet-xml/tracing"]
+tracing = ["dep:tracing"]
 
 [[test]]
 name = "roundtrip"
