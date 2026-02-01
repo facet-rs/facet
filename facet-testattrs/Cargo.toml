@@ -9,7 +9,7 @@ description = "Test attributes for facet extension attribute testing (not publis
 publish = false
 
 [dependencies]
-facet = { path = "../facet", version = "0.43.2" }
+facet = { path = "../facet", version = "0.44.0" }
 
 [lints]
 workspace = true
