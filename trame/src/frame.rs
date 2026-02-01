@@ -281,7 +281,7 @@ impl SetFrame {
     }
 }
 
-/// Option frame data (building Option<T>).
+/// Option frame data (building `Option<T>`).
 /// Tracks whether None or Some is selected and if we're building the inner value.
 pub struct OptionFrame {
     /// The selected variant: None = 0, Some = 1 (or None if not yet selected)
@@ -427,10 +427,10 @@ pub enum FrameKind {
     /// Building a set (HashSet, BTreeSet, etc.).
     Set(SetFrame),
 
-    /// Building an Option<T>.
+    /// Building an `Option<T>`.
     Option(OptionFrame),
 
-    /// Building a Result<T, E>.
+    /// Building a `Result<T, E>`.
     Result(ResultFrame),
 
     /// Building a map entry (key, value) tuple.
@@ -719,7 +719,7 @@ impl Frame {
         }
     }
 
-    /// Create a frame for an Option<T>.
+    /// Create a frame for an `Option<T>`.
     pub fn new_option(data: PtrUninit, shape: impl Into<ShapeDesc>) -> Self {
         Frame {
             data,
