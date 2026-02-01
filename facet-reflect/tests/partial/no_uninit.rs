@@ -91,8 +91,12 @@ fn slice_uninit() {
 }
 
 #[test]
-fn option_uninit() {
-    test_uninit::<Option<u32>>();
+fn option_uninit_defaults_to_none() {
+    // Option<T> has an implicit default of None, so it should succeed
+    let partial: Partial<'_> = Partial::alloc::<Option<u32>>().unwrap();
+    let hv = partial.build().expect("Option<T> should default to None");
+    let value: Option<u32> = hv.materialize().unwrap();
+    assert_eq!(value, None);
 }
 
 #[test]

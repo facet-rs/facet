@@ -1167,43 +1167,10 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         // Pop the frame and save its data pointer for SmartPointer handling
         let mut popped_frame = self.frames_mut().pop().unwrap();
 
-        // If we determined this frame should be stored for deferred re-entry, do it now
-        if let Some(storage_path) = deferred_storage_info {
-            trace!(
-                "end(): Storing frame for deferred path {:?}, shape {}",
-                storage_path,
-                popped_frame.allocated.shape()
-            );
-
-            if let FrameMode::Deferred {
-                stack,
-                stored_frames,
-                ..
-            } = &mut self.mode
-            {
-                // Mark the field as initialized in the parent frame.
-                // This is important because the parent might validate before
-                // finish_deferred runs (e.g., parent is an array element that
-                // isn't stored). Without this, the parent's validation would
-                // fail with "missing field".
-                if let FrameOwnership::Field { field_idx } = popped_frame.ownership
-                    && let Some(parent_frame) = stack.last_mut()
-                {
-                    Self::mark_field_initialized_by_index(parent_frame, field_idx);
-                }
-
-                stored_frames.insert(storage_path, popped_frame);
-
-                // Clear parent's current_child tracking
-                if let Some(parent_frame) = stack.last_mut() {
-                    parent_frame.tracker.clear_current_child();
-                }
-            }
-
-            return Ok(self);
-        }
-
-        // check if this needs deserialization from a different shape
+        // Proxy frames are NEVER stored - they must be processed immediately.
+        // This is because proxy frames share the same path as their parent field frame,
+        // and storing them would cause path collisions. The conversion happens now,
+        // and the parent field frame (with the converted value) may be stored later.
         if popped_frame.using_custom_deserialization {
             // First check the proxy stored in the frame (used for format-specific proxies
             // and container-level proxies), then fall back to field-level proxy.
@@ -1272,6 +1239,42 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 }
                 return Ok(self);
             }
+        }
+
+        // If we determined this frame should be stored for deferred re-entry, do it now
+        if let Some(storage_path) = deferred_storage_info {
+            trace!(
+                "end(): Storing frame for deferred path {:?}, shape {}",
+                storage_path,
+                popped_frame.allocated.shape()
+            );
+
+            if let FrameMode::Deferred {
+                stack,
+                stored_frames,
+                ..
+            } = &mut self.mode
+            {
+                // Mark the field as initialized in the parent frame.
+                // This is important because the parent might validate before
+                // finish_deferred runs (e.g., parent is an array element that
+                // isn't stored). Without this, the parent's validation would
+                // fail with "missing field".
+                if let FrameOwnership::Field { field_idx } = popped_frame.ownership
+                    && let Some(parent_frame) = stack.last_mut()
+                {
+                    Self::mark_field_initialized_by_index(parent_frame, field_idx);
+                }
+
+                stored_frames.insert(storage_path, popped_frame);
+
+                // Clear parent's current_child tracking
+                if let Some(parent_frame) = stack.last_mut() {
+                    parent_frame.tracker.clear_current_child();
+                }
+            }
+
+            return Ok(self);
         }
 
         // Update parent frame's tracking when popping from a child

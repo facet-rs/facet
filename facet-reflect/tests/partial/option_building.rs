@@ -188,20 +188,13 @@ fn explore_option_shape() {
 
 use facet_testhelpers::IPanic;
 
-#[cfg(not(miri))]
-macro_rules! assert_snapshot {
-    ($($tt:tt)*) => {
-        insta::assert_snapshot!($($tt)*)
-    };
-}
-#[cfg(miri)]
-macro_rules! assert_snapshot {
-    ($($tt:tt)*) => {{ let _ = $($tt)*; }};
-}
-
 #[test]
-fn option_uninit() -> Result<(), IPanic> {
-    assert_snapshot!(Partial::alloc::<Option<f64>>()?.build().unwrap_err());
+fn option_uninit_defaults_to_none() -> Result<(), IPanic> {
+    // Option<T> has an implicit default of None
+    let hv = Partial::alloc::<Option<f64>>()?
+        .build()?
+        .materialize::<Option<f64>>()?;
+    assert_eq!(hv, None);
     Ok(())
 }
 

@@ -2575,3 +2575,61 @@ fn deferred_option_struct_deeply_nested_interleaved() -> Result<(), IPanic> {
 
     Ok(())
 }
+
+// =============================================================================
+// Proxy + deferred mode tests
+// =============================================================================
+
+/// Test that proxy conversion works correctly in deferred mode
+#[test]
+fn deferred_with_proxy() -> Result<(), IPanic> {
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub struct NotDerivingFacet(u64);
+
+    // Proxy type that derives Facet
+    #[derive(Facet, Copy, Clone)]
+    pub struct NotDerivingFacetProxy(u64);
+
+    impl TryFrom<NotDerivingFacetProxy> for NotDerivingFacet {
+        type Error = &'static str;
+        fn try_from(val: NotDerivingFacetProxy) -> Result<Self, Self::Error> {
+            Ok(NotDerivingFacet(val.0))
+        }
+    }
+
+    impl TryFrom<&NotDerivingFacet> for NotDerivingFacetProxy {
+        type Error = &'static str;
+        fn try_from(val: &NotDerivingFacet) -> Result<Self, Self::Error> {
+            Ok(NotDerivingFacetProxy(val.0))
+        }
+    }
+
+    #[derive(Facet, Debug)]
+    pub struct Container {
+        name: String,
+        #[facet(opaque, proxy = NotDerivingFacetProxy)]
+        inner: NotDerivingFacet,
+    }
+
+    let mut partial: Partial<'_> = Partial::alloc::<Container>()?;
+    partial = partial.begin_deferred()?;
+
+    // Set name first
+    partial = partial.set_field("name", String::from("test"))?;
+
+    // Now set inner using proxy
+    partial = partial.begin_field("inner")?;
+    partial = partial.begin_custom_deserialization()?;
+    assert_eq!(partial.shape(), NotDerivingFacetProxy::SHAPE);
+    partial = partial.set(NotDerivingFacetProxy(35))?;
+    partial = partial.end()?; // end proxy frame - should do conversion
+    partial = partial.end()?; // end inner field
+
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<Container>()?;
+
+    assert_eq!(result.name, "test");
+    assert_eq!(result.inner, NotDerivingFacet(35));
+
+    Ok(())
+}

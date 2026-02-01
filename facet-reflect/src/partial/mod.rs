@@ -940,6 +940,19 @@ impl Frame {
             };
         }
 
+        // Handle Option types with Scalar tracker - default to None
+        // This happens in deferred mode when an Option field was never touched
+        if !self.is_init
+            && matches!(self.tracker, Tracker::Scalar)
+            && matches!(self.allocated.shape().def, Def::Option(_))
+        {
+            // SAFETY: Option<T> always implements Default (as None)
+            if unsafe { self.allocated.shape().call_default_in_place(self.data) }.is_some() {
+                self.is_init = true;
+                return Ok(());
+            }
+        }
+
         match &mut self.tracker {
             Tracker::Struct { iset, .. } => {
                 if let Type::User(UserType::Struct(struct_type)) = self.allocated.shape().ty {
