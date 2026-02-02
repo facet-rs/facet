@@ -131,6 +131,9 @@ fn test_frame_in_arena() {
     unsafe { std::alloc::dealloc(ptr, layout) };
 }
 
+// Stub for Vec's internal drop - trust Rust's Vec implementation
+unsafe fn stub_drop_in_place_noop<T>(_ptr: *mut T) {}
+
 // Test 6: Partial::alloc with Drop, bounded unwind
 #[kani::proof]
 #[kani::unwind(1)]
@@ -149,6 +152,46 @@ fn test_partial_alloc_u32_with_drop() {
     kani::assume(matches!(frame.kind, FrameKind::Scalar));
 
     // Now let it drop - Kani should only explore the scalar path
+}
+
+// Test 6b: Same as 6 but stub out Vec drop machinery
+#[kani::proof]
+#[kani::stub(std::ptr::drop_in_place::<Vec<Option<crate::frame::Frame>>>, stub_drop_in_place_noop)]
+#[kani::stub(std::ptr::drop_in_place::<Vec<u32>>, stub_drop_in_place_noop)]
+fn test_partial_alloc_u32_with_drop_stubbed() {
+    use super::Partial;
+    use crate::frame::FrameKind;
+
+    let partial = Partial::alloc::<u32>();
+    kani::assert(partial.is_ok(), "Partial::alloc succeeded");
+
+    let partial = partial.unwrap();
+
+    let frame = partial.arena.get(partial.root);
+    kani::assume(matches!(frame.kind, FrameKind::Scalar));
+}
+
+// Test 7: Set a value on Partial and build it
+#[kani::proof]
+#[kani::stub(std::ptr::drop_in_place::<Vec<Option<crate::frame::Frame>>>, stub_drop_in_place_noop)]
+#[kani::stub(std::ptr::drop_in_place::<Vec<u32>>, stub_drop_in_place_noop)]
+fn test_partial_set_and_build() {
+    use super::Partial;
+    use crate::ops::{Imm, Op, Path, Source};
+
+    let mut partial = Partial::alloc::<u32>().unwrap();
+
+    // Set a symbolic value
+    let mut value: u32 = kani::any();
+    let result = partial.apply(&[Op::Set {
+        dst: Path::empty(),
+        src: Source::Imm(Imm::from_ref(&mut value)),
+    }]);
+    kani::assert(result.is_ok(), "set succeeded");
+
+    // Build and verify we get the same value back
+    let built: u32 = partial.build().unwrap();
+    kani::assert(built == value, "built value matches");
 }
 
 // =======================================================================
