@@ -11,3 +11,4 @@ mod no_jit_tier0;
 mod result_jit_diagnostic;
 mod roam_wire;
 mod roundtrip;
+mod skip_attrs;
