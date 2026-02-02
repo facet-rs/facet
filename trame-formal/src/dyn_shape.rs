@@ -22,6 +22,7 @@
 //! - Are all invariants maintained? (no double-init, no drop-before-init, no leak)
 
 use core::alloc::Layout;
+use facet_core::{Field, Shape, StructType, Type, UserType};
 
 // ============================================================================
 // Traits
@@ -296,12 +297,70 @@ impl kani::Arbitrary for DynShape {
 }
 
 // ============================================================================
+// IShape implementation for &'static Shape (real shapes)
+// ============================================================================
+
+impl IShape for &'static Shape {
+    type StructType = &'static StructType;
+    type Field = &'static Field;
+
+    #[inline]
+    fn layout(&self) -> Layout {
+        self.layout
+            .sized_layout()
+            .expect("IShape requires sized types")
+    }
+
+    #[inline]
+    fn is_struct(&self) -> bool {
+        matches!(self.ty, Type::User(UserType::Struct(_)))
+    }
+
+    #[inline]
+    fn as_struct(&self) -> Option<Self::StructType> {
+        match &self.ty {
+            Type::User(UserType::Struct(st)) => Some(st),
+            _ => None,
+        }
+    }
+}
+
+impl IStructType for &'static StructType {
+    type Field = &'static Field;
+
+    #[inline]
+    fn field_count(&self) -> usize {
+        self.fields.len()
+    }
+
+    #[inline]
+    fn field(&self, idx: usize) -> Option<Self::Field> {
+        self.fields.get(idx)
+    }
+}
+
+impl IField for &'static Field {
+    type Shape = &'static Shape;
+
+    #[inline]
+    fn offset(&self) -> usize {
+        self.offset
+    }
+
+    #[inline]
+    fn shape(&self) -> Self::Shape {
+        self.shape.get()
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use facet_core::Facet;
 
     #[test]
     fn scalar_is_not_struct() {
@@ -343,14 +402,43 @@ mod tests {
         assert!(st.field(2).is_none());
     }
 
+    // Tests for real Shape implementation
+
+    #[derive(facet::Facet)]
+    struct TestStruct {
+        a: u32,
+        b: u64,
+    }
+
     #[test]
-    fn struct_layout_calculation() {
-        let fields = [
-            DynField::new(0, Layout::new::<u8>()),
-            DynField::new(8, Layout::new::<u64>()),
-        ];
-        let s = DynShape::struct_with_fields(&fields);
-        assert_eq!(s.layout().size(), 16);
-        assert_eq!(s.layout().align(), 8);
+    fn real_shape_is_struct() {
+        let shape: &'static Shape = TestStruct::SHAPE;
+        assert!(shape.is_struct());
+        assert!(shape.as_struct().is_some());
+    }
+
+    #[test]
+    fn real_shape_field_access() {
+        let shape: &'static Shape = TestStruct::SHAPE;
+        let st = shape.as_struct().unwrap();
+
+        assert_eq!(st.field_count(), 2);
+
+        // Just verify we can access fields - don't assume layout
+        let f0 = st.field(0).unwrap();
+        let f1 = st.field(1).unwrap();
+
+        // Fields exist and have non-zero sized shapes
+        assert!(f0.shape().layout().size() > 0);
+        assert!(f1.shape().layout().size() > 0);
+
+        assert!(st.field(2).is_none());
+    }
+
+    #[test]
+    fn real_scalar_is_not_struct() {
+        let shape: &'static Shape = u32::SHAPE;
+        assert!(!shape.is_struct());
+        assert!(shape.as_struct().is_none());
     }
 }

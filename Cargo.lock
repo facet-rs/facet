@@ -3242,6 +3242,10 @@ dependencies = [
 [[package]]
 name = "trame-formal"
 version = "0.1.0"
+dependencies = [
+ "facet",
+ "facet-core",
+]
 
 [[package]]
 name = "tree-sitter-language"
