@@ -9,8 +9,7 @@
 //! tracks state and asserts valid transitions. For production, RealBackend
 //! performs actual memory operations with zero overhead.
 
-use crate::shape::{FieldInfo, ShapeDesc};
-use core::alloc::Layout;
+use crate::shape::DynShape;
 
 /// Maximum number of allocations tracked by VerifiedBackend.
 pub const MAX_ALLOCS: usize = 8;
@@ -64,7 +63,7 @@ pub trait Backend {
     /// # Safety
     /// - Caller must eventually call `dealloc` to avoid leaks
     /// - All slots start in `Allocated` state
-    unsafe fn alloc(&mut self, shape: ShapeDesc) -> Self::Alloc;
+    unsafe fn alloc(&mut self, shape: DynShape) -> Self::Alloc;
 
     /// Deallocate memory.
     ///
@@ -149,7 +148,7 @@ impl Backend for VerifiedBackend {
     type Alloc = u8;
     type Slot = u16;
 
-    unsafe fn alloc(&mut self, shape: ShapeDesc) -> Self::Alloc {
+    unsafe fn alloc(&mut self, shape: DynShape) -> Self::Alloc {
         let slot_count = shape.slot_count();
 
         assert!(self.next_alloc < MAX_ALLOCS, "too many allocations");
@@ -238,11 +237,13 @@ impl Backend for VerifiedBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shape::FieldInfo;
+    use core::alloc::Layout;
 
     #[test]
     fn alloc_scalar() {
         let mut backend = VerifiedBackend::new();
-        let shape = ShapeDesc::scalar(Layout::new::<u32>());
+        let shape = DynShape::scalar(Layout::new::<u32>());
         let alloc = unsafe { backend.alloc(shape) };
         let slot = unsafe { backend.slot(alloc, 0) };
 
@@ -266,7 +267,7 @@ mod tests {
             FieldInfo::new(4, Layout::new::<u32>()),
             FieldInfo::new(8, Layout::new::<u32>()),
         ];
-        let shape = ShapeDesc::struct_with_fields(&fields);
+        let shape = DynShape::struct_with_fields(&fields);
         let alloc = unsafe { backend.alloc(shape) };
 
         // Init fields out of order
@@ -291,7 +292,7 @@ mod tests {
     #[should_panic(expected = "mark_init")]
     fn double_init_panics() {
         let mut backend = VerifiedBackend::new();
-        let shape = ShapeDesc::scalar(Layout::new::<u32>());
+        let shape = DynShape::scalar(Layout::new::<u32>());
         let alloc = unsafe { backend.alloc(shape) };
         let slot = unsafe { backend.slot(alloc, 0) };
 
@@ -303,7 +304,7 @@ mod tests {
     #[should_panic(expected = "mark_uninit")]
     fn uninit_without_init_panics() {
         let mut backend = VerifiedBackend::new();
-        let shape = ShapeDesc::scalar(Layout::new::<u32>());
+        let shape = DynShape::scalar(Layout::new::<u32>());
         let alloc = unsafe { backend.alloc(shape) };
         let slot = unsafe { backend.slot(alloc, 0) };
 
@@ -314,7 +315,7 @@ mod tests {
     #[should_panic(expected = "dealloc")]
     fn dealloc_while_init_panics() {
         let mut backend = VerifiedBackend::new();
-        let shape = ShapeDesc::scalar(Layout::new::<u32>());
+        let shape = DynShape::scalar(Layout::new::<u32>());
         let alloc = unsafe { backend.alloc(shape) };
         let slot = unsafe { backend.slot(alloc, 0) };
 
@@ -326,7 +327,7 @@ mod tests {
     #[should_panic(expected = "dealloc: already freed")]
     fn double_dealloc_panics() {
         let mut backend = VerifiedBackend::new();
-        let shape = ShapeDesc::scalar(Layout::new::<u32>());
+        let shape = DynShape::scalar(Layout::new::<u32>());
         let alloc = unsafe { backend.alloc(shape) };
 
         unsafe { backend.dealloc(alloc) };
@@ -337,14 +338,15 @@ mod tests {
 #[cfg(kani)]
 mod kani_proofs {
     use super::*;
-    use crate::shape::MAX_FIELDS;
+    use crate::shape::{FieldInfo, MAX_FIELDS};
+    use core::alloc::Layout;
 
     /// Verify that a valid scalar lifecycle doesn't violate any invariants.
     #[kani::proof]
     #[kani::unwind(10)]
     fn valid_scalar_lifecycle() {
         let mut backend = VerifiedBackend::new();
-        let shape = ShapeDesc::scalar(Layout::from_size_align(4, 4).unwrap());
+        let shape = DynShape::scalar(Layout::from_size_align(4, 4).unwrap());
         let alloc = unsafe { backend.alloc(shape) };
         let slot = unsafe { backend.slot(alloc, 0) };
 
@@ -372,7 +374,7 @@ mod kani_proofs {
         }
 
         let layout = Layout::from_size_align((field_count as usize) * 4, 4).unwrap();
-        let shape = ShapeDesc::Struct {
+        let shape = DynShape::Struct {
             layout,
             field_count,
             fields,
@@ -406,7 +408,7 @@ mod kani_proofs {
             FieldInfo::new(0, Layout::from_size_align(4, 4).unwrap()),
             FieldInfo::new(4, Layout::from_size_align(4, 4).unwrap()),
         ];
-        let shape = ShapeDesc::struct_with_fields(&fields);
+        let shape = DynShape::struct_with_fields(&fields);
         let alloc = unsafe { backend.alloc(shape) };
 
         let slot0 = unsafe { backend.slot(alloc, 0) };
@@ -441,8 +443,8 @@ mod kani_proofs {
     fn multiple_allocations() {
         let mut backend = VerifiedBackend::new();
 
-        let shape1 = ShapeDesc::scalar(Layout::from_size_align(4, 4).unwrap());
-        let shape2 = ShapeDesc::scalar(Layout::from_size_align(8, 8).unwrap());
+        let shape1 = DynShape::scalar(Layout::from_size_align(4, 4).unwrap());
+        let shape2 = DynShape::scalar(Layout::from_size_align(8, 8).unwrap());
 
         let alloc1 = unsafe { backend.alloc(shape1) };
         let alloc2 = unsafe { backend.alloc(shape2) };

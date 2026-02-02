@@ -1,16 +1,10 @@
 //! Shape abstractions for formal verification.
 //!
-//! This module provides:
-//! - `ShapeDesc`: bounded synthetic shapes for Kani proofs
-//!
-//! The key insight is that trame needs from shapes:
-//! - Layout (size, align) for allocation
-//! - Field count for structs
-//! - Field offsets for pointer math
-//! - Drop/default vtable functions
-//!
-//! For verification, we don't need the vtable functions - we just track state transitions.
-//! What matters is the structure: how many slots (fields) need tracking.
+//! In regular operation, trame uses `&'static Shape` from facet_core.
+//! However, for testing, we use `DynShape`, which implements Arbitrary.
+//! Those both implement `IShape`, a common interface for shapes, and
+//! are unified by `AnyShape`, an enum that does enum dispatch to the
+//! `DynShape` or the `&'static Shape`.
 
 use core::alloc::Layout;
 
@@ -38,11 +32,14 @@ impl FieldInfo {
 /// Unlike `facet_core::Shape` which uses static references and can be recursive,
 /// these shapes are bounded and can implement `kani::Arbitrary`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ShapeDesc {
+pub enum DynShape {
     /// A scalar type (no internal structure to track).
     /// Examples: u32, String, any opaque type.
     Scalar(Layout),
-
+    // FIXME: Instead of storing layout in all the different enum variants, we should be storing uh
+    // then shape should be a struct, and then it should have a field that's an enum, and the field
+    // that's an enum has uh type-specific information
+    //
     /// A struct with indexed fields.
     /// Each field is a slot that needs independent init tracking.
     Struct {
@@ -56,7 +53,7 @@ pub enum ShapeDesc {
     // TODO: Enum, Option, Result, List, Map, etc.
 }
 
-impl ShapeDesc {
+impl DynShape {
     /// Create a scalar shape with the given layout.
     pub const fn scalar(layout: Layout) -> Self {
         Self::Scalar(layout)
@@ -141,7 +138,7 @@ impl ShapeDesc {
 }
 
 #[cfg(kani)]
-impl kani::Arbitrary for ShapeDesc {
+impl kani::Arbitrary for DynShape {
     fn any() -> Self {
         let variant: u8 = kani::any();
         kani::assume(variant < 2);
@@ -157,7 +154,7 @@ impl kani::Arbitrary for ShapeDesc {
                 // Size must be zero or a multiple of align for valid Layout
                 kani::assume(size == 0 || size % align == 0);
                 let layout = Layout::from_size_align(size, align).unwrap();
-                ShapeDesc::Scalar(layout)
+                DynShape::Scalar(layout)
             }
             1 => {
                 // Struct with 1-4 fields
@@ -182,7 +179,7 @@ impl kani::Arbitrary for ShapeDesc {
 
                 let layout = Layout::from_size_align(offset, 1).unwrap();
 
-                ShapeDesc::Struct {
+                DynShape::Struct {
                     layout,
                     field_count,
                     fields,
@@ -199,7 +196,7 @@ mod tests {
 
     #[test]
     fn scalar_has_one_slot() {
-        let s = ShapeDesc::scalar(Layout::new::<u32>());
+        let s = DynShape::scalar(Layout::new::<u32>());
         assert_eq!(s.slot_count(), 1);
         assert_eq!(s.layout().size(), 4);
         assert_eq!(s.layout().align(), 4);
@@ -212,7 +209,7 @@ mod tests {
             FieldInfo::new(4, Layout::new::<u32>()),
             FieldInfo::new(8, Layout::new::<u32>()),
         ];
-        let s = ShapeDesc::struct_with_fields(&fields);
+        let s = DynShape::struct_with_fields(&fields);
         assert_eq!(s.slot_count(), 3);
     }
 
@@ -222,7 +219,7 @@ mod tests {
             FieldInfo::new(0, Layout::new::<u32>()),
             FieldInfo::new(8, Layout::new::<u64>()),
         ];
-        let s = ShapeDesc::struct_with_fields(&fields);
+        let s = DynShape::struct_with_fields(&fields);
 
         let f0 = s.field(0).unwrap();
         assert_eq!(f0.offset, 0);
@@ -242,14 +239,14 @@ mod tests {
             FieldInfo::new(0, Layout::new::<u8>()),
             FieldInfo::new(8, Layout::new::<u64>()),
         ];
-        let s = ShapeDesc::struct_with_fields(&fields);
+        let s = DynShape::struct_with_fields(&fields);
         assert_eq!(s.layout().size(), 16); // 8 + 8
         assert_eq!(s.layout().align(), 8);
     }
 
     #[test]
     fn scalar_has_no_fields() {
-        let s = ShapeDesc::scalar(Layout::new::<u64>());
+        let s = DynShape::scalar(Layout::new::<u64>());
         assert!(s.field(0).is_none());
         assert!(s.field(1).is_none());
     }

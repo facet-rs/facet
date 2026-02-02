@@ -15,5 +15,7 @@
 #![cfg_attr(kani, feature(stmt_expr_attributes))]
 #![cfg_attr(kani, feature(proc_macro_hygiene))]
 
-pub mod backend;
-pub mod shape;
+// Important rule: we do not declare all modules as pub, we will be very intentional
+// about what our public interface is.
+mod backend;
+mod dyn_shape;
