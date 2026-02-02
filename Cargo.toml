@@ -21,7 +21,6 @@ members = [
 
   # reflection
   "facet-reflect",
-  "trame",
 
   # constraint solver
   "facet-solver",
