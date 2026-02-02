@@ -34,7 +34,7 @@ museair = { version = "0.4", optional = true }
 libc = { version = "0.2", optional = true }
 
 # Pretty error rendering (optional)
-ariadne = { version = "0.5", optional = true }
+ariadne = { version = "0.6", optional = true }
 
 [dev-dependencies]
 
