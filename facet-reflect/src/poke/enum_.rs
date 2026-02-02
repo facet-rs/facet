@@ -67,6 +67,9 @@ impl<'mem, 'facet> PokeEnum<'mem, 'facet> {
     pub fn discriminant(&self) -> i64 {
         // Read the discriminant based on the enum representation
         match self.ty.enum_repr {
+            EnumRepr::Rust => {
+                panic!("cannot read discriminant from Rust enum with unspecified layout")
+            }
             // For RustNPO types, there is no explicit discriminant stored in memory.
             // The variant is determined by niche optimization (e.g., null pointer pattern).
             // Return 0 since that's the declared discriminant for NPO variants.
@@ -88,22 +91,22 @@ impl<'mem, 'facet> PokeEnum<'mem, 'facet> {
     /// Returns the variant index for this enum value
     #[inline]
     pub fn variant_index(&self) -> Result<usize, VariantError> {
-        if self.ty.enum_repr == EnumRepr::RustNPO {
-            // For Option<T> types with niche optimization, use the OptionVTable
-            // to correctly determine if the value is Some or None.
-            if let Def::Option(option_def) = self.value.shape.def {
-                let is_some = unsafe { (option_def.vtable.is_some)(self.value.data()) };
-                return Ok(self
-                    .ty
-                    .variants
-                    .iter()
-                    .position(|variant| {
-                        let has_fields = !variant.data.fields.is_empty();
-                        has_fields == is_some
-                    })
-                    .expect("No variant found matching Option state"));
-            }
+        // For Option<T> types, use the OptionVTable to correctly determine if the value is Some or None.
+        // This handles both RustNPO (niche-optimized) and Rust (non-niche) representations.
+        if let Def::Option(option_def) = self.value.shape.def {
+            let is_some = unsafe { (option_def.vtable.is_some)(self.value.data()) };
+            return Ok(self
+                .ty
+                .variants
+                .iter()
+                .position(|variant| {
+                    let has_fields = !variant.data.fields.is_empty();
+                    has_fields == is_some
+                })
+                .expect("No variant found matching Option state"));
+        }
 
+        if self.ty.enum_repr == EnumRepr::RustNPO {
             // Fallback for other RustNPO types (e.g., Option<&T> where all-zeros means None)
             let layout = self
                 .value

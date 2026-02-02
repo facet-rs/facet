@@ -164,6 +164,7 @@ impl From<facet_core::StructKind> for StructKindLike {
 #[derive(facet::Facet, Clone)]
 #[repr(C)]
 pub enum EnumReprLike {
+    Rust,
     RustNPO,
     U8,
     U16,
@@ -181,6 +182,7 @@ impl From<facet_core::EnumRepr> for EnumReprLike {
     fn from(repr: facet_core::EnumRepr) -> Self {
         use facet_core::EnumRepr as CoreEnumRepr;
         match repr {
+            CoreEnumRepr::Rust => EnumReprLike::Rust,
             CoreEnumRepr::RustNPO => EnumReprLike::RustNPO,
             CoreEnumRepr::U8 => EnumReprLike::U8,
             CoreEnumRepr::U16 => EnumReprLike::U16,

@@ -24,6 +24,12 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
         // Check enum representation early
         match enum_type.enum_repr {
+            EnumRepr::Rust => {
+                return Err(self.err(ReflectErrorKind::OperationFailed {
+                    shape: frame.allocated.shape(),
+                    operation: "Rust enums with unspecified discriminant layout are not supported for incremental building",
+                }));
+            }
             EnumRepr::RustNPO => {
                 return Err(self.err(ReflectErrorKind::OperationFailed {
                     shape: frame.allocated.shape(),

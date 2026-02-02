@@ -893,6 +893,13 @@ pub(crate) fn compile_struct_positional_deserializer<F: JitFormat>(
                                                 0,
                                             );
                                         }
+                                        facet_core::EnumRepr::Rust => {
+                                            jit_debug!(
+                                                "Field '{}' Option<Enum> uses default Rust repr (not supported)",
+                                                field_info.name
+                                            );
+                                            return None;
+                                        }
                                         facet_core::EnumRepr::RustNPO => {
                                             jit_debug!(
                                                 "Field '{}' Option<Enum> uses RustNPO repr (not yet supported)",
@@ -1524,6 +1531,13 @@ pub(crate) fn compile_struct_positional_deserializer<F: JitFormat>(
                                 builder
                                     .ins()
                                     .store(MemFlags::trusted(), disc_i64, field_ptr, 0);
+                            }
+                            facet_core::EnumRepr::Rust => {
+                                jit_debug!(
+                                    "Field '{}' enum uses default Rust repr (not supported)",
+                                    field_info.name
+                                );
+                                return None;
                             }
                             facet_core::EnumRepr::RustNPO => {
                                 jit_debug!(

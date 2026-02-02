@@ -270,6 +270,12 @@ fn ensure_format_jit_enum_supported(
         | EnumRepr::ISize => {
             // All explicit discriminant sizes are supported
         }
+        EnumRepr::Rust => {
+            return Err(Tier2Incompatibility::UnsupportedEnumRepr {
+                type_name,
+                repr: "default Rust (unspecified discriminant layout)",
+            });
+        }
         EnumRepr::RustNPO => {
             return Err(Tier2Incompatibility::UnsupportedEnumRepr {
                 type_name,

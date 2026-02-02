@@ -247,7 +247,8 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
             }
         }
 
-        ShapeBuilder::for_sized::<Option<T>>("Option")            .module_path("core::option")
+        ShapeBuilder::for_sized::<Option<T>>("Option")
+            .module_path("core::option")
             .ty(Type::User(
                 // Null-Pointer-Optimization check
                 if core::mem::size_of::<T>() == core::mem::size_of::<Option<T>>()
@@ -270,7 +271,22 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
                         is_cow: false,
                     })
                 } else {
-                    UserType::Opaque
+                    UserType::Enum(EnumType {
+                        repr: Repr::default(),
+                        enum_repr: EnumRepr::Rust,
+                        variants: &const {
+                            [
+                                VariantBuilder::unit("None").discriminant(0).build(),
+                                VariantBuilder::tuple(
+                                    "Some",
+                                    &const { [FieldBuilder::new("0", crate::shape_of::<T>, 0).build()] },
+                                )
+                                .discriminant(1)
+                                .build(),
+                            ]
+                        },
+                        is_cow: false,
+                    })
                 },
             ))
             .def(Def::Option(OptionDef::new(

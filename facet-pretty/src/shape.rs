@@ -404,6 +404,7 @@ fn format_enum_colored(
 
     // Write repr for the discriminant type
     let repr_str = match enum_type.enum_repr {
+        EnumRepr::Rust => None,
         EnumRepr::RustNPO => None,
         EnumRepr::U8 => Some("u8"),
         EnumRepr::U16 => Some("u16"),
@@ -984,6 +985,7 @@ fn format_enum_with_spans(
 
     // Write repr for the discriminant type
     let repr_str = match enum_type.enum_repr {
+        EnumRepr::Rust => None,
         EnumRepr::RustNPO => None,
         EnumRepr::U8 => Some("u8"),
         EnumRepr::U16 => Some("u16"),
