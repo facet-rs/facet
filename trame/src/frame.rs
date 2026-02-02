@@ -805,7 +805,6 @@ impl Frame {
                         let start = list_frame.len;
                         let end = start + list_frame.staged_len;
 
-                        #[cfg(not(kani))]
                         {
                             for i in start..end {
                                 let elem_ptr = buffer.add(i * element_size);

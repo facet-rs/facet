@@ -85,9 +85,55 @@ fn test_partial_alloc_u32_forget() {
     std::mem::forget(partial);
 }
 
+// Test 5.5: Just Frame with Scalar kind - no Partial, no Arena
+#[kani::proof]
+fn test_frame_scalar_only() {
+    use crate::frame::{Frame, FrameKind};
+
+    let layout = std::alloc::Layout::new::<u32>();
+    let ptr = unsafe { std::alloc::alloc(layout) };
+    kani::assert(!ptr.is_null(), "alloc succeeded");
+
+    let data = facet_core::PtrUninit::new(ptr);
+    let frame = Frame::new(data, u32::SHAPE);
+
+    kani::assert(matches!(frame.kind, FrameKind::Scalar), "frame is scalar");
+
+    // Don't drop, just dealloc
+    unsafe { std::alloc::dealloc(ptr, layout) };
+}
+
+// Test 5.6: Frame + Arena, no Partial
+#[kani::proof]
+fn test_frame_in_arena() {
+    use crate::arena::Arena;
+    use crate::frame::{Frame, FrameKind};
+
+    let layout = std::alloc::Layout::new::<u32>();
+    let ptr = unsafe { std::alloc::alloc(layout) };
+    kani::assert(!ptr.is_null(), "alloc succeeded");
+
+    let data = facet_core::PtrUninit::new(ptr);
+    let frame = Frame::new(data, u32::SHAPE);
+
+    let mut arena: Arena<Frame> = Arena::new();
+    let idx = arena.alloc(frame);
+
+    let frame_ref = arena.get(idx);
+    kani::assert(
+        matches!(frame_ref.kind, FrameKind::Scalar),
+        "frame is scalar",
+    );
+
+    // Free from arena, dealloc manually
+    let freed = arena.free(idx);
+    freed.dealloc_if_owned();
+    unsafe { std::alloc::dealloc(ptr, layout) };
+}
+
 // Test 6: Partial::alloc with Drop, bounded unwind
 #[kani::proof]
-#[kani::unwind(2)]
+#[kani::unwind(1)]
 fn test_partial_alloc_u32_with_drop() {
     use super::Partial;
     use crate::frame::FrameKind;

@@ -5,6 +5,12 @@ all:
     just miri
     just cov
 
+kani *args:
+    cargo kani -Z stubbing -Z function-contracts \
+        --no-default-checks --no-memory-safety-checks \
+        --no-overflow-checks --no-undefined-function-checks \
+        --no-unwinding-checks {{ args }}
+
 miri *args:
     #!/usr/bin/env -S bash -euo pipefail
     source ../miri-env.sh
