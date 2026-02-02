@@ -36,6 +36,3 @@ pub use partial::Partial;
 
 // --- verified abstractions for Kani ---
 mod verified;
-
-// --- backend abstraction for memory operations ---
-pub mod backend;

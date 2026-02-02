@@ -1,0 +1,12 @@
+list:
+    just --list
+
+all:
+    just kani
+    just test
+
+kani *args:
+    cargo kani {{ args }}
+
+test *args:
+    cargo test -p trame-formal {{ args }}

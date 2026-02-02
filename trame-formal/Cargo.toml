@@ -1,0 +1,30 @@
+[package]
+name = "trame-formal"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Formally verified partial value construction"
+keywords = ["reflection", "introspection", "facet", "verification", "kani"]
+categories = ["development-tools", "rust-patterns"]
+homepage = "https://facet.rs"
+readme = "README.md"
+
+[package.metadata]
+
+[package.metadata.kani]
+default-unwind = 10
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[features]
+default = []
+
+[dependencies]
+
+[dev-dependencies]
+
+[lints]
+workspace = true
