@@ -390,6 +390,13 @@ pub(crate) fn compile_enum_positional_deserializer<F: JitFormat>(
                         .ins()
                         .store(MemFlags::trusted(), disc_i64, out_ptr, 0);
                 }
+                facet_core::EnumRepr::Rust => {
+                    jit_debug!(
+                        "Variant '{}' uses default Rust repr (not supported)",
+                        variant.name
+                    );
+                    return None;
+                }
                 facet_core::EnumRepr::RustNPO => {
                     jit_debug!(
                         "Variant '{}' uses RustNPO repr (not yet supported)",

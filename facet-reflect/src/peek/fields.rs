@@ -300,6 +300,11 @@ enum FieldsForSerializeIterState<'mem, 'facet> {
         field: Field,
         list_iter: super::PeekListIter<'mem, 'facet>,
     },
+    /// A flattened Option<T> where T needs to be flattened
+    FlattenedOption {
+        field: Field,
+        inner: Peek<'mem, 'facet>,
+    },
 }
 
 impl<'mem, 'facet> Iterator for FieldsForSerializeIter<'mem, 'facet> {
@@ -394,6 +399,56 @@ impl<'mem, 'facet> Iterator for FieldsForSerializeIter<'mem, 'facet> {
                     // List exhausted, continue to next state
                     continue;
                 }
+                FieldsForSerializeIterState::FlattenedOption { field, inner } => {
+                    // Process the inner value of Some(inner) as if it were a flattened field
+                    // Try to flatten it further (struct, enum, map, etc.)
+                    if let Ok(struct_peek) = inner.into_struct() {
+                        self.stack.push(FieldsForSerializeIterState::Fields(
+                            FieldIter::new_struct(struct_peek),
+                        ));
+                        continue;
+                    } else if let Ok(enum_peek) = inner.into_enum() {
+                        let variant = enum_peek
+                            .active_variant()
+                            .expect("Failed to get active variant");
+                        let field_item = FieldItem::flattened_enum(field, variant);
+
+                        use facet_core::StructKind;
+                        let inner_value = match variant.data.kind {
+                            StructKind::Unit => {
+                                continue;
+                            }
+                            StructKind::TupleStruct | StructKind::Tuple
+                                if variant.data.fields.len() == 1 =>
+                            {
+                                enum_peek
+                                    .field(0)
+                                    .expect("Failed to get variant field")
+                                    .expect("Newtype variant should have field 0")
+                            }
+                            StructKind::TupleStruct | StructKind::Tuple | StructKind::Struct => {
+                                self.stack.push(FieldsForSerializeIterState::FlattenedEnum {
+                                    field_item: Some(field_item),
+                                    value: inner,
+                                });
+                                continue;
+                            }
+                        };
+
+                        self.stack.push(FieldsForSerializeIterState::FlattenedEnum {
+                            field_item: Some(field_item),
+                            value: inner_value,
+                        });
+                        continue;
+                    } else if let Ok(map_peek) = inner.into_map() {
+                        self.stack.push(FieldsForSerializeIterState::FlattenedMap {
+                            map_iter: map_peek.iter(),
+                        });
+                        continue;
+                    }
+                    // Can't flatten this type - skip it
+                    continue;
+                }
                 FieldsForSerializeIterState::Fields(mut fields) => {
                     let Some((field, peek)) = fields.next() else {
                         continue;
@@ -415,7 +470,21 @@ impl<'mem, 'facet> Iterator for FieldsForSerializeIter<'mem, 'facet> {
                     }
 
                     if field.is_flattened() {
-                        if let Ok(struct_peek) = peek.into_struct() {
+                        // Check for Option<T> first - Option now has UserType::Enum but should
+                        // be flattened by unwrapping Some(inner) and flattening inner, or skipping None
+                        if let Ok(opt_peek) = peek.into_option() {
+                            if let Some(inner) = opt_peek.value() {
+                                // Some(inner) - continue flattening with the inner value
+                                // Re-push this field with the inner value to process it
+                                self.stack
+                                    .push(FieldsForSerializeIterState::FlattenedOption {
+                                        field,
+                                        inner,
+                                    });
+                            }
+                            // None - skip this field entirely
+                            continue;
+                        } else if let Ok(struct_peek) = peek.into_struct() {
                             self.stack.push(FieldsForSerializeIterState::Fields(
                                 FieldIter::new_struct(struct_peek),
                             ))
