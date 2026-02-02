@@ -3,8 +3,14 @@
 //! Two implementations:
 //! - `RealBackend`: Actual memory operations (for production)
 //! - `VerifiedBackend`: State tracking with assertions (for Kani)
+//!
+//! The key insight: we have ONE implementation of business logic that uses
+//! the Backend trait. For verification, we swap in VerifiedBackend which
+//! tracks state and asserts valid transitions. For production, RealBackend
+//! performs actual memory operations with zero overhead.
 
-use crate::shape::ShapeDesc;
+use crate::shape::{FieldInfo, ShapeDesc};
+use core::alloc::Layout;
 
 /// Maximum number of allocations tracked by VerifiedBackend.
 pub const MAX_ALLOCS: usize = 8;
@@ -14,6 +20,8 @@ pub const MAX_SLOTS: usize = 32;
 
 /// State of a memory slot.
 ///
+/// The valid state transitions are:
+///
 /// ```text
 /// Unallocated  --alloc-->  Allocated  --init-->  Initialized
 ///                               ^                     |
@@ -21,13 +29,19 @@ pub const MAX_SLOTS: usize = 32;
 ///                               |
 /// Unallocated  <--dealloc-------+
 /// ```
+///
+/// Key invariants:
+/// - Cannot init an Unallocated slot (no memory!)
+/// - Cannot init an already Initialized slot (double-init!)
+/// - Cannot drop an Unallocated or Allocated slot (nothing to drop!)
+/// - Cannot dealloc while any slot is Initialized (leak the drop!)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SlotState {
-    /// Not allocated.
+    /// Not allocated - no memory exists for this slot.
     Unallocated,
-    /// Allocated but not initialized.
+    /// Allocated but not initialized - memory exists but contains garbage.
     Allocated,
-    /// Allocated and initialized.
+    /// Allocated and initialized - memory contains a valid value.
     Initialized,
 }
 
@@ -36,25 +50,27 @@ pub enum SlotState {
 /// # Safety
 ///
 /// All methods are unsafe because they have preconditions that cannot be
-/// checked at compile time.
+/// checked at compile time. The VerifiedBackend asserts these preconditions
+/// for Kani proofs; RealBackend assumes they hold (undefined behavior otherwise).
 pub trait Backend {
-    /// Handle to an allocation.
+    /// Handle to an allocation (a contiguous region of slots).
     type Alloc: Copy;
 
-    /// Handle to a slot within an allocation.
+    /// Handle to a single slot within an allocation.
     type Slot: Copy;
 
     /// Allocate memory for a shape.
     ///
     /// # Safety
-    /// - Caller must eventually call `dealloc`
+    /// - Caller must eventually call `dealloc` to avoid leaks
+    /// - All slots start in `Allocated` state
     unsafe fn alloc(&mut self, shape: ShapeDesc) -> Self::Alloc;
 
     /// Deallocate memory.
     ///
     /// # Safety
-    /// - `alloc` must be a live allocation
-    /// - All slots must be in `Allocated` state (not `Initialized`)
+    /// - `alloc` must be a live allocation (not already freed)
+    /// - All slots must be in `Allocated` state (not `Initialized` - drop first!)
     unsafe fn dealloc(&mut self, alloc: Self::Alloc);
 
     /// Get a slot handle for a field within an allocation.
@@ -68,16 +84,16 @@ pub trait Backend {
     ///
     /// # Safety
     /// - `slot` must be valid
-    /// - Slot must be in `Allocated` state
-    /// - Memory must actually be initialized
+    /// - Slot must be in `Allocated` state (not Unallocated or Initialized)
+    /// - Memory must actually be initialized before calling this
     unsafe fn mark_init(&mut self, slot: Self::Slot);
 
-    /// Mark a slot as uninitialized (after drop).
+    /// Mark a slot as uninitialized (after drop_in_place).
     ///
     /// # Safety
     /// - `slot` must be valid
     /// - Slot must be in `Initialized` state
-    /// - `drop_in_place` must have been called
+    /// - `drop_in_place` must have been called on the memory
     unsafe fn mark_uninit(&mut self, slot: Self::Slot);
 
     /// Check if a slot is initialized.
@@ -88,25 +104,37 @@ pub trait Backend {
 }
 
 /// Verified backend that tracks state for Kani proofs.
+///
+/// This backend doesn't do any real memory operations - it just tracks
+/// the abstract state of slots and asserts that all transitions are valid.
 #[derive(Debug)]
 pub struct VerifiedBackend {
     /// State of each slot.
     slots: [SlotState; MAX_SLOTS],
-    /// Next slot index to allocate.
+    /// Next slot index to allocate from.
     next_slot: usize,
-    /// Allocations: (start_slot, slot_count), or None if freed.
+    /// Allocations: Some((start_slot, slot_count)) if live, None if freed.
     allocs: [Option<(u16, u16)>; MAX_ALLOCS],
     /// Next allocation index.
     next_alloc: usize,
 }
 
 impl VerifiedBackend {
+    /// Create a new verified backend with all slots unallocated.
     pub fn new() -> Self {
         Self {
             slots: [SlotState::Unallocated; MAX_SLOTS],
             next_slot: 0,
             allocs: [None; MAX_ALLOCS],
             next_alloc: 0,
+        }
+    }
+
+    /// Check that all allocations have been freed (for leak detection).
+    #[cfg(test)]
+    pub fn assert_no_leaks(&self) {
+        for (i, alloc) in self.allocs.iter().enumerate() {
+            assert!(alloc.is_none(), "allocation {} not freed: {:?}", i, alloc);
         }
     }
 }
@@ -132,6 +160,11 @@ impl Backend for VerifiedBackend {
 
         // Mark slots as allocated
         for i in 0..slot_count {
+            assert!(
+                self.slots[start_slot + i] == SlotState::Unallocated,
+                "slot {} already allocated",
+                start_slot + i
+            );
             self.slots[start_slot + i] = SlotState::Allocated;
         }
 
@@ -146,12 +179,12 @@ impl Backend for VerifiedBackend {
         let alloc_idx = alloc as usize;
         let (start, count) = self.allocs[alloc_idx].expect("dealloc: already freed");
 
-        // Verify all slots are Allocated (not Initialized)
+        // Verify all slots are Allocated (not Initialized - must drop first!)
         for i in 0..(count as usize) {
             let slot_idx = (start as usize) + i;
             assert!(
                 self.slots[slot_idx] == SlotState::Allocated,
-                "dealloc: slot {} is {:?}, expected Allocated",
+                "dealloc: slot {} is {:?}, expected Allocated (did you forget to drop?)",
                 slot_idx,
                 self.slots[slot_idx]
             );
@@ -209,7 +242,8 @@ mod tests {
     #[test]
     fn alloc_scalar() {
         let mut backend = VerifiedBackend::new();
-        let alloc = unsafe { backend.alloc(ShapeDesc::Scalar) };
+        let shape = ShapeDesc::scalar(Layout::new::<u32>());
+        let alloc = unsafe { backend.alloc(shape) };
         let slot = unsafe { backend.slot(alloc, 0) };
 
         assert!(!unsafe { backend.is_init(slot) });
@@ -221,12 +255,19 @@ mod tests {
         assert!(!unsafe { backend.is_init(slot) });
 
         unsafe { backend.dealloc(alloc) };
+        backend.assert_no_leaks();
     }
 
     #[test]
     fn alloc_struct() {
         let mut backend = VerifiedBackend::new();
-        let alloc = unsafe { backend.alloc(ShapeDesc::Struct { field_count: 3 }) };
+        let fields = [
+            FieldInfo::new(0, Layout::new::<u32>()),
+            FieldInfo::new(4, Layout::new::<u32>()),
+            FieldInfo::new(8, Layout::new::<u32>()),
+        ];
+        let shape = ShapeDesc::struct_with_fields(&fields);
+        let alloc = unsafe { backend.alloc(shape) };
 
         // Init fields out of order
         let slot1 = unsafe { backend.slot(alloc, 1) };
@@ -243,51 +284,68 @@ mod tests {
         unsafe { backend.mark_uninit(slot2) };
 
         unsafe { backend.dealloc(alloc) };
+        backend.assert_no_leaks();
     }
 
     #[test]
     #[should_panic(expected = "mark_init")]
     fn double_init_panics() {
         let mut backend = VerifiedBackend::new();
-        let alloc = unsafe { backend.alloc(ShapeDesc::Scalar) };
+        let shape = ShapeDesc::scalar(Layout::new::<u32>());
+        let alloc = unsafe { backend.alloc(shape) };
         let slot = unsafe { backend.slot(alloc, 0) };
 
         unsafe { backend.mark_init(slot) };
-        unsafe { backend.mark_init(slot) }; // panic
+        unsafe { backend.mark_init(slot) }; // panic: already initialized
     }
 
     #[test]
     #[should_panic(expected = "mark_uninit")]
     fn uninit_without_init_panics() {
         let mut backend = VerifiedBackend::new();
-        let alloc = unsafe { backend.alloc(ShapeDesc::Scalar) };
+        let shape = ShapeDesc::scalar(Layout::new::<u32>());
+        let alloc = unsafe { backend.alloc(shape) };
         let slot = unsafe { backend.slot(alloc, 0) };
 
-        unsafe { backend.mark_uninit(slot) }; // panic
+        unsafe { backend.mark_uninit(slot) }; // panic: not initialized
     }
 
     #[test]
     #[should_panic(expected = "dealloc")]
     fn dealloc_while_init_panics() {
         let mut backend = VerifiedBackend::new();
-        let alloc = unsafe { backend.alloc(ShapeDesc::Scalar) };
+        let shape = ShapeDesc::scalar(Layout::new::<u32>());
+        let alloc = unsafe { backend.alloc(shape) };
         let slot = unsafe { backend.slot(alloc, 0) };
 
         unsafe { backend.mark_init(slot) };
-        unsafe { backend.dealloc(alloc) }; // panic
+        unsafe { backend.dealloc(alloc) }; // panic: slot still initialized
+    }
+
+    #[test]
+    #[should_panic(expected = "dealloc: already freed")]
+    fn double_dealloc_panics() {
+        let mut backend = VerifiedBackend::new();
+        let shape = ShapeDesc::scalar(Layout::new::<u32>());
+        let alloc = unsafe { backend.alloc(shape) };
+
+        unsafe { backend.dealloc(alloc) };
+        unsafe { backend.dealloc(alloc) }; // panic: already freed
     }
 }
 
 #[cfg(kani)]
 mod kani_proofs {
     use super::*;
+    use crate::shape::MAX_FIELDS;
 
-    /// Verify that valid operation sequences don't panic.
+    /// Verify that a valid scalar lifecycle doesn't violate any invariants.
     #[kani::proof]
     #[kani::unwind(10)]
     fn valid_scalar_lifecycle() {
         let mut backend = VerifiedBackend::new();
-        let alloc = unsafe { backend.alloc(ShapeDesc::Scalar) };
+        let shape = ShapeDesc::scalar(Layout::from_size_align(4, 4).unwrap());
+        let alloc = unsafe { backend.alloc(shape) };
         let slot = unsafe { backend.slot(alloc, 0) };
 
         // Must init before uninit
@@ -298,15 +356,29 @@ mod kani_proofs {
         unsafe { backend.dealloc(alloc) };
     }
 
-    /// Verify struct field operations.
+    /// Verify struct field operations follow the state machine.
     #[kani::proof]
     #[kani::unwind(10)]
     fn valid_struct_lifecycle() {
         let field_count: u8 = kani::any();
         kani::assume(field_count > 0 && field_count <= 4);
 
+        // Create a struct shape with that many fields
+        let mut fields = [FieldInfo::new(0, Layout::new::<()>()); MAX_FIELDS];
+        let field_layout = Layout::from_size_align(4, 4).unwrap();
+
+        for i in 0..(field_count as usize) {
+            fields[i] = FieldInfo::new(i * 4, field_layout);
+        }
+
+        let layout = Layout::from_size_align((field_count as usize) * 4, 4).unwrap();
+        let shape = ShapeDesc::Struct {
+            layout,
+            field_count,
+            fields,
+        };
+
         let mut backend = VerifiedBackend::new();
-        let shape = ShapeDesc::Struct { field_count };
         let alloc = unsafe { backend.alloc(shape) };
 
         // Init all fields
@@ -322,5 +394,71 @@ mod kani_proofs {
         }
 
         unsafe { backend.dealloc(alloc) };
+    }
+
+    /// Verify that we can init and uninit fields in any order.
+    #[kani::proof]
+    #[kani::unwind(10)]
+    fn init_uninit_any_order() {
+        let mut backend = VerifiedBackend::new();
+
+        let fields = [
+            FieldInfo::new(0, Layout::from_size_align(4, 4).unwrap()),
+            FieldInfo::new(4, Layout::from_size_align(4, 4).unwrap()),
+        ];
+        let shape = ShapeDesc::struct_with_fields(&fields);
+        let alloc = unsafe { backend.alloc(shape) };
+
+        let slot0 = unsafe { backend.slot(alloc, 0) };
+        let slot1 = unsafe { backend.slot(alloc, 1) };
+
+        // Nondeterministic order for init
+        let init_0_first: bool = kani::any();
+        if init_0_first {
+            unsafe { backend.mark_init(slot0) };
+            unsafe { backend.mark_init(slot1) };
+        } else {
+            unsafe { backend.mark_init(slot1) };
+            unsafe { backend.mark_init(slot0) };
+        }
+
+        // Nondeterministic order for uninit
+        let uninit_0_first: bool = kani::any();
+        if uninit_0_first {
+            unsafe { backend.mark_uninit(slot0) };
+            unsafe { backend.mark_uninit(slot1) };
+        } else {
+            unsafe { backend.mark_uninit(slot1) };
+            unsafe { backend.mark_uninit(slot0) };
+        }
+
+        unsafe { backend.dealloc(alloc) };
+    }
+
+    /// Verify multiple allocations work correctly.
+    #[kani::proof]
+    #[kani::unwind(10)]
+    fn multiple_allocations() {
+        let mut backend = VerifiedBackend::new();
+
+        let shape1 = ShapeDesc::scalar(Layout::from_size_align(4, 4).unwrap());
+        let shape2 = ShapeDesc::scalar(Layout::from_size_align(8, 8).unwrap());
+
+        let alloc1 = unsafe { backend.alloc(shape1) };
+        let alloc2 = unsafe { backend.alloc(shape2) };
+
+        let slot1 = unsafe { backend.slot(alloc1, 0) };
+        let slot2 = unsafe { backend.slot(alloc2, 0) };
+
+        // Init both
+        unsafe { backend.mark_init(slot1) };
+        unsafe { backend.mark_init(slot2) };
+
+        // Uninit and dealloc in opposite order
+        unsafe { backend.mark_uninit(slot2) };
+        unsafe { backend.dealloc(alloc2) };
+
+        unsafe { backend.mark_uninit(slot1) };
+        unsafe { backend.dealloc(alloc1) };
     }
 }
