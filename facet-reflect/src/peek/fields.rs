@@ -300,7 +300,7 @@ enum FieldsForSerializeIterState<'mem, 'facet> {
         field: Field,
         list_iter: super::PeekListIter<'mem, 'facet>,
     },
-    /// A flattened Option<T> where T needs to be flattened
+    /// A flattened `Option<T>` where T needs to be flattened
     FlattenedOption {
         field: Field,
         inner: Peek<'mem, 'facet>,
