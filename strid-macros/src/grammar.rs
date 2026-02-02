@@ -121,9 +121,8 @@ unsynn! {
         Named(BraceGroupContaining<CommaDelimitedVec<NamedField>>),
         /// Unnamed fields: `(i32, i32)`
         Unnamed(ParenthesisGroupContaining<CommaDelimitedVec<UnnamedField>>),
-        /// Unit struct (no fields)
-        #[allow(dead_code)]
-        Unit,
+        /// Unit struct (no fields) - Nothing always succeeds without consuming tokens
+        Unit(Nothing),
     }
 
     /// A named field in a struct.
@@ -167,7 +166,7 @@ impl ItemStruct {
         match &self.fields {
             Fields::Named(f) => f.content.is_empty(),
             Fields::Unnamed(f) => f.content.is_empty(),
-            Fields::Unit => true,
+            Fields::Unit(_) => true,
         }
     }
 }

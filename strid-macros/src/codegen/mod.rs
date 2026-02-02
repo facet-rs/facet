@@ -443,7 +443,7 @@ fn create_field_if_none(fields: &mut crate::grammar::Fields) {
     use crate::grammar::Fields;
 
     // If it's a unit struct, convert it to an unnamed tuple struct with String
-    if matches!(fields, Fields::Unit) {
+    if matches!(fields, Fields::Unit(_)) {
         // Parse a dummy struct to extract the fields structure
         let dummy_struct: proc_macro2::TokenStream = "struct Dummy(String);".parse().unwrap();
         let mut iter = dummy_struct.to_token_iter();
@@ -498,7 +498,7 @@ fn get_field_info<'a>(
             let field = &f.content[0].value;
             Ok((&field.ty, None, &field.attrs))
         }
-        Fields::Unit => {
+        Fields::Unit(_) => {
             Err("unit structs are not supported - struct must have at least one field".to_string())
         }
     }
