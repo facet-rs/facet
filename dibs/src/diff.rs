@@ -154,7 +154,7 @@ impl Change {
     pub fn to_sql(&self, table_name: &str) -> String {
         let qt = quote_ident(table_name);
         match self {
-            Change::AddTable(t) => t.to_create_table_sql(),
+            Change::AddTable(t) => crate::schema::create_table_sql(t),
             Change::DropTable(name) => format!("DROP TABLE {};", quote_ident(name)),
             Change::RenameTable { from, to } => {
                 format!(
@@ -291,7 +291,11 @@ impl Change {
             }
             Change::AddIndex(idx) => {
                 let unique = if idx.unique { "UNIQUE " } else { "" };
-                let quoted_cols: Vec<_> = idx.columns.iter().map(|c| c.to_sql()).collect();
+                let quoted_cols: Vec<_> = idx
+                    .columns
+                    .iter()
+                    .map(|c| crate::schema::index_column_to_sql(c))
+                    .collect();
                 let where_clause = idx
                     .where_clause
                     .as_ref()
@@ -615,7 +619,8 @@ fn detect_renames(added: &[&Table], dropped: &[&Table]) -> Vec<(String, String)>
     renames
 }
 
-impl Schema {
+/// Extension trait for Schema diffing operations.
+pub trait SchemaExt {
     /// Compare this schema (desired/Rust) against another schema (current/database).
     ///
     /// Returns the changes needed to transform `db_schema` into `self`.
@@ -632,7 +637,9 @@ impl Schema {
     /// # Example
     ///
     /// ```ignore
-    /// let rust_schema = Schema::collect();
+    /// use dibs::diff::SchemaExt;
+    ///
+    /// let rust_schema = schema::collect_schema();
     /// let db_schema = Schema::from_database(&client).await?;
     /// let diff = rust_schema.diff(&db_schema);
     ///
@@ -647,24 +654,28 @@ impl Schema {
     ///     }
     /// }
     /// ```
-    pub fn diff(&self, db_schema: &Schema) -> SchemaDiff {
+    fn diff(&self, db_schema: &Schema) -> SchemaDiff;
+}
+
+impl SchemaExt for Schema {
+    fn diff(&self, db_schema: &Schema) -> SchemaDiff {
         let mut table_diffs = Vec::new();
 
-        let desired_tables: HashSet<&str> = self.tables.iter().map(|t| t.name.as_str()).collect();
+        let desired_tables: HashSet<&str> = self.tables.values().map(|t| t.name.as_str()).collect();
         let current_tables: HashSet<&str> =
-            db_schema.tables.iter().map(|t| t.name.as_str()).collect();
+            db_schema.tables.values().map(|t| t.name.as_str()).collect();
 
         // Find tables only in desired (candidates for add or rename target)
         let added_tables: Vec<&Table> = self
             .tables
-            .iter()
+            .values()
             .filter(|t| !current_tables.contains(t.name.as_str()))
             .collect();
 
         // Find tables only in current (candidates for drop or rename source)
         let dropped_tables: Vec<&Table> = db_schema
             .tables
-            .iter()
+            .values()
             .filter(|t| !desired_tables.contains(t.name.as_str()))
             .collect();
 
@@ -690,10 +701,9 @@ impl Schema {
             });
 
             // Also diff the columns between old and new
-            if let (Some(old_table), Some(new_table)) = (
-                db_schema.tables.iter().find(|t| &t.name == from),
-                self.tables.iter().find(|t| &t.name == to),
-            ) {
+            if let (Some(old_table), Some(new_table)) =
+                (db_schema.tables.get(from), self.tables.get(to))
+            {
                 let column_changes = diff_table(new_table, old_table, &table_renames);
                 if !column_changes.is_empty() {
                     // Add column changes to the same table diff
@@ -725,15 +735,11 @@ impl Schema {
         }
 
         // Tables in both (not renamed) - diff columns and constraints
-        for desired_table in &self.tables {
+        for desired_table in self.tables.values() {
             if renamed_to.contains(desired_table.name.as_str()) {
                 continue; // Already handled above
             }
-            if let Some(current_table) = db_schema
-                .tables
-                .iter()
-                .find(|t| t.name == desired_table.name)
-            {
+            if let Some(current_table) = db_schema.tables.get(&desired_table.name) {
                 let changes = diff_table(desired_table, current_table, &table_renames);
                 if !changes.is_empty() {
                     table_diffs.push(TableDiff {
@@ -1369,6 +1375,12 @@ mod tests {
         }
     }
 
+    fn make_schema(tables: Vec<Table>) -> Schema {
+        Schema {
+            tables: tables.into_iter().map(|t| (t.name.clone(), t)).collect(),
+        }
+    }
+
     #[test]
     fn test_diff_empty_schemas() {
         let a = Schema::new();
@@ -1379,12 +1391,10 @@ mod tests {
 
     #[test]
     fn test_diff_add_table() {
-        let desired = Schema {
-            tables: vec![make_table(
-                "users",
-                vec![make_column("id", PgType::BigInt, false)],
-            )],
-        };
+        let desired = make_schema(vec![make_table(
+            "users",
+            vec![make_column("id", PgType::BigInt, false)],
+        )]);
         let current = Schema::new();
 
         let diff = desired.diff(&current);
@@ -1398,12 +1408,10 @@ mod tests {
     #[test]
     fn test_diff_drop_table() {
         let desired = Schema::new();
-        let current = Schema {
-            tables: vec![make_table(
-                "users",
-                vec![make_column("id", PgType::BigInt, false)],
-            )],
-        };
+        let current = make_schema(vec![make_table(
+            "users",
+            vec![make_column("id", PgType::BigInt, false)],
+        )]);
 
         let diff = desired.diff(&current);
         assert_eq!(diff.table_diffs.len(), 1);
@@ -1415,21 +1423,17 @@ mod tests {
 
     #[test]
     fn test_diff_add_column() {
-        let desired = Schema {
-            tables: vec![make_table(
-                "users",
-                vec![
-                    make_column("id", PgType::BigInt, false),
-                    make_column("email", PgType::Text, false),
-                ],
-            )],
-        };
-        let current = Schema {
-            tables: vec![make_table(
-                "users",
-                vec![make_column("id", PgType::BigInt, false)],
-            )],
-        };
+        let desired = make_schema(vec![make_table(
+            "users",
+            vec![
+                make_column("id", PgType::BigInt, false),
+                make_column("email", PgType::Text, false),
+            ],
+        )]);
+        let current = make_schema(vec![make_table(
+            "users",
+            vec![make_column("id", PgType::BigInt, false)],
+        )]);
 
         let diff = desired.diff(&current);
         assert_eq!(diff.table_diffs.len(), 1);
@@ -1441,21 +1445,17 @@ mod tests {
 
     #[test]
     fn test_diff_drop_column() {
-        let desired = Schema {
-            tables: vec![make_table(
-                "users",
-                vec![make_column("id", PgType::BigInt, false)],
-            )],
-        };
-        let current = Schema {
-            tables: vec![make_table(
-                "users",
-                vec![
-                    make_column("id", PgType::BigInt, false),
-                    make_column("email", PgType::Text, false),
-                ],
-            )],
-        };
+        let desired = make_schema(vec![make_table(
+            "users",
+            vec![make_column("id", PgType::BigInt, false)],
+        )]);
+        let current = make_schema(vec![make_table(
+            "users",
+            vec![
+                make_column("id", PgType::BigInt, false),
+                make_column("email", PgType::Text, false),
+            ],
+        )]);
 
         let diff = desired.diff(&current);
         assert_eq!(diff.table_diffs.len(), 1);
@@ -1467,18 +1467,14 @@ mod tests {
 
     #[test]
     fn test_diff_alter_column_type() {
-        let desired = Schema {
-            tables: vec![make_table(
-                "users",
-                vec![make_column("age", PgType::BigInt, false)],
-            )],
-        };
-        let current = Schema {
-            tables: vec![make_table(
-                "users",
-                vec![make_column("age", PgType::Integer, false)],
-            )],
-        };
+        let desired = make_schema(vec![make_table(
+            "users",
+            vec![make_column("age", PgType::BigInt, false)],
+        )]);
+        let current = make_schema(vec![make_table(
+            "users",
+            vec![make_column("age", PgType::Integer, false)],
+        )]);
 
         let diff = desired.diff(&current);
         assert_eq!(diff.table_diffs.len(), 1);
@@ -1490,18 +1486,14 @@ mod tests {
 
     #[test]
     fn test_diff_alter_column_nullable() {
-        let desired = Schema {
-            tables: vec![make_table(
-                "users",
-                vec![make_column("bio", PgType::Text, true)],
-            )],
-        };
-        let current = Schema {
-            tables: vec![make_table(
-                "users",
-                vec![make_column("bio", PgType::Text, false)],
-            )],
-        };
+        let desired = make_schema(vec![make_table(
+            "users",
+            vec![make_column("bio", PgType::Text, true)],
+        )]);
+        let current = make_schema(vec![make_table(
+            "users",
+            vec![make_column("bio", PgType::Text, false)],
+        )]);
 
         let diff = desired.diff(&current);
         assert_eq!(diff.table_diffs.len(), 1);
@@ -1513,15 +1505,13 @@ mod tests {
 
     #[test]
     fn test_diff_no_changes() {
-        let schema = Schema {
-            tables: vec![make_table(
-                "users",
-                vec![
-                    make_column("id", PgType::BigInt, false),
-                    make_column("email", PgType::Text, false),
-                ],
-            )],
-        };
+        let schema = make_schema(vec![make_table(
+            "users",
+            vec![
+                make_column("id", PgType::BigInt, false),
+                make_column("email", PgType::Text, false),
+            ],
+        )]);
 
         let diff = schema.diff(&schema);
         assert!(diff.is_empty());
@@ -1539,12 +1529,8 @@ mod tests {
         current_col.primary_key = true;
         current_col.auto_generated = false;
 
-        let desired = Schema {
-            tables: vec![make_table("users", vec![desired_col])],
-        };
-        let current = Schema {
-            tables: vec![make_table("users", vec![current_col])],
-        };
+        let desired = make_schema(vec![make_table("users", vec![desired_col])]);
+        let current = make_schema(vec![make_table("users", vec![current_col])]);
 
         let diff = desired.diff(&current);
         // This should NOT be empty - we need to add a sequence/identity for the auto column
@@ -1641,7 +1627,7 @@ mod tests {
             icon: None,
         };
 
-        insta::assert_snapshot!(table.to_create_table_sql());
+        insta::assert_snapshot!(crate::schema::create_table_sql(&table));
     }
 
     #[test]
@@ -1663,7 +1649,7 @@ mod tests {
             icon: None,
         };
 
-        insta::assert_snapshot!(table.to_create_table_sql());
+        insta::assert_snapshot!(crate::schema::create_table_sql(&table));
     }
 
     #[test]
@@ -1697,8 +1683,8 @@ mod tests {
             icon: None,
         };
 
-        // Note: to_create_table_sql doesn't include FKs (they're added separately)
-        insta::assert_snapshot!(table.to_create_table_sql());
+        // Note: create_table_sql doesn't include FKs (they're added separately)
+        insta::assert_snapshot!(crate::schema::create_table_sql(&table));
     }
 
     #[test]
@@ -1730,75 +1716,73 @@ mod tests {
             icon: None,
         };
 
-        insta::assert_snapshot!(table.to_create_table_sql());
+        insta::assert_snapshot!(crate::schema::create_table_sql(&table));
     }
 
     #[test]
     fn snapshot_full_diff_sql() {
         // Test the full diff SQL output
-        let desired = Schema {
-            tables: vec![
-                Table {
-                    name: "users".to_string(),
-                    columns: vec![
-                        make_pk_column("id", PgType::BigInt),
-                        make_unique_column("email", PgType::Text, false),
-                        make_column("name", PgType::Text, false),
-                    ],
-                    check_constraints: Vec::new(),
-                    trigger_checks: Vec::new(),
-                    foreign_keys: Vec::new(),
-                    indices: Vec::new(),
-                    source: SourceLocation::default(),
-                    doc: None,
-                    icon: None,
-                },
-                Table {
-                    name: "posts".to_string(),
-                    columns: vec![
-                        make_pk_column("id", PgType::BigInt),
-                        make_column("author_id", PgType::BigInt, false),
-                        make_column("title", PgType::Text, false),
-                    ],
-                    check_constraints: Vec::new(),
-                    trigger_checks: Vec::new(),
-                    foreign_keys: vec![ForeignKey {
-                        columns: vec!["author_id".to_string()],
+        let desired = make_schema(vec![
+            Table {
+                name: "users".to_string(),
+                columns: vec![
+                    make_pk_column("id", PgType::BigInt),
+                    make_unique_column("email", PgType::Text, false),
+                    make_column("name", PgType::Text, false),
+                ],
+                check_constraints: Vec::new(),
+                trigger_checks: Vec::new(),
+                foreign_keys: Vec::new(),
+                indices: Vec::new(),
+                source: SourceLocation::default(),
+                doc: None,
+                icon: None,
+            },
+            Table {
+                name: "posts".to_string(),
+                columns: vec![
+                    make_pk_column("id", PgType::BigInt),
+                    make_column("author_id", PgType::BigInt, false),
+                    make_column("title", PgType::Text, false),
+                ],
+                check_constraints: Vec::new(),
+                trigger_checks: Vec::new(),
+                foreign_keys: vec![ForeignKey {
+                    columns: vec!["author_id".to_string()],
+                    references_table: "users".to_string(),
+                    references_columns: vec!["id".to_string()],
+                }],
+                indices: Vec::new(),
+                source: SourceLocation::default(),
+                doc: None,
+                icon: None,
+            },
+            Table {
+                name: "post_likes".to_string(),
+                columns: vec![
+                    make_pk_column("user_id", PgType::BigInt),
+                    make_pk_column("post_id", PgType::BigInt),
+                ],
+                check_constraints: Vec::new(),
+                trigger_checks: Vec::new(),
+                foreign_keys: vec![
+                    ForeignKey {
+                        columns: vec!["user_id".to_string()],
                         references_table: "users".to_string(),
                         references_columns: vec!["id".to_string()],
-                    }],
-                    indices: Vec::new(),
-                    source: SourceLocation::default(),
-                    doc: None,
-                    icon: None,
-                },
-                Table {
-                    name: "post_likes".to_string(),
-                    columns: vec![
-                        make_pk_column("user_id", PgType::BigInt),
-                        make_pk_column("post_id", PgType::BigInt),
-                    ],
-                    check_constraints: Vec::new(),
-                    trigger_checks: Vec::new(),
-                    foreign_keys: vec![
-                        ForeignKey {
-                            columns: vec!["user_id".to_string()],
-                            references_table: "users".to_string(),
-                            references_columns: vec!["id".to_string()],
-                        },
-                        ForeignKey {
-                            columns: vec!["post_id".to_string()],
-                            references_table: "posts".to_string(),
-                            references_columns: vec!["id".to_string()],
-                        },
-                    ],
-                    indices: Vec::new(),
-                    source: SourceLocation::default(),
-                    doc: None,
-                    icon: None,
-                },
-            ],
-        };
+                    },
+                    ForeignKey {
+                        columns: vec!["post_id".to_string()],
+                        references_table: "posts".to_string(),
+                        references_columns: vec!["id".to_string()],
+                    },
+                ],
+                indices: Vec::new(),
+                source: SourceLocation::default(),
+                doc: None,
+                icon: None,
+            },
+        ]);
 
         let current = Schema::new();
         let diff = desired.diff(&current);
@@ -1880,25 +1864,21 @@ mod tests {
 
     #[test]
     fn test_diff_detects_rename() {
-        let desired = Schema {
-            tables: vec![make_table(
-                "user",
-                vec![
-                    make_column("id", PgType::BigInt, false),
-                    make_column("email", PgType::Text, false),
-                ],
-            )],
-        };
+        let desired = make_schema(vec![make_table(
+            "user",
+            vec![
+                make_column("id", PgType::BigInt, false),
+                make_column("email", PgType::Text, false),
+            ],
+        )]);
 
-        let current = Schema {
-            tables: vec![make_table(
-                "users",
-                vec![
-                    make_column("id", PgType::BigInt, false),
-                    make_column("email", PgType::Text, false),
-                ],
-            )],
-        };
+        let current = make_schema(vec![make_table(
+            "users",
+            vec![
+                make_column("id", PgType::BigInt, false),
+                make_column("email", PgType::Text, false),
+            ],
+        )]);
 
         let diff = desired.diff(&current);
 
@@ -1912,43 +1892,39 @@ mod tests {
 
     #[test]
     fn snapshot_rename_table_sql() {
-        let desired = Schema {
-            tables: vec![
-                make_table(
-                    "user",
-                    vec![
-                        make_column("id", PgType::BigInt, false),
-                        make_column("email", PgType::Text, false),
-                    ],
-                ),
-                make_table(
-                    "category",
-                    vec![
-                        make_column("id", PgType::BigInt, false),
-                        make_column("name", PgType::Text, false),
-                    ],
-                ),
-            ],
-        };
+        let desired = make_schema(vec![
+            make_table(
+                "user",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("email", PgType::Text, false),
+                ],
+            ),
+            make_table(
+                "category",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("name", PgType::Text, false),
+                ],
+            ),
+        ]);
 
-        let current = Schema {
-            tables: vec![
-                make_table(
-                    "users",
-                    vec![
-                        make_column("id", PgType::BigInt, false),
-                        make_column("email", PgType::Text, false),
-                    ],
-                ),
-                make_table(
-                    "categories",
-                    vec![
-                        make_column("id", PgType::BigInt, false),
-                        make_column("name", PgType::Text, false),
-                    ],
-                ),
-            ],
-        };
+        let current = make_schema(vec![
+            make_table(
+                "users",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("email", PgType::Text, false),
+                ],
+            ),
+            make_table(
+                "categories",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("name", PgType::Text, false),
+                ],
+            ),
+        ]);
 
         let diff = desired.diff(&current);
         insta::assert_snapshot!(diff.to_sql());
@@ -1974,36 +1950,32 @@ mod tests {
         }
 
         // Current: categories with self-ref FK
-        let current = Schema {
-            tables: vec![make_table_with_fks(
-                "categories",
-                vec![
-                    make_column("id", PgType::BigInt, false),
-                    make_column("parent_id", PgType::BigInt, true),
-                ],
-                vec![ForeignKey {
-                    columns: vec!["parent_id".to_string()],
-                    references_table: "categories".to_string(),
-                    references_columns: vec!["id".to_string()],
-                }],
-            )],
-        };
+        let current = make_schema(vec![make_table_with_fks(
+            "categories",
+            vec![
+                make_column("id", PgType::BigInt, false),
+                make_column("parent_id", PgType::BigInt, true),
+            ],
+            vec![ForeignKey {
+                columns: vec!["parent_id".to_string()],
+                references_table: "categories".to_string(),
+                references_columns: vec!["id".to_string()],
+            }],
+        )]);
 
         // Desired: same table renamed to category, FK references category
-        let desired = Schema {
-            tables: vec![make_table_with_fks(
-                "category",
-                vec![
-                    make_column("id", PgType::BigInt, false),
-                    make_column("parent_id", PgType::BigInt, true),
-                ],
-                vec![ForeignKey {
-                    columns: vec!["parent_id".to_string()],
-                    references_table: "category".to_string(),
-                    references_columns: vec!["id".to_string()],
-                }],
-            )],
-        };
+        let desired = make_schema(vec![make_table_with_fks(
+            "category",
+            vec![
+                make_column("id", PgType::BigInt, false),
+                make_column("parent_id", PgType::BigInt, true),
+            ],
+            vec![ForeignKey {
+                columns: vec!["parent_id".to_string()],
+                references_table: "category".to_string(),
+                references_columns: vec!["id".to_string()],
+            }],
+        )]);
 
         let diff = desired.diff(&current);
 
@@ -2048,42 +2020,38 @@ mod tests {
         }
 
         // Current: users and posts (posts has FK to users)
-        let current = Schema {
-            tables: vec![
-                make_table("users", vec![make_column("id", PgType::BigInt, false)]),
-                make_table_with_fks(
-                    "posts",
-                    vec![
-                        make_column("id", PgType::BigInt, false),
-                        make_column("author_id", PgType::BigInt, false),
-                    ],
-                    vec![ForeignKey {
-                        columns: vec!["author_id".to_string()],
-                        references_table: "users".to_string(),
-                        references_columns: vec!["id".to_string()],
-                    }],
-                ),
-            ],
-        };
+        let current = make_schema(vec![
+            make_table("users", vec![make_column("id", PgType::BigInt, false)]),
+            make_table_with_fks(
+                "posts",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("author_id", PgType::BigInt, false),
+                ],
+                vec![ForeignKey {
+                    columns: vec!["author_id".to_string()],
+                    references_table: "users".to_string(),
+                    references_columns: vec!["id".to_string()],
+                }],
+            ),
+        ]);
 
         // Desired: users renamed to user, posts FK now references user
-        let desired = Schema {
-            tables: vec![
-                make_table("user", vec![make_column("id", PgType::BigInt, false)]),
-                make_table_with_fks(
-                    "posts",
-                    vec![
-                        make_column("id", PgType::BigInt, false),
-                        make_column("author_id", PgType::BigInt, false),
-                    ],
-                    vec![ForeignKey {
-                        columns: vec!["author_id".to_string()],
-                        references_table: "user".to_string(),
-                        references_columns: vec!["id".to_string()],
-                    }],
-                ),
-            ],
-        };
+        let desired = make_schema(vec![
+            make_table("user", vec![make_column("id", PgType::BigInt, false)]),
+            make_table_with_fks(
+                "posts",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("author_id", PgType::BigInt, false),
+                ],
+                vec![ForeignKey {
+                    columns: vec!["author_id".to_string()],
+                    references_table: "user".to_string(),
+                    references_columns: vec!["id".to_string()],
+                }],
+            ),
+        ]);
 
         let diff = desired.diff(&current);
 
@@ -2155,25 +2123,21 @@ mod tests {
 
     #[test]
     fn test_diff_detects_column_rename() {
-        let desired = Schema {
-            tables: vec![make_table(
-                "users",
-                vec![
-                    make_column("id", PgType::BigInt, false),
-                    make_column("user_email", PgType::Text, false),
-                ],
-            )],
-        };
+        let desired = make_schema(vec![make_table(
+            "users",
+            vec![
+                make_column("id", PgType::BigInt, false),
+                make_column("user_email", PgType::Text, false),
+            ],
+        )]);
 
-        let current = Schema {
-            tables: vec![make_table(
-                "users",
-                vec![
-                    make_column("id", PgType::BigInt, false),
-                    make_column("email", PgType::Text, false),
-                ],
-            )],
-        };
+        let current = make_schema(vec![make_table(
+            "users",
+            vec![
+                make_column("id", PgType::BigInt, false),
+                make_column("email", PgType::Text, false),
+            ],
+        )]);
 
         let diff = desired.diff(&current);
 
@@ -2191,25 +2155,21 @@ mod tests {
 
     #[test]
     fn test_column_rename_with_property_changes() {
-        let desired = Schema {
-            tables: vec![make_table(
-                "users",
-                vec![
-                    make_column("id", PgType::BigInt, false),
-                    make_column("user_email", PgType::Text, true), // Now nullable
-                ],
-            )],
-        };
+        let desired = make_schema(vec![make_table(
+            "users",
+            vec![
+                make_column("id", PgType::BigInt, false),
+                make_column("user_email", PgType::Text, true), // Now nullable
+            ],
+        )]);
 
-        let current = Schema {
-            tables: vec![make_table(
-                "users",
-                vec![
-                    make_column("id", PgType::BigInt, false),
-                    make_column("email", PgType::Text, false), // Was not nullable
-                ],
-            )],
-        };
+        let current = make_schema(vec![make_table(
+            "users",
+            vec![
+                make_column("id", PgType::BigInt, false),
+                make_column("email", PgType::Text, false), // Was not nullable
+            ],
+        )]);
 
         let diff = desired.diff(&current);
 
@@ -2241,25 +2201,21 @@ mod tests {
     #[test]
     fn test_no_false_positive_rename() {
         // Columns with different types should not be detected as renames
-        let desired = Schema {
-            tables: vec![make_table(
-                "users",
-                vec![
-                    make_column("id", PgType::BigInt, false),
-                    make_column("count", PgType::BigInt, false),
-                ],
-            )],
-        };
+        let desired = make_schema(vec![make_table(
+            "users",
+            vec![
+                make_column("id", PgType::BigInt, false),
+                make_column("count", PgType::BigInt, false),
+            ],
+        )]);
 
-        let current = Schema {
-            tables: vec![make_table(
-                "users",
-                vec![
-                    make_column("id", PgType::BigInt, false),
-                    make_column("total", PgType::Text, false), // Different type!
-                ],
-            )],
-        };
+        let current = make_schema(vec![make_table(
+            "users",
+            vec![
+                make_column("id", PgType::BigInt, false),
+                make_column("total", PgType::Text, false), // Different type!
+            ],
+        )]);
 
         let diff = desired.diff(&current);
         let changes = &diff.table_diffs[0].changes;
@@ -2280,27 +2236,23 @@ mod tests {
 
     #[test]
     fn snapshot_rename_column_sql() {
-        let desired = Schema {
-            tables: vec![make_table(
-                "users",
-                vec![
-                    make_column("id", PgType::BigInt, false),
-                    make_column("user_email", PgType::Text, false),
-                    make_column("full_name", PgType::Text, true),
-                ],
-            )],
-        };
+        let desired = make_schema(vec![make_table(
+            "users",
+            vec![
+                make_column("id", PgType::BigInt, false),
+                make_column("user_email", PgType::Text, false),
+                make_column("full_name", PgType::Text, true),
+            ],
+        )]);
 
-        let current = Schema {
-            tables: vec![make_table(
-                "users",
-                vec![
-                    make_column("id", PgType::BigInt, false),
-                    make_column("email", PgType::Text, false),
-                    make_column("name", PgType::Text, true),
-                ],
-            )],
-        };
+        let current = make_schema(vec![make_table(
+            "users",
+            vec![
+                make_column("id", PgType::BigInt, false),
+                make_column("email", PgType::Text, false),
+                make_column("name", PgType::Text, true),
+            ],
+        )]);
 
         let diff = desired.diff(&current);
         insta::assert_snapshot!(diff.to_sql());
@@ -2324,39 +2276,35 @@ mod tests {
             }
         }
 
-        let desired = Schema {
-            tables: vec![
-                make_table("shop", vec![make_column("id", PgType::BigInt, false)]),
-                make_table_with_fks(
-                    "category",
-                    vec![
-                        make_column("id", PgType::BigInt, false),
-                        make_column("shop_id", PgType::BigInt, false),
-                        make_column("parent_id", PgType::BigInt, true),
-                    ],
-                    vec![
-                        ForeignKey {
-                            columns: vec!["shop_id".to_string()],
-                            references_table: "shop".to_string(),
-                            references_columns: vec!["id".to_string()],
-                        },
-                        ForeignKey {
-                            columns: vec!["parent_id".to_string()],
-                            references_table: "category".to_string(),
-                            references_columns: vec!["id".to_string()],
-                        },
-                    ],
-                ),
-            ],
-        };
+        let desired = make_schema(vec![
+            make_table("shop", vec![make_column("id", PgType::BigInt, false)]),
+            make_table_with_fks(
+                "category",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("shop_id", PgType::BigInt, false),
+                    make_column("parent_id", PgType::BigInt, true),
+                ],
+                vec![
+                    ForeignKey {
+                        columns: vec!["shop_id".to_string()],
+                        references_table: "shop".to_string(),
+                        references_columns: vec!["id".to_string()],
+                    },
+                    ForeignKey {
+                        columns: vec!["parent_id".to_string()],
+                        references_table: "category".to_string(),
+                        references_columns: vec!["id".to_string()],
+                    },
+                ],
+            ),
+        ]);
 
         // Current: only shop table exists, no category
-        let current = Schema {
-            tables: vec![make_table(
-                "shop",
-                vec![make_column("id", PgType::BigInt, false)],
-            )],
-        };
+        let current = make_schema(vec![make_table(
+            "shop",
+            vec![make_column("id", PgType::BigInt, false)],
+        )]);
 
         let diff = desired.diff(&current);
         insta::assert_snapshot!(diff.to_sql());

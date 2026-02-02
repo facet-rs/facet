@@ -13,7 +13,7 @@
 //! }
 //! ```
 
-use crate::{Change, MigrationError, Schema};
+use crate::{Change, MigrationError, Schema, diff::SchemaExt, introspect::SchemaIntrospect};
 use dibs_proto::*;
 use roam_stream::{HandshakeConfig, connect};
 use std::io;
@@ -191,14 +191,14 @@ impl DibsServiceImpl {
         });
 
         // Get schemas
-        let rust_schema = Schema::collect();
+        let rust_schema = crate::schema::collect_schema();
         let db_schema = Schema::from_database(&client)
             .await
             .map_err(|e| DibsError::ConnectionFailed(e.to_string()))?;
 
         // Build VirtualSchemas for simulation-based verification
-        let current_schema = crate::solver::VirtualSchema::from_tables(&db_schema.tables);
-        let desired_schema = crate::solver::VirtualSchema::from_tables(&rust_schema.tables);
+        let current_schema = crate::solver::VirtualSchema::from_tables(db_schema.tables.values());
+        let desired_schema = crate::solver::VirtualSchema::from_tables(rust_schema.tables.values());
 
         // Compute diff
         let diff = rust_schema.diff(&db_schema);
@@ -213,7 +213,7 @@ impl DibsServiceImpl {
 
 impl DibsService for DibsServiceImpl {
     async fn schema(&self, _cx: &roam::Context) -> SchemaInfo {
-        let schema = Schema::collect();
+        let schema = crate::schema::collect_schema();
         schema_to_info(&schema)
     }
 
@@ -376,7 +376,7 @@ fn schema_to_info(schema: &Schema) -> SchemaInfo {
     SchemaInfo {
         tables: schema
             .tables
-            .iter()
+            .values()
             .map(|t| TableInfo {
                 name: t.name.clone(),
                 columns: t

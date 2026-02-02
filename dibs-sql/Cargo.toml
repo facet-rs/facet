@@ -9,7 +9,10 @@ edition = "2024"
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
+blake3.workspace = true
 indexmap = "2"
+strid.workspace = true
+facet.workspace = true
 
 [dev-dependencies]
 insta = "1"

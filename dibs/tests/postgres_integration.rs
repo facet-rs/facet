@@ -1,5 +1,8 @@
 //! Integration tests using dockside with Postgres 18.
 
+use dibs::diff::SchemaExt;
+use dibs::introspect::SchemaIntrospect;
+use dibs::schema::{SchemaCodegen, collect_schema};
 use dibs::{PgType, Schema, Table};
 use dockside::{Container, containers};
 use facet::Facet;
@@ -109,6 +112,12 @@ fn test_table(
     }
 }
 
+fn make_schema(tables: Vec<dibs::Table>) -> Schema {
+    Schema {
+        tables: tables.into_iter().map(|t| (t.name.clone(), t)).collect(),
+    }
+}
+
 async fn create_postgres_container() -> (Container, tokio_postgres::Client) {
     // Run container creation on blocking thread since it uses std::process
     let container = tokio::task::spawn_blocking(|| {
@@ -171,10 +180,10 @@ async fn create_postgres_container() -> (Container, tokio_postgres::Client) {
 #[tokio::test]
 async fn test_schema_collection() {
     // Just test that schema collection works
-    let schema = Schema::collect();
+    let schema = collect_schema();
 
     // Should have our test tables
-    let table_names: Vec<_> = schema.tables.iter().map(|t| t.name.as_str()).collect();
+    let table_names: Vec<_> = schema.tables.values().map(|t| t.name.as_str()).collect();
     assert!(
         table_names.contains(&"test_users"),
         "Expected test_users table, got: {:?}",
@@ -189,7 +198,7 @@ async fn test_schema_collection() {
 
 #[tokio::test]
 async fn test_sql_generation() {
-    let schema = Schema::collect();
+    let schema = collect_schema();
     let sql = schema.to_sql();
 
     // Check that SQL contains expected statements (identifiers are quoted)
@@ -206,18 +215,18 @@ async fn test_sql_generation() {
 async fn test_execute_schema_on_postgres() {
     let (_container, client) = create_postgres_container().await;
 
-    let schema = Schema::collect();
+    let schema = collect_schema();
 
     // Filter to only our test tables
     let test_tables: Vec<&Table> = schema
         .tables
-        .iter()
+        .values()
         .filter(|t| t.name.starts_with("test_"))
         .collect();
 
     // Create tables
     for table in &test_tables {
-        let sql = table.to_create_table_sql();
+        let sql = dibs::schema::create_table_sql(table);
         client
             .batch_execute(&sql)
             .await
@@ -246,7 +255,7 @@ async fn test_execute_schema_on_postgres() {
     // Create indices
     for table in &test_tables {
         for idx in &table.indices {
-            let sql = table.to_create_index_sql(idx);
+            let sql = dibs::schema::create_index_sql(table, idx);
             client
                 .batch_execute(&sql)
                 .await
@@ -322,18 +331,18 @@ async fn test_execute_schema_on_postgres() {
 async fn test_insert_and_query_data() {
     let (_container, client) = create_postgres_container().await;
 
-    let schema = Schema::collect();
+    let schema = collect_schema();
 
     // Filter to only our test tables and create them
     let test_tables: Vec<&Table> = schema
         .tables
-        .iter()
+        .values()
         .filter(|t| t.name.starts_with("test_"))
         .collect();
 
     for table in &test_tables {
         client
-            .batch_execute(&table.to_create_table_sql())
+            .batch_execute(&dibs::schema::create_table_sql(table))
             .await
             .unwrap();
     }
@@ -435,24 +444,22 @@ async fn test_diff_rust_vs_database() {
         .expect("Failed to create tables");
 
     // Introspect the database
-    let db_schema = dibs::Schema::from_database(&client)
+    let db_schema = Schema::from_database(&client)
         .await
         .expect("Failed to introspect schema");
 
     // Get the Rust schema (collected from test structs in this file)
-    let rust_schema = dibs::Schema::collect();
+    let rust_schema = collect_schema();
 
     // Find just the test_users table in the Rust schema
     let rust_test_users = rust_schema
         .tables
-        .iter()
+        .values()
         .find(|t| t.name == "test_users")
         .expect("test_users should be in Rust schema");
 
     // Create a schema with just test_users for comparison
-    let rust_schema_subset = dibs::Schema {
-        tables: vec![rust_test_users.clone()],
-    };
+    let rust_schema_subset = make_schema(vec![rust_test_users.clone()]);
 
     // Diff: what changes are needed to make DB match Rust?
     let diff = rust_schema_subset.diff(&db_schema);
@@ -503,20 +510,18 @@ async fn test_diff_no_changes() {
         .await
         .expect("Failed to create tables");
 
-    let db_schema = dibs::Schema::from_database(&client)
+    let db_schema = Schema::from_database(&client)
         .await
         .expect("Failed to introspect schema");
 
-    let rust_schema = dibs::Schema::collect();
+    let rust_schema = collect_schema();
     let rust_test_users = rust_schema
         .tables
-        .iter()
+        .values()
         .find(|t| t.name == "test_users")
         .expect("test_users should be in Rust schema");
 
-    let rust_schema_subset = dibs::Schema {
-        tables: vec![rust_test_users.clone()],
-    };
+    let rust_schema_subset = make_schema(vec![rust_test_users.clone()]);
 
     let diff = rust_schema_subset.diff(&db_schema);
 
@@ -567,7 +572,7 @@ async fn test_introspect_schema_from_database() {
     assert_eq!(schema.tables.len(), 2);
 
     // Find users table
-    let users = schema.tables.iter().find(|t| t.name == "users").unwrap();
+    let users = schema.tables.values().find(|t| t.name == "users").unwrap();
     assert_eq!(users.columns.len(), 5);
 
     // Check id column
@@ -590,7 +595,7 @@ async fn test_introspect_schema_from_database() {
     assert!(users.indices.iter().any(|i| i.name == "idx_users_name"));
 
     // Find posts table
-    let posts = schema.tables.iter().find(|t| t.name == "posts").unwrap();
+    let posts = schema.tables.values().find(|t| t.name == "posts").unwrap();
 
     // Check foreign key
     assert_eq!(posts.foreign_keys.len(), 1);
@@ -634,44 +639,42 @@ async fn test_table_rename_execution() {
         .expect("Failed to create initial schema");
 
     // Introspect current DB state
-    let db_schema = dibs::Schema::from_database(&client)
+    let db_schema = Schema::from_database(&client)
         .await
         .expect("Failed to introspect");
 
     // Define desired schema with singular names
-    let desired = dibs::Schema {
-        tables: vec![
-            test_table(
-                "user",
-                vec![
-                    test_column("id", dibs::PgType::BigInt, false, true, false),
-                    test_column("email", dibs::PgType::Text, false, false, true),
-                    test_column("name", dibs::PgType::Text, false, false, false),
-                ],
-                vec![],
-                vec![],
-            ),
-            test_table(
-                "post",
-                vec![
-                    test_column("id", dibs::PgType::BigInt, false, true, false),
-                    test_column("title", dibs::PgType::Text, false, false, false),
-                    test_column("author_id", dibs::PgType::BigInt, false, false, false),
-                ],
-                vec![dibs::ForeignKey {
-                    columns: vec!["author_id".to_string()],
-                    references_table: "user".to_string(),
-                    references_columns: vec!["id".to_string()],
-                }],
-                vec![dibs::Index {
-                    name: "idx_post_author_id".to_string(),
-                    columns: vec![dibs::IndexColumn::new("author_id")],
-                    unique: false,
-                    where_clause: None,
-                }],
-            ),
-        ],
-    };
+    let desired = make_schema(vec![
+        test_table(
+            "user",
+            vec![
+                test_column("id", dibs::PgType::BigInt, false, true, false),
+                test_column("email", dibs::PgType::Text, false, false, true),
+                test_column("name", dibs::PgType::Text, false, false, false),
+            ],
+            vec![],
+            vec![],
+        ),
+        test_table(
+            "post",
+            vec![
+                test_column("id", dibs::PgType::BigInt, false, true, false),
+                test_column("title", dibs::PgType::Text, false, false, false),
+                test_column("author_id", dibs::PgType::BigInt, false, false, false),
+            ],
+            vec![dibs::ForeignKey {
+                columns: vec!["author_id".to_string()],
+                references_table: "user".to_string(),
+                references_columns: vec!["id".to_string()],
+            }],
+            vec![dibs::Index {
+                name: "idx_post_author_id".to_string(),
+                columns: vec![dibs::IndexColumn::new("author_id")],
+                unique: false,
+                where_clause: None,
+            }],
+        ),
+    ]);
 
     // Generate diff
     let diff = desired.diff(&db_schema);
@@ -787,23 +790,21 @@ async fn test_column_type_change() {
         .expect("Failed to insert");
 
     // Introspect
-    let db_schema = dibs::Schema::from_database(&client)
+    let db_schema = Schema::from_database(&client)
         .await
         .expect("Failed to introspect");
 
     // Desired schema with BIGINT price
-    let desired = dibs::Schema {
-        tables: vec![test_table(
-            "products",
-            vec![
-                test_column("id", dibs::PgType::BigInt, false, true, false),
-                test_column("name", dibs::PgType::Text, false, false, false),
-                test_column("price", dibs::PgType::BigInt, false, false, false), // Changed from Integer
-            ],
-            vec![],
-            vec![],
-        )],
-    };
+    let desired = make_schema(vec![test_table(
+        "products",
+        vec![
+            test_column("id", dibs::PgType::BigInt, false, true, false),
+            test_column("name", dibs::PgType::Text, false, false, false),
+            test_column("price", dibs::PgType::BigInt, false, false, false), // Changed from Integer
+        ],
+        vec![],
+        vec![],
+    )]);
 
     let diff = desired.diff(&db_schema);
     println!("Diff:\n{}", diff);
@@ -863,23 +864,21 @@ async fn test_add_column_with_default() {
         .expect("Failed to create table");
 
     // Introspect
-    let db_schema = dibs::Schema::from_database(&client)
+    let db_schema = Schema::from_database(&client)
         .await
         .expect("Failed to introspect");
 
     // Desired schema with new column
-    let desired = dibs::Schema {
-        tables: vec![test_table(
-            "items",
-            vec![
-                test_column("id", dibs::PgType::BigInt, false, true, false),
-                test_column("name", dibs::PgType::Text, false, false, false),
-                test_column_with_default("quantity", dibs::PgType::Integer, "0"),
-            ],
-            vec![],
-            vec![],
-        )],
-    };
+    let desired = make_schema(vec![test_table(
+        "items",
+        vec![
+            test_column("id", dibs::PgType::BigInt, false, true, false),
+            test_column("name", dibs::PgType::Text, false, false, false),
+            test_column_with_default("quantity", dibs::PgType::Integer, "0"),
+        ],
+        vec![],
+        vec![],
+    )]);
 
     let diff = desired.diff(&db_schema);
     println!("Diff:\n{}", diff);
@@ -930,7 +929,7 @@ async fn test_meta_tables() {
     assert!(table_names.contains(&"__dibs_indices".to_string()));
 
     // Sync schema to meta tables
-    let schema = Schema::collect();
+    let schema = collect_schema();
     let sync_sql = dibs::sync_tables_sql(&schema, Some("test_migration"));
     client
         .batch_execute(&sync_sql)

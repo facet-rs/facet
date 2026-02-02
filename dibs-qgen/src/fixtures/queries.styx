@@ -1,0 +1,202 @@
+@schema {id crate:dibs-queries@1, cli dibs}
+
+// Queries for reef ecommerce backend.
+// These are parsed by dibs-qgen and generate Rust code + SQL.
+
+// ============================================================================
+// Exchange Rate Queries
+// ============================================================================
+
+/// Get all exchange rates for a specific published date
+RatesByDate @select{
+    params {date @timestamp}
+    from exchange_rate
+    where {published_date $date}
+    order-by {currency_code asc}
+    fields {id, currency_code, rate, cached_at}
+}
+
+/// Get the latest exchange rate for a specific currency
+LatestRateByCurrency @select{
+    params {currency @string}
+    from exchange_rate
+    where {currency_code $currency}
+    order-by {published_date desc}
+    first true
+    fields {id, published_date, currency_code, rate, cached_at}
+}
+
+/// Get all rates for the latest published date
+LatestRates @select{
+    from exchange_rate
+    order-by {published_date desc, currency_code asc}
+    limit 50
+    fields {id, published_date, currency_code, rate}
+}
+
+// ============================================================================
+// Exchange Rate Mutations
+// ============================================================================
+
+/// Upsert exchange rate (insert or update if exists)
+UpsertRate @upsert{
+    params {published_date @timestamp, currency_code @string, rate @decimal}
+    into exchange_rate
+    on-conflict {
+        target {published_date, currency_code}
+        update {rate, updated_at @now}
+    }
+    values {
+        published_date
+        currency_code
+        rate
+        cached_at @now
+        updated_at @now
+    }
+    returning {id, published_date, currency_code, rate}
+}
+
+// ============================================================================
+// Authentication Queries
+// ============================================================================
+
+// --- Magic Link Token ---
+
+/// Insert a new magic link token
+InsertMagicLinkToken @insert{
+    params {token @string, email @string, expires_at @timestamp}
+    into magic_link_token
+    values {
+        token
+        email
+        expires_at
+    }
+}
+
+/// Look up a magic link token by its value
+GetMagicLinkToken @select{
+    params {token @string}
+    from magic_link_token
+    where {token}
+    order-by {token asc}
+    first true
+    fields {email, expires_at, used}
+}
+
+/// Mark a magic link token as used
+MarkMagicLinkTokenUsed @update{
+    params {token @string}
+    table magic_link_token
+    where {token}
+    set {used "true"}
+}
+
+// --- Admin User ---
+
+/// Get a user by their email address
+GetUserByEmail @select{
+    params {email @string}
+    from admin_user
+    where {email}
+    order-by {id asc}
+    first true
+    fields {id}
+}
+
+/// Get a user by their ID
+GetUserById @select{
+    params {id @int}
+    from admin_user
+    where {id}
+    order-by {id asc}
+    first true
+    fields {id, email}
+}
+
+/// Create a new user, returning their ID
+CreateUser @insert{
+    params {email @string}
+    into admin_user
+    values {email}
+    returning {id}
+}
+
+// --- Session ---
+
+/// Create a new session
+CreateSession @insert{
+    params {id @string, user_id @int, expires_at @timestamp}
+    into session
+    values {
+        id
+        user_id
+        expires_at
+    }
+}
+
+/// Validate a session and get user info
+/// Returns user_id, email, and expires_at for the session
+ValidateSession @select{
+    params {session_id @string}
+    from session
+    where {id $session_id}
+    order-by {id asc}
+    first true
+    fields {
+        user_id
+        expires_at
+        user @rel{
+            from admin_user
+            order-by {id asc}
+            first true
+            fields {email}
+        }
+    }
+}
+
+/// Delete a session (log out)
+DeleteSession @delete{
+    params {session_id @string}
+    from session
+    where {id $session_id}
+}
+
+// --- Passkey ---
+
+/// Get credential IDs for a user's passkeys (for registration exclusion)
+GetUserPasskeyIds @select{
+    params {user_id @int}
+    from passkey
+    where {user_id}
+    fields {credential_id}
+}
+
+/// Get all passkeys for a user (for authentication)
+GetUserPasskeys @select{
+    params {user_id @int}
+    from passkey
+    where {user_id}
+    fields {public_key}
+}
+
+/// Create a new passkey for a user
+CreatePasskey @insert{
+    params {user_id @int, credential_id @bytes, public_key @bytes, counter @int, name @string}
+    into passkey
+    values {
+        user_id
+        credential_id
+        public_key
+        counter
+        name
+    }
+    returning {id}
+}
+
+/// Update passkey counter after use
+UpdatePasskeyCounter @update{
+    params {credential_id @bytes, counter @int}
+    table passkey
+    where {credential_id}
+    set {counter}
+}

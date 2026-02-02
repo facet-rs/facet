@@ -1,0 +1,6 @@
+---
+source: crates/dibs-sql/src/render/tests.rs
+expression: result.sql
+---
+SELECT "metadata" -> 'key'
+FROM "products"

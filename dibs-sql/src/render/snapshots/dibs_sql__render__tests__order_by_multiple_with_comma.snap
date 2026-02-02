@@ -1,0 +1,7 @@
+---
+source: crates/dibs-sql/src/render/tests.rs
+expression: result.sql
+---
+SELECT "name"
+FROM "users"
+ORDER BY "created_at" DESC, "name" ASC

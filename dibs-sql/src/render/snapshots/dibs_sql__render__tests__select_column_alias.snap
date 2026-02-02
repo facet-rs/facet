@@ -1,0 +1,6 @@
+---
+source: crates/dibs-sql/src/render/tests.rs
+expression: result.sql
+---
+SELECT "first_name" AS "name", COUNT("id") AS "total"
+FROM "users"

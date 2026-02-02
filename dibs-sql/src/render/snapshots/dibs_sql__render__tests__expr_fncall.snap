@@ -1,0 +1,6 @@
+---
+source: crates/dibs-sql/src/render/tests.rs
+expression: result.sql
+---
+SELECT COALESCE("u"."nickname", "u"."name", 'Anonymous')
+FROM "users" "u"

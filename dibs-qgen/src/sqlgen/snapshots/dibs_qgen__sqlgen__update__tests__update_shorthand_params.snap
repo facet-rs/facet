@@ -1,0 +1,9 @@
+---
+source: crates/dibs-qgen/src/sqlgen/update.rs
+assertion_line: 134
+expression: result.sql
+---
+UPDATE "users"
+SET "name" = $1, "email" = $2
+WHERE "id" = $3
+RETURNING "id"

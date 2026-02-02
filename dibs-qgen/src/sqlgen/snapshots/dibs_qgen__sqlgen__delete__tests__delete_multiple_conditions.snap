@@ -1,0 +1,8 @@
+---
+source: crates/dibs-qgen/src/sqlgen/delete.rs
+assertion_line: 123
+expression: result.sql
+---
+DELETE FROM "posts"
+WHERE "user_id" = $1 AND "status" = $2 AND "deleted_at" IS NULL
+RETURNING "id", "title"

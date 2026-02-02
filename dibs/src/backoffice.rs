@@ -144,7 +144,7 @@ fn schema_to_info(schema: &Schema) -> SchemaInfo {
     SchemaInfo {
         tables: schema
             .tables
-            .iter()
+            .values()
             .map(|t| TableInfo {
                 name: t.name.clone(),
                 columns: t
@@ -217,7 +217,7 @@ fn schema_to_info(schema: &Schema) -> SchemaInfo {
 
 impl<P: ConnectionProvider> SquelService for SquelServiceImpl<P> {
     async fn schema(&self, _cx: &roam::Context) -> SchemaInfo {
-        let schema = Schema::collect();
+        let schema = crate::schema::collect_schema();
         schema_to_info(&schema)
     }
 

@@ -1,0 +1,9 @@
+---
+source: crates/dibs-qgen/src/sqlgen/update.rs
+assertion_line: 118
+expression: result.sql
+---
+UPDATE "products"
+SET "status" = $1, "updated_at" = NOW()
+WHERE "user_id" = $2 AND "status" = $3
+RETURNING "id", "status"

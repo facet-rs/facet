@@ -1,0 +1,8 @@
+---
+source: crates/dibs-qgen/src/sqlgen/insert.rs
+assertion_line: 93
+expression: result.sql
+---
+INSERT INTO "users" ("name", "email", "created_at")
+VALUES ($1, $2, NOW())
+RETURNING "id", "name", "email", "created_at"

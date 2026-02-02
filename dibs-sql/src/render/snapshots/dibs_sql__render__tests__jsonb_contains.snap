@@ -1,0 +1,7 @@
+---
+source: crates/dibs-sql/src/render/tests.rs
+expression: result.sql
+---
+SELECT "id"
+FROM "products"
+WHERE "metadata" @> $1

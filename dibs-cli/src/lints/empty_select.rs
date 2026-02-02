@@ -4,7 +4,7 @@ use super::{DiagnosticBuilder, LintContext};
 use dibs_query_schema::*;
 
 /// Check for empty select block in a query.
-pub fn lint_empty_select(select: &Select, ctx: &mut LintContext<'_>) {
+pub fn lint_empty_select(select: &SelectFields, ctx: &mut LintContext<'_>) {
     if select.fields.is_empty() {
         DiagnosticBuilder::warning("empty-select")
             .at(select.span)

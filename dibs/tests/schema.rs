@@ -1,4 +1,4 @@
-use dibs::schema::Schema;
+use dibs::schema::collect_schema;
 use facet::Facet;
 
 #[derive(Facet)]
@@ -26,14 +26,14 @@ struct Tenant {
 
 #[test]
 fn test_schema_collect() {
-    let schema = Schema::collect();
+    let schema = collect_schema();
     assert!(!schema.tables.is_empty(), "Schema should have tables");
 }
 
 #[test]
 fn test_user_table() {
-    let schema = Schema::collect();
-    let user_table = schema.tables.iter().find(|t| t.name == "users");
+    let schema = collect_schema();
+    let user_table = schema.tables.values().find(|t| t.name == "users");
     assert!(user_table.is_some(), "Should have users table");
 
     let user = user_table.unwrap();

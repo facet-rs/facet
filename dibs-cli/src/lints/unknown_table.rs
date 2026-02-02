@@ -3,7 +3,7 @@
 use super::{DiagnosticBuilder, LintContext};
 use dibs_query_schema::*;
 
-pub fn lint_unknown_table_query(query: &Query, ctx: &mut LintContext<'_>) {
+pub fn lint_unknown_table_query(query: &Select, ctx: &mut LintContext<'_>) {
     let Some(from) = &query.from else { return };
     let name = from.as_str();
     if ctx.find_table(name).is_none() {

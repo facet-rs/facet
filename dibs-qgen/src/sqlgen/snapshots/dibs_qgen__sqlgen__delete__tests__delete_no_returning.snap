@@ -1,0 +1,7 @@
+---
+source: crates/dibs-qgen/src/sqlgen/delete.rs
+assertion_line: 108
+expression: result.sql
+---
+DELETE FROM "sessions"
+WHERE "expired_at" < $1

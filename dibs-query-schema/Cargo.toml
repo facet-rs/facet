@@ -10,6 +10,7 @@ description = "Facet types for the dibs query DSL schema"
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
+dibs-sql = { version = "0.1.0", path = "../dibs-sql" }
 facet = { workspace = true, features = ["indexmap"] }
 facet-reflect.workspace = true
 facet-styx.workspace = true

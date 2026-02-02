@@ -1,0 +1,8 @@
+---
+source: crates/dibs-sql/src/render/tests.rs
+expression: result.sql
+---
+INSERT INTO "products" ("handle", "status", "updated_at")
+VALUES ($1, $2, NOW())
+ON CONFLICT ("handle") DO UPDATE SET "status" = EXCLUDED."status", "updated_at" = NOW()
+RETURNING "id", "handle"

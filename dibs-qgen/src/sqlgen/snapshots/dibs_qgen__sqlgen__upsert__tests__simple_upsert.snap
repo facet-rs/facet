@@ -1,0 +1,9 @@
+---
+source: crates/dibs-qgen/src/sqlgen/upsert.rs
+assertion_line: 111
+expression: result.sql
+---
+INSERT INTO "products" ("id", "name", "price")
+VALUES ($1, $2, $3)
+ON CONFLICT ("id") DO UPDATE SET "name" = EXCLUDED."name", "price" = EXCLUDED."price"
+RETURNING "id", "name", "price"

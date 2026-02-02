@@ -1,0 +1,9 @@
+---
+source: crates/dibs-sql/src/render/tests.rs
+expression: result.sql
+---
+SELECT "id", "handle"
+FROM "products"
+WHERE "handle" ILIKE $1
+ORDER BY "handle" ASC
+LIMIT $2

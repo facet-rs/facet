@@ -49,7 +49,7 @@ fn collect_param_refs_from_values(values: &Values) -> Vec<String> {
         match value_expr {
             None => {
                 // Shorthand: column with no value means implicit $column
-                refs.push(col_name.value.clone());
+                refs.push(col_name.value.to_string());
             }
             Some(ValueExpr::Default) => {}
             Some(ValueExpr::Other { tag: _, content }) => {
@@ -68,7 +68,7 @@ fn collect_param_refs_from_conflict_update(update: &ConflictUpdate) -> Vec<Strin
     for (col_name, update_value) in &update.columns {
         match update_value {
             None => {
-                refs.push(col_name.value.clone());
+                refs.push(col_name.value.to_string());
             }
             Some(UpdateValue::Default) => {}
             Some(UpdateValue::Other { tag: _, content }) => {
@@ -103,7 +103,7 @@ fn collect_param_refs_from_payload(payload: &Payload, refs: &mut Vec<String>) {
     }
 }
 
-pub fn lint_unused_params_query(query: &Query, ctx: &mut LintContext<'_>) {
+pub fn lint_unused_params_query(query: &Select, ctx: &mut LintContext<'_>) {
     let Some(params) = &query.params else { return };
 
     let mut used = Vec::new();

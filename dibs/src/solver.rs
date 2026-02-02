@@ -213,9 +213,9 @@ impl VirtualSchema {
     }
 
     /// Initialize with full table info including columns.
-    pub fn from_tables(tables: &[crate::Table]) -> Self {
+    pub fn from_tables<'a>(tables: impl IntoIterator<Item = &'a crate::Table>) -> Self {
         let mut schema = Self::new();
-        for table in tables {
+        for table in tables.into_iter() {
             for trig in &table.trigger_checks {
                 schema
                     .trigger_check_functions
@@ -969,6 +969,7 @@ impl SchemaDiff {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::diff::SchemaExt;
     use crate::{Column, ForeignKey, PgType, Schema, SourceLocation, Table};
 
     fn make_column(name: &str, pg_type: PgType, nullable: bool) -> Column {
@@ -1016,6 +1017,12 @@ mod tests {
             source: SourceLocation::default(),
             doc: None,
             icon: None,
+        }
+    }
+
+    fn make_schema(tables: Vec<Table>) -> Schema {
+        Schema {
+            tables: tables.into_iter().map(|t| (t.name.clone(), t)).collect(),
         }
     }
 
@@ -1069,25 +1076,23 @@ mod tests {
     #[test]
     fn test_virtual_schema_drop_table_with_dependents() {
         // Create a schema with two tables: categories and posts, where posts has a FK to categories
-        let current = Schema {
-            tables: vec![
-                make_table("categories", vec![make_column("id", PgType::BigInt, false)]),
-                make_table_with_fks(
-                    "posts",
-                    vec![
-                        make_column("id", PgType::BigInt, false),
-                        make_column("category_id", PgType::BigInt, false),
-                    ],
-                    vec![ForeignKey {
-                        columns: vec!["category_id".to_string()],
-                        references_table: "categories".to_string(),
-                        references_columns: vec!["id".to_string()],
-                    }],
-                ),
-            ],
-        };
+        let current = make_schema(vec![
+            make_table("categories", vec![make_column("id", PgType::BigInt, false)]),
+            make_table_with_fks(
+                "posts",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("category_id", PgType::BigInt, false),
+                ],
+                vec![ForeignKey {
+                    columns: vec!["category_id".to_string()],
+                    references_table: "categories".to_string(),
+                    references_columns: vec!["id".to_string()],
+                }],
+            ),
+        ]);
 
-        let mut schema = VirtualSchema::from_tables(&current.tables);
+        let mut schema = VirtualSchema::from_tables(current.tables.values());
 
         // Trying to drop categories should fail because posts references it
         let result = schema.apply("categories", &Change::DropTable("categories".to_string()));
@@ -1105,22 +1110,20 @@ mod tests {
     fn test_self_referential_fk_does_not_block_drop() {
         // A table with a self-referential FK (like category.parent_id -> category.id)
         // should be droppable - the self-reference doesn't count as a blocker.
-        let current = Schema {
-            tables: vec![make_table_with_fks(
-                "category",
-                vec![
-                    make_column("id", PgType::BigInt, false),
-                    make_column("parent_id", PgType::BigInt, true),
-                ],
-                vec![ForeignKey {
-                    columns: vec!["parent_id".to_string()],
-                    references_table: "category".to_string(), // SELF-REFERENCE
-                    references_columns: vec!["id".to_string()],
-                }],
-            )],
-        };
+        let current = make_schema(vec![make_table_with_fks(
+            "category",
+            vec![
+                make_column("id", PgType::BigInt, false),
+                make_column("parent_id", PgType::BigInt, true),
+            ],
+            vec![ForeignKey {
+                columns: vec!["parent_id".to_string()],
+                references_table: "category".to_string(), // SELF-REFERENCE
+                references_columns: vec!["id".to_string()],
+            }],
+        )]);
 
-        let mut schema = VirtualSchema::from_tables(&current.tables);
+        let mut schema = VirtualSchema::from_tables(current.tables.values());
 
         // Should be able to drop category despite self-reference
         let result = schema.apply("category", &Change::DropTable("category".to_string()));
@@ -1283,14 +1286,12 @@ mod tests {
             icon: None,
         };
 
-        let desired = Schema {
-            tables: vec![product_table.clone(), product_version_table.clone()],
-        };
-        let current = Schema { tables: vec![] };
+        let desired = make_schema(vec![product_table.clone(), product_version_table.clone()]);
+        let current = make_schema(vec![]);
 
         let diff = desired.diff(&current);
         let current_virtual = VirtualSchema::new();
-        let desired_virtual = VirtualSchema::from_tables(&desired.tables);
+        let desired_virtual = VirtualSchema::from_tables(desired.tables.values());
 
         let result = order_changes(&diff, &current_virtual, &desired_virtual);
         assert!(
@@ -1540,20 +1541,18 @@ mod tests {
             ],
         );
 
-        let desired = Schema {
-            tables: vec![
-                shop.clone(),
-                category.clone(),
-                product.clone(),
-                product_version.clone(),
-                product_translation.clone(),
-            ],
-        };
-        let current = Schema { tables: vec![] };
+        let desired = make_schema(vec![
+            shop.clone(),
+            category.clone(),
+            product.clone(),
+            product_version.clone(),
+            product_translation.clone(),
+        ]);
+        let current = make_schema(vec![]);
 
         let diff = desired.diff(&current);
         let current_virtual = VirtualSchema::new();
-        let desired_virtual = VirtualSchema::from_tables(&desired.tables);
+        let desired_virtual = VirtualSchema::from_tables(desired.tables.values());
 
         let result = order_changes(&diff, &current_virtual, &desired_virtual);
         assert!(
@@ -1585,21 +1584,19 @@ mod tests {
             references_columns: vec!["id".to_string()],
         };
 
-        let current = Schema {
-            tables: vec![
-                make_table("categories", vec![make_column("id", PgType::BigInt, false)]),
-                make_table_with_fks(
-                    "posts",
-                    vec![
-                        make_column("id", PgType::BigInt, false),
-                        make_column("category_id", PgType::BigInt, false),
-                    ],
-                    vec![fk.clone()],
-                ),
-            ],
-        };
+        let current = make_schema(vec![
+            make_table("categories", vec![make_column("id", PgType::BigInt, false)]),
+            make_table_with_fks(
+                "posts",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("category_id", PgType::BigInt, false),
+                ],
+                vec![fk.clone()],
+            ),
+        ]);
 
-        let mut schema = VirtualSchema::from_tables(&current.tables);
+        let mut schema = VirtualSchema::from_tables(current.tables.values());
 
         // First, drop the FK from posts
         let result = schema.apply("posts", &Change::DropForeignKey(fk));
@@ -1647,36 +1644,34 @@ mod tests {
     fn test_virtual_schema_rename_updates_fk_references() {
         // When a table is renamed, FKs that reference it should be updated automatically.
         // This mirrors Postgres behavior.
-        let current = Schema {
-            tables: vec![
-                make_table_with_fks(
-                    "categories",
-                    vec![
-                        make_column("id", PgType::BigInt, false),
-                        make_column("parent_id", PgType::BigInt, true),
-                    ],
-                    vec![ForeignKey {
-                        columns: vec!["parent_id".to_string()],
-                        references_table: "categories".to_string(), // self-ref
-                        references_columns: vec!["id".to_string()],
-                    }],
-                ),
-                make_table_with_fks(
-                    "posts",
-                    vec![
-                        make_column("id", PgType::BigInt, false),
-                        make_column("category_id", PgType::BigInt, false),
-                    ],
-                    vec![ForeignKey {
-                        columns: vec!["category_id".to_string()],
-                        references_table: "categories".to_string(),
-                        references_columns: vec!["id".to_string()],
-                    }],
-                ),
-            ],
-        };
+        let current = make_schema(vec![
+            make_table_with_fks(
+                "categories",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("parent_id", PgType::BigInt, true),
+                ],
+                vec![ForeignKey {
+                    columns: vec!["parent_id".to_string()],
+                    references_table: "categories".to_string(), // self-ref
+                    references_columns: vec!["id".to_string()],
+                }],
+            ),
+            make_table_with_fks(
+                "posts",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("category_id", PgType::BigInt, false),
+                ],
+                vec![ForeignKey {
+                    columns: vec!["category_id".to_string()],
+                    references_table: "categories".to_string(),
+                    references_columns: vec!["id".to_string()],
+                }],
+            ),
+        ]);
 
-        let mut schema = VirtualSchema::from_tables(&current.tables);
+        let mut schema = VirtualSchema::from_tables(current.tables.values());
 
         // Rename categories -> category
         schema
@@ -1770,40 +1765,36 @@ mod tests {
         // Scenario: Rename posts->post, then add FK referencing post
         // The FK add must come AFTER the rename
 
-        let desired = Schema {
-            tables: vec![
-                make_table("post", vec![make_column("id", PgType::BigInt, false)]),
-                make_table_with_fks(
-                    "comment",
-                    vec![
-                        make_column("id", PgType::BigInt, false),
-                        make_column("post_id", PgType::BigInt, false),
-                    ],
-                    vec![ForeignKey {
-                        columns: vec!["post_id".to_string()],
-                        references_table: "post".to_string(),
-                        references_columns: vec!["id".to_string()],
-                    }],
-                ),
-            ],
-        };
+        let desired = make_schema(vec![
+            make_table("post", vec![make_column("id", PgType::BigInt, false)]),
+            make_table_with_fks(
+                "comment",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("post_id", PgType::BigInt, false),
+                ],
+                vec![ForeignKey {
+                    columns: vec!["post_id".to_string()],
+                    references_table: "post".to_string(),
+                    references_columns: vec!["id".to_string()],
+                }],
+            ),
+        ]);
 
-        let current = Schema {
-            tables: vec![
-                make_table("posts", vec![make_column("id", PgType::BigInt, false)]),
-                make_table(
-                    "comment",
-                    vec![
-                        make_column("id", PgType::BigInt, false),
-                        make_column("post_id", PgType::BigInt, false),
-                    ],
-                ),
-            ],
-        };
+        let current = make_schema(vec![
+            make_table("posts", vec![make_column("id", PgType::BigInt, false)]),
+            make_table(
+                "comment",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("post_id", PgType::BigInt, false),
+                ],
+            ),
+        ]);
 
         let diff = desired.diff(&current);
-        let current_schema = VirtualSchema::from_tables(&current.tables);
-        let desired_schema = VirtualSchema::from_tables(&desired.tables);
+        let current_schema = VirtualSchema::from_tables(current.tables.values());
+        let desired_schema = VirtualSchema::from_tables(desired.tables.values());
 
         let result = order_changes(&diff, &current_schema, &desired_schema);
         assert!(result.is_ok(), "Should succeed: {:?}", result);
@@ -1836,63 +1827,59 @@ mod tests {
     fn test_multiple_renames_with_fks() {
         // Scenario: Rename multiple tables, add FKs that reference new names
 
-        let desired = Schema {
-            tables: vec![
-                make_table("user", vec![make_column("id", PgType::BigInt, false)]),
-                make_table(
-                    "post",
-                    vec![
-                        make_column("id", PgType::BigInt, false),
-                        make_column("author_id", PgType::BigInt, false),
-                    ],
-                ),
-                make_table_with_fks(
-                    "comment",
-                    vec![
-                        make_column("id", PgType::BigInt, false),
-                        make_column("post_id", PgType::BigInt, false),
-                        make_column("author_id", PgType::BigInt, false),
-                    ],
-                    vec![
-                        ForeignKey {
-                            columns: vec!["post_id".to_string()],
-                            references_table: "post".to_string(),
-                            references_columns: vec!["id".to_string()],
-                        },
-                        ForeignKey {
-                            columns: vec!["author_id".to_string()],
-                            references_table: "user".to_string(),
-                            references_columns: vec!["id".to_string()],
-                        },
-                    ],
-                ),
-            ],
-        };
+        let desired = make_schema(vec![
+            make_table("user", vec![make_column("id", PgType::BigInt, false)]),
+            make_table(
+                "post",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("author_id", PgType::BigInt, false),
+                ],
+            ),
+            make_table_with_fks(
+                "comment",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("post_id", PgType::BigInt, false),
+                    make_column("author_id", PgType::BigInt, false),
+                ],
+                vec![
+                    ForeignKey {
+                        columns: vec!["post_id".to_string()],
+                        references_table: "post".to_string(),
+                        references_columns: vec!["id".to_string()],
+                    },
+                    ForeignKey {
+                        columns: vec!["author_id".to_string()],
+                        references_table: "user".to_string(),
+                        references_columns: vec!["id".to_string()],
+                    },
+                ],
+            ),
+        ]);
 
-        let current = Schema {
-            tables: vec![
-                make_table("users", vec![make_column("id", PgType::BigInt, false)]),
-                make_table(
-                    "posts",
-                    vec![
-                        make_column("id", PgType::BigInt, false),
-                        make_column("author_id", PgType::BigInt, false),
-                    ],
-                ),
-                make_table(
-                    "comment",
-                    vec![
-                        make_column("id", PgType::BigInt, false),
-                        make_column("post_id", PgType::BigInt, false),
-                        make_column("author_id", PgType::BigInt, false),
-                    ],
-                ),
-            ],
-        };
+        let current = make_schema(vec![
+            make_table("users", vec![make_column("id", PgType::BigInt, false)]),
+            make_table(
+                "posts",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("author_id", PgType::BigInt, false),
+                ],
+            ),
+            make_table(
+                "comment",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("post_id", PgType::BigInt, false),
+                    make_column("author_id", PgType::BigInt, false),
+                ],
+            ),
+        ]);
 
         let diff = desired.diff(&current);
-        let current_schema = VirtualSchema::from_tables(&current.tables);
-        let desired_schema = VirtualSchema::from_tables(&desired.tables);
+        let current_schema = VirtualSchema::from_tables(current.tables.values());
+        let desired_schema = VirtualSchema::from_tables(desired.tables.values());
 
         let result = order_changes(&diff, &current_schema, &desired_schema);
         assert!(result.is_ok(), "Should succeed: {:?}", result);
@@ -1931,37 +1918,33 @@ mod tests {
         // If we're dropping a table that's referenced by FKs,
         // we need to drop the FKs first
 
-        let desired = Schema {
-            tables: vec![make_table(
+        let desired = make_schema(vec![make_table(
+            "comment",
+            vec![
+                make_column("id", PgType::BigInt, false),
+                make_column("post_id", PgType::BigInt, false),
+            ],
+        )]);
+
+        let current = make_schema(vec![
+            make_table("post", vec![make_column("id", PgType::BigInt, false)]),
+            make_table_with_fks(
                 "comment",
                 vec![
                     make_column("id", PgType::BigInt, false),
                     make_column("post_id", PgType::BigInt, false),
                 ],
-            )],
-        };
-
-        let current = Schema {
-            tables: vec![
-                make_table("post", vec![make_column("id", PgType::BigInt, false)]),
-                make_table_with_fks(
-                    "comment",
-                    vec![
-                        make_column("id", PgType::BigInt, false),
-                        make_column("post_id", PgType::BigInt, false),
-                    ],
-                    vec![ForeignKey {
-                        columns: vec!["post_id".to_string()],
-                        references_table: "post".to_string(),
-                        references_columns: vec!["id".to_string()],
-                    }],
-                ),
-            ],
-        };
+                vec![ForeignKey {
+                    columns: vec!["post_id".to_string()],
+                    references_table: "post".to_string(),
+                    references_columns: vec!["id".to_string()],
+                }],
+            ),
+        ]);
 
         let diff = desired.diff(&current);
-        let current_schema = VirtualSchema::from_tables(&current.tables);
-        let desired_schema = VirtualSchema::from_tables(&desired.tables);
+        let current_schema = VirtualSchema::from_tables(current.tables.values());
+        let desired_schema = VirtualSchema::from_tables(desired.tables.values());
 
         let result = order_changes(&diff, &current_schema, &desired_schema);
         assert!(result.is_ok(), "Should succeed: {:?}", result);
@@ -2002,29 +1985,27 @@ mod tests {
         // 1. DROP TABLE post (this implicitly drops its FKs)
         // 2. DROP TABLE category (now nothing references it)
 
-        let current = Schema {
-            tables: vec![
-                make_table("category", vec![make_column("id", PgType::BigInt, false)]),
-                make_table_with_fks(
-                    "post",
-                    vec![
-                        make_column("id", PgType::BigInt, false),
-                        make_column("category_id", PgType::BigInt, true),
-                    ],
-                    vec![ForeignKey {
-                        columns: vec!["category_id".to_string()],
-                        references_table: "category".to_string(),
-                        references_columns: vec!["id".to_string()],
-                    }],
-                ),
-            ],
-        };
+        let current = make_schema(vec![
+            make_table("category", vec![make_column("id", PgType::BigInt, false)]),
+            make_table_with_fks(
+                "post",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("category_id", PgType::BigInt, true),
+                ],
+                vec![ForeignKey {
+                    columns: vec!["category_id".to_string()],
+                    references_table: "category".to_string(),
+                    references_columns: vec!["id".to_string()],
+                }],
+            ),
+        ]);
 
-        let desired = Schema { tables: vec![] };
+        let desired = make_schema(vec![]);
 
         let diff = desired.diff(&current);
-        let current_schema = VirtualSchema::from_tables(&current.tables);
-        let desired_schema = VirtualSchema::from_tables(&desired.tables);
+        let current_schema = VirtualSchema::from_tables(current.tables.values());
+        let desired_schema = VirtualSchema::from_tables(desired.tables.values());
 
         // Debug: print the diff
         eprintln!("Diff changes:");
@@ -2084,91 +2065,89 @@ mod tests {
         // Key insight: category has a SELF-REFERENTIAL FK (parent_id -> category.id)
         // This must NOT block dropping category - only OTHER tables should block it.
 
-        let current = Schema {
-            tables: vec![
-                make_table("user", vec![make_column("id", PgType::BigInt, false)]),
-                // user_follow: junction table with 2 FKs to user
-                make_table_with_fks(
-                    "user_follow",
-                    vec![
-                        make_column("follower_id", PgType::BigInt, false),
-                        make_column("following_id", PgType::BigInt, false),
-                    ],
-                    vec![
-                        ForeignKey {
-                            columns: vec!["follower_id".to_string()],
-                            references_table: "user".to_string(),
-                            references_columns: vec!["id".to_string()],
-                        },
-                        ForeignKey {
-                            columns: vec!["following_id".to_string()],
-                            references_table: "user".to_string(),
-                            references_columns: vec!["id".to_string()],
-                        },
-                    ],
-                ),
-                // category: SELF-REFERENTIAL FK (parent_id -> category.id)
-                make_table_with_fks(
-                    "category",
-                    vec![
-                        make_column("id", PgType::BigInt, false),
-                        make_column("parent_id", PgType::BigInt, true),
-                    ],
-                    vec![ForeignKey {
-                        columns: vec!["parent_id".to_string()],
-                        references_table: "category".to_string(), // SELF-REFERENCE!
+        let current = make_schema(vec![
+            make_table("user", vec![make_column("id", PgType::BigInt, false)]),
+            // user_follow: junction table with 2 FKs to user
+            make_table_with_fks(
+                "user_follow",
+                vec![
+                    make_column("follower_id", PgType::BigInt, false),
+                    make_column("following_id", PgType::BigInt, false),
+                ],
+                vec![
+                    ForeignKey {
+                        columns: vec!["follower_id".to_string()],
+                        references_table: "user".to_string(),
                         references_columns: vec!["id".to_string()],
-                    }],
-                ),
-                make_table_with_fks(
-                    "post",
-                    vec![
-                        make_column("id", PgType::BigInt, false),
-                        make_column("author_id", PgType::BigInt, false),
-                        make_column("category_id", PgType::BigInt, true),
-                    ],
-                    vec![
-                        ForeignKey {
-                            columns: vec!["author_id".to_string()],
-                            references_table: "user".to_string(),
-                            references_columns: vec!["id".to_string()],
-                        },
-                        ForeignKey {
-                            columns: vec!["category_id".to_string()],
-                            references_table: "category".to_string(),
-                            references_columns: vec!["id".to_string()],
-                        },
-                    ],
-                ),
-                make_table("tag", vec![make_column("id", PgType::BigInt, false)]),
-                make_table_with_fks(
-                    "post_tag",
-                    vec![
-                        make_column("post_id", PgType::BigInt, false),
-                        make_column("tag_id", PgType::BigInt, false),
-                    ],
-                    vec![
-                        ForeignKey {
-                            columns: vec!["post_id".to_string()],
-                            references_table: "post".to_string(),
-                            references_columns: vec!["id".to_string()],
-                        },
-                        ForeignKey {
-                            columns: vec!["tag_id".to_string()],
-                            references_table: "tag".to_string(),
-                            references_columns: vec!["id".to_string()],
-                        },
-                    ],
-                ),
-            ],
-        };
+                    },
+                    ForeignKey {
+                        columns: vec!["following_id".to_string()],
+                        references_table: "user".to_string(),
+                        references_columns: vec!["id".to_string()],
+                    },
+                ],
+            ),
+            // category: SELF-REFERENTIAL FK (parent_id -> category.id)
+            make_table_with_fks(
+                "category",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("parent_id", PgType::BigInt, true),
+                ],
+                vec![ForeignKey {
+                    columns: vec!["parent_id".to_string()],
+                    references_table: "category".to_string(), // SELF-REFERENCE!
+                    references_columns: vec!["id".to_string()],
+                }],
+            ),
+            make_table_with_fks(
+                "post",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("author_id", PgType::BigInt, false),
+                    make_column("category_id", PgType::BigInt, true),
+                ],
+                vec![
+                    ForeignKey {
+                        columns: vec!["author_id".to_string()],
+                        references_table: "user".to_string(),
+                        references_columns: vec!["id".to_string()],
+                    },
+                    ForeignKey {
+                        columns: vec!["category_id".to_string()],
+                        references_table: "category".to_string(),
+                        references_columns: vec!["id".to_string()],
+                    },
+                ],
+            ),
+            make_table("tag", vec![make_column("id", PgType::BigInt, false)]),
+            make_table_with_fks(
+                "post_tag",
+                vec![
+                    make_column("post_id", PgType::BigInt, false),
+                    make_column("tag_id", PgType::BigInt, false),
+                ],
+                vec![
+                    ForeignKey {
+                        columns: vec!["post_id".to_string()],
+                        references_table: "post".to_string(),
+                        references_columns: vec!["id".to_string()],
+                    },
+                    ForeignKey {
+                        columns: vec!["tag_id".to_string()],
+                        references_table: "tag".to_string(),
+                        references_columns: vec!["id".to_string()],
+                    },
+                ],
+            ),
+        ]);
 
         // Desired: empty schema (dropping everything for ecommerce)
-        let desired = Schema { tables: vec![] };
+        let desired = make_schema(vec![]);
 
         let diff = desired.diff(&current);
-        let current_schema = VirtualSchema::from_tables(&current.tables);
-        let desired_schema = VirtualSchema::from_tables(&desired.tables);
+        let current_schema = VirtualSchema::from_tables(current.tables.values());
+        let desired_schema = VirtualSchema::from_tables(desired.tables.values());
 
         // Debug: print the diff
         eprintln!("Diff changes:");
@@ -2255,40 +2234,38 @@ mod tests {
         //
         // Result: can't drop category because orphan_table references it
 
-        let current = Schema {
-            tables: vec![
-                make_table("category", vec![make_column("id", PgType::BigInt, false)]),
-                make_table_with_fks(
-                    "post",
-                    vec![
-                        make_column("id", PgType::BigInt, false),
-                        make_column("category_id", PgType::BigInt, true),
-                    ],
-                    vec![ForeignKey {
-                        columns: vec!["category_id".to_string()],
-                        references_table: "category".to_string(),
-                        references_columns: vec!["id".to_string()],
-                    }],
-                ),
-                // This table exists in DB but isn't in Rust schema - it won't be dropped
-                make_table_with_fks(
-                    "orphan_table",
-                    vec![
-                        make_column("id", PgType::BigInt, false),
-                        make_column("category_id", PgType::BigInt, true),
-                    ],
-                    vec![ForeignKey {
-                        columns: vec!["category_id".to_string()],
-                        references_table: "category".to_string(),
-                        references_columns: vec!["id".to_string()],
-                    }],
-                ),
-            ],
-        };
+        let current = make_schema(vec![
+            make_table("category", vec![make_column("id", PgType::BigInt, false)]),
+            make_table_with_fks(
+                "post",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("category_id", PgType::BigInt, true),
+                ],
+                vec![ForeignKey {
+                    columns: vec!["category_id".to_string()],
+                    references_table: "category".to_string(),
+                    references_columns: vec!["id".to_string()],
+                }],
+            ),
+            // This table exists in DB but isn't in Rust schema - it won't be dropped
+            make_table_with_fks(
+                "orphan_table",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("category_id", PgType::BigInt, true),
+                ],
+                vec![ForeignKey {
+                    columns: vec!["category_id".to_string()],
+                    references_table: "category".to_string(),
+                    references_columns: vec!["id".to_string()],
+                }],
+            ),
+        ]);
 
         // Desired: only new tables, none of the old ones
         // But we're only diffing against category and post (not orphan_table)
-        let desired = Schema { tables: vec![] };
+        let desired = make_schema(vec![]);
 
         // Manually create a diff that only drops category and post
         // (simulating what happens when orphan_table isn't in Rust schema)
@@ -2306,8 +2283,8 @@ mod tests {
         };
 
         // VirtualSchema includes ALL tables from DB (including orphan_table)
-        let current_schema = VirtualSchema::from_tables(&current.tables);
-        let desired_schema = VirtualSchema::from_tables(&desired.tables);
+        let current_schema = VirtualSchema::from_tables(current.tables.values());
+        let desired_schema = VirtualSchema::from_tables(desired.tables.values());
 
         eprintln!(
             "Current schema tables: {:?}",
@@ -2351,41 +2328,39 @@ mod tests {
         //
         // Neither can be dropped first.
 
-        let current = Schema {
-            tables: vec![
-                make_table_with_fks(
-                    "table_a",
-                    vec![
-                        make_column("id", PgType::BigInt, false),
-                        make_column("b_id", PgType::BigInt, true),
-                    ],
-                    vec![ForeignKey {
-                        columns: vec!["b_id".to_string()],
-                        references_table: "table_b".to_string(),
-                        references_columns: vec!["id".to_string()],
-                    }],
-                ),
-                make_table_with_fks(
-                    "table_b",
-                    vec![
-                        make_column("id", PgType::BigInt, false),
-                        make_column("a_id", PgType::BigInt, true),
-                    ],
-                    vec![ForeignKey {
-                        columns: vec!["a_id".to_string()],
-                        references_table: "table_a".to_string(),
-                        references_columns: vec!["id".to_string()],
-                    }],
-                ),
-            ],
-        };
+        let current = make_schema(vec![
+            make_table_with_fks(
+                "table_a",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("b_id", PgType::BigInt, true),
+                ],
+                vec![ForeignKey {
+                    columns: vec!["b_id".to_string()],
+                    references_table: "table_b".to_string(),
+                    references_columns: vec!["id".to_string()],
+                }],
+            ),
+            make_table_with_fks(
+                "table_b",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("a_id", PgType::BigInt, true),
+                ],
+                vec![ForeignKey {
+                    columns: vec!["a_id".to_string()],
+                    references_table: "table_a".to_string(),
+                    references_columns: vec!["id".to_string()],
+                }],
+            ),
+        ]);
 
         // Desired: empty (drop both)
-        let desired = Schema { tables: vec![] };
+        let desired = make_schema(vec![]);
 
         let diff = desired.diff(&current);
-        let current_schema = VirtualSchema::from_tables(&current.tables);
-        let desired_schema = VirtualSchema::from_tables(&desired.tables);
+        let current_schema = VirtualSchema::from_tables(current.tables.values());
+        let desired_schema = VirtualSchema::from_tables(desired.tables.values());
 
         eprintln!("Diff changes:");
         for td in &diff.table_diffs {
@@ -2471,7 +2446,7 @@ mod tests {
         let current =
             VirtualSchema::from_existing(&["users"].iter().map(|s| s.to_string()).collect());
         // Desired also has the table
-        let desired = VirtualSchema::from_tables(&[table]);
+        let desired = VirtualSchema::from_tables(std::iter::once(&table));
 
         let result = order_changes(&diff, &current, &desired);
         assert!(
@@ -2485,40 +2460,36 @@ mod tests {
 
     #[test]
     fn test_ordered_sql_output() {
-        let desired = Schema {
-            tables: vec![
-                make_table("post", vec![make_column("id", PgType::BigInt, false)]),
-                make_table_with_fks(
-                    "comment",
-                    vec![
-                        make_column("id", PgType::BigInt, false),
-                        make_column("post_id", PgType::BigInt, false),
-                    ],
-                    vec![ForeignKey {
-                        columns: vec!["post_id".to_string()],
-                        references_table: "post".to_string(),
-                        references_columns: vec!["id".to_string()],
-                    }],
-                ),
-            ],
-        };
+        let desired = make_schema(vec![
+            make_table("post", vec![make_column("id", PgType::BigInt, false)]),
+            make_table_with_fks(
+                "comment",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("post_id", PgType::BigInt, false),
+                ],
+                vec![ForeignKey {
+                    columns: vec!["post_id".to_string()],
+                    references_table: "post".to_string(),
+                    references_columns: vec!["id".to_string()],
+                }],
+            ),
+        ]);
 
-        let current = Schema {
-            tables: vec![
-                make_table("posts", vec![make_column("id", PgType::BigInt, false)]),
-                make_table(
-                    "comment",
-                    vec![
-                        make_column("id", PgType::BigInt, false),
-                        make_column("post_id", PgType::BigInt, false),
-                    ],
-                ),
-            ],
-        };
+        let current = make_schema(vec![
+            make_table("posts", vec![make_column("id", PgType::BigInt, false)]),
+            make_table(
+                "comment",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("post_id", PgType::BigInt, false),
+                ],
+            ),
+        ]);
 
         let diff = desired.diff(&current);
-        let current_schema = VirtualSchema::from_tables(&current.tables);
-        let desired_schema = VirtualSchema::from_tables(&desired.tables);
+        let current_schema = VirtualSchema::from_tables(current.tables.values());
+        let desired_schema = VirtualSchema::from_tables(desired.tables.values());
 
         let sql = diff.to_ordered_sql(&current_schema, &desired_schema);
         assert!(sql.is_ok(), "Should succeed: {:?}", sql);
@@ -2601,91 +2572,87 @@ mod tests {
         // This is the actual scenario that prompted the solver:
         // Rename tables from plural to singular, then add FKs referencing new names
 
-        let desired = Schema {
-            tables: vec![
-                make_table("user", vec![make_column("id", PgType::BigInt, false)]),
-                make_table(
-                    "category",
-                    vec![
-                        make_column("id", PgType::BigInt, false),
-                        make_column("parent_id", PgType::BigInt, true),
-                    ],
-                ),
-                make_table_with_fks(
-                    "post",
-                    vec![
-                        make_column("id", PgType::BigInt, false),
-                        make_column("author_id", PgType::BigInt, false),
-                        make_column("category_id", PgType::BigInt, true),
-                    ],
-                    vec![
-                        ForeignKey {
-                            columns: vec!["author_id".to_string()],
-                            references_table: "user".to_string(),
-                            references_columns: vec!["id".to_string()],
-                        },
-                        ForeignKey {
-                            columns: vec!["category_id".to_string()],
-                            references_table: "category".to_string(),
-                            references_columns: vec!["id".to_string()],
-                        },
-                    ],
-                ),
-                make_table_with_fks(
-                    "comment",
-                    vec![
-                        make_column("id", PgType::BigInt, false),
-                        make_column("post_id", PgType::BigInt, false),
-                        make_column("author_id", PgType::BigInt, false),
-                    ],
-                    vec![
-                        ForeignKey {
-                            columns: vec!["post_id".to_string()],
-                            references_table: "post".to_string(),
-                            references_columns: vec!["id".to_string()],
-                        },
-                        ForeignKey {
-                            columns: vec!["author_id".to_string()],
-                            references_table: "user".to_string(),
-                            references_columns: vec!["id".to_string()],
-                        },
-                    ],
-                ),
-            ],
-        };
+        let desired = make_schema(vec![
+            make_table("user", vec![make_column("id", PgType::BigInt, false)]),
+            make_table(
+                "category",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("parent_id", PgType::BigInt, true),
+                ],
+            ),
+            make_table_with_fks(
+                "post",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("author_id", PgType::BigInt, false),
+                    make_column("category_id", PgType::BigInt, true),
+                ],
+                vec![
+                    ForeignKey {
+                        columns: vec!["author_id".to_string()],
+                        references_table: "user".to_string(),
+                        references_columns: vec!["id".to_string()],
+                    },
+                    ForeignKey {
+                        columns: vec!["category_id".to_string()],
+                        references_table: "category".to_string(),
+                        references_columns: vec!["id".to_string()],
+                    },
+                ],
+            ),
+            make_table_with_fks(
+                "comment",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("post_id", PgType::BigInt, false),
+                    make_column("author_id", PgType::BigInt, false),
+                ],
+                vec![
+                    ForeignKey {
+                        columns: vec!["post_id".to_string()],
+                        references_table: "post".to_string(),
+                        references_columns: vec!["id".to_string()],
+                    },
+                    ForeignKey {
+                        columns: vec!["author_id".to_string()],
+                        references_table: "user".to_string(),
+                        references_columns: vec!["id".to_string()],
+                    },
+                ],
+            ),
+        ]);
 
-        let current = Schema {
-            tables: vec![
-                make_table("users", vec![make_column("id", PgType::BigInt, false)]),
-                make_table(
-                    "categories",
-                    vec![
-                        make_column("id", PgType::BigInt, false),
-                        make_column("parent_id", PgType::BigInt, true),
-                    ],
-                ),
-                make_table(
-                    "posts",
-                    vec![
-                        make_column("id", PgType::BigInt, false),
-                        make_column("author_id", PgType::BigInt, false),
-                        make_column("category_id", PgType::BigInt, true),
-                    ],
-                ),
-                make_table(
-                    "comments",
-                    vec![
-                        make_column("id", PgType::BigInt, false),
-                        make_column("post_id", PgType::BigInt, false),
-                        make_column("author_id", PgType::BigInt, false),
-                    ],
-                ),
-            ],
-        };
+        let current = make_schema(vec![
+            make_table("users", vec![make_column("id", PgType::BigInt, false)]),
+            make_table(
+                "categories",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("parent_id", PgType::BigInt, true),
+                ],
+            ),
+            make_table(
+                "posts",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("author_id", PgType::BigInt, false),
+                    make_column("category_id", PgType::BigInt, true),
+                ],
+            ),
+            make_table(
+                "comments",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("post_id", PgType::BigInt, false),
+                    make_column("author_id", PgType::BigInt, false),
+                ],
+            ),
+        ]);
 
         let diff = desired.diff(&current);
-        let current_schema = VirtualSchema::from_tables(&current.tables);
-        let desired_schema = VirtualSchema::from_tables(&desired.tables);
+        let current_schema = VirtualSchema::from_tables(current.tables.values());
+        let desired_schema = VirtualSchema::from_tables(desired.tables.values());
 
         let result = order_changes(&diff, &current_schema, &desired_schema);
         assert!(
@@ -2732,26 +2699,22 @@ mod tests {
     fn test_add_column_on_renamed_table() {
         // Add a column to a table that's being renamed in the same migration
 
-        let desired = Schema {
-            tables: vec![make_table(
-                "user",
-                vec![
-                    make_column("id", PgType::BigInt, false),
-                    make_column("email", PgType::Text, false), // new column
-                ],
-            )],
-        };
+        let desired = make_schema(vec![make_table(
+            "user",
+            vec![
+                make_column("id", PgType::BigInt, false),
+                make_column("email", PgType::Text, false), // new column
+            ],
+        )]);
 
-        let current = Schema {
-            tables: vec![make_table(
-                "users",
-                vec![make_column("id", PgType::BigInt, false)],
-            )],
-        };
+        let current = make_schema(vec![make_table(
+            "users",
+            vec![make_column("id", PgType::BigInt, false)],
+        )]);
 
         let diff = desired.diff(&current);
-        let current_schema = VirtualSchema::from_tables(&current.tables);
-        let desired_schema = VirtualSchema::from_tables(&desired.tables);
+        let current_schema = VirtualSchema::from_tables(current.tables.values());
+        let desired_schema = VirtualSchema::from_tables(desired.tables.values());
 
         let result = order_changes(&diff, &current_schema, &desired_schema);
         assert!(result.is_ok(), "Should succeed: {:?}", result);
@@ -2792,36 +2755,32 @@ mod tests {
         // the desired state expects the FK to exist.
 
         // Current state: category table with self-referential FK to "categories"
-        let current = Schema {
-            tables: vec![make_table_with_fks(
-                "categories",
-                vec![
-                    make_column("id", PgType::BigInt, false),
-                    make_column("parent_id", PgType::BigInt, true),
-                ],
-                vec![ForeignKey {
-                    columns: vec!["parent_id".to_string()],
-                    references_table: "categories".to_string(),
-                    references_columns: vec!["id".to_string()],
-                }],
-            )],
-        };
+        let current = make_schema(vec![make_table_with_fks(
+            "categories",
+            vec![
+                make_column("id", PgType::BigInt, false),
+                make_column("parent_id", PgType::BigInt, true),
+            ],
+            vec![ForeignKey {
+                columns: vec!["parent_id".to_string()],
+                references_table: "categories".to_string(),
+                references_columns: vec!["id".to_string()],
+            }],
+        )]);
 
         // Desired state: same table renamed to "category" with FK to "category"
-        let desired = Schema {
-            tables: vec![make_table_with_fks(
-                "category",
-                vec![
-                    make_column("id", PgType::BigInt, false),
-                    make_column("parent_id", PgType::BigInt, true),
-                ],
-                vec![ForeignKey {
-                    columns: vec!["parent_id".to_string()],
-                    references_table: "category".to_string(),
-                    references_columns: vec!["id".to_string()],
-                }],
-            )],
-        };
+        let desired = make_schema(vec![make_table_with_fks(
+            "category",
+            vec![
+                make_column("id", PgType::BigInt, false),
+                make_column("parent_id", PgType::BigInt, true),
+            ],
+            vec![ForeignKey {
+                columns: vec!["parent_id".to_string()],
+                references_table: "category".to_string(),
+                references_columns: vec!["id".to_string()],
+            }],
+        )]);
 
         // Manually construct a buggy diff that adds new FK and drops old FK
         // (This simulates what a naive diff algorithm might produce)
@@ -2847,8 +2806,8 @@ mod tests {
             }],
         };
 
-        let current_schema = VirtualSchema::from_tables(&current.tables);
-        let desired_schema = VirtualSchema::from_tables(&desired.tables);
+        let current_schema = VirtualSchema::from_tables(current.tables.values());
+        let desired_schema = VirtualSchema::from_tables(desired.tables.values());
 
         let result = order_changes(&buggy_diff, &current_schema, &desired_schema);
 
@@ -2904,31 +2863,27 @@ mod tests {
         // Test that if the diff doesn't produce all necessary changes,
         // the simulation catches the mismatch
 
-        let current = Schema {
-            tables: vec![make_table(
-                "users",
-                vec![make_column("id", PgType::BigInt, false)],
-            )],
-        };
+        let current = make_schema(vec![make_table(
+            "users",
+            vec![make_column("id", PgType::BigInt, false)],
+        )]);
 
         // Desired has an extra column
-        let desired = Schema {
-            tables: vec![make_table(
-                "users",
-                vec![
-                    make_column("id", PgType::BigInt, false),
-                    make_column("email", PgType::Text, false),
-                ],
-            )],
-        };
+        let desired = make_schema(vec![make_table(
+            "users",
+            vec![
+                make_column("id", PgType::BigInt, false),
+                make_column("email", PgType::Text, false),
+            ],
+        )]);
 
         // Incomplete diff - missing the AddColumn change
         let incomplete_diff = SchemaDiff {
             table_diffs: vec![],
         };
 
-        let current_schema = VirtualSchema::from_tables(&current.tables);
-        let desired_schema = VirtualSchema::from_tables(&desired.tables);
+        let current_schema = VirtualSchema::from_tables(current.tables.values());
+        let desired_schema = VirtualSchema::from_tables(desired.tables.values());
 
         let result = order_changes(&incomplete_diff, &current_schema, &desired_schema);
 
@@ -2945,37 +2900,33 @@ mod tests {
         // This tests when diff generates operations that truly cancel each other:
         // ADD FK then DROP the SAME FK. This should be detected as a bug.
 
-        let current = Schema {
-            tables: vec![
-                make_table("user", vec![make_column("id", PgType::BigInt, false)]),
-                make_table(
-                    "post",
-                    vec![
-                        make_column("id", PgType::BigInt, false),
-                        make_column("author_id", PgType::BigInt, false),
-                    ],
-                ),
-            ],
-        };
+        let current = make_schema(vec![
+            make_table("user", vec![make_column("id", PgType::BigInt, false)]),
+            make_table(
+                "post",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("author_id", PgType::BigInt, false),
+                ],
+            ),
+        ]);
 
         // Desired state has the FK
-        let desired = Schema {
-            tables: vec![
-                make_table("user", vec![make_column("id", PgType::BigInt, false)]),
-                make_table_with_fks(
-                    "post",
-                    vec![
-                        make_column("id", PgType::BigInt, false),
-                        make_column("author_id", PgType::BigInt, false),
-                    ],
-                    vec![ForeignKey {
-                        columns: vec!["author_id".to_string()],
-                        references_table: "user".to_string(),
-                        references_columns: vec!["id".to_string()],
-                    }],
-                ),
-            ],
-        };
+        let desired = make_schema(vec![
+            make_table("user", vec![make_column("id", PgType::BigInt, false)]),
+            make_table_with_fks(
+                "post",
+                vec![
+                    make_column("id", PgType::BigInt, false),
+                    make_column("author_id", PgType::BigInt, false),
+                ],
+                vec![ForeignKey {
+                    columns: vec!["author_id".to_string()],
+                    references_table: "user".to_string(),
+                    references_columns: vec!["id".to_string()],
+                }],
+            ),
+        ]);
 
         // Buggy diff that adds then drops the SAME FK
         let the_fk = ForeignKey {
@@ -2994,8 +2945,8 @@ mod tests {
             }],
         };
 
-        let current_schema = VirtualSchema::from_tables(&current.tables);
-        let desired_schema = VirtualSchema::from_tables(&desired.tables);
+        let current_schema = VirtualSchema::from_tables(current.tables.values());
+        let desired_schema = VirtualSchema::from_tables(desired.tables.values());
 
         let result = order_changes(&buggy_diff, &current_schema, &desired_schema);
 
@@ -3012,15 +2963,13 @@ mod tests {
         // Test that if the diff produces extra changes beyond what's needed,
         // and they result in wrong state, simulation catches it
 
-        let current = Schema {
-            tables: vec![make_table(
-                "users",
-                vec![
-                    make_column("id", PgType::BigInt, false),
-                    make_column("name", PgType::Text, false),
-                ],
-            )],
-        };
+        let current = make_schema(vec![make_table(
+            "users",
+            vec![
+                make_column("id", PgType::BigInt, false),
+                make_column("name", PgType::Text, false),
+            ],
+        )]);
 
         // Desired is same as current (no changes needed)
         let desired = current.clone();
@@ -3033,8 +2982,8 @@ mod tests {
             }],
         };
 
-        let current_schema = VirtualSchema::from_tables(&current.tables);
-        let desired_schema = VirtualSchema::from_tables(&desired.tables);
+        let current_schema = VirtualSchema::from_tables(current.tables.values());
+        let desired_schema = VirtualSchema::from_tables(desired.tables.values());
 
         let result = order_changes(&buggy_diff, &current_schema, &desired_schema);
 
@@ -3052,6 +3001,7 @@ mod tests {
 #[cfg(test)]
 mod proptests {
     use super::*;
+    use crate::diff::SchemaExt;
     use crate::{Column, ForeignKey, Index, PgType, Schema, SourceLocation, Table};
     use proptest::prelude::*;
     use std::collections::HashSet;
@@ -3269,7 +3219,9 @@ mod proptests {
                 }
             }
 
-            Schema { tables }
+            Schema {
+                tables: tables.into_iter().map(|t| (t.name.clone(), t)).collect(),
+            }
         })
     }
 
@@ -3283,8 +3235,8 @@ mod proptests {
             desired in schema_strategy()
         ) {
             let diff = desired.diff(&current);
-            let current_virtual = VirtualSchema::from_tables(&current.tables);
-            let desired_virtual = VirtualSchema::from_tables(&desired.tables);
+            let current_virtual = VirtualSchema::from_tables(current.tables.values());
+            let desired_virtual = VirtualSchema::from_tables(desired.tables.values());
 
             let result = order_changes(&diff, &current_virtual, &desired_virtual);
 
@@ -3326,8 +3278,8 @@ mod proptests {
             desired in schema_strategy()
         ) {
             let diff = desired.diff(&current);
-            let current_virtual = VirtualSchema::from_tables(&current.tables);
-            let desired_virtual = VirtualSchema::from_tables(&desired.tables);
+            let current_virtual = VirtualSchema::from_tables(current.tables.values());
+            let desired_virtual = VirtualSchema::from_tables(desired.tables.values());
 
             if let Ok(ordered) = order_changes(&diff, &current_virtual, &desired_virtual) {
                 // Every change in the ordered list should be applicable
@@ -3347,7 +3299,7 @@ mod proptests {
         #[test]
         fn prop_same_schema_produces_empty_diff(schema in schema_strategy()) {
             let diff = schema.diff(&schema);
-            let virtual_schema = VirtualSchema::from_tables(&schema.tables);
+            let virtual_schema = VirtualSchema::from_tables(schema.tables.values());
 
             // Diff of same schema should have no changes
             let total_changes: usize = diff.table_diffs.iter()

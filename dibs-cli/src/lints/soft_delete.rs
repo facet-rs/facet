@@ -11,7 +11,7 @@ fn where_filters_deleted_at(where_clause: &Where) -> bool {
         .any(|(col, _)| col.as_str() == "deleted_at")
 }
 
-pub fn lint_missing_deleted_at_filter(query: &Query, ctx: &mut LintContext<'_>) {
+pub fn lint_missing_deleted_at_filter(query: &Select, ctx: &mut LintContext<'_>) {
     let Some(from) = &query.from else { return };
     let Some(table) = ctx.find_table(from.as_str()) else {
         return;

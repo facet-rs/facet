@@ -13,7 +13,7 @@ Add this to `.dibs-queries/queries.styx`:
 ```styx
 @schema {id crate:dibs-queries@1, cli dibs}
 
-UserByEmail @query{
+UserByEmail @select{
     params {email @string}
     from users
     where {email $email}
@@ -118,4 +118,3 @@ where
     }
 }
 ```
-

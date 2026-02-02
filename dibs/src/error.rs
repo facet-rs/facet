@@ -75,6 +75,7 @@ impl std::fmt::Display for SqlErrorContext {
     }
 }
 
+// FIXME: fix dreadful structuring / lack of spans etc. here
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("{}", format_postgres_error(.0))]

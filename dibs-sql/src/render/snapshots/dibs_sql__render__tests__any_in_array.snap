@@ -1,0 +1,7 @@
+---
+source: crates/dibs-sql/src/render/tests.rs
+expression: result.sql
+---
+SELECT "id", "status"
+FROM "products"
+WHERE "status" = ANY($1)

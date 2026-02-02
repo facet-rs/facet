@@ -21,12 +21,10 @@
 //! let user: User = from_row(&row)?;
 //! ```
 
-#[cfg(feature = "jsonb")]
 mod jsonb;
-#[cfg(feature = "jsonb")]
-pub use jsonb::Jsonb;
-#[cfg(feature = "jsonb")]
 use jsonb::{OptionalRawJsonb, RawJsonb};
+
+pub use dibs_jsonb::Jsonb;
 
 extern crate alloc;
 
@@ -73,7 +71,6 @@ pub enum Error {
         shape: &'static Shape,
     },
     /// JSONB deserialization error
-    #[cfg(feature = "jsonb")]
     Jsonb {
         /// Name of the column
         column: String,
@@ -103,7 +100,6 @@ impl core::fmt::Display for Error {
             Error::UnsupportedType { field, shape } => {
                 write!(f, "unsupported type for field '{field}': {shape}")
             }
-            #[cfg(feature = "jsonb")]
             Error::Jsonb { column, message } => {
                 write!(f, "JSONB error for column '{column}': {message}")
             }
@@ -225,172 +221,121 @@ fn deserialize_column(
     partial: Partial<'static, false>,
     shape: &'static Shape,
 ) -> Result<Partial<'static, false>> {
-    use facet_core::{Def, NumericType, PrimitiveType};
-
     let mut partial = partial;
 
-    // Handle Option types first
-    if let Def::Option(_) = &shape.def {
+    // Handle Option types first - check via decl_id
+    if shape.decl_id == Option::<()>::SHAPE.decl_id {
         return deserialize_option_column(row, column_idx, column_name, partial, shape);
     }
 
     // Handle based on type
     match &shape.ty {
-        // Signed integers
-        Type::Primitive(PrimitiveType::Numeric(NumericType::Integer { signed: true })) => {
-            match shape.type_identifier {
-                "i8" => {
-                    let val: i8 = get_column(row, column_idx, column_name, shape)?;
-                    partial = partial.set(val)?;
-                }
-                "i16" => {
-                    let val: i16 = get_column(row, column_idx, column_name, shape)?;
-                    partial = partial.set(val)?;
-                }
-                "i32" => {
-                    let val: i32 = get_column(row, column_idx, column_name, shape)?;
-                    partial = partial.set(val)?;
-                }
-                "i64" => {
-                    let val: i64 = get_column(row, column_idx, column_name, shape)?;
-                    partial = partial.set(val)?;
-                }
-                _ => {
-                    return Err(Error::UnsupportedType {
-                        field: column_name.to_string(),
-                        shape,
-                    });
-                }
-            }
+        // Signed integers - compare shapes directly
+        _ if shape == i8::SHAPE => {
+            let val: i8 = get_column(row, column_idx, column_name, shape)?;
+            partial = partial.set(val)?;
+        }
+        _ if shape == i16::SHAPE => {
+            let val: i16 = get_column(row, column_idx, column_name, shape)?;
+            partial = partial.set(val)?;
+        }
+        _ if shape == i32::SHAPE => {
+            let val: i32 = get_column(row, column_idx, column_name, shape)?;
+            partial = partial.set(val)?;
+        }
+        _ if shape == i64::SHAPE => {
+            let val: i64 = get_column(row, column_idx, column_name, shape)?;
+            partial = partial.set(val)?;
         }
 
         // Unsigned integers (postgres doesn't have native unsigned, but we can try)
-        Type::Primitive(PrimitiveType::Numeric(NumericType::Integer { signed: false })) => {
-            // Postgres doesn't have unsigned types natively, so we read as signed and convert
-            match shape.type_identifier {
-                "u8" => {
-                    let val: i16 = get_column(row, column_idx, column_name, shape)?;
-                    partial = partial.set(val as u8)?;
-                }
-                "u16" => {
-                    let val: i32 = get_column(row, column_idx, column_name, shape)?;
-                    partial = partial.set(val as u16)?;
-                }
-                "u32" => {
-                    let val: i64 = get_column(row, column_idx, column_name, shape)?;
-                    partial = partial.set(val as u32)?;
-                }
-                "u64" => {
-                    // For u64, we might need to use BIGINT and hope it fits
-                    let val: i64 = get_column(row, column_idx, column_name, shape)?;
-                    partial = partial.set(val as u64)?;
-                }
-                _ => {
-                    return Err(Error::UnsupportedType {
-                        field: column_name.to_string(),
-                        shape,
-                    });
-                }
-            }
+        // We read as the next larger signed type and convert
+        _ if shape == u8::SHAPE => {
+            let val: i16 = get_column(row, column_idx, column_name, shape)?;
+            partial = partial.set(val as u8)?;
+        }
+        _ if shape == u16::SHAPE => {
+            let val: i32 = get_column(row, column_idx, column_name, shape)?;
+            partial = partial.set(val as u16)?;
+        }
+        _ if shape == u32::SHAPE => {
+            let val: i64 = get_column(row, column_idx, column_name, shape)?;
+            partial = partial.set(val as u32)?;
+        }
+        _ if shape == u64::SHAPE => {
+            // For u64, we use BIGINT and hope it fits
+            let val: i64 = get_column(row, column_idx, column_name, shape)?;
+            partial = partial.set(val as u64)?;
         }
 
         // Floats
-        Type::Primitive(PrimitiveType::Numeric(NumericType::Float)) => {
-            match shape.type_identifier {
-                "f32" => {
-                    let val: f32 = get_column(row, column_idx, column_name, shape)?;
-                    partial = partial.set(val)?;
-                }
-                "f64" => {
-                    let val: f64 = get_column(row, column_idx, column_name, shape)?;
-                    partial = partial.set(val)?;
-                }
-                _ => {
-                    return Err(Error::UnsupportedType {
-                        field: column_name.to_string(),
-                        shape,
-                    });
-                }
-            }
+        _ if shape == f32::SHAPE => {
+            let val: f32 = get_column(row, column_idx, column_name, shape)?;
+            partial = partial.set(val)?;
+        }
+        _ if shape == f64::SHAPE => {
+            let val: f64 = get_column(row, column_idx, column_name, shape)?;
+            partial = partial.set(val)?;
         }
 
         // Booleans
-        Type::Primitive(PrimitiveType::Boolean) => {
+        _ if shape == bool::SHAPE => {
             let val: bool = get_column(row, column_idx, column_name, shape)?;
             partial = partial.set(val)?;
         }
 
         // Strings
-        Type::Primitive(PrimitiveType::Textual(_)) | Type::User(_)
-            if shape.type_identifier == "String" =>
-        {
+        _ if shape == String::SHAPE => {
             let val: String = get_column(row, column_idx, column_name, shape)?;
             partial = partial.set(val)?;
         }
 
-        // Vec<u8> for bytea - check if it's a List of u8
-        _ if matches!(&shape.def, Def::List(_))
-            && shape
-                .inner
-                .is_some_and(|inner| inner.type_identifier == "u8") =>
-        {
+        // Vec<u8> for bytea
+        _ if shape == <Vec<u8>>::SHAPE => {
             let val: Vec<u8> = get_column(row, column_idx, column_name, shape)?;
             partial = partial.set(val)?;
         }
 
-        // Vec<String> for TEXT[] - check if it's a List of String
-        _ if matches!(&shape.def, Def::List(_))
-            && shape
-                .inner
-                .is_some_and(|inner| inner.type_identifier == "String") =>
-        {
+        // Vec<String> for TEXT[]
+        _ if shape == <Vec<String>>::SHAPE => {
             let val: Vec<String> = get_column(row, column_idx, column_name, shape)?;
             partial = partial.set(val)?;
         }
 
-        // Vec<i64> for BIGINT[] - check if it's a List of i64
-        _ if matches!(&shape.def, Def::List(_))
-            && shape
-                .inner
-                .is_some_and(|inner| inner.type_identifier == "i64") =>
-        {
+        // Vec<i64> for BIGINT[]
+        _ if shape == <Vec<i64>>::SHAPE => {
             let val: Vec<i64> = get_column(row, column_idx, column_name, shape)?;
             partial = partial.set(val)?;
         }
 
-        // Vec<i32> for INTEGER[] - check if it's a List of i32
-        _ if matches!(&shape.def, Def::List(_))
-            && shape
-                .inner
-                .is_some_and(|inner| inner.type_identifier == "i32") =>
-        {
+        // Vec<i32> for INTEGER[]
+        _ if shape == <Vec<i32>>::SHAPE => {
             let val: Vec<i32> = get_column(row, column_idx, column_name, shape)?;
             partial = partial.set(val)?;
         }
 
         // rust_decimal::Decimal for NUMERIC columns
         #[cfg(feature = "rust_decimal")]
-        _ if shape.type_identifier == "Decimal" => {
+        _ if shape == rust_decimal::Decimal::SHAPE => {
             let val: rust_decimal::Decimal = get_column(row, column_idx, column_name, shape)?;
             partial = partial.set(val)?;
         }
 
         // jiff::Timestamp for TIMESTAMPTZ columns
         #[cfg(feature = "jiff02")]
-        _ if shape.type_identifier == "Timestamp" && shape.module_path == Some("jiff") => {
+        _ if shape == jiff::Timestamp::SHAPE => {
             let val: jiff::Timestamp = get_column(row, column_idx, column_name, shape)?;
             partial = partial.set(val)?;
         }
 
         // jiff::civil::DateTime for TIMESTAMP (without timezone) columns
         #[cfg(feature = "jiff02")]
-        _ if shape.type_identifier == "DateTime" && shape.module_path == Some("jiff") => {
+        _ if shape == jiff::civil::DateTime::SHAPE => {
             let val: jiff::civil::DateTime = get_column(row, column_idx, column_name, shape)?;
             partial = partial.set(val)?;
         }
 
         // JSONB columns via Jsonb<T> wrapper
-        #[cfg(feature = "jsonb")]
         _ if shape.decl_id == Jsonb::<()>::SHAPE.decl_id => {
             partial = deserialize_jsonb_column(row, column_idx, column_name, partial, shape)?;
         }
@@ -421,8 +366,6 @@ fn deserialize_option_column(
     partial: Partial<'static, false>,
     shape: &'static Shape,
 ) -> Result<Partial<'static, false>> {
-    use facet_core::{NumericType, PrimitiveType};
-
     let inner_shape = shape.inner.expect("Option must have inner shape");
     let mut partial = partial;
 
@@ -445,112 +388,14 @@ fn deserialize_option_column(
         }};
     }
 
-    // Match on inner type to get the right Option<T>
-    match &inner_shape.ty {
-        Type::Primitive(PrimitiveType::Numeric(NumericType::Integer { signed: true })) => {
-            match inner_shape.type_identifier {
-                "i8" => try_option!(i8),
-                "i16" => try_option!(i16),
-                "i32" => try_option!(i32),
-                "i64" => try_option!(i64),
-                _ => {}
-            }
-        }
-        Type::Primitive(PrimitiveType::Numeric(NumericType::Integer { signed: false })) => {
-            // Postgres doesn't have unsigned, read as next larger signed type
-            match inner_shape.type_identifier {
-                "u8" => {
-                    let val: Option<i16> = get_column(row, column_idx, column_name, shape)?;
-                    match val {
-                        Some(v) => {
-                            partial = partial.begin_some()?;
-                            partial = partial.set(v as u8)?;
-                            partial = partial.end()?;
-                        }
-                        None => {
-                            partial = partial.set_default()?;
-                        }
-                    }
-                    return Ok(partial);
-                }
-                "u16" => {
-                    let val: Option<i32> = get_column(row, column_idx, column_name, shape)?;
-                    match val {
-                        Some(v) => {
-                            partial = partial.begin_some()?;
-                            partial = partial.set(v as u16)?;
-                            partial = partial.end()?;
-                        }
-                        None => {
-                            partial = partial.set_default()?;
-                        }
-                    }
-                    return Ok(partial);
-                }
-                "u32" => {
-                    let val: Option<i64> = get_column(row, column_idx, column_name, shape)?;
-                    match val {
-                        Some(v) => {
-                            partial = partial.begin_some()?;
-                            partial = partial.set(v as u32)?;
-                            partial = partial.end()?;
-                        }
-                        None => {
-                            partial = partial.set_default()?;
-                        }
-                    }
-                    return Ok(partial);
-                }
-                "u64" => {
-                    let val: Option<i64> = get_column(row, column_idx, column_name, shape)?;
-                    match val {
-                        Some(v) => {
-                            partial = partial.begin_some()?;
-                            partial = partial.set(v as u64)?;
-                            partial = partial.end()?;
-                        }
-                        None => {
-                            partial = partial.set_default()?;
-                        }
-                    }
-                    return Ok(partial);
-                }
-                _ => {}
-            }
-        }
-        Type::Primitive(PrimitiveType::Numeric(NumericType::Float)) => {
-            match inner_shape.type_identifier {
-                "f32" => try_option!(f32),
-                "f64" => try_option!(f64),
-                _ => {}
-            }
-        }
-        Type::Primitive(PrimitiveType::Boolean) => try_option!(bool),
-        _ if inner_shape.type_identifier == "String" => try_option!(String),
-        #[cfg(feature = "rust_decimal")]
-        _ if inner_shape.type_identifier == "Decimal" => try_option!(rust_decimal::Decimal),
-        #[cfg(feature = "jiff02")]
-        _ if inner_shape.type_identifier == "Timestamp"
-            && inner_shape.module_path == Some("jiff") =>
-        {
-            try_option!(jiff::Timestamp)
-        }
-        #[cfg(feature = "jiff02")]
-        _ if inner_shape.type_identifier == "DateTime"
-            && inner_shape.module_path == Some("jiff") =>
-        {
-            try_option!(jiff::civil::DateTime)
-        }
-        // Option<Jsonb<T>>
-        #[cfg(feature = "jsonb")]
-        _ if inner_shape.decl_id == Jsonb::<()>::SHAPE.decl_id => {
-            // Read JSONB as optional raw bytes using our custom OptionalRawJsonb type
-            let val: OptionalRawJsonb = get_column(row, column_idx, column_name, shape)?;
-            match val.0 {
-                Some(raw_bytes) => {
+    // Macro for unsigned types that need conversion from larger signed types
+    macro_rules! try_option_unsigned {
+        ($signed:ty, $unsigned:ty) => {{
+            let val: Option<$signed> = get_column(row, column_idx, column_name, shape)?;
+            match val {
+                Some(v) => {
                     partial = partial.begin_some()?;
-                    partial =
-                        deserialize_jsonb_bytes(&raw_bytes, partial, inner_shape, column_name)?;
+                    partial = partial.set(v as $unsigned)?;
                     partial = partial.end()?;
                 }
                 None => {
@@ -558,8 +403,66 @@ fn deserialize_option_column(
                 }
             }
             return Ok(partial);
+        }};
+    }
+
+    // Match on inner shape directly
+    if inner_shape == i8::SHAPE {
+        try_option!(i8);
+    } else if inner_shape == i16::SHAPE {
+        try_option!(i16);
+    } else if inner_shape == i32::SHAPE {
+        try_option!(i32);
+    } else if inner_shape == i64::SHAPE {
+        try_option!(i64);
+    } else if inner_shape == u8::SHAPE {
+        try_option_unsigned!(i16, u8);
+    } else if inner_shape == u16::SHAPE {
+        try_option_unsigned!(i32, u16);
+    } else if inner_shape == u32::SHAPE {
+        try_option_unsigned!(i64, u32);
+    } else if inner_shape == u64::SHAPE {
+        try_option_unsigned!(i64, u64);
+    } else if inner_shape == f32::SHAPE {
+        try_option!(f32);
+    } else if inner_shape == f64::SHAPE {
+        try_option!(f64);
+    } else if inner_shape == bool::SHAPE {
+        try_option!(bool);
+    } else if inner_shape == String::SHAPE {
+        try_option!(String);
+    }
+
+    #[cfg(feature = "rust_decimal")]
+    if inner_shape == rust_decimal::Decimal::SHAPE {
+        try_option!(rust_decimal::Decimal);
+    }
+
+    #[cfg(feature = "jiff02")]
+    if inner_shape == jiff::Timestamp::SHAPE {
+        try_option!(jiff::Timestamp);
+    }
+
+    #[cfg(feature = "jiff02")]
+    if inner_shape == jiff::civil::DateTime::SHAPE {
+        try_option!(jiff::civil::DateTime);
+    }
+
+    // Option<Jsonb<T>> - use decl_id comparison for generic types
+    if inner_shape.decl_id == Jsonb::<()>::SHAPE.decl_id {
+        // Read JSONB as optional raw bytes using our custom OptionalRawJsonb type
+        let val: OptionalRawJsonb = get_column(row, column_idx, column_name, shape)?;
+        match val.0 {
+            Some(raw_bytes) => {
+                partial = partial.begin_some()?;
+                partial = deserialize_jsonb_bytes(&raw_bytes, partial, inner_shape, column_name)?;
+                partial = partial.end()?;
+            }
+            None => {
+                partial = partial.set_default()?;
+            }
         }
-        _ => {}
+        return Ok(partial);
     }
 
     // Fallback: try String and parse
@@ -597,7 +500,6 @@ where
 }
 
 /// Deserialize a JSONB column into a Jsonb<T> wrapper.
-#[cfg(feature = "jsonb")]
 fn deserialize_jsonb_column(
     row: &Row,
     column_idx: usize,
@@ -611,7 +513,6 @@ fn deserialize_jsonb_column(
 }
 
 /// Deserialize JSONB bytes into a Jsonb<T> wrapper.
-#[cfg(feature = "jsonb")]
 fn deserialize_jsonb_bytes(
     raw_bytes: &[u8],
     mut partial: Partial<'static, false>,

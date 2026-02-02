@@ -4,7 +4,11 @@ use super::{DiagnosticBuilder, LintContext};
 use dibs_proto::TableInfo;
 use dibs_query_schema::*;
 
-pub fn lint_unknown_columns_select(select: &Select, table: &TableInfo, ctx: &mut LintContext<'_>) {
+pub fn lint_unknown_columns_select(
+    select: &SelectFields,
+    table: &TableInfo,
+    ctx: &mut LintContext<'_>,
+) {
     for (col_name, field_def) in &select.fields {
         if matches!(field_def, Some(FieldDef::Rel(_))) {
             continue;

@@ -1,0 +1,7 @@
+---
+source: crates/dibs-sql/src/render/tests.rs
+expression: result.sql
+---
+SELECT DISTINCT ON ("t0"."user_id") "t0"."id", "t0"."user_id", "t0"."created_at"
+FROM "orders" "t0"
+ORDER BY "t0"."user_id" ASC, "t0"."created_at" DESC

@@ -5,6 +5,7 @@
 //! - Used to generate a styx schema via facet-styx's schema generation
 //! - Used by the LSP extension for diagnostics, hover, go-to-definition
 
+use dibs_sql::{ColumnName, ParamName, TableName};
 use facet::Facet;
 pub use facet_reflect::Span;
 use indexmap::IndexMap;
@@ -190,7 +191,7 @@ pub struct QueryFile(pub IndexMap<Meta<String>, Decl>);
 #[allow(clippy::large_enum_variant)]
 pub enum Decl {
     /// A SELECT query declaration.
-    Query(Query),
+    Select(Select),
     /// An INSERT declaration.
     Insert(Insert),
     /// A bulk INSERT declaration (insert multiple rows).
@@ -205,18 +206,18 @@ pub enum Decl {
     Delete(Delete),
 }
 
-/// A query definition.
+/// A SELECT query definition.
 ///
 /// Can be either a structured query (with `from` and `select`) or a raw SQL query
 /// (with `sql` and `returns`).
 #[derive(Debug, Facet)]
 #[facet(rename_all = "kebab-case")]
-pub struct Query {
+pub struct Select {
     /// Query parameters.
     pub params: Option<Params>,
 
     /// Source table to query from (for structured queries).
-    pub from: Option<Meta<String>>,
+    pub from: Option<Meta<TableName>>,
 
     /// Filter conditions.
     #[facet(rename = "where")]
@@ -241,7 +242,7 @@ pub struct Query {
     pub offset: Option<Meta<String>>,
 
     /// Fields to select (for structured queries).
-    pub select: Option<Select>,
+    pub fields: Option<SelectFields>,
 
     /// Raw SQL query string (for raw SQL queries).
     pub sql: Option<Meta<String>>,
@@ -254,27 +255,27 @@ pub struct Query {
 #[derive(Debug, Facet)]
 pub struct Returns {
     #[facet(flatten)]
-    pub fields: IndexMap<Meta<String>, ParamType>,
+    pub fields: IndexMap<Meta<ColumnName>, ParamType>,
 }
 
 /// DISTINCT ON clause (PostgreSQL-specific) - a sequence of column names.
 #[derive(Debug, Facet)]
 #[facet(transparent)]
-pub struct DistinctOn(pub Vec<Meta<String>>);
+pub struct DistinctOn(pub Vec<Meta<ColumnName>>);
 
 /// ORDER BY clause.
 #[derive(Debug, Facet)]
 pub struct OrderBy {
     /// Column name -> direction ("asc" or "desc", None means asc)
     #[facet(flatten)]
-    pub columns: IndexMap<Meta<String>, Option<Meta<String>>>,
+    pub columns: IndexMap<Meta<ColumnName>, Option<Meta<String>>>,
 }
 
 /// WHERE clause - filter conditions.
-#[derive(Debug, Facet)]
+#[derive(Debug, Clone, Facet)]
 pub struct Where {
     #[facet(flatten)]
-    pub filters: IndexMap<Meta<String>, FilterValue>,
+    pub filters: IndexMap<Meta<ColumnName>, FilterValue>,
 }
 
 /// A filter value - tagged operators or bare scalars for where clauses.
@@ -291,7 +292,7 @@ pub struct Where {
 /// - `@key-exists($param)` for `?` operator (key exists, typically JSONB)
 ///
 /// Bare scalars (like `$handle`) are treated as equality filters via `#[facet(other)]`.
-#[derive(Debug, Facet)]
+#[derive(Debug, Clone, Facet)]
 #[facet(rename_all = "kebab-case")]
 #[repr(u8)]
 pub enum FilterValue {
@@ -332,14 +333,14 @@ pub enum FilterValue {
 }
 
 /// Query parameters.
-#[derive(Debug, Facet)]
+#[derive(Debug, Clone, Facet)]
 pub struct Params {
     #[facet(flatten)]
-    pub params: IndexMap<Meta<String>, ParamType>,
+    pub params: IndexMap<Meta<ParamName>, ParamType>,
 }
 
 /// Parameter type.
-#[derive(Debug, Facet)]
+#[derive(Debug, Clone, Facet)]
 #[facet(rename_all = "lowercase")]
 #[repr(u8)]
 pub enum ParamType {
@@ -357,13 +358,13 @@ pub enum ParamType {
 /// SELECT clause.
 #[derive(Debug, Facet)]
 #[facet(metadata_container)]
-pub struct Select {
+pub struct SelectFields {
     /// Source span of the select block.
     #[facet(metadata = "span")]
     pub span: Span,
 
     #[facet(flatten)]
-    pub fields: IndexMap<Meta<String>, Option<FieldDef>>,
+    pub fields: IndexMap<Meta<ColumnName>, Option<FieldDef>>,
 }
 
 /// A field definition - tagged values in select.
@@ -375,7 +376,7 @@ pub enum FieldDef {
     /// A relation field (`@rel{...}`).
     Rel(Relation),
     /// A count aggregation (`@count(table_name)`).
-    Count(Vec<Meta<String>>),
+    Count(Vec<Meta<TableName>>),
 }
 
 /// A relation definition (nested query on related table).
@@ -383,7 +384,7 @@ pub enum FieldDef {
 #[facet(rename_all = "kebab-case")]
 pub struct Relation {
     /// Optional explicit table name.
-    pub from: Option<Meta<String>>,
+    pub from: Option<Meta<TableName>>,
 
     /// Filter conditions.
     #[facet(rename = "where")]
@@ -396,16 +397,16 @@ pub struct Relation {
     pub first: Option<Meta<bool>>,
 
     /// Fields to select from the relation.
-    pub select: Option<Select>,
+    pub fields: Option<SelectFields>,
 }
 
 /// An INSERT declaration.
-#[derive(Debug, Facet)]
+#[derive(Debug, Clone, Facet)]
 pub struct Insert {
     /// Query parameters.
     pub params: Option<Params>,
     /// Target table.
-    pub into: Meta<String>,
+    pub into: Meta<TableName>,
     /// Values to insert (column -> value expression).
     pub values: Values,
     /// Columns to return.
@@ -413,12 +414,12 @@ pub struct Insert {
 }
 
 /// An UPSERT declaration (INSERT ... ON CONFLICT ... DO UPDATE).
-#[derive(Debug, Facet)]
+#[derive(Debug, Clone, Facet)]
 pub struct Upsert {
     /// Query parameters.
     pub params: Option<Params>,
     /// Target table.
-    pub into: Meta<String>,
+    pub into: Meta<TableName>,
     /// ON CONFLICT clause.
     #[facet(rename = "on-conflict")]
     pub on_conflict: OnConflict,
@@ -441,12 +442,12 @@ pub struct Upsert {
 ///   returning {id, handle, status}
 /// }
 /// ```
-#[derive(Debug, Facet)]
+#[derive(Debug, Clone, Facet)]
 pub struct InsertMany {
     /// Query parameters - each becomes an array parameter.
     pub params: Option<Params>,
     /// Target table.
-    pub into: Meta<String>,
+    pub into: Meta<TableName>,
     /// Values to insert (column -> value expression).
     /// Params become UNNEST columns, other expressions are applied to each row.
     pub values: Values,
@@ -471,12 +472,12 @@ pub struct InsertMany {
 ///   returning {id, handle, status}
 /// }
 /// ```
-#[derive(Debug, Facet)]
+#[derive(Debug, Clone, Facet)]
 pub struct UpsertMany {
     /// Query parameters - each becomes an array parameter.
     pub params: Option<Params>,
     /// Target table.
-    pub into: Meta<String>,
+    pub into: Meta<TableName>,
     /// ON CONFLICT clause.
     #[facet(rename = "on-conflict")]
     pub on_conflict: OnConflict,
@@ -487,12 +488,12 @@ pub struct UpsertMany {
 }
 
 /// An UPDATE declaration.
-#[derive(Debug, Facet)]
+#[derive(Debug, Clone, Facet)]
 pub struct Update {
     /// Query parameters.
     pub params: Option<Params>,
     /// Target table.
-    pub table: Meta<String>,
+    pub table: Meta<TableName>,
     /// Values to set (column -> value expression).
     pub set: Values,
     /// Filter conditions.
@@ -503,12 +504,12 @@ pub struct Update {
 }
 
 /// A DELETE declaration.
-#[derive(Debug, Facet)]
+#[derive(Debug, Clone, Facet)]
 pub struct Delete {
     /// Query parameters.
     pub params: Option<Params>,
     /// Target table.
-    pub from: Meta<String>,
+    pub from: Meta<TableName>,
     /// Filter conditions.
     #[facet(rename = "where")]
     pub where_clause: Option<Where>,
@@ -517,15 +518,15 @@ pub struct Delete {
 }
 
 /// Values clause for INSERT/UPDATE.
-#[derive(Debug, Facet)]
+#[derive(Debug, Clone, Facet)]
 pub struct Values {
     /// Column name -> value expression. None means use param with same name ($column_name).
     #[facet(flatten)]
-    pub columns: IndexMap<Meta<String>, Option<ValueExpr>>,
+    pub columns: IndexMap<Meta<ColumnName>, Option<ValueExpr>>,
 }
 
 /// Payload of a value expression - can be scalar or sequence.
-#[derive(Debug, Facet)]
+#[derive(Debug, Clone, Facet)]
 #[facet(untagged)]
 #[repr(u8)]
 pub enum Payload {
@@ -541,7 +542,7 @@ pub enum Payload {
 /// - `@default` - the DEFAULT keyword
 /// - `@funcname` or `@funcname(args...)` - SQL function calls like NOW(), COALESCE(), etc.
 /// - Bare scalars - parameter references ($name) or literals
-#[derive(Debug, Facet)]
+#[derive(Debug, Clone, Facet)]
 #[facet(rename_all = "lowercase")]
 #[repr(u8)]
 pub enum ValueExpr {
@@ -561,7 +562,7 @@ pub enum ValueExpr {
 }
 
 /// ON CONFLICT clause for UPSERT.
-#[derive(Debug, Facet)]
+#[derive(Debug, Clone, Facet)]
 pub struct OnConflict {
     /// Target columns for conflict detection.
     pub target: ConflictTarget,
@@ -570,21 +571,21 @@ pub struct OnConflict {
 }
 
 /// Conflict target columns.
-#[derive(Debug, Facet)]
+#[derive(Debug, Clone, Facet)]
 pub struct ConflictTarget {
     #[facet(flatten)]
-    pub columns: IndexMap<Meta<String>, ()>,
+    pub columns: IndexMap<Meta<ColumnName>, ()>,
 }
 
 /// Columns to update on conflict.
-#[derive(Debug, Facet)]
+#[derive(Debug, Clone, Facet)]
 pub struct ConflictUpdate {
     #[facet(flatten)]
-    pub columns: IndexMap<Meta<String>, Option<UpdateValue>>,
+    pub columns: IndexMap<Meta<ColumnName>, Option<UpdateValue>>,
 }
 
 /// Value for an update column - mirrors `ValueExpr`.
-#[derive(Debug, Facet)]
+#[derive(Debug, Clone, Facet)]
 #[facet(rename_all = "lowercase")]
 #[repr(u8)]
 pub enum UpdateValue {
@@ -601,114 +602,176 @@ pub enum UpdateValue {
 }
 
 /// RETURNING clause.
-#[derive(Debug, Facet)]
+#[derive(Debug, Clone, Facet)]
 pub struct Returning {
     #[facet(flatten)]
-    pub columns: IndexMap<Meta<String>, ()>,
+    pub columns: IndexMap<Meta<ColumnName>, ()>,
+}
+
+// ============================================================================
+// CONVENIENCE METHODS FOR SCHEMA TYPES
+// ============================================================================
+
+impl Select {
+    /// Check if this query returns only the first result.
+    pub fn is_first(&self) -> bool {
+        self.first.is_some()
+    }
+
+    /// Check if this query has any relations in its select clause.
+    pub fn has_relations(&self) -> bool {
+        self.fields
+            .as_ref()
+            .map(|select| select.has_relations())
+            .unwrap_or(false)
+    }
+
+    /// Check if this query has any Vec (has-many) relations.
+    pub fn has_vec_relations(&self) -> bool {
+        self.fields
+            .as_ref()
+            .map(|select| select.has_vec_relations())
+            .unwrap_or(false)
+    }
+
+    /// Check if this query has nested Vec relations (Vec containing Vec).
+    pub fn has_nested_vec_relations(&self) -> bool {
+        self.fields
+            .as_ref()
+            .map(|select| select.has_nested_vec_relations())
+            .unwrap_or(false)
+    }
+}
+
+impl SelectFields {
+    /// Check if this select has any relations.
+    pub fn has_relations(&self) -> bool {
+        self.fields
+            .values()
+            .any(|field_def| matches!(field_def, Some(FieldDef::Rel(_))))
+    }
+
+    /// Check if this select has any Vec (has-many) relations.
+    pub fn has_vec_relations(&self) -> bool {
+        self.fields.values().any(|field_def| {
+            if let Some(FieldDef::Rel(rel)) = field_def {
+                rel.first.is_none()
+            } else {
+                false
+            }
+        })
+    }
+
+    /// Check if this select has nested Vec relations.
+    pub fn has_nested_vec_relations(&self) -> bool {
+        for field_def in self.fields.values() {
+            if let Some(FieldDef::Rel(rel)) = field_def
+                && rel.first.is_none()
+            {
+                // This is a Vec relation
+                if let Some(rel_select) = &rel.fields
+                    && (rel_select.has_vec_relations() || rel_select.has_nested_vec_relations())
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Check if this select has any count aggregations.
+    pub fn has_count(&self) -> bool {
+        self.fields
+            .values()
+            .any(|field_def| matches!(field_def, Some(FieldDef::Count(_))))
+    }
+
+    /// Iterate over simple columns (fields with None FieldDef).
+    pub fn columns(&self) -> impl Iterator<Item = (&Meta<ColumnName>, &Option<FieldDef>)> {
+        self.fields
+            .iter()
+            .filter(|(_, field_def)| field_def.is_none())
+    }
+
+    /// Iterate over relations (fields with Some(FieldDef::Rel(_))).
+    pub fn relations(&self) -> impl Iterator<Item = (&Meta<ColumnName>, &Relation)> {
+        self.fields.iter().filter_map(|(name, field_def)| {
+            if let Some(FieldDef::Rel(rel)) = field_def {
+                Some((name, rel))
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Iterate over count aggregations (fields with Some(FieldDef::Count(_))).
+    pub fn counts(&self) -> impl Iterator<Item = (&Meta<ColumnName>, &Vec<Meta<TableName>>)> {
+        self.fields.iter().filter_map(|(name, field_def)| {
+            if let Some(FieldDef::Count(tables)) = field_def {
+                Some((name, tables))
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Get the first column name (first simple column, not a relation).
+    /// Returns None if there are no simple columns.
+    pub fn first_column(&self) -> Option<&ColumnName> {
+        self.fields
+            .iter()
+            .find(|(_, field_def)| field_def.is_none())
+            .map(|(name, _)| &name.value)
+    }
+
+    /// Get the ID column name (column named "id", or first column as fallback).
+    /// Returns None if there are no simple columns.
+    pub fn id_column(&self) -> Option<&ColumnName> {
+        // First try to find a column named "id"
+        self.fields
+            .iter()
+            .find(|(name, field_def)| field_def.is_none() && name.value.as_str() == "id")
+            .map(|(name, _)| &name.value)
+            .or_else(|| self.first_column())
+    }
+}
+
+impl Relation {
+    /// Get the table name for this relation.
+    /// Returns the explicit `from` table if set, otherwise returns None
+    /// (caller should use the relation field name as fallback).
+    pub fn table_name(&self) -> Option<&str> {
+        self.from.as_ref().map(|m| m.value.as_str())
+    }
+
+    /// Check if this relation is a single result (first).
+    pub fn is_first(&self) -> bool {
+        self.first.is_some()
+    }
+
+    /// Check if this relation has any nested relations.
+    pub fn has_relations(&self) -> bool {
+        self.fields
+            .as_ref()
+            .map(|select| select.has_relations())
+            .unwrap_or(false)
+    }
+
+    /// Check if this relation has any Vec (has-many) nested relations.
+    pub fn has_vec_relations(&self) -> bool {
+        self.fields
+            .as_ref()
+            .map(|select| select.has_vec_relations())
+            .unwrap_or(false)
+    }
+}
+
+impl Params {
+    /// Iterate over parameters by name and type.
+    pub fn iter(&self) -> impl Iterator<Item = (&Meta<ParamName>, &ParamType)> {
+        self.params.iter()
+    }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use facet_styx::RenderError;
-
-    /// Test that Spanned<String> works as a map key with facet-styx.
-    #[test]
-    fn spanned_string_as_map_key() {
-        #[derive(Debug, Facet)]
-        struct TestMap {
-            #[facet(flatten)]
-            items: IndexMap<Meta<String>, String>,
-        }
-
-        let source = r#"{foo bar, baz qux}"#;
-        let result: Result<TestMap, _> = facet_styx::from_str(source);
-
-        match result {
-            Ok(map) => {
-                assert_eq!(map.items.len(), 2);
-                let keys: Vec<_> = map.items.keys().map(|k| k.value.as_str()).collect();
-                assert!(keys.contains(&"foo"));
-                assert!(keys.contains(&"baz"));
-            }
-            Err(e) => {
-                panic!("Failed to parse: {}", e.render("<test>", source));
-            }
-        }
-    }
-
-    /// Test that Where clause parses correctly with Spanned keys.
-    #[test]
-    fn where_clause_with_spanned_keys() {
-        let source = r#"{deleted_at @null}"#;
-        let result: Result<Where, _> = facet_styx::from_str(source);
-
-        match result {
-            Ok(where_clause) => {
-                assert_eq!(where_clause.filters.len(), 1);
-                let key = where_clause.filters.keys().next().unwrap();
-                assert_eq!(key.value, "deleted_at");
-            }
-            Err(e) => {
-                panic!("Failed to parse: {}", e.render("<test>", source));
-            }
-        }
-    }
-
-    /// Test that FilterValue::EqBare works with Meta<String>.
-    #[test]
-    fn filter_value_eq() {
-        let source = r#"{id $id}"#;
-        let result: Result<Where, _> = facet_styx::from_str(source);
-
-        match result {
-            Ok(where_clause) => {
-                assert_eq!(where_clause.filters.len(), 1);
-                let (key, value) = where_clause.filters.iter().next().unwrap();
-                assert_eq!(key.value, "id");
-                match value {
-                    FilterValue::EqBare(Some(meta)) => {
-                        assert_eq!(meta.as_str(), "$id");
-                        // Verify span is captured (offset 4, len 3 for "$id")
-                        assert_eq!(meta.span.offset, 4);
-                        assert_eq!(meta.span.len, 3);
-                    }
-                    _ => panic!("Expected EqBare variant, got {:?}", value),
-                }
-            }
-            Err(e) => {
-                panic!("Failed to parse: {}", e.render("<test>", source));
-            }
-        }
-    }
-
-    /// Test that FilterValue::EqBare works with shorthand (no value).
-    #[test]
-    fn filter_value_eq_shorthand() {
-        let source = r#"{id}"#;
-        let result: Result<Where, _> = facet_styx::from_str(source);
-
-        match result {
-            Ok(where_clause) => {
-                assert_eq!(where_clause.filters.len(), 1);
-                let (key, value) = where_clause.filters.iter().next().unwrap();
-                assert_eq!(key.value, "id");
-                match value {
-                    FilterValue::EqBare(None) => {
-                        // Success - shorthand syntax where {id} means {id $id}
-                    }
-                    FilterValue::EqBare(Some(meta)) => {
-                        panic!(
-                            "Expected EqBare(None) for shorthand, got EqBare(Some({}))",
-                            meta.as_str()
-                        );
-                    }
-                    _ => panic!("Expected EqBare variant, got {:?}", value),
-                }
-            }
-            Err(e) => {
-                panic!("Failed to parse: {}", e.render("<test>", source));
-            }
-        }
-    }
-}
+mod tests;

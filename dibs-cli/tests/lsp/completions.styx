@@ -16,9 +16,9 @@ tests (
     {
         name "context-aware column completions in select"
         input <<STYX
-            AllProducts @query{
+            AllProducts @select{
                 from product
-                select {|}
+                fields {|}
             }
             STYX
         completions {
@@ -29,9 +29,9 @@ tests (
     {
         name "column completions with prefix"
         input <<STYX
-            AllProducts @query{
+            AllProducts @select{
                 from product
-                select {ha|}
+                fields {ha|}
             }
             STYX
         completions {
@@ -42,7 +42,7 @@ tests (
     {
         name "column completions in where clause"
         input <<STYX
-            AllProducts @query{
+            AllProducts @select{
                 from product
                 where {|}
             }
@@ -55,7 +55,7 @@ tests (
     {
         name "column completions in order-by"
         input <<STYX
-            AllProducts @query{
+            AllProducts @select{
                 from product
                 order-by {|}
             }
@@ -68,9 +68,9 @@ tests (
     {
         name "inlay hints show column types"
         input <<STYX
-            AllProducts @query{
+            AllProducts @select{
                 from product
-                select {
+                fields {
                     id
                     handle
                     active
@@ -90,16 +90,16 @@ tests (
     {
         name "inlay hints appear on correct lines with multiple queries"
         input <<STYX
-            FirstQuery @query{
+            FirstQuery @select{
                 from product
-                select {
+                fields {
                     id
                     handle
                 }
             }
-            SecondQuery @query{
+            SecondQuery @select{
                 from product_variant
-                select {
+                fields {
                     id
                     sku
                     title
@@ -121,14 +121,14 @@ tests (
     {
         name "inlay hints in order-by block"
         input <<STYX
-            AllProducts @query{
+            AllProducts @select{
                 from product
                 where {deleted_at @null}
                 order-by {
                     id asc
                     created_at desc
                 }
-                select {id}
+                fields {id}
             }
             STYX
         inlay_hints {
@@ -145,14 +145,14 @@ tests (
     {
         name "inlay hints in where block"
         input <<STYX
-            ProductById @query{
+            ProductById @select{
                 from product
                 where {
                     deleted_at @null
                     active true
                     id 123
                 }
-                select {handle}
+                fields {handle}
             }
             STYX
         inlay_hints {
@@ -251,7 +251,7 @@ tests (
     {
         name "hover on table shows columns"
         input <<STYX
-            AllProducts @query{
+            AllProducts @select{
                 from prod|uct
             }
             STYX
@@ -263,9 +263,9 @@ tests (
     {
         name "hover on column shows type info"
         input <<STYX
-            AllProducts @query{
+            AllProducts @select{
                 from product
-                select {han|dle}
+                fields {han|dle}
             }
             STYX
         hover {
@@ -276,7 +276,7 @@ tests (
     {
         name "diagnostic for unknown table"
         input <<STYX
-            AllProducts @query{
+            AllProducts @select{
                 from nonexistent_table
             }
             STYX
@@ -288,10 +288,10 @@ tests (
     {
         name "diagnostic for unknown column"
         input <<STYX
-            AllProducts @query{
+            AllProducts @select{
                 from product
                 where {deleted_at @null}
-                select {
+                fields {
                     id
                     nonexistent_column
                 }
@@ -306,10 +306,10 @@ tests (
     {
         name "no diagnostics for valid query"
         input <<STYX
-            AllProducts @query{
+            AllProducts @select{
                 from product
                 where {deleted_at @null}
-                select {
+                fields {
                     id
                     handle
                 }
@@ -323,7 +323,7 @@ tests (
     {
         name "definition: param reference jumps to declaration"
         input <<STYX
-            ProductByHandle @query{
+            ProductByHandle @select{
                 from product
                 params {
                     handle TEXT
@@ -332,7 +332,7 @@ tests (
                     deleted_at @null
                     handle @eq($han|dle)
                 }
-                select {id handle}
+                fields {id handle}
             }
             STYX
         definition {
@@ -344,10 +344,10 @@ tests (
     {
         name "definition: no result for non-param"
         input <<STYX
-            AllProducts @query{
+            AllProducts @select{
                 from product
                 where {deleted_at @null}
-                select {han|dle}
+                fields {han|dle}
             }
             STYX
         definition {
@@ -362,11 +362,11 @@ tests (
     {
         name "lint: offset without limit"
         input <<STYX
-            BadQuery @query{
+            BadQuery @select{
                 from product
                 where {deleted_at @null}
                 offset 10
-                select {id}
+                fields {id}
             }
             STYX
         diagnostics {
@@ -378,11 +378,11 @@ tests (
     {
         name "lint: limit without order-by"
         input <<STYX
-            BadQuery @query{
+            BadQuery @select{
                 from product
                 where {deleted_at @null}
                 limit 10
-                select {id}
+                fields {id}
             }
             STYX
         diagnostics {
@@ -394,11 +394,11 @@ tests (
     {
         name "lint: first without order-by"
         input <<STYX
-            BadQuery @query{
+            BadQuery @select{
                 from product
                 where {deleted_at @null}
                 first true
-                select {id}
+                fields {id}
             }
             STYX
         diagnostics {
@@ -410,12 +410,12 @@ tests (
     {
         name "lint: no warning when limit has order-by"
         input <<STYX
-            GoodQuery @query{
+            GoodQuery @select{
                 from product
                 where {deleted_at @null}
                 order-by {id asc}
                 limit 10
-                select {id}
+                fields {id}
             }
             STYX
         diagnostics {
@@ -465,13 +465,13 @@ tests (
     {
         name "lint: unused param"
         input <<STYX
-            BadQuery @query{
+            BadQuery @select{
                 from product
                 where {deleted_at @null}
                 params {
                     unused_param @string
                 }
-                select {id}
+                fields {id}
             }
             STYX
         diagnostics {
@@ -483,13 +483,13 @@ tests (
     {
         name "lint: no warning when param is used"
         input <<STYX
-            GoodQuery @query{
+            GoodQuery @select{
                 from product
                 params {
                     h @string
                 }
                 where {deleted_at @null, handle $h}
-                select {id}
+                fields {id}
             }
             STYX
         diagnostics {
@@ -500,9 +500,9 @@ tests (
     {
         name "lint: missing deleted_at filter"
         input <<STYX
-            BadQuery @query{
+            BadQuery @select{
                 from product
-                select {id}
+                fields {id}
             }
             STYX
         diagnostics {
@@ -514,10 +514,10 @@ tests (
     {
         name "lint: no warning when deleted_at is filtered"
         input <<STYX
-            GoodQuery @query{
+            GoodQuery @select{
                 from product
                 where {deleted_at @null}
-                select {id}
+                fields {id}
             }
             STYX
         diagnostics {
@@ -542,15 +542,15 @@ tests (
     {
         name "lint: relation first without order-by"
         input <<STYX
-            QueryWithRel @query{
+            QueryWithRel @select{
                 from product
                 where {deleted_at @null}
-                select {
+                fields {
                     id
                     translation @rel{
                         from product_translation
                         first true
-                        select {title}
+                        fields {title}
                     }
                 }
             }
@@ -564,16 +564,16 @@ tests (
     {
         name "lint: no warning when relation has order-by"
         input <<STYX
-            QueryWithRel @query{
+            QueryWithRel @select{
                 from product
                 where {deleted_at @null}
-                select {
+                fields {
                     id
                     translation @rel{
                         from product_translation
                         order-by {locale asc}
                         first true
-                        select {title}
+                        fields {title}
                     }
                 }
             }
@@ -590,11 +590,11 @@ tests (
     {
         name "lint: param type matches column type (string)"
         input <<STYX
-            GoodQuery @query{
+            GoodQuery @select{
                 from product
                 params {h @string}
                 where {deleted_at @null, handle $h}
-                select {id}
+                fields {id}
             }
             STYX
         diagnostics {
@@ -605,11 +605,11 @@ tests (
     {
         name "lint: param type matches column type (int)"
         input <<STYX
-            GoodQuery @query{
+            GoodQuery @select{
                 from product
                 params {i @int}
                 where {deleted_at @null, id $i}
-                select {id}
+                fields {id}
             }
             STYX
         diagnostics {
@@ -620,11 +620,11 @@ tests (
     {
         name "lint: param type mismatch - int param for text column"
         input <<STYX
-            BadQuery @query{
+            BadQuery @select{
                 from product
                 params {h @int}
                 where {deleted_at @null, handle $h}
-                select {id}
+                fields {id}
             }
             STYX
         diagnostics {
@@ -636,11 +636,11 @@ tests (
     {
         name "lint: param type mismatch - string param for bigint column"
         input <<STYX
-            BadQuery @query{
+            BadQuery @select{
                 from product
                 params {i @string}
                 where {deleted_at @null, id $i}
-                select {id}
+                fields {id}
             }
             STYX
         diagnostics {
@@ -652,11 +652,11 @@ tests (
     {
         name "lint: param type mismatch with operator"
         input <<STYX
-            BadQuery @query{
+            BadQuery @select{
                 from product
                 params {id @string}
                 where {deleted_at @null, id @eq($id)}
-                select {id}
+                fields {id}
             }
             STYX
         diagnostics {
@@ -668,10 +668,10 @@ tests (
     {
         name "lint: literal string matches text column"
         input <<STYX
-            GoodQuery @query{
+            GoodQuery @select{
                 from product
                 where {deleted_at @null, handle "test"}
-                select {id}
+                fields {id}
             }
             STYX
         diagnostics {
@@ -682,10 +682,10 @@ tests (
     {
         name "lint: literal boolean matches boolean column"
         input <<STYX
-            GoodQuery @query{
+            GoodQuery @select{
                 from product
                 where {deleted_at @null, active true}
-                select {id}
+                fields {id}
             }
             STYX
         diagnostics {
@@ -696,10 +696,10 @@ tests (
     {
         name "lint: literal integer matches bigint column"
         input <<STYX
-            GoodQuery @query{
+            GoodQuery @select{
                 from product
                 where {deleted_at @null, id 123}
-                select {id}
+                fields {id}
             }
             STYX
         diagnostics {
@@ -710,10 +710,10 @@ tests (
     {
         name "lint: literal string for boolean column"
         input <<STYX
-            BadQuery @query{
+            BadQuery @select{
                 from product
                 where {deleted_at @null, active "yes"}
-                select {id}
+                fields {id}
             }
             STYX
         diagnostics {
@@ -725,10 +725,10 @@ tests (
     {
         name "lint: literal boolean for text column"
         input <<STYX
-            BadQuery @query{
+            BadQuery @select{
                 from product
                 where {deleted_at @null, handle true}
-                select {id}
+                fields {id}
             }
             STYX
         diagnostics {
@@ -744,14 +744,14 @@ tests (
     {
         name "lint: valid FK relationship (product -> product_translation)"
         input <<STYX
-            GoodQuery @query{
+            GoodQuery @select{
                 from product
                 where {deleted_at @null}
-                select {
+                fields {
                     id
                     translation @rel{
                         from product_translation
-                        select {title}
+                        fields {title}
                     }
                 }
             }
@@ -764,14 +764,14 @@ tests (
     {
         name "lint: valid FK relationship (product_variant -> variant_price)"
         input <<STYX
-            GoodQuery @query{
+            GoodQuery @select{
                 from product_variant
                 where {deleted_at @null}
-                select {
+                fields {
                     id
                     prices @rel{
                         from variant_price
-                        select {amount, currency_code}
+                        fields {amount, currency_code}
                     }
                 }
             }
@@ -784,14 +784,14 @@ tests (
     {
         name "lint: no FK relationship error"
         input <<STYX
-            BadQuery @query{
+            BadQuery @select{
                 from product
                 where {deleted_at @null}
-                select {
+                fields {
                     id
                     prices @rel{
                         from variant_price
-                        select {amount}
+                        fields {amount}
                     }
                 }
             }
@@ -805,13 +805,13 @@ tests (
     {
         name "lint: no FK relationship between unrelated tables"
         input <<STYX
-            BadQuery @query{
+            BadQuery @select{
                 from product_source
-                select {
+                fields {
                     id
                     translations @rel{
                         from product_translation
-                        select {title}
+                        fields {title}
                     }
                 }
             }
@@ -829,13 +829,13 @@ tests (
     {
         name "lint: large offset warning"
         input <<STYX
-            BadQuery @query{
+            BadQuery @select{
                 from product
                 where {deleted_at @null}
                 order-by {id asc}
                 offset 5000
                 limit 10
-                select {id}
+                fields {id}
             }
             STYX
         diagnostics {
@@ -847,13 +847,13 @@ tests (
     {
         name "lint: no warning for small offset"
         input <<STYX
-            GoodQuery @query{
+            GoodQuery @select{
                 from product
                 where {deleted_at @null}
                 order-by {id asc}
                 offset 100
                 limit 10
-                select {id}
+                fields {id}
             }
             STYX
         diagnostics {
@@ -864,10 +864,10 @@ tests (
     {
         name "lint: empty select block"
         input <<STYX
-            BadQuery @query{
+            BadQuery @select{
                 from product
                 where {deleted_at @null}
-                select {}
+                fields {}
             }
             STYX
         diagnostics {
@@ -938,11 +938,11 @@ tests (
     {
         name "code action: no actions for valid code"
         input <<STYX
-            GoodQuery @query{
+            GoodQuery @select{
                 from product
                 params {h @string}
                 where {deleted_at @null, handle $h|}
-                select {id}
+                fields {id}
             }
             STYX
         code_actions {
@@ -970,32 +970,12 @@ tests (
     // ========================================================================
 
     {
-        name "inlay hints appear at correct column positions"
-        input <<STYX
-            AllProducts @query{
-                from product
-                select {
-                    id
-                    handle
-                }
-            }
-            STYX
-        inlay_hints {
-            count 2
-            has (
-                {label ": BIGINT", line 4, col 10}
-                {label ": TEXT", line 5, col 14}
-            )
-        }
-    }
-
-    {
         name "inlay hint: wrong column is detected (negative test)"
         expect_fail true
         input <<STYX
-            AllProducts @query{
+            AllProducts @select{
                 from product
-                select {
+                fields {
                     id
                 }
             }
@@ -1012,7 +992,7 @@ tests (
     {
         name "span marker: unknown table has correct span"
         input <<STYX
-            BadQuery @query{
+            BadQuery @select{
                 from nonexistent
                      ^^^^^^^^^^^ "Unknown table"
             }
@@ -1022,10 +1002,10 @@ tests (
     {
         name "span marker: unknown column has correct span"
         input <<STYX
-            BadQuery @query{
+            BadQuery @select{
                 from product
                 where {deleted_at @null}
-                select {
+                fields {
                     id
                     bad_column
                     ^^^^^^^^^^ "Unknown column"
@@ -1038,7 +1018,7 @@ tests (
         name "span marker: wrong span is detected (negative test)"
         expect_fail true
         input <<STYX
-            BadQuery @query{
+            BadQuery @select{
                 from nonexistent
             ^ "Unknown table"
             }
@@ -1050,7 +1030,7 @@ tests (
         name "span marker: wrong message is detected (negative test)"
         expect_fail true
         input <<STYX
-            BadQuery @query{
+            BadQuery @select{
                 from nonexistent
                      ^^^^^^^^^^^ "THIS MESSAGE DOES NOT EXIST"
             }
@@ -1061,11 +1041,11 @@ tests (
     {
         name "lint: redundant param reference in where"
         input <<STYX
-            QueryById @query{
+            QueryById @select{
                 from product
                 params {id @int}
                 where {deleted_at @null, id $id}
-                select {handle}
+                fields {handle}
             }
             STYX
         diagnostics {

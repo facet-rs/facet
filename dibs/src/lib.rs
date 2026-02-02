@@ -1,7 +1,3 @@
-#![allow(clippy::result_large_err)]
-#![allow(clippy::type_complexity)]
-#![allow(clippy::should_implement_trait)]
-
 //! Postgres toolkit for Rust, powered by facet reflection.
 //!
 //! This crate provides:
@@ -48,11 +44,11 @@
 use std::future::Future;
 use std::pin::Pin;
 
+// TODO: clean up public interface
 pub mod backoffice;
-mod diff;
+pub mod diff;
 mod error;
-mod introspect;
-mod jsonb;
+pub mod introspect;
 pub mod meta;
 mod migrate;
 mod plugin;
@@ -64,9 +60,9 @@ pub mod solver;
 mod traced;
 
 pub use backoffice::SquelServiceImpl;
+pub use dibs_jsonb::Jsonb;
 pub use diff::{Change, SchemaDiff, TableDiff};
 pub use error::{Error, MigrationError, SqlErrorContext};
-pub use jsonb::Jsonb;
 pub use meta::{create_meta_tables_sql, record_migration_sql, sync_tables_sql};
 pub use migrate::{
     AppliedMigration, Migration, MigrationContext, MigrationRunner, MigrationStatus, RanMigration,
@@ -75,13 +71,15 @@ pub use pool::ConnectionProvider;
 pub use service::{DibsServiceImpl, run_service};
 pub use traced::{Connection, ConnectionExt, TracedConn, TracedObject, TracedPool};
 
+// Re-export schema types from dibs_db_schema
+pub use dibs_db_schema::{
+    __attr, __parse_attr, Attr, Check, CheckConstraint, Column, CompositeIndex, CompositeUnique,
+    ForeignKey, Index, IndexColumn, NullsOrder, PgType, Schema, SortOrder, SourceLocation, Table,
+    TableDef, TriggerCheck, TriggerCheckConstraint,
+};
+
 // Re-export proto types for convenience
 pub use dibs_proto::*;
-pub use schema::{
-    Attr, Check, CheckConstraint, Column, CompositeIndex, CompositeUnique, ForeignKey, Index,
-    IndexColumn, NullsOrder, PgType, Schema, SortOrder, SourceLocation, Table, TableDef,
-    TriggerCheck, TriggerCheckConstraint,
-};
 
 // Re-export inventory for the proc macro
 pub use inventory;
@@ -90,11 +88,7 @@ pub use inventory;
 pub use dibs_macros::migration;
 
 // Re-export query DSL codegen types
-pub use dibs_query_gen::{
-    ColumnInfo, GeneratedCode, PlannerForeignKey, PlannerSchema, PlannerTable, QueryFile,
-    SchemaInfo, TableInfo, generate_rust_code, generate_rust_code_with_planner,
-    generate_rust_code_with_schema, parse_query_file,
-};
+pub use dibs_qgen::{GeneratedCode, QueryFile, generate_rust_code, parse_query_file};
 
 /// Quote a PostgreSQL identifier.
 ///
@@ -107,13 +101,6 @@ pub fn quote_ident(name: &str) -> String {
 /// Generate a standard index name for a table and columns.
 ///
 /// Uses the convention `idx_{table}_{columns}` where columns are joined by underscore.
-///
-/// # Examples
-///
-/// ```
-/// assert_eq!(dibs::index_name("user", &["email"]), "idx_user_email");
-/// assert_eq!(dibs::index_name("post", &["author_id", "created_at"]), "idx_post_author_id_created_at");
-/// ```
 pub fn index_name(table: &str, columns: &[impl AsRef<str>]) -> String {
     let cols: Vec<&str> = columns.iter().map(|c| c.as_ref()).collect();
     format!("idx_{}_{}", table, cols.join("_"))
@@ -122,13 +109,6 @@ pub fn index_name(table: &str, columns: &[impl AsRef<str>]) -> String {
 /// Generate a standard unique index name for a table and columns.
 ///
 /// Uses the convention `uq_{table}_{columns}` where columns are joined by underscore.
-///
-/// # Examples
-///
-/// ```
-/// assert_eq!(dibs::unique_index_name("user", &["email"]), "uq_user_email");
-/// assert_eq!(dibs::unique_index_name("category", &["shop_id", "handle"]), "uq_category_shop_id_handle");
-/// ```
 pub fn unique_index_name(table: &str, columns: &[impl AsRef<str>]) -> String {
     let cols: Vec<&str> = columns.iter().map(|c| c.as_ref()).collect();
     format!("uq_{}_{}", table, cols.join("_"))
@@ -151,7 +131,6 @@ pub fn check_constraint_name(table: &str, expr: &str) -> String {
     let table_part = if table.len() <= max_table_len {
         table
     } else {
-        // Table names are expected to be ASCII snake_case; still, avoid splitting UTF-8.
         let mut len = max_table_len.min(table.len());
         while len > 0 && !table.is_char_boundary(len) {
             len -= 1;
@@ -210,7 +189,6 @@ fn normalize_sql_expr_for_hash(expr: &str) -> String {
         if in_single_quote {
             out.push(ch);
             if ch == '\'' {
-                // SQL escapes single quotes by doubling them: ''
                 if matches!(chars.peek(), Some('\'')) {
                     out.push(chars.next().expect("peeked"));
                 } else {
@@ -223,7 +201,6 @@ fn normalize_sql_expr_for_hash(expr: &str) -> String {
         if in_double_quote {
             out.push(ch);
             if ch == '"' {
-                // SQL escapes double quotes in identifiers by doubling them: ""
                 if matches!(chars.peek(), Some('"')) {
                     out.push(chars.next().expect("peeked"));
                 } else {
@@ -349,14 +326,14 @@ pub fn build_queries(queries_path: impl AsRef<std::path::Path>) {
     println!("cargo::rerun-if-changed={}", queries_path.display());
 
     // Collect schema from registered tables via inventory
-    let dibs_schema = Schema::collect();
+    let dibs_schema = schema::collect_schema();
 
     eprintln!(
         "cargo::warning=dibs: found {} tables in schema",
         dibs_schema.tables.len()
     );
 
-    for table in &dibs_schema.tables {
+    for table in dibs_schema.tables.values() {
         eprintln!(
             "cargo::warning=dibs: table '{}' with {} columns, {} FKs",
             table.name,
@@ -365,17 +342,13 @@ pub fn build_queries(queries_path: impl AsRef<std::path::Path>) {
         );
     }
 
-    let (schema, planner_schema) = dibs_schema.to_query_schema();
-
     let source = std::fs::read_to_string(queries_path)
         .unwrap_or_else(|e| panic!("Failed to read {}: {}", queries_path.display(), e));
 
-    let filename = queries_path.display().to_string();
-    let file = parse_query_file(&filename, &source).unwrap_or_else(|e| {
-        panic!("Failed to parse {filename}:\n{e:?}");
-    });
+    let filename = camino::Utf8Path::new(queries_path.to_str().expect("path must be UTF-8"));
+    let file = parse_query_file(filename, &source).unwrap();
 
-    let generated = generate_rust_code_with_planner(&file, &schema, Some(&planner_schema));
+    let generated = generate_rust_code(&file, &dibs_schema);
 
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
     let dest_path = std::path::Path::new(&out_dir).join("queries.rs");

@@ -5,7 +5,7 @@ use super::{
     Value, pg_row_to_row,
 };
 use crate::Error;
-use crate::schema::{Schema, Table};
+use crate::{PgType, Schema, Table};
 use tokio_postgres::Client;
 use tracing::Instrument;
 
@@ -24,7 +24,7 @@ impl<'a> Db<'a> {
     pub fn new(client: &'a Client) -> Self {
         Self {
             client,
-            schema: Schema::collect(),
+            schema: crate::schema::collect_schema(),
         }
     }
 
@@ -35,7 +35,7 @@ impl<'a> Db<'a> {
 
     /// Look up a table by name.
     pub fn table(&self, name: &str) -> Option<&Table> {
-        self.schema.tables.iter().find(|t| t.name == name)
+        self.schema.tables.get(name)
     }
 
     /// Start building a SELECT query for a table.
@@ -129,7 +129,7 @@ impl<'a> Db<'a> {
                         .iter()
                         .find(|c| c.name == name)
                         .map(|c| c.pg_type)
-                        .unwrap_or(crate::schema::PgType::Text); // fallback to text
+                        .unwrap_or(PgType::Text); // fallback to text
                     (name, pg_type)
                 })
                 .collect()
@@ -206,7 +206,7 @@ impl<'a> Db<'a> {
                     .iter()
                     .find(|c| c.name == name)
                     .map(|c| c.pg_type)
-                    .unwrap_or(crate::schema::PgType::Text);
+                    .unwrap_or(PgType::Text);
                 (name, pg_type)
             })
             .collect();

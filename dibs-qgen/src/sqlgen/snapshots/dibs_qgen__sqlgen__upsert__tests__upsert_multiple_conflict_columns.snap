@@ -1,0 +1,9 @@
+---
+source: crates/dibs-qgen/src/sqlgen/upsert.rs
+assertion_line: 149
+expression: result.sql
+---
+INSERT INTO "product_translations" ("product_id", "locale", "title")
+VALUES ($1, $2, $3)
+ON CONFLICT ("product_id", "locale") DO UPDATE SET "title" = EXCLUDED."title"
+RETURNING "id"

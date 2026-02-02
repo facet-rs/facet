@@ -1,0 +1,29 @@
+[package]
+name = "dibs-qgen"
+version = "0.1.0"
+edition = "2024"
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[dependencies]
+dibs-db-schema = { path = "../dibs-db-schema" }
+dibs-query-schema.workspace = true
+dibs-sql = { path = "../dibs-sql" }
+facet-styx = { workspace = true, features = ["tracing"] }
+facet-format = { workspace = true, features = ["ariadne"] }
+thiserror.workspace = true
+codegen.workspace = true
+ariadne.workspace = true
+camino = "1.2.2"
+indexmap.workspace = true
+
+[dev-dependencies]
+tracing.workspace = true
+facet-testhelpers.workspace = true
+dockside.workspace = true
+tokio.workspace = true
+tokio-postgres.workspace = true
+insta.workspace = true

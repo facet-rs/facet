@@ -1,3 +1,4 @@
+use dibs::schema::SchemaCodegen;
 use std::fs;
 use std::io::{self, IsTerminal, Write, stdout};
 
@@ -319,6 +320,7 @@ fn schema_info_to_schema(info: dibs_proto::SchemaInfo) -> dibs::Schema {
             doc: t.doc,
             icon: t.icon,
         })
+        .map(|t| (t.name.clone(), t))
         .collect();
 
     dibs::Schema { tables }
@@ -326,7 +328,7 @@ fn schema_info_to_schema(info: dibs_proto::SchemaInfo) -> dibs::Schema {
 
 /// Print schema as plain text (for piping)
 fn print_schema_plain(schema: &dibs::Schema) {
-    for table in &schema.tables {
+    for table in schema.tables.values() {
         println!("TABLE {}", table.name);
         for col in &table.columns {
             let mut attrs = Vec::new();
@@ -519,7 +521,7 @@ impl<'a> SchemaApp<'a> {
                 }
             }
             Focus::Details => {
-                if let Some(table) = self.schema.tables.get(self.selected_table) {
+                if let Some((_, table)) = self.schema.tables.get_index(self.selected_table) {
                     let source_offset = self.detail_source_offset();
 
                     // Source row is index 0 (if present)
@@ -544,7 +546,7 @@ impl<'a> SchemaApp<'a> {
                                 .schema
                                 .tables
                                 .iter()
-                                .position(|t| t.name == fk.references_table)
+                                .position(|(_, t)| t.name == fk.references_table)
                             {
                                 self.selected_table = target_idx;
                                 self.table_state.select(Some(target_idx));
@@ -562,7 +564,7 @@ impl<'a> SchemaApp<'a> {
     }
 
     fn detail_item_count(&self) -> usize {
-        if let Some(table) = self.schema.tables.get(self.selected_table) {
+        if let Some((_, table)) = self.schema.tables.get_index(self.selected_table) {
             // +1 for Source row (if present), then columns, FKs, indices
             let source_row = if table.source.is_known() { 1 } else { 0 };
             source_row + table.columns.len() + table.foreign_keys.len() + table.indices.len()
@@ -573,7 +575,7 @@ impl<'a> SchemaApp<'a> {
 
     /// Returns the offset for column indices based on whether source is shown
     fn detail_source_offset(&self) -> usize {
-        if let Some(table) = self.schema.tables.get(self.selected_table) {
+        if let Some((_, table)) = self.schema.tables.get_index(self.selected_table) {
             if table.source.is_known() { 1 } else { 0 }
         } else {
             0
@@ -756,7 +758,7 @@ impl<'a> SchemaApp<'a> {
             .tables
             .iter()
             .enumerate()
-            .map(|(i, t)| {
+            .map(|(i, (_, t))| {
                 let expanded = self.expanded.get(i).copied().unwrap_or(false);
                 let icon = if expanded { "▼" } else { "▶" };
                 ListItem::new(format!("{} {} ({})", icon, t.name, t.columns.len()))
@@ -783,7 +785,7 @@ impl<'a> SchemaApp<'a> {
         frame.render_stateful_widget(tables_list, chunks[0], &mut self.table_state);
 
         // Right pane: selected table details with selectable items
-        if let Some(table) = self.schema.tables.get(self.selected_table) {
+        if let Some((_, table)) = self.schema.tables.get_index(self.selected_table) {
             let mut lines = vec![Line::from(vec![
                 Span::styled("Table: ", Style::default().fg(Color::Gray)),
                 Span::styled(&table.name, Style::default().fg(Color::Cyan).bold()),

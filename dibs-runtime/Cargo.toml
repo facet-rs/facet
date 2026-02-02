@@ -14,6 +14,8 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 tokio-postgres.workspace = true
 facet.workspace = true
 facet-tokio-postgres = { workspace = true, features = ["jiff02", "rust_decimal", "uuid"] }
+facet-value.workspace = true
+dibs-jsonb = { path = "../dibs-jsonb" }
 jiff.workspace = true
 uuid.workspace = true
 rust_decimal.workspace = true

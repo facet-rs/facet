@@ -24,13 +24,17 @@ tokio.workspace = true
 inventory.workspace = true
 thiserror.workspace = true
 facet.workspace = true
+dibs-db-schema.workspace = true
+dibs-jsonb.workspace = true
 dibs-macros.workspace = true
 dibs-proto.workspace = true
-dibs-query-gen.workspace = true
+dibs-qgen.workspace = true
 roam.workspace = true
 roam-stream.workspace = true
 blake3.workspace = true
 tracing.workspace = true
+camino.workspace = true
+indexmap.workspace = true
 
 [dev-dependencies]
 insta.workspace = true

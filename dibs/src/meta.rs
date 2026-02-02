@@ -92,7 +92,7 @@ pub fn create_meta_tables_sql() -> String {
 pub fn sync_tables_sql(schema: &Schema, migration_name: Option<&str>) -> String {
     let mut sql = String::new();
 
-    for table in &schema.tables {
+    for table in schema.tables.values() {
         let source_file = table
             .source
             .file

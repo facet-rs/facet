@@ -1,0 +1,6 @@
+---
+source: crates/dibs-qgen/src/sqlgen/insert_many.rs
+assertion_line: 245
+expression: result.sql
+---
+INSERT INTO "products" ("handle", "status", "created_at") SELECT handle, status, NOW() FROM UNNEST($1::text[], $2::text[]) AS t(handle, status) RETURNING "id", "handle", "status", "created_at"

@@ -16,12 +16,13 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 [dependencies]
 facet = { workspace = true, optional = true }
 facet-core = { workspace = true }
-facet-json = { workspace = true, optional = true }
+facet-json = { workspace = true }
 facet-reflect = { workspace = true }
 tokio-postgres = { workspace = true }
 postgres-types = { workspace = true }
 rust_decimal = { workspace = true, optional = true, features = ["db-tokio-postgres"] }
 jiff = { workspace = true, optional = true }
+dibs-jsonb.workspace = true
 
 [dev-dependencies]
 facet = { workspace = true }
@@ -42,12 +43,17 @@ test-postgres = []
 # Enable UUID support
 uuid = ["facet-core/uuid"]
 # Enable jiff timestamp support
-jiff02 = ["dep:jiff", "facet-core/jiff02", "tokio-postgres/with-jiff-0_2", "postgres-types/with-jiff-0_2"]
+jiff02 = [
+  "dep:jiff",
+  "facet-core/jiff02",
+  "tokio-postgres/with-jiff-0_2",
+  "postgres-types/with-jiff-0_2",
+]
 # Enable chrono timestamp support
 chrono = ["facet-core/chrono"]
 # Enable time crate support
 time = ["facet-core/time"]
 # Enable rust_decimal::Decimal support for NUMERIC columns
 rust_decimal = ["dep:rust_decimal", "facet-core/rust_decimal"]
-# Enable JSONB support with Jsonb<T> wrapper type
-jsonb = ["dep:facet", "dep:facet-json"]
+# JSONB support is always eanbled
+jsonb = []

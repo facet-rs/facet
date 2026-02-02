@@ -1,0 +1,7 @@
+---
+source: crates/dibs-sql/src/render/tests.rs
+expression: result.sql
+---
+INSERT INTO "products" ("handle", "status", "created_at")
+VALUES ($1, $2, NOW())
+RETURNING "id", "handle", "status"

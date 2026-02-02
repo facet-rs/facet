@@ -1,0 +1,7 @@
+---
+source: crates/dibs-sql/src/render/tests.rs
+expression: result.sql
+---
+SELECT DISTINCT ON ("shop_id", "category_id") "id", "shop_id", "category_id", "name"
+FROM "products"
+ORDER BY "shop_id" ASC, "category_id" ASC, "created_at" DESC

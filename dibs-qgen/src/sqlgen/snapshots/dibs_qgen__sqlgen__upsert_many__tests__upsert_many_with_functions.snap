@@ -1,0 +1,6 @@
+---
+source: crates/dibs-qgen/src/sqlgen/upsert_many.rs
+assertion_line: 343
+expression: result.sql
+---
+INSERT INTO "products" ("handle", "status", "created_at") SELECT handle, status, NOW() FROM UNNEST($1::text[], $2::text[]) AS t(handle, status) ON CONFLICT ("handle") DO UPDATE SET "status" = EXCLUDED."status", "updated_at" = NOW() RETURNING "id", "handle", "status"

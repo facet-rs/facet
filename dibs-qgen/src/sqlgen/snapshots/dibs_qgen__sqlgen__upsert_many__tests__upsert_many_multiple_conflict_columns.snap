@@ -1,0 +1,6 @@
+---
+source: crates/dibs-qgen/src/sqlgen/upsert_many.rs
+assertion_line: 362
+expression: result.sql
+---
+INSERT INTO "product_translations" ("product_id", "locale", "title") SELECT product_id, locale, title FROM UNNEST($1::uuid[], $2::text[], $3::text[]) AS t(product_id, locale, title) ON CONFLICT ("product_id", "locale") DO UPDATE SET "title" = EXCLUDED."title" RETURNING "id"

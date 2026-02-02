@@ -1,7 +1,7 @@
 //! Row mapping between Postgres and Rust types.
 
 use super::Value;
-use crate::schema::PgType;
+use crate::PgType;
 use rust_decimal::Decimal;
 use std::error::Error as StdError;
 use tokio_postgres::types::{FromSql, ToSql, Type as PgTypeInfo, WrongType};

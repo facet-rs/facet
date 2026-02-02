@@ -1,0 +1,8 @@
+---
+source: crates/dibs-qgen/src/sqlgen/insert.rs
+assertion_line: 108
+expression: result.sql
+---
+INSERT INTO "products" ("name", "status")
+VALUES ($1, DEFAULT)
+RETURNING "id", "name", "status"

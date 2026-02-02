@@ -7,12 +7,14 @@ use crate::{
     CheckConstraint, Column, ForeignKey, Index, IndexColumn, PgType, Result, Schema,
     SourceLocation, Table, TriggerCheckConstraint,
 };
+use indexmap::IndexMap;
 
 #[cfg(test)]
 use crate::{NullsOrder, SortOrder};
 use tokio_postgres::Client;
 
-impl Schema {
+/// Extension trait for Schema introspection operations.
+pub trait SchemaIntrospect {
     /// Introspect a live Postgres database and build a Schema from it.
     ///
     /// This queries `information_schema` to discover tables, columns, constraints,
@@ -21,19 +23,25 @@ impl Schema {
     /// # Example
     ///
     /// ```ignore
+    /// use dibs::introspect::SchemaIntrospect;
+    ///
     /// let schema = Schema::from_database(&client).await?;
-    /// for table in &schema.tables {
+    /// for table in schema.tables.values() {
     ///     println!("Found table: {}", table.name);
     /// }
     /// ```
-    pub async fn from_database(client: &Client) -> Result<Self> {
+    fn from_database(client: &Client) -> impl std::future::Future<Output = Result<Schema>> + Send;
+}
+
+impl SchemaIntrospect for Schema {
+    async fn from_database(client: &Client) -> Result<Self> {
         let tables = introspect_tables(client).await?;
         Ok(Self { tables })
     }
 }
 
 /// Introspect all tables in the public schema.
-async fn introspect_tables(client: &Client) -> Result<Vec<Table>> {
+async fn introspect_tables(client: &Client) -> Result<IndexMap<String, Table>> {
     // Get all base tables in public schema, excluding dibs meta tables
     let rows = client
         .query(
@@ -50,11 +58,11 @@ async fn introspect_tables(client: &Client) -> Result<Vec<Table>> {
         )
         .await?;
 
-    let mut tables = Vec::new();
+    let mut tables = IndexMap::new();
     for row in rows {
         let table_name: String = row.get(0);
         let table = introspect_table(client, &table_name).await?;
-        tables.push(table);
+        tables.insert(table_name, table);
     }
 
     Ok(tables)

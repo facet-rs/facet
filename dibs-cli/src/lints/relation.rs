@@ -56,7 +56,7 @@ pub fn lint_relation(rel: &Relation, parent_table: Option<&str>, ctx: &mut LintC
 
 /// Recursively lint relations in a select block.
 pub fn lint_relations_in_select(
-    select: &Select,
+    select: &SelectFields,
     parent_table: Option<&str>,
     ctx: &mut LintContext<'_>,
 ) {
@@ -65,8 +65,8 @@ pub fn lint_relations_in_select(
             lint_relation(rel, parent_table, ctx);
 
             // Recurse into nested selects
-            if let Some(nested_select) = &rel.select {
-                let rel_table = rel.from.value_as_deref();
+            if let Some(nested_select) = &rel.fields {
+                let rel_table = rel.from.as_ref().map(|m| m.value.as_str());
                 lint_relations_in_select(nested_select, rel_table, ctx);
             }
         }

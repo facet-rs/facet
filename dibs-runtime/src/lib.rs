@@ -14,6 +14,8 @@ pub use facet_tokio_postgres;
 
 // Re-export common types used in generated structs
 pub mod types {
+    pub use dibs_jsonb::Jsonb;
+    pub use facet_value;
     pub use jiff::{Timestamp, civil::Date, civil::Time};
     pub use rust_decimal::Decimal;
     pub use uuid::Uuid;

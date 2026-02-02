@@ -1,0 +1,9 @@
+---
+source: crates/dibs-qgen/src/sqlgen/upsert.rs
+assertion_line: 130
+expression: result.sql
+---
+INSERT INTO "products" ("handle", "name", "created_at")
+VALUES ($1, $2, NOW())
+ON CONFLICT ("handle") DO UPDATE SET "name" = EXCLUDED."name", "updated_at" = NOW()
+RETURNING "id", "handle", "name", "updated_at"
