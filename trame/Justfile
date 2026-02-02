@@ -6,7 +6,7 @@ all:
     just cov
 
 kani *args:
-    cargo kani -Z stubbing -Z function-contracts \
+    cargo kani -Z loop-contracts -Z stubbing -Z function-contracts \
         --no-default-checks --no-memory-safety-checks \
         --no-overflow-checks --no-undefined-function-checks \
         --no-unwinding-checks {{ args }}

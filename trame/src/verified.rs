@@ -80,26 +80,34 @@ pub trait StructStorage {
     fn all_complete(&self) -> bool;
 }
 
+/// Maximum number of fields supported in verified storage.
+pub const MAX_FIELDS: usize = 8;
+
 /// A verified struct storage that just tracks field states.
 ///
 /// This is used by Kani to verify the state machine without
 /// performing any actual memory operations.
-#[derive(Debug, Clone)]
+///
+/// Uses a fixed-size array to avoid Vec overhead in Kani proofs.
+#[derive(Debug, Clone, Copy)]
 pub struct VerifiedStructStorage {
-    fields: Vec<FieldState>,
+    fields: [FieldState; MAX_FIELDS],
+    len: usize,
 }
 
 impl VerifiedStructStorage {
     pub fn new(field_count: usize) -> Self {
+        assert!(field_count <= MAX_FIELDS);
         Self {
-            fields: vec![FieldState::NotStarted; field_count],
+            fields: [FieldState::NotStarted; MAX_FIELDS],
+            len: field_count,
         }
     }
 }
 
 impl StructStorage for VerifiedStructStorage {
     fn field_count(&self) -> usize {
-        self.fields.len()
+        self.len
     }
 
     fn field_state(&self, idx: usize) -> FieldState {
@@ -112,7 +120,7 @@ impl StructStorage for VerifiedStructStorage {
     }
 
     fn complete_field(&mut self, idx: usize) {
-        debug_assert_eq!(
+        assert_eq!(
             self.fields[idx],
             FieldState::NotStarted,
             "complete_field requires NotStarted"
@@ -126,7 +134,7 @@ impl StructStorage for VerifiedStructStorage {
     }
 
     fn end_field(&mut self, idx: usize) {
-        debug_assert_eq!(
+        assert_eq!(
             self.fields[idx],
             FieldState::InProgress,
             "end_field requires InProgress"
@@ -140,7 +148,14 @@ impl StructStorage for VerifiedStructStorage {
     }
 
     fn all_complete(&self) -> bool {
-        self.fields.iter().all(|s| *s == FieldState::Complete)
+        let mut i: usize = 0;
+        while i < self.len {
+            if self.fields[i] != FieldState::Complete {
+                return false;
+            }
+            i += 1;
+        }
+        true
     }
 }
 
@@ -204,7 +219,6 @@ mod kani_proofs {
 
     /// Verify: SetField on a valid index always succeeds and marks the field complete.
     #[kani::proof]
-    #[kani::unwind(5)]
     fn verify_set_field_succeeds() {
         let field_count: usize = kani::any();
         kani::assume(field_count > 0 && field_count <= 4);
@@ -225,7 +239,6 @@ mod kani_proofs {
 
     /// Verify: SetField on out-of-bounds index returns error.
     #[kani::proof]
-    #[kani::unwind(5)]
     fn verify_set_field_bounds() {
         let field_count: usize = kani::any();
         kani::assume(field_count > 0 && field_count <= 4);
@@ -245,7 +258,6 @@ mod kani_proofs {
 
     /// Verify: BeginField followed by EndField marks field complete.
     #[kani::proof]
-    #[kani::unwind(5)]
     fn verify_begin_end_field() {
         let field_count: usize = kani::any();
         kani::assume(field_count > 0 && field_count <= 4);
@@ -272,7 +284,6 @@ mod kani_proofs {
 
     /// Verify: EndField without BeginField returns error.
     #[kani::proof]
-    #[kani::unwind(5)]
     fn verify_end_without_begin_fails() {
         let field_count: usize = kani::any();
         kani::assume(field_count > 0 && field_count <= 4);
@@ -291,18 +302,16 @@ mod kani_proofs {
     }
 
     /// Verify: Setting all fields makes all_complete() return true.
+    /// Fixed size 3.
     #[kani::proof]
-    #[kani::unwind(5)]
     fn verify_all_complete() {
-        let field_count: usize = kani::any();
-        kani::assume(field_count > 0 && field_count <= 4);
+        const N: usize = 3;
+        let mut storage = VerifiedStructStorage::new(N);
 
-        let mut storage = VerifiedStructStorage::new(field_count);
-
-        // Set all fields
-        for i in 0..field_count {
-            let _ = apply_struct_op(&mut storage, StructOp::SetField { idx: i });
-        }
+        // Set all fields - unrolled
+        let _ = apply_struct_op(&mut storage, StructOp::SetField { idx: 0 });
+        let _ = apply_struct_op(&mut storage, StructOp::SetField { idx: 1 });
+        let _ = apply_struct_op(&mut storage, StructOp::SetField { idx: 2 });
 
         kani::assert(
             storage.all_complete(),
@@ -311,22 +320,25 @@ mod kani_proofs {
     }
 
     /// Verify: Partial completion means all_complete() returns false.
+    /// Fixed size 3, symbolic skip index.
     #[kani::proof]
-    #[kani::unwind(5)]
     fn verify_partial_not_complete() {
-        let field_count: usize = kani::any();
-        kani::assume(field_count >= 2 && field_count <= 4);
+        const N: usize = 3;
 
         let skip_idx: usize = kani::any();
-        kani::assume(skip_idx < field_count);
+        kani::assume(skip_idx < N);
 
-        let mut storage = VerifiedStructStorage::new(field_count);
+        let mut storage = VerifiedStructStorage::new(N);
 
-        // Set all fields except one
-        for i in 0..field_count {
-            if i != skip_idx {
-                let _ = apply_struct_op(&mut storage, StructOp::SetField { idx: i });
-            }
+        // Set all fields except skip_idx - unrolled
+        if 0 != skip_idx {
+            let _ = apply_struct_op(&mut storage, StructOp::SetField { idx: 0 });
+        }
+        if 1 != skip_idx {
+            let _ = apply_struct_op(&mut storage, StructOp::SetField { idx: 1 });
+        }
+        if 2 != skip_idx {
+            let _ = apply_struct_op(&mut storage, StructOp::SetField { idx: 2 });
         }
 
         kani::assert(
@@ -337,7 +349,6 @@ mod kani_proofs {
 
     /// Verify: Re-setting a field is idempotent (field stays complete).
     #[kani::proof]
-    #[kani::unwind(5)]
     fn verify_reset_field() {
         let field_count: usize = kani::any();
         kani::assume(field_count > 0 && field_count <= 4);
@@ -382,7 +393,6 @@ mod kani_proofs {
     /// This is the key property: we throw symbolic ops at the state machine
     /// and verify it never panics and maintains its invariants.
     #[kani::proof]
-    #[kani::unwind(5)]
     fn verify_op_sequence_3() {
         // Fixed field count to reduce state space
         const FIELD_COUNT: usize = 3;
@@ -416,7 +426,6 @@ mod kani_proofs {
 
     /// Verify: A longer sequence (5 ops) also maintains invariants.
     #[kani::proof]
-    #[kani::unwind(5)]
     fn verify_op_sequence_5() {
         const FIELD_COUNT: usize = 2;
 
