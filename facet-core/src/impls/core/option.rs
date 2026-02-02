@@ -3,9 +3,10 @@
 use core::cmp::Ordering;
 
 use crate::{
-    Def, EnumRepr, EnumType, Facet, FieldBuilder, HashProxy, OptionDef, OptionVTable, OxPtrConst,
-    OxPtrMut, OxPtrUninit, OxRef, PtrConst, Repr, Shape, ShapeBuilder, Type, TypeOpsIndirect,
-    TypeParam, UserType, VTableIndirect, Variance, VarianceDep, VarianceDesc, VariantBuilder,
+    DeclId, Def, EnumRepr, EnumType, Facet, FieldBuilder, HashProxy, OptionDef, OptionVTable,
+    OxPtrConst, OxPtrMut, OxPtrUninit, OxRef, PtrConst, Repr, Shape, ShapeBuilder, Type,
+    TypeOpsIndirect, TypeParam, UserType, VTableIndirect, Variance, VarianceDep, VarianceDesc,
+    VariantBuilder, decl_id_hash,
 };
 
 /// Extract the OptionDef from a shape, returns None if not an Option
@@ -247,7 +248,9 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
             }
         }
 
-        ShapeBuilder::for_sized::<Option<T>>("Option")            .module_path("core::option")
+        ShapeBuilder::for_sized::<Option<T>>("Option")
+            .module_path("core::option")
+            .decl_id(DeclId::new(decl_id_hash("#core#Option")))
             .ty(Type::User(
                 // Null-Pointer-Optimization check
                 if core::mem::size_of::<T>() == core::mem::size_of::<Option<T>>()
