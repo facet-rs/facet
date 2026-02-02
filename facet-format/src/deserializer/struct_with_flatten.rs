@@ -201,10 +201,13 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                                 let wip = nav.take_wip();
                                 nav.return_wip(wip.select_variant_named(variant_name)?);
 
-                                // Only close final if we opened one (may be None if field was already open)
-                                if nav_result.final_segment.is_some() {
-                                    nav.close_final(nav_result.final_is_option)?;
-                                }
+                                // For internally-tagged enums, keep the enum segment open so that
+                                // subsequent fields of the variant can be deserialized into it.
+                                // Without this, the enum frame would be closed and validated here,
+                                // but variant fields haven't been deserialized yet, causing
+                                // "missing field" errors for tuple variants like TypeA(Inner).
+                                // See https://github.com/facet-rs/facet/issues/2007
+                                nav.keep_final_open(&nav_result);
                                 fields_set.insert(field_info.serialized_name);
                                 continue;
                             }
