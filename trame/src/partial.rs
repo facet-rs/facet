@@ -659,9 +659,6 @@ impl<'facet> Partial<'facet> {
     }
 }
 
-#[cfg(kani)]
-mod kani_proofs;
-
 impl<'facet> Drop for Partial<'facet> {
     fn drop(&mut self) {
         // Walk from current frame up to root, cleaning up each frame.

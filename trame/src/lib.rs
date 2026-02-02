@@ -33,3 +33,6 @@ pub use ops::{Imm, Op, OpBatch, Path, PathSegment, Source};
 // --- partial ---
 mod partial;
 pub use partial::Partial;
+
+// --- verified abstractions for Kani ---
+mod verified;
