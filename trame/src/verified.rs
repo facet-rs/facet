@@ -461,6 +461,393 @@ mod kani_proofs {
     }
 }
 
+// =============================================================================
+// Frame Tree Model
+// =============================================================================
+//
+// Models the parent-child relationship between frames in Trame.
+// This is the core abstraction that tracks where we are in the build tree.
+
+/// Maximum number of frames in the arena.
+pub const MAX_FRAMES: usize = 16;
+
+/// Index into the frame arena. Uses sentinel values for invalid states.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FrameIdx(u8);
+
+impl FrameIdx {
+    pub const INVALID: FrameIdx = FrameIdx(u8::MAX);
+    pub const ROOT: FrameIdx = FrameIdx(0);
+
+    pub fn new(idx: usize) -> Self {
+        assert!(idx < MAX_FRAMES);
+        FrameIdx(idx as u8)
+    }
+
+    pub fn is_valid(self) -> bool {
+        (self.0 as usize) < MAX_FRAMES
+    }
+
+    pub fn as_usize(self) -> usize {
+        self.0 as usize
+    }
+}
+
+/// What kind of frame this is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameKindModel {
+    /// A struct with N fields.
+    Struct { field_count: usize },
+    /// A scalar value (no children).
+    Scalar,
+}
+
+/// Link back to parent frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParentLinkModel {
+    /// This is the root frame.
+    Root,
+    /// This is a struct field of the parent.
+    StructField { parent: FrameIdx, field_idx: usize },
+}
+
+/// A single frame in the tree.
+#[derive(Debug, Clone, Copy)]
+pub struct FrameModel {
+    /// What kind of frame this is.
+    pub kind: FrameKindModel,
+    /// Link to parent (or Root if this is the root).
+    pub parent_link: ParentLinkModel,
+    /// Field states (only used for Struct frames).
+    pub fields: [FieldState; MAX_FIELDS],
+    /// Is this frame slot occupied?
+    pub occupied: bool,
+}
+
+impl FrameModel {
+    pub fn empty() -> Self {
+        Self {
+            kind: FrameKindModel::Scalar,
+            parent_link: ParentLinkModel::Root,
+            fields: [FieldState::NotStarted; MAX_FIELDS],
+            occupied: false,
+        }
+    }
+
+    pub fn new_struct(field_count: usize, parent_link: ParentLinkModel) -> Self {
+        Self {
+            kind: FrameKindModel::Struct { field_count },
+            parent_link,
+            fields: [FieldState::NotStarted; MAX_FIELDS],
+            occupied: true,
+        }
+    }
+
+    pub fn new_scalar(parent_link: ParentLinkModel) -> Self {
+        Self {
+            kind: FrameKindModel::Scalar,
+            parent_link,
+            fields: [FieldState::NotStarted; MAX_FIELDS],
+            occupied: true,
+        }
+    }
+}
+
+/// The frame tree - an arena of frames plus a current pointer.
+#[derive(Debug, Clone)]
+pub struct FrameTree {
+    /// All frames in the arena.
+    pub frames: [FrameModel; MAX_FRAMES],
+    /// Index of the current frame we're building.
+    pub current: FrameIdx,
+    /// Next free slot in the arena.
+    pub next_free: usize,
+}
+
+impl FrameTree {
+    /// Create a new frame tree with a root struct frame.
+    pub fn new(root_field_count: usize) -> Self {
+        let mut frames = [FrameModel::empty(); MAX_FRAMES];
+        frames[0] = FrameModel::new_struct(root_field_count, ParentLinkModel::Root);
+        Self {
+            frames,
+            current: FrameIdx::ROOT,
+            next_free: 1,
+        }
+    }
+
+    /// Allocate a new frame, returns its index.
+    pub fn alloc(&mut self, frame: FrameModel) -> Option<FrameIdx> {
+        if self.next_free >= MAX_FRAMES {
+            return None;
+        }
+        let idx = FrameIdx::new(self.next_free);
+        self.frames[self.next_free] = frame;
+        self.next_free += 1;
+        Some(idx)
+    }
+
+    /// Get a reference to a frame.
+    pub fn get(&self, idx: FrameIdx) -> &FrameModel {
+        assert!(idx.is_valid());
+        &self.frames[idx.as_usize()]
+    }
+
+    /// Get a mutable reference to a frame.
+    pub fn get_mut(&mut self, idx: FrameIdx) -> &mut FrameModel {
+        assert!(idx.is_valid());
+        &mut self.frames[idx.as_usize()]
+    }
+
+    /// Get the current frame.
+    pub fn current_frame(&self) -> &FrameModel {
+        self.get(self.current)
+    }
+
+    /// Get the current frame mutably.
+    pub fn current_frame_mut(&mut self) -> &mut FrameModel {
+        self.get_mut(self.current)
+    }
+}
+
+/// Operations on the frame tree.
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(kani, derive(kani::Arbitrary))]
+pub enum TreeOp {
+    /// Set field `idx` of current frame immediately.
+    SetField { idx: usize },
+    /// Begin building field `idx` as a child struct with `child_fields` fields.
+    BeginStructField { idx: usize, child_fields: usize },
+    /// Begin building field `idx` as a scalar.
+    BeginScalarField { idx: usize },
+    /// End the current frame, return to parent.
+    End,
+}
+
+/// Result of a tree operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TreeOpResult {
+    Ok,
+    OutOfBounds,
+    NotAStruct,
+    FieldNotInProgress,
+    AtRoot,
+    ArenaFull,
+}
+
+/// Apply an operation to the frame tree.
+pub fn apply_tree_op(tree: &mut FrameTree, op: TreeOp) -> TreeOpResult {
+    match op {
+        TreeOp::SetField { idx } => {
+            let frame = tree.current_frame_mut();
+            let FrameKindModel::Struct { field_count } = frame.kind else {
+                return TreeOpResult::NotAStruct;
+            };
+            if idx >= field_count {
+                return TreeOpResult::OutOfBounds;
+            }
+            // prepare + complete
+            frame.fields[idx] = FieldState::Complete;
+            TreeOpResult::Ok
+        }
+
+        TreeOp::BeginStructField { idx, child_fields } => {
+            let current_idx = tree.current;
+            let frame = tree.current_frame_mut();
+            let FrameKindModel::Struct { field_count } = frame.kind else {
+                return TreeOpResult::NotAStruct;
+            };
+            if idx >= field_count {
+                return TreeOpResult::OutOfBounds;
+            }
+            // Mark field as in progress
+            frame.fields[idx] = FieldState::InProgress;
+
+            // Allocate child frame
+            let child = FrameModel::new_struct(
+                child_fields,
+                ParentLinkModel::StructField {
+                    parent: current_idx,
+                    field_idx: idx,
+                },
+            );
+            let Some(child_idx) = tree.alloc(child) else {
+                return TreeOpResult::ArenaFull;
+            };
+            tree.current = child_idx;
+            TreeOpResult::Ok
+        }
+
+        TreeOp::BeginScalarField { idx } => {
+            let current_idx = tree.current;
+            let frame = tree.current_frame_mut();
+            let FrameKindModel::Struct { field_count } = frame.kind else {
+                return TreeOpResult::NotAStruct;
+            };
+            if idx >= field_count {
+                return TreeOpResult::OutOfBounds;
+            }
+            // Mark field as in progress
+            frame.fields[idx] = FieldState::InProgress;
+
+            // Allocate child frame
+            let child = FrameModel::new_scalar(ParentLinkModel::StructField {
+                parent: current_idx,
+                field_idx: idx,
+            });
+            let Some(child_idx) = tree.alloc(child) else {
+                return TreeOpResult::ArenaFull;
+            };
+            tree.current = child_idx;
+            TreeOpResult::Ok
+        }
+
+        TreeOp::End => {
+            let frame = tree.current_frame();
+            let ParentLinkModel::StructField { parent, field_idx } = frame.parent_link else {
+                return TreeOpResult::AtRoot;
+            };
+
+            // Mark parent's field as complete
+            let parent_frame = tree.get_mut(parent);
+            if parent_frame.fields[field_idx] != FieldState::InProgress {
+                return TreeOpResult::FieldNotInProgress;
+            }
+            parent_frame.fields[field_idx] = FieldState::Complete;
+
+            // Move current back to parent
+            tree.current = parent;
+            TreeOpResult::Ok
+        }
+    }
+}
+
+#[cfg(kani)]
+mod tree_proofs {
+    use super::*;
+
+    /// Verify: After Begin + End, we're back at the same frame with field complete.
+    #[kani::proof]
+    fn verify_begin_end_returns_to_parent() {
+        let root_fields: usize = kani::any();
+        kani::assume(root_fields > 0 && root_fields <= MAX_FIELDS);
+
+        let field_idx: usize = kani::any();
+        kani::assume(field_idx < root_fields);
+
+        let child_fields: usize = kani::any();
+        kani::assume(child_fields > 0 && child_fields <= MAX_FIELDS);
+
+        let mut tree = FrameTree::new(root_fields);
+        let original_current = tree.current;
+
+        // Begin a child struct
+        let r1 = apply_tree_op(
+            &mut tree,
+            TreeOp::BeginStructField {
+                idx: field_idx,
+                child_fields,
+            },
+        );
+        kani::assert(r1 == TreeOpResult::Ok, "BeginStructField succeeds");
+        kani::assert(tree.current != original_current, "current changed");
+
+        // End back to parent
+        let r2 = apply_tree_op(&mut tree, TreeOp::End);
+        kani::assert(r2 == TreeOpResult::Ok, "End succeeds");
+        kani::assert(tree.current == original_current, "back to original");
+
+        // Field should be complete
+        let frame = tree.get(original_current);
+        kani::assert(
+            frame.fields[field_idx] == FieldState::Complete,
+            "field is complete after End",
+        );
+    }
+
+    /// Verify: End at root returns AtRoot error.
+    #[kani::proof]
+    fn verify_end_at_root_fails() {
+        let root_fields: usize = kani::any();
+        kani::assume(root_fields > 0 && root_fields <= MAX_FIELDS);
+
+        let mut tree = FrameTree::new(root_fields);
+
+        let result = apply_tree_op(&mut tree, TreeOp::End);
+        kani::assert(result == TreeOpResult::AtRoot, "End at root fails");
+    }
+
+    /// Verify: current always points to a valid, occupied frame.
+    #[kani::proof]
+    #[kani::unwind(8)]
+    fn verify_current_always_valid() {
+        let root_fields: usize = kani::any();
+        kani::assume(root_fields > 0 && root_fields <= 4);
+
+        let mut tree = FrameTree::new(root_fields);
+
+        // Apply a sequence of operations
+        for _ in 0..3 {
+            let op_kind: u8 = kani::any();
+            let idx: usize = kani::any();
+            kani::assume(idx < root_fields);
+
+            let child_fields: usize = kani::any();
+            kani::assume(child_fields > 0 && child_fields <= 4);
+
+            let op = match op_kind % 4 {
+                0 => TreeOp::SetField { idx },
+                1 => TreeOp::BeginStructField { idx, child_fields },
+                2 => TreeOp::BeginScalarField { idx },
+                _ => TreeOp::End,
+            };
+
+            let _ = apply_tree_op(&mut tree, op);
+
+            // Invariant: current is always valid and occupied
+            kani::assert(tree.current.is_valid(), "current is valid index");
+            kani::assert(
+                tree.frames[tree.current.as_usize()].occupied,
+                "current frame is occupied",
+            );
+        }
+    }
+
+    /// Verify: Parent link always points to a valid frame.
+    #[kani::proof]
+    fn verify_parent_link_valid() {
+        let root_fields: usize = kani::any();
+        kani::assume(root_fields > 0 && root_fields <= MAX_FIELDS);
+
+        let field_idx: usize = kani::any();
+        kani::assume(field_idx < root_fields);
+
+        let child_fields: usize = kani::any();
+        kani::assume(child_fields > 0 && child_fields <= MAX_FIELDS);
+
+        let mut tree = FrameTree::new(root_fields);
+
+        // Begin a child
+        let _ = apply_tree_op(
+            &mut tree,
+            TreeOp::BeginStructField {
+                idx: field_idx,
+                child_fields,
+            },
+        );
+
+        // Check that child's parent link points to a valid frame
+        let child_frame = tree.current_frame();
+        if let ParentLinkModel::StructField { parent, .. } = child_frame.parent_link {
+            kani::assert(parent.is_valid(), "parent index is valid");
+            kani::assert(
+                tree.frames[parent.as_usize()].occupied,
+                "parent frame is occupied",
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -513,5 +900,87 @@ mod tests {
         // Set again (should prepare then complete)
         apply_struct_op(&mut storage, StructOp::SetField { idx: 0 });
         assert_eq!(storage.field_state(0), FieldState::Complete);
+    }
+
+    // Frame tree tests
+
+    #[test]
+    fn test_frame_tree_basic() {
+        let mut tree = FrameTree::new(3);
+        assert_eq!(tree.current, FrameIdx::ROOT);
+
+        // Set a field directly
+        let r = apply_tree_op(&mut tree, TreeOp::SetField { idx: 0 });
+        assert_eq!(r, TreeOpResult::Ok);
+        assert_eq!(tree.current_frame().fields[0], FieldState::Complete);
+    }
+
+    #[test]
+    fn test_frame_tree_begin_end() {
+        let mut tree = FrameTree::new(2);
+
+        // Begin a child struct
+        let r1 = apply_tree_op(
+            &mut tree,
+            TreeOp::BeginStructField {
+                idx: 0,
+                child_fields: 3,
+            },
+        );
+        assert_eq!(r1, TreeOpResult::Ok);
+        assert_ne!(tree.current, FrameIdx::ROOT);
+
+        // We're now in the child - set its fields
+        let r2 = apply_tree_op(&mut tree, TreeOp::SetField { idx: 0 });
+        assert_eq!(r2, TreeOpResult::Ok);
+
+        // End back to parent
+        let r3 = apply_tree_op(&mut tree, TreeOp::End);
+        assert_eq!(r3, TreeOpResult::Ok);
+        assert_eq!(tree.current, FrameIdx::ROOT);
+
+        // Parent's field 0 should be complete
+        assert_eq!(tree.current_frame().fields[0], FieldState::Complete);
+    }
+
+    #[test]
+    fn test_frame_tree_nested() {
+        let mut tree = FrameTree::new(2);
+
+        // Root -> child1
+        apply_tree_op(
+            &mut tree,
+            TreeOp::BeginStructField {
+                idx: 0,
+                child_fields: 2,
+            },
+        );
+        let child1 = tree.current;
+
+        // child1 -> child2
+        apply_tree_op(
+            &mut tree,
+            TreeOp::BeginStructField {
+                idx: 0,
+                child_fields: 1,
+            },
+        );
+        let child2 = tree.current;
+        assert_ne!(child2, child1);
+
+        // End child2 -> back to child1
+        apply_tree_op(&mut tree, TreeOp::End);
+        assert_eq!(tree.current, child1);
+
+        // End child1 -> back to root
+        apply_tree_op(&mut tree, TreeOp::End);
+        assert_eq!(tree.current, FrameIdx::ROOT);
+    }
+
+    #[test]
+    fn test_frame_tree_end_at_root_fails() {
+        let mut tree = FrameTree::new(2);
+        let r = apply_tree_op(&mut tree, TreeOp::End);
+        assert_eq!(r, TreeOpResult::AtRoot);
     }
 }
