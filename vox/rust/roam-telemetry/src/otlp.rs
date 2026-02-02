@@ -51,7 +51,7 @@ pub struct Span {
     /// 8-byte span ID as hex string (16 chars).
     pub span_id: String,
     /// Parent span ID (if any).
-    #[facet(default)]
+    #[facet(default, skip_serializing_if = Option::is_none)]
     pub parent_span_id: Option<String>,
     /// Span name (e.g., "Testbed.echo").
     pub name: String,
@@ -130,7 +130,7 @@ impl KeyValue {
 
 /// Attribute value (only one field should be set).
 #[derive(Debug, Clone, Facet)]
-#[facet(rename_all = "camelCase")]
+#[facet(rename_all = "camelCase", skip_all_unless_truthy)]
 pub struct AnyValue {
     #[facet(default)]
     pub string_value: Option<String>,
