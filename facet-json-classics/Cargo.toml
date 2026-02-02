@@ -13,4 +13,4 @@ description = "Classic JSON benchmark fixtures (citm, twitter, canada) for facet
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-brotli = "7"
+brotli = "8"
