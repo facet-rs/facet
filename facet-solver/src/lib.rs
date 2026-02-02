@@ -2715,38 +2715,34 @@ impl SchemaBuilder {
             }
             _ => {
                 // Check if this is a Map type - if so, it becomes a catch-all for unknown fields
-                if let Def::Map(map_def) = &shape.def {
-                    // Validate: key must be String (or metadata container wrapping String) for catch-all maps
-                    // For metadata containers like Spanned<String> or Documented<String>, check the inner type
-                    let key_shape = facet_reflect::get_metadata_container_value_shape(map_def.k)
-                        .unwrap_or(map_def.k);
-                    if key_shape.scalar_type() == Some(facet_core::ScalarType::String) {
-                        // This is a valid catch-all map
-                        let field_info = FieldInfo {
-                            serialized_name: field.effective_name(),
-                            path: field_path,
-                            required: false, // Catch-all maps are never required
-                            value_shape: shape,
-                            field,
-                            // For DOM format, determine if this catches attributes or elements
-                            // based on the field's attributes
-                            category: if self.format == Format::Dom {
-                                if field.is_attribute() {
-                                    FieldCategory::Attribute
-                                } else {
-                                    FieldCategory::Element
-                                }
+                if let Def::Map(_) = &shape.def {
+                    // Any map type can serve as a catch-all. Whether the key type can actually
+                    // be deserialized from field name strings is the deserializer's problem,
+                    // not the solver's.
+                    let field_info = FieldInfo {
+                        serialized_name: field.effective_name(),
+                        path: field_path,
+                        required: false, // Catch-all maps are never required
+                        value_shape: shape,
+                        field,
+                        // For DOM format, determine if this catches attributes or elements
+                        // based on the field's attributes
+                        category: if self.format == Format::Dom {
+                            if field.is_attribute() {
+                                FieldCategory::Attribute
                             } else {
-                                FieldCategory::Flat
-                            },
-                        };
+                                FieldCategory::Element
+                            }
+                        } else {
+                            FieldCategory::Flat
+                        },
+                    };
 
-                        let mut result = configs;
-                        for config in &mut result {
-                            config.set_catch_all_map(field_info.category, field_info.clone());
-                        }
-                        return Ok(result);
+                    let mut result = configs;
+                    for config in &mut result {
+                        config.set_catch_all_map(field_info.category, field_info.clone());
                     }
+                    return Ok(result);
                 }
 
                 // Check if this is a DynamicValue type (like facet_value::Value) - also a catch-all
