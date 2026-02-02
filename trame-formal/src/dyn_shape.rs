@@ -2,67 +2,202 @@
 //!
 //! In regular operation, trame uses `&'static Shape` from facet_core.
 //! However, for testing, we use `DynShape`, which implements Arbitrary.
-//! Those both implement `IShape`, a common interface for shapes, and
-//! are unified by `AnyShape`, an enum that does enum dispatch to the
-//! `DynShape` or the `&'static Shape`.
+//! Both implement `IShape`, a common interface for shapes.
+//!
+//! The `Partial` type is generic over `S: IShape`, so:
+//! - Production: `Partial<&'static Shape>`
+//! - Kani proofs: `Partial<DynShape>`
+//!
+//! # Important: Layout is not the point
+//!
+//! Rust's struct layout is **not stable, not guaranteed, and not documented**.
+//! The compiler is free to reorder fields, insert padding, and generally do
+//! whatever it wants (unless you use `#[repr(C)]` or similar).
+//!
+//! **We are not trying to replicate real Rust layouts here.**
+//!
+//! For Kani verification, what matters is the **state machine**, not the memory layout:
+//! - How many fields need independent initialization tracking?
+//! - What are the valid state transitions? (Unallocated → Allocated → Initialized → ...)
+//! - Are all invariants maintained? (no double-init, no drop-before-init, no leak)
 
 use core::alloc::Layout;
+
+// ============================================================================
+// Traits
+// ============================================================================
+
+/// Common interface for shapes.
+///
+/// Implemented by:
+/// - `&'static facet_core::Shape` (real shapes)
+/// - `DynShape` (synthetic shapes for Kani)
+pub trait IShape: Copy {
+    /// The struct type returned by `as_struct()`.
+    type StructType: IStructType<Field = Self::Field>;
+
+    /// The field type used by struct types.
+    type Field: IField<Shape = Self>;
+
+    /// Get the layout (size and alignment) of this shape.
+    fn layout(&self) -> Layout;
+
+    /// Check if this is a struct type.
+    fn is_struct(&self) -> bool;
+
+    /// Get struct-specific information, if this is a struct.
+    fn as_struct(&self) -> Option<Self::StructType>;
+}
+
+/// Interface for struct type information.
+pub trait IStructType: Copy {
+    /// The field type.
+    type Field: IField;
+
+    /// Number of fields in this struct.
+    fn field_count(&self) -> usize;
+
+    /// Get field by index.
+    fn field(&self, idx: usize) -> Option<Self::Field>;
+}
+
+/// Interface for field information.
+pub trait IField: Copy {
+    /// The shape type.
+    type Shape: IShape;
+
+    /// Byte offset of this field within the struct.
+    fn offset(&self) -> usize;
+
+    /// Shape of this field's type.
+    fn shape(&self) -> Self::Shape;
+}
+
+// ============================================================================
+// DynShape - synthetic shapes for Kani
+// ============================================================================
 
 /// Maximum number of fields in a struct (for bounded verification).
 pub const MAX_FIELDS: usize = 8;
 
-/// Information about a single field within a struct.
+/// A synthetic field for Kani verification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct FieldInfo {
+pub struct DynField {
     /// Byte offset of this field within the struct.
     pub offset: usize,
-    /// Layout (size and alignment) of this field.
+    /// Layout of this field (we don't track nested shapes for now).
     pub layout: Layout,
 }
 
-impl FieldInfo {
-    /// Create a new field info.
-    pub const fn new(offset: usize, layout: Layout) -> Self {
-        Self { offset, layout }
-    }
+/// A synthetic struct type for Kani verification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DynStructType {
+    /// Number of fields.
+    pub field_count: u8,
+    /// Field information (only first `field_count` entries are valid).
+    pub fields: [DynField; MAX_FIELDS],
 }
 
-/// A bounded shape descriptor for Kani verification.
+/// A bounded shape for Kani verification.
 ///
 /// Unlike `facet_core::Shape` which uses static references and can be recursive,
 /// these shapes are bounded and can implement `kani::Arbitrary`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DynShape {
+pub struct DynShape {
+    /// Layout of this type.
+    pub layout: Layout,
+    /// Type-specific information.
+    pub def: DynDef,
+}
+
+/// Type-specific definition for DynShape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DynDef {
     /// A scalar type (no internal structure to track).
-    /// Examples: u32, String, any opaque type.
-    Scalar(Layout),
-    // FIXME: Instead of storing layout in all the different enum variants, we should be storing uh
-    // then shape should be a struct, and then it should have a field that's an enum, and the field
-    // that's an enum has uh type-specific information
-    //
+    Scalar,
     /// A struct with indexed fields.
-    /// Each field is a slot that needs independent init tracking.
-    Struct {
-        /// Layout of the whole struct.
-        layout: Layout,
-        /// Number of fields/slots.
-        field_count: u8,
-        /// Field information (only first `field_count` entries are valid).
-        fields: [FieldInfo; MAX_FIELDS],
-    },
+    Struct(DynStructType),
     // TODO: Enum, Option, Result, List, Map, etc.
 }
+
+// ============================================================================
+// IShape implementation for DynShape
+// ============================================================================
+
+impl IShape for DynShape {
+    type StructType = DynStructType;
+    type Field = DynField;
+
+    #[inline]
+    fn layout(&self) -> Layout {
+        self.layout
+    }
+
+    #[inline]
+    fn is_struct(&self) -> bool {
+        matches!(self.def, DynDef::Struct(_))
+    }
+
+    #[inline]
+    fn as_struct(&self) -> Option<Self::StructType> {
+        match self.def {
+            DynDef::Struct(s) => Some(s),
+            _ => None,
+        }
+    }
+}
+
+impl IStructType for DynStructType {
+    type Field = DynField;
+
+    #[inline]
+    fn field_count(&self) -> usize {
+        self.field_count as usize
+    }
+
+    #[inline]
+    fn field(&self, idx: usize) -> Option<Self::Field> {
+        if idx < self.field_count as usize {
+            Some(self.fields[idx])
+        } else {
+            None
+        }
+    }
+}
+
+impl IField for DynField {
+    type Shape = DynShape;
+
+    #[inline]
+    fn offset(&self) -> usize {
+        self.offset
+    }
+
+    #[inline]
+    fn shape(&self) -> Self::Shape {
+        // For now, fields are treated as scalars (no nested struct tracking)
+        DynShape {
+            layout: self.layout,
+            def: DynDef::Scalar,
+        }
+    }
+}
+
+// ============================================================================
+// Constructors
+// ============================================================================
 
 impl DynShape {
     /// Create a scalar shape with the given layout.
     pub const fn scalar(layout: Layout) -> Self {
-        Self::Scalar(layout)
+        Self {
+            layout,
+            def: DynDef::Scalar,
+        }
     }
 
     /// Create a struct shape with the given fields.
-    ///
-    /// Calculates the overall layout from the fields.
-    pub fn struct_with_fields(fields: &[FieldInfo]) -> Self {
+    pub fn struct_with_fields(fields: &[DynField]) -> Self {
         assert!(fields.len() <= MAX_FIELDS, "too many fields");
 
         // Calculate overall layout from fields
@@ -80,174 +215,142 @@ impl DynShape {
 
         let layout = Layout::from_size_align(size, align).expect("valid layout");
 
-        let mut field_array = [FieldInfo::new(0, Layout::new::<()>()); MAX_FIELDS];
+        let mut field_array = [DynField {
+            offset: 0,
+            layout: Layout::new::<()>(),
+        }; MAX_FIELDS];
         for (i, f) in fields.iter().enumerate() {
             field_array[i] = *f;
         }
 
-        Self::Struct {
+        Self {
             layout,
-            field_count: fields.len() as u8,
-            fields: field_array,
+            def: DynDef::Struct(DynStructType {
+                field_count: fields.len() as u8,
+                fields: field_array,
+            }),
         }
-    }
-
-    /// Get the layout of this shape.
-    pub const fn layout(&self) -> Layout {
-        match self {
-            Self::Scalar(layout) => *layout,
-            Self::Struct { layout, .. } => *layout,
-        }
-    }
-
-    /// Number of slots (fields) this shape has.
-    ///
-    /// - Scalars have 1 slot (the whole value)
-    /// - Structs have N slots (one per field)
-    pub const fn slot_count(&self) -> usize {
-        match self {
-            Self::Scalar(_) => 1,
-            Self::Struct { field_count, .. } => *field_count as usize,
-        }
-    }
-
-    /// Get field info by index.
-    ///
-    /// Returns `Some(&FieldInfo)` if index is valid, `None` otherwise.
-    pub const fn field(&self, idx: usize) -> Option<&FieldInfo> {
-        match self {
-            Self::Scalar(_) => None,
-            Self::Struct {
-                field_count,
-                fields,
-                ..
-            } => {
-                if idx < *field_count as usize {
-                    Some(&fields[idx])
-                } else {
-                    None
-                }
-            }
-        }
-    }
-
-    /// Check if this is a struct (has multiple fields).
-    pub const fn is_struct(&self) -> bool {
-        matches!(self, Self::Struct { .. })
     }
 }
+
+impl DynField {
+    /// Create a new field.
+    pub const fn new(offset: usize, layout: Layout) -> Self {
+        Self { offset, layout }
+    }
+}
+
+// ============================================================================
+// Arbitrary for Kani
+// ============================================================================
 
 #[cfg(kani)]
 impl kani::Arbitrary for DynShape {
     fn any() -> Self {
-        let variant: u8 = kani::any();
-        kani::assume(variant < 2);
+        let is_struct: bool = kani::any();
 
-        match variant {
-            0 => {
-                // Scalar with reasonable size/align
-                let size: usize = kani::any();
-                let align_pow: u8 = kani::any();
-                kani::assume(size <= 64);
-                kani::assume(align_pow <= 3); // align up to 8
-                let align = 1usize << align_pow;
-                // Size must be zero or a multiple of align for valid Layout
-                kani::assume(size == 0 || size % align == 0);
-                let layout = Layout::from_size_align(size, align).unwrap();
-                DynShape::Scalar(layout)
+        if is_struct {
+            // Struct with 1-4 fields
+            let field_count: u8 = kani::any();
+            kani::assume(field_count > 0 && field_count <= 4);
+
+            let mut fields = [DynField {
+                offset: 0,
+                layout: Layout::new::<()>(),
+            }; MAX_FIELDS];
+
+            let mut offset = 0usize;
+            for i in 0..(field_count as usize) {
+                let field_size: usize = kani::any();
+                kani::assume(field_size > 0 && field_size <= 8);
+
+                let layout = Layout::from_size_align(field_size, 1).unwrap();
+                fields[i] = DynField::new(offset, layout);
+                offset += field_size;
             }
-            1 => {
-                // Struct with 1-4 fields
-                let field_count: u8 = kani::any();
-                kani::assume(field_count > 0 && field_count <= 4);
 
-                let mut fields = [FieldInfo::new(0, Layout::new::<()>()); MAX_FIELDS];
+            kani::assume(offset <= 64);
 
-                let mut offset = 0usize;
-                for i in 0..(field_count as usize) {
-                    let field_size: usize = kani::any();
-                    kani::assume(field_size > 0 && field_size <= 8);
+            let layout = Layout::from_size_align(offset, 1).unwrap();
 
-                    // All fields use align=1 for simplicity in verification
-                    let layout = Layout::from_size_align(field_size, 1).unwrap();
-                    fields[i] = FieldInfo::new(offset, layout);
-                    offset += field_size;
-                }
-
-                // Keep total size bounded
-                kani::assume(offset <= 64);
-
-                let layout = Layout::from_size_align(offset, 1).unwrap();
-
-                DynShape::Struct {
-                    layout,
+            DynShape {
+                layout,
+                def: DynDef::Struct(DynStructType {
                     field_count,
                     fields,
-                }
+                }),
             }
-            _ => unreachable!(),
+        } else {
+            // Scalar
+            let size: usize = kani::any();
+            let align_pow: u8 = kani::any();
+            kani::assume(size <= 64);
+            kani::assume(align_pow <= 3);
+            let align = 1usize << align_pow;
+            kani::assume(size == 0 || size % align == 0);
+
+            let layout = Layout::from_size_align(size, align).unwrap();
+            DynShape::scalar(layout)
         }
     }
 }
+
+// ============================================================================
+// Tests
+// ============================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn scalar_has_one_slot() {
+    fn scalar_is_not_struct() {
         let s = DynShape::scalar(Layout::new::<u32>());
-        assert_eq!(s.slot_count(), 1);
-        assert_eq!(s.layout().size(), 4);
-        assert_eq!(s.layout().align(), 4);
+        assert!(!s.is_struct());
+        assert!(s.as_struct().is_none());
     }
 
     #[test]
-    fn struct_has_field_count_slots() {
+    fn struct_is_struct() {
         let fields = [
-            FieldInfo::new(0, Layout::new::<u32>()),
-            FieldInfo::new(4, Layout::new::<u32>()),
-            FieldInfo::new(8, Layout::new::<u32>()),
+            DynField::new(0, Layout::new::<u32>()),
+            DynField::new(4, Layout::new::<u32>()),
         ];
         let s = DynShape::struct_with_fields(&fields);
-        assert_eq!(s.slot_count(), 3);
+        assert!(s.is_struct());
+        assert!(s.as_struct().is_some());
     }
 
     #[test]
     fn struct_field_access() {
         let fields = [
-            FieldInfo::new(0, Layout::new::<u32>()),
-            FieldInfo::new(8, Layout::new::<u64>()),
+            DynField::new(0, Layout::new::<u32>()),
+            DynField::new(8, Layout::new::<u64>()),
         ];
         let s = DynShape::struct_with_fields(&fields);
+        let st = s.as_struct().unwrap();
 
-        let f0 = s.field(0).unwrap();
-        assert_eq!(f0.offset, 0);
-        assert_eq!(f0.layout.size(), 4);
+        assert_eq!(st.field_count(), 2);
 
-        let f1 = s.field(1).unwrap();
-        assert_eq!(f1.offset, 8);
-        assert_eq!(f1.layout.size(), 8);
+        let f0 = st.field(0).unwrap();
+        assert_eq!(f0.offset(), 0);
+        assert_eq!(f0.shape().layout().size(), 4);
 
-        assert!(s.field(2).is_none());
+        let f1 = st.field(1).unwrap();
+        assert_eq!(f1.offset(), 8);
+        assert_eq!(f1.shape().layout().size(), 8);
+
+        assert!(st.field(2).is_none());
     }
 
     #[test]
     fn struct_layout_calculation() {
-        // u8 at 0, u64 at 8 (with padding)
         let fields = [
-            FieldInfo::new(0, Layout::new::<u8>()),
-            FieldInfo::new(8, Layout::new::<u64>()),
+            DynField::new(0, Layout::new::<u8>()),
+            DynField::new(8, Layout::new::<u64>()),
         ];
         let s = DynShape::struct_with_fields(&fields);
-        assert_eq!(s.layout().size(), 16); // 8 + 8
+        assert_eq!(s.layout().size(), 16);
         assert_eq!(s.layout().align(), 8);
-    }
-
-    #[test]
-    fn scalar_has_no_fields() {
-        let s = DynShape::scalar(Layout::new::<u64>());
-        assert!(s.field(0).is_none());
-        assert!(s.field(1).is_none());
     }
 }
