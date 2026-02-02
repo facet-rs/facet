@@ -10,7 +10,7 @@ edition = "2024"
 standalone = []
 
 [dependencies]
-afl = "0.15"
+afl = "0.17"
 arbitrary = { version = "1", features = ["derive"] }
 
 [dependencies.facet]
