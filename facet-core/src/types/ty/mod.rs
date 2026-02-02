@@ -258,6 +258,9 @@ impl fmt::Display for Type {
                             // I think it is wrong to have both `Repr` and `EnumRepr` in the same type,
                             // since that allows constructing impossible states.
                             let repr_ty = match self.0.enum_repr {
+                                EnumRepr::Rust => unreachable!(
+                                    "default Rust repr is not valid for `repr(C)` enums"
+                                ),
                                 EnumRepr::RustNPO => unreachable!(
                                     "null-pointer optimization is only valid for `repr(Rust)`"
                                 ),

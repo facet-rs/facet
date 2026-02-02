@@ -3,10 +3,9 @@
 use core::cmp::Ordering;
 
 use crate::{
-    DeclId, Def, EnumRepr, EnumType, Facet, FieldBuilder, HashProxy, OptionDef, OptionVTable,
-    OxPtrConst, OxPtrMut, OxPtrUninit, OxRef, PtrConst, Repr, Shape, ShapeBuilder, Type,
-    TypeOpsIndirect, TypeParam, UserType, VTableIndirect, Variance, VarianceDep, VarianceDesc,
-    VariantBuilder, decl_id_hash,
+    Def, EnumRepr, EnumType, Facet, FieldBuilder, HashProxy, OptionDef, OptionVTable, OxPtrConst,
+    OxPtrMut, OxPtrUninit, OxRef, PtrConst, Repr, Shape, ShapeBuilder, Type, TypeOpsIndirect,
+    TypeParam, UserType, VTableIndirect, Variance, VarianceDep, VarianceDesc, VariantBuilder,
 };
 
 /// Extract the OptionDef from a shape, returns None if not an Option
@@ -250,7 +249,6 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
 
         ShapeBuilder::for_sized::<Option<T>>("Option")
             .module_path("core::option")
-            .decl_id(DeclId::new(decl_id_hash("#core#Option")))
             .ty(Type::User(
                 // Null-Pointer-Optimization check
                 if core::mem::size_of::<T>() == core::mem::size_of::<Option<T>>()
@@ -273,7 +271,22 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
                         is_cow: false,
                     })
                 } else {
-                    UserType::Opaque
+                    UserType::Enum(EnumType {
+                        repr: Repr::default(),
+                        enum_repr: EnumRepr::Rust,
+                        variants: &const {
+                            [
+                                VariantBuilder::unit("None").discriminant(0).build(),
+                                VariantBuilder::tuple(
+                                    "Some",
+                                    &const { [FieldBuilder::new("0", crate::shape_of::<T>, 0).build()] },
+                                )
+                                .discriminant(1)
+                                .build(),
+                            ]
+                        },
+                        is_cow: false,
+                    })
                 },
             ))
             .def(Def::Option(OptionDef::new(

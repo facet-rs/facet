@@ -157,6 +157,12 @@ pub type VariantAttribute = super::Attr;
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(C)]
 pub enum EnumRepr {
+    /// Default Rust enum representation with unspecified discriminant layout.
+    ///
+    /// The compiler chooses the discriminant size and layout as an implementation
+    /// detail. Reflection operations that require knowing the discriminant layout
+    /// will fail for enums with this repr.
+    Rust,
     /// Special-case representation discriminated by zeros under non-nullable pointer
     ///
     /// See: <https://rust-lang.github.io/unsafe-code-guidelines/layout/enums.html#discriminant-elision-on-option-like-enums>
