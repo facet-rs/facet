@@ -418,8 +418,7 @@ impl StructFieldMap {
                     elements_fields.insert(item_element_name, info);
                 } else {
                     // Fallback to singularized field name (with rename_all if present)
-                    let element_key =
-                        singularize(&field_dom_key(field.name, None, rename_all));
+                    let element_key = singularize(&field_dom_key(field.name, None, rename_all));
                     elements_fields.insert(element_key, info);
                 };
             } else if field.is_text() {
@@ -682,23 +681,30 @@ impl StructFieldMap {
 fn is_flattened_enum(field: &'static Field) -> bool {
     let shape = field.shape();
 
-    // Check for direct enum
-    if matches!(&shape.ty, Type::User(UserType::Enum(_))) {
-        return true;
-    }
-
-    // Check for Option<Enum>
+    // Check for Option<Enum> first (Option now reports as UserType::Enum)
     if let Def::Option(option_def) = &shape.def {
         let inner_shape = option_def.t();
-        if matches!(&inner_shape.ty, Type::User(UserType::Enum(_))) {
+        // Only true if the inner type is a real enum (not Option itself)
+        if matches!(&inner_shape.ty, Type::User(UserType::Enum(_)))
+            && !matches!(&inner_shape.def, Def::Option(_))
+        {
             return true;
         }
+        return false;
+    }
+
+    // Check for direct enum (but not Option, which now reports as UserType::Enum)
+    if matches!(&shape.ty, Type::User(UserType::Enum(_))) {
+        return true;
     }
 
     // Check for Vec<Enum> (List containing enum)
     if let Def::List(list_def) = &shape.def {
         let item_shape = list_def.t();
-        if matches!(&item_shape.ty, Type::User(UserType::Enum(_))) {
+        // Exclude Option from enum check
+        if matches!(&item_shape.ty, Type::User(UserType::Enum(_)))
+            && !matches!(&item_shape.def, Def::Option(_))
+        {
             return true;
         }
     }
