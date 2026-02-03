@@ -1143,6 +1143,17 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
             return result;
         }
 
+        // #[facet(other)] variants serialize as untagged - they're fallbacks for
+        // unknown tags and should not write a tag when serializing
+        if variant.is_other() {
+            self.push(PathSegment::Variant(Cow::Borrowed(
+                variant.effective_name(),
+            )));
+            let result = self.serialize_untagged_enum(enum_, variant);
+            self.pop();
+            return result;
+        }
+
         match (tag, content) {
             (Some(tag_key), None) => {
                 // Internally tagged
