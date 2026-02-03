@@ -10,8 +10,8 @@ use core::{
 use std::{hash::DefaultHasher, sync::LazyLock};
 
 use facet_core::{
-    Def, DynDateTimeKind, DynValueKind, Facet, Field, PointerType, PrimitiveType, PtrUninit,
-    SequenceType, Shape, StructKind, StructType, TextualType, Type, TypeNameOpts, UserType,
+    Def, DynDateTimeKind, DynValueKind, Facet, Field, PointerType, PrimitiveType, SequenceType,
+    Shape, StructKind, StructType, TextualType, Type, TypeNameOpts, UserType,
 };
 use facet_reflect::{Peek, ValueId};
 
@@ -938,19 +938,15 @@ impl PrettyPrinter {
         };
 
         // Allocate memory for the proxy value
-        let proxy_mem = unsafe { alloc::alloc::alloc(proxy_layout) };
-        if proxy_mem.is_null() {
-            return write!(f, "/* failed to allocate proxy memory */");
-        }
+        let proxy_uninit = facet_core::alloc_for_layout(proxy_layout);
 
         // Convert target → proxy
-        let proxy_uninit = PtrUninit::new(proxy_mem);
         let convert_result = unsafe { (proxy_def.convert_out)(value.data(), proxy_uninit) };
 
         let proxy_ptr = match convert_result {
             Ok(ptr) => ptr,
             Err(msg) => {
-                unsafe { alloc::alloc::dealloc(proxy_mem, proxy_layout) };
+                unsafe { facet_core::dealloc_for_layout(proxy_uninit.assume_init(), proxy_layout) };
                 return write!(f, "/* proxy conversion failed: {msg} */");
             }
         };
@@ -963,7 +959,7 @@ impl PrettyPrinter {
         // Clean up: drop the proxy value and deallocate
         unsafe {
             let _ = proxy_shape.call_drop_in_place(proxy_ptr);
-            alloc::alloc::dealloc(proxy_mem, proxy_layout);
+            facet_core::dealloc_for_layout(proxy_ptr, proxy_layout);
         }
 
         result
@@ -994,19 +990,15 @@ impl PrettyPrinter {
         };
 
         // Allocate memory for the proxy value
-        let proxy_mem = unsafe { alloc::alloc::alloc(proxy_layout) };
-        if proxy_mem.is_null() {
-            return write!(out, "/* failed to allocate proxy memory */");
-        }
+        let proxy_uninit = facet_core::alloc_for_layout(proxy_layout);
 
         // Convert target → proxy
-        let proxy_uninit = PtrUninit::new(proxy_mem);
         let convert_result = unsafe { (proxy_def.convert_out)(value.data(), proxy_uninit) };
 
         let proxy_ptr = match convert_result {
             Ok(ptr) => ptr,
             Err(msg) => {
-                unsafe { alloc::alloc::dealloc(proxy_mem, proxy_layout) };
+                unsafe { facet_core::dealloc_for_layout(proxy_uninit.assume_init(), proxy_layout) };
                 return write!(out, "/* proxy conversion failed: {msg} */");
             }
         };
@@ -1026,7 +1018,7 @@ impl PrettyPrinter {
         // Clean up: drop the proxy value and deallocate
         unsafe {
             let _ = proxy_shape.call_drop_in_place(proxy_ptr);
-            alloc::alloc::dealloc(proxy_mem, proxy_layout);
+            facet_core::dealloc_for_layout(proxy_ptr, proxy_layout);
         }
 
         result

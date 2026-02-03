@@ -19,16 +19,13 @@ unsafe fn try_from(
     let layout = src_shape.layout.sized_layout().unwrap();
 
     unsafe {
-        let alloc = alloc::alloc::alloc(layout);
-        if alloc.is_null() {
-            alloc::alloc::handle_alloc_error(layout);
-        }
+        let alloc = crate::alloc_for_layout(layout);
 
         let src_ptr = src_ptr.as_ptr::<u8>();
-        core::ptr::copy_nonoverlapping(src_ptr, alloc, layout.size());
+        core::ptr::copy_nonoverlapping(src_ptr, alloc.as_mut_byte_ptr(), layout.size());
 
         // layout of Box<T> == *mut T == *mut u8
-        Ok(dst.put(alloc))
+        Ok(dst.put(alloc.as_mut_byte_ptr()))
     }
 }
 

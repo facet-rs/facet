@@ -198,16 +198,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 }));
             }
         };
-        let key_ptr_raw: *mut u8 = unsafe { ::alloc::alloc::alloc(key_layout) };
-
-        let Some(key_ptr_raw) = NonNull::new(key_ptr_raw) else {
-            return Err(self.err(ReflectErrorKind::OperationFailed {
-                shape,
-                operation: "failed to allocate memory for map key",
-            }));
-        };
-
-        let key_ptr = PtrUninit::new(key_ptr_raw.as_ptr());
+        let key_ptr = facet_core::alloc_for_layout(key_layout);
 
         // Store the key pointer in the insert state
         match &mut frame.tracker {
@@ -228,7 +219,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             .map_key_node_id(parent_type_plan)
             .expect("TypePlan must have map key node");
         self.mode.stack_mut().push(Frame::new(
-            PtrUninit::new(key_ptr_raw.as_ptr()),
+            key_ptr,
             AllocatedShape::new(key_shape, key_layout.size()),
             FrameOwnership::TrackedBuffer,
             child_plan_id,
@@ -296,16 +287,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 }));
             }
         };
-        let value_ptr_raw: *mut u8 = unsafe { ::alloc::alloc::alloc(value_layout) };
-
-        let Some(value_ptr_raw) = NonNull::new(value_ptr_raw) else {
-            return Err(self.err(ReflectErrorKind::OperationFailed {
-                shape,
-                operation: "failed to allocate memory for map value",
-            }));
-        };
-
-        let value_ptr = PtrUninit::new(value_ptr_raw.as_ptr());
+        let value_ptr = facet_core::alloc_for_layout(value_layout);
 
         // Store the value pointer in the insert state
         match &mut frame.tracker {
@@ -442,13 +424,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             }
         };
 
-        let value_ptr: *mut u8 = unsafe { ::alloc::alloc::alloc(value_layout) };
-        let Some(value_ptr) = NonNull::new(value_ptr) else {
-            return Err(self.err(ReflectErrorKind::OperationFailed {
-                shape,
-                operation: "failed to allocate memory for object value",
-            }));
-        };
+        let value_ptr = facet_core::alloc_for_layout(value_layout);
 
         // Update the insert state with the key
         match &mut frame.tracker {
@@ -466,7 +442,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         // For DynamicValue, use the same type plan (self-recursive)
         let child_plan = parent_type_plan;
         self.mode.stack_mut().push(Frame::new(
-            PtrUninit::new(value_ptr.as_ptr()),
+            value_ptr,
             AllocatedShape::new(value_shape, value_layout.size()),
             FrameOwnership::Owned,
             child_plan,

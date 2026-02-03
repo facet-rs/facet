@@ -57,13 +57,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     }));
                 }
             };
-            let inner_ptr: *mut u8 = unsafe { ::alloc::alloc::alloc(inner_layout) };
-            let Some(inner_ptr) = NonNull::new(inner_ptr) else {
-                return Err(self.err(ReflectErrorKind::OperationFailed {
-                    shape,
-                    operation: "failed to allocate memory for smart pointer inner value",
-                }));
-            };
+            let inner_ptr = facet_core::alloc_for_layout(inner_layout);
 
             // Push a new frame for the inner value
             // Get child type plan NodeId for smart pointer pointee
@@ -72,7 +66,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 .pointer_inner_node_id(parent_type_plan)
                 .expect("TypePlan should have pointee node for sized pointer");
             self.mode.stack_mut().push(Frame::new(
-                PtrUninit::new(inner_ptr.as_ptr()),
+                inner_ptr,
                 AllocatedShape::new(pointee_shape, inner_layout.size()),
                 FrameOwnership::Owned,
                 child_plan_id,
@@ -87,13 +81,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     .layout
                     .sized_layout()
                     .expect("String must have a sized layout");
-                let string_ptr: *mut u8 = unsafe { ::alloc::alloc::alloc(string_layout) };
-                let Some(string_ptr) = NonNull::new(string_ptr) else {
-                    return Err(self.err(ReflectErrorKind::OperationFailed {
-                        shape,
-                        operation: "failed to allocate memory for string",
-                    }));
-                };
+                let string_ptr = facet_core::alloc_for_layout(string_layout);
                 let string_size = string_layout.size();
                 // For Arc<str> -> String conversion, TypePlan builds for the conversion source (String)
                 let child_plan_id = self
@@ -101,7 +89,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     .pointer_inner_node_id(parent_type_plan)
                     .expect("TypePlan should have pointee node for str->String conversion");
                 let new_frame = Frame::new(
-                    PtrUninit::new(string_ptr.as_ptr()),
+                    string_ptr,
                     AllocatedShape::new(String::SHAPE, string_size),
                     FrameOwnership::Owned,
                     child_plan_id,

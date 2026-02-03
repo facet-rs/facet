@@ -138,14 +138,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 }));
             }
         };
-        let element_ptr: *mut u8 = unsafe { ::alloc::alloc::alloc(element_layout) };
-
-        let Some(element_ptr) = NonNull::new(element_ptr) else {
-            return Err(self.err(ReflectErrorKind::OperationFailed {
-                shape,
-                operation: "failed to allocate memory for set element",
-            }));
-        };
+        let element_ptr = facet_core::alloc_for_layout(element_layout);
 
         // Push a new frame for the element
         // Get child type plan NodeId for set items
@@ -154,7 +147,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             .set_item_node_id(parent_type_plan)
             .expect("TypePlan should have item node for Set");
         self.mode.stack_mut().push(Frame::new(
-            PtrUninit::new(element_ptr.as_ptr()),
+            element_ptr,
             AllocatedShape::new(element_shape, element_layout.size()),
             FrameOwnership::Owned,
             child_plan_id,
