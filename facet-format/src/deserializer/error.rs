@@ -92,7 +92,6 @@ impl From<ParseError> for DeserializeError {
 ///
 /// This struct contains span and path information at the top level,
 /// with a `kind` field describing the specific error.
-#[derive(Debug)]
 pub struct DeserializeError {
     /// Source span where the error occurred (if available).
     pub span: Option<Span>,
@@ -102,6 +101,29 @@ pub struct DeserializeError {
 
     /// The specific kind of error.
     pub kind: DeserializeErrorKind,
+}
+
+impl fmt::Debug for DeserializeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Show span as simple numbers instead of the verbose Span { offset: X, len: Y }
+        let span_str = match self.span {
+            Some(span) => format!("[{}..{})", span.offset, span.offset + span.len),
+            None => "none".to_string(),
+        };
+
+        // Use Display for path which is much more readable
+        let path_str = match &self.path {
+            Some(path) => format!("{path}"),
+            None => "none".to_string(),
+        };
+
+        // Use Display for kind which gives human-readable error messages
+        write!(
+            f,
+            "DeserializeError {{ span: {}, path: {}, kind: {} }}",
+            span_str, path_str, self.kind
+        )
+    }
 }
 
 /// Specific kinds of deserialization errors.
