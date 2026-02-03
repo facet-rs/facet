@@ -4,15 +4,9 @@
 //! deferred processing (e.g., interleaved field access). This is the core issue
 //! that motivates the rope-based list storage approach.
 //!
-//! The fundamental problem:
-//! - With direct-fill (ListSlot), elements point directly into Vec's buffer
-//! - When Vec grows/reallocates, those pointers become invalid
-//! - So frames inside ListSlot can't be stored for deferred processing
-//! - This causes immediate validation, which fails for interleaved field access
-//!
-//! The solution (rope-based storage):
+//! Rope-based storage ensures that:
 //! - Elements live in stable chunks that never move
-//! - Frames can safely point into these chunks
+//! - Frames can safely point into these chunks for deferred processing
 //! - On list finalization, elements are moved to the real Vec
 //! - This enables full deferred processing inside list elements
 

@@ -295,15 +295,9 @@ pub(crate) enum FrameOwnership {
     /// The caller owns the memory and is responsible for its lifetime.
     External,
 
-    /// Points directly into a Vec's reserved buffer space.
-    /// Used by `begin_list_item()` for direct-fill optimization.
-    /// On successful end(): parent calls `set_len(len + 1)` instead of `push`.
-    /// On drop/failure: no dealloc (memory belongs to Vec), no `set_len` (element not complete).
-    ListSlot,
-
     /// Points into a stable rope chunk for list element building.
-    /// Used by `begin_list_item()` when deferred processing is needed.
-    /// Unlike `ListSlot`, the memory is stable (won't move during Vec growth),
+    /// Used by `begin_list_item()` for building Vec elements.
+    /// The memory is stable (won't move during Vec growth),
     /// so frames inside can be stored for deferred processing.
     /// On successful end(): element is tracked for later finalization.
     /// On list frame end(): all elements are moved into the real Vec.
@@ -319,21 +313,6 @@ impl FrameOwnership {
     /// parent, existing structures, or caller-provided memory.
     const fn needs_dealloc(&self) -> bool {
         matches!(self, FrameOwnership::Owned | FrameOwnership::TrackedBuffer)
-    }
-
-    /// Returns true if this frame's memory may move, invalidating child pointers.
-    ///
-    /// Frames inside movable allocations cannot be stored for deferred processing
-    /// because their pointers would become invalid when the parent reallocates.
-    ///
-    /// - `Owned`: Option's inner struct gets moved when init_some() is called
-    /// - `TrackedBuffer`: Map value buffers get moved/deallocated on map insert
-    /// - `ListSlot`: Vec elements may be invalidated when Vec reallocates during growth
-    const fn is_movable(&self) -> bool {
-        matches!(
-            self,
-            FrameOwnership::Owned | FrameOwnership::TrackedBuffer | FrameOwnership::ListSlot
-        )
     }
 }
 
@@ -460,11 +439,11 @@ pub(crate) enum Tracker {
     List {
         /// If we're pushing another frame for an element, this is the element index
         current_child: Option<usize>,
-        /// Stable rope storage for elements when deferred processing is needed.
+        /// Stable rope storage for elements during list building.
         /// A rope is a list of fixed-size chunks - chunks never reallocate, only new
-        /// chunks are added. This keeps element pointers stable during list building.
+        /// chunks are added. This keeps element pointers stable, enabling deferred
+        /// frame processing for nested structs inside Vec elements.
         /// On finalization, elements are moved into the real Vec.
-        /// None = using direct-fill (ListSlot), Some = using rope (RopeSlot)
         rope: Option<ListRope>,
     },
 
@@ -473,6 +452,11 @@ pub(crate) enum Tracker {
     Map {
         /// State of the current insertion operation
         insert_state: MapInsertState,
+        /// Pending key-value entries to be inserted on map finalization.
+        /// Deferred processing requires keeping buffers alive until finish_deferred(),
+        /// so we delay actual insertion until the map frame is finalized.
+        /// Each entry is (key_ptr, value_ptr) - both are initialized and owned by this tracker.
+        pending_entries: Vec<(PtrUninit, PtrUninit)>,
     },
 
     /// Partially initialized set (HashSet, BTreeSet, etc.)
@@ -486,6 +470,11 @@ pub(crate) enum Tracker {
     Option {
         /// Whether we're currently building the inner value
         building_inner: bool,
+        /// Pending inner value pointer to be moved with init_some on finalization.
+        /// Deferred processing requires keeping the inner value's memory stable,
+        /// so we delay the init_some() call until the Option frame is finalized.
+        /// None = no pending inner, Some = inner value ready to be moved into Option.
+        pending_inner: Option<PtrUninit>,
     },
 
     /// Result being initialized with Ok or Err
@@ -625,7 +614,7 @@ impl Frame {
         // So if Field frame is still on stack during cleanup, parent's iset[idx] is false,
         // meaning the parent won't drop this field - the Field frame must do it.
 
-        match &self.tracker {
+        match &mut self.tracker {
             Tracker::Scalar => {
                 // Simple scalar - drop if initialized
                 if self.is_init {
@@ -712,7 +701,10 @@ impl Frame {
                     };
                 }
             }
-            Tracker::Map { insert_state } => {
+            Tracker::Map {
+                insert_state,
+                pending_entries,
+            } => {
                 // Drop the initialized Map
                 if self.is_init {
                     unsafe {
@@ -720,6 +712,28 @@ impl Frame {
                             .shape()
                             .call_drop_in_place(self.data.assume_init())
                     };
+                }
+
+                // Clean up pending entries (key-value pairs that haven't been inserted yet)
+                if let Def::Map(map_def) = self.allocated.shape().def {
+                    for (key_ptr, value_ptr) in pending_entries.drain(..) {
+                        // Drop and deallocate key
+                        unsafe { map_def.k().call_drop_in_place(key_ptr.assume_init()) };
+                        if let Ok(key_layout) = map_def.k().layout.sized_layout()
+                            && key_layout.size() > 0
+                        {
+                            unsafe { alloc::alloc::dealloc(key_ptr.as_mut_byte_ptr(), key_layout) };
+                        }
+                        // Drop and deallocate value
+                        unsafe { map_def.v().call_drop_in_place(value_ptr.assume_init()) };
+                        if let Ok(value_layout) = map_def.v().layout.sized_layout()
+                            && value_layout.size() > 0
+                        {
+                            unsafe {
+                                alloc::alloc::dealloc(value_ptr.as_mut_byte_ptr(), value_layout)
+                            };
+                        }
+                    }
                 }
 
                 // Clean up key/value buffers based on whether their TrackedBuffer frames
@@ -806,12 +820,29 @@ impl Frame {
                     };
                 }
             }
-            Tracker::Option { building_inner } => {
+            Tracker::Option {
+                building_inner,
+                pending_inner,
+            } => {
+                // Clean up pending inner value if it was never finalized
+                let had_pending = pending_inner.is_some();
+                if let Some(inner_ptr) = pending_inner.take() {
+                    if let Def::Option(option_def) = self.allocated.shape().def {
+                        // Drop the inner value
+                        unsafe { option_def.t.call_drop_in_place(inner_ptr.assume_init()) };
+                        // Deallocate the inner buffer
+                        if let Ok(layout) = option_def.t.layout.sized_layout()
+                            && layout.size() > 0
+                        {
+                            unsafe { alloc::alloc::dealloc(inner_ptr.as_mut_byte_ptr(), layout) };
+                        }
+                    }
+                }
                 // If we're building the inner value, it will be handled by the Option vtable
                 // No special cleanup needed here as the Option will either be properly
                 // initialized or remain uninitialized
-                if !building_inner {
-                    // Option is fully initialized, drop it normally
+                if !*building_inner && !had_pending {
+                    // Option is fully initialized (no pending), drop it normally
                     unsafe {
                         self.allocated
                             .shape()
@@ -823,7 +854,7 @@ impl Frame {
                 // If we're building the inner value, it will be handled by the Result vtable
                 // No special cleanup needed here as the Result will either be properly
                 // initialized or remain uninitialized
-                if !building_inner {
+                if !*building_inner {
                     // Result is fully initialized, drop it normally
                     unsafe {
                         self.allocated
@@ -1150,9 +1181,135 @@ impl Frame {
         false
     }
 
-    /// Returns an error if the value is not fully initialized
-    fn require_full_initialization(&self) -> Result<(), ReflectErrorKind> {
-        match &self.tracker {
+    /// Drain all initialized elements from the rope into the Vec.
+    ///
+    /// This is called when finalizing a list that used rope storage. Elements were
+    /// built in stable rope chunks to allow deferred processing; now we move them
+    /// into the actual Vec.
+    ///
+    /// # Safety
+    ///
+    /// The rope must contain only initialized elements (via `mark_last_initialized`).
+    /// The list_data must point to an initialized Vec with capacity for the elements.
+    fn drain_rope_into_vec(
+        mut rope: ListRope,
+        list_def: &facet_core::ListDef,
+        list_data: PtrUninit,
+    ) -> Result<(), ReflectErrorKind> {
+        let count = rope.initialized_count();
+        if count == 0 {
+            return Ok(());
+        }
+
+        let push_fn = list_def
+            .push()
+            .ok_or_else(|| ReflectErrorKind::OperationFailed {
+                shape: list_def.t(),
+                operation: "List missing push function for rope drain",
+            })?;
+
+        // SAFETY: list_data points to initialized Vec (is_init was true)
+        let list_ptr = unsafe { list_data.assume_init() };
+
+        // Reserve space if available (optimization, not required)
+        if let Some(reserve_fn) = list_def.reserve() {
+            unsafe {
+                reserve_fn(list_ptr, count);
+            }
+        }
+
+        // Move each element from rope to Vec
+        // SAFETY: rope contains `count` initialized elements
+        unsafe {
+            rope.drain_into(|element_ptr| {
+                push_fn(
+                    facet_core::PtrMut::new(list_ptr.as_mut_byte_ptr()),
+                    facet_core::PtrConst::new(element_ptr.as_ptr()),
+                );
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Insert all pending key-value entries into the map.
+    ///
+    /// This is called when finalizing a map that used delayed insertion. Entries were
+    /// kept in pending_entries to allow deferred processing; now we insert them into
+    /// the actual map and deallocate the temporary buffers.
+    fn drain_pending_into_map(
+        pending_entries: &mut Vec<(PtrUninit, PtrUninit)>,
+        map_def: &facet_core::MapDef,
+        map_data: PtrUninit,
+    ) -> Result<(), ReflectErrorKind> {
+        let insert_fn = map_def.vtable.insert;
+
+        // SAFETY: map_data points to initialized map (is_init was true)
+        let map_ptr = unsafe { map_data.assume_init() };
+
+        for (key_ptr, value_ptr) in pending_entries.drain(..) {
+            // Insert the key-value pair
+            unsafe {
+                insert_fn(
+                    facet_core::PtrMut::new(map_ptr.as_mut_byte_ptr()),
+                    facet_core::PtrMut::new(key_ptr.as_mut_byte_ptr()),
+                    facet_core::PtrMut::new(value_ptr.as_mut_byte_ptr()),
+                );
+            }
+
+            // Deallocate the temporary buffers (insert moved the data)
+            if let Ok(key_layout) = map_def.k().layout.sized_layout()
+                && key_layout.size() > 0
+            {
+                unsafe { alloc::alloc::dealloc(key_ptr.as_mut_byte_ptr(), key_layout) };
+            }
+            if let Ok(value_layout) = map_def.v().layout.sized_layout()
+                && value_layout.size() > 0
+            {
+                unsafe { alloc::alloc::dealloc(value_ptr.as_mut_byte_ptr(), value_layout) };
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Complete an Option by moving the pending inner value into it.
+    ///
+    /// This is called when finalizing an Option that used deferred init_some.
+    /// The inner value was kept in stable memory for deferred processing;
+    /// now we move it into the Option and deallocate the temporary buffer.
+    fn complete_pending_option(
+        option_def: facet_core::OptionDef,
+        option_data: PtrUninit,
+        inner_ptr: PtrUninit,
+    ) -> Result<(), ReflectErrorKind> {
+        let init_some_fn = option_def.vtable.init_some;
+        let inner_shape = option_def.t;
+
+        // The inner_ptr contains the initialized inner value
+        let inner_value_ptr = unsafe { inner_ptr.assume_init() };
+
+        // Initialize the Option as Some(inner_value)
+        unsafe {
+            init_some_fn(option_data, inner_value_ptr);
+        }
+
+        // Deallocate the inner value's memory since init_some_fn moved it
+        if let Ok(layout) = inner_shape.layout.sized_layout()
+            && layout.size() > 0
+        {
+            unsafe { alloc::alloc::dealloc(inner_ptr.as_mut_byte_ptr(), layout) };
+        }
+
+        Ok(())
+    }
+
+    /// Returns an error if the value is not fully initialized.
+    /// For lists with rope storage, drains the rope into the Vec.
+    /// For maps with pending entries, drains the entries into the map.
+    /// For options with pending inner values, calls init_some.
+    fn require_full_initialization(&mut self) -> Result<(), ReflectErrorKind> {
+        match &mut self.tracker {
             Tracker::Scalar => {
                 if self.is_init {
                     Ok(())
@@ -1249,8 +1406,17 @@ impl Frame {
                     Ok(())
                 }
             }
-            Tracker::List { current_child } => {
+            Tracker::List {
+                current_child,
+                rope,
+            } => {
                 if self.is_init && current_child.is_none() {
+                    // Drain rope into Vec if we have elements stored there
+                    if let Some(rope) = rope.take() {
+                        if let Def::List(list_def) = self.allocated.shape().def {
+                            Self::drain_rope_into_vec(rope, &list_def, self.data)?;
+                        }
+                    }
                     Ok(())
                 } else {
                     Err(ReflectErrorKind::UninitializedValue {
@@ -1258,8 +1424,17 @@ impl Frame {
                     })
                 }
             }
-            Tracker::Map { insert_state } => {
+            Tracker::Map {
+                insert_state,
+                pending_entries,
+            } => {
                 if self.is_init && matches!(insert_state, MapInsertState::Idle) {
+                    // Insert all pending entries into the map
+                    if !pending_entries.is_empty() {
+                        if let Def::Map(map_def) = self.allocated.shape().def {
+                            Self::drain_pending_into_map(pending_entries, &map_def, self.data)?;
+                        }
+                    }
                     Ok(())
                 } else {
                     Err(ReflectErrorKind::UninitializedValue {
@@ -1268,7 +1443,7 @@ impl Frame {
                 }
             }
             Tracker::Set { current_child } => {
-                if self.is_init && !current_child {
+                if self.is_init && !*current_child {
                     Ok(())
                 } else {
                     Err(ReflectErrorKind::UninitializedValue {
@@ -1276,12 +1451,21 @@ impl Frame {
                     })
                 }
             }
-            Tracker::Option { building_inner } => {
+            Tracker::Option {
+                building_inner,
+                pending_inner,
+            } => {
                 if *building_inner {
                     Err(ReflectErrorKind::UninitializedValue {
                         shape: self.allocated.shape(),
                     })
                 } else {
+                    // Finalize pending init_some if we have a pending inner value
+                    if let Some(inner_ptr) = pending_inner.take() {
+                        if let Def::Option(option_def) = self.allocated.shape().def {
+                            Self::complete_pending_option(option_def, self.data, inner_ptr)?;
+                        }
+                    }
                     Ok(())
                 }
             }
@@ -1523,6 +1707,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 }
                 Tracker::List {
                     current_child: Some(idx),
+                    ..
                 } => {
                     path.push(PathStep::Index(*idx as u32));
                 }
@@ -1534,6 +1719,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 }
                 Tracker::Option {
                     building_inner: true,
+                    ..
                 } => {
                     // Option with building_inner contributes OptionSome to path
                     path.push(PathStep::OptionSome);

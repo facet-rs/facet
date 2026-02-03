@@ -31,6 +31,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                         // For Map, just update tracker - the map is already initialized
                         frame.tracker = Tracker::Map {
                             insert_state: MapInsertState::Idle,
+                            pending_entries: Vec::new(),
                         };
                         return Ok(self);
                     }
@@ -107,6 +108,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 // Update tracker to Map state and mark as initialized
                 frame.tracker = Tracker::Map {
                     insert_state: MapInsertState::Idle,
+                    pending_entries: Vec::new(),
                 };
                 frame.is_init = true;
             }
@@ -153,12 +155,14 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 Def::Map(map_def),
                 Tracker::Map {
                     insert_state: MapInsertState::Idle,
+                    ..
                 },
             ) if frame.is_init => map_def,
             (
                 Def::Map(_),
                 Tracker::Map {
                     insert_state: MapInsertState::PushingKey { .. },
+                    ..
                 },
             ) => {
                 return Err(self.err(ReflectErrorKind::OperationFailed {
@@ -170,6 +174,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 Def::Map(_),
                 Tracker::Map {
                     insert_state: MapInsertState::PushingValue { .. },
+                    ..
                 },
             ) => {
                 return Err(self.err(ReflectErrorKind::OperationFailed {

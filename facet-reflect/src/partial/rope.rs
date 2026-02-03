@@ -82,6 +82,7 @@ impl ListRope {
     }
 
     /// Returns the layout of elements in this rope.
+    #[allow(dead_code)]
     pub fn element_layout(&self) -> Layout {
         self.element_layout
     }
@@ -156,6 +157,7 @@ impl ListRope {
     ///
     /// The caller must ensure that `initialized_count` elements have actually
     /// been initialized.
+    #[allow(dead_code)]
     pub unsafe fn iter_initialized(&self) -> impl Iterator<Item = NonNull<u8>> + '_ {
         (0..self.initialized_count).map(|i| {
             let chunk_idx = i / self.elements_per_chunk;
@@ -197,6 +199,7 @@ impl ListRope {
     ///
     /// The caller must provide a valid drop function for the element type.
     /// The drop function will be called for each initialized element.
+    #[allow(dead_code)]
     pub unsafe fn drop_all(&mut self, drop_fn: Option<unsafe fn(*mut u8)>) {
         // Drop initialized elements
         if let Some(drop_fn) = drop_fn {

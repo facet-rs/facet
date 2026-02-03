@@ -96,6 +96,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     let frame = stack.last_mut().unwrap();
                     frame.tracker = Tracker::Option {
                         building_inner: true,
+                        pending_inner: None,
                     };
 
                     // Clear the restored frame's current_child - we haven't entered any of its
@@ -115,6 +116,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             let frame = self.mode.stack_mut().last_mut().unwrap();
             frame.tracker = Tracker::Option {
                 building_inner: true,
+                pending_inner: None,
             };
             frame.type_plan
         };
