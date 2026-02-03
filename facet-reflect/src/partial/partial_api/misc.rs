@@ -289,6 +289,10 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             return false;
         }
 
+        // Note: We no longer need to check for TrackedBuffer frames here.
+        // Map keys/values now include an entry index in their paths (MapKey(idx), MapValue(idx)),
+        // so different map entries have distinct paths and won't collide.
+
         true
     }
 
@@ -1007,6 +1011,18 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                             // Option with building_inner contributes OptionSome to path
                             field_path.push(PathStep::OptionSome);
                         }
+                        Tracker::Map {
+                            current_entry_index: Some(idx),
+                            building_key,
+                            ..
+                        } => {
+                            // Map with active entry contributes MapKey or MapValue with entry index
+                            if *building_key {
+                                field_path.push(PathStep::MapKey(*idx as u32));
+                            } else {
+                                field_path.push(PathStep::MapValue(*idx as u32));
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -1456,9 +1472,16 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             Tracker::Map {
                 insert_state,
                 pending_entries,
+                ..
             } if parent_frame.is_init => {
                 match insert_state {
                     MapInsertState::PushingKey { key_ptr, .. } => {
+                        // Fill defaults on the key frame before considering it done.
+                        // This handles metadata containers and other structs with Option fields.
+                        if let Err(e) = popped_frame.fill_defaults() {
+                            return Err(self.err(e));
+                        }
+
                         // We just popped the key frame - mark key as initialized and transition
                         // to PushingValue state. key_frame_on_stack = false because the frame
                         // was just popped, so Map now owns the key buffer.
@@ -1472,6 +1495,12 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     MapInsertState::PushingValue {
                         key_ptr, value_ptr, ..
                     } => {
+                        // Fill defaults on the value frame before considering it done.
+                        // This handles structs with Option fields.
+                        if let Err(e) = popped_frame.fill_defaults() {
+                            return Err(self.err(e));
+                        }
+
                         // We just popped the value frame.
                         // Instead of inserting immediately, add to pending_entries.
                         // This keeps the buffers alive for deferred processing.

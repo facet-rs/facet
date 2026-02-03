@@ -128,7 +128,7 @@ mod heap_value;
 pub use heap_value::*;
 
 use facet_core::{
-    Def, EnumType, Field, PtrUninit, Shape, SliceBuilderVTable, Type, UserType, Variant,
+    Def, EnumType, Field, PtrMut, PtrUninit, Shape, SliceBuilderVTable, Type, UserType, Variant,
 };
 use iset::ISet;
 use rope::ListRope;
@@ -457,6 +457,13 @@ pub(crate) enum Tracker {
         /// so we delay actual insertion until the map frame is finalized.
         /// Each entry is (key_ptr, value_ptr) - both are initialized and owned by this tracker.
         pending_entries: Vec<(PtrUninit, PtrUninit)>,
+        /// The current entry index, used for building unique paths for deferred frame storage.
+        /// Incremented each time we start a new key (in begin_key).
+        /// This allows inner frames of different map entries to have distinct paths.
+        current_entry_index: Option<usize>,
+        /// Whether we're currently building a key (true) or value (false).
+        /// Used to determine whether to push MapKey or MapValue to the path.
+        building_key: bool,
     },
 
     /// Partially initialized set (HashSet, BTreeSet, etc.)
@@ -691,7 +698,7 @@ impl Frame {
                     (vtable.free_fn)(builder_ptr);
                 }
             }
-            Tracker::List { .. } => {
+            Tracker::List { rope, .. } => {
                 // Drop the initialized List
                 if self.is_init {
                     unsafe {
@@ -700,10 +707,23 @@ impl Frame {
                             .call_drop_in_place(self.data.assume_init())
                     };
                 }
+
+                // Drop any elements still in the rope (not yet drained into Vec)
+                if let Some(mut rope) = rope.take()
+                    && let Def::List(list_def) = self.allocated.shape().def
+                {
+                    let element_shape = list_def.t;
+                    unsafe {
+                        rope.drain_into(|ptr| {
+                            element_shape.call_drop_in_place(PtrMut::new(ptr.as_ptr()));
+                        });
+                    }
+                }
             }
             Tracker::Map {
                 insert_state,
                 pending_entries,
+                ..
             } => {
                 // Drop the initialized Map
                 if self.is_init {
@@ -826,16 +846,16 @@ impl Frame {
             } => {
                 // Clean up pending inner value if it was never finalized
                 let had_pending = pending_inner.is_some();
-                if let Some(inner_ptr) = pending_inner.take() {
-                    if let Def::Option(option_def) = self.allocated.shape().def {
-                        // Drop the inner value
-                        unsafe { option_def.t.call_drop_in_place(inner_ptr.assume_init()) };
-                        // Deallocate the inner buffer
-                        if let Ok(layout) = option_def.t.layout.sized_layout()
-                            && layout.size() > 0
-                        {
-                            unsafe { alloc::alloc::dealloc(inner_ptr.as_mut_byte_ptr(), layout) };
-                        }
+                if let Some(inner_ptr) = pending_inner.take()
+                    && let Def::Option(option_def) = self.allocated.shape().def
+                {
+                    // Drop the inner value
+                    unsafe { option_def.t.call_drop_in_place(inner_ptr.assume_init()) };
+                    // Deallocate the inner buffer
+                    if let Ok(layout) = option_def.t.layout.sized_layout()
+                        && layout.size() > 0
+                    {
+                        unsafe { alloc::alloc::dealloc(inner_ptr.as_mut_byte_ptr(), layout) };
                     }
                 }
                 // If we're building the inner value, it will be handled by the Option vtable
@@ -1412,10 +1432,10 @@ impl Frame {
             } => {
                 if self.is_init && current_child.is_none() {
                     // Drain rope into Vec if we have elements stored there
-                    if let Some(rope) = rope.take() {
-                        if let Def::List(list_def) = self.allocated.shape().def {
-                            Self::drain_rope_into_vec(rope, &list_def, self.data)?;
-                        }
+                    if let Some(rope) = rope.take()
+                        && let Def::List(list_def) = self.allocated.shape().def
+                    {
+                        Self::drain_rope_into_vec(rope, &list_def, self.data)?;
                     }
                     Ok(())
                 } else {
@@ -1427,13 +1447,14 @@ impl Frame {
             Tracker::Map {
                 insert_state,
                 pending_entries,
+                ..
             } => {
                 if self.is_init && matches!(insert_state, MapInsertState::Idle) {
                     // Insert all pending entries into the map
-                    if !pending_entries.is_empty() {
-                        if let Def::Map(map_def) = self.allocated.shape().def {
-                            Self::drain_pending_into_map(pending_entries, &map_def, self.data)?;
-                        }
+                    if !pending_entries.is_empty()
+                        && let Def::Map(map_def) = self.allocated.shape().def
+                    {
+                        Self::drain_pending_into_map(pending_entries, &map_def, self.data)?;
                     }
                     Ok(())
                 } else {
@@ -1461,10 +1482,10 @@ impl Frame {
                     })
                 } else {
                     // Finalize pending init_some if we have a pending inner value
-                    if let Some(inner_ptr) = pending_inner.take() {
-                        if let Def::Option(option_def) = self.allocated.shape().def {
-                            Self::complete_pending_option(option_def, self.data, inner_ptr)?;
-                        }
+                    if let Some(inner_ptr) = pending_inner.take()
+                        && let Def::Option(option_def) = self.allocated.shape().def
+                    {
+                        Self::complete_pending_option(option_def, self.data, inner_ptr)?;
                     }
                     Ok(())
                 }
@@ -1724,7 +1745,19 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     // Option with building_inner contributes OptionSome to path
                     path.push(PathStep::OptionSome);
                 }
-                // Other tracker types (SmartPointer, Map, etc.)
+                Tracker::Map {
+                    current_entry_index: Some(idx),
+                    building_key,
+                    ..
+                } => {
+                    // Map with active entry contributes MapKey or MapValue with entry index
+                    if *building_key {
+                        path.push(PathStep::MapKey(*idx as u32));
+                    } else {
+                        path.push(PathStep::MapValue(*idx as u32));
+                    }
+                }
+                // Other tracker types (SmartPointer, Set, etc.)
                 // don't contribute to the storage path - they're transparent wrappers
                 _ => {}
             }

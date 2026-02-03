@@ -24,10 +24,12 @@ pub enum PathStep {
     Index(u32),
     /// Navigate to an enum variant by index
     Variant(u32),
-    /// Navigate into a map key
-    MapKey,
-    /// Navigate into a map value
-    MapValue,
+    /// Navigate into a map key at a specific entry index.
+    /// The entry index distinguishes paths for different map keys' inner frames.
+    MapKey(u32),
+    /// Navigate into a map value at a specific entry index.
+    /// The entry index distinguishes paths for different map values' inner frames.
+    MapValue(u32),
     /// Navigate into `Some` of an Option
     OptionSome,
     /// Navigate through a pointer/reference
@@ -169,14 +171,14 @@ impl Path {
                         }
                     }
                 }
-                PathStep::MapKey => {
-                    result.push_str("[key]");
+                PathStep::MapKey(idx) => {
+                    write!(result, "[key#{}]", idx).unwrap();
                     if let Some(key_shape) = get_map_key_shape(current_shape) {
                         current_shape = key_shape;
                     }
                 }
-                PathStep::MapValue => {
-                    result.push_str("[value]");
+                PathStep::MapValue(idx) => {
+                    write!(result, "[value#{}]", idx).unwrap();
                     if let Some(value_shape) = get_map_value_shape(current_shape) {
                         current_shape = value_shape;
                     }
@@ -238,11 +240,11 @@ impl Path {
                     // Remember the variant for the next field lookup
                     current_variant_idx = Some(*idx as usize);
                 }
-                PathStep::MapKey => {
+                PathStep::MapKey(_) => {
                     current_shape = get_map_key_shape(current_shape)?;
                     current_variant_idx = None;
                 }
-                PathStep::MapValue => {
+                PathStep::MapValue(_) => {
                     current_shape = get_map_value_shape(current_shape)?;
                     current_variant_idx = None;
                 }

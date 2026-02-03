@@ -6,6 +6,7 @@
 //!
 //! On finalization, elements are moved from the rope into the target Vec.
 
+use alloc::vec::Vec;
 use core::alloc::Layout;
 use core::ptr::NonNull;
 
@@ -273,8 +274,8 @@ impl Drop for ListRope {
         // 2. If drop_all() was called, chunks are already deallocated
         // 3. If we get here with chunks, it's a leak (but not UB)
         if !self.chunks.is_empty() {
-            // Log a warning in debug builds
-            #[cfg(debug_assertions)]
+            // In debug builds with std, log a warning about potential leak
+            #[cfg(all(debug_assertions, feature = "std"))]
             if self.initialized_count > 0 {
                 eprintln!(
                     "ListRope dropped with {} initialized elements - potential memory leak",
@@ -417,7 +418,7 @@ mod tests {
 
     #[test]
     fn test_rope_with_drop() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
+        use core::sync::atomic::{AtomicUsize, Ordering};
 
         static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
 
