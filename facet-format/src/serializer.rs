@@ -491,6 +491,21 @@ pub trait FormatSerializer {
         self.begin_seq()
     }
 
+    /// Called when a variant tag was written but no payload follows.
+    ///
+    /// This happens for:
+    /// - Unit variants (no fields at all)
+    /// - `#[facet(other)]` variants where all fields are metadata/tag fields
+    ///
+    /// Formats that track state after `write_variant_tag` (like Styx's
+    /// `skip_next_before_value` flag) should use this to clear that state,
+    /// ensuring the next value gets proper spacing.
+    ///
+    /// Default: no-op.
+    fn finish_variant_tag_unit_payload(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
     /// Serialize a byte sequence (`Vec<u8>`, `&[u8]`, etc.) in bulk.
     ///
     /// For binary formats like postcard that store byte sequences as raw bytes
@@ -1499,7 +1514,12 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
         let field_mode = self.serializer.struct_field_mode();
 
         match variant.data.kind {
-            StructKind::Unit => Ok(()),
+            StructKind::Unit => {
+                self.serializer
+                    .finish_variant_tag_unit_payload()
+                    .map_err(SerializeError::Backend)?;
+                Ok(())
+            }
             StructKind::TupleStruct | StructKind::Tuple => {
                 let field_count = variant.data.fields.len();
                 if field_count == 1 {
@@ -1558,6 +1578,9 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
                     .collect();
 
                 if fields.is_empty() {
+                    self.serializer
+                        .finish_variant_tag_unit_payload()
+                        .map_err(SerializeError::Backend)?;
                     return Ok(());
                 }
 
