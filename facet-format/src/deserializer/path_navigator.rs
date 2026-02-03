@@ -16,23 +16,6 @@ struct OpenSegment {
     name: &'static str,
     /// Whether this segment is wrapped in an Option (and we entered Some).
     is_option: bool,
-    /// Whether this segment has a selected variant (internally-tagged enum).
-    /// Such segments must not be closed until all fields are processed,
-    /// because variant fields can appear in any order in the input.
-    has_selected_variant: bool,
-}
-
-/// A segment that was closed but may need to be reopened for more variant fields.
-#[derive(Debug, Clone)]
-struct SuspendedSegment {
-    /// The field name of this segment.
-    name: &'static str,
-    /// Whether this segment is wrapped in an Option.
-    is_option: bool,
-    /// The variant that was selected.
-    variant_name: &'static str,
-    /// The depth at which this segment was (index in open_segments when it was active).
-    depth: usize,
 }
 
 /// Navigates through nested flattened structures by managing open/close of path segments.
@@ -47,8 +30,6 @@ pub(crate) struct PathNavigator<'input, const BORROW: bool> {
     wip: Option<Partial<'input, BORROW>>,
     /// Currently open path segments.
     open_segments: Vec<OpenSegment>,
-    /// Segments that were closed but may need to be reopened (internally-tagged enums).
-    suspended_segments: Vec<SuspendedSegment>,
     /// Last span for error reporting.
     last_span: Span,
 }
@@ -59,7 +40,6 @@ impl<'input, const BORROW: bool> PathNavigator<'input, BORROW> {
         Self {
             wip: Some(wip),
             open_segments: Vec::new(),
-            suspended_segments: Vec::new(),
             last_span,
         }
     }
@@ -189,7 +169,6 @@ impl<'input, const BORROW: bool> PathNavigator<'input, BORROW> {
             .chain(core::iter::once(name))
             .collect();
 
-        let mut has_selected_variant = false;
         for vs in variant_selections {
             let vs_fields: Vec<&str> = vs
                 .path
@@ -212,17 +191,12 @@ impl<'input, const BORROW: bool> PathNavigator<'input, BORROW> {
                     vs.variant_name, current_path
                 );
                 wip = wip.select_variant_named(vs.variant_name)?;
-                has_selected_variant = true;
                 break;
             }
         }
 
         self.return_wip(wip);
-        self.open_segments.push(OpenSegment {
-            name,
-            is_option,
-            has_selected_variant,
-        });
+        self.open_segments.push(OpenSegment { name, is_option });
         Ok(())
     }
 
@@ -241,26 +215,10 @@ impl<'input, const BORROW: bool> PathNavigator<'input, BORROW> {
     }
 
     /// Close segments back to a given depth.
-    ///
-    /// Segments with `has_selected_variant = true` are suspended rather than
-    /// forgotten, so they can be reopened when more variant fields appear.
     pub fn close_to(&mut self, target_len: usize) -> Result<(), DeserializeError> {
         let _guard = SpanGuard::new(self.last_span);
         while self.open_segments.len() > target_len {
-            let depth = self.open_segments.len() - 1;
             let seg = self.open_segments.pop().unwrap();
-
-            // If this segment has a selected variant, suspend it for potential reopening
-            if seg.has_selected_variant {
-                // We need to get the variant name from the current wip state
-                let variant_name = self.wip().selected_variant().map(|v| v.name).unwrap_or("");
-                self.suspended_segments.push(SuspendedSegment {
-                    name: seg.name,
-                    is_option: seg.is_option,
-                    variant_name,
-                    depth,
-                });
-            }
 
             let mut wip = self.take_wip();
             if seg.is_option {
@@ -277,52 +235,12 @@ impl<'input, const BORROW: bool> PathNavigator<'input, BORROW> {
         self.close_to(0)
     }
 
-    /// Get the current depth (number of open segments).
-    #[allow(dead_code)]
-    pub fn depth(&self) -> usize {
-        self.open_segments.len()
-    }
-
-    /// Check if there's an open segment with a selected variant (internally-tagged enum).
-    #[allow(dead_code)]
-    pub fn has_open_internally_tagged_enum(&self) -> bool {
-        self.open_segments
-            .iter()
-            .any(|seg| seg.has_selected_variant)
-    }
-
-    /// Get the depth (index) of the first open segment with a selected variant.
-    #[allow(dead_code)]
-    pub fn internally_tagged_enum_depth(&self) -> Option<usize> {
-        self.open_segments
-            .iter()
-            .position(|seg| seg.has_selected_variant)
-    }
-
     /// Add the final segment to open_segments (for catch-all maps that stay open).
-    ///
-    /// If `has_selected_variant` is true, this segment will not be closed by
-    /// `close_to` - only by `close_all`. This is needed for internally-tagged
-    /// enums whose variant fields can appear in any order.
     pub fn keep_final_open(&mut self, nav_result: &NavigateResult) {
-        self.keep_final_open_with_variant(nav_result, false);
-    }
-
-    /// Add the final segment to open_segments, marking it as having a selected variant.
-    ///
-    /// Segments with selected variants are not closed by `close_to`, only by `close_all`.
-    /// This is necessary for internally-tagged enums in flattened contexts, where variant
-    /// fields can appear in any order in the input, potentially interleaved with sibling fields.
-    pub fn keep_final_open_with_variant(
-        &mut self,
-        nav_result: &NavigateResult,
-        has_selected_variant: bool,
-    ) {
         if let Some(final_seg) = nav_result.final_segment {
             self.open_segments.push(OpenSegment {
                 name: final_seg,
                 is_option: nav_result.final_is_option,
-                has_selected_variant,
             });
         }
     }

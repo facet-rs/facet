@@ -307,10 +307,10 @@ fn vec_many_elements_with_deferred() -> Result<(), IPanic> {
 
     let result = partial.build()?.materialize::<Vec<Item>>()?;
     assert_eq!(result.len(), 20);
-    for i in 0..20 {
+    (0..20).for_each(|i| {
         assert_eq!(result[i].id, i as u32);
         assert_eq!(result[i].data, format!("item_{}", i));
-    }
+    });
 
     Ok(())
 }
@@ -341,11 +341,11 @@ fn vec_many_elements_interleaved_fields() -> Result<(), IPanic> {
 
     let result = partial.build()?.materialize::<Vec<Item>>()?;
     assert_eq!(result.len(), 15);
-    for i in 0..15 {
+    (0..15).for_each(|i| {
         assert_eq!(result[i].a, (i * 3) as u32);
         assert_eq!(result[i].b, (i * 3 + 1) as u32);
         assert_eq!(result[i].c, (i * 3 + 2) as u32);
-    }
+    });
 
     Ok(())
 }

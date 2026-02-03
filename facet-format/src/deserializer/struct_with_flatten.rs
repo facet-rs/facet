@@ -208,7 +208,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                                 // at the end will close it. This handles out-of-order fields.
                                 // See https://github.com/facet-rs/facet/issues/2007
                                 // See https://github.com/facet-rs/facet/issues/2010
-                                nav.keep_final_open_with_variant(&nav_result, true);
+                                nav.keep_final_open(&nav_result);
                                 fields_set.insert(field_info.serialized_name);
                                 continue;
                             }
