@@ -9,6 +9,13 @@
 //! - `PtrUninit` - Wraps PtrMut, for uninitialized memory
 //!
 //! None of these types have lifetime parameters - safety is the caller's responsibility.
+//!
+//! # Allocation Helpers
+//!
+//! - [`alloc_for_layout`] - Allocates memory for a layout, handling ZSTs correctly
+//! - [`dealloc_for_layout`] - Deallocates memory for a layout, handling ZSTs correctly
+//!
+//! These functions avoid undefined behavior when allocating zero-sized types.
 
 mod ptr_layout;
 mod tagged;
@@ -523,4 +530,74 @@ impl From<PtrMut> for PtrUninit {
     fn from(p: PtrMut) -> Self {
         p.as_uninit()
     }
+}
+
+// ============================================================================
+// Allocation Helpers
+// ============================================================================
+
+/// Allocates memory for a layout, correctly handling zero-sized types.
+///
+/// For ZSTs (zero-sized types), returns a dangling but properly aligned pointer
+/// without actually allocating. This avoids undefined behavior since
+/// `alloc::alloc::alloc` with a zero-sized layout is UB.
+///
+/// # Returns
+///
+/// A `PtrUninit` pointing to:
+/// - Newly allocated memory for non-zero-sized layouts
+/// - A dangling, aligned pointer for zero-sized layouts
+///
+/// # Panics
+///
+/// Panics if allocation fails (calls `handle_alloc_error`).
+///
+/// # Example
+///
+/// ```ignore
+/// use core::alloc::Layout;
+/// use facet_core::{alloc_for_layout, dealloc_for_layout};
+///
+/// let layout = Layout::new::<u32>();
+/// let ptr = alloc_for_layout(layout);
+/// // ... use ptr ...
+/// unsafe { dealloc_for_layout(ptr.assume_init(), layout); }
+/// ```
+#[cfg(feature = "alloc")]
+pub fn alloc_for_layout(layout: core::alloc::Layout) -> PtrUninit {
+    if layout.size() == 0 {
+        // ZST: return aligned dangling pointer, never actually allocate
+        // This is the same pattern used in std for Box<ZST>, Vec<ZST>, etc.
+        PtrUninit::new(core::ptr::null_mut::<u8>().wrapping_byte_add(layout.align()))
+    } else {
+        // SAFETY: layout.size() > 0, so this is valid
+        let ptr = unsafe { alloc::alloc::alloc(layout) };
+        if ptr.is_null() {
+            alloc::alloc::handle_alloc_error(layout);
+        }
+        PtrUninit::new(ptr)
+    }
+}
+
+/// Deallocates memory for a layout, correctly handling zero-sized types.
+///
+/// For ZSTs (zero-sized types), this is a no-op since no memory was actually
+/// allocated. This avoids undefined behavior since `alloc::alloc::dealloc`
+/// with a zero-sized layout is UB.
+///
+/// # Safety
+///
+/// - For non-ZST layouts, `ptr` must have been allocated by [`alloc_for_layout`]
+///   (or `alloc::alloc::alloc`) with the same layout.
+/// - `ptr` must not have been deallocated already.
+/// - For ZST layouts, `ptr` is ignored (should be the dangling pointer from
+///   `alloc_for_layout`, but this isn't checked).
+#[cfg(feature = "alloc")]
+pub unsafe fn dealloc_for_layout(ptr: PtrMut, layout: core::alloc::Layout) {
+    if layout.size() == 0 {
+        // ZST: nothing to deallocate
+        return;
+    }
+    // SAFETY: caller guarantees ptr was allocated with this layout
+    unsafe { alloc::alloc::dealloc(ptr.as_mut_byte_ptr(), layout) }
 }

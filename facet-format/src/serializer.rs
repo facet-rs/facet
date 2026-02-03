@@ -1975,27 +1975,18 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
         value: Peek<'mem, 'facet>,
         proxy_def: &'static facet_core::ProxyDef,
     ) -> Result<(), SerializeError<S::Error>> {
-        use facet_core::PtrUninit;
-
         let proxy_shape = proxy_def.shape;
         let proxy_layout = proxy_shape.layout.sized_layout().map_err(|_| {
             SerializeError::Unsupported(Cow::Borrowed("proxy type must be sized for serialization"))
         })?;
 
-        let proxy_mem = unsafe { alloc::alloc::alloc(proxy_layout) };
-        if proxy_mem.is_null() {
-            return Err(SerializeError::Internal(Cow::Borrowed(
-                "failed to allocate proxy memory",
-            )));
-        }
-
-        let proxy_uninit = PtrUninit::new(proxy_mem);
+        let proxy_uninit = facet_core::alloc_for_layout(proxy_layout);
         let convert_result = unsafe { (proxy_def.convert_out)(value.data(), proxy_uninit) };
 
         let proxy_ptr = match convert_result {
             Ok(ptr) => ptr,
             Err(msg) => {
-                unsafe { alloc::alloc::dealloc(proxy_mem, proxy_layout) };
+                unsafe { facet_core::dealloc_for_layout(proxy_uninit.assume_init(), proxy_layout) };
                 return Err(SerializeError::Unsupported(Cow::Owned(msg)));
             }
         };
@@ -2005,7 +1996,7 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
 
         unsafe {
             let _ = proxy_shape.call_drop_in_place(proxy_ptr);
-            alloc::alloc::dealloc(proxy_mem, proxy_layout);
+            facet_core::dealloc_for_layout(proxy_ptr, proxy_layout);
         }
 
         result

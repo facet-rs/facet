@@ -224,23 +224,18 @@ where
                     Err(_) => return false,
                 };
 
-                let owned_ptr = unsafe { alloc::alloc::alloc(owned_layout) };
-                if owned_ptr.is_null() {
-                    return false;
-                }
-
-                let owned_uninit = crate::PtrUninit::new(owned_ptr);
+                let owned_uninit = crate::alloc_for_layout(owned_layout);
                 if unsafe { owned_shape.call_default_in_place(owned_uninit) }.is_none() {
                     // Default not supported, deallocate and return
-                    unsafe { alloc::alloc::dealloc(owned_ptr, owned_layout) };
+                    unsafe { crate::dealloc_for_layout(owned_uninit.assume_init(), owned_layout) };
                     return false;
                 }
 
                 // Move the constructed T::Owned out of the temporary allocation.
-                // This leaves `owned_ptr` uninitialized, so we must deallocate the backing storage.
+                // This leaves the allocation uninitialized, so we must deallocate the backing storage.
                 let owned_value: T::Owned =
-                    unsafe { core::ptr::read(owned_ptr as *const T::Owned) };
-                unsafe { alloc::alloc::dealloc(owned_ptr, owned_layout) };
+                    unsafe { core::ptr::read(owned_uninit.as_byte_ptr() as *const T::Owned) };
+                unsafe { crate::dealloc_for_layout(owned_uninit.assume_init(), owned_layout) };
 
                 // Write the Cow::Owned to uninitialized memory
                 unsafe { dst.put(Cow::<'static, T>::Owned(owned_value)) };
