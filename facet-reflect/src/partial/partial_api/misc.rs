@@ -275,17 +275,19 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             return false;
         }
 
-        // IMPORTANT: Don't store Owned frames that have a SmartPointer parent.
+        // IMPORTANT: Don't store frames that have a SmartPointer in any ancestor.
         // SmartPointer (Box, Arc, etc.) needs its inner value immediately to create
         // the smart pointer - it can't wait for finish_deferred.
-        let has_smart_pointer_parent = if matches!(current_frame.ownership, FrameOwnership::Owned) {
+        // Check all ancestor frames, not just the direct parent.
+        let has_smart_pointer_ancestor = {
             let frames = self.frames();
-            frames.len() >= 2 && matches!(frames[frames.len() - 2].tracker, Tracker::SmartPointer)
-        } else {
-            false
+            frames
+                .iter()
+                .take(frames.len() - 1)
+                .any(|f| matches!(f.tracker, Tracker::SmartPointer))
         };
 
-        if has_smart_pointer_parent {
+        if has_smart_pointer_ancestor {
             return false;
         }
 
