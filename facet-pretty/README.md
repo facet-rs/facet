@@ -8,6 +8,36 @@
 
 Provides pretty-printing capabilities for Facet types.
 
+Example:
+
+```rust
+use facet::Facet;
+use facet_pretty::FacetPretty;
+
+#[derive(Facet)]
+struct Person {
+    name: String,
+    age: u32,
+}
+
+fn main() {
+    let person = Person {
+        name: "Alice".to_string(),
+        age: 30,
+    };
+    println!("Default pretty-printing:");
+    println!("{}", person.pretty());
+}
+```
+
+Produces the output:
+
+```rust
+Person {
+  name: "Alice",
+  age: 30,
+}
+```
 ## Sponsors
 
 Thanks to all individual sponsors:
