@@ -175,6 +175,11 @@ where
             return Ok(wip);
         }
 
+        // Check Def::Option first since Option now reports as UserType::Enum
+        if let Def::Option(_) = &shape.def {
+            return self.deserialize_option(wip, expected_name);
+        }
+
         match &shape.ty {
             Type::User(UserType::Struct(_)) => self.deserialize_struct(wip, expected_name),
             Type::User(UserType::Enum(_)) => self.deserialize_enum(wip, expected_name),
@@ -184,7 +189,6 @@ where
                 Def::List(_) => self.deserialize_list(wip, expected_name),
                 Def::Set(_) => self.deserialize_set(wip, expected_name),
                 Def::Map(_) => self.deserialize_map(wip),
-                Def::Option(_) => self.deserialize_option(wip, expected_name),
                 _ => Err(DomDeserializeError::Unsupported(format!(
                     "unsupported type: {:?}",
                     shape.ty
@@ -224,7 +228,10 @@ where
             if let Some(rename) = shape.get_builtin_attr_value::<&str>("rename") {
                 Cow::Borrowed(rename)
             } else if let Some(rename_all) = shape.get_builtin_attr_value::<&str>("rename_all") {
-                Cow::Owned(crate::naming::apply_rename_all(shape.type_identifier, rename_all))
+                Cow::Owned(crate::naming::apply_rename_all(
+                    shape.type_identifier,
+                    rename_all,
+                ))
             } else {
                 to_element_name(shape.type_identifier)
             }
@@ -879,7 +886,10 @@ where
         value: Cow<'de, str>,
     ) -> Result<Partial<'de, BORROW>, DomDeserializeError<P::Error>> {
         // Handle enums specially - match variant names with lowerCamelCase conversion
-        if let Type::User(UserType::Enum(enum_def)) = &wip.shape().ty {
+        // Skip Option (now reports as UserType::Enum) - facet_dessert handles it
+        if let Type::User(UserType::Enum(enum_def)) = &wip.shape().ty
+            && !matches!(wip.shape().def, Def::Option(_))
+        {
             // Find matching variant
             for (idx, variant) in enum_def.variants.iter().enumerate() {
                 // Only unit variants can be deserialized from a plain string
