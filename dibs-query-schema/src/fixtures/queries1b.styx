@@ -1,0 +1,206 @@
+@schema {id crate:dibs-queries@1, cli dibs}
+
+
+AllProducts @select{
+    from product
+    where {deleted_at @null}
+    order-by {created_at desc}
+    fields {id, handle, status, active}
+}
+
+ActiveProducts @select{
+    from product
+    where {status "published", active true, deleted_at @null}
+    order-by {created_at desc}
+    limit 2
+    fields {id, handle, status}
+}
+
+ProductByHandle @select{
+    params {handle @string}
+    from product
+    where {handle $handle, deleted_at @null}
+    first true
+    fields {id, handle, status, active}
+}
+
+SearchProducts @select{
+    params {q @string}
+    from product
+    where {handle @ilike($q), deleted_at @null}
+    order-by {handle asc}
+    limit 50
+    fields {id, handle, status}
+}
+// Paginated query with limit/offset parameters
+
+ProductsPaginated @select{
+    params {page_size @int, page_offset @int}
+    from product
+    where {deleted_at @null}
+    order-by {handle asc}
+    limit $page_size
+    offset $page_offset
+    fields {id, handle, status, active}
+}
+// Query with JOIN - returns product with its first translation (singular relation)
+
+ProductWithTranslation @select{
+    params {handle @string}
+    from product
+    where {handle $handle, deleted_at @null}
+    first true
+    fields {
+        id
+        handle
+        status
+        translation @rel{
+            from product_translation
+            first true
+            fields {locale, title, description}
+        }
+    }
+}
+
+// Query with vec relation - returns product with all translations (plural relation)
+
+ProductWithAllTranslations @select{
+    params {handle @string}
+    from product
+    where {handle $handle, deleted_at @null}
+    first true
+    fields {
+        id
+        handle
+        status
+        translations @rel{
+            from product_translation
+            fields {locale, title, description}
+        }
+    }
+}
+
+// DISTINCT query - unique statuses
+
+UniqueStatuses @select{
+    from product
+    where {deleted_at @null}
+    distinct true
+    fields {status}
+}
+
+// COUNT query - count products by status
+
+CountProducts @select{
+    from product
+    where {deleted_at @null}
+    count true
+    fields {id}
+}
+
+// Query with filter operators
+// TODO: Fix SQL generation bug where multiple filters on same column aren't all included
+//
+// ProductsByPriceRange @select{
+//     params {min_price @int, max_price @int}
+//     from product
+//     where {
+//         price @gte($min_price)
+//         price @lte($max_price)
+//         deleted_at @null
+//     }
+//     fields {id, handle, price}
+// }
+
+// Query with literal @in filter
+
+ProductsByKnownHandles @select{
+    from product
+    where {handle @in("prod-1" "prod-2" "prod-3"), deleted_at @null}
+    fields {id, handle, status}
+}
+
+// Query with @ne filter
+
+ProductsExcludingStatus @select{
+    params {excluded_status @string}
+    from product
+    where {status @ne($excluded_status), deleted_at @null}
+    fields {id, handle, status}
+}
+
+// ============================================================================
+// Mutations
+// ============================================================================
+
+// Insert a new product with @now function
+
+CreateProduct @insert{
+    params {handle @string, status @string}
+    into product
+    values {handle $handle, status $status, created_at @now}
+    returning {id, handle, status}
+}
+
+// Insert with multiple SQL functions
+
+CreateProductWithFunctions @insert{
+    params {handle @string, status @string, description @string}
+    into product
+    values {
+        handle @lower($handle)
+        status @coalesce($status "draft")
+        description $description
+        created_at @now
+    }
+    returning {id, handle, status}
+}
+
+// Insert with nested function calls
+
+CreateProductNormalized @insert{
+    params {handle @string}
+    into product
+    values {
+        handle @lower(@concat("prod-" $handle))
+        status "draft"
+        created_at @now
+    }
+    returning {id, handle}
+}
+
+// Insert a product with default status
+
+CreateProductWithDefaults @insert{
+    params {handle @string}
+    into product
+    values {handle $handle, status @default, created_at @now}
+    returning {id, handle, status}
+}
+
+// Upsert a product - insert or update on conflict
+
+
+// Query with raw SQL (for complex queries not expressible in DSL)
+
+ProductStats @select{
+    returns {
+        status @string
+        count @int
+        avg_price @decimal
+        min_price @decimal
+        max_price @decimal
+    }
+    sql """
+        SELECT
+            status,
+            COUNT(*) as count,
+            AVG(price) as avg_price,
+            MIN(price) as min_price,
+            MAX(price) as max_price
+        FROM product
+        WHERE deleted_at IS NULL
+        GROUP BY status
+        ORDER BY status
+    """
+}

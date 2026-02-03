@@ -384,7 +384,7 @@ UpsertProductWithDefaults @upsert{
 // Query with raw SQL (for complex queries not expressible in DSL)
 
 ProductStats @select{
-    sql """
+    sql <<SQL,sql
         SELECT
             status,
             COUNT(*) as count,
@@ -395,7 +395,7 @@ ProductStats @select{
         WHERE deleted_at IS NULL
         GROUP BY status
         ORDER BY status
-    """
+    SQL
     returns {
         status @string
         count @int

@@ -1,5 +1,6 @@
 use super::*;
 use facet_styx::RenderError;
+use facet_testhelpers::test;
 
 /// Test that Spanned<String> works as a map key with facet-styx.
 #[test]
@@ -117,6 +118,21 @@ fn test_fixtures_queries1() {
 }
 
 #[test]
+fn test_fixtures_queries1b() {
+    let source = include_str!("./fixtures/queries1b.styx");
+    let result: Result<QueryFile, _> = facet_styx::from_str(source);
+
+    match result {
+        Ok(_where_clause) => {
+            panic!("Should NOT parse queries1b, it has triple-quotes which is not styx syntax");
+        }
+        Err(e) => {
+            eprintln!("Error as expected: {}", e.render("<test>", source));
+        }
+    }
+}
+
+#[test]
 fn test_fixtures_queries2() {
     let source = include_str!("./fixtures/queries2.styx");
     let result: Result<QueryFile, _> = facet_styx::from_str(source);
@@ -129,4 +145,76 @@ fn test_fixtures_queries2() {
             panic!("Failed to parse: {}", e.render("<test>", source));
         }
     }
+}
+
+/// Test that the QueryFile schema can be generated and parsed back (roundtrip).
+///
+/// This validates that facet-styx schema generation works correctly for types
+/// with `#[facet(other)]` variants like FilterValue::EqBare and ValueExpr::Other.
+#[test]
+fn test_query_file_schema_roundtrip() {
+    use facet_styx::SchemaFile;
+
+    // Generate the schema from the QueryFile type
+    let schema_str = facet_styx::schema_from_type::<QueryFile>();
+    eprintln!("Generated QueryFile schema:\n{schema_str}");
+
+    // Parse it back into a SchemaFile - this validates the schema is well-formed
+    let schema_file: SchemaFile = facet_styx::from_str(&schema_str)
+        .expect("Generated QueryFile schema should parse back into SchemaFile");
+
+    // Verify the schema has expected structure
+    assert!(
+        schema_file.schema.contains_key(&None),
+        "Schema should have root definition at @"
+    );
+
+    // Check key type definitions exist
+    let expected_types = [
+        "Select",
+        "Insert",
+        "Update",
+        "Delete",
+        "Upsert",
+        "Where",
+        "FilterValue",
+        "ValueExpr",
+        "Relation",
+        "Params",
+        "ParamType",
+    ];
+
+    for type_name in expected_types {
+        assert!(
+            schema_file
+                .schema
+                .contains_key(&Some(type_name.to_string())),
+            "Schema should contain {type_name} type definition. Available types: {:?}",
+            schema_file
+                .schema
+                .keys()
+                .filter_map(|k| k.as_ref())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    // Verify FilterValue is @any (because it has #[facet(other)] variant)
+    let filter_value = schema_file
+        .schema
+        .get(&Some("FilterValue".to_string()))
+        .expect("FilterValue should exist");
+    assert!(
+        matches!(filter_value, facet_styx::Schema::Any),
+        "FilterValue should be @any due to #[facet(other)] variant, got {filter_value:?}"
+    );
+
+    // Verify ValueExpr is @any (because it has #[facet(other)] variant)
+    let value_expr = schema_file
+        .schema
+        .get(&Some("ValueExpr".to_string()))
+        .expect("ValueExpr should exist");
+    assert!(
+        matches!(value_expr, facet_styx::Schema::Any),
+        "ValueExpr should be @any due to #[facet(other)] variant, got {value_expr:?}"
+    );
 }

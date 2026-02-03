@@ -1128,35 +1128,37 @@ async fn connect_and_fetch_schema(document_uri: &str) -> Result<ExtensionState, 
 
 #[cfg(test)]
 mod tests {
+    use facet_styx::SchemaFile;
+
     #[test]
-    fn test_query_field_completions_from_schema() {
+    fn test_query_schema_roundtrip() {
         // Generate schema from QueryFile type
         let schema_str = facet_styx::schema_from_type::<dibs_query_schema::QueryFile>();
 
-        // Verify the schema contains expected type definitions
-        // Note: We check the schema string directly because facet-styx round-tripping
-        // doesn't support #[facet(other)] variants with payloads (like FilterValue::EqBare)
+        // Parse it back into a SchemaFile - this validates the schema is well-formed
+        let schema_file: SchemaFile = facet_styx::from_str(&schema_str)
+            .expect("Generated schema should parse back into SchemaFile");
+
+        // Verify the schema has the expected structure
         assert!(
-            schema_str.contains("Query"),
-            "Schema should contain Query type definition"
-        );
-        assert!(
-            schema_str.contains("Relation"),
-            "Schema should contain Relation type definition"
+            schema_file.schema.contains_key(&None),
+            "Schema should have root definition"
         );
 
-        // Check that key fields are present in the schema
+        // Check that key type definitions exist
         assert!(
-            schema_str.contains("from"),
-            "Schema should contain 'from' field"
+            schema_file.schema.contains_key(&Some("Select".to_string())),
+            "Schema should contain Select type definition"
         );
         assert!(
-            schema_str.contains("where"),
-            "Schema should contain 'where' field"
+            schema_file
+                .schema
+                .contains_key(&Some("Relation".to_string())),
+            "Schema should contain Relation type definition"
         );
         assert!(
-            schema_str.contains("order-by"),
-            "Schema should contain 'order-by' field"
+            schema_file.schema.contains_key(&Some("Where".to_string())),
+            "Schema should contain Where type definition"
         );
     }
 }
