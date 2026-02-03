@@ -1084,19 +1084,21 @@ mod tests {
 
         #[derive(Facet)]
         #[allow(dead_code)]
-        struct Decl {
-            value: String,
-        }
-
-        #[derive(Facet)]
-        #[allow(dead_code)]
         struct QueryFile {
+            /// All declarations
             #[facet(flatten)]
             decls: HashMap<String, Decl>,
         }
 
+        /// A declaration
+        #[derive(Facet)]
+        #[allow(dead_code)]
+        struct Decl {
+            value: String,
+        }
+
         let schema = schema_from_type::<QueryFile>();
-        tracing::debug!("Generated schema:\n{schema}");
+        eprintln!("Generated schema:\n{schema}");
 
         // Flattened HashMap should NOT have a "decls" key
         assert!(

@@ -203,3 +203,68 @@ fn test_other_variant_nested() {
         }
     );
 }
+
+// ============================================================================
+// Round-trip tests for #[facet(other)] variants (Issue #2004)
+// ============================================================================
+//
+// These tests verify that serializing and then deserializing values with
+// #[facet(other)] variants produces the same value - i.e., round-tripping works.
+//
+// The fix changes two things:
+// 1. #[facet(other)] variants are excluded from VariantLookup
+// 2. #[facet(other)] variants serialize as untagged (just payload, no tag wrapper)
+//
+// This means EqBare("$id") should serialize as "$id", not @eq-bare"$id"
+
+use crate::from_str_expr;
+
+/// Simple enum to test serialization behavior directly
+#[derive(Facet, Debug, PartialEq)]
+#[facet(rename_all = "kebab-case")]
+#[repr(u8)]
+enum SimpleFilter {
+    Null,
+    Gt(Vec<String>),
+    #[facet(other)]
+    EqBare(Option<String>),
+}
+
+#[test]
+fn test_other_variant_serializes_untagged() {
+    // With the fix, #[facet(other)] variants should serialize untagged
+    // i.e., EqBare(Some("$id")) -> "$id", not @eq-bare"$id"
+    let value = SimpleFilter::EqBare(Some("$id".to_string()));
+    let serialized = crate::to_string_compact(&value).unwrap();
+    eprintln!("Serialized EqBare: {serialized}");
+
+    // With the fix, it should be just the string, no tag
+    // Currently (without fix), it's @eq-bare"$id"
+    // After fix, it should be just "$id"
+    assert!(
+        !serialized.contains("eq-bare"),
+        "Expected untagged serialization, but got: {serialized}"
+    );
+}
+
+#[test]
+fn test_other_variant_roundtrip_via_expr() {
+    // Test that roundtrip works for #[facet(other)] variant
+    let original = SimpleFilter::EqBare(Some("$id".to_string()));
+    let serialized = crate::to_string_compact(&original).unwrap();
+    eprintln!("Serialized: {serialized}");
+    let deserialized: SimpleFilter = from_str_expr(&serialized).unwrap();
+    assert_eq!(original, deserialized);
+}
+
+#[test]
+fn test_known_variant_still_tagged() {
+    // Known variants should still serialize with their tag
+    let value = SimpleFilter::Gt(vec!["$value".to_string()]);
+    let serialized = crate::to_string_compact(&value).unwrap();
+    eprintln!("Serialized Gt: {serialized}");
+    assert!(
+        serialized.contains("gt"),
+        "Expected tagged serialization, but got: {serialized}"
+    );
+}
