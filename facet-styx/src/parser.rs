@@ -14,7 +14,71 @@ use facet_format::{
     ParseEvent, ParseEventKind, SavePoint, ScalarTypeHint, ScalarValue,
 };
 use facet_reflect::Span as ReflectSpan;
-use styx_parse::{Event, ParseErrorKind, Parser, ScalarKind as StyxScalarKind, Span};
+use styx_parse::{Event, EventKind, ParseErrorKind, Parser, ScalarKind as StyxScalarKind, Span};
+
+mod inner {
+    use super::*;
+
+    /// Wrapper around styx-parse::Parser that converts errors to Results.
+    ///
+    /// This ensures error handling happens in ONE place instead of being scattered
+    /// across multiple match arms.
+    #[derive(Clone)]
+    pub struct InnerParser<'de> {
+        inner: Parser<'de>,
+        input: &'de str,
+    }
+
+    impl<'de> InnerParser<'de> {
+        pub fn new(input: &'de str) -> Self {
+            Self {
+                inner: Parser::new(input),
+                input,
+            }
+        }
+
+        pub fn new_expr(input: &'de str) -> Self {
+            Self {
+                inner: Parser::new_expr(input),
+                input,
+            }
+        }
+
+        pub fn input(&self) -> &'de str {
+            self.input
+        }
+
+        fn to_reflect_span(&self, span: Span) -> ReflectSpan {
+            ReflectSpan::new(span.start as usize, (span.end - span.start) as usize)
+        }
+
+        fn make_error(&self, span: Span, kind: &ParseErrorKind) -> ParseError {
+            ParseError::new(
+                self.to_reflect_span(span),
+                DeserializeErrorKind::UnexpectedToken {
+                    got: kind.to_string().into(),
+                    expected: "valid syntax",
+                },
+            )
+        }
+
+        pub fn next_event(&mut self) -> Result<Option<Event<'de>>, ParseError> {
+            let next_ev = self.inner.next_event();
+            trace!(?next_ev, "inner_wrapper");
+
+            match next_ev {
+                Some(Event {
+                    span,
+                    kind: EventKind::Error { kind },
+                }) => Err(self.make_error(span, &kind)),
+                Some(event) => Ok(Some(event)),
+                None => Ok(None),
+            }
+        }
+    }
+}
+
+use inner::InnerParser;
 
 /// Streaming Styx parser implementing FormatParser.
 ///
@@ -27,8 +91,7 @@ use styx_parse::{Event, ParseErrorKind, Parser, ScalarKind as StyxScalarKind, Sp
 /// - TooManyAtoms detection
 #[derive(Clone)]
 pub struct StyxParser<'de> {
-    input: &'de str,
-    inner: Parser<'de>,
+    inner: InnerParser<'de>,
     /// Peeked events queue (if any).
     peeked_events: Vec<ParseEvent<'de>>,
     /// Current span for error reporting.
@@ -55,8 +118,7 @@ impl<'de> StyxParser<'de> {
     /// Create a new parser for the given source (document mode).
     pub fn new(source: &'de str) -> Self {
         Self {
-            input: source,
-            inner: Parser::new(source),
+            inner: InnerParser::new(source),
             peeked_events: Vec::new(),
             current_span: None,
             complete: false,
@@ -75,8 +137,7 @@ impl<'de> StyxParser<'de> {
     /// Use this for parsing embedded values like default values in schemas.
     pub fn new_expr(source: &'de str) -> Self {
         Self {
-            input: source,
-            inner: Parser::new_expr(source),
+            inner: InnerParser::new_expr(source),
             peeked_events: Vec::new(),
             current_span: None,
             complete: false,
@@ -96,7 +157,8 @@ impl<'de> StyxParser<'de> {
 
     /// Get the text for a span.
     fn span_text(&self, span: Span) -> &'de str {
-        &self.input[span.start as usize..span.end as usize]
+        let input = self.inner.input();
+        &input[span.start as usize..span.end as usize]
     }
 
     /// Get the current span for event creation.
@@ -116,18 +178,6 @@ impl<'de> StyxParser<'de> {
         if let Some(last) = self.tag_has_payload_stack.last_mut() {
             *last = true;
         }
-    }
-
-    /// Create a parse error from a styx-parse error.
-    fn make_error(&self, span: Span, kind: &ParseErrorKind) -> ParseError {
-        let reflect_span = self.to_reflect_span(span);
-        ParseError::new(
-            reflect_span,
-            DeserializeErrorKind::UnexpectedToken {
-                got: kind.to_string().into(),
-                expected: "valid syntax",
-            },
-        )
     }
 
     /// Parse a scalar value from text into a ScalarValue.
@@ -205,7 +255,7 @@ impl<'de> StyxParser<'de> {
     fn convert_event(&mut self, event: Event<'de>) -> Result<Option<ParseEvent<'de>>, ParseError> {
         let span = event.span;
         match event.kind {
-            styx_parse::EventKind::DocumentStart => {
+            EventKind::DocumentStart => {
                 if self.at_implicit_root {
                     Ok(None)
                 } else {
@@ -214,7 +264,7 @@ impl<'de> StyxParser<'de> {
                 }
             }
 
-            styx_parse::EventKind::DocumentEnd => {
+            EventKind::DocumentEnd => {
                 if self.at_implicit_root {
                     Ok(None)
                 } else {
@@ -223,7 +273,7 @@ impl<'de> StyxParser<'de> {
                 }
             }
 
-            styx_parse::EventKind::ObjectStart => {
+            EventKind::ObjectStart => {
                 self.current_span = Some(span);
                 self.depth += 1;
                 self.mark_tag_has_payload();
@@ -232,7 +282,7 @@ impl<'de> StyxParser<'de> {
                 ))
             }
 
-            styx_parse::EventKind::ObjectEnd => {
+            EventKind::ObjectEnd => {
                 self.current_span = Some(span);
                 self.depth -= 1;
                 if self.depth == 0 {
@@ -241,7 +291,7 @@ impl<'de> StyxParser<'de> {
                 Ok(Some(self.event(ParseEventKind::StructEnd)))
             }
 
-            styx_parse::EventKind::SequenceStart => {
+            EventKind::SequenceStart => {
                 self.current_span = Some(span);
                 self.depth += 1;
                 self.mark_tag_has_payload();
@@ -250,18 +300,18 @@ impl<'de> StyxParser<'de> {
                 ))))
             }
 
-            styx_parse::EventKind::SequenceEnd => {
+            EventKind::SequenceEnd => {
                 self.current_span = Some(span);
                 self.depth -= 1;
                 Ok(Some(self.event(ParseEventKind::SequenceEnd)))
             }
 
-            styx_parse::EventKind::EntryStart | styx_parse::EventKind::EntryEnd => {
+            EventKind::EntryStart | EventKind::EntryEnd => {
                 // These are structural markers not needed by facet-format
                 Ok(None)
             }
 
-            styx_parse::EventKind::Key {
+            EventKind::Key {
                 tag,
                 payload,
                 kind: _,
@@ -303,7 +353,7 @@ impl<'de> StyxParser<'de> {
                 Ok(Some(self.event(ParseEventKind::FieldKey(field_key))))
             }
 
-            styx_parse::EventKind::Scalar { value, kind: _ } => {
+            EventKind::Scalar { value, kind: _ } => {
                 self.current_span = Some(span);
                 // Determine scalar kind from value (Parser2 already unescaped it)
                 // We need to figure out if it was bare or quoted from the raw text
@@ -326,7 +376,7 @@ impl<'de> StyxParser<'de> {
                 Ok(Some(self.event(ParseEventKind::Scalar(scalar))))
             }
 
-            styx_parse::EventKind::Unit => {
+            EventKind::Unit => {
                 self.current_span = Some(span);
                 self.mark_tag_has_payload();
 
@@ -347,7 +397,7 @@ impl<'de> StyxParser<'de> {
                 }
             }
 
-            styx_parse::EventKind::TagStart { name } => {
+            EventKind::TagStart { name } => {
                 self.current_span = Some(span);
                 // Empty name means unit tag (@), which maps to VariantTag(None)
                 let tag = if name.is_empty() { None } else { Some(name) };
@@ -357,7 +407,7 @@ impl<'de> StyxParser<'de> {
                 Ok(Some(self.event(ParseEventKind::VariantTag(tag))))
             }
 
-            styx_parse::EventKind::TagEnd => {
+            EventKind::TagEnd => {
                 // Check if this tag had a payload
                 if let Some(had_payload) = self.tag_has_payload_stack.pop()
                     && !had_payload
@@ -370,12 +420,12 @@ impl<'de> StyxParser<'de> {
                 Ok(None)
             }
 
-            styx_parse::EventKind::Comment { .. } => {
+            EventKind::Comment { .. } => {
                 // Line comments are skipped
                 Ok(None)
             }
 
-            styx_parse::EventKind::DocComment { lines } => {
+            EventKind::DocComment { lines } => {
                 self.current_span = Some(span);
                 // Buffer doc comments for the next field key
                 // Lines are already stripped of `/// ` prefix by the parser
@@ -385,9 +435,9 @@ impl<'de> StyxParser<'de> {
                 Ok(None)
             }
 
-            styx_parse::EventKind::Error { kind } => {
-                self.current_span = Some(span);
-                Err(self.make_error(span, &kind))
+            EventKind::Error { .. } => {
+                // This should never happen - InnerParser converts errors to Results
+                unreachable!("Error events should be handled by InnerParser")
             }
         }
     }
@@ -396,24 +446,24 @@ impl<'de> StyxParser<'de> {
     fn skip_schema_value(&mut self) -> Result<(), ParseError> {
         let mut depth = 0i32;
         loop {
-            let event = self.inner.next_event();
+            let event = self.inner.next_event()?;
             match event {
                 Some(Event {
-                    kind: styx_parse::EventKind::ObjectStart,
+                    kind: EventKind::ObjectStart,
                     ..
                 })
                 | Some(Event {
-                    kind: styx_parse::EventKind::SequenceStart,
+                    kind: EventKind::SequenceStart,
                     ..
                 }) => {
                     depth += 1;
                 }
                 Some(Event {
-                    kind: styx_parse::EventKind::ObjectEnd,
+                    kind: EventKind::ObjectEnd,
                     ..
                 })
                 | Some(Event {
-                    kind: styx_parse::EventKind::SequenceEnd,
+                    kind: EventKind::SequenceEnd,
                     ..
                 }) => {
                     depth -= 1;
@@ -422,11 +472,11 @@ impl<'de> StyxParser<'de> {
                     }
                 }
                 Some(Event {
-                    kind: styx_parse::EventKind::Scalar { .. },
+                    kind: EventKind::Scalar { .. },
                     ..
                 })
                 | Some(Event {
-                    kind: styx_parse::EventKind::Unit,
+                    kind: EventKind::Unit,
                     ..
                 }) => {
                     if depth == 0 {
@@ -434,13 +484,13 @@ impl<'de> StyxParser<'de> {
                     }
                 }
                 Some(Event {
-                    kind: styx_parse::EventKind::TagStart { .. },
+                    kind: EventKind::TagStart { .. },
                     ..
                 }) => {
                     // Tag followed by payload - continue
                 }
                 Some(Event {
-                    kind: styx_parse::EventKind::TagEnd,
+                    kind: EventKind::TagEnd,
                     ..
                 }) => {
                     // After tag end, the payload should follow
@@ -449,31 +499,19 @@ impl<'de> StyxParser<'de> {
                     }
                 }
                 Some(Event {
-                    kind: styx_parse::EventKind::EntryStart,
+                    kind: EventKind::EntryStart,
                     ..
-                })
-                | Some(Event {
-                    kind: styx_parse::EventKind::EntryEnd,
+                }) => {
+                    // Continue
+                }
+                Some(Event {
+                    kind: EventKind::EntryEnd,
                     ..
                 }) => {
                     if depth == 0 {
                         // EntryEnd marks end of the @schema entry
-                        if matches!(
-                            event,
-                            Some(Event {
-                                kind: styx_parse::EventKind::EntryEnd,
-                                ..
-                            })
-                        ) {
-                            break;
-                        }
+                        break;
                     }
-                }
-                Some(Event {
-                    span,
-                    kind: styx_parse::EventKind::Error { kind },
-                }) => {
-                    return Err(self.make_error(span, &kind));
                 }
                 Some(_) => {
                     // Continue
@@ -501,9 +539,7 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
 
         // Get events from inner parser until we have one to return
         loop {
-            let event = self.inner.next_event();
-
-            match event {
+            match self.inner.next_event()? {
                 Some(inner_event) => {
                     trace!(?inner_event);
                     if let Some(converted_event) = self.convert_event(inner_event)? {
@@ -592,7 +628,7 @@ impl<'de> FormatParser<'de> for StyxParser<'de> {
     }
 
     fn input(&self) -> Option<&'de [u8]> {
-        Some(self.input.as_bytes())
+        Some(self.inner.input().as_bytes())
     }
 
     fn hint_scalar_type(&mut self, hint: ScalarTypeHint) {

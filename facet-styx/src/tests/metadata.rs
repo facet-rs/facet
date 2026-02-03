@@ -825,6 +825,6 @@ fn test_parse_schema_declaration() {
         r#"
 @schema blah
 "#,
-        |t, d: QueryFile| {},
+        |_t, _d: QueryFile| {},
     );
 }

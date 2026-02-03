@@ -4,6 +4,7 @@ use std::borrow::Cow;
 use std::collections::{HashMap, VecDeque};
 
 use styx_tokenizer::Span;
+use tracing::trace;
 
 use crate::events::{EventKind, ParseErrorKind, ScalarKind};
 use crate::{Event, Lexeme, Lexer};
@@ -108,13 +109,20 @@ impl<'src> Parser<'src> {
 
     /// Get the next event from the parser.
     pub fn next_event(&mut self) -> Option<Event<'src>> {
+        trace!(
+            queue_len = self.event_queue.len(),
+            "styx-parse next_event called"
+        );
         // Drain queue first
         if let Some(event) = self.event_queue.pop_front() {
+            trace!(?event, "styx-parse returning queued event");
             return Some(event);
         }
 
         // Advance state machine
-        self.advance()
+        let event = self.advance();
+        trace!(?event, "styx-parse returning from advance");
+        event
     }
 
     /// Parse all events into a vector.
