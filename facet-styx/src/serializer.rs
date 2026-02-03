@@ -388,6 +388,15 @@ impl FormatSerializer for StyxSerializer {
         Ok(())
     }
 
+    fn finish_variant_tag_unit_payload(&mut self) -> Result<(), Self::Error> {
+        trace!("finish_variant_tag_unit_payload");
+        // Clear the flags that were set by write_variant_tag, since no payload follows.
+        // This ensures the next value gets proper spacing.
+        self.just_wrote_tag = false;
+        self.writer.clear_skip_before_value();
+        Ok(())
+    }
+
     fn raw_serialize_shape(&self) -> Option<&'static facet_core::Shape> {
         Some(crate::RawStyx::SHAPE)
     }

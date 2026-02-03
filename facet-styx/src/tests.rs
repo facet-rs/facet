@@ -697,3 +697,34 @@ fn test_bare_number_is_string() {
     let result: Config = from_str(input).unwrap();
     assert_eq!(result.port, "8080");
 }
+
+/// Test that @map(@TypeRef @optional(@OtherType)) has proper spacing between type references.
+/// This is a regression test for a bug where type references (via #[facet(other)] variants)
+/// didn't get proper spacing when serialized in maps.
+#[test]
+fn test_map_type_ref_spacing() {
+    use crate::schema_types::{Documented, MapSchema, OptionalSchema, Schema};
+
+    // Create a map with a type reference key and optional type reference value
+    // This mimics: IndexMap<ColumnName, Option<FieldDef>> -> @map(@ColumnName @optional(@FieldDef))
+    let map_schema = Schema::Map(MapSchema(vec![
+        Documented::new(Schema::Type {
+            name: Some("ColumnName".to_string()),
+        }),
+        Documented::new(Schema::Optional(OptionalSchema((Documented::new(
+            Box::new(Schema::Type {
+                name: Some("FieldDef".to_string()),
+            }),
+        ),)))),
+    ]));
+
+    let output = to_string(&map_schema).unwrap();
+    eprintln!("Output: {}", output);
+
+    // Check that there's a space between @ColumnName and @optional
+    assert!(
+        output.contains("@ColumnName @optional"),
+        "Expected space between @ColumnName and @optional, got: {}",
+        output
+    );
+}
