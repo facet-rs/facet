@@ -1,7 +1,6 @@
 //! Debug script for issue 2010
 
 use facet::Facet;
-use facet_testhelpers::test;
 use std::collections::HashMap;
 
 #[derive(Clone, Debug, Facet, PartialEq)]
