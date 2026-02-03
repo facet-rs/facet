@@ -1681,10 +1681,16 @@ impl TypePlanBuilder {
     }
 
     /// Build a variant lookup from variant metadata.
+    ///
+    /// Note: `#[facet(other)]` variants are excluded from the lookup because they
+    /// should only be used as a fallback when no other variant matches. Including
+    /// them would cause serialized `#[facet(other)]` values to deserialize via
+    /// the normal path instead of the fallback path.
     fn build_variant_lookup(&self, variants: &[VariantPlanMeta]) -> VariantLookup {
         let entries: Vec<_> = variants
             .iter()
             .enumerate()
+            .filter(|(_, v)| !v.variant.is_other())
             .map(|(i, v)| (v.name, i))
             .collect();
 

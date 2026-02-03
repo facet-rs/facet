@@ -10,6 +10,7 @@ mod issue_1852;
 mod issue_1896;
 mod issue_1900;
 mod issue_1904;
+mod issue_2004;
 mod issue_2007;
 mod jit_deserialize;
 mod metadata_container_flatten_map;

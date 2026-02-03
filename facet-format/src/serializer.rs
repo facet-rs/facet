@@ -1143,6 +1143,21 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
             return result;
         }
 
+        // #[facet(other)] variants serialize as untagged UNLESS they have a #[facet(tag)] field.
+        // When a tag field is present, the captured tag value should be serialized via
+        // serialize_externally_tagged_enum, which knows how to extract and use that value.
+        if variant.is_other() {
+            let has_tag_field = variant.data.fields.iter().any(|f| f.is_variant_tag());
+            if !has_tag_field {
+                self.push(PathSegment::Variant(Cow::Borrowed(
+                    variant.effective_name(),
+                )));
+                let result = self.serialize_untagged_enum(enum_, variant);
+                self.pop();
+                return result;
+            }
+        }
+
         match (tag, content) {
             (Some(tag_key), None) => {
                 // Internally tagged

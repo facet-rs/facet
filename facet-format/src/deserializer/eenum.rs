@@ -167,13 +167,14 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                     .iter()
                     .any(|f| f.is_variant_content());
 
+                // Use select_nth_variant since #[facet(other)] variants are excluded from variant_lookup
                 if has_tag_field || has_content_field {
-                    wip = wip.select_variant_named(other_variant.effective_name())?;
+                    wip = wip.select_nth_variant(other_idx)?;
                     wip = self.deserialize_other_variant_with_captured_tag(wip, None)?;
                 } else {
                     // Don't consume the event - let deserialize_into handle it properly
                     // This ensures metadata containers like Meta<String> work correctly
-                    wip = wip.select_variant_named(other_variant.effective_name())?;
+                    wip = wip.select_nth_variant(other_idx)?;
                     // Don't consume the event - let deserialize_into handle it properly.
                     // This ensures metadata containers like Meta<String> work correctly
                     // by reading metadata fresh from the unconsumed event.
@@ -202,23 +203,21 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             self.expect_event("value")?; // consume VariantTag
 
             let shape = wip.shape();
-            let enum_def = match &shape.ty {
-                Type::User(UserType::Enum(e)) => e,
-                _ => {
-                    return Err(self.mk_err(
-                        &wip,
-                        DeserializeErrorKind::TypeMismatch {
-                            expected: shape,
-                            got: "non-enum type".into(),
-                        },
-                    ));
-                }
-            };
+            // Verify this is an enum type
+            if !matches!(&shape.ty, Type::User(UserType::Enum(_))) {
+                return Err(self.mk_err(
+                    &wip,
+                    DeserializeErrorKind::TypeMismatch {
+                        expected: shape,
+                        got: "non-enum type".into(),
+                    },
+                ));
+            }
 
             // Use precomputed lookups from EnumPlan
             let enum_plan = wip.enum_plan().unwrap();
 
-            let (variant_name, is_using_other_fallback) = match tag_name {
+            let (variant_idx, is_using_other_fallback) = match tag_name {
                 Some(name) => {
                     // Use VariantLookup for fast lookup
                     let found_idx = enum_plan.variant_lookup.find(name);
@@ -234,7 +233,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                                 },
                             }
                         })?;
-                    (enum_def.variants[variant_idx].effective_name(), is_fallback)
+                    (variant_idx, is_fallback)
                 }
                 None => {
                     // Use precomputed other_variant_idx
@@ -249,12 +248,13 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                                     got: "@".into(),
                                 },
                             })?;
-                    (enum_def.variants[variant_idx].effective_name(), true)
+                    (variant_idx, true)
                 }
             };
 
-            let actual_variant = cow_redirect_variant_name::<BORROW>(enum_def, variant_name);
-            wip = wip.select_variant_named(actual_variant)?;
+            // Use select_nth_variant to handle #[facet(other)] variants which are
+            // excluded from variant_lookup (they should only be used as fallbacks)
+            wip = wip.select_nth_variant(variant_idx)?;
 
             if is_using_other_fallback {
                 wip = self.deserialize_other_variant_with_captured_tag(wip, tag_name)?;
@@ -304,18 +304,16 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         };
 
         let shape = wip.shape();
-        let enum_def = match &shape.ty {
-            Type::User(UserType::Enum(e)) => e,
-            _ => {
-                return Err(self.mk_err(
-                    &wip,
-                    DeserializeErrorKind::TypeMismatch {
-                        expected: shape,
-                        got: "non-enum type".into(),
-                    },
-                ));
-            }
-        };
+        // Verify this is an enum type
+        if !matches!(&shape.ty, Type::User(UserType::Enum(_))) {
+            return Err(self.mk_err(
+                &wip,
+                DeserializeErrorKind::TypeMismatch {
+                    expected: shape,
+                    got: "non-enum type".into(),
+                },
+            ));
+        }
         // Use precomputed lookups from EnumPlan
         let enum_plan = wip.enum_plan().unwrap();
         let found_idx = enum_plan.variant_lookup.find(&field_key_name);
@@ -331,10 +329,10 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                         got: field_key_name.to_string().into(),
                     },
                 })?;
-        let variant_name = enum_def.variants[variant_idx].effective_name();
 
-        let actual_variant = cow_redirect_variant_name::<BORROW>(enum_def, variant_name);
-        wip = wip.select_variant_named(actual_variant)?;
+        // Use select_nth_variant to handle #[facet(other)] variants which are
+        // excluded from variant_lookup (they should only be used as fallbacks)
+        wip = wip.select_nth_variant(variant_idx)?;
 
         // For #[facet(other)] fallback variants, if the content is Unit, use the field key name as the value
         if is_using_other_fallback {
