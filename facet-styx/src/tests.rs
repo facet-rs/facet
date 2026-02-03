@@ -728,3 +728,110 @@ fn test_map_type_ref_spacing() {
         output
     );
 }
+
+/// Test that metadata containers with non-optional Span field work.
+/// This is a regression test for issue #53 where Meta<String> with
+/// `span: Span` (not Option<Span>) failed with "missing field `span`".
+#[test]
+fn test_metadata_container_non_optional_span() {
+    use facet_reflect::Span;
+
+    #[derive(Debug, Facet)]
+    #[facet(metadata_container)]
+    struct Meta<T> {
+        pub value: T,
+        #[facet(metadata = "span")]
+        pub span: Span,
+    }
+
+    #[derive(Debug, Facet)]
+    struct Config {
+        name: Meta<String>,
+    }
+
+    let source = r#"{name "hello"}"#;
+    let result: Result<Config, _> = from_str(source);
+    match result {
+        Ok(config) => {
+            eprintln!("Success: {:?}", config);
+            assert_eq!(config.name.value, "hello");
+            // Span should cover the "hello" string (offset 6, len 7 including quotes)
+            assert_eq!(config.name.span.offset, 6);
+            assert_eq!(config.name.span.len, 7);
+        }
+        Err(e) => {
+            panic!("Failed to parse: {}", e.render("<test>", source));
+        }
+    }
+}
+
+/// Test that metadata containers with non-optional Span work as map keys.
+/// This is a more specific test for issue #53 where Meta<String> as a
+/// flattened map key might fail.
+#[test]
+fn test_metadata_container_as_map_key() {
+    use facet_reflect::Span;
+    use indexmap::IndexMap;
+
+    #[derive(Debug, Facet)]
+    #[facet(metadata_container)]
+    struct Meta<T> {
+        pub value: T,
+        #[facet(metadata = "span")]
+        pub span: Span,
+    }
+
+    impl<T: PartialEq> PartialEq for Meta<T> {
+        fn eq(&self, other: &Self) -> bool {
+            self.value == other.value
+        }
+    }
+    impl<T: Eq> Eq for Meta<T> {}
+    impl<T: std::hash::Hash> std::hash::Hash for Meta<T> {
+        fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+            self.value.hash(state);
+        }
+    }
+
+    #[derive(Debug, Facet)]
+    struct QueryFile {
+        #[facet(flatten)]
+        queries: IndexMap<Meta<String>, Decl>,
+    }
+
+    #[derive(Debug, Facet)]
+    #[facet(rename_all = "lowercase")]
+    #[repr(u8)]
+    enum Decl {
+        Select(Select),
+    }
+
+    #[derive(Debug, Facet)]
+    struct Select {
+        from: String,
+    }
+
+    let source = r#"{
+        GetUsers @select{from users}
+        GetPosts @select{from posts}
+    }"#;
+
+    let result: Result<QueryFile, _> = from_str(source);
+    match result {
+        Ok(file) => {
+            eprintln!("Success: {:?}", file);
+            assert_eq!(file.queries.len(), 2);
+
+            let keys: Vec<_> = file.queries.keys().collect();
+            assert_eq!(keys[0].value, "GetUsers");
+            assert_eq!(keys[1].value, "GetPosts");
+
+            // Check that spans were captured
+            eprintln!("GetUsers span: {:?}", keys[0].span);
+            eprintln!("GetPosts span: {:?}", keys[1].span);
+        }
+        Err(e) => {
+            panic!("Failed to parse: {}", e.render("<test>", source));
+        }
+    }
+}
