@@ -952,25 +952,59 @@ impl StyxLspExtension for DibsExtension {
     async fn code_actions(&self, _cx: &roam::Context, params: CodeActionParams) -> Vec<CodeAction> {
         let mut actions = Vec::new();
 
+        debug!(
+            diagnostics_count = params.diagnostics.len(),
+            "code_actions request"
+        );
+
         // Offer quick fixes for diagnostics at this range
         for diag in &params.diagnostics {
             if diag.code.as_deref() == Some("redundant-param") {
-                // Get the column name from diagnostic data
-                if let Some(name) = diag.data.as_ref().and_then(|v| v.as_str()) {
-                    actions.push(CodeAction {
-                        title: format!("Shorten to '{}'", name),
-                        kind: Some(CodeActionKind::QuickFix),
-                        edit: Some(WorkspaceEdit {
-                            changes: vec![DocumentEdit {
-                                uri: params.document_uri.clone(),
-                                edits: vec![TextEdit {
-                                    span: diag.span,
-                                    new_text: String::new(), // Just delete the $param part
+                // Parse the diagnostic data object: {name "col", delete_start 123, delete_end 456}
+                if let Some(data) = &diag.data
+                    && let Some(obj) = data.as_object()
+                {
+                    let name = obj
+                        .entries
+                        .iter()
+                        .find(|e| e.key.as_str() == Some("name"))
+                        .and_then(|e| e.value.as_str());
+                    let delete_start = obj
+                        .entries
+                        .iter()
+                        .find(|e| e.key.as_str() == Some("delete_start"))
+                        .and_then(|e| e.value.as_str())
+                        .and_then(|s| s.parse::<u32>().ok());
+                    let delete_end = obj
+                        .entries
+                        .iter()
+                        .find(|e| e.key.as_str() == Some("delete_end"))
+                        .and_then(|e| e.value.as_str())
+                        .and_then(|s| s.parse::<u32>().ok());
+
+                    debug!(
+                        ?name,
+                        ?delete_start,
+                        ?delete_end,
+                        "redundant-param diagnostic data"
+                    );
+
+                    if let (Some(name), Some(start), Some(end)) = (name, delete_start, delete_end) {
+                        actions.push(CodeAction {
+                            title: format!("Shorten to '{}'", name),
+                            kind: Some(CodeActionKind::QuickFix),
+                            edit: Some(WorkspaceEdit {
+                                changes: vec![DocumentEdit {
+                                    uri: params.document_uri.clone(),
+                                    edits: vec![TextEdit {
+                                        span: styx_tree::Span { start, end },
+                                        new_text: String::new(),
+                                    }],
                                 }],
-                            }],
-                        }),
-                        is_preferred: true,
-                    });
+                            }),
+                            is_preferred: true,
+                        });
+                    }
                 }
             }
         }
@@ -1159,6 +1193,311 @@ mod tests {
         assert!(
             schema_file.schema.contains_key(&Some("Where".to_string())),
             "Schema should contain Where type definition"
+        );
+    }
+
+    /// Test that diagnostic data survives the JSON round-trip that happens in LSP.
+    ///
+    /// The flow is:
+    /// 1. Extension creates diagnostic with `data: Some(Value::scalar("email"))`
+    /// 2. styx-lsp converts to JSON when sending to client
+    /// 3. Client sends diagnostic back in CodeActionContext
+    /// 4. styx-lsp converts JSON back to styx_tree::Value
+    /// 5. Extension calls `data.as_ref().and_then(|v| v.as_str())`
+    ///
+    /// This test verifies the conversion functions preserve string scalars.
+    #[test]
+    fn test_diagnostic_data_json_roundtrip() {
+        use styx_tree::{Entry, Object, Payload, Scalar, ScalarKind, Sequence, Value};
+
+        // Helper functions copied from styx-lsp to test the exact round-trip
+        fn convert_styx_value_to_json(value: &Value) -> serde_json::Value {
+            // Check for scalar
+            if let Some(s) = value.as_str() {
+                return serde_json::Value::String(s.to_string());
+            }
+
+            // Check for object
+            if let Some(Payload::Object(obj)) = &value.payload {
+                let mut map = serde_json::Map::new();
+                for entry in &obj.entries {
+                    if let Some(key) = entry.key.as_str() {
+                        map.insert(key.to_string(), convert_styx_value_to_json(&entry.value));
+                    }
+                }
+                return serde_json::Value::Object(map);
+            }
+
+            // Check for sequence
+            if let Some(Payload::Sequence(seq)) = &value.payload {
+                let arr: Vec<_> = seq.items.iter().map(convert_styx_value_to_json).collect();
+                return serde_json::Value::Array(arr);
+            }
+
+            // Fallback to null
+            serde_json::Value::Null
+        }
+
+        fn json_to_styx_value(json: &serde_json::Value) -> Value {
+            match json {
+                serde_json::Value::Null => Value::unit(),
+
+                serde_json::Value::Bool(b) => Value {
+                    tag: None,
+                    payload: Some(Payload::Scalar(Scalar {
+                        text: b.to_string(),
+                        kind: ScalarKind::Bare,
+                        span: None,
+                    })),
+                    span: None,
+                },
+
+                serde_json::Value::Number(n) => Value {
+                    tag: None,
+                    payload: Some(Payload::Scalar(Scalar {
+                        text: n.to_string(),
+                        kind: ScalarKind::Bare,
+                        span: None,
+                    })),
+                    span: None,
+                },
+
+                serde_json::Value::String(s) => Value {
+                    tag: None,
+                    payload: Some(Payload::Scalar(Scalar {
+                        text: s.clone(),
+                        kind: ScalarKind::Bare,
+                        span: None,
+                    })),
+                    span: None,
+                },
+
+                serde_json::Value::Array(arr) => {
+                    let items = arr.iter().map(json_to_styx_value).collect();
+                    Value {
+                        tag: None,
+                        payload: Some(Payload::Sequence(Sequence { items, span: None })),
+                        span: None,
+                    }
+                }
+
+                serde_json::Value::Object(obj) => {
+                    let entries = obj
+                        .iter()
+                        .map(|(k, v)| Entry {
+                            key: Value {
+                                tag: None,
+                                payload: Some(Payload::Scalar(Scalar {
+                                    text: k.clone(),
+                                    kind: ScalarKind::Bare,
+                                    span: None,
+                                })),
+                                span: None,
+                            },
+                            value: json_to_styx_value(v),
+                            doc_comment: None,
+                        })
+                        .collect();
+                    Value {
+                        tag: None,
+                        payload: Some(Payload::Object(Object {
+                            entries,
+                            span: None,
+                        })),
+                        span: None,
+                    }
+                }
+            }
+        }
+
+        // Test 1: Simple scalar string (what we use for redundant-param)
+        let original = Value::scalar("email");
+        let json = convert_styx_value_to_json(&original);
+        assert_eq!(json, serde_json::Value::String("email".to_string()));
+
+        let round_tripped = json_to_styx_value(&json);
+        assert_eq!(
+            round_tripped.as_str(),
+            Some("email"),
+            "String scalar should survive JSON round-trip"
+        );
+
+        // Test 2: Simulate the exact path through serde_json serialization/deserialization
+        // (what happens over the wire)
+        let json_string = serde_json::to_string(&json).unwrap();
+        let json_parsed: serde_json::Value = serde_json::from_str(&json_string).unwrap();
+        let round_tripped_wire = json_to_styx_value(&json_parsed);
+        assert_eq!(
+            round_tripped_wire.as_str(),
+            Some("email"),
+            "String scalar should survive wire round-trip"
+        );
+
+        // Test 3: Object with string value (alternative approach)
+        let obj_original = Value {
+            tag: None,
+            payload: Some(Payload::Object(Object {
+                entries: vec![Entry {
+                    key: Value::scalar("name"),
+                    value: Value::scalar("email"),
+                    doc_comment: None,
+                }],
+                span: None,
+            })),
+            span: None,
+        };
+
+        let obj_json = convert_styx_value_to_json(&obj_original);
+        let obj_json_string = serde_json::to_string(&obj_json).unwrap();
+        let obj_json_parsed: serde_json::Value = serde_json::from_str(&obj_json_string).unwrap();
+        let obj_round_tripped = json_to_styx_value(&obj_json_parsed);
+
+        if let Some(Payload::Object(obj)) = &obj_round_tripped.payload {
+            let name_entry = obj.entries.iter().find(|e| e.key.as_str() == Some("name"));
+            assert!(name_entry.is_some(), "Object should have 'name' entry");
+            assert_eq!(
+                name_entry.unwrap().value.as_str(),
+                Some("email"),
+                "Nested string should survive round-trip"
+            );
+        } else {
+            panic!("Expected object payload after round-trip");
+        }
+    }
+
+    /// Test the complete LSP diagnostic round-trip, as it happens in real usage.
+    ///
+    /// This tests the full flow:
+    /// 1. Extension creates diagnostic with styx_tree::Value data
+    /// 2. styx-lsp converts to lsp_types::Diagnostic (styx Value → serde_json::Value)
+    /// 3. LSP serializes to JSON for wire transmission
+    /// 4. Client deserializes (simulated)
+    /// 5. Client sends back in CodeActionContext (serializes again)
+    /// 6. styx-lsp deserializes and converts back (serde_json::Value → styx Value)
+    /// 7. Extension accesses data.as_str()
+    #[test]
+    fn test_full_lsp_diagnostic_roundtrip() {
+        use lsp_types::{Diagnostic, DiagnosticSeverity, NumberOrString, Position, Range};
+
+        // Step 1: Create extension diagnostic with data
+        let ext_data = styx_tree::Value::scalar("email");
+
+        // Step 2: Convert styx Value to JSON (as styx-lsp does)
+        fn convert_styx_value_to_json(value: &styx_tree::Value) -> serde_json::Value {
+            if let Some(s) = value.as_str() {
+                return serde_json::Value::String(s.to_string());
+            }
+            serde_json::Value::Null
+        }
+
+        let json_data = convert_styx_value_to_json(&ext_data);
+
+        // Create LSP diagnostic with the JSON data
+        let lsp_diagnostic = Diagnostic {
+            range: Range {
+                start: Position::new(0, 0),
+                end: Position::new(0, 10),
+            },
+            severity: Some(DiagnosticSeverity::WARNING),
+            code: Some(NumberOrString::String("redundant-param".to_string())),
+            code_description: None,
+            source: Some("dibs".to_string()),
+            message: "Test diagnostic".to_string(),
+            related_information: None,
+            tags: None,
+            data: Some(json_data),
+        };
+
+        // Step 3: LSP serializes for wire transmission
+        let wire_json = serde_json::to_string(&lsp_diagnostic).unwrap();
+        eprintln!("Wire JSON: {}", wire_json);
+
+        // Step 4: Client deserializes (simulated)
+        // The client might be VS Code, Zed, etc.
+        let client_received: serde_json::Value = serde_json::from_str(&wire_json).unwrap();
+        eprintln!("Client received: {:?}", client_received);
+
+        // Verify the data field is present in the raw JSON
+        let data_field = client_received.get("data");
+        assert!(
+            data_field.is_some(),
+            "Data field should be present in wire JSON"
+        );
+        assert_eq!(
+            data_field.unwrap().as_str(),
+            Some("email"),
+            "Data should be the string 'email'"
+        );
+
+        // Step 5: Client sends back in CodeActionContext (serialize again)
+        // The client includes the diagnostic in context.diagnostics
+        let client_sends_back = serde_json::to_string(&client_received).unwrap();
+
+        // Step 6: styx-lsp deserializes (back to lsp_types::Diagnostic)
+        let received_diagnostic: Diagnostic = serde_json::from_str(&client_sends_back).unwrap();
+
+        // Verify data is present
+        assert!(
+            received_diagnostic.data.is_some(),
+            "Received diagnostic should have data field"
+        );
+
+        // Step 7: Convert back to styx Value (as styx-lsp does)
+        fn json_to_styx_value(json: &serde_json::Value) -> styx_tree::Value {
+            use styx_tree::{Payload, Scalar, ScalarKind, Value};
+            match json {
+                serde_json::Value::String(s) => Value {
+                    tag: None,
+                    payload: Some(Payload::Scalar(Scalar {
+                        text: s.clone(),
+                        kind: ScalarKind::Bare,
+                        span: None,
+                    })),
+                    span: None,
+                },
+                _ => Value::unit(),
+            }
+        }
+
+        let restored_data = json_to_styx_value(received_diagnostic.data.as_ref().unwrap());
+
+        // Verify we can access it the same way the extension does
+        let final_value = restored_data.as_str();
+        assert_eq!(
+            final_value,
+            Some("email"),
+            "Data should survive full LSP round-trip and be accessible via as_str()"
+        );
+    }
+
+    /// Test that simulates what happens when a client DOESN'T preserve the data field.
+    /// This would cause the code action to fail.
+    #[test]
+    fn test_diagnostic_without_data_field() {
+        use lsp_types::Diagnostic;
+
+        // Simulate a client that strips the data field
+        let json_without_data = r#"{
+            "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 10}},
+            "severity": 2,
+            "code": "redundant-param",
+            "source": "dibs",
+            "message": "Test diagnostic"
+        }"#;
+
+        let diagnostic: Diagnostic = serde_json::from_str(json_without_data).unwrap();
+
+        // Data should be None
+        assert!(
+            diagnostic.data.is_none(),
+            "Diagnostic without data field should deserialize with data = None"
+        );
+
+        // This is what happens in the extension - no code action can be generated
+        let column_name = diagnostic.data.as_ref().and_then(|v| v.as_str());
+        assert_eq!(
+            column_name, None,
+            "Without data, we can't get the column name"
         );
     }
 }
