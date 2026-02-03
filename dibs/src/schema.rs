@@ -116,7 +116,7 @@ pub fn create_table_sql(table: &Table) -> String {
 /// Generate CREATE INDEX SQL statement for a given index.
 pub fn create_index_sql(table: &Table, idx: &Index) -> String {
     let unique = if idx.unique { "UNIQUE " } else { "" };
-    let quoted_cols: Vec<_> = idx.columns.iter().map(|c| index_column_to_sql(c)).collect();
+    let quoted_cols: Vec<_> = idx.columns.iter().map(index_column_to_sql).collect();
     let where_clause = idx
         .where_clause
         .as_ref()

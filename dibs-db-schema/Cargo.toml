@@ -17,8 +17,6 @@ chrono.workspace = true
 dibs-jsonb = { version = "0.1.0", path = "../dibs-jsonb" }
 dibs-sql = { version = "0.1.0", path = "../dibs-sql" }
 facet = { workspace = true, features = ["uuid", "chrono", "rust_decimal", "jiff02"] }
-# could shed this dep if we put the `Jsonb` type elsewhere but shrug
-facet-tokio-postgres.workspace = true
 indexmap.workspace = true
 inventory.workspace = true
 jiff.workspace = true

@@ -21,15 +21,20 @@ pub(crate) use planner::{QueryPlan, QueryPlanner};
 mod sqlgen;
 pub use sqlgen::{
     GeneratedDelete, GeneratedInsert, GeneratedInsertMany, GeneratedSelect, GeneratedUpdate,
-    GeneratedUpsert, GeneratedUpsertMany, generate_delete_sql, generate_insert_many_sql,
-    generate_insert_sql, generate_select_sql, generate_update_sql, generate_upsert_many_sql,
-    generate_upsert_sql,
+    GeneratedUpsert, GeneratedUpsertMany, SqlGenContext, generate_delete_sql,
+    generate_insert_many_sql, generate_insert_sql, generate_select_sql, generate_update_sql,
+    generate_upsert_many_sql, generate_upsert_sql,
 };
 
 // Rust code generation
 mod rustgen;
 pub use rustgen::{GeneratedCode, generate_rust_code};
 
-// Filter argument parsing
+// Filter argument parsing and validation
 mod filter_spec;
-pub use filter_spec::FilterArg;
+pub use filter_spec::{
+    ArgSpec, CONTAINS_SPEC, EQ_BARE_SPEC, EQ_SPEC, FilterArg, FunctionSpec, GT_SPEC, GTE_SPEC,
+    ILIKE_SPEC, IN_SPEC, JSON_GET_SPEC, JSON_GET_TEXT_SPEC, KEY_EXISTS_SPEC, LIKE_SPEC, LT_SPEC,
+    LTE_SPEC, NE_SPEC, validate_filter, validate_query_file, validate_relation_where,
+    validate_where,
+};

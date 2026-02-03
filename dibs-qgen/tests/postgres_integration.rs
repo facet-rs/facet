@@ -12,16 +12,18 @@
 use camino::Utf8Path;
 use dibs_db_schema::{Column, ForeignKey, PgType, Schema, SourceLocation, Table};
 use dibs_qgen::{
-    Decl, QueryFile, Select, generate_rust_code, generate_select_sql, parse_query_file,
+    Decl, QSource, QueryFile, Select, SqlGenContext, generate_rust_code, generate_select_sql,
+    parse_query_file,
 };
 use dockside::{Container, containers};
 use indexmap::IndexMap;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio_postgres::{Client, NoTls, Row};
 
 /// Helper to parse a query file from a string source
-fn parse_test_query(source: &str) -> QueryFile {
+fn parse_test_query(source: &str) -> (QueryFile, Arc<QSource>) {
     parse_query_file(Utf8Path::new("<test>"), source).unwrap()
 }
 
@@ -435,7 +437,7 @@ AllProducts @select{
   fields { id, handle, status }
 }
 "#;
-    let file = parse_test_query(source);
+    let (file, _qsource) = parse_test_query(source);
     let _query = first_select(&file);
 
     // Generate SQL
@@ -474,11 +476,12 @@ ProductWithTranslation @select{
   }
 }
 "#;
-    let file = parse_test_query(source);
+    let (file, qsource) = parse_test_query(source);
     let query = first_select(&file);
 
     // Generate SQL with JOINs
-    let generated = generate_select_sql(query, &schema).unwrap();
+    let ctx = SqlGenContext::new(&schema, qsource);
+    let generated = generate_select_sql(&ctx, query).unwrap();
     tracing::info!("Generated SQL: {}", generated.sql);
 
     let rows: Vec<Row> = client.query(&generated.sql, &[]).await.unwrap();
@@ -522,11 +525,12 @@ ProductWithVariants @select{
   }
 }
 "#;
-    let file = parse_test_query(source);
+    let (file, qsource) = parse_test_query(source);
     let query = first_select(&file);
 
     // Generate SQL with JOINs
-    let generated = generate_select_sql(query, &schema).unwrap();
+    let ctx = SqlGenContext::new(&schema, qsource.clone());
+    let generated = generate_select_sql(&ctx, query).unwrap();
     tracing::info!("Generated SQL: {}", generated.sql);
 
     let rows: Vec<Row> = client.query(&generated.sql, &[]).await.unwrap();
@@ -569,7 +573,7 @@ ProductWithVariants @select{
     assert_eq!(gizmo.1.len(), 0, "Gizmo should have 0 variants");
 
     // Also verify the generated Rust code looks correct
-    let code = generate_rust_code(&file, &schema);
+    let code = generate_rust_code(&file, &schema, qsource).unwrap();
     tracing::info!("Generated code:\n{}", code.code);
 
     assert!(
@@ -611,11 +615,12 @@ ProductByHandle @select{
   }
 }
 "#;
-    let file = parse_test_query(source);
+    let (file, qsource) = parse_test_query(source);
     let query = first_select(&file);
 
     // Generate SQL with JOINs
-    let generated = generate_select_sql(query, &schema).unwrap();
+    let ctx = SqlGenContext::new(&schema, qsource);
+    let generated = generate_select_sql(&ctx, query).unwrap();
     tracing::info!("Generated SQL: {}", generated.sql);
 
     // Query for widget
@@ -665,11 +670,12 @@ ProductWithVariantCount @select{
   }
 }
 "#;
-    let file = parse_test_query(source);
+    let (file, qsource) = parse_test_query(source);
     let query = first_select(&file);
 
     // Generate SQL
-    let generated = generate_select_sql(query, &schema).unwrap();
+    let ctx = SqlGenContext::new(&schema, qsource);
+    let generated = generate_select_sql(&ctx, query).unwrap();
     tracing::info!("Generated SQL: {}", generated.sql);
 
     let rows: Vec<Row> = client.query(&generated.sql, &[]).await.unwrap();
@@ -729,10 +735,11 @@ ProductWithEnglishTranslation @select{
   }
 }
 "#;
-    let file = parse_test_query(source);
+    let (file, qsource) = parse_test_query(source);
     let query = first_select(&file);
 
-    let generated = generate_select_sql(query, &schema).unwrap();
+    let ctx = SqlGenContext::new(&schema, qsource);
+    let generated = generate_select_sql(&ctx, query).unwrap();
     tracing::info!("Generated SQL: {}", generated.sql);
 
     // Verify the SQL contains the relation filter in ON clause
@@ -805,10 +812,11 @@ ProductWithTranslationByLocale @select{
   }
 }
 "#;
-    let file = parse_test_query(source);
+    let (file, qsource) = parse_test_query(source);
     let query = first_select(&file);
 
-    let generated = generate_select_sql(query, &schema).unwrap();
+    let ctx = SqlGenContext::new(&schema, qsource);
+    let generated = generate_select_sql(&ctx, query).unwrap();
     tracing::info!("Generated SQL: {}", generated.sql);
 
     // Verify the SQL contains the relation filter with param placeholder
@@ -874,10 +882,11 @@ ActiveProductWithTranslation @select{
   }
 }
 "#;
-    let file = parse_test_query(source);
+    let (file, qsource) = parse_test_query(source);
     let query = first_select(&file);
 
-    let generated = generate_select_sql(query, &schema).unwrap();
+    let ctx = SqlGenContext::new(&schema, qsource);
+    let generated = generate_select_sql(&ctx, query).unwrap();
     tracing::info!("Generated SQL: {}", generated.sql);
     tracing::info!("Param order: {:?}", generated.param_order);
 
@@ -945,7 +954,7 @@ CreateProduct @insert{
     returning {id, handle, status}
 }
 "#;
-    let file = parse_test_query(source);
+    let (file, _qsource) = parse_test_query(source);
     let insert = first_insert(&file);
 
     // Generate SQL
@@ -1007,7 +1016,7 @@ CreateProductWithDefault @insert{
     returning {id, handle, status}
 }
 "#;
-    let file = parse_test_query(source);
+    let (file, _qsource) = parse_test_query(source);
     let insert = first_insert(&file);
 
     let generated = dibs_qgen::generate_insert_sql(insert);
@@ -1043,10 +1052,12 @@ UpdateProductStatus @update{
     returning {id, handle, status}
 }
 "#;
-    let file = parse_test_query(source);
+    let (file, qsource) = parse_test_query(source);
     let update = first_update(&file);
 
-    let generated = dibs_qgen::generate_update_sql(update);
+    let schema = Schema::default();
+    let ctx = SqlGenContext::new(&schema, qsource);
+    let generated = dibs_qgen::generate_update_sql(&ctx, update).unwrap();
     tracing::info!("Generated UPDATE SQL: {}", generated.sql);
 
     // Verify SQL structure
@@ -1102,10 +1113,12 @@ DeleteProduct @delete{
     returning {id, handle}
 }
 "#;
-    let file = parse_test_query(source);
+    let (file, qsource) = parse_test_query(source);
     let delete = first_delete(&file);
 
-    let generated = dibs_qgen::generate_delete_sql(delete);
+    let schema = Schema::default();
+    let ctx = SqlGenContext::new(&schema, qsource);
+    let generated = dibs_qgen::generate_delete_sql(&ctx, delete).unwrap();
     tracing::info!("Generated DELETE SQL: {}", generated.sql);
 
     // Verify SQL structure
@@ -1164,7 +1177,7 @@ UpsertProduct @upsert{
     returning {id, handle, status}
 }
 "#;
-    let file = parse_test_query(source);
+    let (file, _qsource) = parse_test_query(source);
     let upsert = first_upsert(&file);
 
     let generated = dibs_qgen::generate_upsert_sql(upsert);
@@ -1224,7 +1237,7 @@ UpsertProduct @upsert{
     returning {id, handle, status}
 }
 "#;
-    let file = parse_test_query(source);
+    let (file, _qsource) = parse_test_query(source);
     let upsert = first_upsert(&file);
 
     let generated = dibs_qgen::generate_upsert_sql(upsert);
@@ -1266,7 +1279,7 @@ CreateProductNoReturn @insert{
     values {handle $handle, status $status}
 }
 "#;
-    let file = parse_test_query(source);
+    let (file, _qsource) = parse_test_query(source);
     let insert = first_insert(&file);
 
     let generated = dibs_qgen::generate_insert_sql(insert);
@@ -1313,7 +1326,7 @@ BulkCreateProducts @insert-many{
     returning {id, handle, status}
 }
 "#;
-    let file = parse_test_query(source);
+    let (file, _qsource) = parse_test_query(source);
     let insert_many = first_insert_many(&file);
 
     // Generate SQL
@@ -1392,7 +1405,7 @@ BulkCreateProductsNoReturn @insert-many{
     values {handle $handle, status $status}
 }
 "#;
-    let file = parse_test_query(source);
+    let (file, _qsource) = parse_test_query(source);
     let insert_many = first_insert_many(&file);
 
     let generated = dibs_qgen::generate_insert_many_sql(insert_many);
@@ -1440,7 +1453,7 @@ BulkUpsertProducts @upsert-many{
     returning {id, handle, status}
 }
 "#;
-    let file = parse_test_query(source);
+    let (file, _qsource) = parse_test_query(source);
     let upsert_many = first_upsert_many(&file);
 
     let generated = dibs_qgen::generate_upsert_many_sql(upsert_many);
@@ -1518,7 +1531,7 @@ BulkUpsertProducts @upsert-many{
     returning {id, handle, status}
 }
 "#;
-    let file = parse_test_query(source);
+    let (file, _qsource) = parse_test_query(source);
     let upsert_many = first_upsert_many(&file);
     let generated = dibs_qgen::generate_upsert_many_sql(upsert_many);
 
@@ -1580,7 +1593,7 @@ BulkCreateProducts @insert-many{
     returning {id, handle, status}
 }
 "#;
-    let file = parse_test_query(source);
+    let (file, _qsource) = parse_test_query(source);
     let insert_many = first_insert_many(&file);
     let generated = dibs_qgen::generate_insert_many_sql(insert_many);
 
@@ -1617,11 +1630,12 @@ GetProductWithSpecs @select{
     where {metadata @json-get($key)}
 }
 "#;
-    let file = parse_test_query(source);
+    let (file, qsource) = parse_test_query(source);
     let query = first_select(&file);
 
     let schema = build_jsonb_test_schema();
-    let generated = generate_select_sql(query, &schema).unwrap();
+    let ctx = SqlGenContext::new(&schema, qsource);
+    let generated = generate_select_sql(&ctx, query).unwrap();
 
     tracing::info!("Generated SQL: {}", generated.sql);
 
@@ -1654,11 +1668,12 @@ GetProductBrand @select{
     where {metadata @json-get-text($key)}
 }
 "#;
-    let file = parse_test_query(source);
+    let (file, qsource) = parse_test_query(source);
     let query = first_select(&file);
 
     let schema = build_jsonb_test_schema();
-    let generated = generate_select_sql(query, &schema).unwrap();
+    let ctx = SqlGenContext::new(&schema, qsource);
+    let generated = generate_select_sql(&ctx, query).unwrap();
 
     tracing::info!("Generated SQL: {}", generated.sql);
 
@@ -1693,13 +1708,14 @@ FindByBrand @select{
     where {metadata @json-get-text("brand")}
 }
 "#;
-    let file = parse_test_query(source);
+    let (file, qsource) = parse_test_query(source);
     let query = first_select(&file);
 
     let schema = build_jsonb_test_schema();
 
     // For this test, we'll use simple SQL generation since we're testing the operator
-    let generated = generate_select_sql(query, &schema).unwrap();
+    let ctx = SqlGenContext::new(&schema, qsource);
+    let generated = generate_select_sql(&ctx, query).unwrap();
 
     tracing::info!("Generated SQL: {}", generated.sql);
 
@@ -1726,11 +1742,12 @@ FindPremiumProducts @select{
     where {metadata @contains("{\"premium\": true}")}
 }
 "#;
-    let file = parse_test_query(source);
+    let (file, qsource) = parse_test_query(source);
     let query = first_select(&file);
 
     let schema = build_jsonb_test_schema();
-    let generated = generate_select_sql(query, &schema).unwrap();
+    let ctx = SqlGenContext::new(&schema, qsource);
+    let generated = generate_select_sql(&ctx, query).unwrap();
 
     tracing::info!("Generated SQL: {}", generated.sql);
 
@@ -1763,11 +1780,12 @@ FindProductsByMetadata @select{
     where {metadata @contains("{\"brand\": \"Acme\"}")}
 }
 "#;
-    let file = parse_test_query(source);
+    let (file, qsource) = parse_test_query(source);
     let query = first_select(&file);
 
     let schema = build_jsonb_test_schema();
-    let generated = generate_select_sql(query, &schema).unwrap();
+    let ctx = SqlGenContext::new(&schema, qsource);
+    let generated = generate_select_sql(&ctx, query).unwrap();
 
     tracing::info!("Generated SQL: {}", generated.sql);
 
@@ -1797,11 +1815,12 @@ FindByNestedSpec @select{
     where {metadata @contains("{\"specs\": {\"color\": \"blue\"}}")}
 }
 "#;
-    let file = parse_test_query(source);
+    let (file, qsource) = parse_test_query(source);
     let query = first_select(&file);
 
     let schema = build_jsonb_test_schema();
-    let generated = generate_select_sql(query, &schema).unwrap();
+    let ctx = SqlGenContext::new(&schema, qsource);
+    let generated = generate_select_sql(&ctx, query).unwrap();
 
     tracing::info!("Generated SQL: {}", generated.sql);
 
@@ -1831,11 +1850,12 @@ FindWithPremiumKey @select{
     where {metadata @key-exists("premium")}
 }
 "#;
-    let file = parse_test_query(source);
+    let (file, qsource) = parse_test_query(source);
     let query = first_select(&file);
 
     let schema = build_jsonb_test_schema();
-    let generated = generate_select_sql(query, &schema).unwrap();
+    let ctx = SqlGenContext::new(&schema, qsource);
+    let generated = generate_select_sql(&ctx, query).unwrap();
 
     tracing::info!("Generated SQL: {}", generated.sql);
 
@@ -1870,11 +1890,12 @@ FindWithKey @select{
     where {metadata @key-exists($key)}
 }
 "#;
-    let file = parse_test_query(source);
+    let (file, qsource) = parse_test_query(source);
     let query = first_select(&file);
 
     let schema = build_jsonb_test_schema();
-    let generated = generate_select_sql(query, &schema).unwrap();
+    let ctx = SqlGenContext::new(&schema, qsource);
+    let generated = generate_select_sql(&ctx, query).unwrap();
 
     tracing::info!("Generated SQL: {}", generated.sql);
 
@@ -1911,11 +1932,12 @@ ComplexJsonQuery @select{
     }
 }
 "#;
-    let file = parse_test_query(source);
+    let (file, qsource) = parse_test_query(source);
     let query = first_select(&file);
 
     let schema = build_jsonb_test_schema();
-    let generated = generate_select_sql(query, &schema).unwrap();
+    let ctx = SqlGenContext::new(&schema, qsource);
+    let generated = generate_select_sql(&ctx, query).unwrap();
 
     tracing::info!("Generated SQL: {}", generated.sql);
 
@@ -1956,11 +1978,12 @@ FindWithMetadata @select{
     where {metadata @key-exists("brand")}
 }
 "#;
-    let file = parse_test_query(source);
+    let (file, qsource) = parse_test_query(source);
     let query = first_select(&file);
 
     let schema = build_jsonb_test_schema();
-    let generated = generate_select_sql(query, &schema).unwrap();
+    let ctx = SqlGenContext::new(&schema, qsource);
+    let generated = generate_select_sql(&ctx, query).unwrap();
 
     // Execute query - should not return products with NULL metadata
     let rows: Vec<Row> = client.query(&generated.sql, &[]).await.unwrap();

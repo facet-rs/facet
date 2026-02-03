@@ -294,7 +294,7 @@ impl Change {
                 let quoted_cols: Vec<_> = idx
                     .columns
                     .iter()
-                    .map(|c| crate::schema::index_column_to_sql(c))
+                    .map(crate::schema::index_column_to_sql)
                     .collect();
                 let where_clause = idx
                     .where_clause

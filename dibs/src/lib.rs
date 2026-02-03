@@ -346,9 +346,10 @@ pub fn build_queries(queries_path: impl AsRef<std::path::Path>) {
         .unwrap_or_else(|e| panic!("Failed to read {}: {}", queries_path.display(), e));
 
     let filename = camino::Utf8Path::new(queries_path.to_str().expect("path must be UTF-8"));
-    let file = parse_query_file(filename, &source).unwrap();
+    let (file, qsource) = parse_query_file(filename, &source).unwrap();
 
-    let generated = generate_rust_code(&file, &dibs_schema);
+    let generated =
+        generate_rust_code(&file, &dibs_schema, qsource).expect("query code generation failed");
 
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
     let dest_path = std::path::Path::new(&out_dir).join("queries.rs");

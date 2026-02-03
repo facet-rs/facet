@@ -199,3 +199,146 @@ pub const KEY_EXISTS_SPEC: FunctionSpec = FunctionSpec {
     name: "key-exists",
     args: &[ArgSpec::VariableOrLiteral],
 };
+
+/// EqBare is a special case - it's bare equality with a single optional argument.
+pub const EQ_BARE_SPEC: FunctionSpec = FunctionSpec {
+    name: "eq-bare",
+    args: &[ArgSpec::VariableOrLiteral],
+};
+
+use dibs_query_schema::FilterValue;
+
+/// Get the function spec for a filter value, along with its arguments.
+///
+/// Returns None for filters that take no arguments (Null, NotNull) or for EqBare.
+fn get_spec_and_args(
+    filter_value: &FilterValue,
+) -> Option<(&'static FunctionSpec, &[Meta<String>])> {
+    match filter_value {
+        FilterValue::Null | FilterValue::NotNull => None,
+        FilterValue::Eq(args) => Some((&EQ_SPEC, args)),
+        FilterValue::Ne(args) => Some((&NE_SPEC, args)),
+        FilterValue::Lt(args) => Some((&LT_SPEC, args)),
+        FilterValue::Lte(args) => Some((&LTE_SPEC, args)),
+        FilterValue::Gt(args) => Some((&GT_SPEC, args)),
+        FilterValue::Gte(args) => Some((&GTE_SPEC, args)),
+        FilterValue::Like(args) => Some((&LIKE_SPEC, args)),
+        FilterValue::Ilike(args) => Some((&ILIKE_SPEC, args)),
+        FilterValue::In(args) => Some((&IN_SPEC, args)),
+        FilterValue::JsonGet(args) => Some((&JSON_GET_SPEC, args)),
+        FilterValue::JsonGetText(args) => Some((&JSON_GET_TEXT_SPEC, args)),
+        FilterValue::Contains(args) => Some((&CONTAINS_SPEC, args)),
+        FilterValue::KeyExists(args) => Some((&KEY_EXISTS_SPEC, args)),
+        FilterValue::EqBare(_) => None, // EqBare is handled specially (optional single arg)
+    }
+}
+
+/// Validate a filter value's arguments according to its spec.
+///
+/// Returns the parsed FilterArgs on success, or an error with proper span information.
+pub fn validate_filter(
+    source: Arc<QSource>,
+    filter_span: Span,
+    filter_value: &FilterValue,
+) -> Result<Option<Vec<FilterArg>>, QError> {
+    match get_spec_and_args(filter_value) {
+        Some((spec, args)) => {
+            let parsed = spec.parse_args(source, filter_span, args)?;
+            Ok(Some(parsed))
+        }
+        None => {
+            // Null, NotNull, and EqBare don't need validation through specs
+            // EqBare has special handling - validate the single optional argument
+            if let FilterValue::EqBare(Some(meta)) = filter_value {
+                // Just parse it to check it's valid (variable or literal)
+                let _ = FilterArg::parse(&meta.value);
+            }
+            Ok(None)
+        }
+    }
+}
+
+use dibs_query_schema::Where;
+use dibs_sql::ColumnName;
+
+/// Validate all filters in a Where clause.
+///
+/// This should be called during query parsing/validation phase to catch
+/// filter argument errors early with proper span information.
+pub fn validate_where(source: Arc<QSource>, where_clause: &Where) -> Result<(), QError> {
+    for (column_meta, filter_value) in &where_clause.filters {
+        // Use the column's span for error reporting since that's where the filter is written
+        validate_filter(source.clone(), column_meta.span, filter_value)?;
+    }
+    Ok(())
+}
+
+/// Validate filters in a relation's where clause.
+///
+/// Takes the relation where clause (which uses a different type) and validates it.
+pub fn validate_relation_where(
+    source: Arc<QSource>,
+    where_clause: &indexmap::IndexMap<Meta<ColumnName>, FilterValue>,
+) -> Result<(), QError> {
+    for (column_meta, filter_value) in where_clause {
+        validate_filter(source.clone(), column_meta.span, filter_value)?;
+    }
+    Ok(())
+}
+
+use dibs_query_schema::{Decl, FieldDef, QueryFile, SelectFields};
+
+/// Validate all filters in a QueryFile.
+///
+/// Recursively validates filters in:
+/// - SELECT queries (top-level WHERE and relation WHERE clauses)
+/// - UPDATE queries (WHERE clause)
+/// - DELETE queries (WHERE clause)
+///
+/// This should be called after parsing to catch filter argument errors early.
+pub fn validate_query_file(source: Arc<QSource>, query_file: &QueryFile) -> Result<(), QError> {
+    for (_name_meta, decl) in &query_file.0 {
+        match decl {
+            Decl::Select(select) => {
+                // Validate top-level WHERE clause
+                if let Some(where_clause) = &select.where_clause {
+                    validate_where(source.clone(), where_clause)?;
+                }
+                // Validate relation WHERE clauses recursively
+                if let Some(fields) = &select.fields {
+                    validate_select_fields(source.clone(), fields)?;
+                }
+            }
+            Decl::Update(update) => {
+                if let Some(where_clause) = &update.where_clause {
+                    validate_where(source.clone(), where_clause)?;
+                }
+            }
+            Decl::Delete(delete) => {
+                if let Some(where_clause) = &delete.where_clause {
+                    validate_where(source.clone(), where_clause)?;
+                }
+            }
+            // Insert, InsertMany, Upsert, UpsertMany don't have WHERE clauses
+            Decl::Insert(_) | Decl::InsertMany(_) | Decl::Upsert(_) | Decl::UpsertMany(_) => {}
+        }
+    }
+    Ok(())
+}
+
+/// Recursively validate filters in SelectFields (handles nested relations).
+fn validate_select_fields(source: Arc<QSource>, fields: &SelectFields) -> Result<(), QError> {
+    for (_field_name, field_def) in &fields.fields {
+        if let Some(FieldDef::Rel(relation)) = field_def {
+            // Validate relation-level WHERE clause
+            if let Some(where_clause) = &relation.where_clause {
+                validate_where(source.clone(), where_clause)?;
+            }
+            // Recurse into nested relations
+            if let Some(nested_fields) = &relation.fields {
+                validate_select_fields(source.clone(), nested_fields)?;
+            }
+        }
+    }
+    Ok(())
+}

@@ -10,12 +10,15 @@
 //! This approach uses facet-tokio-postgres for all deserialization, which
 //! properly handles complex types like `Jsonb<T>` via reflection.
 
+use crate::sqlgen::SqlGenContext;
+use crate::{QError, QSource};
 use codegen::{Block, Function, Scope, Struct};
 use dibs_db_schema::Schema;
 use dibs_query_schema::{
     Decl, Delete, FieldDef, Insert, InsertMany, Meta, Params, QueryFile, Returning, Returns,
     Select, SelectFields, Update, Upsert, UpsertMany,
 };
+use std::sync::Arc;
 
 /// Generated Rust code for a query file.
 #[derive(Debug, Clone)]
@@ -42,6 +45,7 @@ fn schema_column_type(schema: &Schema, table: &str, column: &str) -> Option<Stri
 /// Context for code generation.
 struct CodegenContext<'a> {
     schema: &'a Schema,
+    source: Arc<QSource>,
     #[allow(dead_code)]
     scope: Scope,
 }
@@ -51,10 +55,19 @@ impl CodegenContext<'_> {
     fn column_type(&self, table: &str, column: &str) -> Option<String> {
         schema_column_type(self.schema, table, column)
     }
+
+    /// Create an SqlGenContext for this codegen context.
+    fn sqlgen_ctx(&self) -> SqlGenContext<'_> {
+        SqlGenContext::new(self.schema, self.source.clone())
+    }
 }
 
 /// Generate Rust code for a query file.
-pub fn generate_rust_code(file: &QueryFile, schema: &Schema) -> GeneratedCode {
+pub fn generate_rust_code(
+    file: &QueryFile,
+    schema: &Schema,
+    source: Arc<QSource>,
+) -> Result<GeneratedCode, QError> {
     let mut scope = Scope::new();
 
     // Add file header as raw code
@@ -67,6 +80,7 @@ pub fn generate_rust_code(file: &QueryFile, schema: &Schema) -> GeneratedCode {
 
     let ctx = CodegenContext {
         schema,
+        source,
         scope: Scope::new(),
     };
 
@@ -89,17 +103,17 @@ pub fn generate_rust_code(file: &QueryFile, schema: &Schema) -> GeneratedCode {
                 generate_upsert_many_code(&ctx, name_meta, upsert_many, &mut scope);
             }
             Decl::Update(update) => {
-                generate_update_code(&ctx, name_meta, update, &mut scope);
+                generate_update_code(&ctx, name_meta, update, &mut scope)?;
             }
             Decl::Delete(delete) => {
-                generate_delete_code(&ctx, name_meta, delete, &mut scope);
+                generate_delete_code(&ctx, name_meta, delete, &mut scope)?;
             }
         }
     }
 
-    GeneratedCode {
+    Ok(GeneratedCode {
         code: scope.to_string(),
-    }
+    })
 }
 
 fn generate_select_code(
@@ -429,7 +443,8 @@ fn generate_select_function(
 /// For queries without relations: use `from_row()` directly into the result struct.
 /// For queries with relations: deserialize into flat row struct, then transform.
 fn generate_query_body(ctx: &CodegenContext, query: &Select, struct_name: &str) -> String {
-    let generated = match crate::sqlgen::generate_select_sql(query, ctx.schema) {
+    let sqlgen_ctx = ctx.sqlgen_ctx();
+    let generated = match crate::sqlgen::generate_select_sql(&sqlgen_ctx, query) {
         Ok(g) => g,
         Err(e) => {
             panic!("SELECT SQL generation failed: {}", e);
@@ -483,14 +498,14 @@ fn generate_query_body(ctx: &CodegenContext, query: &Select, struct_name: &str) 
     block.line("");
     block.line("// Deserialize all rows into flat structs using facet reflection");
     block.line(format!(
-        "let flat_rows: Vec<{flat_struct_name}> = rows.iter().map(|row| from_row(row)).collect::<Result<Vec<_>, _>>()?;"
+        "let flat_rows: Vec<{flat_struct_name}> = rows.iter().map(from_row).collect::<Result<Vec<_>, _>>()?;"
     ));
     block.line("");
 
     // Generate the transformation from flat rows to nested result
     let Some(select_fields) = &query.fields else {
         // No fields - shouldn't happen for queries with relations
-        block.line(format!("Ok(vec![])"));
+        block.line("Ok(vec![])".to_string());
         return block_to_string(&block);
     };
 
@@ -792,7 +807,7 @@ fn generate_relation_assembly(
 
                     let mut if_block =
                         Block::new(format!("if let Some(ref rel_id) = flat_row.{id_alias}"));
-                    if_block.line(format!("let key = (parent_id.clone(), rel_id.clone());"));
+                    if_block.line("let key = (parent_id.clone(), rel_id.clone());".to_string());
 
                     let mut if_insert = Block::new(format!("if {set_name}.insert(key)"));
                     let mut push_block =
@@ -1273,14 +1288,15 @@ fn generate_bulk_mutation_body(sql: &str, params: Option<&Params>, execute_only:
 }
 
 fn generate_update_code(
-    _ctx: &CodegenContext,
+    ctx: &CodegenContext,
     name_meta: &Meta<String>,
     update: &Update,
     scope: &mut Scope,
-) {
+) -> Result<(), QError> {
     let name = &name_meta.value;
     let fn_name = to_snake_case(name);
-    let generated = crate::sqlgen::generate_update_sql(update);
+    let sqlgen_ctx = ctx.sqlgen_ctx();
+    let generated = crate::sqlgen::generate_update_sql(&sqlgen_ctx, update)?;
 
     let has_returning = update.returning.is_some();
     let return_ty = if !has_returning {
@@ -1289,7 +1305,7 @@ fn generate_update_code(
         let struct_name = format!("{}Result", name);
         if let Some(returning) = &update.returning {
             generate_mutation_result_struct(
-                _ctx,
+                ctx,
                 &struct_name,
                 update.table.value.as_str(),
                 returning,
@@ -1324,17 +1340,19 @@ fn generate_update_code(
     func.line(block_to_string(&body));
 
     scope.push_fn(func);
+    Ok(())
 }
 
 fn generate_delete_code(
-    _ctx: &CodegenContext,
+    ctx: &CodegenContext,
     name_meta: &Meta<String>,
     delete: &Delete,
     scope: &mut Scope,
-) {
+) -> Result<(), QError> {
     let name = &name_meta.value;
     let fn_name = to_snake_case(name);
-    let generated = crate::sqlgen::generate_delete_sql(delete);
+    let sqlgen_ctx = ctx.sqlgen_ctx();
+    let generated = crate::sqlgen::generate_delete_sql(&sqlgen_ctx, delete)?;
 
     let has_returning = delete.returning.is_some();
     let return_ty = if !has_returning {
@@ -1343,7 +1361,7 @@ fn generate_delete_code(
         let struct_name = format!("{}Result", name);
         if let Some(returning) = &delete.returning {
             generate_mutation_result_struct(
-                _ctx,
+                ctx,
                 &struct_name,
                 delete.from.value.as_str(),
                 returning,
@@ -1378,6 +1396,7 @@ fn generate_delete_code(
     func.line(block_to_string(&body));
 
     scope.push_fn(func);
+    Ok(())
 }
 
 fn generate_mutation_result_struct(

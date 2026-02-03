@@ -39,6 +39,7 @@ impl<'a> Db<'a> {
     }
 
     /// Start building a SELECT query for a table.
+    #[allow(clippy::result_large_err)]
     pub fn select(&self, table: &str) -> Result<SelectBuilder<'_>, Error> {
         let table_def = self
             .table(table)
@@ -51,6 +52,7 @@ impl<'a> Db<'a> {
     }
 
     /// Start building an INSERT query for a table.
+    #[allow(clippy::result_large_err)]
     pub fn insert(&self, table: &str) -> Result<InsertBuilder<'_>, Error> {
         let table_def = self
             .table(table)
@@ -63,6 +65,7 @@ impl<'a> Db<'a> {
     }
 
     /// Start building an UPDATE query for a table.
+    #[allow(clippy::result_large_err)]
     pub fn update(&self, table: &str) -> Result<UpdateBuilder<'_>, Error> {
         let table_def = self
             .table(table)
@@ -75,6 +78,7 @@ impl<'a> Db<'a> {
     }
 
     /// Start building a DELETE query for a table.
+    #[allow(clippy::result_large_err)]
     pub fn delete(&self, table: &str) -> Result<DeleteBuilder<'_>, Error> {
         let table_def = self
             .table(table)

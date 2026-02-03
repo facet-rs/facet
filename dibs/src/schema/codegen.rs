@@ -1,4 +1,4 @@
-use super::{Schema, Table};
+use super::Schema;
 use crate::schema::{
     create_index_sql, create_table_sql, create_trigger_check_function_sql, create_trigger_check_sql,
 };

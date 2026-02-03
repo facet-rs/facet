@@ -197,6 +197,7 @@ impl<'a> QueryPlanner<'a> {
     }
 
     /// Process nested select fields (used for relations).
+    #[allow(clippy::too_many_arguments)]
     fn process_select_nested(
         &self,
         select: &SelectFields,
@@ -358,7 +359,7 @@ impl<'a> QueryPlanner<'a> {
                         first: false,
                         select_columns: vec![],
                     },
-                    direction: FkDirection::Reverse,
+                    _direction: FkDirection::Reverse,
                     parent_key_column,
                 });
             }
@@ -390,7 +391,7 @@ impl<'a> QueryPlanner<'a> {
                         first: false,
                         select_columns: vec![],
                     },
-                    direction: FkDirection::Forward,
+                    _direction: FkDirection::Forward,
                     parent_key_column,
                 });
             }
@@ -433,6 +434,7 @@ impl QueryPlan {
     }
 
     /// Generate SQL FROM clause with JOINs.
+    #[allow(clippy::wrong_self_convention)]
     pub fn from_sql(&self) -> String {
         self.from_sql_with_params(&mut Vec::new(), &mut 1)
     }
@@ -441,6 +443,7 @@ impl QueryPlan {
     ///
     /// Returns the SQL and appends any parameter names to `param_order`.
     /// `param_idx` is updated to track the next $N placeholder.
+    #[allow(clippy::wrong_self_convention)]
     pub fn from_sql_with_params(
         &self,
         param_order: &mut Vec<dibs_sql::ParamName>,

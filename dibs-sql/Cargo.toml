@@ -8,6 +8,9 @@ edition = "2024"
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
+[package.metadata.cargo-shear]
+ignored = ["facet"]  # Used by strid's #[braid] macro
+
 [dependencies]
 blake3.workspace = true
 indexmap = "2"

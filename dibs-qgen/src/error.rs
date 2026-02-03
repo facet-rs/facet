@@ -9,6 +9,7 @@ use std::sync::Arc;
 // Error Handling Types
 // ============================================================================
 
+#[derive(Clone)]
 pub struct QSource {
     /// The original source code (for rendering diagnostics)
     pub source: String,

@@ -54,7 +54,7 @@ mod tests {
     use crate::parse_query_file;
 
     fn get_first_insert(source: &str) -> Insert {
-        let file = parse_query_file(camino::Utf8Path::new("<test>"), source).unwrap();
+        let (file, _source) = parse_query_file(camino::Utf8Path::new("<test>"), source).unwrap();
         for (_, decl) in file.0.iter() {
             if let dibs_query_schema::Decl::Insert(i) = decl {
                 return i.clone();

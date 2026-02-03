@@ -117,6 +117,7 @@ impl Expr {
     }
 
     /// Negate an expression
+    #[allow(clippy::should_implement_trait)]
     pub fn not(expr: Expr) -> Self {
         Expr::Not(Box::new(expr))
     }

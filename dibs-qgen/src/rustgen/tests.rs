@@ -4,7 +4,7 @@ use camino::Utf8Path;
 use dibs_db_schema::{Column, ForeignKey, PgType, Schema, SourceLocation, Table};
 use facet_testhelpers::test;
 
-fn parse_test(source: &str) -> crate::QueryFile {
+fn parse_test(source: &str) -> (crate::QueryFile, Arc<crate::QSource>) {
     parse_query_file(Utf8Path::new("<test>"), source).unwrap()
 }
 
@@ -65,7 +65,7 @@ AllProducts @select{
   fields { id, handle, status }
 }
 "#;
-    let file = parse_test(source);
+    let (file, qsource) = parse_test(source);
     let schema = make_test_schema(vec![make_test_table(
         "product",
         &[
@@ -75,7 +75,7 @@ AllProducts @select{
         ],
         vec![],
     )]);
-    let code = generate_rust_code(&file, &schema);
+    let code = generate_rust_code(&file, &schema, qsource).unwrap();
 
     assert!(code.code.contains("pub struct AllProductsResult"));
     assert!(code.code.contains("pub async fn all_products"));
@@ -95,7 +95,7 @@ ProductByHandle @select{
   fields { id, handle }
 }
 "#;
-    let file = parse_test(source);
+    let (file, qsource) = parse_test(source);
     let schema = make_test_schema(vec![make_test_table(
         "product",
         &[
@@ -104,7 +104,7 @@ ProductByHandle @select{
         ],
         vec![],
     )]);
-    let code = generate_rust_code(&file, &schema);
+    let code = generate_rust_code(&file, &schema, qsource).unwrap();
 
     assert!(code.code.contains("handle: &String"));
     // Uses direct struct construction for Option-returning queries
@@ -127,7 +127,7 @@ ProductListing @select{
   }
 }
 "#;
-    let file = parse_test(source);
+    let (file, qsource) = parse_test(source);
     let schema = make_test_schema(vec![
         make_test_table("product", &[("id", PgType::BigInt, false)], vec![]),
         make_test_table(
@@ -145,7 +145,7 @@ ProductListing @select{
             }],
         ),
     ]);
-    let code = generate_rust_code(&file, &schema);
+    let code = generate_rust_code(&file, &schema, qsource).unwrap();
 
     assert!(
         code.code
@@ -166,9 +166,9 @@ TrendingProducts @select{
   returns { id @int, title @string }
 }
 "#;
-    let file = parse_test(source);
+    let (file, qsource) = parse_test(source);
     // Raw SQL queries don't need schema - types come from explicit `returns` clause
-    let code = generate_rust_code(&file, &empty_schema());
+    let code = generate_rust_code(&file, &empty_schema(), qsource).unwrap();
 
     assert!(code.code.contains("locale: &String"));
     assert!(code.code.contains("days: &i64"));
@@ -207,7 +207,7 @@ ProductWithTranslation @select{
   }
 }
 "#;
-    let file = parse_test(source);
+    let (file, qsource) = parse_test(source);
 
     let schema = make_test_schema(vec![
         make_test_table(
@@ -234,7 +234,7 @@ ProductWithTranslation @select{
         ),
     ]);
 
-    let code = generate_rust_code(&file, &schema);
+    let code = generate_rust_code(&file, &schema, qsource).unwrap();
 
     tracing::info!("Generated code:\n{}", code.code);
 
@@ -283,7 +283,7 @@ ProductWithVariants @select{
   }
 }
 "#;
-    let file = parse_test(source);
+    let (file, qsource) = parse_test(source);
 
     let schema = make_test_schema(vec![
         make_test_table(
@@ -309,7 +309,7 @@ ProductWithVariants @select{
         ),
     ]);
 
-    let code = generate_rust_code(&file, &schema);
+    let code = generate_rust_code(&file, &schema, qsource).unwrap();
 
     tracing::info!("Generated code:\n{}", code.code);
 
@@ -363,7 +363,7 @@ ProductWithVariantCount @select{
   fields { id, handle, variant_count @count(product_variant) }
 }
 "#;
-    let file = parse_test(source);
+    let (file, qsource) = parse_test(source);
 
     let schema = make_test_schema(vec![
         make_test_table(
@@ -389,7 +389,7 @@ ProductWithVariantCount @select{
         ),
     ]);
 
-    let code = generate_rust_code(&file, &schema);
+    let code = generate_rust_code(&file, &schema, qsource).unwrap();
 
     tracing::info!("Generated code:\n{}", code.code);
 
@@ -432,7 +432,7 @@ ProductWithVariantsAndPrices @select{
   }
 }
 "#;
-    let file = parse_test(source);
+    let (file, qsource) = parse_test(source);
 
     let schema = make_test_schema(vec![
         make_test_table(
@@ -472,7 +472,7 @@ ProductWithVariantsAndPrices @select{
         ),
     ]);
 
-    let code = generate_rust_code(&file, &schema);
+    let code = generate_rust_code(&file, &schema, qsource).unwrap();
 
     tracing::info!("Generated code:\n{}", code.code);
 
@@ -547,8 +547,8 @@ CreateUser @insert{
   returning { id, name, email, created_at }
 }
 "#;
-    let file = parse_test(source);
-    let code = generate_rust_code(&file, &empty_schema());
+    let (file, qsource) = parse_test(source);
+    let code = generate_rust_code(&file, &empty_schema(), qsource).unwrap();
 
     assert!(code.code.contains("pub struct CreateUserResult"));
     assert!(code.code.contains("pub async fn create_user"));
@@ -576,8 +576,8 @@ UpsertProduct @upsert{
   returning { id, name, price, updated_at }
 }
 "#;
-    let file = parse_test(source);
-    let code = generate_rust_code(&file, &empty_schema());
+    let (file, qsource) = parse_test(source);
+    let code = generate_rust_code(&file, &empty_schema(), qsource).unwrap();
 
     assert!(code.code.contains("pub struct UpsertProductResult"));
     assert!(code.code.contains("pub async fn upsert_product"));
@@ -597,8 +597,8 @@ UpdateUserEmail @update{
   returning { id, email, updated_at }
 }
 "#;
-    let file = parse_test(source);
-    let code = generate_rust_code(&file, &empty_schema());
+    let (file, qsource) = parse_test(source);
+    let code = generate_rust_code(&file, &empty_schema(), qsource).unwrap();
 
     assert!(code.code.contains("pub struct UpdateUserEmailResult"));
     assert!(code.code.contains("pub async fn update_user_email"));
@@ -617,8 +617,8 @@ DeleteUser @delete{
   returning { id }
 }
 "#;
-    let file = parse_test(source);
-    let code = generate_rust_code(&file, &empty_schema());
+    let (file, qsource) = parse_test(source);
+    let code = generate_rust_code(&file, &empty_schema(), qsource).unwrap();
 
     assert!(code.code.contains("pub struct DeleteUserResult"));
     assert!(code.code.contains("pub async fn delete_user"));
@@ -635,8 +635,8 @@ InsertLog @insert{
   values { message $message, created_at @now }
 }
 "#;
-    let file = parse_test(source);
-    let code = generate_rust_code(&file, &empty_schema());
+    let (file, qsource) = parse_test(source);
+    let code = generate_rust_code(&file, &empty_schema(), qsource).unwrap();
 
     // Should NOT generate a result struct
     assert!(!code.code.contains("pub struct InsertLogResult"));
@@ -656,8 +656,8 @@ BulkCreateProducts @insert-many{
   returning { id, handle, status }
 }
 "#;
-    let file = parse_test(source);
-    let code = generate_rust_code(&file, &empty_schema());
+    let (file, qsource) = parse_test(source);
+    let code = generate_rust_code(&file, &empty_schema(), qsource).unwrap();
 
     // Should generate params struct
     assert!(
@@ -724,8 +724,8 @@ BulkUpsertProducts @upsert-many{
   returning { id, handle, status }
 }
 "#;
-    let file = parse_test(source);
-    let code = generate_rust_code(&file, &empty_schema());
+    let (file, qsource) = parse_test(source);
+    let code = generate_rust_code(&file, &empty_schema(), qsource).unwrap();
 
     // Should generate params struct
     assert!(
@@ -769,8 +769,8 @@ BulkInsertLogs @insert-many{
   values { message $message, created_at @now }
 }
 "#;
-    let file = parse_test(source);
-    let code = generate_rust_code(&file, &empty_schema());
+    let (file, qsource) = parse_test(source);
+    let code = generate_rust_code(&file, &empty_schema(), qsource).unwrap();
 
     // Should NOT generate result struct
     assert!(

@@ -13,8 +13,6 @@ dibs-db-schema = { path = "../dibs-db-schema" }
 dibs-query-schema.workspace = true
 dibs-sql = { path = "../dibs-sql" }
 facet-styx = { workspace = true, features = ["tracing"] }
-facet-format = { workspace = true, features = ["ariadne"] }
-thiserror.workspace = true
 codegen.workspace = true
 ariadne.workspace = true
 camino = "1.2.2"

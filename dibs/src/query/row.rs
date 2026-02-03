@@ -56,6 +56,7 @@ pub struct RowContext<'a> {
 }
 
 /// Convert a tokio_postgres Row to our Row type.
+#[allow(clippy::result_large_err)]
 pub fn pg_row_to_row(
     pg_row: &tokio_postgres::Row,
     columns: &[(String, PgType)],
@@ -72,6 +73,7 @@ pub fn pg_row_to_row(
 }
 
 /// Extract a value from a Postgres row at a given index.
+#[allow(clippy::result_large_err)]
 fn pg_value_to_value(
     row: &tokio_postgres::Row,
     idx: usize,

@@ -272,6 +272,7 @@ async fn introspect_unique_constraints(client: &Client, table_name: &str) -> Res
 }
 
 /// Introspect foreign keys for a table.
+#[allow(clippy::type_complexity)]
 async fn introspect_foreign_keys(client: &Client, table_name: &str) -> Result<Vec<ForeignKey>> {
     let rows = client
         .query(

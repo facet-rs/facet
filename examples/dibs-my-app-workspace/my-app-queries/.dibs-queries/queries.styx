@@ -127,11 +127,12 @@ CountProducts @select{
 //     fields {id, handle, price}
 // }
 
-// Query with literal @in filter
+// Query with @in filter using a literal array expression
+// The array is formatted as a SQL literal that PostgreSQL can parse
 
 ProductsByKnownHandles @select{
     from product
-    where {handle @in("prod-1" "prod-2" "prod-3"), deleted_at @null}
+    where {handle @in("'prod-1','prod-2','prod-3'"), deleted_at @null}
     fields {id, handle, status}
 }
 
@@ -341,7 +342,7 @@ ProductDetailsFull @select{
         updated_at
         locales @rel{
             from product_translation
-            where {locale @in("en" "fr")}
+            where {locale @in("'en','fr'")}
             order-by {locale asc}
             fields {locale, title, description}
         }

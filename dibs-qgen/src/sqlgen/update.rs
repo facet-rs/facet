@@ -1,6 +1,8 @@
 //! SQL generation for UPDATE statements.
 
-use super::common::{value_expr_to_expr, where_to_expr};
+use super::SqlGenContext;
+use super::common::{value_expr_to_expr, where_to_expr_validated};
+use crate::QError;
 use dibs_query_schema::Update;
 use dibs_sql::{ColumnName, ParamName, UpdateStmt, render};
 
@@ -18,7 +20,10 @@ pub struct GeneratedUpdate {
 }
 
 /// Generate SQL for an UPDATE statement.
-pub fn generate_update_sql(update: &Update) -> GeneratedUpdate {
+pub fn generate_update_sql(
+    ctx: &SqlGenContext,
+    update: &Update,
+) -> Result<GeneratedUpdate, QError> {
     let mut stmt = UpdateStmt::new(update.table.value.clone());
 
     // SET clause
@@ -29,10 +34,10 @@ pub fn generate_update_sql(update: &Update) -> GeneratedUpdate {
     }
 
     // WHERE clause
-    if let Some(where_clause) = &update.where_clause {
-        if let Some(expr) = where_to_expr(where_clause) {
-            stmt = stmt.where_(expr);
-        }
+    if let Some(where_clause) = &update.where_clause
+        && let Some(expr) = where_to_expr_validated(ctx, where_clause)?
+    {
+        stmt = stmt.where_(expr);
     }
 
     // RETURNING clause
@@ -48,23 +53,24 @@ pub fn generate_update_sql(update: &Update) -> GeneratedUpdate {
 
     let rendered = render(&stmt);
 
-    GeneratedUpdate {
+    Ok(GeneratedUpdate {
         sql: rendered.sql,
         params: rendered.params,
         returning_columns,
-    }
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::parse_query_file;
+    use dibs_db_schema::Schema;
 
-    fn get_first_update(source: &str) -> Update {
-        let file = parse_query_file(camino::Utf8Path::new("<test>"), source).unwrap();
+    fn get_first_update(source: &str) -> (Update, crate::QSource) {
+        let (file, qsource) = parse_query_file(camino::Utf8Path::new("<test>"), source).unwrap();
         for (_, decl) in file.0.iter() {
             if let dibs_query_schema::Decl::Update(u) = decl {
-                return u.clone();
+                return (u.clone(), (*qsource).clone());
             }
         }
         panic!("No update found in source");
@@ -81,8 +87,10 @@ UpdateUserEmail @update{
     returning {id, email}
 }
 "#;
-        let update = get_first_update(source);
-        let result = generate_update_sql(&update);
+        let (update, qsource) = get_first_update(source);
+        let schema = Schema::default();
+        let ctx = SqlGenContext::new(&schema, std::sync::Arc::new(qsource));
+        let result = generate_update_sql(&ctx, &update).unwrap();
         insta::assert_snapshot!(result.sql);
     }
 
@@ -97,8 +105,10 @@ UpdateUser @update{
     returning {id, name, updated_at}
 }
 "#;
-        let update = get_first_update(source);
-        let result = generate_update_sql(&update);
+        let (update, qsource) = get_first_update(source);
+        let schema = Schema::default();
+        let ctx = SqlGenContext::new(&schema, std::sync::Arc::new(qsource));
+        let result = generate_update_sql(&ctx, &update).unwrap();
         insta::assert_snapshot!(result.sql);
     }
 
@@ -113,8 +123,10 @@ UpdateProductStatus @update{
     returning {id, status}
 }
 "#;
-        let update = get_first_update(source);
-        let result = generate_update_sql(&update);
+        let (update, qsource) = get_first_update(source);
+        let schema = Schema::default();
+        let ctx = SqlGenContext::new(&schema, std::sync::Arc::new(qsource));
+        let result = generate_update_sql(&ctx, &update).unwrap();
         insta::assert_snapshot!(result.sql);
     }
 
@@ -129,8 +141,10 @@ UpdateUser @update{
     returning {id}
 }
 "#;
-        let update = get_first_update(source);
-        let result = generate_update_sql(&update);
+        let (update, qsource) = get_first_update(source);
+        let schema = Schema::default();
+        let ctx = SqlGenContext::new(&schema, std::sync::Arc::new(qsource));
+        let result = generate_update_sql(&ctx, &update).unwrap();
         insta::assert_snapshot!(result.sql);
     }
 }
