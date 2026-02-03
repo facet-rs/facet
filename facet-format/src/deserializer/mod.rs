@@ -167,6 +167,15 @@ mod path_navigator;
 /// Default size of the event buffer for batched parsing.
 pub const DEFAULT_EVENT_BUFFER_SIZE: usize = 512;
 
+/// Save point for the deserializer, capturing both parser state and event buffer.
+///
+/// This ensures that when we restore, we restore BOTH the parser position AND
+/// the buffered events that had already been read from the parser.
+struct DeserializerSavePoint<'input> {
+    parser_save_point: crate::SavePoint,
+    event_buffer: VecDeque<ParseEvent<'input>>,
+}
+
 /// Generic deserializer that drives a format-specific parser directly into `Partial`.
 ///
 /// The const generic `BORROW` controls whether string data can be borrowed:
@@ -246,6 +255,24 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     /// Borrow the inner parser mutably.
     pub fn parser_mut(&mut self) -> &mut dyn FormatParser<'input> {
         self.parser
+    }
+
+    /// Save deserializer state (both parser position AND event buffer).
+    ///
+    /// This must be used instead of calling `parser.save()` directly, because
+    /// the deserializer buffers events from the parser. If we only save/restore
+    /// the parser position, events already in the buffer would be lost.
+    fn save(&mut self) -> DeserializerSavePoint<'input> {
+        DeserializerSavePoint {
+            parser_save_point: self.parser.save(),
+            event_buffer: self.event_buffer.clone(),
+        }
+    }
+
+    /// Restore deserializer state (both parser position AND event buffer).
+    fn restore(&mut self, save_point: DeserializerSavePoint<'input>) {
+        self.parser.restore(save_point.parser_save_point);
+        self.event_buffer = save_point.event_buffer;
     }
 }
 
@@ -625,8 +652,8 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         let schema = Arc::new(Schema::build_auto(shape)?);
         let mut solver = Solver::new(&schema);
 
-        // Save position and start recording events
-        let save_point = self.parser_mut().save();
+        // Save deserializer state (parser position AND event buffer)
+        let save_point = self.save();
 
         let mut depth = 0i32;
         let mut in_struct = false;
@@ -642,7 +669,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
             let Some(event) = event else {
                 // EOF reached
-                self.parser_mut().restore(save_point);
+                self.restore(save_point);
                 return Ok(None);
             };
 
@@ -692,8 +719,8 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             }
         };
 
-        // Restore position regardless of outcome
-        self.parser_mut().restore(save_point);
+        // Restore deserializer state regardless of outcome
+        self.restore(save_point);
 
         match result {
             Some(handle) => {
