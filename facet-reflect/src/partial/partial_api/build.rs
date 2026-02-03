@@ -70,7 +70,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 frame.is_init
             );
 
-            let frame = self.frames().last().unwrap();
+            let frame = self.frames_mut().last_mut().unwrap();
             crate::trace!(
                 "build(): calling require_full_initialization, tracker={:?}",
                 frame.tracker.kind()
@@ -236,7 +236,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 frame.is_init
             );
 
-            let frame = self.frames().last().unwrap();
+            let frame = self.frames_mut().last_mut().unwrap();
             crate::trace!(
                 "finish_in_place(): calling require_full_initialization, tracker={:?}",
                 frame.tracker.kind()

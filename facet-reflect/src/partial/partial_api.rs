@@ -8,7 +8,7 @@ use crate::{
     Guard, HeapValue, Partial, Peek, ReflectError, ReflectErrorKind,
     partial::{
         DynamicObjectInsertState, DynamicValueState, Frame, FrameMode, FrameOwnership,
-        MapInsertState, PartialState, Tracker, iset::ISet,
+        MapInsertState, PartialState, Tracker, iset::ISet, rope::ListRope,
     },
     trace,
 };

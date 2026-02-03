@@ -219,6 +219,7 @@ impl<'input, const BORROW: bool> PathNavigator<'input, BORROW> {
         let _guard = SpanGuard::new(self.last_span);
         while self.open_segments.len() > target_len {
             let seg = self.open_segments.pop().unwrap();
+
             let mut wip = self.take_wip();
             if seg.is_option {
                 wip = wip.end()?;

@@ -31,6 +31,9 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                         // For Map, just update tracker - the map is already initialized
                         frame.tracker = Tracker::Map {
                             insert_state: MapInsertState::Idle,
+                            pending_entries: Vec::new(),
+                            current_entry_index: None,
+                            building_key: false,
                         };
                         return Ok(self);
                     }
@@ -107,6 +110,9 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 // Update tracker to Map state and mark as initialized
                 frame.tracker = Tracker::Map {
                     insert_state: MapInsertState::Idle,
+                    pending_entries: Vec::new(),
+                    current_entry_index: None,
+                    building_key: false,
                 };
                 frame.is_init = true;
             }
@@ -153,12 +159,14 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 Def::Map(map_def),
                 Tracker::Map {
                     insert_state: MapInsertState::Idle,
+                    ..
                 },
             ) if frame.is_init => map_def,
             (
                 Def::Map(_),
                 Tracker::Map {
                     insert_state: MapInsertState::PushingKey { .. },
+                    ..
                 },
             ) => {
                 return Err(self.err(ReflectErrorKind::OperationFailed {
@@ -170,6 +178,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 Def::Map(_),
                 Tracker::Map {
                     insert_state: MapInsertState::PushingValue { .. },
+                    ..
                 },
             ) => {
                 return Err(self.err(ReflectErrorKind::OperationFailed {
@@ -200,9 +209,20 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         };
         let key_ptr = facet_core::alloc_for_layout(key_layout);
 
-        // Store the key pointer in the insert state
+        // Store the key pointer in the insert state and update entry tracking
         match &mut frame.tracker {
-            Tracker::Map { insert_state, .. } => {
+            Tracker::Map {
+                insert_state,
+                current_entry_index,
+                building_key,
+                pending_entries,
+            } => {
+                // Increment entry index for new key (starts at 0 for first key)
+                *current_entry_index = Some(match *current_entry_index {
+                    None => pending_entries.len(), // First key starts at current pending count
+                    Some(idx) => idx + 1,
+                });
+                *building_key = true;
                 *insert_state = MapInsertState::PushingKey {
                     key_ptr,
                     key_initialized: false,
@@ -289,9 +309,14 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         };
         let value_ptr = facet_core::alloc_for_layout(value_layout);
 
-        // Store the value pointer in the insert state
+        // Store the value pointer in the insert state and mark as building value
         match &mut frame.tracker {
-            Tracker::Map { insert_state, .. } => {
+            Tracker::Map {
+                insert_state,
+                building_key,
+                ..
+            } => {
+                *building_key = false; // Now building value, not key
                 *insert_state = MapInsertState::PushingValue {
                     key_ptr,
                     value_ptr: Some(value_ptr),

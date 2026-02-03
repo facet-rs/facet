@@ -238,6 +238,64 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         }
     }
 
+    /// Checks if the current frame should be stored for deferred processing.
+    ///
+    /// This determines whether a frame can safely be stored and re-entered later
+    /// in deferred mode. A frame should be stored if:
+    /// 1. It's a re-entrant type (struct, enum, collection, Option)
+    /// 2. It has storable ownership (Field or Owned)
+    /// 3. It doesn't have a SmartPointer parent that needs immediate completion
+    ///
+    /// Returns `true` if the frame should be stored, `false` if it should be
+    /// validated immediately.
+    fn should_store_frame_for_deferred(&self) -> bool {
+        let current_frame = self.frames().last().unwrap();
+
+        // Check if this is a type that can be re-entered in deferred mode
+        let is_reentrant_type = matches!(
+            current_frame.allocated.shape().ty,
+            Type::User(UserType::Struct(_)) | Type::User(UserType::Enum(_))
+        ) || matches!(
+            current_frame.allocated.shape().def,
+            Def::List(_) | Def::Map(_) | Def::Set(_) | Def::Array(_) | Def::Option(_)
+        );
+
+        if !is_reentrant_type {
+            return false;
+        }
+
+        // Storable ownership types: Field (direct field access) and Owned (inner values
+        // of Option/SmartPointer). Both can be stored for deferred processing.
+        let storable_ownership = matches!(
+            current_frame.ownership,
+            FrameOwnership::Field { .. } | FrameOwnership::Owned
+        );
+
+        if !storable_ownership {
+            return false;
+        }
+
+        // IMPORTANT: Don't store Owned frames that have a SmartPointer parent.
+        // SmartPointer (Box, Arc, etc.) needs its inner value immediately to create
+        // the smart pointer - it can't wait for finish_deferred.
+        let has_smart_pointer_parent = if matches!(current_frame.ownership, FrameOwnership::Owned) {
+            let frames = self.frames();
+            frames.len() >= 2 && matches!(frames[frames.len() - 2].tracker, Tracker::SmartPointer)
+        } else {
+            false
+        };
+
+        if has_smart_pointer_parent {
+            return false;
+        }
+
+        // Note: We no longer need to check for TrackedBuffer frames here.
+        // Map keys/values now include an entry index in their paths (MapKey(idx), MapValue(idx)),
+        // so different map entries have distinct paths and won't collide.
+
+        true
+    }
+
     /// Enables deferred materialization mode with the given Resolution.
     ///
     /// When deferred mode is enabled:
@@ -616,6 +674,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             // Mark the Option as initialized
             option_frame.tracker = Tracker::Option {
                 building_inner: false,
+                pending_inner: None,
             };
             option_frame.is_init = true;
         }
@@ -777,9 +836,9 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     FrameOwnership::TrackedBuffer
                     | FrameOwnership::BorrowedInPlace
                     | FrameOwnership::External
-                    | FrameOwnership::ListSlot => {
+                    | FrameOwnership::RopeSlot => {
                         return Err(self.err(ReflectErrorKind::InvariantViolation {
-                            invariant: "SmartPointerSlice cannot have TrackedBuffer/BorrowedInPlace/External/ListSlot ownership after conversion",
+                            invariant: "SmartPointerSlice cannot have TrackedBuffer/BorrowedInPlace/External/RopeSlot ownership after conversion",
                         }));
                     }
                 }
@@ -811,113 +870,9 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         let requires_full_init = if !self.is_deferred() {
             true
         } else {
-            // Check if this frame will be stored for later processing.
-            let current_frame = self.frames().last().unwrap();
-            let is_reentrant_type = matches!(
-                current_frame.allocated.shape().ty,
-                Type::User(UserType::Struct(_)) | Type::User(UserType::Enum(_))
-            ) || matches!(
-                current_frame.allocated.shape().def,
-                Def::List(_) | Def::Map(_) | Def::Set(_) | Def::Array(_) | Def::Option(_)
-            );
-            // Storable ownership types: Field (direct field access) and Owned (inner values
-            // of Option/SmartPointer). Both can be stored and later processed by finish_deferred.
-            // Key insight: when an Owned frame (like Option's inner struct) is stored, we also
-            // need to store the Option frame so finish_deferred can find it and call init_some.
-            let storable_ownership = matches!(
-                current_frame.ownership,
-                FrameOwnership::Field { .. } | FrameOwnership::Owned
-            );
-
-            // IMPORTANT: Don't store Field frames whose data lives inside an INTERMEDIATE
-            // Owned, TrackedBuffer, or ListSlot frame's memory. When that frame is later
-            // moved (e.g., by complete_option_frame(), map insert, or Vec reallocation),
-            // the Field frame's pointer becomes invalid.
-            //
-            // - Owned frames: Option's inner struct gets moved when init_some() is called
-            // - TrackedBuffer frames: Map value buffers get moved/deallocated when map insert happens
-            // - ListSlot frames: Vec elements may be invalidated when Vec reallocates during growth
-            //
-            // The ROOT frame (index 0) is also Owned, but it won't be moved - only
-            // intermediate Owned/TrackedBuffer/ListSlot frames will be moved.
-            // So we skip index 0 when checking for ancestors.
-            let inside_movable_allocation =
-                if matches!(current_frame.ownership, FrameOwnership::Field { .. }) {
-                    // Skip index 0 (root) and current frame, check remaining for movable ownerships
-                    let frames = self.frames();
-                    frames
-                        .iter()
-                        .enumerate()
-                        .filter(|(idx, _)| *idx != 0 && *idx != frames.len() - 1) // Skip root and current
-                        .any(|(_, f)| {
-                            matches!(
-                                f.ownership,
-                                FrameOwnership::Owned
-                                    | FrameOwnership::TrackedBuffer
-                                    | FrameOwnership::ListSlot
-                            )
-                        })
-                } else {
-                    false
-                };
-
-            // IMPORTANT: Don't store Owned frames that have a SmartPointer parent.
-            // SmartPointer (Box, Arc, etc.) needs its inner value immediately to create
-            // the smart pointer - it can't wait for finish_deferred.
-            let has_smart_pointer_parent =
-                if matches!(current_frame.ownership, FrameOwnership::Owned) {
-                    let frames = self.frames();
-                    frames.len() >= 2
-                        && matches!(frames[frames.len() - 2].tracker, Tracker::SmartPointer)
-                } else {
-                    false
-                };
-
-            // IMPORTANT: Don't store Owned frames (Option inner values) if the Option parent
-            // is inside a movable allocation. The Option parent won't be stored (see above),
-            // so if we store the inner value, finish_deferred won't be able to find the Option
-            // frame to call complete_option_frame on. Instead, let the Option completion happen
-            // immediately in end().
-            let has_option_parent_in_movable =
-                if matches!(current_frame.ownership, FrameOwnership::Owned) {
-                    let frames = self.frames();
-                    if frames.len() >= 2
-                        && matches!(
-                            frames[frames.len() - 2].tracker,
-                            Tracker::Option {
-                                building_inner: true
-                            }
-                        )
-                    {
-                        // Check if the Option parent is inside a movable allocation
-                        // (skip root at index 0 and the two frames at the end - Option and current)
-                        frames
-                            .iter()
-                            .enumerate()
-                            .filter(|(idx, _)| *idx != 0 && *idx < frames.len() - 2)
-                            .any(|(_, f)| {
-                                matches!(
-                                    f.ownership,
-                                    FrameOwnership::Owned | FrameOwnership::TrackedBuffer
-                                )
-                            })
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
-
-            // This must match the should_store logic below
-            let will_be_stored = is_reentrant_type
-                && storable_ownership
-                && !inside_movable_allocation
-                && !has_smart_pointer_parent
-                && !has_option_parent_in_movable;
-
             // If this frame will be stored, defer validation to finish_deferred().
             // Otherwise validate now.
-            !will_be_stored
+            !self.should_store_frame_for_deferred()
         };
 
         if requires_full_init {
@@ -973,7 +928,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     frame.fill_defaults().map_err(|e| self.err(e))?;
                 }
 
-                let frame = self.frames().last().unwrap();
+                let frame = self.frames_mut().last_mut().unwrap();
                 crate::trace!(
                     "end(): Checking full init for {}, tracker={:?}, is_init={}",
                     frame.allocated.shape(),
@@ -996,109 +951,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         // This includes structs, enums, collections, and Options (which need to be
         // stored so finish_deferred can find them when processing their inner values).
         let deferred_storage_info = if self.is_deferred() {
-            // Check if the current frame is a type that can be re-entered in deferred mode.
-            // This includes structs, enums, collections (List, Map, Set, Array), and Options.
-            let current_frame = self.frames().last().unwrap();
-            let is_reentrant_type = matches!(
-                current_frame.allocated.shape().ty,
-                Type::User(UserType::Struct(_)) | Type::User(UserType::Enum(_))
-            ) || matches!(
-                current_frame.allocated.shape().def,
-                Def::List(_) | Def::Map(_) | Def::Set(_) | Def::Array(_) | Def::Option(_)
-            );
-
-            // Storable ownership types: Field (direct field access) and Owned (inner values
-            // of Option/SmartPointer). Both can be stored for deferred processing.
-            let storable_ownership = matches!(
-                current_frame.ownership,
-                FrameOwnership::Field { .. } | FrameOwnership::Owned
-            );
-
-            // IMPORTANT: Don't store Field frames whose data lives inside an INTERMEDIATE
-            // Owned, TrackedBuffer, or ListSlot frame's memory. When that frame is later
-            // moved (e.g., by complete_option_frame(), map insert, or Vec reallocation),
-            // the Field frame's pointer becomes invalid.
-            //
-            // - Owned frames: Option's inner struct gets moved when init_some() is called
-            // - TrackedBuffer frames: Map value buffers get moved/deallocated when map insert happens
-            // - ListSlot frames: Vec elements may be invalidated when Vec reallocates during growth
-            //
-            // The ROOT frame (index 0) is also Owned, but it won't be moved - only
-            // intermediate Owned/TrackedBuffer/ListSlot frames will be moved.
-            // So we skip index 0 when checking for ancestors.
-            let inside_movable_allocation =
-                if matches!(current_frame.ownership, FrameOwnership::Field { .. }) {
-                    // Skip index 0 (root) and current frame, check remaining for movable ownerships
-                    let frames = self.frames();
-                    frames
-                        .iter()
-                        .enumerate()
-                        .filter(|(idx, _)| *idx != 0 && *idx != frames.len() - 1) // Skip root and current
-                        .any(|(_, f)| {
-                            matches!(
-                                f.ownership,
-                                FrameOwnership::Owned
-                                    | FrameOwnership::TrackedBuffer
-                                    | FrameOwnership::ListSlot
-                            )
-                        })
-                } else {
-                    false
-                };
-
-            // IMPORTANT: Don't store Owned frames that have a SmartPointer parent.
-            // SmartPointer (Box, Arc, etc.) needs its inner value immediately to create
-            // the smart pointer - it can't wait for finish_deferred. This is different
-            // from Option, which has special handling in finish_deferred for OptionSome.
-            let has_smart_pointer_parent =
-                if matches!(current_frame.ownership, FrameOwnership::Owned) {
-                    let frames = self.frames();
-                    frames.len() >= 2
-                        && matches!(frames[frames.len() - 2].tracker, Tracker::SmartPointer)
-                } else {
-                    false
-                };
-
-            // IMPORTANT: Don't store Owned frames (Option inner values) if the Option parent
-            // is inside a movable allocation. The Option parent won't be stored (see above),
-            // so if we store the inner value, finish_deferred won't be able to find the Option
-            // frame to call complete_option_frame on. Instead, let the Option completion happen
-            // immediately in end().
-            let has_option_parent_in_movable =
-                if matches!(current_frame.ownership, FrameOwnership::Owned) {
-                    let frames = self.frames();
-                    if frames.len() >= 2
-                        && matches!(
-                            frames[frames.len() - 2].tracker,
-                            Tracker::Option {
-                                building_inner: true
-                            }
-                        )
-                    {
-                        // Check if the Option parent is inside a movable allocation
-                        // (skip root at index 0 and the two frames at the end - Option and current)
-                        frames
-                            .iter()
-                            .enumerate()
-                            .filter(|(idx, _)| *idx != 0 && *idx < frames.len() - 2)
-                            .any(|(_, f)| {
-                                matches!(
-                                    f.ownership,
-                                    FrameOwnership::Owned | FrameOwnership::TrackedBuffer
-                                )
-                            })
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
-
-            let should_store = is_reentrant_type
-                && storable_ownership
-                && !inside_movable_allocation
-                && !has_smart_pointer_parent
-                && !has_option_parent_in_movable;
+            let should_store = self.should_store_frame_for_deferred();
 
             if should_store {
                 // Compute the "field-only" path for storage by finding all Field steps
@@ -1141,6 +994,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         }
                         Tracker::List {
                             current_child: Some(idx),
+                            ..
                         } => {
                             field_path.push(PathStep::Index(*idx as u32));
                         }
@@ -1152,9 +1006,22 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         }
                         Tracker::Option {
                             building_inner: true,
+                            ..
                         } => {
                             // Option with building_inner contributes OptionSome to path
                             field_path.push(PathStep::OptionSome);
+                        }
+                        Tracker::Map {
+                            current_entry_index: Some(idx),
+                            building_key,
+                            ..
+                        } => {
+                            // Map with active entry contributes MapKey or MapValue with entry index
+                            if *building_key {
+                                field_path.push(PathStep::MapKey(*idx as u32));
+                            } else {
+                                field_path.push(PathStep::MapValue(*idx as u32));
+                            }
                         }
                         _ => {}
                     }
@@ -1556,27 +1423,22 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     parent_frame.is_init = true;
                 }
             }
-            Tracker::List { current_child } if parent_frame.is_init => {
+            Tracker::List {
+                current_child,
+                rope,
+                ..
+            } if parent_frame.is_init => {
                 if current_child.is_some() {
                     // We just popped an element frame, now add it to the list
                     if let Def::List(list_def) = parent_shape.def {
-                        // Check if we used direct-fill (ListSlot) or heap allocation (Owned)
-                        if matches!(popped_frame.ownership, FrameOwnership::ListSlot) {
-                            // Direct-fill: element was written directly into Vec's buffer
-                            // Just increment the length
-                            let Some(set_len_fn) = list_def.set_len() else {
-                                return Err(self.err(ReflectErrorKind::OperationFailed {
-                                    shape: parent_shape,
-                                    operation: "List missing set_len function for direct-fill",
-                                }));
-                            };
-                            let current_len = unsafe {
-                                (list_def.vtable.len)(parent_frame.data.assume_init().as_const())
-                            };
-                            unsafe {
-                                set_len_fn(parent_frame.data.assume_init(), current_len + 1);
+                        // Check which storage mode we used
+                        if matches!(popped_frame.ownership, FrameOwnership::RopeSlot) {
+                            // Rope storage: element lives in a stable chunk.
+                            // Mark it as initialized; we'll drain to Vec when the list frame pops.
+                            if let Some(rope) = rope {
+                                rope.mark_last_initialized();
                             }
-                            // No dealloc needed - memory belongs to Vec
+                            // No dealloc needed - memory belongs to rope
                         } else {
                             // Fallback: element is in separate heap buffer, use push to copy
                             let Some(push_fn) = list_def.push() else {
@@ -1607,9 +1469,19 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     }
                 }
             }
-            Tracker::Map { insert_state } if parent_frame.is_init => {
+            Tracker::Map {
+                insert_state,
+                pending_entries,
+                ..
+            } if parent_frame.is_init => {
                 match insert_state {
                     MapInsertState::PushingKey { key_ptr, .. } => {
+                        // Fill defaults on the key frame before considering it done.
+                        // This handles metadata containers and other structs with Option fields.
+                        if let Err(e) = popped_frame.fill_defaults() {
+                            return Err(self.err(e));
+                        }
+
                         // We just popped the key frame - mark key as initialized and transition
                         // to PushingValue state. key_frame_on_stack = false because the frame
                         // was just popped, so Map now owns the key buffer.
@@ -1623,43 +1495,18 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     MapInsertState::PushingValue {
                         key_ptr, value_ptr, ..
                     } => {
-                        // We just popped the value frame, now insert the pair
-                        if let (Some(value_ptr), Def::Map(map_def)) =
-                            (value_ptr, parent_frame.allocated.shape().def)
-                        {
-                            let insert = map_def.vtable.insert;
+                        // Fill defaults on the value frame before considering it done.
+                        // This handles structs with Option fields.
+                        if let Err(e) = popped_frame.fill_defaults() {
+                            return Err(self.err(e));
+                        }
 
-                            // Use insert to add key-value pair to the map
-                            unsafe {
-                                insert(
-                                    PtrMut::new(parent_frame.data.as_mut_byte_ptr()),
-                                    PtrMut::new(key_ptr.as_mut_byte_ptr()),
-                                    PtrMut::new(value_ptr.as_mut_byte_ptr()),
-                                );
-                            }
-
-                            // Note: We don't deallocate the key and value memory here.
-                            // The insert function has semantically moved the values into the map,
-                            // but we still need to deallocate the temporary buffers.
-                            // However, since we don't have frames for them anymore (they were popped),
-                            // we need to handle deallocation here.
-                            if let Ok(key_shape) = map_def.k().layout.sized_layout()
-                                && key_shape.size() > 0
-                            {
-                                unsafe {
-                                    ::alloc::alloc::dealloc(key_ptr.as_mut_byte_ptr(), key_shape);
-                                }
-                            }
-                            if let Ok(value_shape) = map_def.v().layout.sized_layout()
-                                && value_shape.size() > 0
-                            {
-                                unsafe {
-                                    ::alloc::alloc::dealloc(
-                                        value_ptr.as_mut_byte_ptr(),
-                                        value_shape,
-                                    );
-                                }
-                            }
+                        // We just popped the value frame.
+                        // Instead of inserting immediately, add to pending_entries.
+                        // This keeps the buffers alive for deferred processing.
+                        // Actual insertion happens in require_full_initialization.
+                        if let Some(value_ptr) = value_ptr {
+                            pending_entries.push((*key_ptr, *value_ptr));
 
                             // Reset to idle state
                             *insert_state = MapInsertState::Idle;
@@ -1696,42 +1543,26 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     }
                 }
             }
-            Tracker::Option { building_inner } => {
+            Tracker::Option {
+                building_inner,
+                pending_inner,
+            } => {
                 crate::trace!(
                     "end(): matched Tracker::Option, building_inner={}",
                     *building_inner
                 );
                 // We just popped the inner value frame for an Option's Some variant
                 if *building_inner {
-                    if let Def::Option(option_def) = parent_frame.allocated.shape().def {
-                        // Use the Option vtable to initialize Some(inner_value)
-                        let init_some_fn = option_def.vtable.init_some;
-
-                        // The popped frame contains the inner value
-                        let inner_value_ptr = unsafe { popped_frame.data.assume_init() };
-
-                        // Initialize the Option as Some(inner_value)
-                        unsafe {
-                            init_some_fn(parent_frame.data, inner_value_ptr);
-                        }
-
-                        // Deallocate the inner value's memory since init_some_fn moved it
-                        if let FrameOwnership::Owned = popped_frame.ownership
-                            && let Ok(layout) = popped_frame.allocated.shape().layout.sized_layout()
-                            && layout.size() > 0
-                        {
-                            unsafe {
-                                ::alloc::alloc::dealloc(
-                                    popped_frame.data.as_mut_byte_ptr(),
-                                    layout,
-                                );
-                            }
-                        }
+                    if matches!(parent_frame.allocated.shape().def, Def::Option(_)) {
+                        // Store the inner value pointer for deferred init_some.
+                        // This keeps the inner value's memory stable for deferred processing.
+                        // Actual init_some() happens in require_full_initialization().
+                        *pending_inner = Some(popped_frame.data);
 
                         // Mark that we're no longer building the inner value
                         *building_inner = false;
-                        crate::trace!("end(): set building_inner to false");
-                        // Mark the Option as initialized
+                        crate::trace!("end(): stored pending_inner, set building_inner to false");
+                        // Mark the Option as initialized (pending finalization)
                         parent_frame.is_init = true;
                         crate::trace!("end(): set parent_frame.is_init to true");
                     } else {
@@ -2090,6 +1921,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         // Opaque types might be lists (e.g., Vec<T>)
                         if let Tracker::List {
                             current_child: Some(idx),
+                            ..
                         } = &frame.tracker
                         {
                             path.push(PathStep::Index(*idx as u32));
@@ -2189,13 +2021,13 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// - The partial is not in active state
     /// - The current frame is not fully initialized
     #[allow(unsafe_code)]
-    pub fn initialized_data_ptr(&self) -> Option<facet_core::PtrConst> {
+    pub fn initialized_data_ptr(&mut self) -> Option<facet_core::PtrConst> {
         if self.state != PartialState::Active {
             return None;
         }
-        let frame = self.frames().last()?;
+        let frame = self.frames_mut().last_mut()?;
 
-        // Check if fully initialized
+        // Check if fully initialized (may drain rope for lists)
         if frame.require_full_initialization().is_err() {
             return None;
         }
@@ -2211,13 +2043,13 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     ///
     /// This is the safe way to read a value from a Partial for validation purposes.
     #[allow(unsafe_code)]
-    pub fn read_as<T: facet_core::Facet<'facet>>(&self) -> Option<&T> {
+    pub fn read_as<T: facet_core::Facet<'facet>>(&mut self) -> Option<&T> {
         if self.state != PartialState::Active {
             return None;
         }
-        let frame = self.frames().last()?;
+        let frame = self.frames_mut().last_mut()?;
 
-        // Check if fully initialized
+        // Check if fully initialized (may drain rope for lists)
         if frame.require_full_initialization().is_err() {
             return None;
         }

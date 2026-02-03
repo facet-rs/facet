@@ -57,9 +57,9 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     false
                 }
             }
-            Tracker::Option { building_inner } => {
+            Tracker::Option { building_inner, .. } => {
                 if index == 0 {
-                    !building_inner
+                    !*building_inner
                 } else {
                     return Err(self.err(ReflectErrorKind::InvalidOperation {
                         operation: "is_field_set",
@@ -159,10 +159,8 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     // Without this, derive_path() would include an extra OptionSome step,
                     // causing path mismatches when we call begin_some() to find the stored
                     // inner frame.
-                    if matches!(stored_frame.tracker, Tracker::Option { .. }) {
-                        stored_frame.tracker = Tracker::Option {
-                            building_inner: false,
-                        };
+                    if let Tracker::Option { building_inner, .. } = &mut stored_frame.tracker {
+                        *building_inner = false;
                     }
 
                     stack.push(stored_frame);

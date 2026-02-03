@@ -125,14 +125,14 @@ fn test_map_path() {
 
     let mut path = Path::new(Config::SHAPE);
     path.push(PathStep::Field(0)); // settings
-    path.push(PathStep::MapKey);
+    path.push(PathStep::MapKey(0)); // first map entry key
 
     let formatted = path.format();
     insta::assert_snapshot!("map_key_path", formatted);
 
     let mut path = Path::new(Config::SHAPE);
     path.push(PathStep::Field(0)); // settings
-    path.push(PathStep::MapValue);
+    path.push(PathStep::MapValue(0)); // first map entry value
 
     let formatted = path.format();
     insta::assert_snapshot!("map_value_path", formatted);
