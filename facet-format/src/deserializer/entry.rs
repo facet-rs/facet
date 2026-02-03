@@ -658,7 +658,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     pub(crate) fn collect_evidence(
         &mut self,
     ) -> Result<Vec<FieldEvidence<'input>>, DeserializeError> {
-        self.save();
+        let save_point = self.parser_mut().save();
 
         let mut evidence = Vec::new();
         let mut depth = 0i32;
@@ -746,7 +746,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             });
         }
 
-        self.restore();
+        self.parser_mut().restore(save_point);
         Ok(evidence)
     }
 
