@@ -238,6 +238,129 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         }
     }
 
+    /// Checks if the current frame should be stored for deferred processing.
+    ///
+    /// This determines whether a frame can safely be stored and re-entered later
+    /// in deferred mode. A frame should be stored if:
+    /// 1. It's a re-entrant type (struct, enum, collection, Option)
+    /// 2. It has storable ownership (Field or Owned)
+    /// 3. It's NOT inside a movable allocation (Owned, TrackedBuffer, or ListSlot)
+    /// 4. It doesn't have a SmartPointer parent that needs immediate completion
+    /// 5. It's not an Option inner value where the Option is in a movable allocation
+    ///
+    /// Returns `true` if the frame should be stored, `false` if it should be
+    /// validated immediately.
+    fn should_store_frame_for_deferred(&self) -> bool {
+        let current_frame = self.frames().last().unwrap();
+
+        // Check if this is a type that can be re-entered in deferred mode
+        let is_reentrant_type = matches!(
+            current_frame.allocated.shape().ty,
+            Type::User(UserType::Struct(_)) | Type::User(UserType::Enum(_))
+        ) || matches!(
+            current_frame.allocated.shape().def,
+            Def::List(_) | Def::Map(_) | Def::Set(_) | Def::Array(_) | Def::Option(_)
+        );
+
+        if !is_reentrant_type {
+            return false;
+        }
+
+        // Storable ownership types: Field (direct field access) and Owned (inner values
+        // of Option/SmartPointer). Both can be stored for deferred processing.
+        let storable_ownership = matches!(
+            current_frame.ownership,
+            FrameOwnership::Field { .. } | FrameOwnership::Owned
+        );
+
+        if !storable_ownership {
+            return false;
+        }
+
+        // IMPORTANT: Don't store Field frames whose data lives inside an INTERMEDIATE
+        // Owned, TrackedBuffer, or ListSlot frame's memory. When that frame is later
+        // moved (e.g., by complete_option_frame(), map insert, or Vec reallocation),
+        // the Field frame's pointer becomes invalid.
+        //
+        // - Owned frames: Option's inner struct gets moved when init_some() is called
+        // - TrackedBuffer frames: Map value buffers get moved/deallocated when map insert happens
+        // - ListSlot frames: Vec elements may be invalidated when Vec reallocates during growth
+        //
+        // The ROOT frame (index 0) is also Owned, but it won't be moved - only
+        // intermediate Owned/TrackedBuffer/ListSlot frames will be moved.
+        // So we skip index 0 when checking for ancestors.
+        let inside_movable_allocation =
+            if matches!(current_frame.ownership, FrameOwnership::Field { .. }) {
+                let frames = self.frames();
+                frames
+                    .iter()
+                    .enumerate()
+                    .filter(|(idx, _)| *idx != 0 && *idx != frames.len() - 1) // Skip root and current
+                    .any(|(_, f)| f.ownership.is_movable())
+            } else {
+                false
+            };
+
+        if inside_movable_allocation {
+            return false;
+        }
+
+        // IMPORTANT: Don't store Owned frames that have a SmartPointer parent.
+        // SmartPointer (Box, Arc, etc.) needs its inner value immediately to create
+        // the smart pointer - it can't wait for finish_deferred.
+        let has_smart_pointer_parent = if matches!(current_frame.ownership, FrameOwnership::Owned) {
+            let frames = self.frames();
+            frames.len() >= 2 && matches!(frames[frames.len() - 2].tracker, Tracker::SmartPointer)
+        } else {
+            false
+        };
+
+        if has_smart_pointer_parent {
+            return false;
+        }
+
+        // IMPORTANT: Don't store Owned frames (Option inner values) if the Option parent
+        // is inside a movable allocation. The Option parent won't be stored (see above),
+        // so if we store the inner value, finish_deferred won't be able to find the Option
+        // frame to call complete_option_frame on. Instead, let the Option completion happen
+        // immediately in end().
+        let has_option_parent_in_movable =
+            if matches!(current_frame.ownership, FrameOwnership::Owned) {
+                let frames = self.frames();
+                if frames.len() >= 2
+                    && matches!(
+                        frames[frames.len() - 2].tracker,
+                        Tracker::Option {
+                            building_inner: true
+                        }
+                    )
+                {
+                    // Check if the Option parent is inside a movable allocation
+                    // (skip root at index 0 and the two frames at the end - Option and current)
+                    frames
+                        .iter()
+                        .enumerate()
+                        .filter(|(idx, _)| *idx != 0 && *idx < frames.len() - 2)
+                        .any(|(_, f)| {
+                            matches!(
+                                f.ownership,
+                                FrameOwnership::Owned | FrameOwnership::TrackedBuffer
+                            )
+                        })
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+        if has_option_parent_in_movable {
+            return false;
+        }
+
+        true
+    }
+
     /// Enables deferred materialization mode with the given Resolution.
     ///
     /// When deferred mode is enabled:
@@ -777,9 +900,10 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     FrameOwnership::TrackedBuffer
                     | FrameOwnership::BorrowedInPlace
                     | FrameOwnership::External
-                    | FrameOwnership::ListSlot => {
+                    | FrameOwnership::ListSlot
+                    | FrameOwnership::RopeSlot => {
                         return Err(self.err(ReflectErrorKind::InvariantViolation {
-                            invariant: "SmartPointerSlice cannot have TrackedBuffer/BorrowedInPlace/External/ListSlot ownership after conversion",
+                            invariant: "SmartPointerSlice cannot have TrackedBuffer/BorrowedInPlace/External/ListSlot/RopeSlot ownership after conversion",
                         }));
                     }
                 }
@@ -811,113 +935,9 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         let requires_full_init = if !self.is_deferred() {
             true
         } else {
-            // Check if this frame will be stored for later processing.
-            let current_frame = self.frames().last().unwrap();
-            let is_reentrant_type = matches!(
-                current_frame.allocated.shape().ty,
-                Type::User(UserType::Struct(_)) | Type::User(UserType::Enum(_))
-            ) || matches!(
-                current_frame.allocated.shape().def,
-                Def::List(_) | Def::Map(_) | Def::Set(_) | Def::Array(_) | Def::Option(_)
-            );
-            // Storable ownership types: Field (direct field access) and Owned (inner values
-            // of Option/SmartPointer). Both can be stored and later processed by finish_deferred.
-            // Key insight: when an Owned frame (like Option's inner struct) is stored, we also
-            // need to store the Option frame so finish_deferred can find it and call init_some.
-            let storable_ownership = matches!(
-                current_frame.ownership,
-                FrameOwnership::Field { .. } | FrameOwnership::Owned
-            );
-
-            // IMPORTANT: Don't store Field frames whose data lives inside an INTERMEDIATE
-            // Owned, TrackedBuffer, or ListSlot frame's memory. When that frame is later
-            // moved (e.g., by complete_option_frame(), map insert, or Vec reallocation),
-            // the Field frame's pointer becomes invalid.
-            //
-            // - Owned frames: Option's inner struct gets moved when init_some() is called
-            // - TrackedBuffer frames: Map value buffers get moved/deallocated when map insert happens
-            // - ListSlot frames: Vec elements may be invalidated when Vec reallocates during growth
-            //
-            // The ROOT frame (index 0) is also Owned, but it won't be moved - only
-            // intermediate Owned/TrackedBuffer/ListSlot frames will be moved.
-            // So we skip index 0 when checking for ancestors.
-            let inside_movable_allocation =
-                if matches!(current_frame.ownership, FrameOwnership::Field { .. }) {
-                    // Skip index 0 (root) and current frame, check remaining for movable ownerships
-                    let frames = self.frames();
-                    frames
-                        .iter()
-                        .enumerate()
-                        .filter(|(idx, _)| *idx != 0 && *idx != frames.len() - 1) // Skip root and current
-                        .any(|(_, f)| {
-                            matches!(
-                                f.ownership,
-                                FrameOwnership::Owned
-                                    | FrameOwnership::TrackedBuffer
-                                    | FrameOwnership::ListSlot
-                            )
-                        })
-                } else {
-                    false
-                };
-
-            // IMPORTANT: Don't store Owned frames that have a SmartPointer parent.
-            // SmartPointer (Box, Arc, etc.) needs its inner value immediately to create
-            // the smart pointer - it can't wait for finish_deferred.
-            let has_smart_pointer_parent =
-                if matches!(current_frame.ownership, FrameOwnership::Owned) {
-                    let frames = self.frames();
-                    frames.len() >= 2
-                        && matches!(frames[frames.len() - 2].tracker, Tracker::SmartPointer)
-                } else {
-                    false
-                };
-
-            // IMPORTANT: Don't store Owned frames (Option inner values) if the Option parent
-            // is inside a movable allocation. The Option parent won't be stored (see above),
-            // so if we store the inner value, finish_deferred won't be able to find the Option
-            // frame to call complete_option_frame on. Instead, let the Option completion happen
-            // immediately in end().
-            let has_option_parent_in_movable =
-                if matches!(current_frame.ownership, FrameOwnership::Owned) {
-                    let frames = self.frames();
-                    if frames.len() >= 2
-                        && matches!(
-                            frames[frames.len() - 2].tracker,
-                            Tracker::Option {
-                                building_inner: true
-                            }
-                        )
-                    {
-                        // Check if the Option parent is inside a movable allocation
-                        // (skip root at index 0 and the two frames at the end - Option and current)
-                        frames
-                            .iter()
-                            .enumerate()
-                            .filter(|(idx, _)| *idx != 0 && *idx < frames.len() - 2)
-                            .any(|(_, f)| {
-                                matches!(
-                                    f.ownership,
-                                    FrameOwnership::Owned | FrameOwnership::TrackedBuffer
-                                )
-                            })
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
-
-            // This must match the should_store logic below
-            let will_be_stored = is_reentrant_type
-                && storable_ownership
-                && !inside_movable_allocation
-                && !has_smart_pointer_parent
-                && !has_option_parent_in_movable;
-
             // If this frame will be stored, defer validation to finish_deferred().
             // Otherwise validate now.
-            !will_be_stored
+            !self.should_store_frame_for_deferred()
         };
 
         if requires_full_init {
@@ -996,109 +1016,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         // This includes structs, enums, collections, and Options (which need to be
         // stored so finish_deferred can find them when processing their inner values).
         let deferred_storage_info = if self.is_deferred() {
-            // Check if the current frame is a type that can be re-entered in deferred mode.
-            // This includes structs, enums, collections (List, Map, Set, Array), and Options.
-            let current_frame = self.frames().last().unwrap();
-            let is_reentrant_type = matches!(
-                current_frame.allocated.shape().ty,
-                Type::User(UserType::Struct(_)) | Type::User(UserType::Enum(_))
-            ) || matches!(
-                current_frame.allocated.shape().def,
-                Def::List(_) | Def::Map(_) | Def::Set(_) | Def::Array(_) | Def::Option(_)
-            );
-
-            // Storable ownership types: Field (direct field access) and Owned (inner values
-            // of Option/SmartPointer). Both can be stored for deferred processing.
-            let storable_ownership = matches!(
-                current_frame.ownership,
-                FrameOwnership::Field { .. } | FrameOwnership::Owned
-            );
-
-            // IMPORTANT: Don't store Field frames whose data lives inside an INTERMEDIATE
-            // Owned, TrackedBuffer, or ListSlot frame's memory. When that frame is later
-            // moved (e.g., by complete_option_frame(), map insert, or Vec reallocation),
-            // the Field frame's pointer becomes invalid.
-            //
-            // - Owned frames: Option's inner struct gets moved when init_some() is called
-            // - TrackedBuffer frames: Map value buffers get moved/deallocated when map insert happens
-            // - ListSlot frames: Vec elements may be invalidated when Vec reallocates during growth
-            //
-            // The ROOT frame (index 0) is also Owned, but it won't be moved - only
-            // intermediate Owned/TrackedBuffer/ListSlot frames will be moved.
-            // So we skip index 0 when checking for ancestors.
-            let inside_movable_allocation =
-                if matches!(current_frame.ownership, FrameOwnership::Field { .. }) {
-                    // Skip index 0 (root) and current frame, check remaining for movable ownerships
-                    let frames = self.frames();
-                    frames
-                        .iter()
-                        .enumerate()
-                        .filter(|(idx, _)| *idx != 0 && *idx != frames.len() - 1) // Skip root and current
-                        .any(|(_, f)| {
-                            matches!(
-                                f.ownership,
-                                FrameOwnership::Owned
-                                    | FrameOwnership::TrackedBuffer
-                                    | FrameOwnership::ListSlot
-                            )
-                        })
-                } else {
-                    false
-                };
-
-            // IMPORTANT: Don't store Owned frames that have a SmartPointer parent.
-            // SmartPointer (Box, Arc, etc.) needs its inner value immediately to create
-            // the smart pointer - it can't wait for finish_deferred. This is different
-            // from Option, which has special handling in finish_deferred for OptionSome.
-            let has_smart_pointer_parent =
-                if matches!(current_frame.ownership, FrameOwnership::Owned) {
-                    let frames = self.frames();
-                    frames.len() >= 2
-                        && matches!(frames[frames.len() - 2].tracker, Tracker::SmartPointer)
-                } else {
-                    false
-                };
-
-            // IMPORTANT: Don't store Owned frames (Option inner values) if the Option parent
-            // is inside a movable allocation. The Option parent won't be stored (see above),
-            // so if we store the inner value, finish_deferred won't be able to find the Option
-            // frame to call complete_option_frame on. Instead, let the Option completion happen
-            // immediately in end().
-            let has_option_parent_in_movable =
-                if matches!(current_frame.ownership, FrameOwnership::Owned) {
-                    let frames = self.frames();
-                    if frames.len() >= 2
-                        && matches!(
-                            frames[frames.len() - 2].tracker,
-                            Tracker::Option {
-                                building_inner: true
-                            }
-                        )
-                    {
-                        // Check if the Option parent is inside a movable allocation
-                        // (skip root at index 0 and the two frames at the end - Option and current)
-                        frames
-                            .iter()
-                            .enumerate()
-                            .filter(|(idx, _)| *idx != 0 && *idx < frames.len() - 2)
-                            .any(|(_, f)| {
-                                matches!(
-                                    f.ownership,
-                                    FrameOwnership::Owned | FrameOwnership::TrackedBuffer
-                                )
-                            })
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
-
-            let should_store = is_reentrant_type
-                && storable_ownership
-                && !inside_movable_allocation
-                && !has_smart_pointer_parent
-                && !has_option_parent_in_movable;
+            let should_store = self.should_store_frame_for_deferred();
 
             if should_store {
                 // Compute the "field-only" path for storage by finding all Field steps

@@ -6,6 +6,7 @@ mod deserialize;
 mod empty_tuples;
 mod fuzz;
 mod invariant;
+mod list_deferred;
 mod list_leak;
 mod map;
 mod map_leak;

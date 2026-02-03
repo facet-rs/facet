@@ -113,6 +113,7 @@ use alloc::{collections::BTreeMap, sync::Arc, vec::Vec};
 
 mod arena;
 mod iset;
+mod rope;
 pub(crate) mod typeplan;
 pub use typeplan::{DeserStrategy, NodeId, TypePlan, TypePlanCore};
 
@@ -130,6 +131,7 @@ use facet_core::{
     Def, EnumType, Field, PtrUninit, Shape, SliceBuilderVTable, Type, UserType, Variant,
 };
 use iset::ISet;
+use rope::ListRope;
 use typeplan::{FieldDefault, FieldInitPlan, FillRule};
 
 /// State of a partial value
@@ -298,6 +300,15 @@ pub(crate) enum FrameOwnership {
     /// On successful end(): parent calls `set_len(len + 1)` instead of `push`.
     /// On drop/failure: no dealloc (memory belongs to Vec), no `set_len` (element not complete).
     ListSlot,
+
+    /// Points into a stable rope chunk for list element building.
+    /// Used by `begin_list_item()` when deferred processing is needed.
+    /// Unlike `ListSlot`, the memory is stable (won't move during Vec growth),
+    /// so frames inside can be stored for deferred processing.
+    /// On successful end(): element is tracked for later finalization.
+    /// On list frame end(): all elements are moved into the real Vec.
+    /// On drop/failure: the rope chunk handles cleanup.
+    RopeSlot,
 }
 
 impl FrameOwnership {
@@ -308,6 +319,21 @@ impl FrameOwnership {
     /// parent, existing structures, or caller-provided memory.
     const fn needs_dealloc(&self) -> bool {
         matches!(self, FrameOwnership::Owned | FrameOwnership::TrackedBuffer)
+    }
+
+    /// Returns true if this frame's memory may move, invalidating child pointers.
+    ///
+    /// Frames inside movable allocations cannot be stored for deferred processing
+    /// because their pointers would become invalid when the parent reallocates.
+    ///
+    /// - `Owned`: Option's inner struct gets moved when init_some() is called
+    /// - `TrackedBuffer`: Map value buffers get moved/deallocated on map insert
+    /// - `ListSlot`: Vec elements may be invalidated when Vec reallocates during growth
+    const fn is_movable(&self) -> bool {
+        matches!(
+            self,
+            FrameOwnership::Owned | FrameOwnership::TrackedBuffer | FrameOwnership::ListSlot
+        )
     }
 }
 
@@ -434,6 +460,12 @@ pub(crate) enum Tracker {
     List {
         /// If we're pushing another frame for an element, this is the element index
         current_child: Option<usize>,
+        /// Stable rope storage for elements when deferred processing is needed.
+        /// A rope is a list of fixed-size chunks - chunks never reallocate, only new
+        /// chunks are added. This keeps element pointers stable during list building.
+        /// On finalization, elements are moved into the real Vec.
+        /// None = using direct-fill (ListSlot), Some = using rope (RopeSlot)
+        rope: Option<ListRope>,
     },
 
     /// Partially initialized map (HashMap, BTreeMap, etc.)
