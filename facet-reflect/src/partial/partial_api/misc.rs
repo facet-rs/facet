@@ -594,6 +594,27 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     }
                 }
 
+                // Special handling for Proxy values: when path ends with Proxy,
+                // the parent is the target type (e.g., Inner) and we need to convert
+                // the proxy value (e.g., InnerProxy) using the proxy's convert_in.
+                if matches!(last_step, PathStep::Proxy) {
+                    // Find the parent frame (the proxy target)
+                    let parent_frame = if parent_path.steps.is_empty() {
+                        let parent_index = start_depth.saturating_sub(1);
+                        self.frames_mut().get_mut(parent_index)
+                    } else if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
+                        Some(parent_frame)
+                    } else {
+                        let parent_frame_index = start_depth + parent_path.steps.len() - 1;
+                        self.frames_mut().get_mut(parent_frame_index)
+                    };
+
+                    if let Some(target_frame) = parent_frame {
+                        Self::complete_proxy_frame(target_frame, frame);
+                        continue;
+                    }
+                }
+
                 // Special handling for List/SmartPointerSlice element values: when path ends with Index,
                 // the parent is a List or SmartPointerSlice frame and we need to push the element into it.
                 // RopeSlot frames are already stored in the rope and will be drained during
@@ -1048,6 +1069,66 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         // Mark the wrapper as initialized
         inner_wrapper_frame.tracker = Tracker::Scalar;
         inner_wrapper_frame.is_init = true;
+    }
+
+    /// Complete a proxy conversion during deferred finalization.
+    ///
+    /// This handles proxy types (e.g., `#[facet(proxy = InnerProxy)]`) that were
+    /// deferred during flatten deserialization. The proxy frame's children (e.g.,
+    /// Vec<f64> fields) have already been materialized (ropes drained), so it's
+    /// now safe to run the conversion.
+    fn complete_proxy_frame(target_frame: &mut Frame, proxy_frame: Frame) {
+        // Get the convert_in function from the proxy stored on the frame
+        let Some(proxy_def) = proxy_frame.shape_level_proxy else {
+            crate::trace!(
+                "complete_proxy_frame: no shape_level_proxy on frame {}",
+                proxy_frame.allocated.shape()
+            );
+            return;
+        };
+        let convert_in = proxy_def.convert_in;
+
+        let _proxy_shape = proxy_frame.allocated.shape();
+        let _target_shape = target_frame.allocated.shape();
+
+        crate::trace!(
+            "complete_proxy_frame: converting {} to {}",
+            _proxy_shape,
+            _target_shape
+        );
+
+        unsafe {
+            let inner_value_ptr = proxy_frame.data.assume_init().as_const();
+            let res = (convert_in)(inner_value_ptr, target_frame.data);
+
+            match res {
+                Ok(rptr) => {
+                    if rptr.as_uninit() != target_frame.data {
+                        crate::trace!(
+                            "complete_proxy_frame: convert_in returned unexpected pointer"
+                        );
+                        return;
+                    }
+                }
+                Err(_message) => {
+                    crate::trace!("complete_proxy_frame: conversion failed: {}", _message);
+                    return;
+                }
+            }
+        }
+
+        // Deallocate the proxy frame's memory (convert_in consumed it via ptr::read)
+        if let FrameOwnership::Owned = proxy_frame.ownership
+            && let Ok(layout) = proxy_frame.allocated.shape().layout.sized_layout()
+            && layout.size() > 0
+        {
+            unsafe {
+                ::alloc::alloc::dealloc(proxy_frame.data.as_mut_byte_ptr(), layout);
+            }
+        }
+
+        // Mark the target as initialized
+        target_frame.is_init = true;
     }
 
     /// Complete a List frame by pushing an element into it (for deferred finalization)
@@ -1567,6 +1648,16 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         }
                         _ => {}
                     }
+
+                    // If the next frame on the stack is a proxy frame, add a Proxy
+                    // path step. This distinguishes the proxy frame (and its children)
+                    // from the parent frame that the proxy writes into, preventing path
+                    // collisions in deferred mode where both frames are stored.
+                    if frame_idx + 1 < frames_len
+                        && self.frames()[frame_idx + 1].using_custom_deserialization
+                    {
+                        field_path.push(PathStep::Proxy);
+                    }
                 }
 
                 if !field_path.is_empty() {
@@ -1584,11 +1675,11 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         // Pop the frame and save its data pointer for SmartPointer handling
         let mut popped_frame = self.frames_mut().pop().unwrap();
 
-        // Proxy frames are NEVER stored - they must be processed immediately.
-        // This is because proxy frames share the same path as their parent field frame,
-        // and storing them would cause path collisions. The conversion happens now,
-        // and the parent field frame (with the converted value) may be stored later.
-        if popped_frame.using_custom_deserialization {
+        // In non-deferred mode, proxy frames are processed immediately.
+        // In deferred mode, proxy frames are stored (with a PathStep::Proxy
+        // distinguishing them from their parent) and the conversion is handled
+        // by finish_deferred after children have been fully materialized.
+        if popped_frame.using_custom_deserialization && deferred_storage_info.is_none() {
             // First check the proxy stored in the frame (used for format-specific proxies
             // and container-level proxies), then fall back to field-level proxy.
             // This ordering is important because format-specific proxies store their
