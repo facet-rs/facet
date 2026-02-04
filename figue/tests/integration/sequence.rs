@@ -229,3 +229,101 @@ fn test_doubledash_with_subcommand_and_trailing_args() {
         }
     );
 }
+
+/// Reproduces <https://github.com/bearcove/figue/issues/57>
+/// When a subcommand name matches a value after --, it should be treated as
+/// a positional argument, not as a subcommand.
+#[test]
+fn test_doubledash_with_subcommand_name_collision() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct BuildArgs {}
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct RunArgs {
+        #[facet(args::short = 'r', args::named, default)]
+        release: bool,
+
+        /// Arguments to pass to ddc
+        #[facet(args::positional, default)]
+        ddc_args: Vec<String>,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(u8)]
+    enum Command {
+        Build(BuildArgs),
+        Run(RunArgs),
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Args {
+        #[facet(args::subcommand)]
+        command: Command,
+    }
+
+    // "run -- build" should treat "build" as a positional arg to RunArgs,
+    // NOT as the Build subcommand
+    let args = figue::from_slice::<Args>(&["run", "--", "build"]).unwrap();
+    assert_eq!(
+        args,
+        Args {
+            command: Command::Run(RunArgs {
+                release: false,
+                ddc_args: vec!["build".to_string()],
+            }),
+        }
+    );
+
+    // Multiple trailing args should also work
+    let args = figue::from_slice::<Args>(&["run", "--", "build", "deploy"]).unwrap();
+    assert_eq!(
+        args,
+        Args {
+            command: Command::Run(RunArgs {
+                release: false,
+                ddc_args: vec!["build".to_string(), "deploy".to_string()],
+            }),
+        }
+    );
+}
+
+/// Reproduces <https://github.com/bearcove/figue/issues/57>
+/// Single trailing arg after -- in a subcommand with Vec<String> field.
+/// This is the core bug: a single value stays as ConfigValue::String and
+/// coerce_types_from_shape must recurse into the enum to wrap it in an array.
+#[test]
+fn test_doubledash_with_subcommand_single_trailing_arg() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct RunArgs {
+        #[facet(args::short = 'r', args::named, default)]
+        release: bool,
+
+        /// Arguments to pass to ddc
+        #[facet(args::positional, default)]
+        ddc_args: Vec<String>,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(u8)]
+    enum Command {
+        Run(RunArgs),
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Args {
+        #[facet(args::subcommand)]
+        command: Command,
+    }
+
+    // Single trailing arg: "run -- serve"
+    let args = figue::from_slice::<Args>(&["run", "--", "serve"]).unwrap();
+    assert_eq!(
+        args,
+        Args {
+            command: Command::Run(RunArgs {
+                release: false,
+                ddc_args: vec!["serve".to_string()],
+            }),
+        }
+    );
+}
