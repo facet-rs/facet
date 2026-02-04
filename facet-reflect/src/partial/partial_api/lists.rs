@@ -223,7 +223,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             let frame = self.mode.stack_mut().last_mut().unwrap();
             if let Tracker::SmartPointerSlice {
                 building_item: true,
-                vtable: _,
+                ..
             } = &frame.tracker
             {
                 return Err(self.err(ReflectErrorKind::OperationFailed {
@@ -306,12 +306,17 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             );
             self.mode.stack_mut().push(element_frame);
 
-            // Mark that we're building an item
+            // Mark that we're building an item and increment the element index
             let parent_idx = self.mode.stack().len() - 2;
-            if let Tracker::SmartPointerSlice { building_item, .. } =
-                &mut self.mode.stack_mut()[parent_idx].tracker
+            if let Tracker::SmartPointerSlice {
+                building_item,
+                current_child,
+                ..
+            } = &mut self.mode.stack_mut()[parent_idx].tracker
             {
-                crate::trace!("Marking element frame as building item");
+                let next_idx = current_child.map(|i| i + 1).unwrap_or(0);
+                *current_child = Some(next_idx);
+                crate::trace!("Marking element frame as building item, index={}", next_idx);
                 *building_item = true;
             }
 

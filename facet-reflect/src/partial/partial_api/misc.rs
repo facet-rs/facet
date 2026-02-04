@@ -371,6 +371,113 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 frame.tracker.kind()
             );
 
+            // Special handling for SmartPointerSlice: convert builder to Arc<[T]> before validation
+            if let Tracker::SmartPointerSlice { vtable, .. } = &frame.tracker {
+                let vtable = *vtable;
+                let current_shape = frame.allocated.shape();
+
+                // Convert the builder to Arc<[T]>
+                let builder_ptr = unsafe { frame.data.assume_init() };
+                let arc_ptr = unsafe { (vtable.convert_fn)(builder_ptr) };
+
+                trace!(
+                    "finish_deferred: Converting SmartPointerSlice builder to {}",
+                    current_shape
+                );
+
+                // Handle different ownership cases
+                match frame.ownership {
+                    FrameOwnership::Field { field_idx } => {
+                        // Arc<[T]> is a field in a struct
+                        // Find the parent frame and write the Arc to the field location
+                        let parent_path = facet_path::Path {
+                            shape: path.shape,
+                            steps: path.steps[..path.steps.len() - 1].to_vec(),
+                        };
+
+                        // Get the parent frame
+                        let parent_frame_opt = if parent_path.steps.is_empty() {
+                            let parent_index = start_depth.saturating_sub(1);
+                            self.frames_mut().get_mut(parent_index)
+                        } else if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
+                            Some(parent_frame)
+                        } else {
+                            let parent_frame_index = start_depth + parent_path.steps.len() - 1;
+                            self.frames_mut().get_mut(parent_frame_index)
+                        };
+
+                        if let Some(parent_frame) = parent_frame_opt {
+                            // Get the field to find its offset
+                            if let Type::User(UserType::Struct(struct_type)) =
+                                parent_frame.allocated.shape().ty
+                            {
+                                let field = &struct_type.fields[field_idx];
+
+                                // Calculate where the Arc should be written (parent.data + field.offset)
+                                let field_location =
+                                    unsafe { parent_frame.data.field_uninit(field.offset) };
+
+                                // Write the Arc to the parent struct's field location
+                                if let Ok(arc_layout) = current_shape.layout.sized_layout() {
+                                    let arc_size = arc_layout.size();
+                                    unsafe {
+                                        core::ptr::copy_nonoverlapping(
+                                            arc_ptr.as_byte_ptr(),
+                                            field_location.as_mut_byte_ptr(),
+                                            arc_size,
+                                        );
+                                    }
+
+                                    // Free the staging allocation from convert_fn
+                                    unsafe {
+                                        ::alloc::alloc::dealloc(
+                                            arc_ptr.as_byte_ptr() as *mut u8,
+                                            arc_layout,
+                                        );
+                                    }
+
+                                    // Update the frame to point to the correct field location and mark as initialized
+                                    frame.data = field_location;
+                                    frame.tracker = Tracker::Scalar;
+                                    frame.is_init = true;
+
+                                    trace!(
+                                        "finish_deferred: SmartPointerSlice converted and written to field {}",
+                                        field_idx
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    FrameOwnership::Owned => {
+                        // Arc<[T]> is the root - write in place
+                        if let Ok(arc_layout) = current_shape.layout.sized_layout() {
+                            let arc_size = arc_layout.size();
+                            // Allocate new memory for the Arc
+                            let new_ptr = facet_core::alloc_for_layout(arc_layout);
+                            unsafe {
+                                core::ptr::copy_nonoverlapping(
+                                    arc_ptr.as_byte_ptr(),
+                                    new_ptr.as_mut_byte_ptr(),
+                                    arc_size,
+                                );
+                            }
+                            // Free the staging allocation
+                            unsafe {
+                                ::alloc::alloc::dealloc(
+                                    arc_ptr.as_byte_ptr() as *mut u8,
+                                    arc_layout,
+                                );
+                            }
+                            frame.data = new_ptr;
+                            frame.tracker = Tracker::Scalar;
+                            frame.is_init = true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
             // Fill in defaults for unset fields that have defaults
             if let Err(e) = frame.fill_defaults() {
                 // Before cleanup, clear the parent's iset bit for the frame that failed.
@@ -463,15 +570,15 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     }
                 }
 
-                // Special handling for List element values: when path ends with Index,
-                // the parent is a List frame and we need to push the element into it.
+                // Special handling for List/SmartPointerSlice element values: when path ends with Index,
+                // the parent is a List or SmartPointerSlice frame and we need to push the element into it.
                 // RopeSlot frames are already stored in the rope and will be drained during
                 // validation - pushing them here would duplicate the elements.
                 if matches!(last_step, PathStep::Index(_))
                     && !matches!(frame.ownership, FrameOwnership::RopeSlot)
                 {
-                    // Find the List frame (parent)
-                    let list_frame = if parent_path.steps.is_empty() {
+                    // Find the parent frame (List or SmartPointerSlice)
+                    let parent_frame = if parent_path.steps.is_empty() {
                         let parent_index = start_depth.saturating_sub(1);
                         self.frames_mut().get_mut(parent_index)
                     } else if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
@@ -481,9 +588,15 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         self.frames_mut().get_mut(parent_frame_index)
                     };
 
-                    if let Some(list_frame) = list_frame {
-                        // The frame contains the element value - push it into the List
-                        Self::complete_list_item_frame(list_frame, frame);
+                    if let Some(parent_frame) = parent_frame {
+                        // Check if parent is a SmartPointerSlice (e.g., Arc<[T]>)
+                        if matches!(parent_frame.tracker, Tracker::SmartPointerSlice { .. }) {
+                            Self::complete_smart_pointer_slice_item_frame(parent_frame, frame);
+                            // Frame data has been transferred to slice builder - don't drop it
+                            continue;
+                        }
+                        // Otherwise try List handling
+                        Self::complete_list_item_frame(parent_frame, frame);
                         // Frame data has been transferred to List - don't drop it
                         continue;
                     }
@@ -751,7 +864,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         if let Def::Pointer(smart_ptr_def) = smart_ptr_frame.allocated.shape().def {
             // Use the SmartPointer vtable to create the smart pointer from the inner value
             if let Some(new_into_fn) = smart_ptr_def.vtable.new_into_fn {
-                // The inner frame contains the inner value - assume_init validates it's initialized
+                // Sized pointee case: use new_into_fn
                 let _ = unsafe { inner_frame.data.assume_init() };
 
                 // Create the SmartPointer with the inner value
@@ -763,6 +876,71 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 }
 
                 // Deallocate the inner value's memory since new_into_fn moved it
+                if let FrameOwnership::Owned = inner_frame.ownership
+                    && let Ok(layout) = inner_frame.allocated.shape().layout.sized_layout()
+                    && layout.size() > 0
+                {
+                    unsafe {
+                        ::alloc::alloc::dealloc(inner_frame.data.as_mut_byte_ptr(), layout);
+                    }
+                }
+
+                // Mark the SmartPointer as initialized
+                smart_ptr_frame.tracker = Tracker::SmartPointer {
+                    building_inner: false,
+                    pending_inner: None,
+                };
+                smart_ptr_frame.is_init = true;
+            } else if let Some(pointee) = smart_ptr_def.pointee()
+                && pointee.is_shape(str::SHAPE)
+                && inner_frame.allocated.shape().is_shape(String::SHAPE)
+            {
+                // Unsized pointee case: String -> Arc<str>/Box<str>/Rc<str> conversion
+                use ::alloc::{rc::Rc, string::String, sync::Arc};
+                use facet_core::KnownPointer;
+
+                let Some(known) = smart_ptr_def.known else {
+                    return;
+                };
+
+                // Read the String value from the inner frame
+                let string_ptr = inner_frame.data.as_mut_byte_ptr() as *mut String;
+                let string_value = unsafe { core::ptr::read(string_ptr) };
+
+                // Convert to the appropriate smart pointer type
+                match known {
+                    KnownPointer::Box => {
+                        let boxed: ::alloc::boxed::Box<str> = string_value.into_boxed_str();
+                        unsafe {
+                            core::ptr::write(
+                                smart_ptr_frame.data.as_mut_byte_ptr()
+                                    as *mut ::alloc::boxed::Box<str>,
+                                boxed,
+                            );
+                        }
+                    }
+                    KnownPointer::Arc => {
+                        let arc: Arc<str> = Arc::from(string_value.into_boxed_str());
+                        unsafe {
+                            core::ptr::write(
+                                smart_ptr_frame.data.as_mut_byte_ptr() as *mut Arc<str>,
+                                arc,
+                            );
+                        }
+                    }
+                    KnownPointer::Rc => {
+                        let rc: Rc<str> = Rc::from(string_value.into_boxed_str());
+                        unsafe {
+                            core::ptr::write(
+                                smart_ptr_frame.data.as_mut_byte_ptr() as *mut Rc<str>,
+                                rc,
+                            );
+                        }
+                    }
+                    _ => return,
+                }
+
+                // Deallocate the String's memory (we moved the data out via ptr::read)
                 if let FrameOwnership::Owned = inner_frame.ownership
                     && let Ok(layout) = inner_frame.allocated.shape().layout.sized_layout()
                     && layout.size() > 0
@@ -813,6 +991,44 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 }
             }
         }
+    }
+
+    /// Complete a SmartPointerSlice element frame by pushing the element into the slice builder
+    /// (for deferred finalization)
+    fn complete_smart_pointer_slice_item_frame(
+        slice_frame: &mut Frame,
+        element_frame: Frame,
+    ) -> bool {
+        if let Tracker::SmartPointerSlice { vtable, .. } = &slice_frame.tracker {
+            let vtable = *vtable;
+            // The slice frame's data pointer IS the builder pointer
+            let builder_ptr = slice_frame.data;
+
+            // Push the element into the builder
+            unsafe {
+                (vtable.push_fn)(
+                    PtrMut::new(builder_ptr.as_mut_byte_ptr()),
+                    PtrConst::new(element_frame.data.as_byte_ptr()),
+                );
+            }
+
+            crate::trace!(
+                "complete_smart_pointer_slice_item_frame: pushed element into builder for {}",
+                slice_frame.allocated.shape()
+            );
+
+            // Deallocate the element's memory since push moved it
+            if let FrameOwnership::Owned = element_frame.ownership
+                && let Ok(layout) = element_frame.allocated.shape().layout.sized_layout()
+                && layout.size() > 0
+            {
+                unsafe {
+                    ::alloc::alloc::dealloc(element_frame.data.as_mut_byte_ptr(), layout);
+                }
+            }
+            return true;
+        }
+        false
     }
 
     /// Complete a Map key frame by transitioning the Map from PushingKey to PushingValue state
@@ -959,96 +1175,113 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         };
 
         if needs_slice_conversion {
-            // Get shape info upfront to avoid borrow conflicts
-            let current_shape = self.frames().last().unwrap().allocated.shape();
+            // In deferred mode, don't convert immediately - let finish_deferred handle it.
+            // Set building_item = true and return early (matching non-deferred behavior).
+            // The next end() call will store the frame.
+            if self.is_deferred() {
+                let frames = self.frames_mut();
+                let top_idx = frames.len() - 1;
+                if let Tracker::SmartPointerSlice { building_item, .. } =
+                    &mut frames[top_idx].tracker
+                {
+                    *building_item = true;
+                }
+                return Ok(self);
+            } else {
+                // Get shape info upfront to avoid borrow conflicts
+                let current_shape = self.frames().last().unwrap().allocated.shape();
 
-            let frames = self.frames_mut();
-            let top_idx = frames.len() - 1;
+                let frames = self.frames_mut();
+                let top_idx = frames.len() - 1;
 
-            if let Tracker::SmartPointerSlice { vtable, .. } = &frames[top_idx].tracker {
-                // Convert the builder to Arc<[T]>
-                let vtable = *vtable;
-                let builder_ptr = unsafe { frames[top_idx].data.assume_init() };
-                let arc_ptr = unsafe { (vtable.convert_fn)(builder_ptr) };
+                if let Tracker::SmartPointerSlice { vtable, .. } = &frames[top_idx].tracker {
+                    // Convert the builder to Arc<[T]>
+                    let vtable = *vtable;
+                    let builder_ptr = unsafe { frames[top_idx].data.assume_init() };
+                    let arc_ptr = unsafe { (vtable.convert_fn)(builder_ptr) };
 
-                match frames[top_idx].ownership {
-                    FrameOwnership::Field { field_idx } => {
-                        // Arc<[T]> is a field in a struct
-                        // The field frame's original data pointer was overwritten with the builder pointer,
-                        // so we need to reconstruct where the Arc should be written.
+                    match frames[top_idx].ownership {
+                        FrameOwnership::Field { field_idx } => {
+                            // Arc<[T]> is a field in a struct
+                            // The field frame's original data pointer was overwritten with the builder pointer,
+                            // so we need to reconstruct where the Arc should be written.
 
-                        // Get parent frame and field info
-                        let parent_idx = top_idx - 1;
-                        let parent_frame = &frames[parent_idx];
+                            // Get parent frame and field info
+                            let parent_idx = top_idx - 1;
+                            let parent_frame = &frames[parent_idx];
 
-                        // Get the field to find its offset
-                        let field = if let Type::User(UserType::Struct(struct_type)) =
-                            parent_frame.allocated.shape().ty
-                        {
-                            &struct_type.fields[field_idx]
-                        } else {
-                            return Err(self.err(ReflectErrorKind::InvariantViolation {
+                            // Get the field to find its offset
+                            let field = if let Type::User(UserType::Struct(struct_type)) =
+                                parent_frame.allocated.shape().ty
+                            {
+                                &struct_type.fields[field_idx]
+                            } else {
+                                return Err(self.err(ReflectErrorKind::InvariantViolation {
                                 invariant: "SmartPointerSlice field frame parent must be a struct",
                             }));
-                        };
+                            };
 
-                        // Calculate where the Arc should be written (parent.data + field.offset)
-                        let field_location =
-                            unsafe { parent_frame.data.field_uninit(field.offset) };
+                            // Calculate where the Arc should be written (parent.data + field.offset)
+                            let field_location =
+                                unsafe { parent_frame.data.field_uninit(field.offset) };
 
-                        // Write the Arc to the parent struct's field location
-                        let arc_layout = match current_shape.layout.sized_layout() {
-                            Ok(layout) => layout,
-                            Err(_) => {
-                                return Err(self.err(ReflectErrorKind::Unsized {
+                            // Write the Arc to the parent struct's field location
+                            let arc_layout = match current_shape.layout.sized_layout() {
+                                Ok(layout) => layout,
+                                Err(_) => {
+                                    return Err(self.err(ReflectErrorKind::Unsized {
                                     shape: current_shape,
                                     operation: "SmartPointerSlice conversion requires sized Arc",
                                 }));
+                                }
+                            };
+                            let arc_size = arc_layout.size();
+                            unsafe {
+                                core::ptr::copy_nonoverlapping(
+                                    arc_ptr.as_byte_ptr(),
+                                    field_location.as_mut_byte_ptr(),
+                                    arc_size,
+                                );
                             }
-                        };
-                        let arc_size = arc_layout.size();
-                        unsafe {
-                            core::ptr::copy_nonoverlapping(
-                                arc_ptr.as_byte_ptr(),
-                                field_location.as_mut_byte_ptr(),
-                                arc_size,
-                            );
+
+                            // Free the staging allocation from convert_fn (the Arc was copied to field_location)
+                            unsafe {
+                                ::alloc::alloc::dealloc(
+                                    arc_ptr.as_byte_ptr() as *mut u8,
+                                    arc_layout,
+                                );
+                            }
+
+                            // Update the frame to point to the correct field location and mark as initialized
+                            frames[top_idx].data = field_location;
+                            frames[top_idx].tracker = Tracker::Scalar;
+                            frames[top_idx].is_init = true;
+
+                            // Return WITHOUT popping - the field frame will be popped by the next end() call
+                            return Ok(self);
                         }
+                        FrameOwnership::Owned => {
+                            // Arc<[T]> is the root type or owned independently
+                            // The frame already has the allocation, we just need to update it with the Arc
 
-                        // Free the staging allocation from convert_fn (the Arc was copied to field_location)
-                        unsafe {
-                            ::alloc::alloc::dealloc(arc_ptr.as_byte_ptr() as *mut u8, arc_layout);
+                            // The frame's data pointer is currently the builder, but we allocated
+                            // the Arc memory in the convert_fn. Update to point to the Arc.
+                            frames[top_idx].data = PtrUninit::new(arc_ptr.as_byte_ptr() as *mut u8);
+                            frames[top_idx].tracker = Tracker::Scalar;
+                            frames[top_idx].is_init = true;
+                            // Keep Owned ownership so Guard will properly deallocate
+
+                            // Return WITHOUT popping - the frame stays and will be built/dropped normally
+                            return Ok(self);
                         }
-
-                        // Update the frame to point to the correct field location and mark as initialized
-                        frames[top_idx].data = field_location;
-                        frames[top_idx].tracker = Tracker::Scalar;
-                        frames[top_idx].is_init = true;
-
-                        // Return WITHOUT popping - the field frame will be popped by the next end() call
-                        return Ok(self);
-                    }
-                    FrameOwnership::Owned => {
-                        // Arc<[T]> is the root type or owned independently
-                        // The frame already has the allocation, we just need to update it with the Arc
-
-                        // The frame's data pointer is currently the builder, but we allocated
-                        // the Arc memory in the convert_fn. Update to point to the Arc.
-                        frames[top_idx].data = PtrUninit::new(arc_ptr.as_byte_ptr() as *mut u8);
-                        frames[top_idx].tracker = Tracker::Scalar;
-                        frames[top_idx].is_init = true;
-                        // Keep Owned ownership so Guard will properly deallocate
-
-                        // Return WITHOUT popping - the frame stays and will be built/dropped normally
-                        return Ok(self);
-                    }
-                    FrameOwnership::TrackedBuffer
-                    | FrameOwnership::BorrowedInPlace
-                    | FrameOwnership::External
-                    | FrameOwnership::RopeSlot => {
-                        return Err(self.err(ReflectErrorKind::InvariantViolation {
+                        FrameOwnership::TrackedBuffer
+                        | FrameOwnership::BorrowedInPlace
+                        | FrameOwnership::External
+                        | FrameOwnership::RopeSlot => {
+                            return Err(self.err(ReflectErrorKind::InvariantViolation {
                             invariant: "SmartPointerSlice cannot have TrackedBuffer/BorrowedInPlace/External/RopeSlot ownership after conversion",
                         }));
+                        }
                     }
                 }
             }
@@ -1212,6 +1445,13 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         } => {
                             // SmartPointer with building_inner contributes Deref to path
                             field_path.push(PathStep::Deref);
+                        }
+                        Tracker::SmartPointerSlice {
+                            current_child: Some(idx),
+                            ..
+                        } => {
+                            // SmartPointerSlice with current_child contributes Index to path
+                            field_path.push(PathStep::Index(*idx as u32));
                         }
                         Tracker::Map {
                             current_entry_index: Some(idx),
@@ -1419,6 +1659,16 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         } = &mut parent_frame.tracker
                     {
                         rope.mark_last_initialized();
+                    }
+
+                    // Clear building_item for SmartPointerSlice so the next element can be added
+                    if let Tracker::SmartPointerSlice { building_item, .. } =
+                        &mut parent_frame.tracker
+                    {
+                        *building_item = false;
+                        crate::trace!(
+                            "end(): SmartPointerSlice building_item cleared while storing element"
+                        );
                     }
                 }
 
@@ -1691,38 +1941,23 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                             );
                         } else {
                             // Not in deferred mode - complete immediately
-                            if let Def::Pointer(smart_ptr_def) = parent_frame.allocated.shape().def
-                            {
+                            if let Def::Pointer(_) = parent_frame.allocated.shape().def {
                                 if let Err(e) = popped_frame.require_full_initialization() {
                                     popped_frame.deinit();
                                     popped_frame.dealloc();
                                     return Err(self.err(e));
                                 }
 
-                                let Some(new_into_fn) = smart_ptr_def.vtable.new_into_fn else {
-                                    popped_frame.deinit();
-                                    popped_frame.dealloc();
-                                    return Err(self.err(ReflectErrorKind::OperationFailed {
-                                        shape: parent_shape,
-                                        operation: "SmartPointer missing new_into_fn",
-                                    }));
-                                };
-
-                                let inner_ptr = PtrMut::new(popped_frame.data.as_mut_byte_ptr());
-                                unsafe {
-                                    new_into_fn(parent_frame.data, inner_ptr);
-                                }
+                                // Use complete_smart_pointer_frame which handles both:
+                                // - Sized pointees (via new_into_fn)
+                                // - Unsized pointees like str (via String conversion)
+                                Self::complete_smart_pointer_frame(parent_frame, popped_frame);
                                 crate::trace!(
-                                    "end() SMARTPTR: called new_into_fn, Arc/Box/Rc created"
+                                    "end() SMARTPTR: completed smart pointer via complete_smart_pointer_frame"
                                 );
-
-                                popped_frame.tracker = Tracker::Scalar;
-                                popped_frame.is_init = false;
-                                popped_frame.dealloc();
 
                                 // Change tracker to Scalar so the next end() just pops it
                                 parent_frame.tracker = Tracker::Scalar;
-                                parent_frame.is_init = true;
                             }
                         }
                     } else {
@@ -2075,6 +2310,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             Tracker::SmartPointerSlice {
                 vtable,
                 building_item,
+                ..
             } => {
                 if *building_item {
                     // We just popped an element frame, now push it to the slice builder

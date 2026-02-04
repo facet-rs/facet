@@ -79,6 +79,13 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             if pointee_shape == str::SHAPE {
                 crate::trace!("Pointee is str");
 
+                // Mark the SmartPointer frame as building its inner value
+                // This is needed for derive_path() to add a Deref step
+                self.mode.stack_mut().last_mut().unwrap().tracker = Tracker::SmartPointer {
+                    building_inner: true,
+                    pending_inner: None,
+                };
+
                 // Allocate space for a String
                 let string_layout = String::SHAPE
                     .layout
@@ -130,6 +137,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 frame.tracker = Tracker::SmartPointerSlice {
                     vtable: slice_builder_vtable,
                     building_item: false,
+                    current_child: None,
                 };
                 // Keep the original ownership (e.g., Field) so parent tracking works correctly.
                 // The slice builder memory itself is managed by the vtable's convert_fn/free_fn.

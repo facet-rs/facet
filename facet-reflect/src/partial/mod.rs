@@ -120,6 +120,7 @@ pub use typeplan::{DeserStrategy, NodeId, TypePlan, TypePlanCore};
 mod partial_api;
 
 use crate::{ReflectErrorKind, TrackerKind, trace};
+use facet_core::Facet;
 use facet_path::{Path, PathStep};
 
 use core::marker::PhantomData;
@@ -427,6 +428,9 @@ pub(crate) enum Tracker {
 
         /// Whether we're currently building an item to push
         building_item: bool,
+
+        /// Current element index being built (for path derivation in deferred mode)
+        current_child: Option<usize>,
     },
 
     /// Partially initialized enum (but we picked a variant,
@@ -1355,35 +1359,95 @@ impl Frame {
         smart_ptr_data: PtrUninit,
         inner_ptr: PtrUninit,
     ) -> Result<(), ReflectErrorKind> {
-        let Some(new_into_fn) = smart_ptr_def.vtable.new_into_fn else {
-            return Err(ReflectErrorKind::OperationFailed {
-                shape: smart_ptr_shape,
-                operation: "SmartPointer missing new_into_fn",
-            });
-        };
-        let Some(inner_shape) = smart_ptr_def.pointee else {
-            return Err(ReflectErrorKind::OperationFailed {
-                shape: smart_ptr_shape,
-                operation: "SmartPointer missing pointee shape",
-            });
-        };
+        // Check for sized pointee case first (uses new_into_fn)
+        if let Some(new_into_fn) = smart_ptr_def.vtable.new_into_fn {
+            let Some(inner_shape) = smart_ptr_def.pointee else {
+                return Err(ReflectErrorKind::OperationFailed {
+                    shape: smart_ptr_shape,
+                    operation: "SmartPointer missing pointee shape",
+                });
+            };
 
-        // The inner_ptr contains the initialized inner value
-        let _ = unsafe { inner_ptr.assume_init() };
+            // The inner_ptr contains the initialized inner value
+            let _ = unsafe { inner_ptr.assume_init() };
 
-        // Initialize the SmartPointer with the inner value
-        unsafe {
-            new_into_fn(smart_ptr_data, PtrMut::new(inner_ptr.as_mut_byte_ptr()));
+            // Initialize the SmartPointer with the inner value
+            unsafe {
+                new_into_fn(smart_ptr_data, PtrMut::new(inner_ptr.as_mut_byte_ptr()));
+            }
+
+            // Deallocate the inner value's memory since new_into_fn moved it
+            if let Ok(layout) = inner_shape.layout.sized_layout()
+                && layout.size() > 0
+            {
+                unsafe { alloc::alloc::dealloc(inner_ptr.as_mut_byte_ptr(), layout) };
+            }
+
+            return Ok(());
         }
 
-        // Deallocate the inner value's memory since new_into_fn moved it
-        if let Ok(layout) = inner_shape.layout.sized_layout()
-            && layout.size() > 0
+        // Check for unsized pointee case: String -> Arc<str>/Box<str>/Rc<str>
+        if let Some(pointee) = smart_ptr_def.pointee()
+            && pointee.is_shape(str::SHAPE)
         {
-            unsafe { alloc::alloc::dealloc(inner_ptr.as_mut_byte_ptr(), layout) };
+            use alloc::{rc::Rc, string::String, sync::Arc};
+            use facet_core::KnownPointer;
+
+            let Some(known) = smart_ptr_def.known else {
+                return Err(ReflectErrorKind::OperationFailed {
+                    shape: smart_ptr_shape,
+                    operation: "SmartPointer<str> missing known pointer type",
+                });
+            };
+
+            // Read the String value from inner_ptr
+            let string_ptr = inner_ptr.as_mut_byte_ptr() as *mut String;
+            let string_value = unsafe { core::ptr::read(string_ptr) };
+
+            // Convert to the appropriate smart pointer type
+            match known {
+                KnownPointer::Box => {
+                    let boxed: alloc::boxed::Box<str> = string_value.into_boxed_str();
+                    unsafe {
+                        core::ptr::write(
+                            smart_ptr_data.as_mut_byte_ptr() as *mut alloc::boxed::Box<str>,
+                            boxed,
+                        );
+                    }
+                }
+                KnownPointer::Arc => {
+                    let arc: Arc<str> = Arc::from(string_value.into_boxed_str());
+                    unsafe {
+                        core::ptr::write(smart_ptr_data.as_mut_byte_ptr() as *mut Arc<str>, arc);
+                    }
+                }
+                KnownPointer::Rc => {
+                    let rc: Rc<str> = Rc::from(string_value.into_boxed_str());
+                    unsafe {
+                        core::ptr::write(smart_ptr_data.as_mut_byte_ptr() as *mut Rc<str>, rc);
+                    }
+                }
+                _ => {
+                    return Err(ReflectErrorKind::OperationFailed {
+                        shape: smart_ptr_shape,
+                        operation: "Unsupported SmartPointer<str> type",
+                    });
+                }
+            }
+
+            // Deallocate the String's memory (we moved the data out via ptr::read)
+            let string_layout = alloc::string::String::SHAPE.layout.sized_layout().unwrap();
+            if string_layout.size() > 0 {
+                unsafe { alloc::alloc::dealloc(inner_ptr.as_mut_byte_ptr(), string_layout) };
+            }
+
+            return Ok(());
         }
 
-        Ok(())
+        Err(ReflectErrorKind::OperationFailed {
+            shape: smart_ptr_shape,
+            operation: "SmartPointer missing new_into_fn and not a supported unsized type",
+        })
     }
 
     /// Returns an error if the value is not fully initialized.
@@ -1839,6 +1903,13 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 } => {
                     // SmartPointer with building_inner contributes Deref to path
                     path.push(PathStep::Deref);
+                }
+                Tracker::SmartPointerSlice {
+                    current_child: Some(idx),
+                    ..
+                } => {
+                    // SmartPointerSlice with current_child contributes Index to path
+                    path.push(PathStep::Index(*idx as u32));
                 }
                 Tracker::Map {
                     current_entry_index: Some(idx),
