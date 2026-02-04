@@ -198,6 +198,59 @@ pub(crate) fn coerce_types_from_shape(
             // Keep as string if coercion fails or not needed
             value.clone()
         }
+        ConfigValue::Enum(sourced) => {
+            // For enum variants, recurse into the variant's fields
+            let enum_type = match &shape.ty {
+                facet_core::Type::User(facet_core::UserType::Enum(e)) => *e,
+                _ => return value.clone(),
+            };
+
+            // Find the variant by effective_name
+            let variant = enum_type
+                .variants
+                .iter()
+                .find(|v| v.effective_name() == sourced.value.variant);
+
+            let Some(variant) = variant else {
+                return value.clone();
+            };
+
+            let variant_fields = variant.data.fields;
+
+            // For tuple variants like Run(RunArgs) with a single struct field,
+            // the fields in EnumValue are the inner struct's fields (flattened).
+            let effective_fields: &[facet_core::Field] = if variant.data.kind
+                == facet_core::StructKind::TupleStruct
+                && variant_fields.len() == 1
+            {
+                let inner_shape = variant_fields[0].shape.get();
+                if let facet_core::Type::User(facet_core::UserType::Struct(s)) = &inner_shape.ty {
+                    s.fields
+                } else {
+                    variant_fields
+                }
+            } else {
+                variant_fields
+            };
+
+            // Coerce each field value using its field shape
+            let mut new_fields = sourced.value.fields.clone();
+            for field in effective_fields {
+                if let Some(val) = new_fields.get(field.name) {
+                    let coerced = coerce_types_from_shape(val, field.shape.get());
+                    new_fields.insert(field.name.to_string(), coerced);
+                }
+            }
+
+            ConfigValue::Enum(Sourced {
+                value: crate::config_value::EnumValue {
+                    variant: sourced.value.variant.clone(),
+                    fields: new_fields,
+                },
+                span: sourced.span,
+                provenance: sourced.provenance.clone(),
+            })
+        }
         // Other types don't need coercion
         _ => value.clone(),
     }
