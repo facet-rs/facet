@@ -272,6 +272,14 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 trace!(
                     "begin_inner: Creating frame for inner type {inner_shape} (parent is {parent_shape})"
                 );
+
+                // Mark the parent frame as building its inner value.
+                // This is needed for derive_path() to add an Inner step so that
+                // inner and parent frames have distinct paths in deferred mode.
+                self.mode.stack_mut().last_mut().unwrap().tracker = Tracker::Inner {
+                    building_inner: true,
+                };
+
                 // Navigate to the inner type's TypePlan node for correct strategy lookup.
                 // If the TypePlan has a child node for the inner type, use it; otherwise
                 // fall back to the parent's node (which may result in incorrect strategy).

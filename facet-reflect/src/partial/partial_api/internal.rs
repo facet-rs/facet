@@ -451,7 +451,8 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             | Tracker::Set { .. }
             | Tracker::Option { .. }
             | Tracker::Result { .. }
-            | Tracker::DynamicValue { .. } => true,
+            | Tracker::DynamicValue { .. }
+            | Tracker::Inner { .. } => true,
         };
         if !needs_cleanup {
             return false;

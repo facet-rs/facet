@@ -1,3 +1,4 @@
+use facet_core::TryFromOutcome;
 use facet_path::{Path, PathStep};
 
 use super::*;
@@ -570,6 +571,29 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     }
                 }
 
+                // Special handling for Inner values: when path ends with Inner,
+                // the parent is a transparent wrapper (NonZero, ByteString, etc.) and we need
+                // to convert the inner value to the parent type using try_from.
+                if matches!(last_step, PathStep::Inner) {
+                    // Find the parent frame (Inner wrapper)
+                    let parent_frame = if parent_path.steps.is_empty() {
+                        let parent_index = start_depth.saturating_sub(1);
+                        self.frames_mut().get_mut(parent_index)
+                    } else if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
+                        Some(parent_frame)
+                    } else {
+                        let parent_frame_index = start_depth + parent_path.steps.len() - 1;
+                        self.frames_mut().get_mut(parent_frame_index)
+                    };
+
+                    if let Some(inner_wrapper_frame) = parent_frame {
+                        // The frame contains the inner value - convert to parent type using try_from
+                        Self::complete_inner_frame(inner_wrapper_frame, frame);
+                        // Frame data has been transferred - don't drop it
+                        continue;
+                    }
+                }
+
                 // Special handling for List/SmartPointerSlice element values: when path ends with Index,
                 // the parent is a List or SmartPointerSlice frame and we need to push the element into it.
                 // RopeSlot frames are already stored in the rope and will be drained during
@@ -960,6 +984,72 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         }
     }
 
+    /// Complete an Inner frame by converting the inner value to the parent type using try_from
+    /// (for deferred finalization)
+    fn complete_inner_frame(inner_wrapper_frame: &mut Frame, inner_frame: Frame) {
+        let wrapper_shape = inner_wrapper_frame.allocated.shape();
+        let inner_ptr = PtrConst::new(inner_frame.data.as_byte_ptr());
+        let inner_shape = inner_frame.allocated.shape();
+
+        // Handle Direct and Indirect vtables - both return TryFromOutcome
+        let result = match wrapper_shape.vtable {
+            facet_core::VTableErased::Direct(vt) => {
+                if let Some(try_from_fn) = vt.try_from {
+                    unsafe {
+                        try_from_fn(
+                            inner_wrapper_frame.data.as_mut_byte_ptr() as *mut (),
+                            inner_shape,
+                            inner_ptr,
+                        )
+                    }
+                } else {
+                    return;
+                }
+            }
+            facet_core::VTableErased::Indirect(vt) => {
+                if let Some(try_from_fn) = vt.try_from {
+                    let ox_uninit =
+                        facet_core::OxPtrUninit::new(inner_wrapper_frame.data, wrapper_shape);
+                    unsafe { try_from_fn(ox_uninit, inner_shape, inner_ptr) }
+                } else {
+                    return;
+                }
+            }
+        };
+
+        match result {
+            TryFromOutcome::Converted => {
+                crate::trace!(
+                    "complete_inner_frame: converted {} to {}",
+                    inner_shape,
+                    wrapper_shape
+                );
+            }
+            TryFromOutcome::Unsupported | TryFromOutcome::Failed(_) => {
+                crate::trace!(
+                    "complete_inner_frame: conversion failed from {} to {}",
+                    inner_shape,
+                    wrapper_shape
+                );
+                return;
+            }
+        }
+
+        // Deallocate the inner value's memory (try_from consumed it)
+        if let FrameOwnership::Owned = inner_frame.ownership
+            && let Ok(layout) = inner_frame.allocated.shape().layout.sized_layout()
+            && layout.size() > 0
+        {
+            unsafe {
+                ::alloc::alloc::dealloc(inner_frame.data.as_mut_byte_ptr(), layout);
+            }
+        }
+
+        // Mark the wrapper as initialized
+        inner_wrapper_frame.tracker = Tracker::Scalar;
+        inner_wrapper_frame.is_init = true;
+    }
+
     /// Complete a List frame by pushing an element into it (for deferred finalization)
     fn complete_list_item_frame(list_frame: &mut Frame, element_frame: Frame) {
         if let Def::List(list_def) = list_frame.allocated.shape().def
@@ -1037,12 +1127,15 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         if let Tracker::Map { insert_state, .. } = &mut map_frame.tracker
             && let MapInsertState::PushingKey { key_ptr, .. } = insert_state
         {
-            // Transition to PushingValue state, keeping the key pointer
+            // Transition to PushingValue state, keeping the key pointer.
+            // key_frame_stored = false because the key frame is being finalized here,
+            // so after this the Map owns the key buffer.
             *insert_state = MapInsertState::PushingValue {
                 key_ptr: *key_ptr,
                 value_ptr: None,
                 value_initialized: false,
                 value_frame_on_stack: false,
+                key_frame_stored: false,
             };
 
             crate::trace!(
@@ -1138,13 +1231,14 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         // Strategic tracing: show the frame stack state
         #[cfg(feature = "tracing")]
         {
+            use ::alloc::string::ToString;
             let frames = self.frames();
             let stack_desc: Vec<_> = frames
                 .iter()
-                .map(|f| format!("{}({:?})", f.allocated.shape(), f.tracker.kind()))
+                .map(|f| ::alloc::format!("{}({:?})", f.allocated.shape(), f.tracker.kind()))
                 .collect();
             let path = if self.is_deferred() {
-                format!("{:?}", self.derive_path())
+                ::alloc::format!("{:?}", self.derive_path())
             } else {
                 "N/A".to_string()
             };
@@ -1453,6 +1547,12 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                             // SmartPointerSlice with current_child contributes Index to path
                             field_path.push(PathStep::Index(*idx as u32));
                         }
+                        Tracker::Inner {
+                            building_inner: true,
+                        } => {
+                            // Inner with building_inner contributes Inner to path
+                            field_path.push(PathStep::Inner);
+                        }
                         Tracker::Map {
                             current_entry_index: Some(idx),
                             building_key,
@@ -1583,6 +1683,20 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     Self::mark_field_initialized_by_index(parent_frame, field_idx);
                 }
 
+                // For BorrowedInPlace DynamicValue frames (e.g., re-entered pending entries),
+                // flush pending_elements/pending_entries and return without storing.
+                // These frames point to memory that's already tracked in the parent's
+                // pending_entries - storing them would overwrite the entry.
+                if matches!(popped_frame.ownership, FrameOwnership::BorrowedInPlace) {
+                    crate::trace!(
+                        "end(): BorrowedInPlace frame, flushing pending items and returning"
+                    );
+                    if let Err(kind) = popped_frame.require_full_initialization() {
+                        return Err(ReflectError::new(kind, storage_path));
+                    }
+                    return Ok(self);
+                }
+
                 // Handle Map state transitions even when storing frames.
                 // The Map needs to transition states so that subsequent operations work:
                 // - PushingKey -> PushingValue: so begin_value() can be called
@@ -1597,12 +1711,15 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     {
                         match insert_state {
                             MapInsertState::PushingKey { key_ptr, .. } => {
-                                // Transition to PushingValue state
+                                // Transition to PushingValue state.
+                                // key_frame_stored = true because the key frame is being stored,
+                                // so the stored frame will handle cleanup (not the Map's deinit).
                                 *insert_state = MapInsertState::PushingValue {
                                     key_ptr: *key_ptr,
                                     value_ptr: None,
                                     value_initialized: false,
                                     value_frame_on_stack: false,
+                                    key_frame_stored: true,
                                 };
                                 crate::trace!(
                                     "end(): Map transitioned to PushingValue while storing key frame"
@@ -1646,6 +1763,82 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         popped_frame.is_init = false;
                         popped_frame.dealloc();
                         *current_child = false;
+                        // Don't store this frame - return early
+                        return Ok(self);
+                    }
+
+                    // Handle DynamicValue object entry - add to pending_entries for deferred insertion.
+                    // Like Map entries, we store the key-value pair and insert during finalization.
+                    if let Tracker::DynamicValue {
+                        state:
+                            DynamicValueState::Object {
+                                insert_state,
+                                pending_entries,
+                            },
+                    } = &mut parent_frame.tracker
+                        && let DynamicObjectInsertState::BuildingValue { key } = insert_state
+                    {
+                        // Take ownership of the key from insert_state
+                        let key = core::mem::take(key);
+
+                        // Finalize the child Value before adding to pending_entries.
+                        // The child might have its own pending_entries/pending_elements
+                        // that need to be inserted first.
+                        if let Err(kind) = popped_frame.require_full_initialization() {
+                            return Err(ReflectError::new(kind, storage_path.clone()));
+                        }
+
+                        // Add to pending_entries for deferred insertion
+                        pending_entries.push((key, popped_frame.data));
+                        crate::trace!(
+                            "end(): DynamicValue object entry added to pending_entries in deferred mode"
+                        );
+
+                        // The value frame's data is now owned by pending_entries
+                        // Mark frame as not owning the data so it won't be deallocated
+                        popped_frame.tracker = Tracker::Scalar;
+                        popped_frame.is_init = false;
+                        // Don't dealloc - pending_entries owns the pointer now
+
+                        // Reset insert state to Idle so more entries can be added
+                        *insert_state = DynamicObjectInsertState::Idle;
+
+                        // Don't store this frame - return early
+                        return Ok(self);
+                    }
+
+                    // Handle DynamicValue array element - add to pending_elements for deferred insertion.
+                    if let Tracker::DynamicValue {
+                        state:
+                            DynamicValueState::Array {
+                                building_element,
+                                pending_elements,
+                            },
+                    } = &mut parent_frame.tracker
+                        && *building_element
+                    {
+                        // Finalize the child Value before adding to pending_elements.
+                        // The child might have its own pending_entries/pending_elements
+                        // that need to be inserted first.
+                        if let Err(kind) = popped_frame.require_full_initialization() {
+                            return Err(ReflectError::new(kind, storage_path.clone()));
+                        }
+
+                        // Add to pending_elements for deferred insertion
+                        pending_elements.push(popped_frame.data);
+                        crate::trace!(
+                            "end(): DynamicValue array element added to pending_elements in deferred mode"
+                        );
+
+                        // The element frame's data is now owned by pending_elements
+                        // Mark frame as not owning the data so it won't be deallocated
+                        popped_frame.tracker = Tracker::Scalar;
+                        popped_frame.is_init = false;
+                        // Don't dealloc - pending_elements owns the pointer now
+
+                        // Reset building_element so more elements can be added
+                        *building_element = false;
+
                         // Don't store this frame - return early
                         return Ok(self);
                     }
@@ -1701,10 +1894,13 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         // 1. The parent frame has a builder_shape or inner type that matches the popped frame's shape
         // 2. The parent frame has try_from
         // 3. The parent frame is not yet initialized
-        // 4. The parent frame's tracker is Scalar (not Option, SmartPointer, etc.)
+        // 4. The parent frame's tracker is Scalar or Inner (not Option, SmartPointer, etc.)
         //    This ensures we only do conversion when begin_inner was used, not begin_some
         let needs_conversion = !parent_frame.is_init
-            && matches!(parent_frame.tracker, Tracker::Scalar)
+            && matches!(
+                parent_frame.tracker,
+                Tracker::Scalar | Tracker::Inner { .. }
+            )
             && ((parent_shape.builder_shape.is_some()
                 && parent_shape.builder_shape.unwrap() == popped_frame.allocated.shape())
                 || (parent_shape.inner.is_some()
@@ -1789,6 +1985,10 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 facet_core::TryFromOutcome::Converted => {
                     trace!("Conversion succeeded, marking parent as initialized");
                     parent_frame.is_init = true;
+                    // Reset Inner tracker to Scalar after successful conversion
+                    if matches!(parent_frame.tracker, Tracker::Inner { .. }) {
+                        parent_frame.tracker = Tracker::Scalar;
+                    }
                 }
                 facet_core::TryFromOutcome::Unsupported => {
                     trace!("Source type not supported for conversion - source NOT consumed");
@@ -1913,6 +2113,16 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 _ => {}
             }
             return Ok(self);
+        }
+
+        // For BorrowedInPlace DynamicValue frames (e.g., re-entered pending entries),
+        // flush any pending_elements/pending_entries that were accumulated during
+        // this re-entry. This is necessary because BorrowedInPlace frames aren't
+        // stored for deferred processing - they modify existing memory in-place.
+        if matches!(popped_frame.ownership, FrameOwnership::BorrowedInPlace)
+            && let Err(e) = popped_frame.require_full_initialization()
+        {
+            return Err(self.err(e));
         }
 
         match &mut parent_frame.tracker {
@@ -2041,6 +2251,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                             value_ptr: None,
                             value_initialized: false,
                             value_frame_on_stack: false, // No value frame yet
+                            key_frame_stored: false,     // Key frame was popped, Map owns key
                         };
                     }
                     MapInsertState::PushingValue {
@@ -2336,7 +2547,10 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 }
             }
             Tracker::DynamicValue {
-                state: DynamicValueState::Array { building_element },
+                state:
+                    DynamicValueState::Array {
+                        building_element, ..
+                    },
             } => {
                 if *building_element {
                     // Check that the element is initialized before pushing
@@ -2373,7 +2587,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 }
             }
             Tracker::DynamicValue {
-                state: DynamicValueState::Object { insert_state },
+                state: DynamicValueState::Object { insert_state, .. },
             } => {
                 if let DynamicObjectInsertState::BuildingValue { key } = insert_state {
                     // Check that the value is initialized before inserting

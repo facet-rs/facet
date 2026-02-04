@@ -265,6 +265,10 @@ pub(crate) enum MapInsertState {
         /// When true, the frame handles cleanup. When false (after end()),
         /// the Map tracker owns the buffer and must clean it up.
         value_frame_on_stack: bool,
+        /// Whether the key's frame was stored in deferred mode.
+        /// When true, the stored frame handles cleanup. When false,
+        /// the Map tracker owns the key buffer and must clean it up.
+        key_frame_stored: bool,
     },
 }
 
@@ -433,6 +437,13 @@ pub(crate) enum Tracker {
         current_child: Option<usize>,
     },
 
+    /// Transparent inner type wrapper (`NonZero<T>`, ByteString, etc.)
+    /// Used to distinguish inner frames from their parent for deferred path tracking.
+    Inner {
+        /// Whether we're currently building the inner value
+        building_inner: bool,
+    },
+
     /// Partially initialized enum (but we picked a variant,
     /// so it's not Uninit)
     Enum {
@@ -520,10 +531,16 @@ pub(crate) enum DynamicValueState {
     /// Initialized as a scalar (null, bool, number, string, bytes)
     Scalar,
     /// Initialized as an array, currently building an element
-    Array { building_element: bool },
+    Array {
+        building_element: bool,
+        /// Pending elements to be inserted during finalization (deferred mode)
+        pending_elements: alloc::vec::Vec<PtrUninit>,
+    },
     /// Initialized as an object
     Object {
         insert_state: DynamicObjectInsertState,
+        /// Pending entries to be inserted during finalization (deferred mode)
+        pending_entries: alloc::vec::Vec<(alloc::string::String, PtrUninit)>,
     },
 }
 
@@ -555,6 +572,7 @@ impl Tracker {
             Tracker::Option { .. } => TrackerKind::Option,
             Tracker::Result { .. } => TrackerKind::Result,
             Tracker::DynamicValue { .. } => TrackerKind::DynamicValue,
+            Tracker::Inner { .. } => TrackerKind::Inner,
         }
     }
 
@@ -819,17 +837,20 @@ impl Frame {
                         value_ptr,
                         value_initialized,
                         value_frame_on_stack,
+                        key_frame_stored,
                     } => {
                         if let Def::Map(map_def) = self.allocated.shape().def {
-                            // Key was already popped (that's how we got to PushingValue state),
-                            // so we always own the key buffer and must clean it up.
-                            unsafe { map_def.k().call_drop_in_place(key_ptr.assume_init()) };
-                            if let Ok(key_layout) = map_def.k().layout.sized_layout()
-                                && key_layout.size() > 0
-                            {
-                                unsafe {
-                                    alloc::alloc::dealloc(key_ptr.as_mut_byte_ptr(), key_layout)
-                                };
+                            // Only clean up key if the key frame was NOT stored.
+                            // If key_frame_stored is true, the stored frame handles cleanup.
+                            if !*key_frame_stored {
+                                unsafe { map_def.k().call_drop_in_place(key_ptr.assume_init()) };
+                                if let Ok(key_layout) = map_def.k().layout.sized_layout()
+                                    && key_layout.size() > 0
+                                {
+                                    unsafe {
+                                        alloc::alloc::dealloc(key_ptr.as_mut_byte_ptr(), key_layout)
+                                    };
+                                }
                             }
 
                             // Only clean up value if the frame was already popped.
@@ -912,7 +933,57 @@ impl Frame {
                     };
                 }
             }
-            Tracker::DynamicValue { .. } => {
+            Tracker::DynamicValue { state } => {
+                // Clean up pending_entries if this is an Object
+                if let DynamicValueState::Object {
+                    pending_entries, ..
+                } = state
+                {
+                    // Drop and deallocate any pending values that weren't inserted
+                    if let Def::DynamicValue(dyn_def) = self.allocated.shape().def {
+                        let value_shape = self.allocated.shape(); // Value entries are same shape
+                        for (_key, value_ptr) in pending_entries.drain(..) {
+                            // Drop the value
+                            unsafe {
+                                value_shape.call_drop_in_place(value_ptr.assume_init());
+                            }
+                            // Deallocate the value buffer
+                            if let Ok(layout) = value_shape.layout.sized_layout()
+                                && layout.size() > 0
+                            {
+                                unsafe {
+                                    alloc::alloc::dealloc(value_ptr.as_mut_byte_ptr(), layout);
+                                }
+                            }
+                        }
+                        // Note: keys are Strings and will be dropped when pending_entries is dropped
+                        let _ = dyn_def; // silence unused warning
+                    }
+                }
+
+                // Clean up pending_elements if this is an Array
+                if let DynamicValueState::Array {
+                    pending_elements, ..
+                } = state
+                {
+                    // Drop and deallocate any pending elements that weren't inserted
+                    let element_shape = self.allocated.shape(); // Array elements are same shape
+                    for element_ptr in pending_elements.drain(..) {
+                        // Drop the element
+                        unsafe {
+                            element_shape.call_drop_in_place(element_ptr.assume_init());
+                        }
+                        // Deallocate the element buffer
+                        if let Ok(layout) = element_shape.layout.sized_layout()
+                            && layout.size() > 0
+                        {
+                            unsafe {
+                                alloc::alloc::dealloc(element_ptr.as_mut_byte_ptr(), layout);
+                            }
+                        }
+                    }
+                }
+
                 // Drop if initialized
                 if self.is_init {
                     let result = unsafe {
@@ -927,6 +998,16 @@ impl Frame {
                             self.allocated.shape()
                         );
                     }
+                }
+            }
+            Tracker::Inner { .. } => {
+                // Inner wrapper - drop if initialized
+                if self.is_init {
+                    unsafe {
+                        self.allocated
+                            .shape()
+                            .call_drop_in_place(self.data.assume_init())
+                    };
                 }
             }
         }
@@ -1651,12 +1732,106 @@ impl Frame {
                     Ok(())
                 }
             }
+            Tracker::Inner { building_inner } => {
+                if *building_inner {
+                    // Inner value is still being built
+                    Err(ReflectErrorKind::UninitializedValue {
+                        shape: self.allocated.shape(),
+                    })
+                } else if self.is_init {
+                    Ok(())
+                } else {
+                    Err(ReflectErrorKind::UninitializedValue {
+                        shape: self.allocated.shape(),
+                    })
+                }
+            }
             Tracker::DynamicValue { state } => {
                 if matches!(state, DynamicValueState::Uninit) {
                     Err(ReflectErrorKind::UninitializedValue {
                         shape: self.allocated.shape(),
                     })
                 } else {
+                    // Insert pending entries for Object state
+                    if let DynamicValueState::Object {
+                        pending_entries,
+                        insert_state,
+                    } = state
+                    {
+                        if !matches!(insert_state, DynamicObjectInsertState::Idle) {
+                            return Err(ReflectErrorKind::UninitializedValue {
+                                shape: self.allocated.shape(),
+                            });
+                        }
+
+                        if !pending_entries.is_empty()
+                            && let Def::DynamicValue(dyn_def) = self.allocated.shape().def
+                        {
+                            let object_ptr = unsafe { self.data.assume_init() };
+                            let value_shape = self.allocated.shape();
+
+                            for (key, value_ptr) in pending_entries.drain(..) {
+                                // Insert the entry
+                                unsafe {
+                                    (dyn_def.vtable.insert_object_entry)(
+                                        object_ptr,
+                                        &key,
+                                        value_ptr.assume_init(),
+                                    );
+                                }
+                                // Deallocate the value buffer (insert_object_entry moved the value)
+                                if let Ok(layout) = value_shape.layout.sized_layout()
+                                    && layout.size() > 0
+                                {
+                                    unsafe {
+                                        alloc::alloc::dealloc(value_ptr.as_mut_byte_ptr(), layout);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Insert pending elements for Array state
+                    if let DynamicValueState::Array {
+                        pending_elements,
+                        building_element,
+                    } = state
+                    {
+                        if *building_element {
+                            return Err(ReflectErrorKind::UninitializedValue {
+                                shape: self.allocated.shape(),
+                            });
+                        }
+
+                        if !pending_elements.is_empty()
+                            && let Def::DynamicValue(dyn_def) = self.allocated.shape().def
+                        {
+                            let array_ptr = unsafe { self.data.assume_init() };
+                            let element_shape = self.allocated.shape();
+
+                            for element_ptr in pending_elements.drain(..) {
+                                // Push the element into the array
+                                unsafe {
+                                    (dyn_def.vtable.push_array_element)(
+                                        array_ptr,
+                                        element_ptr.assume_init(),
+                                    );
+                                }
+                                // Deallocate the element buffer (push_array_element moved the value)
+                                if let Ok(layout) = element_shape.layout.sized_layout()
+                                    && layout.size() > 0
+                                {
+                                    unsafe {
+                                        alloc::alloc::dealloc(
+                                            element_ptr.as_mut_byte_ptr(),
+                                            layout,
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     Ok(())
                 }
             }
@@ -1910,6 +2085,12 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 } => {
                     // SmartPointerSlice with current_child contributes Index to path
                     path.push(PathStep::Index(*idx as u32));
+                }
+                Tracker::Inner {
+                    building_inner: true,
+                } => {
+                    // Inner with building_inner contributes Inner to path
+                    path.push(PathStep::Inner);
                 }
                 Tracker::Map {
                     current_entry_index: Some(idx),

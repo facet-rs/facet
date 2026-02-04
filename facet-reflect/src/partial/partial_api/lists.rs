@@ -49,6 +49,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                         frame.tracker = Tracker::DynamicValue {
                             state: DynamicValueState::Array {
                                 building_element: false,
+                                pending_elements: Vec::new(),
                             },
                         };
                         return Ok(self);
@@ -131,6 +132,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 frame.tracker = Tracker::DynamicValue {
                     state: DynamicValueState::Array {
                         building_element: false,
+                        pending_elements: Vec::new(),
                     },
                 };
                 frame.is_init = true;
@@ -327,7 +329,10 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         if tracker_kind == crate::error::TrackerKind::DynamicValue {
             let frame = self.mode.stack().last().unwrap();
             if let Tracker::DynamicValue {
-                state: DynamicValueState::Array { building_element },
+                state:
+                    DynamicValueState::Array {
+                        building_element, ..
+                    },
             } = &frame.tracker
             {
                 if *building_element {
@@ -376,7 +381,10 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 // Mark that we're building an element
                 let parent_idx = self.mode.stack().len() - 2;
                 if let Tracker::DynamicValue {
-                    state: DynamicValueState::Array { building_element },
+                    state:
+                        DynamicValueState::Array {
+                            building_element, ..
+                        },
                 } = &mut self.mode.stack_mut()[parent_idx].tracker
                 {
                     *building_element = true;

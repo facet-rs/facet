@@ -34,6 +34,8 @@ pub enum PathStep {
     OptionSome,
     /// Navigate through a pointer/reference
     Deref,
+    /// Navigate into a transparent inner type (e.g., `NonZero<T>` -> T)
+    Inner,
 }
 
 /// A path through a type structure, recorded as a series of steps.
@@ -193,6 +195,11 @@ impl Path {
                         current_shape = inner_shape;
                     }
                 }
+                PathStep::Inner => {
+                    if let Some(inner_shape) = get_inner_shape(current_shape) {
+                        current_shape = inner_shape;
+                    }
+                }
             }
         }
 
@@ -254,6 +261,10 @@ impl Path {
                 }
                 PathStep::Deref => {
                     current_shape = get_pointer_inner_shape(current_shape)?;
+                    current_variant_idx = None;
+                }
+                PathStep::Inner => {
+                    current_shape = get_inner_shape(current_shape)?;
                     current_variant_idx = None;
                 }
             }
@@ -384,6 +395,11 @@ const fn get_pointer_inner_shape(shape: &Shape) -> Option<&'static Shape> {
         Def::Pointer(pd) => pd.pointee(),
         _ => None,
     }
+}
+
+/// Get the inner shape for a transparent type (e.g., `NonZero<T>`).
+const fn get_inner_shape(shape: &Shape) -> Option<&'static Shape> {
+    shape.inner
 }
 
 #[cfg(test)]
