@@ -1,6 +1,7 @@
 //! Test Arc deserialization without HashMap to isolate the issue
 
 use facet::Facet;
+use facet_testhelpers::test;
 use std::sync::Arc;
 
 #[derive(Clone, Debug, Facet)]

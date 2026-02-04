@@ -4,6 +4,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use facet::Facet;
+use facet_testhelpers::test;
 
 #[derive(Clone, Debug, Facet)]
 pub struct Inner {
