@@ -1075,7 +1075,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     ///
     /// This handles proxy types (e.g., `#[facet(proxy = InnerProxy)]`) that were
     /// deferred during flatten deserialization. The proxy frame's children (e.g.,
-    /// Vec<f64> fields) have already been materialized (ropes drained), so it's
+    /// `Vec<f64>` fields) have already been materialized (ropes drained), so it's
     /// now safe to run the conversion.
     fn complete_proxy_frame(target_frame: &mut Frame, proxy_frame: Frame) {
         // Get the convert_in function from the proxy stored on the frame
