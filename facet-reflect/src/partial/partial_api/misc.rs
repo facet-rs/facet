@@ -465,7 +465,11 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
                 // Special handling for List element values: when path ends with Index,
                 // the parent is a List frame and we need to push the element into it.
-                if matches!(last_step, PathStep::Index(_)) {
+                // RopeSlot frames are already stored in the rope and will be drained during
+                // validation - pushing them here would duplicate the elements.
+                if matches!(last_step, PathStep::Index(_))
+                    && !matches!(frame.ownership, FrameOwnership::RopeSlot)
+                {
                     // Find the List frame (parent)
                     let list_frame = if parent_path.steps.is_empty() {
                         let parent_index = start_depth.saturating_sub(1);
@@ -920,20 +924,20 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         // Strategic tracing: show the frame stack state
         {
             let frames = self.frames();
-            let stack_desc: Vec<_> = frames
+            let _stack_desc: Vec<_> = frames
                 .iter()
                 .map(|f| format!("{}({:?})", f.allocated.shape(), f.tracker.kind()))
                 .collect();
-            let path = if self.is_deferred() {
+            let _path = if self.is_deferred() {
                 format!("{:?}", self.derive_path())
             } else {
                 "N/A".to_string()
             };
             crate::trace!(
                 "end() SLOW PATH: stack=[{}], deferred={}, path={}",
-                stack_desc.join(" > "),
+                _stack_desc.join(" > "),
                 self.is_deferred(),
-                path
+                _path
             );
         }
 
