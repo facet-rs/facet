@@ -10,7 +10,7 @@ Provides pretty-printing capabilities for Facet types.
 
 Example:
 
-```rust
+```rust,no_run
 use facet::Facet;
 use facet_pretty::FacetPretty;
 
@@ -32,7 +32,7 @@ fn main() {
 
 Produces the output:
 
-```rust
+```rust,no_run
 Person {
   name: "Alice",
   age: 30,
