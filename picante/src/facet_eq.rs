@@ -96,6 +96,46 @@ fn peek_eq<'mem, 'facet>(a: Peek<'mem, 'facet>, b: Peek<'mem, 'facet>) -> bool {
     // Handle known structural types first - we can do better than their vtable partial_eq
     // (e.g., Vec's vtable partial_eq fails if elements lack PartialEq, but we can still
     // compare structurally by recursing on each element)
+
+    // Check Def::Option and Def::Result first, before UserType::Enum
+    // (Option and Result are now UserType::Enum but need special handling via their Def)
+    match a.shape().def {
+        Def::Option(_) => {
+            let Ok(opt_a) = a.into_option() else {
+                return false;
+            };
+            let Ok(opt_b) = b.into_option() else {
+                return false;
+            };
+
+            return match (opt_a.value(), opt_b.value()) {
+                (Some(inner_a), Some(inner_b)) => peek_eq(inner_a, inner_b),
+                (None, None) => true,
+                _ => false,
+            };
+        }
+
+        Def::Result(_) => {
+            let Ok(result_a) = a.into_result() else {
+                return false;
+            };
+            let Ok(result_b) = b.into_result() else {
+                return false;
+            };
+
+            return match (result_a.ok(), result_b.ok()) {
+                (Some(ok_a), Some(ok_b)) => peek_eq(ok_a, ok_b),
+                (None, None) => match (result_a.err(), result_b.err()) {
+                    (Some(err_a), Some(err_b)) => peek_eq(err_a, err_b),
+                    _ => false,
+                },
+                _ => false,
+            };
+        }
+
+        _ => {}
+    }
+
     match a.shape().ty {
         Type::User(UserType::Struct(_)) => {
             let Ok(struct_a) = a.into_struct() else {
@@ -273,39 +313,8 @@ fn peek_eq<'mem, 'facet>(a: Peek<'mem, 'facet>, b: Peek<'mem, 'facet>) -> bool {
                     true
                 }
 
-                Def::Option(_) => {
-                    let Ok(opt_a) = a.into_option() else {
-                        return false;
-                    };
-                    let Ok(opt_b) = b.into_option() else {
-                        return false;
-                    };
-
-                    match (opt_a.value(), opt_b.value()) {
-                        (Some(inner_a), Some(inner_b)) => peek_eq(inner_a, inner_b),
-                        (None, None) => true,
-                        _ => false,
-                    }
-                }
-
-                Def::Result(_) => {
-                    let Ok(result_a) = a.into_result() else {
-                        return false;
-                    };
-                    let Ok(result_b) = b.into_result() else {
-                        return false;
-                    };
-
-                    match (result_a.ok(), result_b.ok()) {
-                        (Some(ok_a), Some(ok_b)) => peek_eq(ok_a, ok_b),
-                        (None, None) => match (result_a.err(), result_b.err()) {
-                            (Some(err_a), Some(err_b)) => peek_eq(err_a, err_b),
-                            _ => false,
-                        },
-                        _ => false,
-                    }
-                }
-
+                // Option and Result are handled at the top of the function
+                // (they're now UserType::Enum but need special handling via their Def)
                 _ => {
                     // Not a known container type, try vtable partial_eq for scalars
                     // This handles primitives (i32, bool, etc.) and types that derive PartialEq
