@@ -249,36 +249,9 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// Returns `true` if the frame should be stored, `false` if it should be
     /// validated immediately.
     fn should_store_frame_for_deferred(&self) -> bool {
-        let current_frame = self.frames().last().unwrap();
-
-        // Check if this is a type that can be re-entered in deferred mode
-        let is_reentrant_type = matches!(
-            current_frame.allocated.shape().ty,
-            Type::User(UserType::Struct(_)) | Type::User(UserType::Enum(_))
-        ) || matches!(
-            current_frame.allocated.shape().def,
-            Def::List(_) | Def::Map(_) | Def::Set(_) | Def::Array(_) | Def::Option(_)
-        );
-
-        if !is_reentrant_type {
-            return false;
-        }
-
-        // Storable ownership types: Field (direct field access) and Owned (inner values
-        // of Option/SmartPointer). Both can be stored for deferred processing.
-        let storable_ownership = matches!(
-            current_frame.ownership,
-            FrameOwnership::Field { .. } | FrameOwnership::Owned
-        );
-
-        if !storable_ownership {
-            return false;
-        }
-
-        // Note: We no longer need to check for TrackedBuffer frames here.
-        // Map keys/values now include an entry index in their paths (MapKey(idx), MapValue(idx)),
-        // so different map entries have distinct paths and won't collide.
-
+        // In deferred mode, all frames have stable memory and can be stored.
+        // PR #2019 added stable storage for all container elements (ListRope for Vec,
+        // pending_entries for Map, pending_inner for Option).
         true
     }
 
