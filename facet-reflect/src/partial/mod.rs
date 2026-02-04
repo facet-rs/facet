@@ -408,7 +408,15 @@ pub(crate) enum Tracker {
 
     /// Smart pointer being initialized.
     /// Whether it's initialized is tracked by `Frame::is_init`.
-    SmartPointer,
+    SmartPointer {
+        /// Whether we're currently building the inner value
+        building_inner: bool,
+        /// Pending inner value pointer to be moved with new_into_fn on finalization.
+        /// Deferred processing requires keeping the inner value's memory stable,
+        /// so we delay the new_into_fn() call until the SmartPointer frame is finalized.
+        /// None = no pending inner, Some = inner value ready to be moved into SmartPointer.
+        pending_inner: Option<PtrUninit>,
+    },
 
     /// We're initializing an `Arc<[T]>`, `Box<[T]>`, `Rc<[T]>`, etc.
     ///
@@ -534,7 +542,7 @@ impl Tracker {
             Tracker::Scalar => TrackerKind::Scalar,
             Tracker::Array { .. } => TrackerKind::Array,
             Tracker::Struct { .. } => TrackerKind::Struct,
-            Tracker::SmartPointer => TrackerKind::SmartPointer,
+            Tracker::SmartPointer { .. } => TrackerKind::SmartPointer,
             Tracker::SmartPointerSlice { .. } => TrackerKind::SmartPointerSlice,
             Tracker::Enum { .. } => TrackerKind::Enum,
             Tracker::List { .. } => TrackerKind::List,
@@ -679,8 +687,19 @@ impl Frame {
                     }
                 }
             }
-            Tracker::SmartPointer => {
-                // Drop the initialized Box
+            Tracker::SmartPointer { pending_inner, .. } => {
+                // If there's a pending inner value, drop it
+                if let Some(inner_ptr) = pending_inner {
+                    if let Def::Pointer(ptr_def) = self.allocated.shape().def {
+                        if let Some(inner_shape) = ptr_def.pointee {
+                            unsafe {
+                                inner_shape
+                                    .call_drop_in_place(PtrMut::new(inner_ptr.as_mut_byte_ptr()))
+                            };
+                        }
+                    }
+                }
+                // Drop the initialized SmartPointer
                 if self.is_init {
                     unsafe {
                         self.allocated
@@ -688,8 +707,6 @@ impl Frame {
                             .call_drop_in_place(self.data.assume_init())
                     };
                 }
-                // Note: we don't deallocate the inner value here because
-                // the Box's drop will handle that
             }
             Tracker::SmartPointerSlice { vtable, .. } => {
                 // Free the slice builder
@@ -1324,6 +1341,43 @@ impl Frame {
         Ok(())
     }
 
+    fn complete_pending_smart_pointer(
+        smart_ptr_shape: &'static Shape,
+        smart_ptr_def: facet_core::PointerDef,
+        smart_ptr_data: PtrUninit,
+        inner_ptr: PtrUninit,
+    ) -> Result<(), ReflectErrorKind> {
+        let Some(new_into_fn) = smart_ptr_def.vtable.new_into_fn else {
+            return Err(ReflectErrorKind::OperationFailed {
+                shape: smart_ptr_shape,
+                operation: "SmartPointer missing new_into_fn",
+            });
+        };
+        let Some(inner_shape) = smart_ptr_def.pointee else {
+            return Err(ReflectErrorKind::OperationFailed {
+                shape: smart_ptr_shape,
+                operation: "SmartPointer missing pointee shape",
+            });
+        };
+
+        // The inner_ptr contains the initialized inner value
+        let _ = unsafe { inner_ptr.assume_init() };
+
+        // Initialize the SmartPointer with the inner value
+        unsafe {
+            new_into_fn(smart_ptr_data, PtrMut::new(inner_ptr.as_mut_byte_ptr()));
+        }
+
+        // Deallocate the inner value's memory since new_into_fn moved it
+        if let Ok(layout) = inner_shape.layout.sized_layout()
+            && layout.size() > 0
+        {
+            unsafe { alloc::alloc::dealloc(inner_ptr.as_mut_byte_ptr(), layout) };
+        }
+
+        Ok(())
+    }
+
     /// Returns an error if the value is not fully initialized.
     /// For lists with rope storage, drains the rope into the Vec.
     /// For maps with pending entries, drains the entries into the map.
@@ -1408,8 +1462,34 @@ impl Frame {
                     }
                 }
             }
-            Tracker::SmartPointer => {
-                if self.is_init {
+            Tracker::SmartPointer {
+                building_inner,
+                pending_inner,
+            } => {
+                if *building_inner {
+                    // Inner value is still being built
+                    Err(ReflectErrorKind::UninitializedValue {
+                        shape: self.allocated.shape(),
+                    })
+                } else if let Some(inner_ptr) = pending_inner.take() {
+                    // Finalize the pending inner value
+                    let smart_ptr_shape = self.allocated.shape();
+                    if let Def::Pointer(smart_ptr_def) = smart_ptr_shape.def {
+                        Self::complete_pending_smart_pointer(
+                            smart_ptr_shape,
+                            smart_ptr_def,
+                            self.data,
+                            inner_ptr,
+                        )?;
+                        self.is_init = true;
+                        Ok(())
+                    } else {
+                        Err(ReflectErrorKind::OperationFailed {
+                            shape: smart_ptr_shape,
+                            operation: "SmartPointer frame without SmartPointer definition",
+                        })
+                    }
+                } else if self.is_init {
                     Ok(())
                 } else {
                     Err(ReflectErrorKind::UninitializedValue {
@@ -1745,6 +1825,13 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     // Option with building_inner contributes OptionSome to path
                     path.push(PathStep::OptionSome);
                 }
+                Tracker::SmartPointer {
+                    building_inner: true,
+                    ..
+                } => {
+                    // SmartPointer with building_inner contributes Deref to path
+                    path.push(PathStep::Deref);
+                }
                 Tracker::Map {
                     current_entry_index: Some(idx),
                     building_key,
@@ -1757,7 +1844,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         path.push(PathStep::MapValue(*idx as u32));
                     }
                 }
-                // Other tracker types (SmartPointer, Set, etc.)
+                // Other tracker types (Set, Result, etc.)
                 // don't contribute to the storage path - they're transparent wrappers
                 _ => {}
             }

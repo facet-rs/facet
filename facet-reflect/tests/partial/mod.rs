@@ -19,6 +19,7 @@ mod pointer_complex;
 mod put_vec_leak;
 mod result_building;
 mod set;
+mod smartptr_deferred;
 mod struct_leak;
 mod tuples;
 mod variance;

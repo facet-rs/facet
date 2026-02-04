@@ -275,22 +275,6 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             return false;
         }
 
-        // IMPORTANT: Don't store frames that have a SmartPointer in any ancestor.
-        // SmartPointer (Box, Arc, etc.) needs its inner value immediately to create
-        // the smart pointer - it can't wait for finish_deferred.
-        // Check all ancestor frames, not just the direct parent.
-        let has_smart_pointer_ancestor = {
-            let frames = self.frames();
-            frames
-                .iter()
-                .take(frames.len() - 1)
-                .any(|f| matches!(f.tracker, Tracker::SmartPointer))
-        };
-
-        if has_smart_pointer_ancestor {
-            return false;
-        }
-
         // Note: We no longer need to check for TrackedBuffer frames here.
         // Map keys/values now include an entry index in their paths (MapKey(idx), MapValue(idx)),
         // so different map entries have distinct paths and won't collide.
@@ -462,6 +446,29 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         // The frame contains the inner value - write it into the Option's memory
                         Self::complete_option_frame(option_frame, frame);
                         // Frame data has been transferred to Option - don't drop it
+                        continue;
+                    }
+                }
+
+                // Special handling for SmartPointer inner values: when path ends with Deref,
+                // the parent is a SmartPointer frame and we need to complete it by
+                // creating the SmartPointer from the inner value.
+                if matches!(last_step, PathStep::Deref) {
+                    // Find the SmartPointer frame (parent)
+                    let smart_ptr_frame = if parent_path.steps.is_empty() {
+                        let parent_index = start_depth.saturating_sub(1);
+                        self.frames_mut().get_mut(parent_index)
+                    } else if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
+                        Some(parent_frame)
+                    } else {
+                        let parent_frame_index = start_depth + parent_path.steps.len() - 1;
+                        self.frames_mut().get_mut(parent_frame_index)
+                    };
+
+                    if let Some(smart_ptr_frame) = smart_ptr_frame {
+                        // The frame contains the inner value - create the SmartPointer from it
+                        Self::complete_smart_pointer_frame(smart_ptr_frame, frame);
+                        // Frame data has been transferred to SmartPointer - don't drop it
                         continue;
                     }
                 }
@@ -679,6 +686,41 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 pending_inner: None,
             };
             option_frame.is_init = true;
+        }
+    }
+
+    fn complete_smart_pointer_frame(smart_ptr_frame: &mut Frame, inner_frame: Frame) {
+        if let Def::Pointer(smart_ptr_def) = smart_ptr_frame.allocated.shape().def {
+            // Use the SmartPointer vtable to create the smart pointer from the inner value
+            if let Some(new_into_fn) = smart_ptr_def.vtable.new_into_fn {
+                // The inner frame contains the inner value - assume_init validates it's initialized
+                let _ = unsafe { inner_frame.data.assume_init() };
+
+                // Create the SmartPointer with the inner value
+                unsafe {
+                    new_into_fn(
+                        smart_ptr_frame.data,
+                        PtrMut::new(inner_frame.data.as_mut_byte_ptr()),
+                    );
+                }
+
+                // Deallocate the inner value's memory since new_into_fn moved it
+                if let FrameOwnership::Owned = inner_frame.ownership
+                    && let Ok(layout) = inner_frame.allocated.shape().layout.sized_layout()
+                    && layout.size() > 0
+                {
+                    unsafe {
+                        ::alloc::alloc::dealloc(inner_frame.data.as_mut_byte_ptr(), layout);
+                    }
+                }
+
+                // Mark the SmartPointer as initialized
+                smart_ptr_frame.tracker = Tracker::SmartPointer {
+                    building_inner: false,
+                    pending_inner: None,
+                };
+                smart_ptr_frame.is_init = true;
+            }
         }
     }
 
@@ -1013,6 +1055,13 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                             // Option with building_inner contributes OptionSome to path
                             field_path.push(PathStep::OptionSome);
                         }
+                        Tracker::SmartPointer {
+                            building_inner: true,
+                            ..
+                        } => {
+                            // SmartPointer with building_inner contributes Deref to path
+                            field_path.push(PathStep::Deref);
+                        }
                         Tracker::Map {
                             current_entry_index: Some(idx),
                             building_key,
@@ -1157,6 +1206,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         // Update parent frame's tracking when popping from a child
         // Get parent shape upfront to avoid borrow conflicts
         let parent_shape = self.frames().last().unwrap().allocated.shape();
+        let is_deferred_mode = self.is_deferred();
         let parent_frame = self.frames_mut().last_mut().unwrap();
 
         crate::trace!(
@@ -1387,42 +1437,85 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         }
 
         match &mut parent_frame.tracker {
-            Tracker::SmartPointer => {
-                // We just popped the inner value frame, so now we need to create the smart pointer
-                if let Def::Pointer(smart_ptr_def) = parent_frame.allocated.shape().def {
-                    // The inner value must be fully initialized before we can create the smart pointer
-                    if let Err(e) = popped_frame.require_full_initialization() {
-                        // Inner value wasn't initialized, deallocate and return error
-                        popped_frame.deinit();
-                        popped_frame.dealloc();
-                        return Err(self.err(e));
-                    }
+            Tracker::SmartPointer {
+                building_inner,
+                pending_inner,
+            } => {
+                crate::trace!(
+                    "end(): matched Tracker::SmartPointer, building_inner={}",
+                    *building_inner
+                );
+                // We just popped the inner value frame for a SmartPointer
+                if *building_inner {
+                    if matches!(parent_frame.allocated.shape().def, Def::Pointer(_)) {
+                        // Check if we're in deferred mode - if so, store the inner value pointer
+                        if is_deferred_mode {
+                            crate::trace!("end(): in deferred mode, storing pending_inner");
+                            // Store the inner value pointer for deferred new_into_fn.
+                            // This keeps the inner value's memory stable for deferred processing.
+                            // Actual new_into_fn() happens in require_full_initialization().
+                            *pending_inner = Some(popped_frame.data);
 
-                    let Some(new_into_fn) = smart_ptr_def.vtable.new_into_fn else {
-                        popped_frame.deinit();
-                        popped_frame.dealloc();
+                            // Mark that we're no longer building the inner value
+                            *building_inner = false;
+                            crate::trace!(
+                                "end(): stored pending_inner, set building_inner to false"
+                            );
+                            // Mark the SmartPointer as initialized (pending finalization)
+                            parent_frame.is_init = true;
+                            crate::trace!("end(): set parent_frame.is_init to true");
+                        } else {
+                            // Not in deferred mode - complete immediately
+                            crate::trace!("end(): not in deferred mode, completing immediately");
+                            if let Def::Pointer(smart_ptr_def) = parent_frame.allocated.shape().def
+                            {
+                                // The inner value must be fully initialized before we can create the smart pointer
+                                if let Err(e) = popped_frame.require_full_initialization() {
+                                    // Inner value wasn't initialized, deallocate and return error
+                                    popped_frame.deinit();
+                                    popped_frame.dealloc();
+                                    return Err(self.err(e));
+                                }
+
+                                let Some(new_into_fn) = smart_ptr_def.vtable.new_into_fn else {
+                                    popped_frame.deinit();
+                                    popped_frame.dealloc();
+                                    return Err(self.err(ReflectErrorKind::OperationFailed {
+                                        shape: parent_shape,
+                                        operation: "SmartPointer missing new_into_fn",
+                                    }));
+                                };
+
+                                // The child frame contained the inner value
+                                let inner_ptr = PtrMut::new(popped_frame.data.as_mut_byte_ptr());
+
+                                // Use new_into_fn to create the SmartPointer
+                                unsafe {
+                                    new_into_fn(parent_frame.data, inner_ptr);
+                                }
+
+                                // We just moved out of it
+                                popped_frame.tracker = Tracker::Scalar;
+                                popped_frame.is_init = false;
+
+                                // Deallocate the inner value's memory since new_into_fn moved it
+                                popped_frame.dealloc();
+
+                                parent_frame.is_init = true;
+                            }
+                        }
+                    } else {
                         return Err(self.err(ReflectErrorKind::OperationFailed {
                             shape: parent_shape,
-                            operation: "SmartPointer missing new_into_fn",
+                            operation: "SmartPointer frame without SmartPointer definition",
                         }));
-                    };
-
-                    // The child frame contained the inner value
-                    let inner_ptr = PtrMut::new(popped_frame.data.as_mut_byte_ptr());
-
-                    // Use new_into_fn to create the Box
-                    unsafe {
-                        new_into_fn(parent_frame.data, inner_ptr);
                     }
-
-                    // We just moved out of it
-                    popped_frame.tracker = Tracker::Scalar;
-                    popped_frame.is_init = false;
-
-                    // Deallocate the inner value's memory since new_into_fn moved it
-                    popped_frame.dealloc();
-
-                    parent_frame.is_init = true;
+                } else {
+                    // building_inner is false - shouldn't happen in normal flow
+                    return Err(self.err(ReflectErrorKind::OperationFailed {
+                        shape: parent_shape,
+                        operation: "SmartPointer end() called with building_inner = false",
+                    }));
                 }
             }
             Tracker::List {

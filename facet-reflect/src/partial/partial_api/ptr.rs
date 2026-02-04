@@ -46,7 +46,10 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             // pointee is sized, we can allocate it — for `Arc<T>` we'll be allocating a `T` and
             // holding onto it. We'll build a new Arc with it when ending the smart pointer frame.
 
-            self.mode.stack_mut().last_mut().unwrap().tracker = Tracker::SmartPointer;
+            self.mode.stack_mut().last_mut().unwrap().tracker = Tracker::SmartPointer {
+                building_inner: true,
+                pending_inner: None,
+            };
 
             let inner_layout = match pointee_shape.layout.sized_layout() {
                 Ok(layout) => layout,

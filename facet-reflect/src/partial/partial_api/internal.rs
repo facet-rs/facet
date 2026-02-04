@@ -405,7 +405,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             Tracker::Struct { .. }
             | Tracker::Array { .. }
             | Tracker::Enum { .. }
-            | Tracker::SmartPointer
+            | Tracker::SmartPointer { .. }
             | Tracker::SmartPointerSlice { .. }
             | Tracker::List { .. }
             | Tracker::Map { .. }
