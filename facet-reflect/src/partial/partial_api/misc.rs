@@ -784,32 +784,32 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
     /// Complete a List frame by pushing an element into it (for deferred finalization)
     fn complete_list_item_frame(list_frame: &mut Frame, element_frame: Frame) {
-        if let Def::List(list_def) = list_frame.allocated.shape().def {
-            if let Some(push_fn) = list_def.push() {
-                // The element frame contains the element value
-                let element_ptr = PtrMut::new(element_frame.data.as_mut_byte_ptr());
+        if let Def::List(list_def) = list_frame.allocated.shape().def
+            && let Some(push_fn) = list_def.push()
+        {
+            // The element frame contains the element value
+            let element_ptr = PtrMut::new(element_frame.data.as_mut_byte_ptr());
 
-                // Use push to add element to the list
-                unsafe {
-                    push_fn(
-                        PtrMut::new(list_frame.data.as_mut_byte_ptr()),
-                        element_ptr.into(),
-                    );
-                }
-
-                crate::trace!(
-                    "complete_list_item_frame: pushed element into {}",
-                    list_frame.allocated.shape()
+            // Use push to add element to the list
+            unsafe {
+                push_fn(
+                    PtrMut::new(list_frame.data.as_mut_byte_ptr()),
+                    element_ptr.into(),
                 );
+            }
 
-                // Deallocate the element's memory since push moved it
-                if let FrameOwnership::Owned = element_frame.ownership
-                    && let Ok(layout) = element_frame.allocated.shape().layout.sized_layout()
-                    && layout.size() > 0
-                {
-                    unsafe {
-                        ::alloc::alloc::dealloc(element_frame.data.as_mut_byte_ptr(), layout);
-                    }
+            crate::trace!(
+                "complete_list_item_frame: pushed element into {}",
+                list_frame.allocated.shape()
+            );
+
+            // Deallocate the element's memory since push moved it
+            if let FrameOwnership::Owned = element_frame.ownership
+                && let Ok(layout) = element_frame.allocated.shape().layout.sized_layout()
+                && layout.size() > 0
+            {
+                unsafe {
+                    ::alloc::alloc::dealloc(element_frame.data.as_mut_byte_ptr(), layout);
                 }
             }
         }
@@ -818,29 +818,29 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// Complete a Map key frame by transitioning the Map from PushingKey to PushingValue state
     /// (for deferred finalization)
     fn complete_map_key_frame(map_frame: &mut Frame, key_frame: Frame) {
-        if let Tracker::Map { insert_state, .. } = &mut map_frame.tracker {
-            if let MapInsertState::PushingKey { key_ptr, .. } = insert_state {
-                // Transition to PushingValue state, keeping the key pointer
-                *insert_state = MapInsertState::PushingValue {
-                    key_ptr: *key_ptr,
-                    value_ptr: None,
-                    value_initialized: false,
-                    value_frame_on_stack: false,
-                };
+        if let Tracker::Map { insert_state, .. } = &mut map_frame.tracker
+            && let MapInsertState::PushingKey { key_ptr, .. } = insert_state
+        {
+            // Transition to PushingValue state, keeping the key pointer
+            *insert_state = MapInsertState::PushingValue {
+                key_ptr: *key_ptr,
+                value_ptr: None,
+                value_initialized: false,
+                value_frame_on_stack: false,
+            };
 
-                crate::trace!(
-                    "complete_map_key_frame: transitioned {} to PushingValue",
-                    map_frame.allocated.shape()
-                );
+            crate::trace!(
+                "complete_map_key_frame: transitioned {} to PushingValue",
+                map_frame.allocated.shape()
+            );
 
-                // Deallocate the key frame's memory (the key data lives at key_ptr which Map owns)
-                if let FrameOwnership::Owned = key_frame.ownership
-                    && let Ok(layout) = key_frame.allocated.shape().layout.sized_layout()
-                    && layout.size() > 0
-                {
-                    unsafe {
-                        ::alloc::alloc::dealloc(key_frame.data.as_mut_byte_ptr(), layout);
-                    }
+            // Deallocate the key frame's memory (the key data lives at key_ptr which Map owns)
+            if let FrameOwnership::Owned = key_frame.ownership
+                && let Ok(layout) = key_frame.allocated.shape().layout.sized_layout()
+                && layout.size() > 0
+            {
+                unsafe {
+                    ::alloc::alloc::dealloc(key_frame.data.as_mut_byte_ptr(), layout);
                 }
             }
         }
@@ -854,32 +854,30 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             pending_entries,
             ..
         } = &mut map_frame.tracker
-        {
-            if let MapInsertState::PushingValue {
+            && let MapInsertState::PushingValue {
                 key_ptr,
                 value_ptr: Some(value_ptr),
                 ..
             } = insert_state
+        {
+            // Add the key-value pair to pending_entries
+            pending_entries.push((*key_ptr, *value_ptr));
+
+            crate::trace!(
+                "complete_map_value_frame: added entry to pending_entries for {}",
+                map_frame.allocated.shape()
+            );
+
+            // Reset to idle state
+            *insert_state = MapInsertState::Idle;
+
+            // Deallocate the value frame's memory (the value data lives at value_ptr which Map owns)
+            if let FrameOwnership::Owned = value_frame.ownership
+                && let Ok(layout) = value_frame.allocated.shape().layout.sized_layout()
+                && layout.size() > 0
             {
-                // Add the key-value pair to pending_entries
-                pending_entries.push((*key_ptr, *value_ptr));
-
-                crate::trace!(
-                    "complete_map_value_frame: added entry to pending_entries for {}",
-                    map_frame.allocated.shape()
-                );
-
-                // Reset to idle state
-                *insert_state = MapInsertState::Idle;
-
-                // Deallocate the value frame's memory (the value data lives at value_ptr which Map owns)
-                if let FrameOwnership::Owned = value_frame.ownership
-                    && let Ok(layout) = value_frame.allocated.shape().layout.sized_layout()
-                    && layout.size() > 0
-                {
-                    unsafe {
-                        ::alloc::alloc::dealloc(value_frame.data.as_mut_byte_ptr(), layout);
-                    }
+                unsafe {
+                    ::alloc::alloc::dealloc(value_frame.data.as_mut_byte_ptr(), layout);
                 }
             }
         }
@@ -922,22 +920,23 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         // SLOW PATH: Handle all the edge cases
 
         // Strategic tracing: show the frame stack state
+        #[cfg(feature = "tracing")]
         {
             let frames = self.frames();
-            let _stack_desc: Vec<_> = frames
+            let stack_desc: Vec<_> = frames
                 .iter()
                 .map(|f| format!("{}({:?})", f.allocated.shape(), f.tracker.kind()))
                 .collect();
-            let _path = if self.is_deferred() {
+            let path = if self.is_deferred() {
                 format!("{:?}", self.derive_path())
             } else {
                 "N/A".to_string()
             };
             crate::trace!(
                 "end() SLOW PATH: stack=[{}], deferred={}, path={}",
-                _stack_desc.join(" > "),
+                stack_desc.join(" > "),
                 self.is_deferred(),
-                _path
+                path
             );
         }
 
@@ -1388,40 +1387,38 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     // Handle Set element insertion immediately.
                     // Set elements have no path identity (no index), so they can't be stored
                     // and re-entered. We must insert them into the Set now.
-                    if let Tracker::Set { current_child } = &mut parent_frame.tracker {
-                        if *current_child && parent_frame.is_init {
-                            if let Def::Set(set_def) = parent_frame.allocated.shape().def {
-                                let insert = set_def.vtable.insert;
-                                let element_ptr = PtrMut::new(popped_frame.data.as_mut_byte_ptr());
-                                unsafe {
-                                    insert(
-                                        PtrMut::new(parent_frame.data.as_mut_byte_ptr()),
-                                        element_ptr,
-                                    );
-                                }
-                                crate::trace!(
-                                    "end(): Set element inserted immediately in deferred mode"
-                                );
-                                // Insert moved out of popped_frame - don't store it
-                                popped_frame.tracker = Tracker::Scalar;
-                                popped_frame.is_init = false;
-                                popped_frame.dealloc();
-                                *current_child = false;
-                                // Don't store this frame - return early
-                                return Ok(self);
-                            }
+                    if let Tracker::Set { current_child } = &mut parent_frame.tracker
+                        && *current_child
+                        && parent_frame.is_init
+                        && let Def::Set(set_def) = parent_frame.allocated.shape().def
+                    {
+                        let insert = set_def.vtable.insert;
+                        let element_ptr = PtrMut::new(popped_frame.data.as_mut_byte_ptr());
+                        unsafe {
+                            insert(
+                                PtrMut::new(parent_frame.data.as_mut_byte_ptr()),
+                                element_ptr,
+                            );
                         }
+                        crate::trace!("end(): Set element inserted immediately in deferred mode");
+                        // Insert moved out of popped_frame - don't store it
+                        popped_frame.tracker = Tracker::Scalar;
+                        popped_frame.is_init = false;
+                        popped_frame.dealloc();
+                        *current_child = false;
+                        // Don't store this frame - return early
+                        return Ok(self);
                     }
 
                     // For List elements stored in a rope (RopeSlot ownership), we need to
                     // mark the element as initialized in the rope. When the List frame is
                     // deinited, the rope will drop all initialized elements.
-                    if matches!(popped_frame.ownership, FrameOwnership::RopeSlot) {
-                        if let Tracker::List { rope, .. } = &mut parent_frame.tracker {
-                            if let Some(rope) = rope {
-                                rope.mark_last_initialized();
-                            }
-                        }
+                    if matches!(popped_frame.ownership, FrameOwnership::RopeSlot)
+                        && let Tracker::List {
+                            rope: Some(rope), ..
+                        } = &mut parent_frame.tracker
+                    {
+                        rope.mark_last_initialized();
                     }
                 }
 

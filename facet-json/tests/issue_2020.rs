@@ -65,16 +65,16 @@ fn test_arc_deserialization() {
     };
 
     eprintln!("Checking results...");
-    if let Some(items) = &root.container.items {
-        if let Some(item) = items.get("a") {
-            match &item.tagged {
-                Tagged::TypeA { value, data } => {
-                    eprintln!("Found TypeA with value={}, data.y={:?}", value, data.y);
-                    assert_eq!(*value, 42.0);
-                    assert!(!data.y.is_empty(), "Arc<Inner> not deserialized correctly");
-                    assert_eq!(data.y.get(0), Some(&100.0));
-                    assert_eq!(data.x.get(0), Some(&1.0));
-                }
+    if let Some(items) = &root.container.items
+        && let Some(item) = items.get("a")
+    {
+        match &item.tagged {
+            Tagged::TypeA { value, data } => {
+                eprintln!("Found TypeA with value={}, data.y={:?}", value, data.y);
+                assert_eq!(*value, 42.0);
+                assert!(!data.y.is_empty(), "Arc<Inner> not deserialized correctly");
+                assert_eq!(data.y.first(), Some(&100.0));
+                assert_eq!(data.x.first(), Some(&1.0));
             }
         }
     }

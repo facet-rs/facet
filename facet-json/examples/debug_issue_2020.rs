@@ -51,18 +51,18 @@ fn main() {
     println!("Attempting to deserialize...");
     match facet_json::from_str::<Root>(json) {
         Ok(root) => {
-            if let Some(items) = &root.container.items {
-                if let Some(item) = items.get("a") {
-                    match &item.tagged {
-                        Tagged::TypeA { value, data } => {
-                            println!("value: {}", value);
-                            println!("data.y[0]: {}", data.y.get(0).unwrap_or(&0.0));
+            if let Some(items) = &root.container.items
+                && let Some(item) = items.get("a")
+            {
+                match &item.tagged {
+                    Tagged::TypeA { value, data } => {
+                        println!("value: {}", value);
+                        println!("data.y[0]: {}", data.y.first().unwrap_or(&0.0));
 
-                            if data.y.is_empty() || *data.y.get(0).unwrap_or(&0.0) == 0.0 {
-                                println!("BUG: Arc<Inner> not deserialized correctly!");
-                            } else {
-                                println!("SUCCESS: Arc<Inner> deserialized correctly!");
-                            }
+                        if data.y.is_empty() || *data.y.first().unwrap_or(&0.0) == 0.0 {
+                            println!("BUG: Arc<Inner> not deserialized correctly!");
+                        } else {
+                            println!("SUCCESS: Arc<Inner> deserialized correctly!");
                         }
                     }
                 }

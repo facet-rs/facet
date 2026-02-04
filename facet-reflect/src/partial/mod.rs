@@ -699,15 +699,13 @@ impl Frame {
             }
             Tracker::SmartPointer { pending_inner, .. } => {
                 // If there's a pending inner value, drop it
-                if let Some(inner_ptr) = pending_inner {
-                    if let Def::Pointer(ptr_def) = self.allocated.shape().def {
-                        if let Some(inner_shape) = ptr_def.pointee {
-                            unsafe {
-                                inner_shape
-                                    .call_drop_in_place(PtrMut::new(inner_ptr.as_mut_byte_ptr()))
-                            };
-                        }
-                    }
+                if let Some(inner_ptr) = pending_inner
+                    && let Def::Pointer(ptr_def) = self.allocated.shape().def
+                    && let Some(inner_shape) = ptr_def.pointee
+                {
+                    unsafe {
+                        inner_shape.call_drop_in_place(PtrMut::new(inner_ptr.as_mut_byte_ptr()))
+                    };
                 }
                 // Drop the initialized SmartPointer
                 if self.is_init {

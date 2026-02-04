@@ -52,15 +52,15 @@ fn test_no_arc_deserialization() {
 
     let root = facet_json::from_str::<Root>(json).expect("deserialization failed");
 
-    if let Some(items) = &root.container.items {
-        if let Some(item) = items.get("a") {
-            match &item.tagged {
-                Tagged::TypeA { value, data } => {
-                    assert_eq!(*value, 42.0);
-                    assert!(!data.y.is_empty(), "Inner not deserialized correctly");
-                    assert_eq!(data.y.get(0), Some(&100.0));
-                    assert_eq!(data.x.get(0), Some(&1.0));
-                }
+    if let Some(items) = &root.container.items
+        && let Some(item) = items.get("a")
+    {
+        match &item.tagged {
+            Tagged::TypeA { value, data } => {
+                assert_eq!(*value, 42.0);
+                assert!(!data.y.is_empty(), "Inner not deserialized correctly");
+                assert_eq!(data.y.first(), Some(&100.0));
+                assert_eq!(data.x.first(), Some(&1.0));
             }
         }
     }

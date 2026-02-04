@@ -48,8 +48,8 @@ fn test_arc_no_flatten_deserialization() {
         Tagged::TypeA { value, data } => {
             assert_eq!(*value, 42.0);
             assert!(!data.y.is_empty(), "Arc<Inner> not deserialized correctly");
-            assert_eq!(data.y.get(0), Some(&100.0));
-            assert_eq!(data.x.get(0), Some(&1.0));
+            assert_eq!(data.y.first(), Some(&100.0));
+            assert_eq!(data.x.first(), Some(&1.0));
         }
     }
 }
