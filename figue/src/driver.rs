@@ -568,21 +568,31 @@ fn get_source_for_provenance(
     }
 }
 
-/// Opaque result type for driver operations.
+/// The result of running the figue driver — either a parsed value or an early exit.
 ///
-/// This type intentionally does NOT implement `Try`, so you cannot use `?` on it directly.
-/// This prevents accidentally propagating help/version/completions as errors (which would
-/// cause exit code 1 instead of 0).
+/// # Why this type exists
+///
+/// When a CLI user passes `--help` or `--version`, the program should print the
+/// relevant text and exit with code 0 (success). But these cases flow through the
+/// error path of the driver, since no config value `T` was produced. If `DriverOutcome`
+/// were just a `Result`, calling `.unwrap()` would panic on `--help`, and using `?`
+/// would propagate it as an error (exit code 1 instead of 0).
+///
+/// `DriverOutcome` solves this by providing an [`.unwrap()`](Self::unwrap) method that
+/// does the right thing for every case:
+///
+/// - Parsed successfully → returns `T`
+/// - `--help` / `--version` / `--completions` → prints to stdout, exits with code 0
+/// - Parse error → prints diagnostics to stderr, exits with code 1
+///
+/// This type intentionally does NOT implement `Try`, so you cannot use `?` on it
+/// accidentally.
 ///
 /// # Usage
 ///
-/// Use one of the following methods to extract the value:
-/// - [`.unwrap()`](Self::unwrap) - handles exits correctly, returns `T` (recommended for most cases)
-/// - [`.into_result()`](Self::into_result) - for advanced users who want to handle everything themselves
+/// For most CLI programs, just call `.unwrap()`:
 ///
-/// # Example
-///
-/// ```rust
+/// ```rust,no_run
 /// use facet::Facet;
 /// use figue::{self as args, FigueBuiltins};
 ///
@@ -595,13 +605,41 @@ fn get_source_for_provenance(
 ///     builtins: FigueBuiltins,
 /// }
 ///
-/// // Using unwrap() - recommended for simple cases
-/// let args: Args = figue::from_slice(&["input.txt"]).unwrap();
-/// assert_eq!(args.file, "input.txt");
+/// fn main() {
+///     // If the user passes --help, this prints help and exits with code 0.
+///     // If the user passes invalid args, this prints an error and exits with code 1.
+///     // Otherwise, it returns the parsed Args.
+///     let args: Args = figue::from_std_args().unwrap();
+///     println!("Processing: {}", args.file);
+/// }
+/// ```
 ///
-/// // Using into_result() - for custom error handling
-/// let result = figue::from_slice::<Args>(&["--help"]).into_result();
-/// assert!(result.is_err());
+/// For tests or custom handling, use [`.into_result()`](Self::into_result) to get a
+/// `Result<DriverOutput<T>, DriverError>`:
+///
+/// ```rust
+/// use facet::Facet;
+/// use figue::{self as args, FigueBuiltins, DriverError};
+///
+/// #[derive(Facet)]
+/// struct Args {
+///     #[facet(args::positional, default)]
+///     file: Option<String>,
+///
+///     #[facet(flatten)]
+///     builtins: FigueBuiltins,
+/// }
+///
+/// // --help produces a DriverError::Help (exit code 0, not a "real" error)
+/// let outcome = figue::from_slice::<Args>(&["--help"]);
+/// let err = outcome.unwrap_err();
+/// assert!(err.is_help());
+/// assert_eq!(err.exit_code(), 0);
+///
+/// // Successful parse returns DriverOutput containing the value
+/// let outcome = figue::from_slice::<Args>(&["input.txt"]);
+/// let output = outcome.into_result().unwrap();
+/// assert_eq!(output.value.file.as_deref(), Some("input.txt"));
 /// ```
 #[must_use = "this `DriverOutcome` may contain a help/version request that should be handled"]
 pub struct DriverOutcome<T>(Result<DriverOutput<T>, DriverError>);
@@ -631,9 +669,12 @@ impl<T> DriverOutcome<T> {
 
     /// Convert to a standard `Result` for manual handling.
     ///
-    /// **Warning**: If you use `?` on this result and the error is `Help`, `Version`,
-    /// or `Completions`, Rust's default error handling will exit with code 1 instead of 0.
-    /// Consider using `.unwrap()` instead for correct exit behavior.
+    /// Use this when you need to inspect the error yourself (e.g., in tests, or to
+    /// implement custom exit behavior). For most CLI programs, prefer
+    /// [`.unwrap()`](Self::unwrap) instead.
+    ///
+    /// **Warning**: Don't blindly use `?` on this result — early exits like `Help` and
+    /// `Version` will propagate as errors and cause exit code 1 instead of 0.
     pub fn into_result(self) -> Result<DriverOutput<T>, DriverError> {
         self.0
     }
@@ -648,14 +689,18 @@ impl<T> DriverOutcome<T> {
         self.0.is_err()
     }
 
-    /// Get the value, or print output and exit.
+    /// Get the parsed value, handling all early-exit cases automatically.
     ///
-    /// This is the recommended way to handle `DriverOutcome` in most applications.
-    /// It correctly handles all cases:
+    /// This is the primary way to use figue. It does exactly what a well-behaved
+    /// CLI should do:
     ///
-    /// - **On success**: prints warnings to stderr, returns the parsed value
-    /// - **On help/completions/version**: prints to stdout, exits with code 0
-    /// - **On error**: prints diagnostics to stderr, exits with code 1
+    /// | Case | Behavior |
+    /// |------|----------|
+    /// | Parse succeeded | Prints warnings to stderr, returns `T` |
+    /// | `--help` passed | Prints help to stdout, exits with code 0 |
+    /// | `--version` passed | Prints version to stdout, exits with code 0 |
+    /// | `--completions` passed | Prints shell script to stdout, exits with code 0 |
+    /// | Parse failed | Prints diagnostics to stderr, exits with code 1 |
     ///
     /// # Example
     ///
@@ -672,12 +717,10 @@ impl<T> DriverOutcome<T> {
     ///     builtins: FigueBuiltins,
     /// }
     ///
-    /// // This will:
-    /// // - Print help and exit(0) if --help is passed
-    /// // - Print version and exit(0) if --version is passed
-    /// // - Print error and exit(1) if args are invalid
-    /// // - Return the Args if everything is OK
+    /// // In your main():
     /// let args: Args = figue::from_std_args().unwrap();
+    /// // If we get here, args were parsed successfully.
+    /// // --help and --version already exited before this line.
     /// println!("Processing: {}", args.file);
     /// ```
     pub fn unwrap(self) -> T {
@@ -1013,22 +1056,33 @@ fn extract_shell_from_value(value: &ConfigValue) -> Option<Shell> {
     }
 }
 
-/// Error returned by the driver.
+/// Reason the driver did not produce a parsed value.
 ///
-/// Not all variants are "errors" in the traditional sense - [`Help`](Self::Help),
-/// [`Completions`](Self::Completions), and [`Version`](Self::Version) are successful
-/// operations that just don't produce a config value.
+/// This enum covers two distinct cases:
+///
+/// - **Early exits** ([`Help`](Self::Help), [`Version`](Self::Version),
+///   [`Completions`](Self::Completions)) — the user asked for something other than
+///   running the program. These have exit code 0 and are "errors" only in the sense
+///   that no `T` was produced.
+///
+/// - **Actual errors** ([`Failed`](Self::Failed), [`Builder`](Self::Builder),
+///   [`EnvSubst`](Self::EnvSubst)) — something went wrong. These have exit code 1.
+///
+/// Most programs don't need to inspect this type at all — calling
+/// [`DriverOutcome::unwrap()`] handles everything correctly. This type is useful
+/// when you want to customize behavior, e.g. in tests or in programs that embed
+/// figue's parsing in a larger framework.
 ///
 /// # Exit Codes
 ///
-/// | Variant | Exit Code | Meaning |
-/// |---------|-----------|---------|
-/// | `Help` | 0 | User requested help |
-/// | `Version` | 0 | User requested version |
-/// | `Completions` | 0 | User requested shell completions |
-/// | `Failed` | 1 | Parsing or validation error |
-/// | `Builder` | 1 | Schema or setup error |
-/// | `EnvSubst` | 1 | Environment variable substitution error |
+/// | Variant | Exit Code | Kind |
+/// |---------|-----------|------|
+/// | `Help` | 0 | Early exit |
+/// | `Version` | 0 | Early exit |
+/// | `Completions` | 0 | Early exit |
+/// | `Failed` | 1 | Error |
+/// | `Builder` | 1 | Error |
+/// | `EnvSubst` | 1 | Error |
 ///
 /// # Example
 ///
@@ -1045,11 +1099,19 @@ fn extract_shell_from_value(value: &ConfigValue) -> Option<Shell> {
 ///     builtins: FigueBuiltins,
 /// }
 ///
-/// let result = figue::from_slice::<Args>(&["--help"]).into_result();
-/// match result {
+/// // --help is an early exit, not an error
+/// let err = figue::from_slice::<Args>(&["--help"]).unwrap_err();
+/// assert!(err.is_success());
+/// assert_eq!(err.exit_code(), 0);
+///
+/// // Pattern matching for custom handling:
+/// match figue::from_slice::<Args>(&["--help"]).into_result() {
+///     Ok(output) => {
+///         // use output.value
+///     }
 ///     Err(DriverError::Help { text }) => {
 ///         assert!(text.contains("--help"));
-///         // In a real app: print text and exit(0)
+///         // print text and exit(0)
 ///     }
 ///     Err(DriverError::Version { text }) => {
 ///         // print text and exit(0)
@@ -1059,9 +1121,6 @@ fn extract_shell_from_value(value: &ConfigValue) -> Option<Shell> {
 ///     }
 ///     Err(e) => {
 ///         // other error, exit(1)
-///     }
-///     Ok(output) => {
-///         // success, use output.value
 ///     }
 /// }
 /// ```
