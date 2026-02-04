@@ -5,6 +5,7 @@
 #![allow(unused)]
 
 use facet::Facet;
+use facet_testhelpers::test;
 
 #[derive(Facet)]
 #[facet(transparent)]

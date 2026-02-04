@@ -50,6 +50,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                                 frame.tracker = Tracker::DynamicValue {
                                     state: DynamicValueState::Object {
                                         insert_state: DynamicObjectInsertState::Idle,
+                                        pending_entries: Vec::new(),
                                     },
                                 };
                                 return Ok(self);
@@ -128,6 +129,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 frame.tracker = Tracker::DynamicValue {
                     state: DynamicValueState::Object {
                         insert_state: DynamicObjectInsertState::Idle,
+                        pending_entries: Vec::new(),
                     },
                 };
                 frame.is_init = true;
@@ -258,7 +260,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         let frame = self.mode.stack_mut().last_mut().unwrap();
 
         // Check that we have a Map in PushingValue state with no value_ptr yet
-        let (map_def, key_ptr) = match (&shape.def, &frame.tracker) {
+        let (map_def, key_ptr, key_frame_stored) = match (&shape.def, &frame.tracker) {
             (
                 Def::Map(map_def),
                 Tracker::Map {
@@ -266,11 +268,12 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                         MapInsertState::PushingValue {
                             value_ptr: None,
                             key_ptr,
+                            key_frame_stored,
                             ..
                         },
                     ..
                 },
-            ) => (map_def, *key_ptr),
+            ) => (map_def, *key_ptr, *key_frame_stored),
             (
                 Def::Map(_),
                 Tracker::Map {
@@ -322,6 +325,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     value_ptr: Some(value_ptr),
                     value_initialized: false,
                     value_frame_on_stack: true, // TrackedBuffer frame is now on the stack
+                    key_frame_stored,           // Preserve from previous state
                 };
             }
             _ => unreachable!(),
@@ -368,6 +372,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     state:
                         DynamicValueState::Object {
                             insert_state: DynamicObjectInsertState::Idle,
+                            ..
                         },
                 },
             ) if frame.is_init => {
@@ -380,6 +385,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     state:
                         DynamicValueState::Object {
                             insert_state: DynamicObjectInsertState::BuildingValue { .. },
+                            ..
                         },
                 },
             ) => {
@@ -404,6 +410,40 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
 
         // For DynamicValue objects, the value shape is the same DynamicValue shape
         let value_shape = shape;
+
+        // In deferred mode, check if the key exists in pending_entries first.
+        // This is needed for TOML array-of-tables: [[a.b]] adds to the same array incrementally.
+        // Each [[a.b]] section ends the array temporarily, but subsequent sections should
+        // re-enter and append to the same array, not create a new one.
+        if let Tracker::DynamicValue {
+            state: DynamicValueState::Object {
+                pending_entries, ..
+            },
+        } = &frame.tracker
+            && let Some(idx) = pending_entries.iter().position(|(k, _)| k == key)
+        {
+            let value_ptr = pending_entries[idx].1;
+            let value_size = value_shape
+                .layout
+                .sized_layout()
+                .expect("value must be sized")
+                .size();
+            let child_plan = parent_type_plan;
+            let mut new_frame = Frame::new(
+                value_ptr,
+                AllocatedShape::new(value_shape, value_size),
+                FrameOwnership::BorrowedInPlace,
+                child_plan,
+            );
+            new_frame.is_init = true;
+            // For DynamicValue, we need to check the actual value to set the right tracker.
+            // The value is already initialized, so we set Scalar and let subsequent
+            // operations (init_list, init_map) handle the conversion appropriately.
+            new_frame.tracker = Tracker::Scalar;
+            crate::trace!("begin_object_entry({key:?}): re-entering pending entry at index {idx}");
+            self.mode.stack_mut().push(new_frame);
+            return Ok(self);
+        }
 
         // Check if key already exists using object_get_mut (for "get or create" semantics)
         // This is needed for formats like TOML with implicit tables: [a] followed by [a.b.c]
@@ -454,7 +494,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         // Update the insert state with the key
         match &mut frame.tracker {
             Tracker::DynamicValue {
-                state: DynamicValueState::Object { insert_state },
+                state: DynamicValueState::Object { insert_state, .. },
             } => {
                 *insert_state = DynamicObjectInsertState::BuildingValue {
                     key: String::from(key),

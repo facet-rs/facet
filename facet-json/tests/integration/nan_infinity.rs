@@ -4,6 +4,7 @@
 //! these should serialize as `null`.
 
 use facet::Facet;
+use facet_testhelpers::test;
 
 #[derive(Debug, Facet)]
 struct Container {

@@ -9,6 +9,7 @@
 
 use facet::Facet;
 use facet_json::{from_str, to_string};
+use facet_testhelpers::test;
 
 /// A cow-like enum that can hold either a borrowed or owned string.
 #[derive(Debug, PartialEq, Facet)]

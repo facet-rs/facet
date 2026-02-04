@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 use facet::Facet;
+use facet_testhelpers::test;
 use tendril::{Atomic, StrTendril, Tendril, fmt};
 
 /// Atomic variant of StrTendril (Send + Sync)

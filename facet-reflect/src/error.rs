@@ -62,6 +62,7 @@ pub enum TrackerKind {
     Option,
     Result,
     DynamicValue,
+    Inner,
 }
 
 /// Error that occurred during reflection, with path context.

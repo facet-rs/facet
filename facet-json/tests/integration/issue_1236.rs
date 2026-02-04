@@ -3,6 +3,8 @@
 
 use std::{collections::HashMap, sync::Arc};
 
+use facet_testhelpers::test;
+
 use facet::Facet;
 
 #[derive(Clone, Debug, Facet)]

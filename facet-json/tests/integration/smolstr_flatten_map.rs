@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 
 use facet::Facet;
+use facet_testhelpers::test;
 use smol_str::SmolStr;
 
 #[derive(Facet, Debug)]

@@ -1,4 +1,5 @@
 use facet::Facet;
+use facet_testhelpers::test;
 
 use facet_json::to_vec;
 

@@ -46,7 +46,10 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             // pointee is sized, we can allocate it — for `Arc<T>` we'll be allocating a `T` and
             // holding onto it. We'll build a new Arc with it when ending the smart pointer frame.
 
-            self.mode.stack_mut().last_mut().unwrap().tracker = Tracker::SmartPointer;
+            self.mode.stack_mut().last_mut().unwrap().tracker = Tracker::SmartPointer {
+                building_inner: true,
+                pending_inner: None,
+            };
 
             let inner_layout = match pointee_shape.layout.sized_layout() {
                 Ok(layout) => layout,
@@ -75,6 +78,13 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             // pointee is unsized, we only support a handful of cases there
             if pointee_shape == str::SHAPE {
                 crate::trace!("Pointee is str");
+
+                // Mark the SmartPointer frame as building its inner value
+                // This is needed for derive_path() to add a Deref step
+                self.mode.stack_mut().last_mut().unwrap().tracker = Tracker::SmartPointer {
+                    building_inner: true,
+                    pending_inner: None,
+                };
 
                 // Allocate space for a String
                 let string_layout = String::SHAPE
@@ -127,6 +137,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 frame.tracker = Tracker::SmartPointerSlice {
                     vtable: slice_builder_vtable,
                     building_item: false,
+                    current_child: None,
                 };
                 // Keep the original ownership (e.g., Field) so parent tracking works correctly.
                 // The slice builder memory itself is managed by the vtable's convert_fn/free_fn.

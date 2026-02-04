@@ -2,6 +2,7 @@
 
 use facet::Facet;
 use facet_json::{RawJson, from_str, from_str_borrowed, to_string};
+use facet_testhelpers::test;
 
 // ── Deserialization tests ──
 

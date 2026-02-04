@@ -1,5 +1,6 @@
 use facet::Facet;
 use facet_json::{from_str as from_json, to_string as to_json};
+use facet_testhelpers::test;
 
 #[derive(Facet, Debug, Clone, PartialEq, Eq)]
 pub struct Base {

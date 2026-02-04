@@ -1,5 +1,6 @@
 use facet::Facet;
 use facet_json::{from_str, to_string};
+use facet_testhelpers::test;
 
 #[derive(Debug, PartialEq, Facet, Default)]
 #[repr(u8)]
@@ -29,10 +30,10 @@ fn test_option_enum_flatten_null_roundtrip() {
         dev_port: 42,
         data: InnerData::default(), // speed: None, count: None
     };
-    
+
     let json = to_string(&config).unwrap();
     println!("Serialized: {}", json);
-    
+
     let deserialized: PortConfig = from_str(&json).unwrap();
     assert_eq!(config, deserialized);
 }
@@ -46,10 +47,10 @@ fn test_option_enum_flatten_with_value_roundtrip() {
             count: Some(100),
         },
     };
-    
+
     let json = to_string(&config).unwrap();
     println!("Serialized: {}", json);
-    
+
     let deserialized: PortConfig = from_str(&json).unwrap();
     assert_eq!(config, deserialized);
 }

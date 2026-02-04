@@ -4,6 +4,7 @@
 
 use facet::Facet;
 use facet_json::{from_str, to_vec};
+use facet_testhelpers::test;
 
 // =============================================================================
 // Enum rename_all tests
@@ -20,13 +21,15 @@ fn enum_rename_all_snake_case_serialize() {
         UnknownRequirement,
     }
 
-    let json = String::from_utf8(to_vec(&ValidationErrorCode::CircularDependency).unwrap()).unwrap();
+    let json =
+        String::from_utf8(to_vec(&ValidationErrorCode::CircularDependency).unwrap()).unwrap();
     assert_eq!(json, r#""circular_dependency""#);
 
     let json = String::from_utf8(to_vec(&ValidationErrorCode::InvalidNaming).unwrap()).unwrap();
     assert_eq!(json, r#""invalid_naming""#);
 
-    let json = String::from_utf8(to_vec(&ValidationErrorCode::UnknownRequirement).unwrap()).unwrap();
+    let json =
+        String::from_utf8(to_vec(&ValidationErrorCode::UnknownRequirement).unwrap()).unwrap();
     assert_eq!(json, r#""unknown_requirement""#);
 }
 
@@ -244,7 +247,10 @@ fn struct_individual_rename_serialize() {
     };
 
     let json = String::from_utf8(to_vec(&data).unwrap()).unwrap();
-    assert_eq!(json, r#"{"userName":"bob","emailAddress":"bob@example.com"}"#);
+    assert_eq!(
+        json,
+        r#"{"userName":"bob","emailAddress":"bob@example.com"}"#
+    );
 }
 
 #[test]

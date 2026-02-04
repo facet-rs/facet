@@ -58,19 +58,58 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         };
 
         // All checks passed, now we can safely make changes
-        let fr = self.frames_mut().last_mut().unwrap();
 
-        // Check if we're re-selecting the same variant - preserve the ISet if so.
-        // This is important for internally-tagged enums where variant fields might be
-        // deserialized before the tag field arrives in the JSON stream.
-        let existing_data = match &fr.tracker {
-            Tracker::Enum {
-                variant_idx: existing_idx,
-                data,
-                ..
-            } if *existing_idx == variant_idx => Some(data.clone()),
-            _ => None,
+        // Check if we're re-selecting the same variant (preserve ISet) or switching
+        // (need cleanup). Do this before taking mutable borrow of frame.
+        let (existing_data, switching_variants) = {
+            let fr = self.frames().last().unwrap();
+            match &fr.tracker {
+                Tracker::Enum {
+                    variant_idx: existing_idx,
+                    data,
+                    ..
+                } => {
+                    if *existing_idx == variant_idx {
+                        (Some(data.clone()), false) // Same variant, preserve ISet
+                    } else {
+                        (None, true) // Different variant, need cleanup
+                    }
+                }
+                _ => (None, false),
+            }
         };
+
+        // If switching to a different variant in deferred mode, clean up stored frames
+        // that belong to the old variant's fields. These frames would reference fields
+        // that don't exist in the new variant.
+        if switching_variants {
+            // Get current path before borrowing stored_frames
+            let current_path = self.derive_path();
+            let current_len = current_path.steps.len();
+
+            if let crate::partial::FrameMode::Deferred { stored_frames, .. } = &mut self.mode {
+                // Find all stored frames that are children of this path
+                // (their path starts with current_path and has more steps)
+                let paths_to_remove: Vec<_> = stored_frames
+                    .keys()
+                    .filter(|p| {
+                        p.steps.len() > current_len
+                            && p.steps[..current_len] == current_path.steps[..]
+                            && p.shape == current_path.shape
+                    })
+                    .cloned()
+                    .collect();
+
+                // Remove and deinit those frames
+                for path in paths_to_remove {
+                    if let Some(mut frame) = stored_frames.remove(&path) {
+                        frame.deinit();
+                    }
+                }
+            }
+        }
+
+        let fr = self.frames_mut().last_mut().unwrap();
 
         // Write the discriminant to memory
         unsafe {
@@ -405,14 +444,15 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             Tracker::Struct { .. }
             | Tracker::Array { .. }
             | Tracker::Enum { .. }
-            | Tracker::SmartPointer
+            | Tracker::SmartPointer { .. }
             | Tracker::SmartPointerSlice { .. }
             | Tracker::List { .. }
             | Tracker::Map { .. }
             | Tracker::Set { .. }
             | Tracker::Option { .. }
             | Tracker::Result { .. }
-            | Tracker::DynamicValue { .. } => true,
+            | Tracker::DynamicValue { .. }
+            | Tracker::Inner { .. } => true,
         };
         if !needs_cleanup {
             return false;

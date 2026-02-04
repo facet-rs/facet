@@ -5,6 +5,7 @@
 //! of fields.
 
 use facet::Facet;
+use facet_testhelpers::test;
 
 /// Struct with 89 fields - matching the issue report
 #[derive(Debug, PartialEq, Facet)]

@@ -3,6 +3,7 @@
 
 use facet::Facet;
 use facet_json::from_str;
+use facet_testhelpers::test;
 
 #[derive(Facet, Debug, PartialEq, Default)]
 struct LoggingOpts {

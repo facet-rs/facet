@@ -120,6 +120,7 @@ pub use typeplan::{DeserStrategy, NodeId, TypePlan, TypePlanCore};
 mod partial_api;
 
 use crate::{ReflectErrorKind, TrackerKind, trace};
+use facet_core::Facet;
 use facet_path::{Path, PathStep};
 
 use core::marker::PhantomData;
@@ -264,6 +265,10 @@ pub(crate) enum MapInsertState {
         /// When true, the frame handles cleanup. When false (after end()),
         /// the Map tracker owns the buffer and must clean it up.
         value_frame_on_stack: bool,
+        /// Whether the key's frame was stored in deferred mode.
+        /// When true, the stored frame handles cleanup. When false,
+        /// the Map tracker owns the key buffer and must clean it up.
+        key_frame_stored: bool,
     },
 }
 
@@ -408,7 +413,15 @@ pub(crate) enum Tracker {
 
     /// Smart pointer being initialized.
     /// Whether it's initialized is tracked by `Frame::is_init`.
-    SmartPointer,
+    SmartPointer {
+        /// Whether we're currently building the inner value
+        building_inner: bool,
+        /// Pending inner value pointer to be moved with new_into_fn on finalization.
+        /// Deferred processing requires keeping the inner value's memory stable,
+        /// so we delay the new_into_fn() call until the SmartPointer frame is finalized.
+        /// None = no pending inner, Some = inner value ready to be moved into SmartPointer.
+        pending_inner: Option<PtrUninit>,
+    },
 
     /// We're initializing an `Arc<[T]>`, `Box<[T]>`, `Rc<[T]>`, etc.
     ///
@@ -419,6 +432,16 @@ pub(crate) enum Tracker {
 
         /// Whether we're currently building an item to push
         building_item: bool,
+
+        /// Current element index being built (for path derivation in deferred mode)
+        current_child: Option<usize>,
+    },
+
+    /// Transparent inner type wrapper (`NonZero<T>`, ByteString, etc.)
+    /// Used to distinguish inner frames from their parent for deferred path tracking.
+    Inner {
+        /// Whether we're currently building the inner value
+        building_inner: bool,
     },
 
     /// Partially initialized enum (but we picked a variant,
@@ -508,10 +531,16 @@ pub(crate) enum DynamicValueState {
     /// Initialized as a scalar (null, bool, number, string, bytes)
     Scalar,
     /// Initialized as an array, currently building an element
-    Array { building_element: bool },
+    Array {
+        building_element: bool,
+        /// Pending elements to be inserted during finalization (deferred mode)
+        pending_elements: alloc::vec::Vec<PtrUninit>,
+    },
     /// Initialized as an object
     Object {
         insert_state: DynamicObjectInsertState,
+        /// Pending entries to be inserted during finalization (deferred mode)
+        pending_entries: alloc::vec::Vec<(alloc::string::String, PtrUninit)>,
     },
 }
 
@@ -534,7 +563,7 @@ impl Tracker {
             Tracker::Scalar => TrackerKind::Scalar,
             Tracker::Array { .. } => TrackerKind::Array,
             Tracker::Struct { .. } => TrackerKind::Struct,
-            Tracker::SmartPointer => TrackerKind::SmartPointer,
+            Tracker::SmartPointer { .. } => TrackerKind::SmartPointer,
             Tracker::SmartPointerSlice { .. } => TrackerKind::SmartPointerSlice,
             Tracker::Enum { .. } => TrackerKind::Enum,
             Tracker::List { .. } => TrackerKind::List,
@@ -543,6 +572,7 @@ impl Tracker {
             Tracker::Option { .. } => TrackerKind::Option,
             Tracker::Result { .. } => TrackerKind::Result,
             Tracker::DynamicValue { .. } => TrackerKind::DynamicValue,
+            Tracker::Inner { .. } => TrackerKind::Inner,
         }
     }
 
@@ -559,12 +589,16 @@ impl Tracker {
     }
 
     /// Clear the current_child index for trackers that support it
-    const fn clear_current_child(&mut self) {
+    fn clear_current_child(&mut self) {
         match self {
             Tracker::Struct { current_child, .. }
             | Tracker::Enum { current_child, .. }
-            | Tracker::Array { current_child, .. } => {
+            | Tracker::Array { current_child, .. }
+            | Tracker::List { current_child, .. } => {
                 *current_child = None;
+            }
+            Tracker::Set { current_child } => {
+                *current_child = false;
             }
             _ => {}
         }
@@ -606,9 +640,15 @@ impl Frame {
         // collection entries (Value objects, Option inners) where the parent has no
         // per-entry tracking. Dropping here would cause double-free when parent drops.
         //
+        // For RopeSlot frames, we must NOT drop. These point into a ListRope chunk
+        // owned by the parent List's tracker. The rope handles cleanup of all elements.
+        //
         // For TrackedBuffer frames, we CAN drop. These are temporary buffers where
         // the parent's MapInsertState tracks initialization via is_init propagation.
-        if matches!(self.ownership, FrameOwnership::BorrowedInPlace) {
+        if matches!(
+            self.ownership,
+            FrameOwnership::BorrowedInPlace | FrameOwnership::RopeSlot
+        ) {
             self.is_init = false;
             self.tracker = Tracker::Scalar;
             return;
@@ -679,8 +719,17 @@ impl Frame {
                     }
                 }
             }
-            Tracker::SmartPointer => {
-                // Drop the initialized Box
+            Tracker::SmartPointer { pending_inner, .. } => {
+                // If there's a pending inner value, drop it
+                if let Some(inner_ptr) = pending_inner
+                    && let Def::Pointer(ptr_def) = self.allocated.shape().def
+                    && let Some(inner_shape) = ptr_def.pointee
+                {
+                    unsafe {
+                        inner_shape.call_drop_in_place(PtrMut::new(inner_ptr.as_mut_byte_ptr()))
+                    };
+                }
+                // Drop the initialized SmartPointer
                 if self.is_init {
                     unsafe {
                         self.allocated
@@ -688,8 +737,6 @@ impl Frame {
                             .call_drop_in_place(self.data.assume_init())
                     };
                 }
-                // Note: we don't deallocate the inner value here because
-                // the Box's drop will handle that
             }
             Tracker::SmartPointerSlice { vtable, .. } => {
                 // Free the slice builder
@@ -790,17 +837,20 @@ impl Frame {
                         value_ptr,
                         value_initialized,
                         value_frame_on_stack,
+                        key_frame_stored,
                     } => {
                         if let Def::Map(map_def) = self.allocated.shape().def {
-                            // Key was already popped (that's how we got to PushingValue state),
-                            // so we always own the key buffer and must clean it up.
-                            unsafe { map_def.k().call_drop_in_place(key_ptr.assume_init()) };
-                            if let Ok(key_layout) = map_def.k().layout.sized_layout()
-                                && key_layout.size() > 0
-                            {
-                                unsafe {
-                                    alloc::alloc::dealloc(key_ptr.as_mut_byte_ptr(), key_layout)
-                                };
+                            // Only clean up key if the key frame was NOT stored.
+                            // If key_frame_stored is true, the stored frame handles cleanup.
+                            if !*key_frame_stored {
+                                unsafe { map_def.k().call_drop_in_place(key_ptr.assume_init()) };
+                                if let Ok(key_layout) = map_def.k().layout.sized_layout()
+                                    && key_layout.size() > 0
+                                {
+                                    unsafe {
+                                        alloc::alloc::dealloc(key_ptr.as_mut_byte_ptr(), key_layout)
+                                    };
+                                }
                             }
 
                             // Only clean up value if the frame was already popped.
@@ -883,7 +933,57 @@ impl Frame {
                     };
                 }
             }
-            Tracker::DynamicValue { .. } => {
+            Tracker::DynamicValue { state } => {
+                // Clean up pending_entries if this is an Object
+                if let DynamicValueState::Object {
+                    pending_entries, ..
+                } = state
+                {
+                    // Drop and deallocate any pending values that weren't inserted
+                    if let Def::DynamicValue(dyn_def) = self.allocated.shape().def {
+                        let value_shape = self.allocated.shape(); // Value entries are same shape
+                        for (_key, value_ptr) in pending_entries.drain(..) {
+                            // Drop the value
+                            unsafe {
+                                value_shape.call_drop_in_place(value_ptr.assume_init());
+                            }
+                            // Deallocate the value buffer
+                            if let Ok(layout) = value_shape.layout.sized_layout()
+                                && layout.size() > 0
+                            {
+                                unsafe {
+                                    alloc::alloc::dealloc(value_ptr.as_mut_byte_ptr(), layout);
+                                }
+                            }
+                        }
+                        // Note: keys are Strings and will be dropped when pending_entries is dropped
+                        let _ = dyn_def; // silence unused warning
+                    }
+                }
+
+                // Clean up pending_elements if this is an Array
+                if let DynamicValueState::Array {
+                    pending_elements, ..
+                } = state
+                {
+                    // Drop and deallocate any pending elements that weren't inserted
+                    let element_shape = self.allocated.shape(); // Array elements are same shape
+                    for element_ptr in pending_elements.drain(..) {
+                        // Drop the element
+                        unsafe {
+                            element_shape.call_drop_in_place(element_ptr.assume_init());
+                        }
+                        // Deallocate the element buffer
+                        if let Ok(layout) = element_shape.layout.sized_layout()
+                            && layout.size() > 0
+                        {
+                            unsafe {
+                                alloc::alloc::dealloc(element_ptr.as_mut_byte_ptr(), layout);
+                            }
+                        }
+                    }
+                }
+
                 // Drop if initialized
                 if self.is_init {
                     let result = unsafe {
@@ -898,6 +998,16 @@ impl Frame {
                             self.allocated.shape()
                         );
                     }
+                }
+            }
+            Tracker::Inner { .. } => {
+                // Inner wrapper - drop if initialized
+                if self.is_init {
+                    unsafe {
+                        self.allocated
+                            .shape()
+                            .call_drop_in_place(self.data.assume_init())
+                    };
                 }
             }
         }
@@ -1324,6 +1434,103 @@ impl Frame {
         Ok(())
     }
 
+    fn complete_pending_smart_pointer(
+        smart_ptr_shape: &'static Shape,
+        smart_ptr_def: facet_core::PointerDef,
+        smart_ptr_data: PtrUninit,
+        inner_ptr: PtrUninit,
+    ) -> Result<(), ReflectErrorKind> {
+        // Check for sized pointee case first (uses new_into_fn)
+        if let Some(new_into_fn) = smart_ptr_def.vtable.new_into_fn {
+            let Some(inner_shape) = smart_ptr_def.pointee else {
+                return Err(ReflectErrorKind::OperationFailed {
+                    shape: smart_ptr_shape,
+                    operation: "SmartPointer missing pointee shape",
+                });
+            };
+
+            // The inner_ptr contains the initialized inner value
+            let _ = unsafe { inner_ptr.assume_init() };
+
+            // Initialize the SmartPointer with the inner value
+            unsafe {
+                new_into_fn(smart_ptr_data, PtrMut::new(inner_ptr.as_mut_byte_ptr()));
+            }
+
+            // Deallocate the inner value's memory since new_into_fn moved it
+            if let Ok(layout) = inner_shape.layout.sized_layout()
+                && layout.size() > 0
+            {
+                unsafe { alloc::alloc::dealloc(inner_ptr.as_mut_byte_ptr(), layout) };
+            }
+
+            return Ok(());
+        }
+
+        // Check for unsized pointee case: String -> Arc<str>/Box<str>/Rc<str>
+        if let Some(pointee) = smart_ptr_def.pointee()
+            && pointee.is_shape(str::SHAPE)
+        {
+            use alloc::{rc::Rc, string::String, sync::Arc};
+            use facet_core::KnownPointer;
+
+            let Some(known) = smart_ptr_def.known else {
+                return Err(ReflectErrorKind::OperationFailed {
+                    shape: smart_ptr_shape,
+                    operation: "SmartPointer<str> missing known pointer type",
+                });
+            };
+
+            // Read the String value from inner_ptr
+            let string_ptr = inner_ptr.as_mut_byte_ptr() as *mut String;
+            let string_value = unsafe { core::ptr::read(string_ptr) };
+
+            // Convert to the appropriate smart pointer type
+            match known {
+                KnownPointer::Box => {
+                    let boxed: alloc::boxed::Box<str> = string_value.into_boxed_str();
+                    unsafe {
+                        core::ptr::write(
+                            smart_ptr_data.as_mut_byte_ptr() as *mut alloc::boxed::Box<str>,
+                            boxed,
+                        );
+                    }
+                }
+                KnownPointer::Arc => {
+                    let arc: Arc<str> = Arc::from(string_value.into_boxed_str());
+                    unsafe {
+                        core::ptr::write(smart_ptr_data.as_mut_byte_ptr() as *mut Arc<str>, arc);
+                    }
+                }
+                KnownPointer::Rc => {
+                    let rc: Rc<str> = Rc::from(string_value.into_boxed_str());
+                    unsafe {
+                        core::ptr::write(smart_ptr_data.as_mut_byte_ptr() as *mut Rc<str>, rc);
+                    }
+                }
+                _ => {
+                    return Err(ReflectErrorKind::OperationFailed {
+                        shape: smart_ptr_shape,
+                        operation: "Unsupported SmartPointer<str> type",
+                    });
+                }
+            }
+
+            // Deallocate the String's memory (we moved the data out via ptr::read)
+            let string_layout = alloc::string::String::SHAPE.layout.sized_layout().unwrap();
+            if string_layout.size() > 0 {
+                unsafe { alloc::alloc::dealloc(inner_ptr.as_mut_byte_ptr(), string_layout) };
+            }
+
+            return Ok(());
+        }
+
+        Err(ReflectErrorKind::OperationFailed {
+            shape: smart_ptr_shape,
+            operation: "SmartPointer missing new_into_fn and not a supported unsized type",
+        })
+    }
+
     /// Returns an error if the value is not fully initialized.
     /// For lists with rope storage, drains the rope into the Vec.
     /// For maps with pending entries, drains the entries into the map.
@@ -1408,8 +1615,34 @@ impl Frame {
                     }
                 }
             }
-            Tracker::SmartPointer => {
-                if self.is_init {
+            Tracker::SmartPointer {
+                building_inner,
+                pending_inner,
+            } => {
+                if *building_inner {
+                    // Inner value is still being built
+                    Err(ReflectErrorKind::UninitializedValue {
+                        shape: self.allocated.shape(),
+                    })
+                } else if let Some(inner_ptr) = pending_inner.take() {
+                    // Finalize the pending inner value
+                    let smart_ptr_shape = self.allocated.shape();
+                    if let Def::Pointer(smart_ptr_def) = smart_ptr_shape.def {
+                        Self::complete_pending_smart_pointer(
+                            smart_ptr_shape,
+                            smart_ptr_def,
+                            self.data,
+                            inner_ptr,
+                        )?;
+                        self.is_init = true;
+                        Ok(())
+                    } else {
+                        Err(ReflectErrorKind::OperationFailed {
+                            shape: smart_ptr_shape,
+                            operation: "SmartPointer frame without SmartPointer definition",
+                        })
+                    }
+                } else if self.is_init {
                     Ok(())
                 } else {
                     Err(ReflectErrorKind::UninitializedValue {
@@ -1499,12 +1732,106 @@ impl Frame {
                     Ok(())
                 }
             }
+            Tracker::Inner { building_inner } => {
+                if *building_inner {
+                    // Inner value is still being built
+                    Err(ReflectErrorKind::UninitializedValue {
+                        shape: self.allocated.shape(),
+                    })
+                } else if self.is_init {
+                    Ok(())
+                } else {
+                    Err(ReflectErrorKind::UninitializedValue {
+                        shape: self.allocated.shape(),
+                    })
+                }
+            }
             Tracker::DynamicValue { state } => {
                 if matches!(state, DynamicValueState::Uninit) {
                     Err(ReflectErrorKind::UninitializedValue {
                         shape: self.allocated.shape(),
                     })
                 } else {
+                    // Insert pending entries for Object state
+                    if let DynamicValueState::Object {
+                        pending_entries,
+                        insert_state,
+                    } = state
+                    {
+                        if !matches!(insert_state, DynamicObjectInsertState::Idle) {
+                            return Err(ReflectErrorKind::UninitializedValue {
+                                shape: self.allocated.shape(),
+                            });
+                        }
+
+                        if !pending_entries.is_empty()
+                            && let Def::DynamicValue(dyn_def) = self.allocated.shape().def
+                        {
+                            let object_ptr = unsafe { self.data.assume_init() };
+                            let value_shape = self.allocated.shape();
+
+                            for (key, value_ptr) in pending_entries.drain(..) {
+                                // Insert the entry
+                                unsafe {
+                                    (dyn_def.vtable.insert_object_entry)(
+                                        object_ptr,
+                                        &key,
+                                        value_ptr.assume_init(),
+                                    );
+                                }
+                                // Deallocate the value buffer (insert_object_entry moved the value)
+                                if let Ok(layout) = value_shape.layout.sized_layout()
+                                    && layout.size() > 0
+                                {
+                                    unsafe {
+                                        alloc::alloc::dealloc(value_ptr.as_mut_byte_ptr(), layout);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Insert pending elements for Array state
+                    if let DynamicValueState::Array {
+                        pending_elements,
+                        building_element,
+                    } = state
+                    {
+                        if *building_element {
+                            return Err(ReflectErrorKind::UninitializedValue {
+                                shape: self.allocated.shape(),
+                            });
+                        }
+
+                        if !pending_elements.is_empty()
+                            && let Def::DynamicValue(dyn_def) = self.allocated.shape().def
+                        {
+                            let array_ptr = unsafe { self.data.assume_init() };
+                            let element_shape = self.allocated.shape();
+
+                            for element_ptr in pending_elements.drain(..) {
+                                // Push the element into the array
+                                unsafe {
+                                    (dyn_def.vtable.push_array_element)(
+                                        array_ptr,
+                                        element_ptr.assume_init(),
+                                    );
+                                }
+                                // Deallocate the element buffer (push_array_element moved the value)
+                                if let Ok(layout) = element_shape.layout.sized_layout()
+                                    && layout.size() > 0
+                                {
+                                    unsafe {
+                                        alloc::alloc::dealloc(
+                                            element_ptr.as_mut_byte_ptr(),
+                                            layout,
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     Ok(())
                 }
             }
@@ -1745,6 +2072,26 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     // Option with building_inner contributes OptionSome to path
                     path.push(PathStep::OptionSome);
                 }
+                Tracker::SmartPointer {
+                    building_inner: true,
+                    ..
+                } => {
+                    // SmartPointer with building_inner contributes Deref to path
+                    path.push(PathStep::Deref);
+                }
+                Tracker::SmartPointerSlice {
+                    current_child: Some(idx),
+                    ..
+                } => {
+                    // SmartPointerSlice with current_child contributes Index to path
+                    path.push(PathStep::Index(*idx as u32));
+                }
+                Tracker::Inner {
+                    building_inner: true,
+                } => {
+                    // Inner with building_inner contributes Inner to path
+                    path.push(PathStep::Inner);
+                }
                 Tracker::Map {
                     current_entry_index: Some(idx),
                     building_key,
@@ -1757,7 +2104,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         path.push(PathStep::MapValue(*idx as u32));
                     }
                 }
-                // Other tracker types (SmartPointer, Set, etc.)
+                // Other tracker types (Set, Result, etc.)
                 // don't contribute to the storage path - they're transparent wrappers
                 _ => {}
             }
@@ -1797,39 +2144,36 @@ impl<'facet, const BORROW: bool> Drop for Partial<'facet, BORROW> {
             paths.sort_by_key(|p| core::cmp::Reverse(p.steps.len()));
             for path in paths {
                 if let Some(mut frame) = stored_frames.remove(&path) {
-                    // Before dropping this frame, mark the parent's field as uninitialized
-                    // so the parent won't try to drop it again.
-                    if let Some(PathStep::Field(field_idx)) = path.steps.last() {
-                        let field_idx = *field_idx as usize;
-                        // Construct parent path
-                        let parent_path = Path {
-                            shape: path.shape,
-                            steps: path.steps[..path.steps.len() - 1].to_vec(),
-                        };
-                        // Find and update the parent frame - check BOTH stored_frames AND the stack
-                        let parent_found_in_stored =
-                            if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
-                                match &mut parent_frame.tracker {
-                                    Tracker::Struct { iset, .. } => {
-                                        iset.unset(field_idx);
-                                    }
-                                    Tracker::Enum { data, .. } => {
-                                        data.unset(field_idx);
-                                    }
-                                    _ => {}
-                                }
-                                true
-                            } else {
-                                false
-                            };
+                    // Before dropping this frame, update the parent to prevent double-free.
+                    // The parent path is everything except the last step.
+                    let parent_path = Path {
+                        shape: path.shape,
+                        steps: path.steps[..path.steps.len().saturating_sub(1)].to_vec(),
+                    };
 
-                        // If parent not in stored_frames, check the stack.
-                        // For stored frames at depth 1 (e.g., [Field(1)]), the parent is
-                        // on the stack. We need to find it and unset its bit.
-                        if !parent_found_in_stored && parent_path.steps.is_empty() {
-                            // Parent is the root frame on the stack
-                            if let Some(root_frame) = stack.first_mut() {
-                                match &mut root_frame.tracker {
+                    // Helper to find parent frame in stored_frames or stack
+                    let find_parent_frame =
+                        |stored: &mut alloc::collections::BTreeMap<Path, Frame>,
+                         stk: &mut [Frame],
+                         pp: &Path|
+                         -> Option<*mut Frame> {
+                            if let Some(pf) = stored.get_mut(pp) {
+                                Some(pf as *mut Frame)
+                            } else {
+                                let idx = pp.steps.len();
+                                stk.get_mut(idx).map(|f| f as *mut Frame)
+                            }
+                        };
+
+                    match path.steps.last() {
+                        Some(PathStep::Field(field_idx)) => {
+                            let field_idx = *field_idx as usize;
+                            if let Some(parent_ptr) =
+                                find_parent_frame(&mut stored_frames, stack, &parent_path)
+                            {
+                                // SAFETY: parent_ptr is valid for the duration of this block
+                                let parent_frame = unsafe { &mut *parent_ptr };
+                                match &mut parent_frame.tracker {
                                     Tracker::Struct { iset, .. } => {
                                         iset.unset(field_idx);
                                     }
@@ -1840,6 +2184,68 @@ impl<'facet, const BORROW: bool> Drop for Partial<'facet, BORROW> {
                                 }
                             }
                         }
+                        Some(PathStep::MapKey(entry_idx)) => {
+                            // Map key frame - clear from parent's insert_state to prevent
+                            // double-free. The key will be dropped by this frame's deinit.
+                            let entry_idx = *entry_idx as usize;
+                            if let Some(parent_ptr) =
+                                find_parent_frame(&mut stored_frames, stack, &parent_path)
+                            {
+                                let parent_frame = unsafe { &mut *parent_ptr };
+                                if let Tracker::Map {
+                                    insert_state,
+                                    pending_entries,
+                                    ..
+                                } = &mut parent_frame.tracker
+                                {
+                                    // If key is in insert_state, clear it
+                                    if let MapInsertState::PushingKey {
+                                        key_frame_on_stack, ..
+                                    } = insert_state
+                                    {
+                                        *key_frame_on_stack = false;
+                                    }
+                                    // Also check if there's a pending entry with this key
+                                    // that needs to have the key nullified
+                                    if entry_idx < pending_entries.len() {
+                                        // Remove this entry since we're handling cleanup here
+                                        // The key will be dropped by this frame's deinit
+                                        // The value frame will be handled separately
+                                        // Mark the key as already-handled by setting to dangling
+                                        // Actually, we'll clear the entire entry - the value
+                                        // frame will be processed separately anyway
+                                    }
+                                }
+                            }
+                        }
+                        Some(PathStep::MapValue(entry_idx)) => {
+                            // Map value frame - remove the entry from pending_entries.
+                            // The value is dropped by this frame's deinit.
+                            // The key is dropped by the MapKey frame's deinit (processed separately).
+                            let entry_idx = *entry_idx as usize;
+                            if let Some(parent_ptr) =
+                                find_parent_frame(&mut stored_frames, stack, &parent_path)
+                            {
+                                let parent_frame = unsafe { &mut *parent_ptr };
+                                if let Tracker::Map {
+                                    pending_entries, ..
+                                } = &mut parent_frame.tracker
+                                {
+                                    // Remove the entry at this index if it exists.
+                                    // Don't drop key/value here - they're handled by their
+                                    // respective stored frames (MapKey and MapValue).
+                                    if entry_idx < pending_entries.len() {
+                                        pending_entries.remove(entry_idx);
+                                    }
+                                }
+                            }
+                        }
+                        Some(PathStep::Index(_)) => {
+                            // List element frames with RopeSlot ownership are handled by
+                            // the deinit check for RopeSlot - they skip dropping since the
+                            // rope owns the data. No parent update needed.
+                        }
+                        _ => {}
                     }
                     frame.deinit();
                     frame.dealloc();

@@ -3,6 +3,7 @@
 use facet::Facet;
 use facet_format::jit;
 use facet_json::JsonParser;
+use facet_testhelpers::test;
 
 #[cfg(feature = "jit")]
 use facet_json::JsonJitFormat;

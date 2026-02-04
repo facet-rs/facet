@@ -847,6 +847,7 @@ impl FormatSuite for TomlSlice {
 }
 
 fn main() {
+    facet_testhelpers::setup();
     let args = Arguments::from_args();
 
     let trials: Vec<Trial> = all_cases::<TomlSlice>()

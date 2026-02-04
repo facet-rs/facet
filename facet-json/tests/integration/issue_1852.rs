@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use facet::Facet;
+use facet_testhelpers::test;
 
 #[derive(Clone, Debug, PartialEq, Facet)]
 pub struct TwoVecs {

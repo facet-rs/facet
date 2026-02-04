@@ -3,6 +3,7 @@
 //! Value can capture arbitrary TOML structures when the schema isn't known.
 
 use facet::Facet;
+use facet_testhelpers::test;
 use facet_value::{Value, value};
 
 // ============================================================================

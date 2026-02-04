@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use compact_str::CompactString;
 use facet_json::to_string;
+use facet_testhelpers::test;
 
 /// Test Box<str> as map key - should serialize as `{"key":true}` not `{"⟨Box<str>⟩":true}`
 #[test]
