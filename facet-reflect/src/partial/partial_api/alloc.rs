@@ -44,6 +44,25 @@ impl Partial<'static, false> {
     pub fn alloc_owned<T: Facet<'static>>() -> Result<Self, AllocError> {
         TypePlan::<T>::build()?.partial_owned()
     }
+
+    /// Create a new owned Partial from a shape.
+    ///
+    /// This allocates memory for a value described by the shape and returns a `Partial`
+    /// that can be used to initialize it incrementally. The resulting value will be
+    /// fully owned ('static lifetime).
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that the shape is valid and corresponds to a real type.
+    /// Using an incorrect or maliciously crafted shape can lead to undefined behavior
+    /// when materializing values.
+    #[inline]
+    pub unsafe fn alloc_shape_owned(shape: &'static facet_core::Shape) -> Result<Self, AllocError> {
+        // SAFETY: caller guarantees shape is valid
+        let plan = unsafe { TypePlanCore::from_shape(shape)? };
+        let root_id = plan.root_id();
+        create_partial_internal::<false>(plan, root_id)
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
