@@ -575,6 +575,9 @@ impl Tracker {
             | Tracker::List { current_child, .. } => {
                 *current_child = None;
             }
+            Tracker::Set { current_child } => {
+                *current_child = false;
+            }
             _ => {}
         }
     }
@@ -615,9 +618,15 @@ impl Frame {
         // collection entries (Value objects, Option inners) where the parent has no
         // per-entry tracking. Dropping here would cause double-free when parent drops.
         //
+        // For RopeSlot frames, we must NOT drop. These point into a ListRope chunk
+        // owned by the parent List's tracker. The rope handles cleanup of all elements.
+        //
         // For TrackedBuffer frames, we CAN drop. These are temporary buffers where
         // the parent's MapInsertState tracks initialization via is_init propagation.
-        if matches!(self.ownership, FrameOwnership::BorrowedInPlace) {
+        if matches!(
+            self.ownership,
+            FrameOwnership::BorrowedInPlace | FrameOwnership::RopeSlot
+        ) {
             self.is_init = false;
             self.tracker = Tracker::Scalar;
             return;
@@ -1885,40 +1894,35 @@ impl<'facet, const BORROW: bool> Drop for Partial<'facet, BORROW> {
             paths.sort_by_key(|p| core::cmp::Reverse(p.steps.len()));
             for path in paths {
                 if let Some(mut frame) = stored_frames.remove(&path) {
-                    // Before dropping this frame, mark the parent's field as uninitialized
-                    // so the parent won't try to drop it again.
-                    if let Some(PathStep::Field(field_idx)) = path.steps.last() {
-                        let field_idx = *field_idx as usize;
-                        // Construct parent path
-                        let parent_path = Path {
-                            shape: path.shape,
-                            steps: path.steps[..path.steps.len() - 1].to_vec(),
-                        };
-                        // Find and update the parent frame - check BOTH stored_frames AND the stack
-                        let parent_found_in_stored =
-                            if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
-                                match &mut parent_frame.tracker {
-                                    Tracker::Struct { iset, .. } => {
-                                        iset.unset(field_idx);
-                                    }
-                                    Tracker::Enum { data, .. } => {
-                                        data.unset(field_idx);
-                                    }
-                                    _ => {}
-                                }
-                                true
-                            } else {
-                                false
-                            };
+                    // Before dropping this frame, update the parent to prevent double-free.
+                    // The parent path is everything except the last step.
+                    let parent_path = Path {
+                        shape: path.shape,
+                        steps: path.steps[..path.steps.len().saturating_sub(1)].to_vec(),
+                    };
 
-                        // If parent not in stored_frames, check the stack.
-                        // The parent could be at any depth on the stack, not just the root.
-                        // We find it by matching the parent path length to the stack index.
-                        if !parent_found_in_stored {
-                            // Parent is on the stack at index = parent_path.steps.len()
-                            // (e.g., parent at [] is stack[0], parent at [Field(0)] is stack[1])
-                            let parent_stack_idx = parent_path.steps.len();
-                            if let Some(parent_frame) = stack.get_mut(parent_stack_idx) {
+                    // Helper to find parent frame in stored_frames or stack
+                    let find_parent_frame =
+                        |stored: &mut alloc::collections::BTreeMap<Path, Frame>,
+                         stk: &mut [Frame],
+                         pp: &Path|
+                         -> Option<*mut Frame> {
+                            if let Some(pf) = stored.get_mut(pp) {
+                                Some(pf as *mut Frame)
+                            } else {
+                                let idx = pp.steps.len();
+                                stk.get_mut(idx).map(|f| f as *mut Frame)
+                            }
+                        };
+
+                    match path.steps.last() {
+                        Some(PathStep::Field(field_idx)) => {
+                            let field_idx = *field_idx as usize;
+                            if let Some(parent_ptr) =
+                                find_parent_frame(&mut stored_frames, stack, &parent_path)
+                            {
+                                // SAFETY: parent_ptr is valid for the duration of this block
+                                let parent_frame = unsafe { &mut *parent_ptr };
                                 match &mut parent_frame.tracker {
                                     Tracker::Struct { iset, .. } => {
                                         iset.unset(field_idx);
@@ -1930,6 +1934,68 @@ impl<'facet, const BORROW: bool> Drop for Partial<'facet, BORROW> {
                                 }
                             }
                         }
+                        Some(PathStep::MapKey(entry_idx)) => {
+                            // Map key frame - clear from parent's insert_state to prevent
+                            // double-free. The key will be dropped by this frame's deinit.
+                            let entry_idx = *entry_idx as usize;
+                            if let Some(parent_ptr) =
+                                find_parent_frame(&mut stored_frames, stack, &parent_path)
+                            {
+                                let parent_frame = unsafe { &mut *parent_ptr };
+                                if let Tracker::Map {
+                                    insert_state,
+                                    pending_entries,
+                                    ..
+                                } = &mut parent_frame.tracker
+                                {
+                                    // If key is in insert_state, clear it
+                                    if let MapInsertState::PushingKey {
+                                        key_frame_on_stack, ..
+                                    } = insert_state
+                                    {
+                                        *key_frame_on_stack = false;
+                                    }
+                                    // Also check if there's a pending entry with this key
+                                    // that needs to have the key nullified
+                                    if entry_idx < pending_entries.len() {
+                                        // Remove this entry since we're handling cleanup here
+                                        // The key will be dropped by this frame's deinit
+                                        // The value frame will be handled separately
+                                        // Mark the key as already-handled by setting to dangling
+                                        // Actually, we'll clear the entire entry - the value
+                                        // frame will be processed separately anyway
+                                    }
+                                }
+                            }
+                        }
+                        Some(PathStep::MapValue(entry_idx)) => {
+                            // Map value frame - remove the entry from pending_entries.
+                            // The value is dropped by this frame's deinit.
+                            // The key is dropped by the MapKey frame's deinit (processed separately).
+                            let entry_idx = *entry_idx as usize;
+                            if let Some(parent_ptr) =
+                                find_parent_frame(&mut stored_frames, stack, &parent_path)
+                            {
+                                let parent_frame = unsafe { &mut *parent_ptr };
+                                if let Tracker::Map {
+                                    pending_entries, ..
+                                } = &mut parent_frame.tracker
+                                {
+                                    // Remove the entry at this index if it exists.
+                                    // Don't drop key/value here - they're handled by their
+                                    // respective stored frames (MapKey and MapValue).
+                                    if entry_idx < pending_entries.len() {
+                                        pending_entries.remove(entry_idx);
+                                    }
+                                }
+                            }
+                        }
+                        Some(PathStep::Index(_)) => {
+                            // List element frames with RopeSlot ownership are handled by
+                            // the deinit check for RopeSlot - they skip dropping since the
+                            // rope owns the data. No parent update needed.
+                        }
+                        _ => {}
                     }
                     frame.deinit();
                     frame.dealloc();

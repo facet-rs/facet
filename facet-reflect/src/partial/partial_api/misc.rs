@@ -1380,6 +1380,45 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                             _ => {}
                         }
                     }
+
+                    // Handle Set element insertion immediately.
+                    // Set elements have no path identity (no index), so they can't be stored
+                    // and re-entered. We must insert them into the Set now.
+                    if let Tracker::Set { current_child } = &mut parent_frame.tracker {
+                        if *current_child && parent_frame.is_init {
+                            if let Def::Set(set_def) = parent_frame.allocated.shape().def {
+                                let insert = set_def.vtable.insert;
+                                let element_ptr = PtrMut::new(popped_frame.data.as_mut_byte_ptr());
+                                unsafe {
+                                    insert(
+                                        PtrMut::new(parent_frame.data.as_mut_byte_ptr()),
+                                        element_ptr,
+                                    );
+                                }
+                                crate::trace!(
+                                    "end(): Set element inserted immediately in deferred mode"
+                                );
+                                // Insert moved out of popped_frame - don't store it
+                                popped_frame.tracker = Tracker::Scalar;
+                                popped_frame.is_init = false;
+                                popped_frame.dealloc();
+                                *current_child = false;
+                                // Don't store this frame - return early
+                                return Ok(self);
+                            }
+                        }
+                    }
+
+                    // For List elements stored in a rope (RopeSlot ownership), we need to
+                    // mark the element as initialized in the rope. When the List frame is
+                    // deinited, the rope will drop all initialized elements.
+                    if matches!(popped_frame.ownership, FrameOwnership::RopeSlot) {
+                        if let Tracker::List { rope, .. } = &mut parent_frame.tracker {
+                            if let Some(rope) = rope {
+                                rope.mark_last_initialized();
+                            }
+                        }
+                    }
                 }
 
                 stored_frames.insert(storage_path, popped_frame);
