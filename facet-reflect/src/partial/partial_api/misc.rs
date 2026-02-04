@@ -333,9 +333,26 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         // Restore the stack to self.mode
         self.mode = FrameMode::Strict { stack };
 
-        // Sort paths by depth (deepest first) so we process children before parents
+        // Sort paths by depth (deepest first) so we process children before parents.
+        // For equal-depth paths, we need stable ordering for list elements:
+        // Index(0) must be processed before Index(1) to maintain insertion order.
         let mut paths: Vec<_> = stored_frames.keys().cloned().collect();
-        paths.sort_by_key(|b| core::cmp::Reverse(b.len()));
+        paths.sort_by(|a, b| {
+            // Primary: deeper paths first
+            let depth_cmp = b.len().cmp(&a.len());
+            if depth_cmp != core::cmp::Ordering::Equal {
+                return depth_cmp;
+            }
+            // Secondary: for same-depth paths, compare step by step
+            // This ensures Index(0) comes before Index(1) for the same parent
+            for (step_a, step_b) in a.steps.iter().zip(b.steps.iter()) {
+                let step_cmp = step_a.cmp(step_b);
+                if step_cmp != core::cmp::Ordering::Equal {
+                    return step_cmp;
+                }
+            }
+            core::cmp::Ordering::Equal
+        });
 
         trace!(
             "finish_deferred: Processing {} stored frames in order: {:?}",
@@ -442,6 +459,70 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         // The frame contains the inner value - create the SmartPointer from it
                         Self::complete_smart_pointer_frame(smart_ptr_frame, frame);
                         // Frame data has been transferred to SmartPointer - don't drop it
+                        continue;
+                    }
+                }
+
+                // Special handling for List element values: when path ends with Index,
+                // the parent is a List frame and we need to push the element into it.
+                if matches!(last_step, PathStep::Index(_)) {
+                    // Find the List frame (parent)
+                    let list_frame = if parent_path.steps.is_empty() {
+                        let parent_index = start_depth.saturating_sub(1);
+                        self.frames_mut().get_mut(parent_index)
+                    } else if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
+                        Some(parent_frame)
+                    } else {
+                        let parent_frame_index = start_depth + parent_path.steps.len() - 1;
+                        self.frames_mut().get_mut(parent_frame_index)
+                    };
+
+                    if let Some(list_frame) = list_frame {
+                        // The frame contains the element value - push it into the List
+                        Self::complete_list_item_frame(list_frame, frame);
+                        // Frame data has been transferred to List - don't drop it
+                        continue;
+                    }
+                }
+
+                // Special handling for Map key values: when path ends with MapKey,
+                // the parent is a Map frame and we need to transition it to PushingValue state.
+                if matches!(last_step, PathStep::MapKey(_)) {
+                    // Find the Map frame (parent)
+                    let map_frame = if parent_path.steps.is_empty() {
+                        let parent_index = start_depth.saturating_sub(1);
+                        self.frames_mut().get_mut(parent_index)
+                    } else if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
+                        Some(parent_frame)
+                    } else {
+                        let parent_frame_index = start_depth + parent_path.steps.len() - 1;
+                        self.frames_mut().get_mut(parent_frame_index)
+                    };
+
+                    if let Some(map_frame) = map_frame {
+                        // Transition the Map from PushingKey to PushingValue state
+                        Self::complete_map_key_frame(map_frame, frame);
+                        continue;
+                    }
+                }
+
+                // Special handling for Map value values: when path ends with MapValue,
+                // the parent is a Map frame and we need to add the entry to pending_entries.
+                if matches!(last_step, PathStep::MapValue(_)) {
+                    // Find the Map frame (parent)
+                    let map_frame = if parent_path.steps.is_empty() {
+                        let parent_index = start_depth.saturating_sub(1);
+                        self.frames_mut().get_mut(parent_index)
+                    } else if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
+                        Some(parent_frame)
+                    } else {
+                        let parent_frame_index = start_depth + parent_path.steps.len() - 1;
+                        self.frames_mut().get_mut(parent_frame_index)
+                    };
+
+                    if let Some(map_frame) = map_frame {
+                        // Add the key-value pair to pending_entries
+                        Self::complete_map_value_frame(map_frame, frame);
                         continue;
                     }
                 }
@@ -693,6 +774,109 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     pending_inner: None,
                 };
                 smart_ptr_frame.is_init = true;
+            }
+        }
+    }
+
+    /// Complete a List frame by pushing an element into it (for deferred finalization)
+    fn complete_list_item_frame(list_frame: &mut Frame, element_frame: Frame) {
+        if let Def::List(list_def) = list_frame.allocated.shape().def {
+            if let Some(push_fn) = list_def.push() {
+                // The element frame contains the element value
+                let element_ptr = PtrMut::new(element_frame.data.as_mut_byte_ptr());
+
+                // Use push to add element to the list
+                unsafe {
+                    push_fn(
+                        PtrMut::new(list_frame.data.as_mut_byte_ptr()),
+                        element_ptr.into(),
+                    );
+                }
+
+                crate::trace!(
+                    "complete_list_item_frame: pushed element into {}",
+                    list_frame.allocated.shape()
+                );
+
+                // Deallocate the element's memory since push moved it
+                if let FrameOwnership::Owned = element_frame.ownership
+                    && let Ok(layout) = element_frame.allocated.shape().layout.sized_layout()
+                    && layout.size() > 0
+                {
+                    unsafe {
+                        ::alloc::alloc::dealloc(element_frame.data.as_mut_byte_ptr(), layout);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Complete a Map key frame by transitioning the Map from PushingKey to PushingValue state
+    /// (for deferred finalization)
+    fn complete_map_key_frame(map_frame: &mut Frame, key_frame: Frame) {
+        if let Tracker::Map { insert_state, .. } = &mut map_frame.tracker {
+            if let MapInsertState::PushingKey { key_ptr, .. } = insert_state {
+                // Transition to PushingValue state, keeping the key pointer
+                *insert_state = MapInsertState::PushingValue {
+                    key_ptr: *key_ptr,
+                    value_ptr: None,
+                    value_initialized: false,
+                    value_frame_on_stack: false,
+                };
+
+                crate::trace!(
+                    "complete_map_key_frame: transitioned {} to PushingValue",
+                    map_frame.allocated.shape()
+                );
+
+                // Deallocate the key frame's memory (the key data lives at key_ptr which Map owns)
+                if let FrameOwnership::Owned = key_frame.ownership
+                    && let Ok(layout) = key_frame.allocated.shape().layout.sized_layout()
+                    && layout.size() > 0
+                {
+                    unsafe {
+                        ::alloc::alloc::dealloc(key_frame.data.as_mut_byte_ptr(), layout);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Complete a Map value frame by adding the key-value pair to pending_entries
+    /// (for deferred finalization)
+    fn complete_map_value_frame(map_frame: &mut Frame, value_frame: Frame) {
+        if let Tracker::Map {
+            insert_state,
+            pending_entries,
+            ..
+        } = &mut map_frame.tracker
+        {
+            if let MapInsertState::PushingValue {
+                key_ptr,
+                value_ptr: Some(value_ptr),
+                ..
+            } = insert_state
+            {
+                // Add the key-value pair to pending_entries
+                pending_entries.push((*key_ptr, *value_ptr));
+
+                crate::trace!(
+                    "complete_map_value_frame: added entry to pending_entries for {}",
+                    map_frame.allocated.shape()
+                );
+
+                // Reset to idle state
+                *insert_state = MapInsertState::Idle;
+
+                // Deallocate the value frame's memory (the value data lives at value_ptr which Map owns)
+                if let FrameOwnership::Owned = value_frame.ownership
+                    && let Ok(layout) = value_frame.allocated.shape().layout.sized_layout()
+                    && layout.size() > 0
+                {
+                    unsafe {
+                        ::alloc::alloc::dealloc(value_frame.data.as_mut_byte_ptr(), layout);
+                    }
+                }
             }
         }
     }
@@ -1154,6 +1338,48 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     && let Some(parent_frame) = stack.last_mut()
                 {
                     Self::mark_field_initialized_by_index(parent_frame, field_idx);
+                }
+
+                // Handle Map state transitions even when storing frames.
+                // The Map needs to transition states so that subsequent operations work:
+                // - PushingKey -> PushingValue: so begin_value() can be called
+                // - PushingValue -> Idle: so begin_key() can be called for the next entry
+                // The frames are still stored for potential re-entry and finalization.
+                if let Some(parent_frame) = stack.last_mut() {
+                    if let Tracker::Map {
+                        insert_state,
+                        pending_entries,
+                        ..
+                    } = &mut parent_frame.tracker
+                    {
+                        match insert_state {
+                            MapInsertState::PushingKey { key_ptr, .. } => {
+                                // Transition to PushingValue state
+                                *insert_state = MapInsertState::PushingValue {
+                                    key_ptr: *key_ptr,
+                                    value_ptr: None,
+                                    value_initialized: false,
+                                    value_frame_on_stack: false,
+                                };
+                                crate::trace!(
+                                    "end(): Map transitioned to PushingValue while storing key frame"
+                                );
+                            }
+                            MapInsertState::PushingValue {
+                                key_ptr,
+                                value_ptr: Some(value_ptr),
+                                ..
+                            } => {
+                                // Add entry to pending_entries and reset to Idle
+                                pending_entries.push((*key_ptr, *value_ptr));
+                                *insert_state = MapInsertState::Idle;
+                                crate::trace!(
+                                    "end(): Map added entry to pending_entries while storing value frame"
+                                );
+                            }
+                            _ => {}
+                        }
+                    }
                 }
 
                 stored_frames.insert(storage_path, popped_frame);

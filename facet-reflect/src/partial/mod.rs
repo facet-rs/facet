@@ -1912,12 +1912,14 @@ impl<'facet, const BORROW: bool> Drop for Partial<'facet, BORROW> {
                             };
 
                         // If parent not in stored_frames, check the stack.
-                        // For stored frames at depth 1 (e.g., [Field(1)]), the parent is
-                        // on the stack. We need to find it and unset its bit.
-                        if !parent_found_in_stored && parent_path.steps.is_empty() {
-                            // Parent is the root frame on the stack
-                            if let Some(root_frame) = stack.first_mut() {
-                                match &mut root_frame.tracker {
+                        // The parent could be at any depth on the stack, not just the root.
+                        // We find it by matching the parent path length to the stack index.
+                        if !parent_found_in_stored {
+                            // Parent is on the stack at index = parent_path.steps.len()
+                            // (e.g., parent at [] is stack[0], parent at [Field(0)] is stack[1])
+                            let parent_stack_idx = parent_path.steps.len();
+                            if let Some(parent_frame) = stack.get_mut(parent_stack_idx) {
+                                match &mut parent_frame.tracker {
                                     Tracker::Struct { iset, .. } => {
                                         iset.unset(field_idx);
                                     }
