@@ -36,6 +36,11 @@ pub enum PathStep {
     Deref,
     /// Navigate into a transparent inner type (e.g., `NonZero<T>` -> T)
     Inner,
+    /// Navigate into a proxy type (e.g., `Inner` with `#[facet(proxy = InnerProxy)]`)
+    ///
+    /// This step distinguishes a proxy frame from its parent in the deferred
+    /// processing path, so both can be stored without path collisions.
+    Proxy,
 }
 
 /// A path through a type structure, recorded as a series of steps.
@@ -200,6 +205,13 @@ impl Path {
                         current_shape = inner_shape;
                     }
                 }
+                PathStep::Proxy => {
+                    // Proxy navigates to the proxy type (e.g., InnerProxy for Inner)
+                    // The proxy shape is resolved via the shape's effective_proxy
+                    if let Some(proxy_def) = current_shape.effective_proxy(None) {
+                        current_shape = proxy_def.shape;
+                    }
+                }
             }
         }
 
@@ -265,6 +277,11 @@ impl Path {
                 }
                 PathStep::Inner => {
                     current_shape = get_inner_shape(current_shape)?;
+                    current_variant_idx = None;
+                }
+                PathStep::Proxy => {
+                    let proxy_def = current_shape.effective_proxy(None)?;
+                    current_shape = proxy_def.shape;
                     current_variant_idx = None;
                 }
             }

@@ -2039,7 +2039,8 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
         // Walk ALL frames, extracting navigation steps
         // This matches the storage path computation in end()
-        for frame in self.frames().iter() {
+        let frames = self.frames();
+        for (frame_idx, frame) in frames.iter().enumerate() {
             match &frame.tracker {
                 Tracker::Struct {
                     current_child: Some(idx),
@@ -2107,6 +2108,11 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 // Other tracker types (Set, Result, etc.)
                 // don't contribute to the storage path - they're transparent wrappers
                 _ => {}
+            }
+
+            // If the next frame is a proxy frame, add a Proxy step (matches end())
+            if frame_idx + 1 < frames.len() && frames[frame_idx + 1].using_custom_deserialization {
+                path.push(PathStep::Proxy);
             }
         }
 
