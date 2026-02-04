@@ -1,6 +1,7 @@
 // Test opaque proxy on struct fields (this should already work)
 
 use facet::Facet;
+use facet_testhelpers::test;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpaqueType {

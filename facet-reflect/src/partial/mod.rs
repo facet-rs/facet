@@ -567,11 +567,12 @@ impl Tracker {
     }
 
     /// Clear the current_child index for trackers that support it
-    const fn clear_current_child(&mut self) {
+    fn clear_current_child(&mut self) {
         match self {
             Tracker::Struct { current_child, .. }
             | Tracker::Enum { current_child, .. }
-            | Tracker::Array { current_child, .. } => {
+            | Tracker::Array { current_child, .. }
+            | Tracker::List { current_child, .. } => {
                 *current_child = None;
             }
             _ => {}

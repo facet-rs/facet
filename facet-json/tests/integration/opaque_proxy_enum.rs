@@ -1,6 +1,7 @@
 // Test for issue #1873: Enum variant with #[facet(opaque, proxy = ...)] fails to serialize
 
 use facet::Facet;
+use facet_testhelpers::test;
 use tendril::StrTendril;
 
 // Simple opaque type that doesn't implement Facet

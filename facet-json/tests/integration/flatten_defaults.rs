@@ -3,6 +3,7 @@
 use facet::Facet;
 use facet_format::FormatDeserializer;
 use facet_json::JsonParser;
+use facet_testhelpers::test;
 
 #[derive(Facet, Debug, PartialEq)]
 struct FlattenInner {

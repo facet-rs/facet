@@ -4,6 +4,7 @@
 //! Single element works fine, but Vec fails with "missing field `0`".
 
 use facet::Facet;
+use facet_testhelpers::test;
 
 #[derive(Facet, Clone, PartialEq, Debug)]
 pub struct Inner {

@@ -732,12 +732,24 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         }
 
         // SLOW PATH: Handle all the edge cases
-        if let Some(_frame) = self.frames().last() {
+
+        // Strategic tracing: show the frame stack state
+        {
+            let frames = self.frames();
+            let stack_desc: Vec<_> = frames
+                .iter()
+                .map(|f| format!("{}({:?})", f.allocated.shape(), f.tracker.kind()))
+                .collect();
+            let path = if self.is_deferred() {
+                format!("{:?}", self.derive_path())
+            } else {
+                "N/A".to_string()
+            };
             crate::trace!(
-                "end() called: shape={}, tracker={:?}, is_init={}",
-                _frame.allocated.shape(),
-                _frame.tracker.kind(),
-                _frame.is_init
+                "end() SLOW PATH: stack=[{}], deferred={}, path={}",
+                stack_desc.join(" > "),
+                self.is_deferred(),
+                path
             );
         }
 
@@ -749,11 +761,6 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 false
             } else {
                 let top_idx = frames.len() - 1;
-                crate::trace!(
-                    "end(): frames.len()={}, top tracker={:?}",
-                    frames.len(),
-                    frames[top_idx].tracker.kind()
-                );
                 matches!(
                     frames[top_idx].tracker,
                     Tracker::SmartPointerSlice {
@@ -763,8 +770,6 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 )
             }
         };
-
-        crate::trace!("end(): needs_slice_conversion={}", needs_slice_conversion);
 
         if needs_slice_conversion {
             // Get shape info upfront to avoid borrow conflicts
@@ -923,40 +928,26 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 // (root_plan borrow of `plans` is still active but that's fine -
                 // mode and root_plan are separate fields)
                 let frame = self.mode.stack_mut().last_mut().unwrap();
-                crate::trace!(
-                    "end(): Using optimized fill_and_require_fields for {}, tracker={:?}",
-                    frame.allocated.shape(),
-                    frame.tracker.kind()
-                );
                 frame
                     .fill_and_require_fields(plans, plans.len(), &self.root_plan)
                     .map_err(|e| self.err(e))?;
             } else {
                 // Fall back to the old path if optimized path wasn't available
-                // Fill defaults before checking full initialization
-                // This handles structs/enums that have fields with #[facet(default)] or
-                // fields whose types implement Default - they should be auto-filled.
                 if let Some(frame) = self.frames_mut().last_mut() {
-                    crate::trace!(
-                        "end(): Filling defaults before full init check for {}, tracker={:?}",
-                        frame.allocated.shape(),
-                        frame.tracker.kind()
-                    );
                     frame.fill_defaults().map_err(|e| self.err(e))?;
                 }
 
                 let frame = self.frames_mut().last_mut().unwrap();
-                crate::trace!(
-                    "end(): Checking full init for {}, tracker={:?}, is_init={}",
-                    frame.allocated.shape(),
-                    frame.tracker.kind(),
-                    frame.is_init
-                );
                 let result = frame.require_full_initialization();
-                crate::trace!(
-                    "end(): require_full_initialization result: {:?}",
-                    result.is_ok()
-                );
+                if result.is_err() {
+                    crate::trace!(
+                        "end() VALIDATION FAILED: {} ({:?}) is_init={} - {:?}",
+                        frame.allocated.shape(),
+                        frame.tracker.kind(),
+                        frame.is_init,
+                        result
+                    );
+                }
                 result.map_err(|e| self.err(e))?
             }
         }
@@ -1401,7 +1392,6 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     if child_is_initialized {
                         data.set(field_idx); // Parent reclaims responsibility only if child was init
                     }
-                    crate::trace!("end(): Enum field {} data after={:?}", field_idx, data);
                     *current_child = None;
                 }
                 _ => {}
@@ -1415,36 +1405,29 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 pending_inner,
             } => {
                 crate::trace!(
-                    "end(): matched Tracker::SmartPointer, building_inner={}",
-                    *building_inner
+                    "end() SMARTPTR: popped {} into parent {} (building_inner={}, deferred={})",
+                    popped_frame.allocated.shape(),
+                    parent_frame.allocated.shape(),
+                    *building_inner,
+                    is_deferred_mode
                 );
                 // We just popped the inner value frame for a SmartPointer
                 if *building_inner {
                     if matches!(parent_frame.allocated.shape().def, Def::Pointer(_)) {
                         // Check if we're in deferred mode - if so, store the inner value pointer
                         if is_deferred_mode {
-                            crate::trace!("end(): in deferred mode, storing pending_inner");
                             // Store the inner value pointer for deferred new_into_fn.
-                            // This keeps the inner value's memory stable for deferred processing.
-                            // Actual new_into_fn() happens in require_full_initialization().
                             *pending_inner = Some(popped_frame.data);
-
-                            // Mark that we're no longer building the inner value
                             *building_inner = false;
-                            crate::trace!(
-                                "end(): stored pending_inner, set building_inner to false"
-                            );
-                            // Mark the SmartPointer as initialized (pending finalization)
                             parent_frame.is_init = true;
-                            crate::trace!("end(): set parent_frame.is_init to true");
+                            crate::trace!(
+                                "end() SMARTPTR: stored pending_inner, will finalize in finish_deferred"
+                            );
                         } else {
                             // Not in deferred mode - complete immediately
-                            crate::trace!("end(): not in deferred mode, completing immediately");
                             if let Def::Pointer(smart_ptr_def) = parent_frame.allocated.shape().def
                             {
-                                // The inner value must be fully initialized before we can create the smart pointer
                                 if let Err(e) = popped_frame.require_full_initialization() {
-                                    // Inner value wasn't initialized, deallocate and return error
                                     popped_frame.deinit();
                                     popped_frame.dealloc();
                                     return Err(self.err(e));
@@ -1459,21 +1442,20 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                                     }));
                                 };
 
-                                // The child frame contained the inner value
                                 let inner_ptr = PtrMut::new(popped_frame.data.as_mut_byte_ptr());
-
-                                // Use new_into_fn to create the SmartPointer
                                 unsafe {
                                     new_into_fn(parent_frame.data, inner_ptr);
                                 }
+                                crate::trace!(
+                                    "end() SMARTPTR: called new_into_fn, Arc/Box/Rc created"
+                                );
 
-                                // We just moved out of it
                                 popped_frame.tracker = Tracker::Scalar;
                                 popped_frame.is_init = false;
-
-                                // Deallocate the inner value's memory since new_into_fn moved it
                                 popped_frame.dealloc();
 
+                                // Change tracker to Scalar so the next end() just pops it
+                                parent_frame.tracker = Tracker::Scalar;
                                 parent_frame.is_init = true;
                             }
                         }

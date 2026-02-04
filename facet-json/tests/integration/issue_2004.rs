@@ -8,6 +8,7 @@
 
 use facet::Facet;
 use facet_json::{from_str, to_string};
+use facet_testhelpers::test;
 
 #[derive(Facet, Debug, PartialEq)]
 #[facet(rename_all = "kebab-case")]

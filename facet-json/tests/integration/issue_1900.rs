@@ -9,6 +9,7 @@
 use compact_str::CompactString;
 use facet::Facet;
 use facet_json::{from_str, to_string};
+use facet_testhelpers::test;
 
 /// Example from the issue - a cow-like enum using CompactString
 #[derive(Debug, PartialEq, Facet)]

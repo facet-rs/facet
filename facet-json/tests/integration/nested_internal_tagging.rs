@@ -1,5 +1,6 @@
 use facet::Facet;
 use facet_json::{from_str, to_string};
+use facet_testhelpers::test;
 
 /// Test nested internal tagging - an outer enum tagged by one field,
 /// containing an inner enum tagged by another field.

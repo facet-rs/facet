@@ -6,6 +6,7 @@
 
 use facet::Facet;
 use facet_json::from_str;
+use facet_testhelpers::test;
 
 #[derive(Facet, Clone, Debug, PartialEq, PartialOrd)]
 #[facet(tag = "type")]

@@ -3,6 +3,7 @@
 use facet::Facet;
 use facet_format::FormatDeserializer;
 use facet_json::JsonParser;
+use facet_testhelpers::test;
 use std::collections::HashMap;
 
 // Test for issue #1621: nested flattened maps not capturing unknown fields

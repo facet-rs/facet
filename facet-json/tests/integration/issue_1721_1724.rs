@@ -2,6 +2,7 @@
 
 use facet::Facet;
 use facet_json::{from_str as from_json, to_string};
+use facet_testhelpers::test;
 use std::collections::HashMap;
 
 #[test]

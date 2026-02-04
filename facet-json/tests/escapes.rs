@@ -2,6 +2,8 @@
 //!
 //! See: https://github.com/bearcove/facet/issues/1891
 
+use facet_testhelpers::test;
+
 /// Test that escape sequences after multi-byte UTF-8 characters are correctly decoded.
 #[test]
 fn test_escape_after_multibyte_utf8() {
