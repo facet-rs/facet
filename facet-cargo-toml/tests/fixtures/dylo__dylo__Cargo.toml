@@ -2,7 +2,7 @@
 name = "dylo"
 version = "1.0.3"
 edition = "2024"
-authors = ["Amos Wenger <amos@bearcove.net>"]
+authors = ["Amos Wenger <amos@bearcove.eu>"]
 description = "Generate dyn-compatible traits with procedural macros"
 license = "Apache-2.0 OR MIT"
 readme = "README.md"
