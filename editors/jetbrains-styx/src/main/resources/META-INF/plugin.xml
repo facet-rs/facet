@@ -1,7 +1,7 @@
 <idea-plugin>
     <id>com.bearcove.styx</id>
     <name>Styx</name>
-    <vendor email="hello@bearcove.net" url="https://bearcove.net">Bearcove</vendor>
+    <vendor email="hello@bearcove.eu" url="https://bearcove.eu">Bearcove</vendor>
 
     <description><![CDATA[
     Styx configuration language support for JetBrains IDEs.

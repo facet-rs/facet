@@ -5,7 +5,7 @@ description = "Native Python parser for the Styx configuration language"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
-authors = [{ name = "Amos Wenger", email = "amos@bearcove.net" }]
+authors = [{ name = "Amos Wenger", email = "amos@bearcove.eu" }]
 keywords = ["styx", "configuration", "parser"]
 classifiers = [
     "Development Status :: 3 - Alpha",

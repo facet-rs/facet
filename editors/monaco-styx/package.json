@@ -27,7 +27,7 @@
     "syntax-highlighting",
     "editor"
   ],
-  "author": "Amos Wenger <amos@bearcove.net>",
+  "author": "Amos Wenger <amos@bearcove.eu>",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -37,7 +37,7 @@
   "bugs": {
     "url": "https://github.com/bearcove/styx/issues"
   },
-  "homepage": "https://styx.bearcove.net",
+  "homepage": "https://styx.bearcove.eu",
   "devDependencies": {
     "tsup": "^8.0.0",
     "typescript": "^5.3.0"

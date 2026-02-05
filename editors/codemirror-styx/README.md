@@ -1,6 +1,6 @@
 # @bearcove/codemirror-lang-styx
 
-[Styx](https://styx.bearcove.net) language support for [CodeMirror 6](https://codemirror.net/).
+[Styx](https://styx.bearcove.eu) language support for [CodeMirror 6](https://codemirror.net/).
 
 ## Installation
 
