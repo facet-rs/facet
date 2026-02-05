@@ -2,16 +2,10 @@
 source: crates/figue/tests/integration/sequence.rs
 expression: "$crate :: common :: strip_ansi(& err.to_string())"
 ---
-Error: Missing required fields:
-
-Sources:
-├─ cli --settings.*
-└─ defaults
-
-input.. .. ⨯ MISSING
-
-Missing:
-  input <String> (<input>)
-    The input file to process
-
-Run with --help for usage information.
+Error: missing required argument
+   ╭─[ <suggestion>:1:6 ]
+   │
+ 1 │ main <input>
+   │      ───┬───  
+   │         ╰───── The input file to process
+───╯

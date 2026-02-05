@@ -1,0 +1,11 @@
+---
+source: crates/figue/tests/integration/simple.rs
+expression: "$crate :: common :: strip_ansi(& err.to_string())"
+---
+Error: flag --completions requires one of: bash, zsh, fish
+   ╭─[ <cli>:1:13 ]
+   │
+ 1 │ --name test --completions
+   │             ──────┬──────  
+   │                   ╰──────── flag --completions requires one of: bash, zsh, fish
+───╯

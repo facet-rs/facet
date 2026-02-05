@@ -8,6 +8,7 @@ use owo_colors::OwoColorize;
 use std::string::String;
 use std::vec::Vec;
 
+use crate::missing::normalize_program_name;
 use crate::schema::{ArgLevelSchema, ArgSchema, Schema, Subcommand};
 
 /// Generate help text for a Facet type.
@@ -30,7 +31,11 @@ pub fn generate_help_for_shape(shape: &'static facet_core::Shape, config: &HelpC
             let program_name = config
                 .program_name
                 .clone()
-                .or_else(|| std::env::args().next())
+                .or_else(|| {
+                    std::env::args()
+                        .next()
+                        .map(|path| normalize_program_name(&path))
+                })
                 .unwrap_or_else(|| "program".to_string());
             return format!(
                 "{}\n\n(Schema could not be built for this type)\n",
@@ -78,7 +83,11 @@ pub fn generate_help_for_subcommand(
     let program_name = config
         .program_name
         .clone()
-        .or_else(|| std::env::args().next())
+        .or_else(|| {
+            std::env::args()
+                .next()
+                .map(|path| normalize_program_name(&path))
+        })
         .unwrap_or_else(|| "program".to_string());
 
     if subcommand_path.is_empty() {
@@ -297,10 +306,15 @@ fn write_arg_help(out: &mut String, arg: &ArgSchema) {
 
         // Show value placeholder for non-bool, non-counted types
         if !is_counted && !arg.value().is_bool() {
-            out.push_str(&format!(
-                " <{}>",
-                arg.value().type_identifier().to_uppercase()
-            ));
+            let placeholder = if let Some(variants) = arg.value().inner_if_option().enum_variants()
+            {
+                // For enums, show the variants: <bash,zsh,fish>
+                format!("<{}>", variants.join(","))
+            } else {
+                // For other types, show the type identifier: <STRING>
+                format!("<{}>", arg.value().type_identifier().to_uppercase())
+            };
+            out.push_str(&format!(" {}", placeholder));
         }
     }
 

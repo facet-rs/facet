@@ -2,4 +2,10 @@
 source: crates/figue/tests/integration/subcommand.rs
 expression: "$crate :: common :: strip_ansi(& err.to_string())"
 ---
-Error: missing field `action` in type `Command` at command::Ci
+Error: missing required argument
+   ╭─[ <suggestion>:1:4 ]
+   │
+ 1 │ ci <action>
+   │    ────┬───  
+   │        ╰───── missing required argument
+───╯

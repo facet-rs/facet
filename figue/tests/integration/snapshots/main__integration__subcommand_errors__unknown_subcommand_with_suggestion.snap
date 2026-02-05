@@ -1,0 +1,11 @@
+---
+source: crates/figue/tests/integration/subcommand_errors.rs
+expression: "$crate :: common :: strip_ansi(& err.to_string())"
+---
+Error: unexpected argument: int. Did you mean 'init'?
+   ╭─[ <cli>:1:1 ]
+   │
+ 1 │ int
+   │ ─┬─  
+   │  ╰─── unexpected argument: int. Did you mean 'init'?
+───╯

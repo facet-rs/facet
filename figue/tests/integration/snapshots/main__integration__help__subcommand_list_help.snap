@@ -1,13 +1,13 @@
 ---
-source: tests/integration/help.rs
-expression: "$crate :: common ::\nstrip_binary_paths(& $crate :: common :: strip_ansi(& help))"
+source: crates/figue/tests/integration/help.rs
+expression: "$crate :: common :: strip_ansi(& help)"
 ---
-<PROGRAM>
+main ls
 
 List installed packages
 
 USAGE:
-    <PROGRAM>
+    main ls [OPTIONS]
 
 OPTIONS:
     -a, --all

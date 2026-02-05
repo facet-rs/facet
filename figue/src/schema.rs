@@ -814,6 +814,18 @@ impl ValueSchema {
     pub fn is_option(&self) -> bool {
         matches!(self, ValueSchema::Option { .. })
     }
+
+    /// Get enum variants if this is an enum type.
+    /// Returns None for non-enum types.
+    pub fn enum_variants(&self) -> Option<&[String]> {
+        match self {
+            ValueSchema::Leaf(LeafSchema {
+                kind: LeafKind::Enum { variants },
+                ..
+            }) => Some(variants.as_slice()),
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]

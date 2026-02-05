@@ -439,6 +439,11 @@ mod tests {
             help.contains("--completions"),
             "help should contain --completions"
         );
+        assert!(
+            help.contains("<bash,zsh,fish>"),
+            "help should show enum variants for --completions: {}",
+            help
+        );
     }
 
     #[test]

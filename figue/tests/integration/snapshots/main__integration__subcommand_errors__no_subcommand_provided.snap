@@ -1,0 +1,20 @@
+---
+source: crates/figue/tests/integration/subcommand_errors.rs
+expression: "$crate :: common :: strip_ansi(& err.to_string())"
+---
+main
+
+USAGE:
+    main [OPTIONS] <COMMAND>
+
+OPTIONS:
+    -h, --help
+            Show help message and exit.
+    -V, --version
+            Show version and exit.
+        --completions <bash,zsh,fish>
+            Generate shell completions.
+
+COMMANDS:
+    init
+    build
