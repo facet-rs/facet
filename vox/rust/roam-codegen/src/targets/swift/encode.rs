@@ -54,6 +54,10 @@ pub fn generate_encode_expr(shape: &'static Shape, value: &str) -> String {
                 field_encodes.join(" + ")
             }
         }
+        ShapeKind::Enum(EnumInfo { .. }) => {
+            let encode_closure = generate_encode_closure(shape);
+            format!("{encode_closure}({value})")
+        }
         ShapeKind::Pointer { pointee } => generate_encode_expr(pointee, value),
         ShapeKind::Result { ok, err } => {
             // Encode Result<T, E> - discriminant 0 = Ok, 1 = Err
@@ -216,6 +220,13 @@ mod tests {
     use super::*;
     use facet::Facet;
 
+    #[repr(u8)]
+    #[derive(Facet)]
+    enum Color {
+        Red,
+        Green,
+    }
+
     #[test]
     fn test_encode_primitives() {
         assert_eq!(
@@ -250,5 +261,13 @@ mod tests {
     fn test_encode_bytes() {
         let result = generate_encode_expr(<Vec<u8> as Facet>::SHAPE, "data");
         assert_eq!(result, "encodeBytes(Array(data))");
+    }
+
+    #[test]
+    fn test_encode_enum_expr() {
+        let result = generate_encode_expr(<Color as Facet>::SHAPE, "color");
+        assert!(result.contains("switch"));
+        assert!(result.contains("(color)"));
+        assert_ne!(result, "[]");
     }
 }

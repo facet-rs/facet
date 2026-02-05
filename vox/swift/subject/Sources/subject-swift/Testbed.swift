@@ -16,7 +16,7 @@ public enum TestbedMethodId {
     public static let transform: UInt64 = 0x5d9895604eb18b19
     public static let echoPoint: UInt64 = 0x453fa9bf6932528c
     public static let createPerson: UInt64 = 0x3dd231f57b1bca21
-    public static let rectangleArea: UInt64 = 0xba75c48683f1d9e6
+    public static let rectangleArea: UInt64 = 0x04ef653fdf0653c4
     public static let parseColor: UInt64 = 0xe285f31c6dfffbfc
     public static let shapeArea: UInt64 = 0x6e706354167c00c2
     public static let createCanvas: UInt64 = 0xa914982e7d3c7b55
@@ -338,7 +338,7 @@ public final class TestbedClient: TestbedCaller {
         var payloadBytes: [UInt8] = []
         payloadBytes += encodeI32(rect.topLeft.x) + encodeI32(rect.topLeft.y) + encodeI32(rect.bottomRight.x) + encodeI32(rect.bottomRight.y) + encodeOption(rect.label, encoder: { encodeString($0) })
         let payload = Data(payloadBytes)
-        let response = try await connection.call(methodId: 0xba75c48683f1d9e6, payload: payload)
+        let response = try await connection.call(methodId: 0x04ef653fdf0653c4, payload: payload)
         var offset = 0
         try decodeRpcResult(from: response, offset: &offset)
         let result = try decodeF64(from: response, offset: &offset)
@@ -372,7 +372,16 @@ public final class TestbedClient: TestbedCaller {
 
     public func shapeArea(shape: Shape) async throws -> Double {
         var payloadBytes: [UInt8] = []
-        payloadBytes += []
+        payloadBytes += { v in
+    switch v {
+    case .circle(let radius):
+        return [UInt8(0)] + encodeF64(radius)
+    case .rectangle(let width, let height):
+        return [UInt8(1)] + encodeF64(width) + encodeF64(height)
+    case .point:
+        return [UInt8(2)]
+    }
+}(shape)
         let payload = Data(payloadBytes)
         let response = try await connection.call(methodId: 0x6e706354167c00c2, payload: payload)
         var offset = 0
@@ -394,7 +403,16 @@ public final class TestbedClient: TestbedCaller {
         return [UInt8(2)]
     }
 })
-        payloadBytes += []
+        payloadBytes += { v in
+    switch v {
+    case .red:
+        return [UInt8(0)]
+    case .green:
+        return [UInt8(1)]
+    case .blue:
+        return [UInt8(2)]
+    }
+}(background)
         let payload = Data(payloadBytes)
         let response = try await connection.call(methodId: 0xa914982e7d3c7b55, payload: payload)
         var offset = 0
@@ -436,7 +454,16 @@ public final class TestbedClient: TestbedCaller {
 
     public func processMessage(msg: Message) async throws -> Message {
         var payloadBytes: [UInt8] = []
-        payloadBytes += []
+        payloadBytes += { v in
+    switch v {
+    case .text(let val):
+        return [UInt8(0)] + encodeString(val)
+    case .number(let val):
+        return [UInt8(1)] + encodeI64(val)
+    case .data(let val):
+        return [UInt8(2)] + encodeBytes(Array(val))
+    }
+}(msg)
         let payload = Data(payloadBytes)
         let response = try await connection.call(methodId: 0xed1dc0c625889d30, payload: payload)
         var offset = 0
@@ -559,7 +586,7 @@ public final class TestbedDispatcher {
             return try await dispatchechoPoint(payload: payload)
         case 0x3dd231f57b1bca21:
             return try await dispatchcreatePerson(payload: payload)
-        case 0xba75c48683f1d9e6:
+        case 0x04ef653fdf0653c4:
             return try await dispatchrectangleArea(payload: payload)
         case 0xe285f31c6dfffbfc:
             return try await dispatchparseColor(payload: payload)
@@ -748,7 +775,16 @@ public final class TestbedDispatcher {
     case .point:
         return [UInt8(2)]
     }
-}) + [] }))
+}) + { v in
+    switch v {
+    case .red:
+        return [UInt8(0)]
+    case .green:
+        return [UInt8(1)]
+    case .blue:
+        return [UInt8(2)]
+    }
+}($0.background) }))
     }
 
     private func dispatchprocessMessage(payload: Data) async throws -> Data {
@@ -827,7 +863,7 @@ public final class TestbedStreamingDispatcher {
             await dispatchechoPoint(requestId: requestId, payload: payload)
         case 0x3dd231f57b1bca21:
             await dispatchcreatePerson(requestId: requestId, payload: payload)
-        case 0xba75c48683f1d9e6:
+        case 0x04ef653fdf0653c4:
             await dispatchrectangleArea(requestId: requestId, payload: payload)
         case 0xe285f31c6dfffbfc:
             await dispatchparseColor(requestId: requestId, payload: payload)
@@ -1114,7 +1150,16 @@ public final class TestbedStreamingDispatcher {
     case .point:
         return [UInt8(2)]
     }
-}) + [] })))
+}) + { v in
+    switch v {
+    case .red:
+        return [UInt8(0)]
+    case .green:
+        return [UInt8(1)]
+    case .blue:
+        return [UInt8(2)]
+    }
+}($0.background) })))
         } catch {
             taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
         }

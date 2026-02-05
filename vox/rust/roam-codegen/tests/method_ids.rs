@@ -24,6 +24,28 @@ pub trait Testbed {
     async fn transform(&self, input: Tx<String>, output: Rx<String>);
 }
 
+#[repr(u8)]
+#[derive(Facet)]
+enum ItemType {
+    File,
+    Directory,
+    Symlink,
+}
+
+#[derive(Facet)]
+struct DirEntry {
+    name: String,
+    item_id: u64,
+    item_type: ItemType,
+}
+
+#[allow(async_fn_in_trait)]
+#[service]
+pub trait EnumTest {
+    async fn read_dir(&self, item_id: u64, cursor: u64) -> Vec<DirEntry>;
+    async fn create(&self, parent_id: u64, name: String, item_type: ItemType) -> ();
+}
+
 fn fixture_methods() -> Vec<MethodDetail> {
     vec![
         MethodDetail {
@@ -125,4 +147,20 @@ fn swift_service_generation() {
 
     // Print for inspection
     println!("{}", out);
+}
+
+#[test]
+fn swift_service_generation_encodes_and_decodes_enums_without_placeholders() {
+    let service = enum_test_service_detail();
+    let out = targets::swift::generate_service(&service);
+
+    assert!(out.contains(
+        "public func create(parentId: UInt64, name: String, itemType: ItemType) async throws"
+    ));
+    assert!(out.contains("payloadBytes += { v in"));
+    assert!(out.contains("}(itemType)"));
+    assert!(out.contains("let _itemType = try ({ data, off in"));
+    assert!(out.contains("switch disc"));
+    assert!(!out.contains("payloadBytes += []"));
+    assert!(!out.contains("decodeError(\"unsupported\")"));
 }

@@ -372,7 +372,10 @@ pub fn generate_inline_decode(shape: &'static Shape, data_var: &str, offset_var:
             )
         }
         ShapeKind::Pointer { pointee } => generate_inline_decode(pointee, data_var, offset_var),
-        _ => "{ throw RoamError.decodeError(\"unsupported\") }()".to_string(),
+        _ => {
+            let decode_closure = generate_decode_closure(shape);
+            format!("({decode_closure})({data_var}, &{offset_var})")
+        }
     }
 }
 
@@ -402,6 +405,19 @@ pub fn swift_decode_fn(scalar: ScalarType) -> &'static str {
 mod tests {
     use super::*;
     use facet::Facet;
+
+    #[repr(u8)]
+    #[derive(Facet)]
+    enum ItemType {
+        File,
+        Directory,
+    }
+
+    #[derive(Facet)]
+    struct DirEntry {
+        name: String,
+        item_type: ItemType,
+    }
 
     #[test]
     fn test_decode_primitives() {
@@ -438,5 +454,12 @@ mod tests {
     fn test_inline_decode() {
         let result = generate_inline_decode(<u32 as Facet>::SHAPE, "buf", "pos");
         assert_eq!(result, "decodeU32(from: buf, offset: &pos)");
+    }
+
+    #[test]
+    fn test_decode_vec_struct_with_enum_field() {
+        let result = generate_decode_stmt(<Vec<DirEntry> as Facet>::SHAPE, "entries", "    ");
+        assert!(result.contains("switch disc"));
+        assert!(!result.contains("unsupported"));
     }
 }
