@@ -383,6 +383,81 @@ async fn run_client() -> Result<(), String> {
                 .map_err(|e| format!("recv task failed: {e}"))?;
             info!("received numbers: {received:?}");
         }
+        "shape_area" => {
+            let result = service
+                .shape_area(Shape::Rectangle {
+                    width: 3.0,
+                    height: 4.0,
+                })
+                .await
+                .map_err(|e| format!("shape_area call failed: {e}"))?;
+            if (result - 12.0).abs() > f64::EPSILON {
+                return Err(format!("shape_area expected 12.0, got {result}"));
+            }
+            info!("shape_area result: {result}");
+        }
+        "create_canvas" => {
+            let result = service
+                .create_canvas(
+                    "enum-canvas".to_string(),
+                    vec![Shape::Point, Shape::Circle { radius: 2.5 }],
+                    Color::Green,
+                )
+                .await
+                .map_err(|e| format!("create_canvas call failed: {e}"))?;
+
+            if result.name != "enum-canvas" {
+                return Err(format!(
+                    "create_canvas expected name 'enum-canvas', got {:?}",
+                    result.name
+                ));
+            }
+            if result.background != Color::Green {
+                return Err(format!(
+                    "create_canvas expected background Green, got {:?}",
+                    result.background
+                ));
+            }
+            if result.shapes.len() != 2 {
+                return Err(format!(
+                    "create_canvas expected 2 shapes, got {}",
+                    result.shapes.len()
+                ));
+            }
+            match &result.shapes[0] {
+                Shape::Point => {}
+                other => {
+                    return Err(format!(
+                        "create_canvas expected first shape Point, got {other:?}"
+                    ));
+                }
+            }
+            match &result.shapes[1] {
+                Shape::Circle { radius } if (*radius - 2.5).abs() < f64::EPSILON => {}
+                other => {
+                    return Err(format!(
+                        "create_canvas expected second shape Circle {{ radius: 2.5 }}, got {other:?}"
+                    ));
+                }
+            }
+            info!("create_canvas result: {result:?}");
+        }
+        "process_message" => {
+            let result = service
+                .process_message(Message::Data(vec![1, 2, 3, 4]))
+                .await
+                .map_err(|e| format!("process_message call failed: {e}"))?;
+            match result {
+                Message::Data(data) if data == vec![4, 3, 2, 1] => {
+                    info!("process_message result: {data:?}");
+                }
+                other => {
+                    return Err(format!(
+                        "process_message expected Data([4, 3, 2, 1]), got {other:?}"
+                    ));
+                }
+            }
+        }
         _ => {
             return Err(format!("unknown CLIENT_SCENARIO: {scenario}"));
         }

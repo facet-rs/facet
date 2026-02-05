@@ -17,6 +17,9 @@ fn method_ids() -> wire_server::MethodIds {
         sum: method_id::sum(),
         generate: method_id::generate(),
         transform: method_id::transform(),
+        shape_area: method_id::shape_area(),
+        create_canvas: method_id::create_canvas(),
+        process_message: method_id::process_message(),
     }
 }
 
@@ -38,4 +41,25 @@ fn client_mode_sum() {
 #[test]
 fn client_mode_generate() {
     run_async(async { wire_server::run("generate", &method_ids()).await }).unwrap();
+}
+
+// r[verify call.request.payload-encoding] - Generated client encodes enum args in request payload.
+// r[verify call.response.encoding] - Generated client decodes enum-typed responses.
+#[test]
+fn client_mode_shape_area() {
+    run_async(async { wire_server::run("shape_area", &method_ids()).await }).unwrap();
+}
+
+// r[verify call.request.payload-encoding] - Generated client encodes mixed args including Vec<enum>.
+// r[verify call.response.encoding] - Generated client decodes nested enum payloads in responses.
+#[test]
+fn client_mode_create_canvas() {
+    run_async(async { wire_server::run("create_canvas", &method_ids()).await }).unwrap();
+}
+
+// r[verify call.request.payload-encoding] - Generated client encodes newtype enum variants.
+// r[verify call.response.encoding] - Generated client decodes newtype enum variants.
+#[test]
+fn client_mode_process_message() {
+    run_async(async { wire_server::run("process_message", &method_ids()).await }).unwrap();
 }

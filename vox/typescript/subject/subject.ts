@@ -271,6 +271,45 @@ async function runClient() {
       console.error(`generate received: [${received.join(", ")}]`);
       break;
     }
+    case "shape_area": {
+      const result = await client.shapeArea({ tag: "Rectangle", width: 3, height: 4 });
+      if (result !== 12) {
+        throw new Error(`shape_area expected 12, got ${result}`);
+      }
+      console.error(`shape_area result: ${result}`);
+      break;
+    }
+    case "create_canvas": {
+      const result = await client.createCanvas(
+        "enum-canvas",
+        [{ tag: "Point" }, { tag: "Circle", radius: 2.5 }],
+        { tag: "Green" },
+      );
+      if (result.name !== "enum-canvas") {
+        throw new Error(`create_canvas expected name enum-canvas, got ${result.name}`);
+      }
+      if (result.background.tag !== "Green") {
+        throw new Error(`create_canvas expected background Green, got ${result.background.tag}`);
+      }
+      if (
+        result.shapes.length !== 2 ||
+        result.shapes[0]?.tag !== "Point" ||
+        result.shapes[1]?.tag !== "Circle" ||
+        result.shapes[1].radius !== 2.5
+      ) {
+        throw new Error(`create_canvas returned unexpected shapes: ${JSON.stringify(result.shapes)}`);
+      }
+      console.error(`create_canvas result OK`);
+      break;
+    }
+    case "process_message": {
+      const result = await client.processMessage({ tag: "Data", value: new Uint8Array([1, 2, 3, 4]) });
+      if (result.tag !== "Data" || result.value.length !== 4 || result.value.join(",") !== "4,3,2,1") {
+        throw new Error(`process_message returned unexpected value`);
+      }
+      console.error(`process_message result OK`);
+      break;
+    }
     default:
       throw new Error(`unknown CLIENT_SCENARIO: ${scenario}`);
   }

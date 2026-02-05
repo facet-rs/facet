@@ -347,7 +347,7 @@ pub mod wire_server {
         }
 
         // Handle requests until client disconnects
-        let result = handle_requests(&mut io, method_ids).await;
+        let result = handle_requests(&mut io, scenario, method_ids).await;
 
         // Wait for child to exit
         let status = child.wait().await.map_err(|e| format!("wait: {e}"))?;
@@ -368,6 +368,9 @@ pub mod wire_server {
         pub sum: u64,
         pub generate: u64,
         pub transform: u64,
+        pub shape_area: u64,
+        pub create_canvas: u64,
+        pub process_message: u64,
     }
 
     fn metadata_empty() -> roam_wire::Metadata {
@@ -382,16 +385,21 @@ pub mod wire_server {
         Ok(result)
     }
 
-    async fn handle_requests(io: &mut CobsFramed, method_ids: &MethodIds) -> Result<(), String> {
+    async fn handle_requests(
+        io: &mut CobsFramed,
+        scenario: &str,
+        method_ids: &MethodIds,
+    ) -> Result<(), String> {
         // Track open channels: channel_id -> accumulated data
         let mut channels: HashMap<u64, Vec<i32>> = HashMap::new();
         // Track pending requests that are waiting for channel data
         let mut pending_sum: Option<(u64, u64)> = None; // (request_id, channel_id)
+        let mut scenario_satisfied = false;
 
         loop {
             let msg = match io.recv_timeout(Duration::from_secs(5)).await {
                 Ok(Some(m)) => m,
-                Ok(None) => break, // Client disconnected
+                Ok(None) => break, // Client disconnected or idle timeout
                 Err(e) => return Err(format!("recv: {e}")),
             };
 
@@ -483,6 +491,122 @@ pub mod wire_server {
                         // transform(input: Rx<String>, output: Tx<String>)
                         // This is more complex - we'll handle it if needed
                         return Err("transform not yet implemented in wire server".to_string());
+                    } else if method_id == method_ids.shape_area {
+                        // shape_area(shape: Shape) -> f64
+                        let args: (spec_proto::Shape,) = facet_postcard::from_slice(&payload)
+                            .map_err(|e| format!("decode shape_area args: {e}"))?;
+                        match args.0 {
+                            spec_proto::Shape::Rectangle { width, height }
+                                if (width - 3.0).abs() < f64::EPSILON
+                                    && (height - 4.0).abs() < f64::EPSILON => {}
+                            other => {
+                                return Err(format!(
+                                    "shape_area expected Rectangle {{ width: 3.0, height: 4.0 }}, got {other:?}"
+                                ));
+                            }
+                        }
+
+                        let response_payload = encode_ok(&12.0_f64)?;
+                        io.send(&Message::Response {
+                            conn_id: roam_wire::ConnectionId::ROOT,
+                            request_id,
+                            metadata: metadata_empty(),
+                            channels: vec![],
+                            payload: response_payload,
+                        })
+                        .await
+                        .map_err(|e| format!("send shape_area response: {e}"))?;
+                        if scenario == "shape_area" {
+                            scenario_satisfied = true;
+                        }
+                    } else if method_id == method_ids.create_canvas {
+                        // create_canvas(name: String, shapes: Vec<Shape>, background: Color) -> Canvas
+                        let args: (String, Vec<spec_proto::Shape>, spec_proto::Color) =
+                            facet_postcard::from_slice(&payload)
+                                .map_err(|e| format!("decode create_canvas args: {e}"))?;
+
+                        if args.0 != "enum-canvas" {
+                            return Err(format!(
+                                "create_canvas expected name 'enum-canvas', got {:?}",
+                                args.0
+                            ));
+                        }
+                        if args.2 != spec_proto::Color::Green {
+                            return Err(format!(
+                                "create_canvas expected background Green, got {:?}",
+                                args.2
+                            ));
+                        }
+                        if args.1.len() != 2 {
+                            return Err(format!(
+                                "create_canvas expected 2 shapes, got {}",
+                                args.1.len()
+                            ));
+                        }
+                        match &args.1[0] {
+                            spec_proto::Shape::Point => {}
+                            other => {
+                                return Err(format!(
+                                    "create_canvas expected first shape Point, got {other:?}"
+                                ));
+                            }
+                        }
+                        match &args.1[1] {
+                            spec_proto::Shape::Circle { radius }
+                                if (*radius - 2.5).abs() < f64::EPSILON => {}
+                            other => {
+                                return Err(format!(
+                                    "create_canvas expected second shape Circle {{ radius: 2.5 }}, got {other:?}"
+                                ));
+                            }
+                        }
+
+                        let canvas = spec_proto::Canvas {
+                            name: args.0,
+                            shapes: args.1,
+                            background: args.2,
+                        };
+                        let response_payload = encode_ok(&canvas)?;
+                        io.send(&Message::Response {
+                            conn_id: roam_wire::ConnectionId::ROOT,
+                            request_id,
+                            metadata: metadata_empty(),
+                            channels: vec![],
+                            payload: response_payload,
+                        })
+                        .await
+                        .map_err(|e| format!("send create_canvas response: {e}"))?;
+                        if scenario == "create_canvas" {
+                            scenario_satisfied = true;
+                        }
+                    } else if method_id == method_ids.process_message {
+                        // process_message(msg: Message) -> Message
+                        let args: (spec_proto::Message,) = facet_postcard::from_slice(&payload)
+                            .map_err(|e| format!("decode process_message args: {e}"))?;
+                        match args.0 {
+                            spec_proto::Message::Data(ref data)
+                                if data.as_slice() == [1, 2, 3, 4] => {}
+                            ref other => {
+                                return Err(format!(
+                                    "process_message expected Data([1, 2, 3, 4]), got {other:?}"
+                                ));
+                            }
+                        }
+
+                        let response_msg = spec_proto::Message::Data(vec![4, 3, 2, 1]);
+                        let response_payload = encode_ok(&response_msg)?;
+                        io.send(&Message::Response {
+                            conn_id: roam_wire::ConnectionId::ROOT,
+                            request_id,
+                            metadata: metadata_empty(),
+                            channels: vec![],
+                            payload: response_payload,
+                        })
+                        .await
+                        .map_err(|e| format!("send process_message response: {e}"))?;
+                        if scenario == "process_message" {
+                            scenario_satisfied = true;
+                        }
                     } else {
                         // Unknown method - send error response
                         let response_payload = vec![0x01, 0x01]; // Result::Err, RoamError::UnknownMethod
@@ -537,6 +661,14 @@ pub mod wire_server {
                     // Ignore other messages
                 }
             }
+        }
+
+        if matches!(scenario, "shape_area" | "create_canvas" | "process_message")
+            && !scenario_satisfied
+        {
+            return Err(format!(
+                "scenario '{scenario}' was not exercised by subject client"
+            ));
         }
 
         Ok(())
