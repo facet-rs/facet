@@ -1,13 +1,13 @@
 ---
-source: tests/integration/help.rs
-expression: "$crate :: common ::\nstrip_binary_paths(& $crate :: common :: strip_ansi(& help))"
+source: crates/figue/tests/integration/help.rs
+expression: "$crate :: common :: strip_ansi(& help)"
 ---
-<PROGRAM>
+main repo clone
 
 Clone a repository
 
 USAGE:
-    <PROGRAM>
+    main repo clone [OPTIONS] <URL>
 
 ARGUMENTS:
         <URL>

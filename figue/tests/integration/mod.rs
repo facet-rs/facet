@@ -10,5 +10,6 @@ mod sequence;
 mod short_chaining;
 mod simple;
 mod subcommand;
+mod subcommand_errors;
 mod subspans;
 mod unknown_keys;

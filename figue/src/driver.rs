@@ -32,7 +32,9 @@ use crate::env_subst::{EnvSubstError, RealEnv, substitute_env_vars};
 use crate::help::generate_help_for_subcommand;
 use crate::layers::{cli::parse_cli, env::parse_env, file::parse_file};
 use crate::merge::merge_layers;
-use crate::missing::{collect_missing_fields, format_missing_fields_summary};
+use crate::missing::{
+    build_corrected_command_diagnostics, collect_missing_fields, format_missing_fields_summary,
+};
 use crate::path::Path;
 use crate::provenance::{FileResolution, Override, Provenance};
 use crate::span::Span;
@@ -150,19 +152,19 @@ impl<T: Facet<'static>> Driver<T> {
         let mut file_resolution = None;
 
         // Get CLI args source for Ariadne error display
+        // None means no arguments were provided (used for better error formatting)
         let cli_args_source = self
             .config
             .cli_config
             .as_ref()
             .map(|c| {
                 let args = c.resolve_args().join(" ");
-                if args.is_empty() {
-                    "<no arguments>".to_string()
-                } else {
-                    args
-                }
+                if args.is_empty() { None } else { Some(args) }
             })
-            .unwrap_or_else(|| "<no arguments>".to_string());
+            .unwrap_or(None);
+
+        // For Ariadne display, we need a string (use placeholder if empty)
+        let cli_args_display = cli_args_source.as_deref().unwrap_or("<no arguments>");
 
         // Phase 1: Parse each layer
         // Priority order (lowest to highest): defaults < file < env < cli
@@ -289,7 +291,7 @@ impl<T: Facet<'static>> Driver<T> {
                     layers,
                     file_resolution,
                     overrides: Vec::new(),
-                    cli_args_source,
+                    cli_args_source: cli_args_display.to_string(),
                     source_name: "<cli>".to_string(),
                 }),
             });
@@ -334,6 +336,7 @@ impl<T: Facet<'static>> Driver<T> {
                 report: Box::new(DriverReport {
                     diagnostics: vec![Diagnostic {
                         message,
+                        label: None,
                         path: None,
                         span: None,
                         severity: Severity::Error,
@@ -341,7 +344,7 @@ impl<T: Facet<'static>> Driver<T> {
                     layers,
                     file_resolution,
                     overrides,
-                    cli_args_source,
+                    cli_args_source: cli_args_display.to_string(),
                     source_name: "<cli>".to_string(),
                 }),
             });
@@ -415,67 +418,108 @@ impl<T: Facet<'static>> Driver<T> {
                 return DriverOutcome::err(DriverError::Help { text: help });
             }
 
-            // Show dump with missing field markers (includes Sources header)
-            let mut dump_buf = Vec::new();
-            let resolution = file_resolution.as_ref().cloned().unwrap_or_default();
-            dump_config_with_schema(
-                &mut dump_buf,
-                &value_with_defaults,
-                &resolution,
-                &self.config.schema,
-            );
-            let dump =
-                String::from_utf8(dump_buf).unwrap_or_else(|_| "error rendering dump".into());
-
-            // Build error message with both missing fields and unknown keys
-            let mut message_parts = Vec::new();
-
-            if has_unknown {
-                message_parts.push("Unknown configuration keys:".to_string());
-            }
-            if has_missing {
-                message_parts.push("Missing required fields:".to_string());
-            }
-
-            let header = message_parts.join(" / ");
-
-            // Format the summary of missing fields
-            let missing_summary = if has_missing {
-                format!(
-                    "\nMissing:\n{}",
-                    format_missing_fields_summary(&missing_fields)
-                )
-            } else {
-                String::new()
-            };
-
-            // Format the summary of unknown keys with suggestions
-            let unknown_summary = if has_unknown {
-                let config_schema = self.config.schema.config();
-                let unknown_list: Vec<String> = unknown_keys
+            // Check if all missing fields are simple CLI arguments (not config fields)
+            // Use the proper kind field to distinguish between CLI args and config fields
+            let all_cli_missing = has_missing
+                && !has_unknown
+                && missing_fields
                     .iter()
-                    .map(|uk| {
-                        let source = uk.provenance.source_description();
-                        let suggestion = config_schema
-                            .map(|cs| crate::suggest::suggest_config_path(cs, &uk.key))
-                            .unwrap_or_default();
-                        format!("  {} (from {}){}", uk.key.join("."), source, suggestion)
-                    })
-                    .collect();
-                format!("\nUnknown keys:\n{}", unknown_list.join("\n"))
-            } else {
-                String::new()
-            };
+                    .all(|f| matches!(f.kind, crate::missing::MissingFieldKind::CliArg));
 
-            let message = format!(
-                "{}\n\n{}{}{}\nRun with --help for usage information.",
-                header, dump, missing_summary, unknown_summary
-            );
+            if all_cli_missing {
+                // Use corrected command as source with proper diagnostics
+                let mut corrected = build_corrected_command_diagnostics(
+                    &missing_fields,
+                    cli_args_source.as_deref(),
+                );
+
+                // Add help hint if the schema has a help field
+                if self.config.schema.special().help.is_some() {
+                    corrected.diagnostics.push(Diagnostic {
+                        message: "Run with --help for usage information.".to_string(),
+                        label: None,
+                        path: None,
+                        span: None,
+                        severity: Severity::Note,
+                    });
+                }
+
+                return DriverOutcome::err(DriverError::Failed {
+                    report: Box::new(DriverReport {
+                        diagnostics: corrected.diagnostics,
+                        layers,
+                        file_resolution,
+                        overrides,
+                        cli_args_source: corrected.corrected_source,
+                        source_name: "<suggestion>".to_string(),
+                    }),
+                });
+            }
+
+            let message = {
+                // Use detailed format with config dump
+                let mut dump_buf = Vec::new();
+                let resolution = file_resolution.as_ref().cloned().unwrap_or_default();
+                dump_config_with_schema(
+                    &mut dump_buf,
+                    &value_with_defaults,
+                    &resolution,
+                    &self.config.schema,
+                );
+                let dump =
+                    String::from_utf8(dump_buf).unwrap_or_else(|_| "error rendering dump".into());
+
+                // Build error message with both missing fields and unknown keys
+                let mut message_parts = Vec::new();
+
+                if has_unknown {
+                    message_parts.push("Unknown configuration keys:".to_string());
+                }
+                if has_missing {
+                    message_parts.push("Missing required fields:".to_string());
+                }
+
+                let header = message_parts.join(" / ");
+
+                // Format the summary of missing fields
+                let missing_summary = if has_missing {
+                    format!(
+                        "\nMissing:\n{}",
+                        format_missing_fields_summary(&missing_fields)
+                    )
+                } else {
+                    String::new()
+                };
+
+                // Format the summary of unknown keys with suggestions
+                let unknown_summary = if has_unknown {
+                    let config_schema = self.config.schema.config();
+                    let unknown_list: Vec<String> = unknown_keys
+                        .iter()
+                        .map(|uk| {
+                            let source = uk.provenance.source_description();
+                            let suggestion = config_schema
+                                .map(|cs| crate::suggest::suggest_config_path(cs, &uk.key))
+                                .unwrap_or_default();
+                            format!("  {} (from {}){}", uk.key.join("."), source, suggestion)
+                        })
+                        .collect();
+                    format!("\nUnknown keys:\n{}", unknown_list.join("\n"))
+                } else {
+                    String::new()
+                };
+
+                format!(
+                    "{}\n\n{}{}{}\nRun with --help for usage information.",
+                    header, dump, missing_summary, unknown_summary
+                )
+            };
 
             return DriverOutcome::err(DriverError::Failed {
                 report: Box::new(DriverReport {
                     diagnostics: vec![Diagnostic {
                         message,
+                        label: None,
                         path: None,
                         span: None,
                         severity: Severity::Error,
@@ -483,7 +527,7 @@ impl<T: Facet<'static>> Driver<T> {
                     layers,
                     file_resolution,
                     overrides,
-                    cli_args_source,
+                    cli_args_source: cli_args_display.to_string(),
                     source_name: "<cli>".to_string(),
                 }),
             });
@@ -507,19 +551,20 @@ impl<T: Facet<'static>> Driver<T> {
                             entry.real_span.len as usize,
                         );
                         let (name, contents) =
-                            get_source_for_provenance(&entry.provenance, &cli_args_source, &layers);
+                            get_source_for_provenance(&entry.provenance, cli_args_display, &layers);
                         (Some(real_span), name, contents)
                     } else {
-                        (None, "<unknown>".to_string(), cli_args_source.clone())
+                        (None, "<unknown>".to_string(), cli_args_display.to_string())
                     }
                 } else {
-                    (None, "<unknown>".to_string(), cli_args_source.clone())
+                    (None, "<unknown>".to_string(), cli_args_display.to_string())
                 };
 
                 return DriverOutcome::err(DriverError::Failed {
                     report: Box::new(DriverReport {
                         diagnostics: vec![Diagnostic {
                             message: e.to_string(),
+                            label: None,
                             path: None,
                             span,
                             severity: Severity::Error,
@@ -541,7 +586,7 @@ impl<T: Facet<'static>> Driver<T> {
                 layers,
                 file_resolution,
                 overrides,
-                cli_args_source,
+                cli_args_source: cli_args_display.to_string(),
                 source_name: "<cli>".to_string(),
             },
             merged_config: value_with_virtual_spans,
@@ -553,11 +598,11 @@ impl<T: Facet<'static>> Driver<T> {
 /// Get the source name and contents for a provenance.
 fn get_source_for_provenance(
     provenance: &Provenance,
-    cli_args_source: &str,
+    cli_args_display: &str,
     layers: &ConfigLayers,
 ) -> (String, String) {
     match provenance {
-        Provenance::Cli { .. } => ("<cli>".to_string(), cli_args_source.to_string()),
+        Provenance::Cli { .. } => ("<cli>".to_string(), cli_args_display.to_string()),
         Provenance::Env { .. } => {
             // Use the virtual env document from the env layer
             let source_text = layers.env.source_text.as_ref().cloned().unwrap_or_default();
@@ -940,6 +985,18 @@ impl DriverReport {
             // For diagnostics without a span, just print the message directly
             // (e.g., missing required fields error doesn't point to a specific location)
             if diagnostic.span.is_none() {
+                // If message starts with "Error:" it's already a formatted report (e.g., from Ariadne)
+                // Just output it as-is without adding another prefix
+                if diagnostic.message.starts_with("Error:")
+                    || diagnostic.message.starts_with("Warning:")
+                    || diagnostic.message.starts_with("Note:")
+                {
+                    output.extend_from_slice(diagnostic.message.as_bytes());
+                    output.push(b'\n');
+                    continue;
+                }
+
+                // Otherwise add the appropriate prefix
                 let prefix = match diagnostic.severity {
                     Severity::Error => "Error: ",
                     Severity::Warning => "Warning: ",
@@ -968,11 +1025,12 @@ impl DriverReport {
                 Severity::Note => Color::Cyan,
             };
 
+            let label_message = diagnostic.label.as_deref().unwrap_or(&diagnostic.message);
             let report = Report::build(report_kind, span.clone())
                 .with_message(&diagnostic.message)
                 .with_label(
                     Label::new(span)
-                        .with_message(&diagnostic.message)
+                        .with_message(label_message)
                         .with_color(color),
                 )
                 .finish();
@@ -1004,6 +1062,8 @@ impl core::fmt::Debug for DriverReport {
 pub struct Diagnostic {
     /// Human-readable message.
     pub message: String,
+    /// Optional label message for the span (if different from message).
+    pub label: Option<String>,
     /// Optional path within the schema or config.
     pub path: Option<Path>,
     /// Optional byte span within a formatted shape or source file.

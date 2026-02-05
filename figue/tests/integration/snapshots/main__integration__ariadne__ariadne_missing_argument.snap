@@ -2,15 +2,10 @@
 source: crates/figue/tests/integration/ariadne.rs
 expression: ariadne_output
 ---
-Error: Missing required fields:
-
-Sources:
-├─ cli --settings.*
-└─ defaults
-
-required_field.. .. ⨯ MISSING
-
-Missing:
-  required_field <String> (--required-field)
-
-Run with --help for usage information.
+Error: missing required argument
+   ╭─[ <suggestion>:1:6 ]
+   │
+ 1 │ main --required-field <required-field>
+   │      ────────────────┬────────────────  
+   │                      ╰────────────────── missing required argument
+───╯

@@ -267,6 +267,7 @@ impl<'a> ValueBuilder<'a> {
     pub fn warn(&mut self, message: impl Into<String>) {
         self.diagnostics.push(Diagnostic {
             message: message.into(),
+            label: None,
             path: None,
             span: None,
             severity: Severity::Warning,
@@ -277,6 +278,7 @@ impl<'a> ValueBuilder<'a> {
     pub fn error(&mut self, message: impl Into<String>) {
         self.diagnostics.push(Diagnostic {
             message: message.into(),
+            label: None,
             path: None,
             span: None,
             severity: Severity::Error,

@@ -325,6 +325,7 @@ impl<'a> FileParseContext<'a> {
     fn emit_error(&mut self, message: String) {
         self.early_diagnostics.push(Diagnostic {
             message,
+            label: None,
             path: None,
             span: None,
             severity: Severity::Error,

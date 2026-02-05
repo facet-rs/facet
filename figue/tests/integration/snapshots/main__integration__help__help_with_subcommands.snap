@@ -1,5 +1,5 @@
 ---
-source: tests/integration/help.rs
+source: crates/figue/tests/integration/help.rs
 expression: "$crate :: common ::\nstrip_binary_paths(& $crate :: common :: strip_ansi(& help))"
 ---
 git 2.40.0
@@ -14,7 +14,7 @@ OPTIONS:
             Show help message and exit.
     -V, --version
             Show version and exit.
-        --completions <SHELL>
+        --completions <bash,zsh,fish>
             Generate shell completions.
 
 COMMANDS:

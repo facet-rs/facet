@@ -370,6 +370,7 @@ impl<'a> ParseContext<'a> {
                 target,
                 &lookup.effective_name,
                 lookup.is_bool,
+                None, // enum_variants not available for parent lookup
                 inline_value,
             );
         } else {
@@ -473,6 +474,8 @@ impl<'a> ParseContext<'a> {
                     let value = self.parse_value_string(value_str, &prov_arg, value_span);
                     self.insert_value_to(target, &name, value);
                 } else {
+                    // For short flags, we don't have easy access to enum variants
+                    // Could be improved in the future
                     self.emit_error_at(format!("flag -{} requires a value", ch), flag_span);
                 }
             } else {
@@ -556,7 +559,15 @@ impl<'a> ParseContext<'a> {
         inline_value: Option<&str>,
     ) {
         let is_bool = schema.value().inner_if_option().is_bool();
-        self.parse_flag_value_simple(arg, InsertTarget::Current, name, is_bool, inline_value);
+        let enum_variants = schema.value().inner_if_option().enum_variants();
+        self.parse_flag_value_simple(
+            arg,
+            InsertTarget::Current,
+            name,
+            is_bool,
+            enum_variants,
+            inline_value,
+        );
     }
 
     /// Parse a flag value with explicit is_bool (avoids borrow issues with schema).
@@ -566,6 +577,7 @@ impl<'a> ParseContext<'a> {
         target: InsertTarget,
         name: &str,
         is_bool: bool,
+        enum_variants: Option<&[String]>,
         inline_value: Option<&str>,
     ) {
         if is_bool {
@@ -604,7 +616,13 @@ impl<'a> ParseContext<'a> {
                     self.index += 1;
                     (v, span)
                 } else {
-                    self.emit_error_at(format!("flag {} requires a value", arg), flag_span);
+                    let error_msg = if let Some(variants) = enum_variants {
+                        let variant_list = variants.join(", ");
+                        format!("flag {} requires one of: {}", arg, variant_list)
+                    } else {
+                        format!("flag {} requires a value", arg)
+                    };
+                    self.emit_error_at(error_msg, flag_span);
                     return;
                 }
             };
@@ -967,6 +985,7 @@ impl<'a> ParseContext<'a> {
     fn emit_error_at(&mut self, message: String, span: facet_reflect::Span) {
         self.diagnostics.push(Diagnostic {
             message,
+            label: None,
             path: None,
             span: Some(crate::span::Span::new(
                 span.offset as usize,

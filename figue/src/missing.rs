@@ -8,6 +8,39 @@ use crate::schema::{
 use heck::ToKebabCase;
 use heck::ToShoutySnakeCase;
 
+/// Normalize a program name for display in error messages and help text.
+///
+/// This function:
+/// 1. Extracts just the filename from a full path
+/// 2. Strips Cargo test binary hash suffixes (e.g., "main-138217976bbdb088" -> "main")
+///
+/// This ensures stable, readable output in both tests and help messages.
+pub fn normalize_program_name(path: &str) -> String {
+    // Extract just the filename from the path
+    let name = std::path::Path::new(path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(path);
+
+    // Check if the name ends with a dash followed by exactly 16 hex characters
+    if let Some(dash_pos) = name.rfind('-') {
+        let suffix = &name[dash_pos + 1..];
+        if suffix.len() == 16 && suffix.chars().all(|c| c.is_ascii_hexdigit()) {
+            return name[..dash_pos].to_string();
+        }
+    }
+    name.to_string()
+}
+
+/// The kind of field that is missing - determines how errors should be formatted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MissingFieldKind {
+    /// A direct CLI argument (flag or positional) at the top level or in a subcommand
+    CliArg,
+    /// A field in a config struct (has layered sources: file, env, CLI overrides)
+    ConfigField,
+}
+
 /// Information about a missing required field.
 #[derive(Debug, Clone)]
 pub struct MissingFieldInfo {
@@ -25,6 +58,92 @@ pub struct MissingFieldInfo {
     pub env_var: Option<String>,
     /// Environment variable aliases (e.g., ["DATABASE_URL", "DB_URL"])
     pub env_aliases: Vec<String>,
+    /// What kind of field this is - determines error formatting strategy
+    pub kind: MissingFieldKind,
+}
+
+/// Information about a corrected command with missing arguments for display.
+pub struct CorrectedCommandInfo {
+    /// The corrected command text showing what should be typed
+    pub corrected_source: String,
+    /// Diagnostics with spans pointing to the corrected source
+    pub diagnostics: Vec<crate::driver::Diagnostic>,
+}
+
+/// Build corrected command source and diagnostics for missing CLI arguments.
+///
+/// Returns the corrected command as a source and diagnostics that point to it.
+pub fn build_corrected_command_diagnostics(
+    missing: &[MissingFieldInfo],
+    cli_args: Option<&str>,
+) -> CorrectedCommandInfo {
+    use crate::driver::{Diagnostic, Severity};
+    use crate::span::Span;
+
+    let cli_text = cli_args.unwrap_or("");
+
+    // Handle the first missing field (most common case)
+    // Multiple missing would need a different UI approach
+    if let Some(field) = missing.first() {
+        // Build the corrected command with the missing argument
+        let missing_arg_text = if let Some(cli_flag) = &field.cli_flag {
+            if cli_flag.starts_with('<') && cli_flag.ends_with('>') {
+                // Positional argument like <name>
+                cli_flag.clone()
+            } else if cli_flag.starts_with("--") {
+                // Named argument like --region
+                let flag_name = cli_flag.trim_start_matches("--");
+                format!("{} <{}>", cli_flag, flag_name)
+            } else {
+                cli_flag.clone()
+            }
+        } else {
+            format!("<{}>", field.field_name)
+        };
+
+        let corrected_command = if cli_text.is_empty() {
+            // Get program name
+            let program_name = std::env::args()
+                .next()
+                .map(|path| normalize_program_name(&path))
+                .unwrap_or_else(|| "program".to_string());
+            format!("{} {}", program_name, missing_arg_text)
+        } else {
+            format!("{} {}", cli_text, missing_arg_text)
+        };
+
+        // Calculate the span of the missing argument in the corrected command
+        let missing_arg_start = if cli_text.is_empty() {
+            corrected_command.len() - missing_arg_text.len()
+        } else {
+            cli_text.len() + 1
+        };
+
+        // Use generic message for the error, field docs go in the label (rendered by Ariadne)
+        let message = "missing required argument".to_string();
+
+        // Use field documentation as the label message
+        let label = field.doc_comment.clone();
+
+        let diagnostic = Diagnostic {
+            message,
+            label,
+            path: None,
+            span: Some(Span::new(missing_arg_start, missing_arg_text.len())),
+            severity: Severity::Error,
+        };
+
+        CorrectedCommandInfo {
+            corrected_source: corrected_command,
+            diagnostics: vec![diagnostic],
+        }
+    } else {
+        // No missing fields - return empty
+        CorrectedCommandInfo {
+            corrected_source: cli_text.to_string(),
+            diagnostics: vec![],
+        }
+    }
 }
 
 /// Collect missing required fields by walking the schema and checking against the ConfigValue.
@@ -68,6 +187,7 @@ pub fn collect_missing_fields(
                     cli_flag: None,
                     env_var: None,
                     env_aliases: Vec::new(),
+                    kind: MissingFieldKind::ConfigField,
                 });
             }
         } else {
@@ -108,29 +228,57 @@ fn collect_missing_in_arg_level(
                 cli_flag,
                 env_var: None, // CLI args don't have env vars
                 env_aliases: Vec::new(),
+                kind: MissingFieldKind::CliArg,
             });
         }
     }
 
     // Check subcommands if present and required
-    if let Some(subcommand_field) = arg_level.subcommand_field_name()
-        && !arg_level.subcommand_optional()
-        && obj_map.get(subcommand_field).is_none()
-    {
-        let field_path = if path_prefix.is_empty() {
-            subcommand_field.to_string()
-        } else {
-            format!("{}.{}", path_prefix, subcommand_field)
-        };
-        missing.push(MissingFieldInfo {
-            field_name: subcommand_field.to_string(),
-            field_path,
-            type_name: "Subcommand".to_string(),
-            doc_comment: None,
-            cli_flag: Some(format!("<{}>", subcommand_field.to_kebab_case())),
-            env_var: None,
-            env_aliases: Vec::new(),
-        });
+    if let Some(subcommand_field) = arg_level.subcommand_field_name() {
+        if !arg_level.subcommand_optional() && obj_map.get(subcommand_field).is_none() {
+            // Subcommand field itself is missing
+            let field_path = if path_prefix.is_empty() {
+                subcommand_field.to_string()
+            } else {
+                format!("{}.{}", path_prefix, subcommand_field)
+            };
+            missing.push(MissingFieldInfo {
+                field_name: subcommand_field.to_string(),
+                field_path,
+                type_name: "Subcommand".to_string(),
+                doc_comment: None,
+                cli_flag: Some(format!("<{}>", subcommand_field.to_kebab_case())),
+                env_var: None,
+                env_aliases: Vec::new(),
+                kind: MissingFieldKind::CliArg,
+            });
+        } else if let Some(ConfigValue::Enum(sourced)) = obj_map.get(subcommand_field) {
+            // Subcommand is present - recursively check its arguments
+            let enum_value = &sourced.value;
+            let variant_name = &enum_value.variant;
+
+            // Find the matching subcommand schema
+            if let Some(subcommand_schema) = arg_level
+                .subcommands()
+                .iter()
+                .find(|(name, _)| name.as_str() == variant_name)
+                .map(|(_, schema)| schema)
+            {
+                // Recursively check the subcommand's arguments
+                let subcommand_path = if path_prefix.is_empty() {
+                    format!("{}::{}", subcommand_field, variant_name)
+                } else {
+                    format!("{}.{}::{}", path_prefix, subcommand_field, variant_name)
+                };
+
+                collect_missing_in_arg_level(
+                    &enum_value.fields,
+                    subcommand_schema.args(),
+                    &subcommand_path,
+                    missing,
+                );
+            }
+        }
     }
 }
 
@@ -261,6 +409,7 @@ fn collect_missing_in_config_value(
                                     cli_flag: None,
                                     env_var: None,
                                     env_aliases: field_schema.env_aliases().to_vec(),
+                                    kind: MissingFieldKind::ConfigField,
                                 });
                             }
                         }
@@ -342,6 +491,7 @@ fn check_missing_field(
             cli_flag,
             env_var,
             env_aliases: field_schema.env_aliases().to_vec(),
+            kind: MissingFieldKind::ConfigField,
         });
     }
 }
@@ -368,6 +518,9 @@ fn type_name_from_config_value_schema(schema: &ConfigValueSchema) -> String {
 /// This produces a focused list of just the missing fields with their paths,
 /// types, and documentation (if available), so users can quickly see what
 /// needs to be provided without scrolling through the entire config dump.
+///
+/// For CLI-only missing fields (when all missing fields have cli_flag set),
+/// prefer using `format_missing_cli_args_with_mockup` for a more user-friendly display.
 pub fn format_missing_fields_summary(missing: &[MissingFieldInfo]) -> String {
     use owo_colors::OwoColorize;
     use std::fmt::Write;
@@ -1290,5 +1443,50 @@ mod tests {
 
         assert_eq!(missing.len(), 1);
         assert!(!missing[0].type_name.is_empty(), "Type name should be set");
+    }
+
+    #[test]
+    fn test_normalize_program_name() {
+        // Test with cargo test binary pattern and full path
+        assert_eq!(
+            normalize_program_name(
+                "/Users/amos/bearcove/figue/target/debug/deps/main-138217976bbdb088"
+            ),
+            "main"
+        );
+        assert_eq!(
+            normalize_program_name(
+                "/home/runner/work/figue/figue/target/debug/deps/main-b36e7ccd11ac5f87"
+            ),
+            "main"
+        );
+
+        // Test with just binary name and hash
+        assert_eq!(normalize_program_name("main-138217976bbdb088"), "main");
+        assert_eq!(normalize_program_name("main-b36e7ccd11ac5f87"), "main");
+
+        // Test with regular binary names (no hash)
+        assert_eq!(normalize_program_name("myapp"), "myapp");
+        assert_eq!(normalize_program_name("my-app"), "my-app");
+        assert_eq!(normalize_program_name("/usr/local/bin/myapp"), "myapp");
+
+        // Test with names that have dashes but not the hash pattern
+        assert_eq!(normalize_program_name("my-app-test"), "my-app-test");
+        assert_eq!(normalize_program_name("app-v1-final"), "app-v1-final");
+
+        // Test with hash that's too short
+        assert_eq!(normalize_program_name("app-123abc"), "app-123abc");
+
+        // Test with hash that's too long
+        assert_eq!(
+            normalize_program_name("app-123456789abcdef01"),
+            "app-123456789abcdef01"
+        );
+
+        // Test with non-hex characters
+        assert_eq!(
+            normalize_program_name("app-123456789abcdexg"),
+            "app-123456789abcdexg"
+        );
     }
 }

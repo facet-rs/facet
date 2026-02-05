@@ -1,0 +1,17 @@
+---
+source: crates/figue/tests/integration/simple.rs
+expression: "$crate :: common :: strip_ansi(& help.to_string())"
+---
+main
+
+USAGE:
+    main [OPTIONS]
+
+OPTIONS:
+        --name <STRING>
+    -h, --help
+            Show help message and exit.
+    -V, --version
+            Show version and exit.
+        --completions <bash,zsh,fish>
+            Generate shell completions.

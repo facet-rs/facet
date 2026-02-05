@@ -1,3 +1,4 @@
+use crate::assert_diag_snapshot;
 use facet::Facet;
 use figue as args;
 
@@ -293,4 +294,47 @@ fn test_option_named_enum_variant() {
             assert_eq!(node, Some("42".to_string()));
         }
     }
+}
+
+/// Test that demonstrates the helpful error when using from_slice with FigueBuiltins
+/// and --completions flag without specifying a shell. The error message now shows valid values.
+#[test]
+fn test_from_slice_with_completions_shows_helpful_error() {
+    use figue::FigueBuiltins;
+
+    #[derive(Facet, Debug)]
+    struct Args {
+        #[facet(args::named)]
+        name: String,
+
+        #[facet(flatten)]
+        builtins: FigueBuiltins,
+    }
+
+    // When using from_slice with --completions but no shell argument, the error is helpful
+    let err = figue::from_slice::<Args>(&["--name", "test", "--completions"]).unwrap_err();
+
+    // Snapshot the error to show that it now helpfully lists valid values
+    // It says "requires one of: bash, zsh, fish"
+    assert_diag_snapshot!(err);
+}
+
+/// Test that help text shows enum variants for --completions flag.
+#[test]
+fn test_completions_help_shows_enum_variants() {
+    use figue::FigueBuiltins;
+
+    #[derive(Facet, Debug)]
+    struct Args {
+        #[facet(args::named)]
+        name: String,
+
+        #[facet(flatten)]
+        builtins: FigueBuiltins,
+    }
+
+    let help = figue::generate_help::<Args>(&figue::HelpConfig::default());
+
+    // Snapshot the help to show that --completions displays <bash,zsh,fish>
+    assert_diag_snapshot!(help);
 }
