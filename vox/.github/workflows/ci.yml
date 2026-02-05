@@ -190,6 +190,40 @@ jobs:
       - name: Build subject
         run: swift build -c release --package-path swift/subject
 
+      - name: Run RoamRuntime Swift tests
+        run: swift test
+
+      - name: Run spec tests
+        run: cargo nextest run -p spec-tests
+        env:
+          SUBJECT_CMD: "sh swift/subject/subject-swift.sh"
+
+  swift-linux:
+    name: Conformance / Swift (Linux)
+    runs-on: depot-ubuntu-24.04-16
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Swift
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.0"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build subject
+        run: swift build -c release --package-path swift/subject
+
+      - name: Run RoamRuntime Swift tests
+        run: swift test
+
       - name: Run spec tests
         run: cargo nextest run -p spec-tests
         env:

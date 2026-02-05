@@ -12,9 +12,9 @@
 /// The output will contain no zero bytes. A zero byte should be
 /// appended as a frame delimiter after sending.
 public func cobsEncode(_ data: [UInt8]) -> [UInt8] {
-    // Empty input produces empty output
+    // Canonical COBS encoding of empty input is a single code byte (0x01).
     guard !data.isEmpty else {
-        return []
+        return [1]
     }
 
     var output: [UInt8] = []

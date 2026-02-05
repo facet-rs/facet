@@ -57,48 +57,51 @@ struct WireEncodingTests {
     }
 
     @Test func testMessageGoodbye() throws {
-        let msg = Message.goodbye(reason: "test")
-        try assertEncoding(msg.encode(), "wire/message_goodbye.bin")
+        let msg = Message.goodbye(connId: 0, reason: "test")
+        try assertEncoding(msg.encode(), "wire/message_goodbye_conn0.bin")
     }
 
     @Test func testMessageRequestEmpty() throws {
-        let msg = Message.request(requestId: 1, methodId: 42, metadata: [], channels: [], payload: [])
+        let msg = Message.request(
+            connId: 0, requestId: 1, methodId: 42, metadata: [], channels: [], payload: [])
         try assertEncoding(msg.encode(), "wire/message_request_empty.bin")
     }
 
     @Test func testMessageRequestWithPayload() throws {
         let msg = Message.request(
-            requestId: 1, methodId: 42, metadata: [], channels: [], payload: [0xDE, 0xAD, 0xBE, 0xEF])
+            connId: 0, requestId: 1, methodId: 42, metadata: [], channels: [], payload: [
+                0xDE, 0xAD, 0xBE, 0xEF,
+            ])
         try assertEncoding(msg.encode(), "wire/message_request_with_payload.bin")
     }
 
     @Test func testMessageResponse() throws {
-        let msg = Message.response(requestId: 1, metadata: [], payload: [0x42])
+        let msg = Message.response(connId: 0, requestId: 1, metadata: [], channels: [], payload: [0x42])
         try assertEncoding(msg.encode(), "wire/message_response.bin")
     }
 
     @Test func testMessageCancel() throws {
-        let msg = Message.cancel(requestId: 99)
+        let msg = Message.cancel(connId: 0, requestId: 99)
         try assertEncoding(msg.encode(), "wire/message_cancel.bin")
     }
 
     @Test func testMessageData() throws {
-        let msg = Message.data(channelId: 1, payload: [1, 2, 3])
+        let msg = Message.data(connId: 0, channelId: 1, payload: [1, 2, 3])
         try assertEncoding(msg.encode(), "wire/message_data.bin")
     }
 
     @Test func testMessageClose() throws {
-        let msg = Message.close(channelId: 7)
+        let msg = Message.close(connId: 0, channelId: 7)
         try assertEncoding(msg.encode(), "wire/message_close.bin")
     }
 
     @Test func testMessageReset() throws {
-        let msg = Message.reset(channelId: 5)
+        let msg = Message.reset(connId: 0, channelId: 5)
         try assertEncoding(msg.encode(), "wire/message_reset.bin")
     }
 
     @Test func testMessageCredit() throws {
-        let msg = Message.credit(channelId: 3, bytes: 4096)
+        let msg = Message.credit(connId: 0, channelId: 3, bytes: 4096)
         try assertEncoding(msg.encode(), "wire/message_credit.bin")
     }
 
@@ -120,10 +123,12 @@ struct WireEncodingTests {
     @Test func testMessageRequestDecode() throws {
         let bytes = try loadGoldenVector("wire/message_request_with_payload.bin")
         let msg = try Message.decode(from: Data(bytes))
-        guard case .request(let reqId, let methodId, let meta, let channels, let payload) = msg else {
+        guard case .request(let connId, let reqId, let methodId, let meta, let channels, let payload) = msg
+        else {
             Issue.record("Expected Request message")
             return
         }
+        #expect(connId == 0)
         #expect(reqId == 1)
         #expect(methodId == 42)
         #expect(meta.isEmpty)

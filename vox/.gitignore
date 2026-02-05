@@ -17,6 +17,9 @@ typescript/test-results/
 go/**/subject-go
 
 # Swift
+/.build/
+/.swiftpm/
+/Package.resolved
 swift/.build/
 swift/.swiftpm/
 swift/**/.build/
