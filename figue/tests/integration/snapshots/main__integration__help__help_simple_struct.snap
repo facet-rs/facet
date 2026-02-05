@@ -20,7 +20,7 @@ ARGUMENTS:
 OPTIONS:
     -v, --verbose
             Enable verbose output
-    -j, --jobs <USIZE>
+    -j, --jobs <COUNT>
             Number of parallel jobs
     -h, --help
             Show help message and exit.
