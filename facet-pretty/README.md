@@ -10,29 +10,27 @@ Provides pretty-printing capabilities for Facet types.
 
 Example:
 
-```rust,no_run
+```rust
 use facet::Facet;
 use facet_pretty::FacetPretty;
 
-#[derive(Facet)]
+#[derive(Debug, Facet)]
 struct Person {
     name: String,
     age: u32,
 }
 
-fn main() {
-    let person = Person {
-        name: "Alice".to_string(),
-        age: 30,
-    };
-    println!("Default pretty-printing:");
-    println!("{}", person.pretty());
-}
+let person = Person {
+    name: "Alice".to_string(),
+    age: 30,
+};
+println!("Default pretty-printing:");
+println!("{}", person.pretty());
 ```
 
 Produces the output:
 
-```rust,no_run
+```text
 Person {
   name: "Alice",
   age: 30,
