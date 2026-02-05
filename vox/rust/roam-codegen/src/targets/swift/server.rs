@@ -8,7 +8,7 @@ use roam_schema::{
     MethodDetail, ServiceDetail, ShapeKind, StructInfo, classify_shape, is_rx, is_tx,
 };
 
-use super::decode::{generate_decode_stmt, generate_inline_decode};
+use super::decode::{generate_decode_stmt_with_cursor, generate_inline_decode};
 use super::encode::generate_encode_closure;
 use super::types::{format_doc, is_stream, swift_type_server_arg, swift_type_server_return};
 use crate::code_writer::CodeWriter;
@@ -193,10 +193,11 @@ fn generate_decode_args(w: &mut CodeWriter<&mut String>, args: &[roam_schema::Ar
         return;
     }
 
-    w.writeln("var offset = 0").unwrap();
+    let cursor_var = unique_decode_cursor_name(args);
+    cw_writeln!(w, "var {cursor_var} = 0").unwrap();
     for arg in args {
         let arg_name = arg.name.to_lower_camel_case();
-        let decode_stmt = generate_decode_stmt(arg.ty, &arg_name, "");
+        let decode_stmt = generate_decode_stmt_with_cursor(arg.ty, &arg_name, "", &cursor_var);
         for line in decode_stmt.lines() {
             w.writeln(line).unwrap();
         }
@@ -297,7 +298,8 @@ fn generate_preregister_channels(w: &mut CodeWriter<&mut String>, service: &Serv
             if has_rx_args {
                 cw_writeln!(w, "case {}:", hex_u64(method_id)).unwrap();
                 w.writeln("    do {").unwrap();
-                w.writeln("        var offset = 0").unwrap();
+                let cursor_var = unique_decode_cursor_name(&method.args);
+                cw_writeln!(w, "        var {cursor_var} = 0").unwrap();
 
                 // Parse channel IDs and mark them as known
                 for arg in &method.args {
@@ -306,7 +308,7 @@ fn generate_preregister_channels(w: &mut CodeWriter<&mut String>, service: &Serv
                         // Schema Rx = client sends, server receives → need to preregister
                         cw_writeln!(
                             w,
-                            "        let {arg_name}ChannelId = try decodeVarint(from: payload, offset: &offset)"
+                            "        let {arg_name}ChannelId = try decodeVarint(from: payload, offset: &{cursor_var})"
                         )
                         .unwrap();
                         cw_writeln!(w, "        await registry.markKnown({arg_name}ChannelId)")
@@ -315,12 +317,12 @@ fn generate_preregister_channels(w: &mut CodeWriter<&mut String>, service: &Serv
                         // Schema Tx = server sends → just skip the varint
                         cw_writeln!(
                             w,
-                            "        _ = try decodeVarint(from: payload, offset: &offset) // {arg_name}"
+                            "        _ = try decodeVarint(from: payload, offset: &{cursor_var}) // {arg_name}"
                         )
                         .unwrap();
                     } else {
                         // Non-streaming arg - skip it based on type
-                        generate_skip_arg(w, &arg_name, arg.ty, "        ");
+                        generate_skip_arg(w, &arg_name, arg.ty, "        ", &cursor_var);
                     }
                 }
 
@@ -344,13 +346,14 @@ fn generate_skip_arg(
     name: &str,
     shape: &'static Shape,
     indent: &str,
+    cursor_var: &str,
 ) {
     use roam_schema::is_bytes;
 
     if is_bytes(shape) {
         cw_writeln!(
             w,
-            "{indent}_ = try decodeBytes(from: payload, offset: &offset) // {name}"
+            "{indent}_ = try decodeBytes(from: payload, offset: &{cursor_var}) // {name}"
         )
         .unwrap();
         return;
@@ -359,16 +362,20 @@ fn generate_skip_arg(
     match classify_shape(shape) {
         ShapeKind::Scalar(scalar) => {
             let skip_code = match scalar {
-                ScalarType::Bool | ScalarType::U8 | ScalarType::I8 => "offset += 1",
-                ScalarType::U16 | ScalarType::I16 => "offset += 2",
-                ScalarType::U32 | ScalarType::I32 | ScalarType::U64 | ScalarType::I64 => {
-                    "_ = try decodeVarint(from: payload, offset: &offset)"
+                ScalarType::Bool | ScalarType::U8 | ScalarType::I8 => {
+                    format!("{cursor_var} += 1")
                 }
-                ScalarType::F32 => "offset += 4",
-                ScalarType::F64 => "offset += 8",
-                ScalarType::Unit => "",
-                ScalarType::Char => "_ = try decodeVarint(from: payload, offset: &offset)",
-                _ => "// unknown scalar type",
+                ScalarType::U16 | ScalarType::I16 => format!("{cursor_var} += 2"),
+                ScalarType::U32 | ScalarType::I32 | ScalarType::U64 | ScalarType::I64 => {
+                    format!("_ = try decodeVarint(from: payload, offset: &{cursor_var})")
+                }
+                ScalarType::F32 => format!("{cursor_var} += 4"),
+                ScalarType::F64 => format!("{cursor_var} += 8"),
+                ScalarType::Unit => String::new(),
+                ScalarType::Char => {
+                    format!("_ = try decodeVarint(from: payload, offset: &{cursor_var})")
+                }
+                _ => String::from("// unknown scalar type"),
             };
             if !skip_code.is_empty() {
                 cw_writeln!(w, "{indent}{skip_code} // {name}").unwrap();
@@ -377,7 +384,7 @@ fn generate_skip_arg(
         ShapeKind::List { .. } | ShapeKind::Slice { .. } | ShapeKind::Array { .. } => {
             cw_writeln!(
                 w,
-                "{indent}_ = try decodeBytes(from: payload, offset: &offset) // {name} (skipped)"
+                "{indent}_ = try decodeBytes(from: payload, offset: &{cursor_var}) // {name} (skipped)"
             )
             .unwrap();
         }
@@ -388,7 +395,7 @@ fn generate_skip_arg(
             // For structs, recursively skip each field
             for field in fields {
                 let field_name = format!("{}.{}", name, field.name);
-                generate_skip_arg(w, &field_name, field.shape(), indent);
+                generate_skip_arg(w, &field_name, field.shape(), indent, cursor_var);
             }
         }
         _ => {
@@ -413,12 +420,13 @@ fn generate_streaming_dispatch_method(w: &mut CodeWriter<&mut String>, method: &
         w.writeln("do {").unwrap();
         {
             let _indent = w.indent();
-            w.writeln("var offset = 0").unwrap();
+            let cursor_var = unique_decode_cursor_name(&method.args);
+            cw_writeln!(w, "var {cursor_var} = 0").unwrap();
 
             // Decode arguments - for streaming, decode channel IDs and create Tx/Rx
             for arg in &method.args {
                 let arg_name = arg.name.to_lower_camel_case();
-                generate_streaming_decode_arg(w, &arg_name, arg.ty);
+                generate_streaming_decode_arg(w, &arg_name, arg.ty, &cursor_var);
             }
 
             // Call handler
@@ -526,6 +534,7 @@ fn generate_streaming_decode_arg(
     w: &mut CodeWriter<&mut String>,
     name: &str,
     shape: &'static Shape,
+    cursor_var: &str,
 ) {
     match classify_shape(shape) {
         ShapeKind::Rx { inner } => {
@@ -534,7 +543,7 @@ fn generate_streaming_decode_arg(
             let inline_decode = generate_inline_decode(inner, "Data(bytes)", "off");
             cw_writeln!(
                 w,
-                "let {name}ChannelId = try decodeVarint(from: payload, offset: &offset)"
+                "let {name}ChannelId = try decodeVarint(from: payload, offset: &{cursor_var})"
             )
             .unwrap();
             cw_writeln!(
@@ -557,7 +566,7 @@ fn generate_streaming_decode_arg(
             let encode_closure = generate_encode_closure(inner);
             cw_writeln!(
                 w,
-                "let {name}ChannelId = try decodeVarint(from: payload, offset: &offset)"
+                "let {name}ChannelId = try decodeVarint(from: payload, offset: &{cursor_var})"
             )
             .unwrap();
             cw_writeln!(
@@ -568,12 +577,21 @@ fn generate_streaming_decode_arg(
         }
         _ => {
             // Non-streaming argument - use standard decode
-            let decode_stmt = generate_decode_stmt(shape, name, "");
+            let decode_stmt = generate_decode_stmt_with_cursor(shape, name, "", cursor_var);
             for line in decode_stmt.lines() {
                 w.writeln(line).unwrap();
             }
         }
     }
+}
+
+fn unique_decode_cursor_name(args: &[roam_schema::ArgDetail]) -> String {
+    let arg_names: Vec<String> = args.iter().map(|a| a.name.to_lower_camel_case()).collect();
+    let mut candidate = String::from("cursor");
+    while arg_names.iter().any(|name| name == &candidate) {
+        candidate.push('_');
+    }
+    candidate
 }
 
 #[cfg(test)]
@@ -596,6 +614,56 @@ mod tests {
                 }],
                 return_type: <String as Facet>::SHAPE,
                 doc: Some(Cow::Borrowed("Echo back the message")),
+            }],
+        }
+    }
+
+    fn offset_arg_service() -> ServiceDetail {
+        ServiceDetail {
+            name: Cow::Borrowed("Vfs"),
+            doc: None,
+            methods: vec![MethodDetail {
+                service_name: Cow::Borrowed("Vfs"),
+                method_name: Cow::Borrowed("read"),
+                args: vec![
+                    ArgDetail {
+                        name: Cow::Borrowed("item_id"),
+                        ty: <u64 as Facet>::SHAPE,
+                    },
+                    ArgDetail {
+                        name: Cow::Borrowed("offset"),
+                        ty: <u64 as Facet>::SHAPE,
+                    },
+                    ArgDetail {
+                        name: Cow::Borrowed("len"),
+                        ty: <u64 as Facet>::SHAPE,
+                    },
+                ],
+                return_type: <u64 as Facet>::SHAPE,
+                doc: None,
+            }],
+        }
+    }
+
+    fn cursor_arg_service() -> ServiceDetail {
+        ServiceDetail {
+            name: Cow::Borrowed("Vfs"),
+            doc: None,
+            methods: vec![MethodDetail {
+                service_name: Cow::Borrowed("Vfs"),
+                method_name: Cow::Borrowed("read"),
+                args: vec![
+                    ArgDetail {
+                        name: Cow::Borrowed("cursor"),
+                        ty: <u64 as Facet>::SHAPE,
+                    },
+                    ArgDetail {
+                        name: Cow::Borrowed("cursor_"),
+                        ty: <u64 as Facet>::SHAPE,
+                    },
+                ],
+                return_type: <u64 as Facet>::SHAPE,
+                doc: None,
             }],
         }
     }
@@ -629,5 +697,26 @@ mod tests {
         assert!(code.contains("class EchoStreamingDispatcher"));
         assert!(code.contains("preregisterChannels"));
         assert!(code.contains("IncomingChannelRegistry"));
+    }
+
+    #[test]
+    fn test_dispatcher_uses_cursor_for_offset_argument() {
+        let code = generate_dispatcher(&offset_arg_service());
+
+        assert!(code.contains("var cursor = 0"));
+        assert!(code.contains("let offset = try decodeVarint(from: payload, offset: &cursor)"));
+        assert!(!code.contains("var offset = 0"));
+    }
+
+    #[test]
+    fn test_dispatcher_chooses_unique_cursor_variable_name() {
+        let code = generate_dispatcher(&cursor_arg_service());
+
+        assert!(code.contains("var cursor_ = 0") || code.contains("var cursor__ = 0"));
+        assert!(
+            code.contains("let cursor = try decodeVarint(from: payload, offset: &cursor_)")
+                || code.contains("let cursor = try decodeVarint(from: payload, offset: &cursor__)")
+        );
+        assert!(!code.contains("var cursor = 0"));
     }
 }

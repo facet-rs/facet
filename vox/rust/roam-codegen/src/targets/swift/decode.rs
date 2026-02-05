@@ -9,57 +9,81 @@ use roam_schema::{
 };
 
 /// Generate a Swift decode statement for a given shape.
-/// Returns code that decodes from `payload` at `offset` into a variable named `var_name`.
+/// Returns code that decodes from `payload` at `cursor` into a variable named `var_name`.
 pub fn generate_decode_stmt(shape: &'static Shape, var_name: &str, indent: &str) -> String {
-    generate_decode_stmt_from(shape, var_name, indent, "payload")
+    generate_decode_stmt_with_cursor(shape, var_name, indent, "cursor")
+}
+
+/// Generate a Swift decode statement for a given shape using a custom cursor variable name.
+pub fn generate_decode_stmt_with_cursor(
+    shape: &'static Shape,
+    var_name: &str,
+    indent: &str,
+    cursor_var: &str,
+) -> String {
+    generate_decode_stmt_from_with_cursor(shape, var_name, indent, "payload", cursor_var)
 }
 
 /// Generate a Swift decode statement for a given shape from a specific data variable.
-/// Returns code that decodes from `data_var` at `offset` into a variable named `var_name`.
+/// Returns code that decodes from `data_var` at `cursor` into a variable named `var_name`.
 pub fn generate_decode_stmt_from(
     shape: &'static Shape,
     var_name: &str,
     indent: &str,
     data_var: &str,
 ) -> String {
+    generate_decode_stmt_from_with_cursor(shape, var_name, indent, data_var, "cursor")
+}
+
+/// Generate a Swift decode statement for a given shape from a specific data variable
+/// and using a custom cursor variable name.
+pub fn generate_decode_stmt_from_with_cursor(
+    shape: &'static Shape,
+    var_name: &str,
+    indent: &str,
+    data_var: &str,
+    cursor_var: &str,
+) -> String {
     // Check for bytes first
     if is_bytes(shape) {
         return format!(
-            "{indent}let {var_name} = try decodeBytes(from: {data_var}, offset: &offset)\n"
+            "{indent}let {var_name} = try decodeBytes(from: {data_var}, offset: &{cursor_var})\n"
         );
     }
 
     match classify_shape(shape) {
         ShapeKind::Scalar(scalar) => {
             let decode_fn = swift_decode_fn(scalar);
-            format!("{indent}let {var_name} = try {decode_fn}(from: {data_var}, offset: &offset)\n")
+            format!(
+                "{indent}let {var_name} = try {decode_fn}(from: {data_var}, offset: &{cursor_var})\n"
+            )
         }
         ShapeKind::List { element }
         | ShapeKind::Slice { element }
         | ShapeKind::Array { element, .. } => {
             let inner_decode = generate_decode_closure(element);
             format!(
-                "{indent}let {var_name} = try decodeVec(from: {data_var}, offset: &offset, decoder: {inner_decode})\n"
+                "{indent}let {var_name} = try decodeVec(from: {data_var}, offset: &{cursor_var}, decoder: {inner_decode})\n"
             )
         }
         ShapeKind::Option { inner } => {
             let inner_decode = generate_decode_closure(inner);
             format!(
-                "{indent}let {var_name} = try decodeOption(from: {data_var}, offset: &offset, decoder: {inner_decode})\n"
+                "{indent}let {var_name} = try decodeOption(from: {data_var}, offset: &{cursor_var}, decoder: {inner_decode})\n"
             )
         }
         ShapeKind::Tuple { elements } if elements.len() == 2 => {
             let a_decode = generate_decode_closure(elements[0].shape);
             let b_decode = generate_decode_closure(elements[1].shape);
             format!(
-                "{indent}let {var_name} = try decodeTuple2(from: {data_var}, offset: &offset, decoderA: {a_decode}, decoderB: {b_decode})\n"
+                "{indent}let {var_name} = try decodeTuple2(from: {data_var}, offset: &{cursor_var}, decoderA: {a_decode}, decoderB: {b_decode})\n"
             )
         }
         ShapeKind::TupleStruct { fields } if fields.len() == 2 => {
             let a_decode = generate_decode_closure(fields[0].shape());
             let b_decode = generate_decode_closure(fields[1].shape());
             format!(
-                "{indent}let {var_name} = try decodeTuple2(from: {data_var}, offset: &offset, decoderA: {a_decode}, decoderB: {b_decode})\n"
+                "{indent}let {var_name} = try decodeTuple2(from: {data_var}, offset: &{cursor_var}, decoderA: {a_decode}, decoderB: {b_decode})\n"
             )
         }
         ShapeKind::Struct(StructInfo {
@@ -71,11 +95,12 @@ pub fn generate_decode_stmt_from(
             let mut out = String::new();
             for f in fields.iter() {
                 let field_name = f.name.to_lower_camel_case();
-                out.push_str(&generate_decode_stmt_from(
+                out.push_str(&generate_decode_stmt_from_with_cursor(
                     f.shape(),
                     &format!("_{var_name}_{field_name}"),
                     indent,
                     data_var,
+                    cursor_var,
                 ));
             }
             let field_inits: Vec<String> = fields
@@ -99,7 +124,7 @@ pub fn generate_decode_stmt_from(
             // Named enum - decode discriminant then decode variant
             let mut out = String::new();
             out.push_str(&format!(
-                "{indent}let _{var_name}_disc = try decodeU8(from: {data_var}, offset: &offset)\n"
+                "{indent}let _{var_name}_disc = try decodeU8(from: {data_var}, offset: &{cursor_var})\n"
             ));
             out.push_str(&format!("{indent}let {var_name}: {name}\n"));
             out.push_str(&format!("{indent}switch _{var_name}_disc {{\n"));
@@ -113,11 +138,12 @@ pub fn generate_decode_stmt_from(
                         ));
                     }
                     VariantKind::Newtype { inner } => {
-                        out.push_str(&generate_decode_stmt_from(
+                        out.push_str(&generate_decode_stmt_from_with_cursor(
                             inner,
                             &format!("_{var_name}_val"),
                             &format!("{indent}    "),
                             data_var,
+                            cursor_var,
                         ));
                         out.push_str(&format!(
                             "{indent}    {var_name} = .{}(_{var_name}_val)\n",
@@ -126,11 +152,12 @@ pub fn generate_decode_stmt_from(
                     }
                     VariantKind::Tuple { fields } => {
                         for (j, f) in fields.iter().enumerate() {
-                            out.push_str(&generate_decode_stmt_from(
+                            out.push_str(&generate_decode_stmt_from_with_cursor(
                                 f.shape(),
                                 &format!("_{var_name}_f{j}"),
                                 &format!("{indent}    "),
                                 data_var,
+                                cursor_var,
                             ));
                         }
                         let args: Vec<String> = (0..fields.len())
@@ -145,11 +172,12 @@ pub fn generate_decode_stmt_from(
                     VariantKind::Struct { fields } => {
                         for f in fields.iter() {
                             let field_name = f.name.to_lower_camel_case();
-                            out.push_str(&generate_decode_stmt_from(
+                            out.push_str(&generate_decode_stmt_from_with_cursor(
                                 f.shape(),
                                 &format!("_{var_name}_{field_name}"),
                                 &format!("{indent}    "),
                                 data_var,
+                                cursor_var,
                             ));
                         }
                         let args: Vec<String> = fields
@@ -174,35 +202,39 @@ pub fn generate_decode_stmt_from(
             out.push_str(&format!("{indent}}}\n"));
             out
         }
-        ShapeKind::Pointer { pointee } => generate_decode_stmt(pointee, var_name, indent),
+        ShapeKind::Pointer { pointee } => {
+            generate_decode_stmt_with_cursor(pointee, var_name, indent, cursor_var)
+        }
         ShapeKind::Result { ok, err } => {
             // Decode Result<T, E> - discriminant 0 = Ok, 1 = Err
             let ok_type = super::types::swift_type_base(ok);
             let err_type = super::types::swift_type_base(err);
             let mut out = String::new();
             out.push_str(&format!(
-                "{indent}let _{var_name}_disc = try decodeU8(from: {data_var}, offset: &offset)\n"
+                "{indent}let _{var_name}_disc = try decodeU8(from: {data_var}, offset: &{cursor_var})\n"
             ));
             out.push_str(&format!(
                 "{indent}let {var_name}: Result<{ok_type}, {err_type}>\n"
             ));
             out.push_str(&format!("{indent}switch _{var_name}_disc {{\n"));
             out.push_str(&format!("{indent}case 0:\n"));
-            out.push_str(&generate_decode_stmt_from(
+            out.push_str(&generate_decode_stmt_from_with_cursor(
                 ok,
                 &format!("_{var_name}_ok"),
                 &format!("{indent}    "),
                 data_var,
+                cursor_var,
             ));
             out.push_str(&format!(
                 "{indent}    {var_name} = .success(_{var_name}_ok)\n"
             ));
             out.push_str(&format!("{indent}case 1:\n"));
-            out.push_str(&generate_decode_stmt_from(
+            out.push_str(&generate_decode_stmt_from_with_cursor(
                 err,
                 &format!("_{var_name}_err"),
                 &format!("{indent}    "),
                 data_var,
+                cursor_var,
             ));
             out.push_str(&format!(
                 "{indent}    {var_name} = .failure(_{var_name}_err)\n"

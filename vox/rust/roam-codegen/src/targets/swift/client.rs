@@ -5,7 +5,7 @@
 use heck::{ToLowerCamelCase, ToUpperCamelCase};
 use roam_schema::{MethodDetail, ServiceDetail, ShapeKind, classify_shape, is_rx, is_tx};
 
-use super::decode::generate_decode_stmt_from;
+use super::decode::generate_decode_stmt_from_with_cursor;
 use super::encode::generate_encode_expr;
 use super::types::{format_doc, is_stream, swift_type_client_arg, swift_type_client_return};
 use crate::code_writer::CodeWriter;
@@ -145,9 +145,10 @@ fn generate_client_method(
 
     {
         let _indent = w.indent();
+        let cursor_var = unique_decode_cursor_name(&method.args);
 
         if has_streaming {
-            generate_streaming_client_body(w, method, service_name, &method_id_name);
+            generate_streaming_client_body(w, method, service_name, &method_id_name, &cursor_var);
         } else {
             // Encode arguments
             generate_encode_args(w, &method.args);
@@ -161,9 +162,12 @@ fn generate_client_method(
                     hex_u64(method_id)
                 )
                 .unwrap();
-                w.writeln("var offset = 0").unwrap();
-                w.writeln("try decodeRpcResult(from: response, offset: &offset)")
-                    .unwrap();
+                cw_writeln!(w, "var {cursor_var} = 0").unwrap();
+                cw_writeln!(
+                    w,
+                    "try decodeRpcResult(from: response, offset: &{cursor_var})"
+                )
+                .unwrap();
             } else {
                 cw_writeln!(
                     w,
@@ -182,14 +186,23 @@ fn generate_client_method(
                         unreachable!()
                     };
 
-                    w.writeln("var offset = 0").unwrap();
+                    cw_writeln!(w, "var {cursor_var} = 0").unwrap();
                     w.writeln("do {").unwrap();
                     {
                         let _indent = w.indent();
-                        w.writeln("try decodeRpcResult(from: response, offset: &offset)")
-                            .unwrap();
+                        cw_writeln!(
+                            w,
+                            "try decodeRpcResult(from: response, offset: &{cursor_var})"
+                        )
+                        .unwrap();
                         // Decode success value (just T, not Result<T, E>)
-                        let decode_ok = generate_decode_stmt_from(ok, "value", "", "response");
+                        let decode_ok = generate_decode_stmt_from_with_cursor(
+                            ok,
+                            "value",
+                            "",
+                            "response",
+                            &cursor_var,
+                        );
                         for line in decode_ok.lines() {
                             w.writeln(line).unwrap();
                         }
@@ -210,10 +223,15 @@ fn generate_client_method(
                             .unwrap();
                         }
                         w.writeln("}").unwrap();
-                        w.writeln("var offset = 0").unwrap();
+                        cw_writeln!(w, "var {cursor_var} = 0").unwrap();
                         // Decode error value (just E)
-                        let decode_err =
-                            generate_decode_stmt_from(err, "userError", "", "errorPayload");
+                        let decode_err = generate_decode_stmt_from_with_cursor(
+                            err,
+                            "userError",
+                            "",
+                            "errorPayload",
+                            &cursor_var,
+                        );
                         for line in decode_err.lines() {
                             w.writeln(line).unwrap();
                         }
@@ -222,11 +240,19 @@ fn generate_client_method(
                     w.writeln("}").unwrap();
                 } else {
                     // Infallible method: just decode success
-                    w.writeln("var offset = 0").unwrap();
-                    w.writeln("try decodeRpcResult(from: response, offset: &offset)")
-                        .unwrap();
-                    let decode_stmt =
-                        generate_decode_stmt_from(method.return_type, "result", "", "response");
+                    cw_writeln!(w, "var {cursor_var} = 0").unwrap();
+                    cw_writeln!(
+                        w,
+                        "try decodeRpcResult(from: response, offset: &{cursor_var})"
+                    )
+                    .unwrap();
+                    let decode_stmt = generate_decode_stmt_from_with_cursor(
+                        method.return_type,
+                        "result",
+                        "",
+                        "response",
+                        &cursor_var,
+                    );
                     for line in decode_stmt.lines() {
                         w.writeln(line).unwrap();
                     }
@@ -260,6 +286,7 @@ fn generate_streaming_client_body(
     method: &MethodDetail,
     service_name: &str,
     method_id_name: &str,
+    cursor_var: &str,
 ) {
     let service_name_lower = service_name.to_lower_camel_case();
 
@@ -315,9 +342,12 @@ fn generate_streaming_client_body(
             hex_u64(method_id)
         )
         .unwrap();
-        w.writeln("var offset = 0").unwrap();
-        w.writeln("try decodeRpcResult(from: response, offset: &offset)")
-            .unwrap();
+        cw_writeln!(w, "var {cursor_var} = 0").unwrap();
+        cw_writeln!(
+            w,
+            "try decodeRpcResult(from: response, offset: &{cursor_var})"
+        )
+        .unwrap();
     } else {
         cw_writeln!(
             w,
@@ -335,13 +365,17 @@ fn generate_streaming_client_body(
                 unreachable!()
             };
 
-            w.writeln("var offset = 0").unwrap();
+            cw_writeln!(w, "var {cursor_var} = 0").unwrap();
             w.writeln("do {").unwrap();
             {
                 let _indent = w.indent();
-                w.writeln("try decodeRpcResult(from: response, offset: &offset)")
-                    .unwrap();
-                let decode_ok = generate_decode_stmt_from(ok, "value", "", "response");
+                cw_writeln!(
+                    w,
+                    "try decodeRpcResult(from: response, offset: &{cursor_var})"
+                )
+                .unwrap();
+                let decode_ok =
+                    generate_decode_stmt_from_with_cursor(ok, "value", "", "response", cursor_var);
                 for line in decode_ok.lines() {
                     w.writeln(line).unwrap();
                 }
@@ -362,8 +396,14 @@ fn generate_streaming_client_body(
                     .unwrap();
                 }
                 w.writeln("}").unwrap();
-                w.writeln("var offset = 0").unwrap();
-                let decode_err = generate_decode_stmt_from(err, "userError", "", "errorPayload");
+                cw_writeln!(w, "var {cursor_var} = 0").unwrap();
+                let decode_err = generate_decode_stmt_from_with_cursor(
+                    err,
+                    "userError",
+                    "",
+                    "errorPayload",
+                    cursor_var,
+                );
                 for line in decode_err.lines() {
                     w.writeln(line).unwrap();
                 }
@@ -372,17 +412,34 @@ fn generate_streaming_client_body(
             w.writeln("}").unwrap();
         } else {
             // Infallible method: just decode success
-            w.writeln("var offset = 0").unwrap();
-            w.writeln("try decodeRpcResult(from: response, offset: &offset)")
-                .unwrap();
-            let decode_stmt =
-                generate_decode_stmt_from(method.return_type, "result", "", "response");
+            cw_writeln!(w, "var {cursor_var} = 0").unwrap();
+            cw_writeln!(
+                w,
+                "try decodeRpcResult(from: response, offset: &{cursor_var})"
+            )
+            .unwrap();
+            let decode_stmt = generate_decode_stmt_from_with_cursor(
+                method.return_type,
+                "result",
+                "",
+                "response",
+                cursor_var,
+            );
             for line in decode_stmt.lines() {
                 w.writeln(line).unwrap();
             }
             w.writeln("return result").unwrap();
         }
     }
+}
+
+fn unique_decode_cursor_name(args: &[roam_schema::ArgDetail]) -> String {
+    let arg_names: Vec<String> = args.iter().map(|a| a.name.to_lower_camel_case()).collect();
+    let mut candidate = String::from("cursor");
+    while arg_names.iter().any(|name| name == &candidate) {
+        candidate.push('_');
+    }
+    candidate
 }
 
 #[cfg(test)]
@@ -409,6 +466,56 @@ mod tests {
         }
     }
 
+    fn offset_arg_service() -> ServiceDetail {
+        ServiceDetail {
+            name: Cow::Borrowed("Vfs"),
+            doc: None,
+            methods: vec![MethodDetail {
+                service_name: Cow::Borrowed("Vfs"),
+                method_name: Cow::Borrowed("read"),
+                args: vec![
+                    ArgDetail {
+                        name: Cow::Borrowed("item_id"),
+                        ty: <u64 as Facet>::SHAPE,
+                    },
+                    ArgDetail {
+                        name: Cow::Borrowed("offset"),
+                        ty: <u64 as Facet>::SHAPE,
+                    },
+                    ArgDetail {
+                        name: Cow::Borrowed("len"),
+                        ty: <u64 as Facet>::SHAPE,
+                    },
+                ],
+                return_type: <u64 as Facet>::SHAPE,
+                doc: None,
+            }],
+        }
+    }
+
+    fn cursor_arg_service() -> ServiceDetail {
+        ServiceDetail {
+            name: Cow::Borrowed("Vfs"),
+            doc: None,
+            methods: vec![MethodDetail {
+                service_name: Cow::Borrowed("Vfs"),
+                method_name: Cow::Borrowed("read"),
+                args: vec![
+                    ArgDetail {
+                        name: Cow::Borrowed("cursor"),
+                        ty: <u64 as Facet>::SHAPE,
+                    },
+                    ArgDetail {
+                        name: Cow::Borrowed("cursor_"),
+                        ty: <u64 as Facet>::SHAPE,
+                    },
+                ],
+                return_type: <u64 as Facet>::SHAPE,
+                doc: None,
+            }],
+        }
+    }
+
     #[test]
     fn test_generate_caller_protocol() {
         let service = sample_service();
@@ -428,5 +535,25 @@ mod tests {
         assert!(code.contains("EchoCaller"));
         assert!(code.contains("RoamConnection"));
         assert!(code.contains("public func echo"));
+    }
+
+    #[test]
+    fn test_client_uses_cursor_for_offset_argument() {
+        let code = generate_client_impl(&offset_arg_service());
+
+        assert!(code.contains(
+            "public func read(itemId: UInt64, offset: UInt64, len: UInt64) async throws -> UInt64"
+        ));
+        assert!(code.contains("var cursor = 0"));
+        assert!(!code.contains("var offset = 0"));
+    }
+
+    #[test]
+    fn test_client_chooses_unique_cursor_variable_name() {
+        let code = generate_client_impl(&cursor_arg_service());
+
+        assert!(code.contains("public func read("));
+        assert!(code.contains("var cursor_ = 0") || code.contains("var cursor__ = 0"));
+        assert!(!code.contains("var cursor = 0"));
     }
 }
