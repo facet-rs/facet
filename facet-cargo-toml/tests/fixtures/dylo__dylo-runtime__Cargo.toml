@@ -2,7 +2,7 @@
 name = "dylo-runtime"
 version = "2.5.1"
 edition = "2024"
-authors = ["Amos Wenger <amos@bearcove.net>"]
+authors = ["Amos Wenger <amos@bearcove.eu>"]
 description = "Dynamic library loader for con traits"
 license = "Apache-2.0 OR MIT"
 readme = "README.md"

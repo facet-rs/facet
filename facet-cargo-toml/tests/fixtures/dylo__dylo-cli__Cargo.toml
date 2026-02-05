@@ -2,7 +2,7 @@
 name = "dylo-cli"
 version = "4.7.0"
 edition = "2024"
-authors = ["Amos Wenger <amos@bearcove.net>"]
+authors = ["Amos Wenger <amos@bearcove.eu>"]
 description = "Generate dyn-compatible traits with proc macros"
 license = "Apache-2.0 OR MIT"
 readme = "README.md"
