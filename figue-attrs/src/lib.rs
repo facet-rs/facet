@@ -183,5 +183,12 @@ facet::define_attr_grammar! {
         /// }
         /// ```
         Origin(&'static str),
-    }
+        /// Specifies a custom label for the help message.
+        ///
+        /// When provided, this string is used instead of the Rust type name
+        /// in the generated help (e.g., `<MY_TYPE>` instead of `<STRING>`).
+        ///
+        /// Usage: `#[facet(args::label = "MY_TYPE")]`
+        Label(&'static str),
+   }
 }

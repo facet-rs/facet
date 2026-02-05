@@ -143,6 +143,23 @@ fn has_env_subst_all(shape: &'static Shape) -> bool {
         .any(|attr| attr.ns == Some("args") && attr.key == "env_subst_all")
 }
 
+/// Extract a custom type label from `#[facet(args::label = "...")]`.
+fn extract_label(field: &Field) -> Option<String> {
+    // Prefer typed parsing via Attr
+    if let Some(attr) = field.get_attr(Some("args"), "label") {
+        if let Some(parsed) = attr.get_as::<Attr>()
+            && let Attr::Label(s) = parsed
+        {
+            return Some(s.to_string());
+        }
+        // Fallback: direct &str if typed form isn't available
+        if let Some(s) = attr.get_as::<&str>() {
+            return Some(s.to_string());
+        }
+    }
+    None
+}
+
 /// Extract the default value from a field's `#[facet(default)]` or `#[facet(default = ...)]` attribute,
 /// serialized to ConfigValue.
 ///
@@ -880,6 +897,7 @@ fn arg_level_from_fields_with_prefix(
             docs,
             kind,
             value,
+            label: extract_label(field),
             required,
             multiple,
             default,

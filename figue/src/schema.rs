@@ -272,6 +272,9 @@ pub struct ArgSchema {
     /// Value shape (including Option/Vec wrappers).
     value: ValueSchema,
 
+    /// Type description for help messages.
+    label: Option<String>,
+
     /// Whether the argument is required on the CLI.
     /// Set when the field is non-optional, has no default, is not a bool flag,
     /// and is not an optional subcommand.
@@ -622,6 +625,11 @@ impl ArgSchema {
     /// Get the documentation for this argument.
     pub fn docs(&self) -> &Docs {
         &self.docs
+    }
+
+    /// Get the custom type description for this argument, if any.
+    pub fn label(&self) -> Option<&str> {
+        self.label.as_deref()
     }
 
     /// Get the default value for this argument, if any.

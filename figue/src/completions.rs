@@ -3,7 +3,6 @@
 //! This module generates completion scripts for various shells (bash, zsh, fish)
 //! based on Schema metadata built from Facet types.
 
-use facet_core::Facet;
 use heck::ToKebabCase;
 use std::string::String;
 use std::vec::Vec;
@@ -22,19 +21,11 @@ pub enum Shell {
     Fish,
 }
 
-/// Generate shell completion script for a Facet type.
-///
-/// This is a convenience function that builds a Schema internally.
-/// If you already have a Schema, use `generate_completions_for_schema` instead.
-pub fn generate_completions<T: Facet<'static>>(shell: Shell, program_name: &str) -> String {
-    generate_completions_for_shape(T::SHAPE, shell, program_name)
-}
-
 /// Generate shell completion script for a shape.
 ///
 /// This is a convenience function that builds a Schema internally.
-/// If you already have a Schema, use `generate_completions_for_schema` instead.
-pub fn generate_completions_for_shape(
+/// If you already have a Schema, use [generate_completions_for_schema] instead.
+pub(crate) fn generate_completions_for_shape(
     shape: &'static facet_core::Shape,
     shell: Shell,
     program_name: &str,
@@ -50,7 +41,7 @@ pub fn generate_completions_for_shape(
     generate_completions_for_schema(&schema, shell, program_name)
 }
 
-/// Generate shell completion script from a Schema.
+/// Generate shell completion script from a [Schema].
 pub fn generate_completions_for_schema(
     schema: &Schema,
     shell: Shell,

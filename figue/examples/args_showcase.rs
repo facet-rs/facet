@@ -43,7 +43,7 @@ struct SimpleArgs {
     verbose: bool,
 
     /// Number of parallel jobs to run
-    #[facet(default, args::named, args::short = 'j')]
+    #[facet(default, args::named, args::short = 'j', args::label = "count")]
     jobs: Option<usize>,
 
     /// Input file to process
@@ -193,15 +193,6 @@ fn main() {
     showcase_help_simple(&mut runner);
     showcase_help_auto_detection(&mut runner);
     showcase_help_subcommands(&mut runner);
-
-    // =========================================================================
-    // PART 3: Shell Completions
-    // =========================================================================
-    runner.section("Shell Completions");
-
-    showcase_completions_bash(&mut runner);
-    showcase_completions_zsh(&mut runner);
-    showcase_completions_fish(&mut runner);
 
     // =========================================================================
     // PART 4: Error Diagnostics
@@ -366,43 +357,6 @@ fn showcase_help_subcommands(runner: &mut ShowcaseRunner) {
         .description("Help text automatically lists available subcommands with descriptions.")
         .target_type::<GitLikeArgs>()
         .ansi_output(&help)
-        .finish();
-}
-
-// =============================================================================
-// Shell Completion Scenarios
-// =============================================================================
-
-fn showcase_completions_bash(runner: &mut ShowcaseRunner) {
-    let completions = args::generate_completions::<BuildArgs>(args::Shell::Bash, "cargo-build");
-
-    runner
-        .scenario("Bash Completions")
-        .description("Generated Bash completion script for tab-completion support.")
-        .target_type::<BuildArgs>()
-        .serialized_output(Language::Plain, &completions)
-        .finish();
-}
-
-fn showcase_completions_zsh(runner: &mut ShowcaseRunner) {
-    let completions = args::generate_completions::<BuildArgs>(args::Shell::Zsh, "cargo-build");
-
-    runner
-        .scenario("Zsh Completions")
-        .description("Generated Zsh completion script with argument descriptions.")
-        .target_type::<BuildArgs>()
-        .serialized_output(Language::Plain, &completions)
-        .finish();
-}
-
-fn showcase_completions_fish(runner: &mut ShowcaseRunner) {
-    let completions = args::generate_completions::<BuildArgs>(args::Shell::Fish, "cargo-build");
-
-    runner
-        .scenario("Fish Completions")
-        .description("Generated Fish shell completion script.")
-        .target_type::<BuildArgs>()
-        .serialized_output(Language::Plain, &completions)
         .finish();
 }
 
