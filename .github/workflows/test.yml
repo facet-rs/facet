@@ -195,7 +195,7 @@ jobs:
           cargo clippy --workspace --all-features --all-targets --keep-going -- -D warnings --allow deprecated
 
   test-aarch64-apple-darwin:
-    runs-on: mac-arm64-oakhost
+    runs-on: depot-macos-15
     steps:
       - uses: actions/checkout@v5
 
