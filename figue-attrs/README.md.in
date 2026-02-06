@@ -2,7 +2,7 @@
 
 [![crates.io](https://img.shields.io/crates/v/figue-attrs.svg)](https://crates.io/crates/figue-attrs)
 [![documentation](https://docs.rs/figue-attrs/badge.svg)](https://docs.rs/figue-attrs)
-[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/figue-attrs.svg)](./LICENSE)
+[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/figue-attrs.svg)](../../LICENSE-MIT)
 
 Attribute macros for [figue](https://crates.io/crates/figue) CLI argument parsing.
 

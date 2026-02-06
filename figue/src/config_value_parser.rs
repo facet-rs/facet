@@ -1029,7 +1029,7 @@ pub(crate) fn serialize_default_to_config_value(
                         format!("Shape {} has no default function", shape.type_identifier)
                     })?;
                     // Direct ops default: unsafe fn(*mut ()) - initializes in place, no return value
-                    unsafe { (default_fn)(ptr) };
+                    unsafe { default_fn(ptr) };
                 }
                 TypeOps::Indirect(_) => {
                     Err(
@@ -1792,7 +1792,7 @@ mod tests {
 
     #[test]
     fn test_parse_object_with_fields() {
-        let mut map = indexmap::IndexMap::default();
+        let mut map = IndexMap::default();
         map.insert(
             "name".to_string(),
             ConfigValue::String(Sourced::new("Alice".to_string())),
@@ -1878,7 +1878,7 @@ mod tests {
             enabled: bool,
         }
 
-        let mut map = indexmap::IndexMap::default();
+        let mut map = IndexMap::default();
         map.insert("port".to_string(), ConfigValue::Integer(Sourced::new(8080)));
         map.insert("enabled".to_string(), ConfigValue::Bool(Sourced::new(true)));
 
@@ -1906,14 +1906,14 @@ mod tests {
         }
 
         // Build nested config value
-        let mut smtp_map = indexmap::IndexMap::default();
+        let mut smtp_map = IndexMap::default();
         smtp_map.insert(
             "host".to_string(),
             ConfigValue::String(Sourced::new("smtp.example.com".to_string())),
         );
         smtp_map.insert("port".to_string(), ConfigValue::Integer(Sourced::new(587)));
 
-        let mut server_map = indexmap::IndexMap::default();
+        let mut server_map = IndexMap::default();
         server_map.insert("port".to_string(), ConfigValue::Integer(Sourced::new(8080)));
         server_map.insert(
             "smtp".to_string(),
@@ -1944,7 +1944,7 @@ mod tests {
         }
 
         // Input has port but not enabled
-        let mut map = indexmap::IndexMap::default();
+        let mut map = IndexMap::default();
         map.insert("port".to_string(), ConfigValue::Integer(Sourced::new(8080)));
         let input = ConfigValue::Object(Sourced::new(map));
 
@@ -1987,7 +1987,7 @@ mod tests {
         }
 
         // Input has only name - common fields should be flattened as defaults
-        let mut map = indexmap::IndexMap::default();
+        let mut map = IndexMap::default();
         map.insert(
             "name".to_string(),
             ConfigValue::String(Sourced::new("test".to_string())),
@@ -2040,7 +2040,7 @@ mod tests {
         }
 
         // Input has name and verbose (already provided)
-        let mut map = indexmap::IndexMap::default();
+        let mut map = IndexMap::default();
         map.insert(
             "name".to_string(),
             ConfigValue::String(Sourced::new("test".to_string())),
@@ -2093,14 +2093,14 @@ mod tests {
         }
 
         // Input: command is present, builtins fields should be flattened
-        let mut fields = indexmap::IndexMap::default();
+        let mut fields = IndexMap::default();
         fields.insert("release".to_string(), ConfigValue::Bool(Sourced::new(true)));
         let enum_value = ConfigValue::Enum(Sourced::new(crate::config_value::EnumValue {
             variant: "Build".to_string(),
             fields,
         }));
 
-        let mut map = indexmap::IndexMap::default();
+        let mut map = IndexMap::default();
         map.insert("command".to_string(), enum_value);
         let input = ConfigValue::Object(Sourced::new(map));
 
@@ -2179,7 +2179,7 @@ mod fill_defaults_tests {
 
     #[test]
     fn test_fill_defaults_simple_struct() {
-        let input = ConfigValue::Object(Sourced::new(indexmap::IndexMap::default()));
+        let input = ConfigValue::Object(Sourced::new(IndexMap::default()));
         let result = fill_defaults_from_shape(&input, SimpleStruct::SHAPE);
 
         if let ConfigValue::Object(obj) = result {
@@ -2241,7 +2241,7 @@ mod fill_defaults_tests {
 
     #[test]
     fn test_fill_defaults_enum_struct_variant() {
-        let fields = indexmap::IndexMap::default();
+        let fields = IndexMap::default();
         let input = ConfigValue::Enum(Sourced::new(crate::config_value::EnumValue {
             variant: "Variant".to_string(),
             fields,
@@ -2272,7 +2272,7 @@ mod fill_defaults_tests {
     #[test]
     fn test_fill_defaults_enum_tuple_variant() {
         // Tuple variant fields should be flattened - payload_flag at top level, not under "0"
-        let fields = indexmap::IndexMap::default();
+        let fields = IndexMap::default();
         let input = ConfigValue::Enum(Sourced::new(crate::config_value::EnumValue {
             variant: "TupleVar".to_string(),
             fields,
@@ -2316,7 +2316,7 @@ mod fill_defaults_tests {
 
     #[test]
     fn test_fill_defaults_enum_flatten_in_variant() {
-        let fields = indexmap::IndexMap::default();
+        let fields = IndexMap::default();
         let input = ConfigValue::Enum(Sourced::new(crate::config_value::EnumValue {
             variant: "Cmd".to_string(),
             fields,
@@ -2367,7 +2367,7 @@ mod fill_defaults_tests {
 
     #[test]
     fn test_fill_defaults_deep_flatten() {
-        let input = ConfigValue::Object(Sourced::new(indexmap::IndexMap::default()));
+        let input = ConfigValue::Object(Sourced::new(IndexMap::default()));
         let result = fill_defaults_from_shape(&input, DeepFlattenStruct::SHAPE);
 
         if let ConfigValue::Object(obj) = result {
@@ -2409,7 +2409,7 @@ mod fill_defaults_tests {
     #[test]
     fn test_fill_defaults_renamed_variant() {
         // ConfigValue uses effective name "ls", not "List"
-        let fields = indexmap::IndexMap::default();
+        let fields = IndexMap::default();
         let input = ConfigValue::Enum(Sourced::new(crate::config_value::EnumValue {
             variant: "ls".to_string(), // effective name
             fields,
