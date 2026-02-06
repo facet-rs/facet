@@ -573,7 +573,7 @@ impl FileConfigBuilder {
     /// Register an additional config file format.
     ///
     /// By default, JSON is supported. Use this to add TOML, YAML, or custom formats.
-    /// See [`ConfigFormat`](crate::ConfigFormat) for implementing custom formats.
+    /// See [`ConfigFormat`] for implementing custom formats.
     pub fn format<F: ConfigFormat + 'static>(mut self, format: F) -> Self {
         self.config.registry.register(format);
         self

@@ -2,7 +2,6 @@ use std::borrow::Cow;
 
 use ariadne::{Color, Label, Report, ReportKind, Source};
 use facet_core::Shape;
-use facet_error as _;
 use facet_pretty::{PathSegment, format_shape_with_spans};
 
 use crate::{

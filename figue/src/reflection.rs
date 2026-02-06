@@ -2,7 +2,7 @@ use crate::config_value::{ConfigValue, Sourced};
 
 /// Coerce ConfigValue types based on the target shape.
 /// This is needed because environment variables always come in as strings,
-/// but we want to display them with their proper types (int, bool, etc).
+/// but we want to display them with their proper types (int, bool, etc.).
 pub(crate) fn coerce_types_from_shape(
     value: &ConfigValue,
     shape: &'static facet_core::Shape,

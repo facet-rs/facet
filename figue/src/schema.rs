@@ -799,7 +799,7 @@ impl ValueSchema {
         }
     }
 
-    /// Unwrap Option wrapper if present, returning the inner schema.
+    /// Unwrap [Option] wrapper if present, returning the inner schema.
     pub fn inner_if_option(&self) -> &ValueSchema {
         match self {
             ValueSchema::Option { value, .. } => value.as_ref(),
@@ -808,7 +808,7 @@ impl ValueSchema {
     }
 
     /// Get the type identifier for display purposes (e.g., "STRING", "U16").
-    /// Returns the innermost type's identifier, unwrapping Option/Vec.
+    /// Returns the innermost type's identifier, unwrapping [Option]/[Vec].
     pub fn type_identifier(&self) -> &'static str {
         match self {
             ValueSchema::Leaf(leaf) => leaf.shape.type_identifier,
@@ -824,7 +824,7 @@ impl ValueSchema {
     }
 
     /// Get enum variants if this is an enum type.
-    /// Returns None for non-enum types.
+    /// Returns [None] for non-enum types.
     pub fn enum_variants(&self) -> Option<&[String]> {
         match self {
             ValueSchema::Leaf(LeafSchema {
