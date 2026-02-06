@@ -13,6 +13,13 @@ public enum Hello: Sendable {
     case v4(maxPayloadSize: UInt32, initialChannelCredit: UInt32)
 }
 
+/// Returns a Hello message using the current protocol version with default parameters.
+///
+/// r[impl message.hello.version] - Use v4 protocol defaults.
+public func defaultHello() -> Hello {
+    .v4(maxPayloadSize: 1024 * 1024, initialChannelCredit: 64 * 1024)
+}
+
 extension Hello {
     public var maxPayloadSize: UInt32 {
         switch self {

@@ -203,9 +203,6 @@ func runServer() async throws {
     let transport = try await connect(host: host, port: port)
     log("connected")
 
-    // r[impl message.hello.version] - Use v4 protocol defaults.
-    let hello = Hello.v4(maxPayloadSize: 1024 * 1024, initialChannelCredit: 64 * 1024)
-
     // r[impl core.conn.accept-required] - Check if we should accept incoming virtual connections.
     let acceptConnections = ProcessInfo.processInfo.environment["ACCEPT_CONNECTIONS"] == "1"
 
@@ -214,7 +211,6 @@ func runServer() async throws {
 
     let (_, driver) = try await establishAcceptor(
         transport: transport,
-        ourHello: hello,
         dispatcher: dispatcher,
         acceptConnections: acceptConnections
     )
@@ -249,14 +245,11 @@ func runClient() async throws {
     let transport = try await connect(host: host, port: port)
     log("connected")
 
-    // r[impl message.hello.version] - Use v4 protocol defaults.
-    let hello = Hello.v4(maxPayloadSize: 1024 * 1024, initialChannelCredit: 64 * 1024)
     let handler = TestbedService()
     let dispatcher = TestbedDispatcherAdapter(handler: handler)
 
     let (handle, driver) = try await establishInitiator(
         transport: transport,
-        ourHello: hello,
         dispatcher: dispatcher
     )
 

@@ -564,10 +564,10 @@ public enum ConnectionError: Error {
 /// r[impl call.initiate] - Initiator can start calls after Hello exchange.
 public func establishInitiator(
     transport: any MessageTransport,
-    ourHello: Hello,
     dispatcher: any ServiceDispatcher,
     acceptConnections: Bool = false
 ) async throws -> (ConnectionHandle, Driver) {
+    let ourHello = defaultHello()
     // Send our hello
     try await transport.send(.hello(ourHello))
 
@@ -615,10 +615,10 @@ public func establishInitiator(
 /// r[impl message.hello.timing] - Send Hello immediately on connection.
 public func establishAcceptor(
     transport: any MessageTransport,
-    ourHello: Hello,
     dispatcher: any ServiceDispatcher,
     acceptConnections: Bool = false
 ) async throws -> (ConnectionHandle, Driver) {
+    let ourHello = defaultHello()
     // Send our hello immediately
     try await transport.send(.hello(ourHello))
 
