@@ -10,7 +10,7 @@ import {
   MetadataValueDiscriminant,
   HelloDiscriminant,
   // Factory functions
-  helloV3,
+  helloV4,
   MetadataFlags,
   metadataString,
   metadataBytes,
@@ -72,7 +72,7 @@ describe("wire discriminants", () => {
   it("has correct Hello discriminants", () => {
     expect(HelloDiscriminant.V1).toBe(0);
     expect(HelloDiscriminant.V2).toBe(1);
-    expect(HelloDiscriminant.V3).toBe(2);
+    expect(HelloDiscriminant.V4).toBe(3);
   });
 });
 
@@ -82,9 +82,9 @@ describe("wire discriminants", () => {
 
 describe("factory functions", () => {
   describe("Hello", () => {
-    it("creates Hello.V3", () => {
-      const hello = helloV3(65536, 1024);
-      expect(hello.tag).toBe("V3");
+    it("creates Hello.V4", () => {
+      const hello = helloV4(65536, 1024);
+      expect(hello.tag).toBe("V4");
       expect(hello.maxPayloadSize).toBe(65536);
       expect(hello.initialChannelCredit).toBe(1024);
     });
@@ -113,7 +113,7 @@ describe("factory functions", () => {
 
   describe("Message", () => {
     it("creates Message.Hello", () => {
-      const hello = helloV3(65536, 1024);
+      const hello = helloV4(65536, 1024);
       const msg = messageHello(hello);
       expect(msg.tag).toBe("Hello");
       if (msg.tag === "Hello") {
@@ -214,8 +214,8 @@ describe("wire schemas", () => {
     expect(HelloSchema.variants[0].discriminant).toBe(0);
     expect(HelloSchema.variants[1].name).toBe("V2");
     expect(HelloSchema.variants[1].discriminant).toBe(1);
-    expect(HelloSchema.variants[2].name).toBe("V3");
-    expect(HelloSchema.variants[2].discriminant).toBe(2);
+    expect(HelloSchema.variants[2].name).toBe("V4");
+    expect(HelloSchema.variants[2].discriminant).toBe(3);
   });
 
   it("MetadataValueSchema has correct structure", () => {
@@ -282,15 +282,15 @@ describe("wire schemas", () => {
 // ============================================================================
 
 describe("Hello codec", () => {
-  it("roundtrips Hello.V3", () => {
-    const hello = helloV3(65536, 1024);
+  it("roundtrips Hello.V4", () => {
+    const hello = helloV4(65536, 1024);
     const encoded = encodeHello(hello);
     const decoded = decodeHello(encoded);
     expect(decoded.value).toEqual(hello);
     expect(decoded.next).toBe(encoded.length);
   });
 
-  it("roundtrips Hello.V3 with different values", () => {
+  it("roundtrips Hello.V4 with different values", () => {
     const testCases = [
       { maxPayloadSize: 0, initialChannelCredit: 0 },
       { maxPayloadSize: 1, initialChannelCredit: 1 },
@@ -299,17 +299,17 @@ describe("Hello codec", () => {
     ];
 
     for (const { maxPayloadSize, initialChannelCredit } of testCases) {
-      const hello = helloV3(maxPayloadSize, initialChannelCredit);
+      const hello = helloV4(maxPayloadSize, initialChannelCredit);
       const encoded = encodeHello(hello);
       const decoded = decodeHello(encoded);
       expect(decoded.value).toEqual(hello);
     }
   });
 
-  it("encodes Hello.V3 with discriminant 2", () => {
-    const hello = helloV3(65536, 1024);
+  it("encodes Hello.V4 with discriminant 3", () => {
+    const hello = helloV4(65536, 1024);
     const encoded = encodeHello(hello);
-    expect(encoded[0]).toBe(2); // First byte is discriminant
+    expect(encoded[0]).toBe(3); // First byte is discriminant
   });
 });
 
@@ -416,14 +416,14 @@ describe("MetadataEntry codec", () => {
 describe("Message codec", () => {
   describe("Message.Hello", () => {
     it("roundtrips", () => {
-      const msg = messageHello(helloV3(65536, 1024));
+      const msg = messageHello(helloV4(65536, 1024));
       const encoded = encodeMessage(msg);
       const decoded = decodeMessage(encoded);
       expect(decoded.value).toEqual(msg);
     });
 
     it("encodes with discriminant 0", () => {
-      const msg = messageHello(helloV3(65536, 1024));
+      const msg = messageHello(helloV4(65536, 1024));
       const encoded = encodeMessage(msg);
       expect(encoded[0]).toBe(0);
     });
@@ -613,7 +613,7 @@ describe("multiple messages codec", () => {
 
   it("encodes and decodes multiple messages", () => {
     const messages: Message[] = [
-      messageHello(helloV3(65536, 1024)),
+      messageHello(helloV4(65536, 1024)),
       messageRequest(1n, 100n, new Uint8Array([1, 2, 3])),
       messageResponse(1n, new Uint8Array([4, 5, 6])),
       messageData(10n, new Uint8Array([7, 8, 9])),
@@ -627,7 +627,7 @@ describe("multiple messages codec", () => {
 
   it("encodes and decodes all message types", () => {
     const messages: Message[] = [
-      messageHello(helloV3(1000, 100)),
+      messageHello(helloV4(1000, 100)),
       messageGoodbye("reason"),
       messageRequest(1n, 2n, new Uint8Array([1])),
       messageResponse(1n, new Uint8Array([2])),

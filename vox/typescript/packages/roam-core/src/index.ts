@@ -7,7 +7,6 @@ export {
   decodeVarint,
   decodeVarintNumber,
 } from "../../roam-postcard/src/binary/varint.ts";
-export { cobsEncode, cobsDecode } from "../../roam-postcard/src/binary/cobs.ts";
 export { concat } from "../../roam-postcard/src/binary/bytes.ts";
 
 // Postcard encoding/decoding - comprehensive type support
@@ -81,7 +80,7 @@ export {
 // Wire types, schemas, and codec
 export type {
   Hello,
-  HelloV3,
+  HelloV4,
   MetadataValue,
   MetadataValueString,
   MetadataValueBytes,
@@ -110,7 +109,7 @@ export {
   // Metadata flags
   MetadataFlags,
   // Wire factory functions
-  helloV3,
+  helloV4,
   metadataString,
   metadataBytes,
   metadataU64,

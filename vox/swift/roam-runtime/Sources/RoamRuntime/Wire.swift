@@ -10,19 +10,20 @@ public enum Hello: Sendable {
     case v1(maxPayloadSize: UInt32, initialChannelCredit: UInt32)
     case v2(maxPayloadSize: UInt32, initialChannelCredit: UInt32)
     case v3(maxPayloadSize: UInt32, initialChannelCredit: UInt32)
+    case v4(maxPayloadSize: UInt32, initialChannelCredit: UInt32)
 }
 
 extension Hello {
     public var maxPayloadSize: UInt32 {
         switch self {
-        case .v1(let size, _), .v2(let size, _), .v3(let size, _):
+        case .v1(let size, _), .v2(let size, _), .v3(let size, _), .v4(let size, _):
             return size
         }
     }
 
     public var initialChannelCredit: UInt32 {
         switch self {
-        case .v1(_, let credit), .v2(_, let credit), .v3(_, let credit):
+        case .v1(_, let credit), .v2(_, let credit), .v3(_, let credit), .v4(_, let credit):
             return credit
         }
     }
@@ -47,6 +48,12 @@ extension Hello {
             out += encodeVarint(UInt64(maxPayload))
             out += encodeVarint(UInt64(initialCredit))
             return out
+        case .v4(let maxPayload, let initialCredit):
+            var out: [UInt8] = []
+            out += encodeVarint(3)  // V4 discriminant
+            out += encodeVarint(UInt64(maxPayload))
+            out += encodeVarint(UInt64(initialCredit))
+            return out
         }
     }
 
@@ -65,6 +72,10 @@ extension Hello {
             let maxPayload = try decodeVarintU32(from: data, offset: &offset)
             let initialCredit = try decodeVarintU32(from: data, offset: &offset)
             return .v3(maxPayloadSize: maxPayload, initialChannelCredit: initialCredit)
+        case 3:
+            let maxPayload = try decodeVarintU32(from: data, offset: &offset)
+            let initialCredit = try decodeVarintU32(from: data, offset: &offset)
+            return .v4(maxPayloadSize: maxPayload, initialChannelCredit: initialCredit)
         default:
             throw WireError.unknownHelloVariant
         }
@@ -110,7 +121,7 @@ public typealias MetadataEntry = (key: String, value: MetadataValue, flags: UInt
 
 // MARK: - Message
 
-/// Wire protocol message types (v3 protocol).
+/// Wire protocol message types (v4 protocol).
 ///
 /// r[impl wire.message-types] - All wire message types.
 /// r[impl core.call] - Request/Response messages implement the call abstraction.
@@ -167,7 +178,7 @@ public enum Message: Sendable {
 }
 
 extension Message {
-    /// Encode a message to bytes (without COBS framing).
+    /// Encode a message to bytes (without transport framing).
     public func encode() -> [UInt8] {
         switch self {
         case .hello(let hello):
@@ -261,7 +272,7 @@ extension Message {
         }
     }
 
-    /// Decode a message from bytes (without COBS framing).
+    /// Decode a message from bytes (without transport framing).
     public static func decode(from data: Data) throws -> Message {
         guard !data.isEmpty else {
             throw WireError.truncated

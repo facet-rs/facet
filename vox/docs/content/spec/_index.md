@@ -6,7 +6,7 @@ weight = 10
 
 # Introduction
 
-This is roam specification v3.0.0, last updated January 28, 2026. It canonically
+This is roam specification v4.0.0, last updated February 6, 2026. It canonically
 lives at <https://github.com/bearcove/roam> — where you can get the latest version.
 
 roam is a **Rust-native** RPC protocol. We don't claim to be language-neutral —
@@ -1087,8 +1087,8 @@ roam uses credit-based flow control for channels on all transports.
 > Credits are measured in bytes. The byte count for a channel element is
 > the length of its [^POSTCARD] encoding — the same bytes that appear in
 > `Data.payload`, or on multi-stream transports, the bytes written to the
-> dedicated transport stream before [^COBS] framing. Framing overhead
-> ([^COBS], transport headers) is NOT counted.
+> dedicated transport stream before length-prefix framing. Framing overhead
+> (length-prefix header, transport headers) is NOT counted.
 
 ### Initial Credit
 
@@ -1247,7 +1247,7 @@ type, and each variant contains only the fields it needs.
 > r[message.decode-error]
 >
 > If a peer cannot decode a received message (invalid [^POSTCARD] encoding,
-> [^COBS] framing error, or malformed fields), it MUST send a Goodbye
+> length-prefix framing error, or malformed fields), it MUST send a Goodbye
 > message (reason: `message.decode-error`) and close the connection.
 
 ## Message Types
@@ -1276,7 +1276,7 @@ type, and each variant contains only the fields it needs.
 
 ```rust
 enum Hello {
-    V3 {
+    V4 {
         max_payload_size: u32,
         initial_channel_credit: u32,
     },
@@ -1413,7 +1413,7 @@ Different transports require different handling:
 |------|---------|---------|---------|
 | Message | WebSocket | Transport provides | All in one |
 | Multi-stream | QUIC | Per stream | Can map to transport streams |
-| Byte stream | TCP | [^COBS] | All in one |
+| Byte stream | TCP | 4-byte length prefix | All in one |
 
 ## Message Transports
 
@@ -1447,13 +1447,13 @@ implemented.
 
 Byte stream transports (like TCP) provide a single ordered byte stream.
 
-> r[transport.bytestream.cobs]
+> r[transport.bytestream.length-prefix]
 >
-> Messages MUST be framed using [^COBS]. Each message MUST be followed by
-> a 0x00 delimiter byte.
+> Messages MUST be framed using a 4-byte little-endian length prefix
+> followed by exactly that many message bytes.
 > 
 > ```
-> [COBS-encoded message][0x00][COBS-encoded message][0x00]...
+> [len: u32 LE][message bytes][len: u32 LE][message bytes]...
 > ```
 
 All messages flow through the single byte stream. The `channel_id` field
@@ -1760,5 +1760,3 @@ the connection can continue serving other channels.
 [^RUST-SPEC]: roam Rust Implementation Specification - <@/rust-spec/_index.md>
 
 [^SHM-SPEC]: roam Shared Memory Transport Specification - <@/shm-spec/_index.md>
-
-[^COBS]: Consistent Overhead Byte Stuffing - <https://en.wikipedia.org/wiki/Consistent_Overhead_Byte_Stuffing>

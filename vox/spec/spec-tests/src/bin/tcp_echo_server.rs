@@ -1,11 +1,10 @@
-//! TCP server for cross-language testing.
+//! Rust TCP server for cross-language testing.
 //!
 //! Listens on a TCP port and handles Testbed service requests.
 //! Used to test clients in other languages against a Rust server.
 //!
 //! This is a wire-level implementation that does not use any roam runtime types.
 
-use cobs::{decode_vec as cobs_decode_vec, encode_vec as cobs_encode_vec};
 use facet::Facet;
 use roam_wire::{Hello, Message};
 use spec_tests::testbed::method_id;
@@ -14,12 +13,12 @@ use std::io::ErrorKind;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
-struct CobsFramed {
+struct LengthPrefixedFramed {
     stream: TcpStream,
     buf: Vec<u8>,
 }
 
-impl CobsFramed {
+impl LengthPrefixedFramed {
     fn new(stream: TcpStream) -> Self {
         Self {
             stream,
@@ -30,32 +29,39 @@ impl CobsFramed {
     async fn send(&mut self, msg: &Message) -> std::io::Result<()> {
         let payload = facet_postcard::to_vec(msg)
             .map_err(|e| std::io::Error::new(ErrorKind::InvalidData, e.to_string()))?;
-        let mut framed = cobs_encode_vec(&payload);
-        framed.push(0x00);
-        self.stream.write_all(&framed).await?;
+        let len = u32::try_from(payload.len())
+            .map_err(|_| std::io::Error::new(ErrorKind::InvalidInput, "frame too large"))?
+            .to_le_bytes();
+        self.stream.write_all(&len).await?;
+        self.stream.write_all(&payload).await?;
         self.stream.flush().await
     }
 
     async fn recv(&mut self) -> std::io::Result<Option<Message>> {
         loop {
-            if let Some(idx) = self.buf.iter().position(|b| *b == 0x00) {
-                let frame = self.buf.drain(..idx).collect::<Vec<_>>();
-                self.buf.drain(..1);
-                if frame.is_empty() {
-                    continue;
+            if self.buf.len() >= 4 {
+                let len = u32::from_le_bytes([self.buf[0], self.buf[1], self.buf[2], self.buf[3]])
+                    as usize;
+                let needed = 4 + len;
+                if self.buf.len() >= needed {
+                    let frame = self.buf[4..needed].to_vec();
+                    self.buf.drain(..needed);
+                    let msg: Message = facet_postcard::from_slice(&frame).map_err(|e| {
+                        std::io::Error::new(ErrorKind::InvalidData, format!("postcard: {e}"))
+                    })?;
+                    return Ok(Some(msg));
                 }
-                let decoded = cobs_decode_vec(&frame).map_err(|e| {
-                    std::io::Error::new(ErrorKind::InvalidData, format!("cobs: {e}"))
-                })?;
-                let msg: Message = facet_postcard::from_slice(&decoded).map_err(|e| {
-                    std::io::Error::new(ErrorKind::InvalidData, format!("postcard: {e}"))
-                })?;
-                return Ok(Some(msg));
             }
             let mut tmp = [0u8; 4096];
             let n = self.stream.read(&mut tmp).await?;
             if n == 0 {
-                return Ok(None);
+                if self.buf.is_empty() {
+                    return Ok(None);
+                }
+                return Err(std::io::Error::new(
+                    ErrorKind::UnexpectedEof,
+                    format!("eof with {} trailing bytes", self.buf.len()),
+                ));
             }
             self.buf.extend_from_slice(&tmp[..n]);
         }
@@ -63,10 +69,10 @@ impl CobsFramed {
 }
 
 async fn handle_connection(stream: TcpStream) -> Result<(), Box<dyn std::error::Error>> {
-    let mut io = CobsFramed::new(stream);
+    let mut io = LengthPrefixedFramed::new(stream);
 
     // Send our Hello
-    let our_hello = Hello::V3 {
+    let our_hello = Hello::V4 {
         max_payload_size: 1024 * 1024,
         initial_channel_credit: 64 * 1024,
     };
@@ -75,10 +81,10 @@ async fn handle_connection(stream: TcpStream) -> Result<(), Box<dyn std::error::
     // Wait for client Hello
     let msg = io.recv().await?.ok_or("expected Hello")?;
     let _negotiated_max = match msg {
-        Message::Hello(Hello::V3 {
+        Message::Hello(Hello::V4 {
             max_payload_size, ..
         }) => max_payload_size,
-        _ => return Err("expected Hello::V3".into()),
+        _ => return Err("expected Hello::V4".into()),
     };
 
     // Handle requests
@@ -220,32 +226,17 @@ fn dispatch_method(method: u64, payload: &[u8]) -> Result<Vec<u8>, Box<dyn std::
 }
 
 #[tokio::main]
-async fn main() {
-    let port = env::var("TCP_PORT").unwrap_or_else(|_| "9001".to_string());
-    let addr = format!("127.0.0.1:{}", port);
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let addr = env::var("SERVER_ADDR").unwrap_or_else(|_| "127.0.0.1:0".to_string());
+    let listener = TcpListener::bind(&addr).await?;
+    let local_addr = listener.local_addr()?;
 
-    let listener = TcpListener::bind(&addr).await.unwrap();
-    eprintln!("TCP server listening on {}", addr);
+    // Print actual address for test harness to capture
+    println!("LISTENING:{}", local_addr);
 
-    // Print port on stdout for test harness
-    println!("{}", port);
+    // Accept one connection and handle it
+    let (stream, _peer) = listener.accept().await?;
+    handle_connection(stream).await?;
 
-    loop {
-        let (stream, peer) = match listener.accept().await {
-            Ok(conn) => conn,
-            Err(e) => {
-                eprintln!("Accept error: {}", e);
-                continue;
-            }
-        };
-
-        eprintln!("New connection from {}", peer);
-
-        tokio::spawn(async move {
-            if let Err(e) = handle_connection(stream).await {
-                eprintln!("Connection error: {:?}", e);
-            }
-            eprintln!("Connection closed: {}", peer);
-        });
-    }
+    Ok(())
 }

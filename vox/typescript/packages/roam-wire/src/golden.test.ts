@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   type MetadataEntry,
-  helloV3,
+  helloV4,
   metadataString,
   MetadataFlags,
   messageHello,
@@ -56,9 +56,9 @@ function hexDump(bytes: Uint8Array): string {
 
 describe("Hello golden vectors", () => {
   it("encodes Hello V2 (small values) matching Rust", () => {
-    const hello = helloV3(1024, 64);
+    const hello = helloV4(1024, 64);
     const encoded = encodeHello(hello);
-    const expected = loadGoldenVector("wire/hello_v3_small.bin");
+    const expected = loadGoldenVector("wire/hello_v4_small.bin");
 
     if (!arraysEqual(encoded, expected)) {
       console.log("Expected:", hexDump(expected));
@@ -69,9 +69,9 @@ describe("Hello golden vectors", () => {
   });
 
   it("encodes Hello V2 (typical values) matching Rust", () => {
-    const hello = helloV3(1024 * 1024, 64 * 1024);
+    const hello = helloV4(1024 * 1024, 64 * 1024);
     const encoded = encodeHello(hello);
-    const expected = loadGoldenVector("wire/hello_v3_typical.bin");
+    const expected = loadGoldenVector("wire/hello_v4_typical.bin");
 
     if (!arraysEqual(encoded, expected)) {
       console.log("Expected:", hexDump(expected));
@@ -82,16 +82,16 @@ describe("Hello golden vectors", () => {
   });
 
   it("decodes Hello V2 (small) from Rust bytes", () => {
-    const bytes = loadGoldenVector("wire/hello_v3_small.bin");
+    const bytes = loadGoldenVector("wire/hello_v4_small.bin");
     const decoded = decodeHello(bytes);
-    expect(decoded.value).toEqual(helloV3(1024, 64));
+    expect(decoded.value).toEqual(helloV4(1024, 64));
     expect(decoded.next).toBe(bytes.length);
   });
 
   it("decodes Hello V2 (typical) from Rust bytes", () => {
-    const bytes = loadGoldenVector("wire/hello_v3_typical.bin");
+    const bytes = loadGoldenVector("wire/hello_v4_typical.bin");
     const decoded = decodeHello(bytes);
-    expect(decoded.value).toEqual(helloV3(1024 * 1024, 64 * 1024));
+    expect(decoded.value).toEqual(helloV4(1024 * 1024, 64 * 1024));
     expect(decoded.next).toBe(bytes.length);
   });
 });
@@ -102,7 +102,7 @@ describe("Hello golden vectors", () => {
 
 describe("Message::Hello golden vectors", () => {
   it("encodes Message::Hello (small) matching Rust", () => {
-    const msg = messageHello(helloV3(1024, 64));
+    const msg = messageHello(helloV4(1024, 64));
     const encoded = encodeMessage(msg);
     const expected = loadGoldenVector("wire/message_hello_small.bin");
 
@@ -115,7 +115,7 @@ describe("Message::Hello golden vectors", () => {
   });
 
   it("encodes Message::Hello (typical) matching Rust", () => {
-    const msg = messageHello(helloV3(1024 * 1024, 64 * 1024));
+    const msg = messageHello(helloV4(1024 * 1024, 64 * 1024));
     const encoded = encodeMessage(msg);
     const expected = loadGoldenVector("wire/message_hello_typical.bin");
 
@@ -132,7 +132,7 @@ describe("Message::Hello golden vectors", () => {
     const decoded = decodeMessage(bytes);
     expect(decoded.value.tag).toBe("Hello");
     if (decoded.value.tag === "Hello") {
-      expect(decoded.value.value).toEqual(helloV3(1024 * 1024, 64 * 1024));
+      expect(decoded.value.value).toEqual(helloV4(1024 * 1024, 64 * 1024));
     }
     expect(decoded.next).toBe(bytes.length);
   });

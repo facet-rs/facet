@@ -345,15 +345,15 @@ struct DaemonConnector {
 }
 
 impl Connector for DaemonConnector {
-    type Transport = CobsFramed<UnixStream>;
+    type Transport = LengthPrefixedFramed<UnixStream>;
 
     async fn connect(&self) -> io::Result<Self::Transport> {
         let stream = UnixStream::connect(&self.socket_path).await?;
-        Ok(CobsFramed::new(stream))
+        Ok(LengthPrefixedFramed::new(stream))
     }
 
     fn hello(&self) -> Hello {
-        Hello::V3 {
+        Hello::V4 {
             max_payload_size: 1024 * 1024,
             initial_channel_credit: 64 * 1024,
         }

@@ -35,12 +35,12 @@ Tests fundamental protocol behavior:
 
 **How it works:**
 ```
-[Test Harness] ----raw COBS frames---> [Subject as Server]
+[Test Harness] ----raw length-prefixed frames---> [Subject as Server]
        ^                                      |
-       +----------raw COBS frames-------------+
+       +------raw length-prefixed frames------+
 ```
 
-The harness uses `CobsFramed` to send/receive raw wire messages. No roam
+The harness uses `LengthPrefixedFramed` to send/receive raw wire messages. No roam
 runtime types are used - just `roam_wire::Message`.
 
 ### 2. RPC Mechanics Tests

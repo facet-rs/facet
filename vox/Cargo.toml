@@ -62,7 +62,6 @@ roam-task-local = { path = "rust/roam-task-local", version = "3.0.0" }
 # External dependencies
 bytes = "1"
 blake3 = "1.8"
-cobs = "0.5.0"
 tokio = { version = "1", features = ["sync", "rt", "time", "macros", "io-util"] }
 tokio-tungstenite = "0.26"
 libc = "0.2.180"

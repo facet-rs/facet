@@ -31,9 +31,9 @@ public protocol MessageTransport: Sendable {
     func close() async throws
 }
 
-// MARK: - COBS-Framed NIO Transport
+// MARK: - Length-Prefixed NIO Transport
 
-/// COBS-framed transport over a NIO channel.
+/// Length-prefixed transport over a NIO channel.
 public final class NIOTransport: MessageTransport, @unchecked Sendable {
     private let channel: Channel
     private let inboundStream: AsyncStream<Result<Message, Error>>
@@ -47,11 +47,13 @@ public final class NIOTransport: MessageTransport, @unchecked Sendable {
 
     public func send(_ message: Message) async throws {
         let encoded = message.encode()
-        var framed = cobsEncode(encoded)
-        framed.append(0)  // Frame delimiter
+        guard let len = UInt32(exactly: encoded.count) else {
+            throw TransportError.decodeFailed("frame too large for u32 length prefix")
+        }
 
-        var buffer = channel.allocator.buffer(capacity: framed.count)
-        buffer.writeBytes(framed)
+        var buffer = channel.allocator.buffer(capacity: 4 + encoded.count)
+        buffer.writeInteger(len, endianness: .little)
+        buffer.writeBytes(encoded)
         try await channel.writeAndFlush(buffer)
     }
 
@@ -67,53 +69,39 @@ public final class NIOTransport: MessageTransport, @unchecked Sendable {
     }
 }
 
-// MARK: - COBS Frame Decoder
+// MARK: - Length Prefix Decoder
 
-/// NIO handler that decodes COBS-framed messages.
-final class COBSFrameDecoder: ByteToMessageDecoder, @unchecked Sendable {
+/// NIO handler that decodes length-prefixed messages.
+final class LengthPrefixDecoder: ByteToMessageDecoder, @unchecked Sendable {
     typealias InboundOut = [UInt8]
     private static let maxBufferedFrameBytes = 16 * 1024 * 1024
-    private var searchOffset = 0
 
     func decode(context: ChannelHandlerContext, buffer: inout ByteBuffer) throws -> DecodingState {
-        let readable = buffer.readableBytes
-        if searchOffset > readable {
-            searchOffset = 0
-        }
-
-        // Search only bytes not previously scanned since the last decoder invocation.
-        guard
-            let zeroIndex = buffer.readableBytesView.dropFirst(searchOffset).firstIndex(of: 0)
+        guard let frameLen: UInt32 = buffer.getInteger(at: buffer.readerIndex, endianness: .little)
         else {
-            searchOffset = readable
-            if readable > Self.maxBufferedFrameBytes {
-                throw TransportError.decodeFailed(
-                    "COBS frame exceeds \(Self.maxBufferedFrameBytes) bytes without delimiter")
-            }
             return .needMoreData
         }
 
-        let frameLength = zeroIndex - buffer.readableBytesView.startIndex
-        searchOffset = 0
-
-        if frameLength == 0 {
-            // Empty frame, skip the zero and continue
-            buffer.moveReaderIndex(forwardBy: 1)
-            return .continue
+        let frameLength = Int(frameLen)
+        if frameLength > Self.maxBufferedFrameBytes {
+            throw TransportError.decodeFailed(
+                "Frame exceeds \(Self.maxBufferedFrameBytes) bytes")
         }
 
-        // Read the frame (excluding the zero)
+        let needed = 4 + frameLength
+        guard buffer.readableBytes >= needed else {
+            return .needMoreData
+        }
+
+        // Consume header
+        buffer.moveReaderIndex(forwardBy: 4)
+
+        // Read payload
         guard let frameBytes = buffer.readBytes(length: frameLength) else {
             return .needMoreData
         }
 
-        // Skip the zero delimiter
-        buffer.moveReaderIndex(forwardBy: 1)
-
-        // Decode COBS
-        let decoded = try cobsDecode(frameBytes)
-        context.fireChannelRead(wrapInboundOut(decoded))
-
+        context.fireChannelRead(wrapInboundOut(frameBytes))
         return .continue
     }
 
@@ -125,13 +113,13 @@ final class COBSFrameDecoder: ByteToMessageDecoder, @unchecked Sendable {
         let state = try decode(context: context, buffer: &buffer)
         if state == .needMoreData && seenEOF && buffer.readableBytes > 0 {
             throw TransportError.decodeFailed(
-                "EOF with \(buffer.readableBytes) trailing bytes and no frame delimiter")
+                "EOF with \(buffer.readableBytes) trailing bytes and no complete frame")
         }
         return state
     }
 }
 
-/// NIO handler that decodes wire messages from decoded COBS frames.
+/// NIO handler that decodes wire messages from decoded frames.
 final class MessageDecoder: ChannelInboundHandler, Sendable {
     typealias InboundIn = [UInt8]
     typealias InboundOut = Message
@@ -188,7 +176,7 @@ public func connect(host: String, port: Int) async throws -> NIOTransport {
         .channelInitializer { channel in
             // Note: ByteToMessageHandler is explicitly non-Sendable in SwiftNIO.
             // This warning is benign - channel initializers run on the event loop.
-            channel.pipeline.addHandler(ByteToMessageHandler(COBSFrameDecoder())).flatMap {
+            channel.pipeline.addHandler(ByteToMessageHandler(LengthPrefixDecoder())).flatMap {
                 channel.pipeline.addHandler(MessageDecoder())
             }.flatMap {
                 channel.pipeline.addHandler(

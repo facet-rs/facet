@@ -4,13 +4,13 @@
 // payload validation, and stream ID management.
 //
 // Generic over MessageTransport to support different transports:
-// - CobsFramed for TCP (byte streams with COBS framing)
+// - LengthPrefixedFramed for TCP (byte streams with length-prefix framing)
 // - WsTransport for WebSocket (message-oriented transport)
 
 import {
   type Hello,
   type MetadataEntry,
-  helloV3,
+  helloV4,
   messageHello,
   messageGoodbye,
   messageRequest,
@@ -128,7 +128,7 @@ export interface StreamingDispatcher {
  * A live connection with completed Hello exchange.
  *
  * Generic over MessageTransport to support different transports
- * (CobsFramed for TCP, WsTransport for WebSocket).
+ * (LengthPrefixedFramed for TCP, WsTransport for WebSocket).
  */
 export class Connection<T extends MessageTransport = MessageTransport> {
   private io: T;
@@ -981,7 +981,7 @@ async function waitForPeerHello<T extends MessageTransport>(
 
     if (msg.tag === "Hello") {
       // r[impl message.hello.unknown-version] - reject unknown Hello versions
-      if (msg.value.tag !== "V3") {
+      if (msg.value.tag !== "V4") {
         await io.send(encodeMessage(messageGoodbye("message.hello.unknown-version")));
         io.close();
         throw ConnectionError.protocol({
@@ -1003,9 +1003,9 @@ async function waitForPeerHello<T extends MessageTransport>(
   }
 }
 
-/** Default Hello message (V3 for metadata flags support). */
+/** Default Hello message (V4 for metadata flags support). */
 export function defaultHello(): Hello {
-  return helloV3(1024 * 1024, 64 * 1024);
+  return helloV4(1024 * 1024, 64 * 1024);
 }
 
 /**

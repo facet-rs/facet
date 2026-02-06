@@ -1,19 +1,20 @@
-// COBS framing for TCP streams.
+// Length-prefixed framing for TCP streams.
 //
-// r[impl transport.bytestream.cobs] - Messages are COBS-encoded with 0x00 delimiter.
+// r[impl transport.bytestream.length-prefix] - Messages are prefixed with a
+// 4-byte little-endian length header.
 
 import net from "node:net";
-import { cobsDecode, cobsEncode, type MessageTransport } from "@bearcove/roam-core";
+import { type MessageTransport } from "@bearcove/roam-core";
 
 /**
- * A COBS-framed TCP connection.
+ * A length-prefixed TCP connection.
  *
  * Handles encoding/decoding of raw message bytes over a TCP socket using
- * COBS (Consistent Overhead Byte Stuffing) framing with 0x00 delimiters.
+ * 4-byte little-endian frame length prefixes.
  *
  * Implements the MessageTransport interface for use with Connection.
  */
-export class CobsFramed implements MessageTransport {
+export class LengthPrefixedFramed implements MessageTransport {
   private socket: net.Socket;
   private buf: Buffer = Buffer.alloc(0);
   private pendingFrames: Uint8Array[] = [];
@@ -52,33 +53,22 @@ export class CobsFramed implements MessageTransport {
 
   private processBuffer() {
     while (true) {
-      const idx = this.buf.indexOf(0x00);
-      if (idx < 0) break;
+      if (this.buf.length < 4) break;
 
-      const frameBytes = this.buf.subarray(0, idx);
-      this.buf = this.buf.subarray(idx + 1);
+      const frameLen = this.buf.readUInt32LE(0);
+      const needed = 4 + frameLen;
+      if (this.buf.length < needed) break;
 
-      if (frameBytes.length === 0) continue;
+      const frameBytes = this.buf.subarray(4, needed);
+      this.buf = this.buf.subarray(needed);
+      const decoded = new Uint8Array(frameBytes);
+      this.lastDecoded = decoded;
 
-      // r[impl transport.bytestream.cobs] - decode COBS-encoded frame
-      try {
-        const decoded = cobsDecode(new Uint8Array(frameBytes));
-        this.lastDecoded = decoded;
-
-        if (this.waitingResolve) {
-          this.waitingResolve(decoded);
-          this.waitingResolve = null;
-        } else {
-          this.pendingFrames.push(decoded);
-        }
-      } catch {
-        // COBS decode error - store as error for next recv
-        this.error = new Error("cobs decode error");
-        if (this.waitingResolve) {
-          this.waitingResolve(null);
-          this.waitingResolve = null;
-        }
-        return;
+      if (this.waitingResolve) {
+        this.waitingResolve(decoded);
+        this.waitingResolve = null;
+      } else {
+        this.pendingFrames.push(decoded);
       }
     }
   }
@@ -91,14 +81,18 @@ export class CobsFramed implements MessageTransport {
   /**
    * Send raw payload bytes over the connection.
    *
-   * r[impl transport.bytestream.cobs] - COBS encode with 0x00 delimiter.
+   * r[impl transport.bytestream.length-prefix] - 4-byte little-endian length + payload.
    */
   send(payload: Uint8Array): Promise<void> {
     return new Promise<void>((resolve, reject) => {
-      const encoded = cobsEncode(payload);
-      const framed = Buffer.alloc(encoded.length + 1);
-      framed.set(encoded);
-      framed[encoded.length] = 0x00;
+      if (payload.length > 0xffff_ffff) {
+        reject(new Error("frame too large for u32 length prefix"));
+        return;
+      }
+
+      const framed = Buffer.alloc(4 + payload.length);
+      framed.writeUInt32LE(payload.length, 0);
+      framed.set(payload, 4);
 
       this.socket.write(framed, (err) => {
         if (err) reject(err);

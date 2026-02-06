@@ -8,10 +8,10 @@
 // ============================================================================
 
 /**
- * Hello message variant V3 (supports virtual connections and metadata flags).
+ * Hello message variant V4 (supports virtual connections and metadata flags).
  */
-export interface HelloV3 {
-  tag: "V3";
+export interface HelloV4 {
+  tag: "V4";
   maxPayloadSize: number;
   initialChannelCredit: number;
 }
@@ -21,7 +21,7 @@ export interface HelloV3 {
  *
  * r[impl message.hello.structure]
  */
-export type Hello = HelloV3;
+export type Hello = HelloV4;
 
 // ============================================================================
 // MetadataValue
@@ -290,7 +290,7 @@ export const MetadataValueDiscriminant = {
 export const HelloDiscriminant = {
   V1: 0, // deprecated
   V2: 1, // deprecated
-  V3: 2,
+  V4: 3,
 } as const;
 
 // ============================================================================
@@ -298,10 +298,10 @@ export const HelloDiscriminant = {
 // ============================================================================
 
 /**
- * Create a Hello.V3 message.
+ * Create a Hello.V4 message.
  */
-export function helloV3(maxPayloadSize: number, initialChannelCredit: number): HelloV3 {
-  return { tag: "V3", maxPayloadSize, initialChannelCredit };
+export function helloV4(maxPayloadSize: number, initialChannelCredit: number): HelloV4 {
+  return { tag: "V4", maxPayloadSize, initialChannelCredit };
 }
 
 /**

@@ -12,13 +12,13 @@ import type { Schema, SchemaRegistry, EnumSchema, TupleSchema } from "@bearcove/
 /**
  * Schema for Hello enum.
  *
- * Rust definition (v3.0.0):
+ * Rust definition (v4.0.0):
  * ```rust
  * #[repr(u8)]
  * pub enum Hello {
  *     V1 { max_payload_size: u32, initial_channel_credit: u32 } = 0,
  *     V2 { max_payload_size: u32, initial_channel_credit: u32 } = 1,
- *     V3 { max_payload_size: u32, initial_channel_credit: u32 } = 2,
+ *     V4 { max_payload_size: u32, initial_channel_credit: u32 } = 3,
  * }
  * ```
  */
@@ -42,8 +42,8 @@ export const HelloSchema: EnumSchema = {
       },
     },
     {
-      name: "V3",
-      discriminant: 2,
+      name: "V4",
+      discriminant: 3,
       fields: {
         maxPayloadSize: { kind: "u32" },
         initialChannelCredit: { kind: "u32" },
@@ -100,7 +100,7 @@ export const MetadataEntrySchema: TupleSchema = {
 /**
  * Schema for Message enum.
  *
- * Rust definition (v3.0.0):
+ * Rust definition (v4.0.0):
  * ```rust
  * #[repr(u8)]
  * pub enum Message {

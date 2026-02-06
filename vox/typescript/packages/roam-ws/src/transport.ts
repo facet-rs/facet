@@ -9,7 +9,7 @@ import type { MessageTransport } from "@bearcove/roam-core";
  * WebSocket transport for roam messages.
  *
  * Works in both browser (native WebSocket) and Node.js environments.
- * Messages are postcard-encoded directly without COBS framing
+ * Messages are postcard-encoded directly without length-prefix framing
  * since WebSocket provides native message boundaries.
  */
 export class WsTransport implements MessageTransport {

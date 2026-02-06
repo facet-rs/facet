@@ -21,7 +21,7 @@ QUIC/WebTransport support is added to roam.
 > Implementations MUST designate a **control stream** for control messages
 > (Hello, Goodbye, Request, Response, Cancel, Credit). The initiator opens
 > this stream first; the acceptor's first received stream is the control
-> stream. Control messages are [COBS]-framed [POSTCARD]-encoded Message
+> stream. Control messages are length-prefixed [POSTCARD]-encoded Message
 > values.
 
 ## Stream Mapping
@@ -55,7 +55,7 @@ peer-to-peer).
 
 > r[multistream.stream-data]
 >
-> After the stream ID header, data is sent as [COBS]-framed [POSTCARD]-
+> After the stream ID header, data is sent as length-prefixed [POSTCARD]-
 > encoded values of the stream's element type `T`. No Message wrapper is
 > needed — the stream identity was established by the header.
 
@@ -72,13 +72,11 @@ peer-to-peer).
 > (e.g., QUIC RESET_STREAM). The Reset message is not used on multi-stream
 > transports.
 
-## Why COBS on Control Streams?
+## Why Length Prefix on Control Streams?
 
 QUIC streams are byte streams, not message streams. We need framing.
-COBS provides:
-- Guaranteed message boundaries (0x00 delimiter)
-- Low overhead (≈1 byte per 254 bytes)
-- No escape sequences that could cause ambiguity
-
-[COBS]: https://en.wikipedia.org/wiki/Consistent_Overhead_Byte_Stuffing
+Length-prefix framing provides:
+- Guaranteed message boundaries
+- O(1) frame boundary parsing
+- Consistent framing with roam byte-stream transports
 [POSTCARD]: https://postcard.jamesmunns.com/

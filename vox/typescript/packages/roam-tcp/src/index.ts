@@ -2,7 +2,7 @@
 //
 // Provides TCP-specific I/O: socket framing, connection state machine, server.
 
-export { CobsFramed } from "./framing.ts";
+export { LengthPrefixedFramed } from "./framing.ts";
 export { Server, type ConnectOptions } from "./transport.ts";
 
 // Re-export Connection and protocol types from core

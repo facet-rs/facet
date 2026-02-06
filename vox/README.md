@@ -146,7 +146,7 @@ let client = DownstreamClient::new(caller);
 
 | Transport | Framing | Status |
 |-----------|---------|--------|
-| TCP / Unix sockets | COBS | ✓ |
+| TCP / Unix sockets | 4-byte length prefix | ✓ |
 | WebSocket | Binary frames | ✓ |
 | Shared Memory Hub | Lock-free rings | ✓ |
 | HTTP Bridge | WebSocket upgrade | ✓ |

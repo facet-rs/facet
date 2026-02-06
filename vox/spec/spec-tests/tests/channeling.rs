@@ -28,7 +28,7 @@ fn metadata_empty() -> Vec<(String, MetadataValue, u64)> {
 }
 
 /// Helper to do hello exchange.
-async fn hello_exchange(io: &mut spec_tests::harness::CobsFramed) -> Result<(), String> {
+async fn hello_exchange(io: &mut spec_tests::harness::LengthPrefixedFramed) -> Result<(), String> {
     // Subject sends Hello first.
     let msg = io
         .recv_timeout(Duration::from_millis(250))
@@ -36,8 +36,8 @@ async fn hello_exchange(io: &mut spec_tests::harness::CobsFramed) -> Result<(), 
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "expected Hello from subject".to_string())?;
     match msg {
-        Message::Hello(Hello::V3 { .. }) => {}
-        _ => return Err(format!("first message must be Hello::V3, got {msg:?}")),
+        Message::Hello(Hello::V4 { .. }) => {}
+        _ => return Err(format!("first message must be Hello::V4, got {msg:?}")),
     }
 
     io.send(&Message::Hello(our_hello(1024 * 1024)))

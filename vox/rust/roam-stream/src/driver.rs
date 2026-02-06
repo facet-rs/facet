@@ -1,7 +1,7 @@
 //! Byte-stream specific connection handling.
 //!
 //! This module provides connection handling for byte-stream transports
-//! (TCP, Unix sockets) that need COBS framing.
+//! (TCP, Unix sockets) that need length-prefixed framing.
 //!
 //! For message-based transports (WebSocket), use `roam_session` directly.
 
@@ -14,7 +14,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
-use crate::framing::CobsFramed;
+use crate::framing::LengthPrefixedFramed;
 use roam_session::{
     Caller, ConnectError, ConnectionError, ConnectionHandle, Driver, HandshakeConfig, ResponseData,
     RetryPolicy, SendPtr, ServiceDispatcher, TransportError,
@@ -23,7 +23,7 @@ use roam_session::{
 /// A factory that creates new byte-stream connections on demand.
 ///
 /// Used by [`connect()`] for reconnection. The transport will be wrapped
-/// in COBS framing automatically.
+/// in length-prefixed framing automatically.
 ///
 /// For transports that already provide message framing (like WebSocket),
 /// use [`roam_session::MessageConnector`] instead.
@@ -41,7 +41,7 @@ pub trait Connector: Send + Sync + 'static {
 
 /// Accept a byte-stream connection and perform handshake.
 ///
-/// Wraps the stream in COBS framing, then delegates to `accept_framed`.
+/// Wraps the stream in length-prefixed framing, then delegates to `accept_framed`.
 /// Returns:
 /// - A handle for making calls on connection 0 (root)
 /// - A receiver for incoming virtual connection requests
@@ -54,7 +54,7 @@ pub async fn accept<S, D>(
     (
         ConnectionHandle,
         roam_session::IncomingConnections,
-        Driver<CobsFramed<S>, D>,
+        Driver<LengthPrefixedFramed<S>, D>,
     ),
     ConnectionError,
 >
@@ -62,7 +62,7 @@ where
     S: AsyncRead + AsyncWrite + Unpin + Send,
     D: ServiceDispatcher,
 {
-    let framed = CobsFramed::new(stream);
+    let framed = LengthPrefixedFramed::new(stream);
     roam_session::accept_framed(framed, config, dispatcher).await
 }
 
@@ -186,7 +186,7 @@ where
             .await
             .map_err(ConnectError::ConnectFailed)?;
 
-        let framed = CobsFramed::new(stream);
+        let framed = LengthPrefixedFramed::new(stream);
 
         let (handle, _incoming, driver) =
             roam_session::initiate_framed(framed, self.config.clone(), self.dispatcher.clone())
@@ -431,7 +431,7 @@ fn connection_error_to_io(e: ConnectionError) -> io::Error {
         }
         ConnectionError::UnsupportedProtocolVersion => io::Error::new(
             io::ErrorKind::InvalidData,
-            "unsupported protocol version (expected V3)",
+            "unsupported protocol version (expected V4)",
         ),
     }
 }

@@ -5,7 +5,7 @@
  * transport mechanisms for sending and receiving roam messages.
  *
  * Implementations:
- * - CobsFramed (roam-tcp) for byte streams (TCP)
+ * - LengthPrefixedFramed (roam-tcp) for byte streams (TCP)
  * - WsTransport (roam-ws) for WebSocket
  */
 
@@ -13,7 +13,7 @@
  * Interface for transports that can send and receive roam messages.
  *
  * This abstracts over the framing mechanism:
- * - Byte streams need COBS framing to delimit messages
+ * - Byte streams need length-prefix framing to delimit messages
  * - Message-oriented transports (WebSocket) have built-in framing
  *
  * Both cases share the same protocol logic in Connection.
@@ -21,7 +21,7 @@
 export interface MessageTransport {
   /**
    * Send a message (raw postcard-encoded payload for WebSocket,
-   * or COBS-encoded for byte streams).
+   * or length-prefixed for byte streams).
    */
   send(payload: Uint8Array): Promise<void>;
 

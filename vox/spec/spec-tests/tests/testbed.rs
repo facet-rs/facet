@@ -96,8 +96,8 @@ fn rpc_echo_roundtrip() {
             .map_err(|e| e.to_string())?
             .ok_or_else(|| "expected Hello from subject".to_string())?;
         match msg {
-            Message::Hello(Hello::V3 { .. }) => {}
-            _ => return Err(format!("first message must be Hello::V3, got {msg:?}")),
+            Message::Hello(Hello::V4 { .. }) => {}
+            _ => return Err(format!("first message must be Hello::V4, got {msg:?}")),
         }
 
         io.send(&Message::Hello(our_hello(1024 * 1024)))

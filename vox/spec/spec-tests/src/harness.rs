@@ -3,7 +3,6 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use cobs::{decode_vec as cobs_decode_vec, encode_vec as cobs_encode_vec};
 use roam_wire::{Hello, Message};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -44,6 +43,12 @@ fn format_message(msg: &Message, direction: &str) -> String {
                 initial_channel_credit,
             } => format!(
                 "{direction} Hello::V3 {{ max_payload: {max_payload_size}, credit: {initial_channel_credit} }}"
+            ),
+            Hello::V4 {
+                max_payload_size,
+                initial_channel_credit,
+            } => format!(
+                "{direction} Hello::V4 {{ max_payload: {max_payload_size}, credit: {initial_channel_credit} }}"
             ),
         },
         Message::Goodbye { reason, .. } => format!("{direction} Goodbye {{ reason: {reason:?} }}"),
@@ -114,18 +119,18 @@ pub fn run_async<T>(f: impl std::future::Future<Output = T>) -> T {
 }
 
 pub fn our_hello(max_payload_size: u32) -> Hello {
-    Hello::V3 {
+    Hello::V4 {
         max_payload_size,
         initial_channel_credit: 64 * 1024,
     }
 }
 
-pub struct CobsFramed {
+pub struct LengthPrefixedFramed {
     pub stream: TcpStream,
     buf: Vec<u8>,
 }
 
-impl CobsFramed {
+impl LengthPrefixedFramed {
     pub fn new(stream: TcpStream) -> Self {
         Self {
             stream,
@@ -139,9 +144,13 @@ impl CobsFramed {
         }
         let payload = facet_postcard::to_vec(msg)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
-        let mut framed = cobs_encode_vec(&payload);
-        framed.push(0x00);
-        self.stream.write_all(&framed).await?;
+
+        let frame_len = u32::try_from(payload.len())
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "frame too large"))?
+            .to_le_bytes();
+
+        self.stream.write_all(&frame_len).await?;
+        self.stream.write_all(&payload).await?;
         self.stream.flush().await?;
         Ok(())
     }
@@ -154,32 +163,43 @@ impl CobsFramed {
 
     async fn recv_inner(&mut self) -> std::io::Result<Option<Message>> {
         loop {
-            if let Some(idx) = self.buf.iter().position(|b| *b == 0x00) {
-                let frame = self.buf.drain(..idx).collect::<Vec<_>>();
-                self.buf.drain(..1); // delimiter
+            if self.buf.len() >= 4 {
+                let frame_len =
+                    u32::from_le_bytes([self.buf[0], self.buf[1], self.buf[2], self.buf[3]])
+                        as usize;
+                let needed = 4 + frame_len;
+                if self.buf.len() >= needed {
+                    let frame = self.buf[4..needed].to_vec();
+                    self.buf.drain(..needed);
 
-                let decoded = cobs_decode_vec(&frame).map_err(|e| {
-                    std::io::Error::new(std::io::ErrorKind::InvalidData, format!("cobs: {e}"))
-                })?;
-
-                let msg: Message = facet_postcard::from_slice(&decoded).map_err(|e| {
-                    eprintln!(
-                        "Failed to decode {} bytes: {:02x?}",
-                        decoded.len(),
-                        &decoded[..decoded.len().min(64)]
-                    );
-                    std::io::Error::new(std::io::ErrorKind::InvalidData, format!("postcard: {e}"))
-                })?;
-                if wire_spy_enabled() {
-                    eprintln!("[WIRE] {}", format_message(&msg, "<--"));
+                    let msg: Message = facet_postcard::from_slice(&frame).map_err(|e| {
+                        eprintln!(
+                            "Failed to decode {} bytes: {:02x?}",
+                            frame.len(),
+                            &frame[..frame.len().min(64)]
+                        );
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!("postcard: {e}"),
+                        )
+                    })?;
+                    if wire_spy_enabled() {
+                        eprintln!("[WIRE] {}", format_message(&msg, "<--"));
+                    }
+                    return Ok(Some(msg));
                 }
-                return Ok(Some(msg));
             }
 
             let mut tmp = [0u8; 4096];
             let n = self.stream.read(&mut tmp).await?;
             if n == 0 {
-                return Ok(None);
+                if self.buf.is_empty() {
+                    return Ok(None);
+                }
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    format!("eof with {} trailing bytes", self.buf.len()),
+                ));
             }
             self.buf.extend_from_slice(&tmp[..n]);
         }
@@ -210,14 +230,14 @@ pub async fn spawn_subject(peer_addr: &str) -> Result<Child, String> {
     Ok(child)
 }
 
-pub async fn accept_subject() -> Result<(CobsFramed, Child), String> {
+pub async fn accept_subject() -> Result<(LengthPrefixedFramed, Child), String> {
     accept_subject_with_options(false).await
 }
 
 /// Accept subject with option to enable incoming virtual connections.
 pub async fn accept_subject_with_options(
     accept_connections: bool,
-) -> Result<(CobsFramed, Child), String> {
+) -> Result<(LengthPrefixedFramed, Child), String> {
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .map_err(|e| format!("bind: {e}"))?;
@@ -232,7 +252,7 @@ pub async fn accept_subject_with_options(
         .map_err(|_| "subject did not connect within 5s".to_string())?
         .map_err(|e| format!("accept: {e}"))?;
 
-    Ok((CobsFramed::new(stream), child))
+    Ok((LengthPrefixedFramed::new(stream), child))
 }
 
 /// Spawn subject with option to enable incoming virtual connections.
@@ -298,11 +318,35 @@ pub async fn spawn_subject_client(peer_addr: &str, scenario: &str) -> Result<Chi
     Ok(child)
 }
 
-/// Wire-level server for client mode tests.
-///
-/// This implements a minimal Testbed server at the wire level, without using
-/// any roam runtime types. This ensures we're testing the wire protocol, not
-/// roam-against-roam.
+pub async fn wait_for_goodbye_with_rule(
+    io: &mut LengthPrefixedFramed,
+    rule: &str,
+) -> Result<(), String> {
+    let mut saw_reason = None::<String>;
+    for _ in 0..10 {
+        match io
+            .recv_timeout(Duration::from_millis(250))
+            .await
+            .map_err(|e| e.to_string())?
+        {
+            None => break,
+            Some(Message::Goodbye { reason, .. }) => {
+                saw_reason = Some(reason);
+                break;
+            }
+            Some(_) => continue,
+        }
+    }
+
+    let reason = saw_reason.ok_or_else(|| "expected Goodbye, got none".to_string())?;
+    if !reason.contains(rule) {
+        return Err(format!(
+            "Goodbye reason must mention {rule}, got {reason:?}"
+        ));
+    }
+    Ok(())
+}
+
 pub mod wire_server {
     use super::*;
     use std::collections::HashMap;
@@ -328,7 +372,7 @@ pub mod wire_server {
             .map_err(|_| "subject did not connect within 5s".to_string())?
             .map_err(|e| format!("accept: {e}"))?;
 
-        let mut io = CobsFramed::new(stream);
+        let mut io = LengthPrefixedFramed::new(stream);
 
         // Hello exchange
         io.send(&Message::Hello(our_hello(1024 * 1024)))
@@ -342,8 +386,8 @@ pub mod wire_server {
             .ok_or("connection closed before hello")?;
 
         match msg {
-            Message::Hello(Hello::V3 { .. }) => {}
-            other => return Err(format!("expected Hello::V3, got {other:?}")),
+            Message::Hello(Hello::V4 { .. }) => {}
+            other => return Err(format!("expected Hello::V4, got {other:?}")),
         }
 
         // Handle requests until client disconnects
@@ -386,7 +430,7 @@ pub mod wire_server {
     }
 
     async fn handle_requests(
-        io: &mut CobsFramed,
+        io: &mut LengthPrefixedFramed,
         scenario: &str,
         method_ids: &MethodIds,
     ) -> Result<(), String> {

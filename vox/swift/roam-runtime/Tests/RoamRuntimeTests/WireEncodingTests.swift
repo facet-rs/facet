@@ -33,25 +33,25 @@ struct WireEncodingTests {
     // MARK: - Hello Tests
 
     @Test func testHelloEncodingSmall() throws {
-        let hello = Hello.v3(maxPayloadSize: 1024, initialChannelCredit: 64)
-        try assertEncoding(hello.encode(), "wire/hello_v3_small.bin")
+        let hello = Hello.v4(maxPayloadSize: 1024, initialChannelCredit: 64)
+        try assertEncoding(hello.encode(), "wire/hello_v4_small.bin")
     }
 
     @Test func testHelloEncodingTypical() throws {
-        let hello = Hello.v3(maxPayloadSize: 1_048_576, initialChannelCredit: 65536)
-        try assertEncoding(hello.encode(), "wire/hello_v3_typical.bin")
+        let hello = Hello.v4(maxPayloadSize: 1_048_576, initialChannelCredit: 65536)
+        try assertEncoding(hello.encode(), "wire/hello_v4_typical.bin")
     }
 
     // MARK: - Message Tests
 
     @Test func testMessageHelloSmall() throws {
-        let hello = Hello.v3(maxPayloadSize: 1024, initialChannelCredit: 64)
+        let hello = Hello.v4(maxPayloadSize: 1024, initialChannelCredit: 64)
         let msg = Message.hello(hello)
         try assertEncoding(msg.encode(), "wire/message_hello_small.bin")
     }
 
     @Test func testMessageHelloTypical() throws {
-        let hello = Hello.v3(maxPayloadSize: 1_048_576, initialChannelCredit: 65536)
+        let hello = Hello.v4(maxPayloadSize: 1_048_576, initialChannelCredit: 65536)
         let msg = Message.hello(hello)
         try assertEncoding(msg.encode(), "wire/message_hello_typical.bin")
     }
@@ -111,7 +111,7 @@ struct WireEncodingTests {
         let bytes = try loadGoldenVector("wire/message_hello_small.bin")
         let msg = try Message.decode(from: Data(bytes))
         guard case .hello(let hello) = msg,
-            case .v3(let maxPayload, let initialCredit) = hello
+            case .v4(let maxPayload, let initialCredit) = hello
         else {
             Issue.record("Expected Hello message")
             return
@@ -308,79 +308,3 @@ struct VarintEncodingTests {
     }
 }
 
-// MARK: - COBS Framing Tests
-
-struct COBSEncodingTests {
-
-    @Test func testCOBSEmpty() throws {
-        let raw = try loadGoldenVector("cobs/empty_raw.bin")
-        let expected = try loadGoldenVector("cobs/empty_encoded.bin")
-        let encoded = cobsEncode(raw)
-        if encoded != expected {
-            Issue.record("COBS empty: got \(encoded), expected \(expected)")
-        }
-    }
-
-    @Test func testCOBSNoZeros() throws {
-        let raw = try loadGoldenVector("cobs/no_zeros_raw.bin")
-        let expected = try loadGoldenVector("cobs/no_zeros_encoded.bin")
-        let encoded = cobsEncode(raw)
-        if encoded != expected {
-            Issue.record("COBS no_zeros: got \(encoded), expected \(expected)")
-        }
-    }
-
-    @Test func testCOBSSingleZero() throws {
-        let raw = try loadGoldenVector("cobs/single_zero_raw.bin")
-        let expected = try loadGoldenVector("cobs/single_zero_encoded.bin")
-        let encoded = cobsEncode(raw)
-        if encoded != expected {
-            Issue.record("COBS single_zero: got \(encoded), expected \(expected)")
-        }
-    }
-
-    @Test func testCOBSTwoZeros() throws {
-        let raw = try loadGoldenVector("cobs/two_zeros_raw.bin")
-        let expected = try loadGoldenVector("cobs/two_zeros_encoded.bin")
-        let encoded = cobsEncode(raw)
-        if encoded != expected {
-            Issue.record("COBS two_zeros: got \(encoded), expected \(expected)")
-        }
-    }
-
-    @Test func testCOBSOneZeroMiddle() throws {
-        let raw = try loadGoldenVector("cobs/one_zero_middle_raw.bin")
-        let expected = try loadGoldenVector("cobs/one_zero_middle_encoded.bin")
-        let encoded = cobsEncode(raw)
-        if encoded != expected {
-            Issue.record("COBS one_zero_middle: got \(encoded), expected \(expected)")
-        }
-    }
-
-    @Test func testCOBSMultipleZeros() throws {
-        let raw = try loadGoldenVector("cobs/multiple_zeros_raw.bin")
-        let expected = try loadGoldenVector("cobs/multiple_zeros_encoded.bin")
-        let encoded = cobsEncode(raw)
-        if encoded != expected {
-            Issue.record("COBS multiple_zeros: got \(encoded), expected \(expected)")
-        }
-    }
-
-    @Test func testCOBSHelloMessage() throws {
-        let raw = try loadGoldenVector("cobs/message_hello_typical_raw.bin")
-        let expected = try loadGoldenVector("cobs/message_hello_typical_encoded.bin")
-        let encoded = cobsEncode(raw)
-        if encoded != expected {
-            Issue.record("COBS Hello message: got \(encoded), expected \(expected)")
-        }
-    }
-
-    @Test func testCOBSDecodeRoundTrip() throws {
-        let raw = try loadGoldenVector("cobs/message_hello_typical_raw.bin")
-        let encoded = try loadGoldenVector("cobs/message_hello_typical_encoded.bin")
-        let decoded = try cobsDecode(encoded)
-        if decoded != raw {
-            Issue.record("COBS decode roundtrip: got \(decoded), expected \(raw)")
-        }
-    }
-}

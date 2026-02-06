@@ -1030,7 +1030,7 @@ mod tests {
 
     #[test]
     fn hello_not_supported() {
-        let msg = Message::Hello(Hello::V3 {
+        let msg = Message::Hello(Hello::V4 {
             max_payload_size: 64 * 1024,
             initial_channel_credit: 64 * 1024,
         });

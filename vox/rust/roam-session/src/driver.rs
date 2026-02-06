@@ -4,7 +4,7 @@
 //! that already provide message framing (like WebSocket).
 //!
 //! For byte-stream transports (TCP, Unix sockets), see `roam-stream` which
-//! wraps streams in COBS framing before using this driver.
+//! wraps streams in length-prefixed framing before using this driver.
 //!
 //! # Example
 //!
@@ -80,7 +80,7 @@ impl std::fmt::Display for ConnectionError {
             ConnectionError::Dispatch(msg) => write!(f, "dispatch error: {msg}"),
             ConnectionError::Closed => write!(f, "connection closed"),
             ConnectionError::UnsupportedProtocolVersion => {
-                write!(f, "unsupported protocol version (expected V3)")
+                write!(f, "unsupported protocol version (expected V4)")
             }
         }
     }
@@ -120,9 +120,9 @@ impl Default for HandshakeConfig {
 }
 
 impl HandshakeConfig {
-    /// Convert to Hello message (v3 format).
+    /// Convert to Hello message (v4 format).
     pub fn to_hello(&self) -> Hello {
-        Hello::V3 {
+        Hello::V4 {
             max_payload_size: self.max_payload_size,
             initial_channel_credit: self.initial_channel_credit,
         }
@@ -703,7 +703,7 @@ fn connection_error_to_io(e: ConnectionError) -> io::Error {
         }
         ConnectionError::UnsupportedProtocolVersion => io::Error::new(
             io::ErrorKind::InvalidData,
-            "unsupported protocol version (expected V3)",
+            "unsupported protocol version (expected V4)",
         ),
     }
 }
@@ -1606,8 +1606,8 @@ where
         Ok(None) => return Err(ConnectionError::Closed),
         Err(e) => {
             let raw = io.last_decoded();
-            // Hello discriminants: V1=0, V2=1, V3=2. Unknown if > 2.
-            let is_unknown_hello = raw.len() >= 2 && raw[0] == 0x00 && raw[1] > 0x02;
+            // Hello discriminants: V1=0, V2=1, V3=2, V4=3. Unknown if > 3.
+            let is_unknown_hello = raw.len() >= 2 && raw[0] == 0x00 && raw[1] > 0x03;
             let version = if is_unknown_hello { raw[1] } else { 0 };
 
             if is_unknown_hello {
@@ -1626,15 +1626,15 @@ where
         }
     };
 
-    // Negotiate parameters (both sides MUST use V3)
-    let Hello::V3 {
+    // Negotiate parameters (both sides MUST use V4)
+    let Hello::V4 {
         max_payload_size: our_max,
         initial_channel_credit: our_credit,
     } = &our_hello
     else {
         return Err(ConnectionError::UnsupportedProtocolVersion);
     };
-    let Hello::V3 {
+    let Hello::V4 {
         max_payload_size: peer_max,
         initial_channel_credit: peer_credit,
     } = &peer_hello

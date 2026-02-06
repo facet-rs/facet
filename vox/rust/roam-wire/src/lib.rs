@@ -144,11 +144,17 @@ pub enum Hello {
         initial_channel_credit: u32,
     } = 1,
 
-    /// Spec v3 Hello - metadata includes flags.
+    /// Spec v3 Hello - deprecated.
     V3 {
         max_payload_size: u32,
         initial_channel_credit: u32,
     } = 2,
+
+    /// Spec v4 Hello - length-prefixed byte-stream framing.
+    V4 {
+        max_payload_size: u32,
+        initial_channel_credit: u32,
+    } = 3,
 }
 
 /// Metadata value.

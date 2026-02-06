@@ -4,7 +4,7 @@
 //! transport mechanisms for sending and receiving roam messages.
 //!
 //! Implementations:
-//! - `CobsFramed` from `roam-stream` for byte streams (TCP, Unix sockets) - native only
+//! - `LengthPrefixedFramed` from `roam-stream` for byte streams (TCP, Unix sockets) - native only
 //! - `WsTransport` from `roam-websocket` for WebSocket (native and WASM)
 
 use std::io;
@@ -15,7 +15,7 @@ use roam_wire::Message;
 /// Trait for transports that can send and receive roam messages.
 ///
 /// This abstracts over the framing mechanism:
-/// - Byte streams need COBS framing to delimit messages
+/// - Byte streams need length-prefixed framing to delimit messages
 /// - Message-oriented transports (WebSocket) have built-in framing
 ///
 /// Both cases share the same protocol logic in the Driver.

@@ -28,24 +28,24 @@ fn main() {
     let wire_dir = out_dir.join("wire");
     fs::create_dir_all(&wire_dir).expect("failed to create wire directory");
 
-    // Hello messages (V3 for spec v3.0.0)
-    let hello_small = Hello::V3 {
+    // Hello messages (V4 for spec v4.0.0)
+    let hello_small = Hello::V4 {
         max_payload_size: 1024,
         initial_channel_credit: 64,
     };
     write_vector(
         &wire_dir,
-        "hello_v3_small",
+        "hello_v4_small",
         &facet_postcard::to_vec(&hello_small).unwrap(),
     );
 
-    let hello_typical = Hello::V3 {
+    let hello_typical = Hello::V4 {
         max_payload_size: 1024 * 1024,
         initial_channel_credit: 64 * 1024,
     };
     write_vector(
         &wire_dir,
-        "hello_v3_typical",
+        "hello_v4_typical",
         &facet_postcard::to_vec(&hello_typical).unwrap(),
     );
 
@@ -662,64 +662,10 @@ fn main() {
         &facet_postcard::to_vec(&("hello".to_string(), 42i32)).unwrap(),
     );
 
-    // === COBS framing ===
-    // These test that COBS encoding/decoding matches the Rust cobs crate
-    let cobs_dir = out_dir.join("cobs");
-    fs::create_dir_all(&cobs_dir).expect("failed to create cobs directory");
-
-    // Empty data
-    let data: Vec<u8> = vec![];
-    let encoded = cobs::encode_vec(&data);
-    write_vector(&cobs_dir, "empty_encoded", &encoded);
-    write_vector(&cobs_dir, "empty_raw", &data);
-
-    // Simple data with no zeros
-    let data: Vec<u8> = vec![1, 2, 3, 4, 5];
-    let encoded = cobs::encode_vec(&data);
-    write_vector(&cobs_dir, "no_zeros_encoded", &encoded);
-    write_vector(&cobs_dir, "no_zeros_raw", &data);
-
-    // Data with zeros
-    let data: Vec<u8> = vec![0];
-    let encoded = cobs::encode_vec(&data);
-    write_vector(&cobs_dir, "single_zero_encoded", &encoded);
-    write_vector(&cobs_dir, "single_zero_raw", &data);
-
-    let data: Vec<u8> = vec![0, 0];
-    let encoded = cobs::encode_vec(&data);
-    write_vector(&cobs_dir, "two_zeros_encoded", &encoded);
-    write_vector(&cobs_dir, "two_zeros_raw", &data);
-
-    let data: Vec<u8> = vec![1, 0, 2];
-    let encoded = cobs::encode_vec(&data);
-    write_vector(&cobs_dir, "one_zero_middle_encoded", &encoded);
-    write_vector(&cobs_dir, "one_zero_middle_raw", &data);
-
-    let data: Vec<u8> = vec![0, 1, 2, 0, 3, 4, 0];
-    let encoded = cobs::encode_vec(&data);
-    write_vector(&cobs_dir, "multiple_zeros_encoded", &encoded);
-    write_vector(&cobs_dir, "multiple_zeros_raw", &data);
-
-    // Hello message (v3)
-    let hello = Message::Hello(Hello::V3 {
-        max_payload_size: 1024 * 1024,
-        initial_channel_credit: 64 * 1024,
-    });
-    let payload = facet_postcard::to_vec(&hello).unwrap();
-    let encoded = cobs::encode_vec(&payload);
-    write_vector(&cobs_dir, "message_hello_typical_raw", &payload);
-    write_vector(&cobs_dir, "message_hello_typical_encoded", &encoded);
-
-    // Full frame (COBS + delimiter)
-    let mut framed = encoded.clone();
-    framed.push(0x00);
-    write_vector(&cobs_dir, "message_hello_typical_framed", &framed);
-
     println!(
         "\nDone! Generated {} golden vector files.",
         fs::read_dir(&wire_dir).unwrap().count()
             + fs::read_dir(&varint_dir).unwrap().count()
             + fs::read_dir(&prim_dir).unwrap().count()
-            + fs::read_dir(&cobs_dir).unwrap().count()
     );
 }

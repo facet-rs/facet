@@ -2,7 +2,7 @@
 
 //! Stream transport layer for roam RPC.
 //!
-//! This crate provides COBS framing and byte-stream specific machinery for running
+//! This crate provides length-prefixed framing and byte-stream specific machinery for running
 //! roam services over TCP, Unix sockets, or any async byte stream.
 //!
 //! For message-based transports (like WebSocket) that already provide framing,
@@ -52,8 +52,8 @@ mod framing;
 // Byte-stream specific API (stays here)
 pub use driver::{Client, Connector, accept, connect, connect_with_policy};
 
-// COBS framing
-pub use framing::CobsFramed;
+// length-prefixed framing
+pub use framing::LengthPrefixedFramed;
 #[cfg(feature = "fuzzing")]
 pub use framing::try_decode_one_from_buffer_for_fuzz;
 

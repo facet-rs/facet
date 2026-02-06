@@ -9,7 +9,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use roam::session::{Rx, Tx};
-use roam_stream::{CobsFramed, ConnectionHandle, HandshakeConfig, accept, initiate_framed};
+use roam_stream::{
+    ConnectionHandle, HandshakeConfig, LengthPrefixedFramed, accept, initiate_framed,
+};
 use spec_proto::{Testbed, TestbedClient, TestbedDispatcher};
 
 /// Test service implementation.
@@ -241,7 +243,7 @@ async fn rpc_over_virtual_connection() {
     // Connect to the server
     let stream = tokio::net::TcpStream::connect(addr).await.unwrap();
     let dispatcher = TestbedDispatcher::new(service.clone());
-    let framed = CobsFramed::new(stream);
+    let framed = LengthPrefixedFramed::new(stream);
     let (root_handle, _incoming, driver) =
         initiate_framed(framed, HandshakeConfig::default(), dispatcher)
             .await
@@ -272,7 +274,7 @@ async fn multiple_virtual_connections_independent() {
     let stream = tokio::net::TcpStream::connect(addr).await.unwrap();
     let dispatcher = TestbedDispatcher::new(service.clone());
     let (root_handle, _incoming, driver) = initiate_framed(
-        CobsFramed::new(stream),
+        LengthPrefixedFramed::new(stream),
         HandshakeConfig::default(),
         dispatcher,
     )
@@ -307,7 +309,7 @@ async fn root_and_virtual_connections_coexist() {
     let stream = tokio::net::TcpStream::connect(addr).await.unwrap();
     let dispatcher = TestbedDispatcher::new(service.clone());
     let (root_handle, _incoming, driver) = initiate_framed(
-        CobsFramed::new(stream),
+        LengthPrefixedFramed::new(stream),
         HandshakeConfig::default(),
         dispatcher,
     )
@@ -353,7 +355,7 @@ async fn streaming_over_virtual_connection() {
     let stream = tokio::net::TcpStream::connect(addr).await.unwrap();
     let dispatcher = TestbedDispatcher::new(service.clone());
     let (root_handle, _incoming, driver) = initiate_framed(
-        CobsFramed::new(stream),
+        LengthPrefixedFramed::new(stream),
         HandshakeConfig::default(),
         dispatcher,
     )
@@ -402,7 +404,7 @@ async fn user_errors_over_virtual_connection() {
     let stream = tokio::net::TcpStream::connect(addr).await.unwrap();
     let dispatcher = TestbedDispatcher::new(service.clone());
     let (root_handle, _incoming, driver) = initiate_framed(
-        CobsFramed::new(stream),
+        LengthPrefixedFramed::new(stream),
         HandshakeConfig::default(),
         dispatcher,
     )
@@ -437,7 +439,7 @@ async fn bidirectional_streaming_over_virtual_connection() {
     let stream = tokio::net::TcpStream::connect(addr).await.unwrap();
     let dispatcher = TestbedDispatcher::new(service.clone());
     let (root_handle, _incoming, driver) = initiate_framed(
-        CobsFramed::new(stream),
+        LengthPrefixedFramed::new(stream),
         HandshakeConfig::default(),
         dispatcher,
     )
@@ -484,7 +486,7 @@ async fn concurrent_calls_on_virtual_connection() {
     let stream = tokio::net::TcpStream::connect(addr).await.unwrap();
     let dispatcher = TestbedDispatcher::new(service.clone());
     let (root_handle, _incoming, driver) = initiate_framed(
-        CobsFramed::new(stream),
+        LengthPrefixedFramed::new(stream),
         HandshakeConfig::default(),
         dispatcher,
     )
@@ -526,7 +528,7 @@ async fn complex_types_over_virtual_connection() {
     let stream = tokio::net::TcpStream::connect(addr).await.unwrap();
     let dispatcher = TestbedDispatcher::new(service.clone());
     let (root_handle, _incoming, driver) = initiate_framed(
-        CobsFramed::new(stream),
+        LengthPrefixedFramed::new(stream),
         HandshakeConfig::default(),
         dispatcher,
     )
@@ -578,7 +580,7 @@ async fn virtual_connection_cannot_accept_nested() {
     let stream = tokio::net::TcpStream::connect(addr).await.unwrap();
     let dispatcher = TestbedDispatcher::new(service.clone());
     let (root_handle, _incoming, driver) = initiate_framed(
-        CobsFramed::new(stream),
+        LengthPrefixedFramed::new(stream),
         HandshakeConfig::default(),
         dispatcher,
     )
@@ -608,7 +610,7 @@ async fn many_virtual_connections() {
     let stream = tokio::net::TcpStream::connect(addr).await.unwrap();
     let dispatcher = TestbedDispatcher::new(service.clone());
     let (root_handle, _incoming, driver) = initiate_framed(
-        CobsFramed::new(stream),
+        LengthPrefixedFramed::new(stream),
         HandshakeConfig::default(),
         dispatcher,
     )
@@ -647,7 +649,7 @@ async fn connect_with_metadata() {
     let stream = tokio::net::TcpStream::connect(addr).await.unwrap();
     let dispatcher = TestbedDispatcher::new(service.clone());
     let (root_handle, _incoming, driver) = initiate_framed(
-        CobsFramed::new(stream),
+        LengthPrefixedFramed::new(stream),
         HandshakeConfig::default(),
         dispatcher,
     )
@@ -719,7 +721,7 @@ async fn connect_explicit_rejection() {
     let service = TestService::new();
     let dispatcher = TestbedDispatcher::new(service);
     let (root_handle, _incoming, driver) = initiate_framed(
-        CobsFramed::new(stream),
+        LengthPrefixedFramed::new(stream),
         HandshakeConfig::default(),
         dispatcher,
     )
@@ -744,7 +746,7 @@ async fn interleaved_streaming_multiple_connections() {
     let stream = tokio::net::TcpStream::connect(addr).await.unwrap();
     let dispatcher = TestbedDispatcher::new(service.clone());
     let (root_handle, _incoming, driver) = initiate_framed(
-        CobsFramed::new(stream),
+        LengthPrefixedFramed::new(stream),
         HandshakeConfig::default(),
         dispatcher,
     )
@@ -841,7 +843,7 @@ async fn server_initiated_virtual_connection() {
     let service = TestService::new();
     let dispatcher = TestbedDispatcher::new(service);
     let (_root_handle, mut incoming, driver) = initiate_framed(
-        CobsFramed::new(stream),
+        LengthPrefixedFramed::new(stream),
         HandshakeConfig::default(),
         dispatcher,
     )
@@ -905,7 +907,7 @@ async fn link_closure_during_streaming_call() {
     let service = TestService::new();
     let dispatcher = TestbedDispatcher::new(service);
     let (root_handle, _incoming, driver) = initiate_framed(
-        CobsFramed::new(stream),
+        LengthPrefixedFramed::new(stream),
         HandshakeConfig::default(),
         dispatcher,
     )

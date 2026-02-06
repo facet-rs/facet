@@ -6,7 +6,7 @@
 //! `MessageTransport` trait from `roam-session`.
 //!
 //! Unlike byte stream transports (TCP, Unix sockets), WebSocket provides
-//! native message framing, so no COBS encoding is needed.
+//! native message framing, so no additional byte-stream framing is needed.
 //!
 //! r[impl transport.message.one-to-one] - Each WebSocket message = one roam message.
 //! r[impl transport.message.binary] - Uses binary WebSocket frames.

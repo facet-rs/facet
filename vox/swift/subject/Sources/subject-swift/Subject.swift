@@ -203,8 +203,8 @@ func runServer() async throws {
     let transport = try await connect(host: host, port: port)
     log("connected")
 
-    // r[impl message.hello.version] - Use v3 for metadata flags support.
-    let hello = Hello.v3(maxPayloadSize: 1024 * 1024, initialChannelCredit: 64 * 1024)
+    // r[impl message.hello.version] - Use v4 protocol defaults.
+    let hello = Hello.v4(maxPayloadSize: 1024 * 1024, initialChannelCredit: 64 * 1024)
 
     // r[impl core.conn.accept-required] - Check if we should accept incoming virtual connections.
     let acceptConnections = ProcessInfo.processInfo.environment["ACCEPT_CONNECTIONS"] == "1"
@@ -249,8 +249,8 @@ func runClient() async throws {
     let transport = try await connect(host: host, port: port)
     log("connected")
 
-    // r[impl message.hello.version] - Use v3 for metadata flags support.
-    let hello = Hello.v3(maxPayloadSize: 1024 * 1024, initialChannelCredit: 64 * 1024)
+    // r[impl message.hello.version] - Use v4 protocol defaults.
+    let hello = Hello.v4(maxPayloadSize: 1024 * 1024, initialChannelCredit: 64 * 1024)
     let handler = TestbedService()
     let dispatcher = TestbedDispatcherAdapter(handler: handler)
 

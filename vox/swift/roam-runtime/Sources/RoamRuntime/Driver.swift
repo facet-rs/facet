@@ -590,6 +590,10 @@ public func establishInitiator(
         try? await transport.send(.goodbye(connId: 0, reason: reason))
         throw ConnectionError.handshakeFailed(reason)
     }
+    guard case .v4 = peerHello else {
+        try? await transport.send(.goodbye(connId: 0, reason: "message.hello.unknown-version"))
+        throw ConnectionError.handshakeFailed("message.hello.unknown-version")
+    }
 
     let negotiated = Negotiated(
         maxPayloadSize: min(ourHello.maxPayloadSize, peerHello.maxPayloadSize),
@@ -635,6 +639,10 @@ public func establishAcceptor(
             ? "message.hello.unknown-version" : "handshake.decode-error"
         try? await transport.send(.goodbye(connId: 0, reason: reason))
         throw ConnectionError.handshakeFailed(reason)
+    }
+    guard case .v4 = peerHello else {
+        try? await transport.send(.goodbye(connId: 0, reason: "message.hello.unknown-version"))
+        throw ConnectionError.handshakeFailed("message.hello.unknown-version")
     }
 
     let negotiated = Negotiated(

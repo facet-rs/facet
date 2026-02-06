@@ -20,7 +20,7 @@ fn metadata_empty() -> Vec<(String, MetadataValue, u64)> {
 
 /// Helper to complete hello handshake and return the negotiated parameters.
 async fn complete_hello_handshake(
-    io: &mut spec_tests::harness::CobsFramed,
+    io: &mut spec_tests::harness::LengthPrefixedFramed,
 ) -> Result<(u32, u32), String> {
     // Receive Hello from subject
     let msg = io
@@ -30,11 +30,11 @@ async fn complete_hello_handshake(
         .ok_or_else(|| "expected Hello from subject".to_string())?;
 
     let (their_max_payload, their_credit) = match msg {
-        Message::Hello(Hello::V3 {
+        Message::Hello(Hello::V4 {
             max_payload_size,
             initial_channel_credit,
         }) => (max_payload_size, initial_channel_credit),
-        other => return Err(format!("expected Hello::V3, got {other:?}")),
+        other => return Err(format!("expected Hello::V4, got {other:?}")),
     };
 
     // Send our Hello

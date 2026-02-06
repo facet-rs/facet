@@ -4,7 +4,7 @@
 //! using the roam-stream transport library.
 
 use roam::session::{Rx, Tx};
-use roam_stream::{CobsFramed, Connector, HandshakeConfig, connect, initiate_framed};
+use roam_stream::{Connector, HandshakeConfig, LengthPrefixedFramed, connect, initiate_framed};
 use tokio::net::TcpStream;
 use tracing::{debug, error, info, instrument};
 
@@ -284,7 +284,7 @@ async fn run_server_with_incoming_connections(addr: &str) -> Result<(), String> 
     let stream = TcpStream::connect(addr)
         .await
         .map_err(|e| format!("connect failed: {e}"))?;
-    let framed = CobsFramed::new(stream);
+    let framed = LengthPrefixedFramed::new(stream);
 
     let dispatcher = testbed::TestbedDispatcher::new(TestbedService);
     let (handle, mut incoming, driver) =

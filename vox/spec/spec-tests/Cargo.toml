@@ -28,7 +28,6 @@ description = "Compliance tests for the canonical roam spec in docs/content/"
 [dependencies]
 roam-wire = { path = "../../rust/roam-wire" }
 spec-proto = { path = "../spec-proto" }
-cobs.workspace = true
 facet.workspace = true
 facet-postcard.workspace = true
 tokio = { workspace = true, features = [

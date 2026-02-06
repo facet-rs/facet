@@ -1,7 +1,7 @@
 // TCP transport for roam connections.
 
 import net from "node:net";
-import { CobsFramed } from "./framing.ts";
+import { LengthPrefixedFramed } from "./framing.ts";
 import {
   Connection,
   ConnectionError,
@@ -31,7 +31,7 @@ export class Server {
 
       const socket = net.createConnection({ host, port }, async () => {
         try {
-          const io = new CobsFramed(socket);
+          const io = new LengthPrefixedFramed(socket);
           const conn = await helloExchangeInitiator(io, defaultHello(), options);
           resolve(conn);
         } catch (e) {
@@ -49,7 +49,7 @@ export class Server {
    * Accept a connection from a socket and perform handshake as acceptor.
    */
   async accept(socket: net.Socket, options: ConnectOptions = {}): Promise<Connection> {
-    const io = new CobsFramed(socket);
+    const io = new LengthPrefixedFramed(socket);
     return helloExchangeAcceptor(io, defaultHello(), options);
   }
 }

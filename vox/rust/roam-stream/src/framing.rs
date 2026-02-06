@@ -1,6 +1,7 @@
-//! COBS framing for async streams.
+//! Length-prefixed framing for async streams.
 //!
-//! r[impl transport.bytestream.cobs] - Messages are COBS-encoded with 0x00 delimiter.
+//! r[impl transport.bytestream.length-prefix] - Messages are prefixed by a
+//! 4-byte little-endian frame length.
 //! r[impl transport.message.binary] - All messages are binary (not text).
 //! r[impl transport.message.one-to-one] - Each frame contains exactly one roam message.
 //! r[impl transport.message.multiplexing] - channel_id field provides multiplexing.
@@ -16,7 +17,6 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use cobs::decode_vec as cobs_decode_vec;
 use roam_wire::Message;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
@@ -59,75 +59,57 @@ fn wire_spy_bytes(direction: &str, bytes: &[u8]) {
 }
 
 const RECV_BUF_COMPACT_THRESHOLD: usize = 64 * 1024;
+const FRAME_LEN_PREFIX_SIZE: usize = 4;
 
-fn compact_recv_buffer(buf: &mut Vec<u8>, unread_start: &mut usize, scan_from: &mut usize) {
+fn compact_recv_buffer(buf: &mut Vec<u8>, unread_start: &mut usize) {
     if *unread_start == buf.len() {
         buf.clear();
         *unread_start = 0;
-        *scan_from = 0;
         return;
     }
 
     if *unread_start >= RECV_BUF_COMPACT_THRESHOLD && *unread_start >= buf.len() / 2 {
         buf.drain(..*unread_start);
-        *scan_from = scan_from.saturating_sub(*unread_start);
         *unread_start = 0;
     }
 }
 
-fn advance_past_frame(
-    buf: &mut Vec<u8>,
-    unread_start: &mut usize,
-    scan_from: &mut usize,
-    frame_end: usize,
-) {
-    *unread_start = frame_end + 1;
-    *scan_from = *unread_start;
-    compact_recv_buffer(buf, unread_start, scan_from);
+fn advance_past_frame(buf: &mut Vec<u8>, unread_start: &mut usize, frame_end: usize) {
+    *unread_start = frame_end;
+    compact_recv_buffer(buf, unread_start);
 }
 
 fn try_decode_one_from_buffer(
     buf: &mut Vec<u8>,
     unread_start: &mut usize,
-    scan_from: &mut usize,
+    _scan_from: &mut usize,
     last_decoded: &mut Vec<u8>,
 ) -> io::Result<Option<Message>> {
-    if *scan_from < *unread_start {
-        *scan_from = *unread_start;
-    }
-    if *scan_from > buf.len() {
-        *scan_from = buf.len();
+    if *unread_start > buf.len() {
+        *unread_start = buf.len();
     }
 
-    let Some(rel_idx) = buf[*scan_from..].iter().position(|b| *b == 0x00) else {
-        *scan_from = buf.len();
+    let unread = &buf[*unread_start..];
+    if unread.len() < FRAME_LEN_PREFIX_SIZE {
         return Ok(None);
-    };
+    }
 
-    let frame_end = *scan_from + rel_idx;
-    let frame = &buf[*unread_start..frame_end];
+    let frame_len = u32::from_le_bytes([unread[0], unread[1], unread[2], unread[3]]) as usize;
+    let frame_end = *unread_start + FRAME_LEN_PREFIX_SIZE + frame_len;
+    if frame_end > buf.len() {
+        return Ok(None);
+    }
+
+    let frame_start = *unread_start + FRAME_LEN_PREFIX_SIZE;
+    let frame = &buf[frame_start..frame_end];
 
     wire_spy_bytes("<-- frame", frame);
 
-    let decoded = match cobs_decode_vec(frame) {
-        Ok(decoded) => decoded,
-        Err(e) => {
-            last_decoded.clear();
-            advance_past_frame(buf, unread_start, scan_from, frame_end);
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("cobs: {e}"),
-            ));
-        }
-    };
-
-    wire_spy_bytes("<-- decoded", &decoded);
-
-    let msg: Message = match facet_postcard::from_slice(&decoded) {
+    let msg: Message = match facet_postcard::from_slice(frame) {
         Ok(msg) => msg,
         Err(e) => {
-            *last_decoded = decoded;
-            advance_past_frame(buf, unread_start, scan_from, frame_end);
+            *last_decoded = frame.to_vec();
+            advance_past_frame(buf, unread_start, frame_end);
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("postcard: {e}"),
@@ -135,9 +117,9 @@ fn try_decode_one_from_buffer(
         }
     };
 
-    *last_decoded = decoded;
+    *last_decoded = frame.to_vec();
     wire_spy_log("<--", &msg);
-    advance_past_frame(buf, unread_start, scan_from, frame_end);
+    advance_past_frame(buf, unread_start, frame_end);
     Ok(Some(msg))
 }
 
@@ -151,15 +133,15 @@ pub fn try_decode_one_from_buffer_for_fuzz(
     try_decode_one_from_buffer(buf, unread_start, scan_from, last_decoded)
 }
 
-/// A COBS-framed async stream connection.
+/// A length-prefixed async stream connection.
 ///
 /// Handles encoding/decoding of roam messages over any async byte stream using
-/// COBS (Consistent Overhead Byte Stuffing) framing with 0x00 delimiters.
+/// a 4-byte little-endian frame length prefix.
 ///
 /// Generic over the transport type `S` which must implement `AsyncRead + AsyncWrite + Unpin`.
 /// This allows the same framing logic to work with TCP sockets, Unix domain sockets,
 /// or any other async byte stream.
-pub struct CobsFramed<S> {
+pub struct LengthPrefixedFramed<S> {
     stream: S,
     buf: Vec<u8>,
     unread_start: usize,
@@ -170,7 +152,7 @@ pub struct CobsFramed<S> {
     encode_buf: Vec<u8>,
 }
 
-impl<S> CobsFramed<S> {
+impl<S> LengthPrefixedFramed<S> {
     /// Create a new framed connection from an async stream.
     pub fn new(stream: S) -> Self {
         Self {
@@ -199,77 +181,51 @@ impl<S> CobsFramed<S> {
     }
 }
 
-struct CobsWriter<'a> {
+struct VecWriter<'a> {
     out: &'a mut Vec<u8>,
-    code_idx: usize,
-    block_len: u8,
 }
 
-impl<'a> CobsWriter<'a> {
-    fn new(out: &'a mut Vec<u8>) -> Self {
-        let code_idx = out.len();
-        out.push(0);
-        Self {
-            out,
-            code_idx,
-            block_len: 0,
-        }
-    }
-
-    fn finalize(self) {
-        self.out[self.code_idx] = self.block_len + 1;
-    }
-}
-
-impl facet_postcard::Writer for CobsWriter<'_> {
+impl facet_postcard::Writer for VecWriter<'_> {
     fn write_byte(&mut self, byte: u8) -> Result<(), facet_postcard::SerializeError> {
-        if self.block_len == 254 {
-            self.code_idx = self.out.len();
-            self.out.push(0);
-            self.block_len = 0;
-        }
-
-        if byte == 0 {
-            self.out[self.code_idx] = self.block_len + 1;
-            self.code_idx = self.out.len();
-            self.out.push(0);
-            self.block_len = 0;
-        } else {
-            self.out.push(byte);
-            self.block_len += 1;
-            if self.block_len == 254 {
-                self.out[self.code_idx] = 0xFF;
-            }
-        }
+        self.out.push(byte);
         Ok(())
     }
 
     fn write_bytes(&mut self, bytes: &[u8]) -> Result<(), facet_postcard::SerializeError> {
-        for &b in bytes {
-            self.write_byte(b)?;
-        }
+        self.out.extend_from_slice(bytes);
         Ok(())
     }
 }
 
-impl<S> CobsFramed<S>
+impl<S> LengthPrefixedFramed<S>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     /// Send a message over the connection.
     ///
-    /// r[impl transport.bytestream.cobs] - COBS encode with 0x00 delimiter.
+    /// r[impl transport.bytestream.length-prefix] - Prefix each message with
+    /// a 4-byte little-endian frame length.
     pub async fn send(&mut self, msg: &Message) -> io::Result<()> {
         wire_spy_log("-->", msg);
 
         self.encode_buf.clear();
-        let mut writer = CobsWriter::new(&mut self.encode_buf);
+        let mut writer = VecWriter {
+            out: &mut self.encode_buf,
+        };
         facet_postcard::to_writer_fallible(msg, &mut writer)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
-        writer.finalize();
-        self.encode_buf.push(0x00); // Delimiter
 
+        let frame_len = u32::try_from(self.encode_buf.len()).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "message too large for u32 length prefix",
+            )
+        })?;
+        let header = frame_len.to_le_bytes();
+
+        wire_spy_bytes("--> len", &header);
         wire_spy_bytes("-->", &self.encode_buf);
+        self.stream.write_all(&header).await?;
         self.stream.write_all(&self.encode_buf).await?;
         self.stream.flush().await?;
         Ok(())
@@ -314,7 +270,7 @@ where
                 if trailing != 0 {
                     return Err(io::Error::new(
                         io::ErrorKind::UnexpectedEof,
-                        format!("eof with {trailing} trailing bytes and no frame delimiter"),
+                        format!("eof with {trailing} trailing bytes and no complete frame"),
                     ));
                 }
                 return Ok(None);
@@ -322,26 +278,26 @@ where
             if wire_spy_enabled() {
                 eprintln!("[WIRE] <-- read {} bytes: {:02x?}", n, &tmp[..n.min(64)]);
             }
-            compact_recv_buffer(&mut self.buf, &mut self.unread_start, &mut self.scan_from);
+            compact_recv_buffer(&mut self.buf, &mut self.unread_start);
             self.buf.extend_from_slice(&tmp[..n]);
         }
     }
 }
 
-impl<S> MessageTransport for CobsFramed<S>
+impl<S> MessageTransport for LengthPrefixedFramed<S>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
     async fn send(&mut self, msg: &Message) -> io::Result<()> {
-        CobsFramed::send(self, msg).await
+        LengthPrefixedFramed::send(self, msg).await
     }
 
     async fn recv_timeout(&mut self, timeout: Duration) -> io::Result<Option<Message>> {
-        CobsFramed::recv_timeout(self, timeout).await
+        LengthPrefixedFramed::recv_timeout(self, timeout).await
     }
 
     async fn recv(&mut self) -> io::Result<Option<Message>> {
-        CobsFramed::recv(self).await
+        LengthPrefixedFramed::recv(self).await
     }
 
     fn last_decoded(&self) -> &[u8] {
@@ -352,59 +308,20 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cobs::encode_vec as cobs_encode_vec;
     use std::process::Command;
     use std::time::Duration;
     use tokio::io::{AsyncWriteExt, duplex};
 
-    #[test]
-    fn test_cobs_writer_matches_cobs_crate() {
-        let mut input_254_zero = vec![0x11; 254];
-        input_254_zero.push(0x00);
-
-        let mut input_254_11 = vec![0x11; 254];
-        input_254_11.push(0x11);
-
-        let cases = vec![
-            vec![],
-            vec![0x00],
-            vec![0x11, 0x00, 0x22],
-            vec![0x11; 253],
-            vec![0x11; 254],
-            vec![0x11; 255],
-            input_254_zero,
-            input_254_11,
-            vec![0x00; 10],
-            (0..500).map(|i| (i % 256) as u8).collect::<Vec<_>>(),
-        ];
-
-        for input in cases {
-            let mut out = Vec::new();
-            let mut writer = CobsWriter::new(&mut out);
-            for &b in &input {
-                facet_postcard::Writer::write_byte(&mut writer, b).unwrap();
-            }
-            writer.finalize();
-
-            let expected = cobs_encode_vec(&input);
-            assert_eq!(out, expected, "Failed for input of length {}", input.len());
-        }
-    }
-
     #[tokio::test]
     async fn recv_invalid_postcard_payload_returns_invalid_data() {
-        // Minimized from AFL crash corpus.
-        let input = [
-            0x17, 0x01, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x30, 0x30, 0xfd,
-            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x05, 0x05, 0x30, 0x30, 0x30, 0x30,
-            0x00,
-        ];
+        // frame len = 3, payload = invalid postcard bytes.
+        let input = [0x03, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff];
 
         let (mut writer, reader) = duplex(input.len() + 1);
         writer.write_all(&input).await.unwrap();
         writer.shutdown().await.unwrap();
 
-        let mut framed = CobsFramed::new(reader);
+        let mut framed = LengthPrefixedFramed::new(reader);
         let err = framed.recv().await.expect_err("expected invalid data");
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     }
@@ -423,8 +340,8 @@ mod tests {
         };
 
         let (left, right) = duplex(256 * 1024);
-        let mut sender = CobsFramed::new(left);
-        let mut receiver = CobsFramed::new(right);
+        let mut sender = LengthPrefixedFramed::new(left);
+        let mut receiver = LengthPrefixedFramed::new(right);
 
         sender.send(&msg).await.unwrap();
         let decoded = receiver.recv().await.unwrap().expect("expected frame");
@@ -432,21 +349,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn recv_does_not_spin_on_delimiter_heavy_invalid_input() {
-        let mut input = Vec::with_capacity(64 * 1024);
-        for i in 0..(64 * 1024) {
-            if i % 2 == 0 {
-                input.push(0x00);
-            } else {
-                input.push(0xff);
-            }
-        }
+    async fn recv_does_not_spin_on_incomplete_input() {
+        let input = [0xff, 0xff, 0x00, 0x00, 0x01, 0x02];
 
         let (mut writer, reader) = duplex(input.len() + 1);
         writer.write_all(&input).await.unwrap();
         writer.shutdown().await.unwrap();
 
-        let mut framed = CobsFramed::new(reader);
+        let mut framed = LengthPrefixedFramed::new(reader);
         let completed = tokio::time::timeout(Duration::from_millis(250), framed.recv())
             .await
             .expect("recv should complete without spinning");
@@ -461,19 +371,16 @@ mod tests {
     fn compact_recv_buffer_compacts_large_consumed_prefix() {
         let mut buf = vec![0xaa; RECV_BUF_COMPACT_THRESHOLD + 32];
         let mut unread_start = RECV_BUF_COMPACT_THRESHOLD;
-        let mut scan_from = RECV_BUF_COMPACT_THRESHOLD + 7;
 
-        compact_recv_buffer(&mut buf, &mut unread_start, &mut scan_from);
+        compact_recv_buffer(&mut buf, &mut unread_start);
 
         assert_eq!(unread_start, 0);
-        assert_eq!(scan_from, 7);
         assert_eq!(buf, vec![0xaa; 32]);
     }
 
     #[test]
-    fn try_decode_normalizes_scan_bounds() {
-        // scan_from > len should clamp to len
-        let mut buf = Vec::new();
+    fn try_decode_waits_for_full_frame() {
+        let mut buf = vec![0x03, 0x00, 0x00, 0x00, 0x01, 0x02];
         let mut unread_start = 0usize;
         let mut scan_from = 123usize;
         let mut last_decoded = Vec::new();
@@ -485,28 +392,12 @@ mod tests {
         )
         .unwrap();
         assert!(decoded.is_none());
-        assert_eq!(scan_from, 0);
-
-        // scan_from < unread_start should move scan start forward before searching.
-        let mut buf = vec![0x42, 0x00];
-        let mut unread_start = 1usize;
-        let mut scan_from = 0usize;
-        let mut last_decoded = vec![1, 2, 3];
-        let err = try_decode_one_from_buffer(
-            &mut buf,
-            &mut unread_start,
-            &mut scan_from,
-            &mut last_decoded,
-        )
-        .expect_err("empty frame should fail postcard decode");
-        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-        assert!(last_decoded.is_empty());
     }
 
     #[test]
     fn accessors_roundtrip_underlying_stream() {
         let (left, _right) = duplex(1024);
-        let mut framed = CobsFramed::new(left);
+        let mut framed = LengthPrefixedFramed::new(left);
         let _ = framed.stream();
         let _ = framed.stream_mut();
         let _inner = framed.into_inner();
@@ -551,12 +442,12 @@ mod tests {
         WIRE_SPY_INIT.get_or_init(|| {});
         WIRE_SPY_ENABLED.store(true, Ordering::Relaxed);
 
-        let input = [0x11, 0x22, 0x33, 0x44];
+        let input = [0x04, 0x00, 0x00, 0x00, 0x11, 0x22];
         let (mut writer, reader) = duplex(input.len() + 1);
         writer.write_all(&input).await.unwrap();
         writer.shutdown().await.unwrap();
 
-        let mut framed = CobsFramed::new(reader);
+        let mut framed = LengthPrefixedFramed::new(reader);
         let err = framed
             .recv()
             .await
@@ -575,14 +466,17 @@ mod tests {
             payload: vec![1, 2, 3, 4],
         };
         let postcard = facet_postcard::to_vec(&msg).unwrap();
-        let mut frame = cobs_encode_vec(&postcard);
-        frame.push(0x00);
+
+        let frame_len = (postcard.len() as u32).to_le_bytes();
+        let mut frame = Vec::with_capacity(FRAME_LEN_PREFIX_SIZE + postcard.len());
+        frame.extend_from_slice(&frame_len);
+        frame.extend_from_slice(&postcard);
 
         let (mut writer, reader) = duplex(frame.len() + 1);
         writer.write_all(&frame).await.unwrap();
         writer.shutdown().await.unwrap();
 
-        let mut framed = CobsFramed::new(reader);
+        let mut framed = LengthPrefixedFramed::new(reader);
         let decoded = framed
             .recv()
             .await

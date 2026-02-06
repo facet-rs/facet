@@ -6,8 +6,6 @@ use std::env;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 
-use cobs::{decode_vec, encode_vec};
-
 fn main() {
     let addr = env::var("SERVER_ADDR").unwrap_or_else(|_| "127.0.0.1:9000".to_string());
 
@@ -18,12 +16,10 @@ fn main() {
     // Send Hello
     let mut hello = Vec::new();
     write_varint(&mut hello, 0); // Message::Hello
-    write_varint(&mut hello, 2); // Hello::V3 (discriminant 2)
+    write_varint(&mut hello, 3); // Hello::V4 (discriminant 3)
     write_varint(&mut hello, 1024 * 1024); // max_payload
     write_varint(&mut hello, 64 * 1024); // initial_channel_credit
-    let mut framed = encode_vec(&hello);
-    framed.push(0);
-    stream.write_all(&framed).expect("Failed to send hello");
+    write_message(&mut stream, &hello).expect("Failed to send hello");
 
     // Read Hello from server
     let _hello_msg = read_message(&mut stream).expect("Failed to read hello");
@@ -80,23 +76,22 @@ fn read_varint(buf: &[u8], off: &mut usize) -> u64 {
     result
 }
 
+fn write_message(stream: &mut TcpStream, payload: &[u8]) -> Result<(), String> {
+    let len = u32::try_from(payload.len())
+        .map_err(|_| "frame too large".to_string())?
+        .to_le_bytes();
+    stream.write_all(&len).map_err(|e| e.to_string())?;
+    stream.write_all(payload).map_err(|e| e.to_string())
+}
+
 fn read_message(stream: &mut TcpStream) -> Result<Vec<u8>, String> {
-    let mut buf = vec![0u8; 4096];
-    let mut recv = Vec::new();
+    let mut len = [0u8; 4];
+    stream.read_exact(&mut len).map_err(|e| e.to_string())?;
+    let frame_len = u32::from_le_bytes(len) as usize;
 
-    loop {
-        let n = stream.read(&mut buf).map_err(|e| e.to_string())?;
-        if n == 0 {
-            return Err("Connection closed".to_string());
-        }
-        recv.extend_from_slice(&buf[..n]);
-
-        if let Some(zero_idx) = recv.iter().position(|&b| b == 0) {
-            let frame = &recv[..zero_idx];
-            let decoded = decode_vec(frame).map_err(|e| format!("COBS decode error: {:?}", e))?;
-            return Ok(decoded);
-        }
-    }
+    let mut frame = vec![0u8; frame_len];
+    stream.read_exact(&mut frame).map_err(|e| e.to_string())?;
+    Ok(frame)
 }
 
 static mut REQUEST_ID: u64 = 1;
@@ -117,15 +112,15 @@ fn call_method(stream: &mut TcpStream, method_id: u64, message: &str) -> String 
     // Build request
     let mut request = Vec::new();
     write_varint(&mut request, 2); // Message::Request
+    write_varint(&mut request, 0); // conn_id
     write_varint(&mut request, request_id);
     write_varint(&mut request, method_id);
     write_varint(&mut request, 0); // metadata length = 0
+    write_varint(&mut request, 0); // channels length = 0
     write_varint(&mut request, payload.len() as u64); // payload length
     request.extend_from_slice(&payload);
 
-    let mut framed = encode_vec(&request);
-    framed.push(0);
-    stream.write_all(&framed).expect("Failed to send request");
+    write_message(stream, &request).expect("Failed to send request");
 
     // Read response
     let response = read_message(stream).expect("Failed to read response");
@@ -135,6 +130,7 @@ fn call_method(stream: &mut TcpStream, method_id: u64, message: &str) -> String 
     let msg_type = read_varint(&response, &mut off);
     assert_eq!(msg_type, 3, "Expected Response message");
 
+    let _conn_id = read_varint(&response, &mut off);
     let resp_id = read_varint(&response, &mut off);
     assert_eq!(resp_id, request_id, "Request ID mismatch");
 
@@ -158,6 +154,12 @@ fn call_method(stream: &mut TcpStream, method_id: u64, message: &str) -> String 
             }
             _ => panic!("Unknown metadata value type"),
         }
+        let _flags = read_varint(&response, &mut off);
+    }
+
+    let channels_len = read_varint(&response, &mut off) as usize;
+    for _ in 0..channels_len {
+        let _ = read_varint(&response, &mut off);
     }
 
     let _payload_len = read_varint(&response, &mut off);
