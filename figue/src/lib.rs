@@ -163,6 +163,7 @@ use figue_attrs as args;
 mod macros;
 
 pub(crate) mod builder;
+pub(crate) mod color;
 pub(crate) mod completions;
 pub(crate) mod config_format;
 pub(crate) mod config_value;

@@ -7,6 +7,7 @@ use crate::schema::{
 };
 use heck::ToKebabCase;
 use heck::ToShoutySnakeCase;
+use owo_colors::Stream::Stdout;
 
 /// Normalize a program name for display in error messages and help text.
 ///
@@ -536,25 +537,40 @@ pub fn format_missing_fields_summary(missing: &[MissingFieldInfo]) -> String {
         write!(
             output,
             "  {} <{}>",
-            field.field_path.bold(),
-            field.type_name.cyan()
+            field
+                .field_path
+                .if_supports_color(Stdout, |text| text.bold()),
+            field
+                .type_name
+                .if_supports_color(Stdout, |text| text.cyan()),
         )
         .unwrap();
 
         // Show how to set the field
         let mut hints = Vec::new();
         if let Some(cli) = &field.cli_flag {
-            hints.push(cli.green().to_string());
+            hints.push(
+                cli.if_supports_color(Stdout, |text| text.green())
+                    .to_string(),
+            );
         }
         if let Some(env) = &field.env_var {
-            hints.push(format!("${}", env).yellow().to_string());
+            hints.push(
+                format!("${}", env)
+                    .if_supports_color(Stdout, |text| text.yellow())
+                    .to_string(),
+            );
         }
         // Show env aliases
         for alias in &field.env_aliases {
             hints.push(
-                format!("${} {}", alias, "(alias)".dimmed())
-                    .yellow()
-                    .to_string(),
+                format!(
+                    "${} {}",
+                    alias,
+                    "(alias)".if_supports_color(Stdout, |text| text.dimmed())
+                )
+                .if_supports_color(Stdout, |text| text.yellow())
+                .to_string(),
             );
         }
         if !hints.is_empty() {
@@ -563,7 +579,12 @@ pub fn format_missing_fields_summary(missing: &[MissingFieldInfo]) -> String {
 
         // Add doc comment on a new line if available
         if let Some(doc) = &field.doc_comment {
-            write!(output, "\n    {}", doc.dimmed()).unwrap();
+            write!(
+                output,
+                "\n    {}",
+                doc.if_supports_color(Stdout, |text| text.dimmed())
+            )
+            .unwrap();
         }
 
         output.push('\n');

@@ -35,6 +35,7 @@ ariadne.workspace = true
 unicode-width.workspace = true
 strip-ansi-escapes.workspace = true
 strsim.workspace = true
+supports-color.workspace = true
 
 [dev-dependencies]
 facet-format = { workspace = true, features = ["tracing"] }

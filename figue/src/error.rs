@@ -606,7 +606,8 @@ impl fmt::Display for ArgsError {
 
 mod ariadne_impl {
     use super::*;
-    use ariadne::{Color, Label, Report, ReportKind, Source};
+    use crate::color::should_use_color;
+    use ariadne::{Color, Config, Label, Report, ReportKind, Source};
     use facet_pretty::{PathSegment, format_shape_with_spans};
     use std::borrow::Cow;
 
@@ -619,6 +620,7 @@ mod ariadne_impl {
             // Skip help requests - they're not real errors
             if self.is_help_request() {
                 return Report::build(ReportKind::Custom("Help", Color::Cyan), 0..0)
+                    .with_config(Config::default().with_color(should_use_color()))
                     .with_message(self.help_text().unwrap_or(""))
                     .finish();
             }
@@ -631,6 +633,7 @@ mod ariadne_impl {
                     let span = field_span.key.0..field_span.value.1;
 
                     let mut builder = Report::build(ReportKind::Error, span.clone())
+                        .with_config(Config::default().with_color(should_use_color()))
                         .with_code(self.inner.kind.code())
                         .with_message(self.inner.kind.label());
 
@@ -677,6 +680,7 @@ mod ariadne_impl {
             let range = span.start..(span.start + span.len);
 
             let mut builder = Report::build(ReportKind::Error, range.clone())
+                .with_config(Config::default().with_color(should_use_color()))
                 .with_code(self.inner.kind.code())
                 .with_message(self.inner.kind.label());
 
