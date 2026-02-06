@@ -1,0 +1,21 @@
+[package]
+name = "roam-stream-afl"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+afl = "0.17"
+roam-stream = { path = "../../rust/roam-stream" }
+roam-wire = { path = "../../rust/roam-wire" }
+tokio = { version = "1", features = ["io-util", "rt", "time"] }
+cobs = "0.5"
+facet-postcard = { git = "https://github.com/facet-rs/facet", branch = "main" }
+
+[[bin]]
+name = "cobs_recv_inner"
+path = "src/bin/cobs_recv_inner.rs"
+
+[[bin]]
+name = "generate_seeds"
+path = "src/bin/generate_seeds.rs"

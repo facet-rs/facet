@@ -1,5 +1,9 @@
 target/
 .handoffs/
+fuzz/**/in/
+fuzz/**/out/
+fuzz/**/findings/
+fuzz/**/target/
 
 # Node.js / Playwright
 node_modules/

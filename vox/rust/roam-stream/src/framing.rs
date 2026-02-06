@@ -257,6 +257,8 @@ where
 mod tests {
     use super::*;
     use cobs::encode_vec as cobs_encode_vec;
+    use std::time::Duration;
+    use tokio::io::{AsyncWriteExt, duplex};
 
     #[test]
     fn test_cobs_writer_matches_cobs_crate() {
@@ -289,6 +291,72 @@ mod tests {
 
             let expected = cobs_encode_vec(&input);
             assert_eq!(out, expected, "Failed for input of length {}", input.len());
+        }
+    }
+
+    #[tokio::test]
+    async fn recv_invalid_postcard_payload_returns_invalid_data() {
+        // Minimized from AFL crash corpus.
+        let input = [
+            0x17, 0x01, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x30, 0x30, 0xfd,
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x05, 0x05, 0x30, 0x30, 0x30, 0x30,
+            0x00,
+        ];
+
+        let (mut writer, reader) = duplex(input.len() + 1);
+        writer.write_all(&input).await.unwrap();
+        writer.shutdown().await.unwrap();
+
+        let mut framed = CobsFramed::new(reader);
+        let err = framed.recv().await.expect_err("expected invalid data");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[tokio::test]
+    async fn roundtrip_large_response_payload() {
+        let payload: Vec<u8> = (0..(32 * 1024))
+            .map(|i| (i as u8).wrapping_mul(31))
+            .collect();
+        let msg = Message::Response {
+            conn_id: roam_wire::ConnectionId::ROOT,
+            request_id: 42,
+            metadata: vec![],
+            channels: vec![],
+            payload,
+        };
+
+        let (left, right) = duplex(256 * 1024);
+        let mut sender = CobsFramed::new(left);
+        let mut receiver = CobsFramed::new(right);
+
+        sender.send(&msg).await.unwrap();
+        let decoded = receiver.recv().await.unwrap().expect("expected frame");
+        assert_eq!(decoded, msg);
+    }
+
+    #[tokio::test]
+    async fn recv_does_not_spin_on_delimiter_heavy_invalid_input() {
+        let mut input = Vec::with_capacity(64 * 1024);
+        for i in 0..(64 * 1024) {
+            if i % 2 == 0 {
+                input.push(0x00);
+            } else {
+                input.push(0xff);
+            }
+        }
+
+        let (mut writer, reader) = duplex(input.len() + 1);
+        writer.write_all(&input).await.unwrap();
+        writer.shutdown().await.unwrap();
+
+        let mut framed = CobsFramed::new(reader);
+        let completed = tokio::time::timeout(Duration::from_millis(250), framed.recv())
+            .await
+            .expect("recv should complete without spinning");
+
+        match completed {
+            Ok(None) | Err(_) => {}
+            Ok(Some(msg)) => panic!("unexpectedly decoded message: {msg:?}"),
         }
     }
 }
