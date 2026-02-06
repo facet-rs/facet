@@ -23,6 +23,7 @@ use std::string::String;
 use std::vec::Vec;
 
 use crate::builder::Config;
+use crate::color::should_use_color;
 use crate::completions::{Shell, generate_completions_for_shape};
 use crate::config_value::ConfigValue;
 use crate::config_value_parser::{fill_defaults_from_schema, from_config_value};
@@ -969,7 +970,7 @@ impl ariadne::Cache<()> for NamedSource {
 impl DriverReport {
     /// Render the report using Ariadne for pretty error display.
     pub fn render_pretty(&self) -> String {
-        use ariadne::{Color, Label, Report, ReportKind, Source};
+        use ariadne::{Color, Config, Label, Report, ReportKind, Source};
 
         if self.diagnostics.is_empty() {
             return String::new();
@@ -1027,6 +1028,7 @@ impl DriverReport {
 
             let label_message = diagnostic.label.as_deref().unwrap_or(&diagnostic.message);
             let report = Report::build(report_kind, span.clone())
+                .with_config(Config::default().with_color(should_use_color()))
                 .with_message(&diagnostic.message)
                 .with_label(
                     Label::new(span)

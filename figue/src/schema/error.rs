@@ -1,9 +1,10 @@
 use std::borrow::Cow;
 
-use ariadne::{Color, Label, Report, ReportKind, Source};
+use ariadne::{Color, Config, Label, Report, ReportKind, Source};
 use facet_core::Shape;
 use facet_pretty::{PathSegment, format_shape_with_spans};
 
+use crate::color::should_use_color;
 use crate::{
     diagnostics::{ColorHint, Diagnostic, LabelSpec, SourceBundle, SourceId},
     path::Path,
@@ -230,8 +231,9 @@ impl SchemaError {
             .map(|label| label.span.clone())
             .unwrap_or(0..0);
 
-        let mut builder =
-            Report::build(ReportKind::Error, primary_span.clone()).with_message(self.label());
+        let mut builder = Report::build(ReportKind::Error, primary_span.clone())
+            .with_config(Config::default().with_color(should_use_color()))
+            .with_message(self.label());
 
         for label in labels {
             if label.source != SourceId::Schema {

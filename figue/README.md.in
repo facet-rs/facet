@@ -35,6 +35,11 @@ Ok(())
 
 The entry point of figue is [`builder`] — let yourself be guided from there.
 
+## Color
+
+Color is enabled by default if the terminal supports it. It is disabled when the
+[`NO_COLOR`](https://no-color.org) environment variable is set.
+
 ## Sponsors
 
 Thanks to all individual sponsors:

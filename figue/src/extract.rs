@@ -3,13 +3,13 @@
 //! This module provides the ability to validate and extract subcommand-specific
 //! required fields from a successfully parsed configuration.
 
+use crate::config_value::{ConfigValue, ObjectMap, Sourced};
+use crate::schema::Schema;
 use facet::{Def, Facet, Field, Type, UserType};
 use heck::{ToKebabCase, ToShoutySnakeCase};
 use indexmap::IndexMap;
 use owo_colors::OwoColorize;
-
-use crate::config_value::{ConfigValue, ObjectMap, Sourced};
-use crate::schema::Schema;
+use owo_colors::Stream::Stdout;
 
 /// Information about a missing required field during extraction.
 #[derive(Debug, Clone)]
@@ -40,17 +40,27 @@ impl std::fmt::Display for ExtractError {
             write!(
                 f,
                 "  {} <{}> at {}",
-                field.field_name.bold(),
-                field.type_name.cyan(),
+                field
+                    .field_name
+                    .if_supports_color(Stdout, |text| text.bold()),
+                field
+                    .type_name
+                    .if_supports_color(Stdout, |text| text.cyan()),
                 field.origin_path
             )?;
 
             let mut hints = Vec::new();
             if let Some(cli) = &field.cli_hint {
-                hints.push(cli.green().to_string());
+                hints.push(
+                    cli.if_supports_color(Stdout, |text| text.green())
+                        .to_string(),
+                );
             }
             if let Some(env) = &field.env_hint {
-                hints.push(env.yellow().to_string());
+                hints.push(
+                    env.if_supports_color(Stdout, |text| text.yellow())
+                        .to_string(),
+                );
             }
             if !hints.is_empty() {
                 write!(f, "\n    Set via: {}", hints.join(" or "))?;
