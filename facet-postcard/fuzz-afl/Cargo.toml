@@ -1,0 +1,22 @@
+[package]
+name = "facet-postcard-fuzz-afl"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[dependencies]
+afl = "0.15"
+
+[dependencies.facet-postcard]
+path = ".."
+
+# Prevent this from interfering with the top-level workspace.
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "from_slice"
+path = "src/from_slice.rs"
+test = false
+doc = false
+bench = false
