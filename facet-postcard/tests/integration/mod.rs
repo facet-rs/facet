@@ -3,6 +3,7 @@ mod cross_compat;
 mod external_types;
 mod issue_1453;
 mod issue_1474;
+mod issue_2027;
 mod jit_vec_bool;
 mod jit_vec_int;
 mod multi_tier;

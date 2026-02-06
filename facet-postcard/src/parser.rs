@@ -210,11 +210,15 @@ impl<'de> PostcardParser<'de> {
 
     /// Read N bytes as a slice.
     fn read_bytes(&mut self, len: usize) -> Result<&'de [u8], ParseError> {
-        if self.pos + len > self.input.len() {
+        let end = self
+            .pos
+            .checked_add(len)
+            .ok_or_else(|| error_from_code(codes::UNEXPECTED_EOF, self.pos))?;
+        if end > self.input.len() {
             return Err(error_from_code(codes::UNEXPECTED_EOF, self.pos));
         }
-        let bytes = &self.input[self.pos..self.pos + len];
-        self.pos += len;
+        let bytes = &self.input[self.pos..end];
+        self.pos = end;
         Ok(bytes)
     }
 
@@ -736,11 +740,15 @@ impl<'de> PostcardParser<'de> {
 
     /// Read exactly N bytes from input without length prefix.
     fn read_fixed_bytes(&mut self, len: usize) -> Result<&'de [u8], ParseError> {
-        if self.pos + len > self.input.len() {
+        let end = self
+            .pos
+            .checked_add(len)
+            .ok_or_else(|| error_from_code(codes::UNEXPECTED_EOF, self.pos))?;
+        if end > self.input.len() {
             return Err(error_from_code(codes::UNEXPECTED_EOF, self.pos));
         }
-        let bytes = &self.input[self.pos..self.pos + len];
-        self.pos += len;
+        let bytes = &self.input[self.pos..end];
+        self.pos = end;
         Ok(bytes)
     }
 

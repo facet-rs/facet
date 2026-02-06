@@ -81,6 +81,12 @@ fuzz-smoke-value:
 fuzz-smoke-inline:
     cargo fuzz run fuzz_inline_string -- -runs=1000
 
+afl-build-postcard:
+    cd facet-postcard/fuzz-afl && cargo afl build --bin from_slice
+
+afl-fuzz-postcard:
+    cd facet-postcard/fuzz-afl && mkdir -p in out && cargo afl fuzz -i in -o out target/debug/from_slice
+
 test-ci *args:
     #!/usr/bin/env -S bash -euo pipefail
     source .envrc
