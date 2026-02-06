@@ -494,9 +494,14 @@ pub unsafe fn prepare_sync(
     // SAFETY: caller guarantees args_ptr is valid and properly sized
     unsafe { deserialize_into(args_ptr, args_shape, payload) }?;
 
-    // 2. Count expected channels and validate
+    // 2. Collect expected channels and validate count
     // SAFETY: args_ptr was just initialized by deserialize_into
-    let expected_channels = unsafe { count_channels_by_shape(args_ptr, args_shape) };
+    let expected_channels = {
+        // SAFETY: args_ptr is valid and initialized by deserialize_into above.
+        let peek =
+            unsafe { facet::Peek::unchecked_new(PtrConst::new(args_ptr.cast::<u8>()), args_shape) };
+        collect_channel_ids_from_peek(peek).len()
+    };
     if channels.len() != expected_channels {
         return Err(PrepareError::ChannelCountMismatch {
             expected: expected_channels,
@@ -568,68 +573,6 @@ pub unsafe fn deserialize_into(
         .map_err(|e| PrepareError::Deserialize(e.to_string()))?;
 
     Ok(())
-}
-
-/// Count the number of Tx/Rx fields in args by walking with Peek (non-generic).
-///
-/// Used to validate that the request has the correct number of channel IDs.
-///
-/// # Safety
-///
-/// - `args_ptr` must point to valid, initialized memory matching `args_shape`
-#[allow(unsafe_code)]
-pub unsafe fn count_channels_by_shape(args_ptr: *const (), args_shape: &'static Shape) -> usize {
-    // SAFETY: Caller guarantees args_ptr is valid and initialized
-    let peek =
-        unsafe { facet::Peek::unchecked_new(PtrConst::new(args_ptr.cast::<u8>()), args_shape) };
-    count_channels_recursive(peek)
-}
-
-fn count_channels_recursive(peek: facet::Peek<'_, '_>) -> usize {
-    let shape = peek.shape();
-
-    // Check if this is an Rx or Tx type
-    if shape.decl_id == Rx::<()>::SHAPE.decl_id || shape.decl_id == Tx::<()>::SHAPE.decl_id {
-        return 1;
-    }
-
-    let mut count = 0;
-
-    // Recurse into struct/tuple fields
-    if let Ok(ps) = peek.into_struct() {
-        let field_count = ps.field_count();
-        for i in 0..field_count {
-            if let Ok(field_peek) = ps.field(i) {
-                count += count_channels_recursive(field_peek);
-            }
-        }
-        return count;
-    }
-
-    // Recurse into Option<T>
-    if let Ok(po) = peek.into_option() {
-        if let Some(inner) = po.value() {
-            count += count_channels_recursive(inner);
-        }
-        return count;
-    }
-
-    // Recurse into enum variants
-    if let Ok(pe) = peek.into_enum() {
-        if let Ok(Some(variant_peek)) = pe.field(0) {
-            count += count_channels_recursive(variant_peek);
-        }
-        return count;
-    }
-
-    // Recurse into sequences
-    if let Ok(pl) = peek.into_list() {
-        for element in pl.iter() {
-            count += count_channels_recursive(element);
-        }
-    }
-
-    count
 }
 
 /// Patch channel IDs into deserialized args by walking with Poke (non-generic).
@@ -912,17 +855,11 @@ fn collect_channel_ids_recursive(peek: facet::Peek<'_, '_>, ids: &mut Vec<u64>) 
 
     // Recurse into enum variants (for other enums with data)
     if let Ok(pe) = peek.into_enum() {
-        // Try to get the first field of the active variant (e.g., Some(T) has one field)
-        if let Ok(Some(variant_peek)) = pe.field(0) {
-            collect_channel_ids_recursive(variant_peek, ids);
-        }
-        return;
-    }
-
-    // Recurse into sequences (e.g., Vec<Tx<T>>)
-    if let Ok(pl) = peek.into_list() {
-        for element in pl.iter() {
-            collect_channel_ids_recursive(element, ids);
+        for i in 0usize.. {
+            match pe.field(i) {
+                Ok(Some(variant_peek)) => collect_channel_ids_recursive(variant_peek, ids),
+                Ok(None) | Err(_) => break,
+            }
         }
     }
 }
@@ -939,7 +876,7 @@ pub fn patch_channel_ids<T: Facet<'static>>(args: &mut T, channels: &[u64]) {
 }
 
 #[allow(unsafe_code)]
-fn patch_channel_ids_recursive(mut poke: facet::Poke<'_, '_>, channels: &[u64], idx: &mut usize) {
+fn patch_channel_ids_recursive(poke: facet::Poke<'_, '_>, channels: &[u64], idx: &mut usize) {
     use facet::Def;
 
     let shape = poke.shape();
@@ -973,45 +910,17 @@ fn patch_channel_ids_recursive(mut poke: facet::Poke<'_, '_>, channels: &[u64], 
             }
         }
 
-        // Recurse into Option<T>
-        Def::Option(_) => {
-            // Option is represented as an enum, use into_enum to access its value
-            if let Ok(mut pe) = poke.into_enum()
-                && let Ok(Some(inner_poke)) = pe.field(0)
-            {
-                patch_channel_ids_recursive(inner_poke, channels, idx);
-            }
-        }
-
-        // Recurse into list elements (e.g., Vec<Tx<T>>)
-        Def::List(list_def) => {
-            let len = {
-                let peek = poke.as_peek();
-                peek.into_list().map(|pl| pl.len()).unwrap_or(0)
-            };
-            // Get mutable access to elements via VTable (no PokeList exists)
-            if let Some(get_mut_fn) = list_def.vtable.get_mut {
-                let element_shape = list_def.t;
-                let data_ptr = poke.data_mut();
-                for i in 0..len {
-                    // SAFETY: We have exclusive mutable access via poke, index < len, shape is correct
-                    let element_ptr = unsafe { (get_mut_fn)(data_ptr, i, element_shape) };
-                    if let Some(ptr) = element_ptr {
-                        // SAFETY: ptr points to a valid element with the correct shape
-                        let element_poke =
-                            unsafe { facet::Poke::from_raw_parts(ptr, element_shape) };
-                        patch_channel_ids_recursive(element_poke, channels, idx);
+        // Recurse into enum fields (includes Option<T>)
+        _ if poke.is_enum() => {
+            if let Ok(mut pe) = poke.into_enum() {
+                for i in 0usize.. {
+                    match pe.field(i) {
+                        Ok(Some(variant_poke)) => {
+                            patch_channel_ids_recursive(variant_poke, channels, idx)
+                        }
+                        Ok(None) | Err(_) => break,
                     }
                 }
-            }
-        }
-
-        // Other enum variants
-        _ if poke.is_enum() => {
-            if let Ok(mut pe) = poke.into_enum()
-                && let Ok(Some(variant_poke)) = pe.field(0)
-            {
-                patch_channel_ids_recursive(variant_poke, channels, idx);
             }
         }
 

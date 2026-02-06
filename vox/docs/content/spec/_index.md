@@ -536,6 +536,15 @@ Request {
 > `Tx<T>` and `Rx<T>` parameters), in declaration order. This enables
 > transparent proxying without parsing the payload.
 
+> r[call.request.channels.schema-driven]
+>
+> Channel discovery is defined by the method schema, not by byte-by-byte
+> inspection of payload values. Implementations MUST traverse only struct
+> fields (including tuples) and active enum variant fields when collecting
+> channel IDs. They MUST NOT traverse list or map container elements. For
+> example, `Vec<T>` values (lists) and `HashMap<K, V>` values (maps) are not
+> traversed for channel discovery.
+
 > r[call.request.payload-encoding]
 >
 > The payload MUST be the [^POSTCARD] encoding of a tuple containing all
