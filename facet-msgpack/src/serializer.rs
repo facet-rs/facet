@@ -249,6 +249,13 @@ impl MsgPackSerializer {
             }
         }
     }
+
+    /// Record a value emission in the current sequence, if any.
+    fn bump_seq_count_for_value(&mut self) {
+        if let Some(ContainerState::Seq { count, .. }) = self.stack.last_mut() {
+            *count += 1;
+        }
+    }
 }
 
 impl Default for MsgPackSerializer {
@@ -261,6 +268,7 @@ impl FormatSerializer for MsgPackSerializer {
     type Error = MsgPackSerializeError;
 
     fn begin_struct(&mut self) -> Result<(), Self::Error> {
+        self.bump_seq_count_for_value();
         let count_pos = self.begin_map();
         self.stack.push(ContainerState::Struct {
             count: 0,
@@ -291,6 +299,7 @@ impl FormatSerializer for MsgPackSerializer {
     }
 
     fn begin_seq(&mut self) -> Result<(), Self::Error> {
+        self.bump_seq_count_for_value();
         let count_pos = self.begin_array();
         self.stack.push(ContainerState::Seq {
             count: 0,
@@ -312,10 +321,7 @@ impl FormatSerializer for MsgPackSerializer {
     }
 
     fn scalar(&mut self, scalar: ScalarValue<'_>) -> Result<(), Self::Error> {
-        // Increment count in current sequence
-        if let Some(ContainerState::Seq { count, .. }) = self.stack.last_mut() {
-            *count += 1;
-        }
+        self.bump_seq_count_for_value();
 
         match scalar {
             ScalarValue::Null | ScalarValue::Unit => self.write_nil(),

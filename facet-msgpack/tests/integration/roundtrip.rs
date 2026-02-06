@@ -235,6 +235,20 @@ fn test_scalar_string() {
     assert_eq!(result, "hello world");
 }
 
+#[derive(Debug, Facet, PartialEq, Eq, Serialize, Deserialize)]
+struct Issue2029Foo(usize);
+
+#[derive(Debug, Facet, PartialEq, Eq, Serialize, Deserialize)]
+struct Issue2029Bar(Issue2029Foo);
+
+#[test]
+fn test_issue_2029_nested_newtype_roundtrip() {
+    let value = Issue2029Bar(Issue2029Foo(1234));
+    let bytes = to_vec(&value).unwrap();
+    let result: Issue2029Bar = from_slice(&bytes).unwrap();
+    assert_eq!(result, value);
+}
+
 // =============================================================================
 // Enums
 // =============================================================================
