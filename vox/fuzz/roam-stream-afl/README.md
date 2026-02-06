@@ -1,7 +1,8 @@
 # roam-stream AFL harness
 
-This harness targets `roam_stream::CobsFramed::recv` to catch hangs, decode panics,
-and framing edge cases (including large valid payloads).
+This harness targets the low-level frame decoder (`try_decode_one_from_buffer_for_fuzz`)
+used by `CobsFramed::recv`, so fuzzing stays focused on delimiter scanning and frame
+decode behavior without async runtime overhead.
 
 ## Build
 

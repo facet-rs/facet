@@ -6,7 +6,7 @@ publish = false
 
 [dependencies]
 afl = "0.17"
-roam-stream = { path = "../../rust/roam-stream" }
+roam-stream = { path = "../../rust/roam-stream", features = ["fuzzing"] }
 roam-wire = { path = "../../rust/roam-wire" }
 tokio = { version = "1", features = ["io-util", "rt", "time"] }
 cobs = "0.5"

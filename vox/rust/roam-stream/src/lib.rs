@@ -54,6 +54,8 @@ pub use driver::{Client, Connector, accept, connect, connect_with_policy};
 
 // COBS framing
 pub use framing::CobsFramed;
+#[cfg(feature = "fuzzing")]
+pub use framing::try_decode_one_from_buffer_for_fuzz;
 
 // Re-export types that moved to roam-session (backwards compat)
 pub use roam_session::{

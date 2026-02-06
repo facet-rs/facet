@@ -25,6 +25,7 @@ use roam_session::MessageTransport;
 /// Enable wire-level message logging for debugging.
 /// Set ROAM_WIRE_SPY=1 to enable.
 static WIRE_SPY_ENABLED: AtomicBool = AtomicBool::new(false);
+static WIRE_SPY_BYTES_ONLY: AtomicBool = AtomicBool::new(false);
 
 static WIRE_SPY_INIT: OnceLock<()> = OnceLock::new();
 
@@ -33,13 +34,16 @@ fn wire_spy_enabled() -> bool {
         if std::env::var("ROAM_WIRE_SPY").is_ok() {
             WIRE_SPY_ENABLED.store(true, Ordering::Relaxed);
         }
+        if std::env::var("ROAM_WIRE_SPY_BYTES_ONLY").is_ok() {
+            WIRE_SPY_BYTES_ONLY.store(true, Ordering::Relaxed);
+        }
     });
 
     WIRE_SPY_ENABLED.load(Ordering::Relaxed)
 }
 
 fn wire_spy_log(direction: &str, msg: &Message) {
-    if wire_spy_enabled() {
+    if wire_spy_enabled() && !WIRE_SPY_BYTES_ONLY.load(Ordering::Relaxed) {
         eprintln!("[WIRE] {direction} {msg:?}");
     }
 }
@@ -54,6 +58,99 @@ fn wire_spy_bytes(direction: &str, bytes: &[u8]) {
     }
 }
 
+const RECV_BUF_COMPACT_THRESHOLD: usize = 64 * 1024;
+
+fn compact_recv_buffer(buf: &mut Vec<u8>, unread_start: &mut usize, scan_from: &mut usize) {
+    if *unread_start == buf.len() {
+        buf.clear();
+        *unread_start = 0;
+        *scan_from = 0;
+        return;
+    }
+
+    if *unread_start >= RECV_BUF_COMPACT_THRESHOLD && *unread_start >= buf.len() / 2 {
+        buf.drain(..*unread_start);
+        *scan_from = scan_from.saturating_sub(*unread_start);
+        *unread_start = 0;
+    }
+}
+
+fn advance_past_frame(
+    buf: &mut Vec<u8>,
+    unread_start: &mut usize,
+    scan_from: &mut usize,
+    frame_end: usize,
+) {
+    *unread_start = frame_end + 1;
+    *scan_from = *unread_start;
+    compact_recv_buffer(buf, unread_start, scan_from);
+}
+
+fn try_decode_one_from_buffer(
+    buf: &mut Vec<u8>,
+    unread_start: &mut usize,
+    scan_from: &mut usize,
+    last_decoded: &mut Vec<u8>,
+) -> io::Result<Option<Message>> {
+    if *scan_from < *unread_start {
+        *scan_from = *unread_start;
+    }
+    if *scan_from > buf.len() {
+        *scan_from = buf.len();
+    }
+
+    let Some(rel_idx) = buf[*scan_from..].iter().position(|b| *b == 0x00) else {
+        *scan_from = buf.len();
+        return Ok(None);
+    };
+
+    let frame_end = *scan_from + rel_idx;
+    let frame = &buf[*unread_start..frame_end];
+
+    wire_spy_bytes("<-- frame", frame);
+
+    let decoded = match cobs_decode_vec(frame) {
+        Ok(decoded) => decoded,
+        Err(e) => {
+            last_decoded.clear();
+            advance_past_frame(buf, unread_start, scan_from, frame_end);
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("cobs: {e}"),
+            ));
+        }
+    };
+
+    wire_spy_bytes("<-- decoded", &decoded);
+
+    let msg: Message = match facet_postcard::from_slice(&decoded) {
+        Ok(msg) => msg,
+        Err(e) => {
+            *last_decoded = decoded;
+            advance_past_frame(buf, unread_start, scan_from, frame_end);
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("postcard: {e}"),
+            ));
+        }
+    };
+
+    *last_decoded = decoded;
+    wire_spy_log("<--", &msg);
+    advance_past_frame(buf, unread_start, scan_from, frame_end);
+    Ok(Some(msg))
+}
+
+#[cfg(feature = "fuzzing")]
+pub fn try_decode_one_from_buffer_for_fuzz(
+    buf: &mut Vec<u8>,
+    unread_start: &mut usize,
+    scan_from: &mut usize,
+    last_decoded: &mut Vec<u8>,
+) -> io::Result<Option<Message>> {
+    try_decode_one_from_buffer(buf, unread_start, scan_from, last_decoded)
+}
+
 /// A COBS-framed async stream connection.
 ///
 /// Handles encoding/decoding of roam messages over any async byte stream using
@@ -65,6 +162,8 @@ fn wire_spy_bytes(direction: &str, bytes: &[u8]) {
 pub struct CobsFramed<S> {
     stream: S,
     buf: Vec<u8>,
+    unread_start: usize,
+    scan_from: usize,
     /// Last successfully decoded frame bytes (for error recovery/debugging).
     pub last_decoded: Vec<u8>,
     /// Buffer for encoding messages to avoid reallocations.
@@ -77,6 +176,8 @@ impl<S> CobsFramed<S> {
         Self {
             stream,
             buf: Vec::new(),
+            unread_start: 0,
+            scan_from: 0,
             last_decoded: Vec::new(),
             encode_buf: Vec::with_capacity(1024),
         }
@@ -193,25 +294,12 @@ where
 
     async fn recv_inner(&mut self) -> io::Result<Option<Message>> {
         loop {
-            // Look for frame delimiter
-            if let Some(idx) = self.buf.iter().position(|b| *b == 0x00) {
-                let frame = self.buf.drain(..idx).collect::<Vec<_>>();
-                self.buf.drain(..1); // Remove delimiter
-
-                wire_spy_bytes("<-- frame", &frame);
-
-                // r[impl transport.bytestream.cobs] - decode COBS-encoded frame
-                let decoded = cobs_decode_vec(&frame).map_err(|e| {
-                    io::Error::new(io::ErrorKind::InvalidData, format!("cobs: {e}"))
-                })?;
-                self.last_decoded = decoded.clone();
-
-                wire_spy_bytes("<-- decoded", &decoded);
-
-                let msg: Message = facet_postcard::from_slice(&decoded).map_err(|e| {
-                    io::Error::new(io::ErrorKind::InvalidData, format!("postcard: {e}"))
-                })?;
-                wire_spy_log("<--", &msg);
+            if let Some(msg) = try_decode_one_from_buffer(
+                &mut self.buf,
+                &mut self.unread_start,
+                &mut self.scan_from,
+                &mut self.last_decoded,
+            )? {
                 return Ok(Some(msg));
             }
 
@@ -219,14 +307,22 @@ where
             let mut tmp = [0u8; 4096];
             let n = self.stream.read(&mut tmp).await?;
             if n == 0 {
+                let trailing = self.buf.len().saturating_sub(self.unread_start);
                 if wire_spy_enabled() {
                     eprintln!("[WIRE] <-- EOF (read 0 bytes)");
+                }
+                if trailing != 0 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        format!("eof with {trailing} trailing bytes and no frame delimiter"),
+                    ));
                 }
                 return Ok(None);
             }
             if wire_spy_enabled() {
                 eprintln!("[WIRE] <-- read {} bytes: {:02x?}", n, &tmp[..n.min(64)]);
             }
+            compact_recv_buffer(&mut self.buf, &mut self.unread_start, &mut self.scan_from);
             self.buf.extend_from_slice(&tmp[..n]);
         }
     }
@@ -257,6 +353,7 @@ where
 mod tests {
     use super::*;
     use cobs::encode_vec as cobs_encode_vec;
+    use std::process::Command;
     use std::time::Duration;
     use tokio::io::{AsyncWriteExt, duplex};
 
@@ -358,5 +455,140 @@ mod tests {
             Ok(None) | Err(_) => {}
             Ok(Some(msg)) => panic!("unexpectedly decoded message: {msg:?}"),
         }
+    }
+
+    #[test]
+    fn compact_recv_buffer_compacts_large_consumed_prefix() {
+        let mut buf = vec![0xaa; RECV_BUF_COMPACT_THRESHOLD + 32];
+        let mut unread_start = RECV_BUF_COMPACT_THRESHOLD;
+        let mut scan_from = RECV_BUF_COMPACT_THRESHOLD + 7;
+
+        compact_recv_buffer(&mut buf, &mut unread_start, &mut scan_from);
+
+        assert_eq!(unread_start, 0);
+        assert_eq!(scan_from, 7);
+        assert_eq!(buf, vec![0xaa; 32]);
+    }
+
+    #[test]
+    fn try_decode_normalizes_scan_bounds() {
+        // scan_from > len should clamp to len
+        let mut buf = Vec::new();
+        let mut unread_start = 0usize;
+        let mut scan_from = 123usize;
+        let mut last_decoded = Vec::new();
+        let decoded = try_decode_one_from_buffer(
+            &mut buf,
+            &mut unread_start,
+            &mut scan_from,
+            &mut last_decoded,
+        )
+        .unwrap();
+        assert!(decoded.is_none());
+        assert_eq!(scan_from, 0);
+
+        // scan_from < unread_start should move scan start forward before searching.
+        let mut buf = vec![0x42, 0x00];
+        let mut unread_start = 1usize;
+        let mut scan_from = 0usize;
+        let mut last_decoded = vec![1, 2, 3];
+        let err = try_decode_one_from_buffer(
+            &mut buf,
+            &mut unread_start,
+            &mut scan_from,
+            &mut last_decoded,
+        )
+        .expect_err("empty frame should fail postcard decode");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(last_decoded.is_empty());
+    }
+
+    #[test]
+    fn accessors_roundtrip_underlying_stream() {
+        let (left, _right) = duplex(1024);
+        let mut framed = CobsFramed::new(left);
+        let _ = framed.stream();
+        let _ = framed.stream_mut();
+        let _inner = framed.into_inner();
+    }
+
+    #[test]
+    fn wire_spy_env_init_and_logging_paths() {
+        const SUBPROCESS_KEY: &str = "ROAM_WIRE_SPY_TEST_SUBPROCESS";
+        if std::env::var_os(SUBPROCESS_KEY).is_some() {
+            assert!(wire_spy_enabled());
+            assert!(WIRE_SPY_ENABLED.load(Ordering::Relaxed));
+            assert!(WIRE_SPY_BYTES_ONLY.load(Ordering::Relaxed));
+
+            // Exercise both logging branches.
+            WIRE_SPY_BYTES_ONLY.store(false, Ordering::Relaxed);
+            wire_spy_log(
+                "test",
+                &Message::Cancel {
+                    conn_id: roam_wire::ConnectionId::ROOT,
+                    request_id: 1,
+                },
+            );
+            WIRE_SPY_BYTES_ONLY.store(true, Ordering::Relaxed);
+            wire_spy_bytes("test", &[1, 2, 3, 4]);
+            return;
+        }
+
+        let status = Command::new(std::env::current_exe().expect("test binary path"))
+            .arg("--exact")
+            .arg("framing::tests::wire_spy_env_init_and_logging_paths")
+            .arg("--nocapture")
+            .env(SUBPROCESS_KEY, "1")
+            .env("ROAM_WIRE_SPY", "1")
+            .env("ROAM_WIRE_SPY_BYTES_ONLY", "1")
+            .status()
+            .expect("spawn subprocess");
+        assert!(status.success(), "wire spy subprocess test failed");
+    }
+
+    #[tokio::test]
+    async fn recv_reports_unexpected_eof_for_partial_frame() {
+        WIRE_SPY_INIT.get_or_init(|| {});
+        WIRE_SPY_ENABLED.store(true, Ordering::Relaxed);
+
+        let input = [0x11, 0x22, 0x33, 0x44];
+        let (mut writer, reader) = duplex(input.len() + 1);
+        writer.write_all(&input).await.unwrap();
+        writer.shutdown().await.unwrap();
+
+        let mut framed = CobsFramed::new(reader);
+        let err = framed
+            .recv()
+            .await
+            .expect_err("expected EOF for partial frame");
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+        assert!(err.to_string().contains("trailing bytes"));
+    }
+
+    #[tokio::test]
+    async fn message_transport_last_decoded_tracks_last_payload() {
+        let msg = Message::Response {
+            conn_id: roam_wire::ConnectionId::ROOT,
+            request_id: 7,
+            metadata: vec![],
+            channels: vec![],
+            payload: vec![1, 2, 3, 4],
+        };
+        let postcard = facet_postcard::to_vec(&msg).unwrap();
+        let mut frame = cobs_encode_vec(&postcard);
+        frame.push(0x00);
+
+        let (mut writer, reader) = duplex(frame.len() + 1);
+        writer.write_all(&frame).await.unwrap();
+        writer.shutdown().await.unwrap();
+
+        let mut framed = CobsFramed::new(reader);
+        let decoded = framed
+            .recv()
+            .await
+            .unwrap()
+            .expect("expected decoded frame");
+        assert_eq!(decoded, msg);
+        assert_eq!(MessageTransport::last_decoded(&framed), postcard.as_slice());
     }
 }

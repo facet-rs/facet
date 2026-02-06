@@ -70,16 +70,31 @@ public final class NIOTransport: MessageTransport, @unchecked Sendable {
 // MARK: - COBS Frame Decoder
 
 /// NIO handler that decodes COBS-framed messages.
-final class COBSFrameDecoder: ByteToMessageDecoder, Sendable {
+final class COBSFrameDecoder: ByteToMessageDecoder, @unchecked Sendable {
     typealias InboundOut = [UInt8]
+    private static let maxBufferedFrameBytes = 16 * 1024 * 1024
+    private var searchOffset = 0
 
     func decode(context: ChannelHandlerContext, buffer: inout ByteBuffer) throws -> DecodingState {
-        // Look for zero delimiter
-        guard let zeroIndex = buffer.readableBytesView.firstIndex(of: 0) else {
+        let readable = buffer.readableBytes
+        if searchOffset > readable {
+            searchOffset = 0
+        }
+
+        // Search only bytes not previously scanned since the last decoder invocation.
+        guard
+            let zeroIndex = buffer.readableBytesView.dropFirst(searchOffset).firstIndex(of: 0)
+        else {
+            searchOffset = readable
+            if readable > Self.maxBufferedFrameBytes {
+                throw TransportError.decodeFailed(
+                    "COBS frame exceeds \(Self.maxBufferedFrameBytes) bytes without delimiter")
+            }
             return .needMoreData
         }
 
         let frameLength = zeroIndex - buffer.readableBytesView.startIndex
+        searchOffset = 0
 
         if frameLength == 0 {
             // Empty frame, skip the zero and continue
@@ -100,6 +115,19 @@ final class COBSFrameDecoder: ByteToMessageDecoder, Sendable {
         context.fireChannelRead(wrapInboundOut(decoded))
 
         return .continue
+    }
+
+    func decodeLast(
+        context: ChannelHandlerContext,
+        buffer: inout ByteBuffer,
+        seenEOF: Bool
+    ) throws -> DecodingState {
+        let state = try decode(context: context, buffer: &buffer)
+        if state == .needMoreData && seenEOF && buffer.readableBytes > 0 {
+            throw TransportError.decodeFailed(
+                "EOF with \(buffer.readableBytes) trailing bytes and no frame delimiter")
+        }
+        return state
     }
 }
 

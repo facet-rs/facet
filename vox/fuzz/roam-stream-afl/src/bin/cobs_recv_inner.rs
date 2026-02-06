@@ -1,122 +1,96 @@
 use afl::fuzz;
 use cobs::encode_vec as cobs_encode_vec;
-use roam_stream::CobsFramed;
+use roam_stream::try_decode_one_from_buffer_for_fuzz;
 use roam_wire::{ConnectionId, Message};
-use std::io;
-use std::pin::Pin;
-use std::task::{Context, Poll};
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio::runtime::Builder;
-use tokio::time::{Duration, timeout};
 
-struct ChunkedStream {
-    input: Vec<u8>,
-    pos: usize,
-    chunk_pattern: [usize; 2],
-    chunk_ix: usize,
-}
+fn drive_stateful(stream: &[u8], chunk_a: usize, chunk_b: usize, max_steps: usize) {
+    let mut in_pos = 0usize;
+    let mut chunk_ix = 0usize;
+    let chunk_pattern = [chunk_a.max(1), chunk_b.max(1)];
 
-impl ChunkedStream {
-    fn new(input: Vec<u8>, first_chunk: usize, second_chunk: usize) -> Self {
-        Self {
-            input,
-            pos: 0,
-            chunk_pattern: [first_chunk.max(1), second_chunk.max(1)],
-            chunk_ix: 0,
+    let mut recv_buf = Vec::new();
+    let mut unread_start = 0usize;
+    let mut scan_from = 0usize;
+    let mut last_decoded = Vec::new();
+
+    for _ in 0..max_steps {
+        match try_decode_one_from_buffer_for_fuzz(
+            &mut recv_buf,
+            &mut unread_start,
+            &mut scan_from,
+            &mut last_decoded,
+        ) {
+            Ok(Some(_)) => {
+                continue;
+            }
+            Ok(None) => {
+                if in_pos >= stream.len() {
+                    return;
+                }
+                let chunk = chunk_pattern[chunk_ix % 2];
+                chunk_ix += 1;
+                let end = (in_pos + chunk).min(stream.len());
+                recv_buf.extend_from_slice(&stream[in_pos..end]);
+                in_pos = end;
+            }
+            Err(_) => return,
         }
     }
 }
 
-impl AsyncRead for ChunkedStream {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        _cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<io::Result<()>> {
-        if self.pos >= self.input.len() {
-            return Poll::Ready(Ok(()));
-        }
-
-        let chunk = self.chunk_pattern[self.chunk_ix % self.chunk_pattern.len()];
-        self.chunk_ix += 1;
-
-        let remaining = self.input.len() - self.pos;
-        let n = chunk.min(remaining).min(buf.remaining());
-        let start = self.pos;
-        let end = start + n;
-        buf.put_slice(&self.input[start..end]);
-        self.pos = end;
-        Poll::Ready(Ok(()))
-    }
-}
-
-impl AsyncWrite for ChunkedStream {
-    fn poll_write(
-        self: Pin<&mut Self>,
-        _cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<io::Result<usize>> {
-        Poll::Ready(Ok(buf.len()))
+fn build_valid_stream(data: &[u8]) -> Vec<u8> {
+    if data.is_empty() {
+        return vec![0x00];
     }
 
-    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Poll::Ready(Ok(()))
-    }
+    let mut out = Vec::new();
+    let mut cursor = 0usize;
+    let mut req_id = 1u64;
 
-    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Poll::Ready(Ok(()))
-    }
-}
+    while cursor < data.len() && req_id <= 16 {
+        let remaining = data.len() - cursor;
+        let take = remaining.min(4096);
+        let payload = data[cursor..cursor + take].to_vec();
+        cursor += take;
 
-fn fuzz_recv_chunked(data: &[u8]) {
-    if data.len() < 3 {
-        return;
-    }
-
-    let Ok(runtime) = Builder::new_current_thread().enable_all().build() else {
-        return;
-    };
-
-    runtime.block_on(async {
-        let first_chunk = (data[0] as usize % 256) + 1;
-        let second_chunk = (data[1] as usize % 256) + 1;
-        let stream_data = data[2..].to_vec();
-        let stream = ChunkedStream::new(stream_data, first_chunk, second_chunk);
-        let mut framed = CobsFramed::new(stream);
-
-        let _ = timeout(Duration::from_millis(20), framed.recv()).await;
-    });
-}
-
-fn fuzz_large_valid_message(payload: &[u8]) {
-    let Ok(runtime) = Builder::new_current_thread().enable_all().build() else {
-        return;
-    };
-
-    runtime.block_on(async {
-        let message = Message::Response {
+        let msg = Message::Response {
             conn_id: ConnectionId::ROOT,
-            request_id: 1,
+            request_id: req_id,
             metadata: vec![],
             channels: vec![],
-            payload: payload.to_vec(),
+            payload,
         };
+        req_id += 1;
 
-        let Ok(postcard) = facet_postcard::to_vec(&message) else {
-            return;
+        let Ok(postcard) = facet_postcard::to_vec(&msg) else {
+            break;
         };
-        let mut framed_bytes = cobs_encode_vec(&postcard);
-        framed_bytes.push(0x00);
+        let mut framed = cobs_encode_vec(&postcard);
+        framed.push(0x00);
+        out.extend_from_slice(&framed);
+    }
 
-        let stream = ChunkedStream::new(framed_bytes, 4096, 1536);
-        let mut receiver = CobsFramed::new(stream);
-        let _ = timeout(Duration::from_millis(20), receiver.recv()).await;
-    });
+    out
 }
 
 fn main() {
     fuzz!(|data: &[u8]| {
-        fuzz_recv_chunked(data);
-        fuzz_large_valid_message(data);
+        if data.len() < 3 {
+            return;
+        }
+
+        let mode = data[0];
+        let chunk_a = (data[1] as usize % 4096) + 1;
+        let chunk_b = (data[2] as usize % 4096) + 1;
+        let body = &data[3..];
+
+        // Path 1: raw inbound bytes.
+        drive_stateful(body, chunk_a, chunk_b, 20_000);
+
+        // Path 2: grammar-ish valid stream composed from input bytes.
+        if (mode & 1) != 0 {
+            let valid = build_valid_stream(body);
+            drive_stateful(&valid, chunk_b, chunk_a, 20_000);
+        }
     });
 }

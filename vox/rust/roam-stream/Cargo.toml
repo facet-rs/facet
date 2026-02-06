@@ -11,6 +11,10 @@ description = "Stream transport layer for roam RPC - works with TCP, Unix socket
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
+[features]
+default = []
+fuzzing = []
+
 [dependencies]
 cobs.workspace = true
 
