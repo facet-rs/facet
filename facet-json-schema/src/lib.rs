@@ -34,71 +34,65 @@ use facet_core::{Def, Field, Shape, StructKind, Type, UserType};
 /// This is a simplified representation that covers the most common cases.
 /// It can be serialized to JSON using facet-json.
 #[derive(Debug, Clone, Facet)]
+#[facet(skip_all_unless_truthy)]
 pub struct JsonSchema {
     /// The JSON Schema dialect
-    #[facet(rename = "$schema", skip_serializing_if = Option::is_none)]
+    #[facet(rename = "$schema")]
     pub schema: Option<String>,
 
     /// Reference to another schema definition
-    #[facet(rename = "$ref", skip_serializing_if = Option::is_none)]
+    #[facet(rename = "$ref")]
     pub ref_: Option<String>,
 
     /// Schema definitions for reuse
-    #[facet(rename = "$defs", skip_serializing_if = Option::is_none)]
+    #[facet(rename = "$defs")]
     pub defs: Option<BTreeMap<String, JsonSchema>>,
 
     /// The type of the schema
-    #[facet(rename = "type", skip_serializing_if = Option::is_none)]
+    #[facet(rename = "type")]
     pub type_: Option<SchemaType>,
 
     /// For objects: the properties
-    #[facet(skip_serializing_if = Option::is_none)]
     pub properties: Option<BTreeMap<String, JsonSchema>>,
 
     /// For objects: required property names
-    #[facet(skip_serializing_if = Option::is_none)]
     pub required: Option<Vec<String>>,
 
     /// For objects: additional properties schema or false
-    #[facet(rename = "additionalProperties", skip_serializing_if = Option::is_none)]
+    #[facet(rename = "additionalProperties")]
     pub additional_properties: Option<AdditionalProperties>,
 
     /// For arrays: the items schema
-    #[facet(skip_serializing_if = Option::is_none)]
     pub items: Option<Box<JsonSchema>>,
 
     /// For strings: enumerated values
-    #[facet(rename = "enum", skip_serializing_if = Option::is_none)]
+    #[facet(rename = "enum")]
     pub enum_: Option<Vec<String>>,
 
     /// For numbers: minimum value
-    #[facet(skip_serializing_if = Option::is_none)]
     pub minimum: Option<i128>,
 
     /// For numbers: maximum value
-    #[facet(skip_serializing_if = Option::is_none)]
     pub maximum: Option<u128>,
 
     /// For oneOf/anyOf/allOf
-    #[facet(rename = "oneOf", skip_serializing_if = Option::is_none)]
+    #[facet(rename = "oneOf")]
     pub one_of: Option<Vec<JsonSchema>>,
 
-    #[facet(rename = "anyOf", skip_serializing_if = Option::is_none)]
+    #[facet(rename = "anyOf")]
     pub any_of: Option<Vec<JsonSchema>>,
 
-    #[facet(rename = "allOf", skip_serializing_if = Option::is_none)]
+    #[facet(rename = "allOf")]
     pub all_of: Option<Vec<JsonSchema>>,
 
     /// Description from doc comments
-    #[facet(skip_serializing_if = Option::is_none)]
     pub description: Option<String>,
 
     /// Title (type name)
-    #[facet(skip_serializing_if = Option::is_none)]
     pub title: Option<String>,
 
     /// Constant value
-    #[facet(rename = "const", skip_serializing_if = Option::is_none)]
+    #[facet(rename = "const")]
     pub const_: Option<String>,
 }
 
