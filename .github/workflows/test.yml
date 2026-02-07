@@ -16,7 +16,7 @@ jobs:
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Install system dependencies
         run: apt-get update && apt-get install -y zlib1g-dev
@@ -55,7 +55,7 @@ jobs:
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - uses: Swatinem/rust-cache@v2
 
@@ -70,7 +70,7 @@ jobs:
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-miri-amd64
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - uses: Swatinem/rust-cache@v2
 
@@ -86,7 +86,7 @@ jobs:
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-miri-amd64
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - uses: Swatinem/rust-cache@v2
 
@@ -102,7 +102,7 @@ jobs:
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Install valgrind and nodejs
         run: apt-get update && apt-get install -y valgrind nodejs
@@ -120,7 +120,7 @@ jobs:
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-miri-amd64
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - uses: Swatinem/rust-cache@v2
 
@@ -138,7 +138,7 @@ jobs:
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - uses: Swatinem/rust-cache@v2
 
@@ -153,7 +153,7 @@ jobs:
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - uses: Swatinem/rust-cache@v2
 
@@ -170,7 +170,7 @@ jobs:
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - uses: Swatinem/rust-cache@v2
 
@@ -185,7 +185,7 @@ jobs:
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - uses: Swatinem/rust-cache@v2
 
@@ -197,7 +197,7 @@ jobs:
   test-aarch64-apple-darwin:
     runs-on: depot-macos-15
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -220,7 +220,7 @@ jobs:
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-arm64
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - uses: Swatinem/rust-cache@v2
 
@@ -235,7 +235,7 @@ jobs:
   test-x86_64-pc-windows-msvc:
     runs-on: depot-windows-2025-32
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - uses: dtolnay/rust-toolchain@stable
 
