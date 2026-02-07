@@ -976,7 +976,7 @@ impl DriverReport {
             return String::new();
         }
 
-        let mut output = Vec::new();
+        let mut output = Vec::with_capacity(128);
         let mut cache = NamedSource {
             name: self.source_name.clone(),
             source: Source::from(self.cli_args_source.clone()),
@@ -1020,21 +1020,21 @@ impl DriverReport {
                 Severity::Note => ReportKind::Advice,
             };
 
-            let color = match diagnostic.severity {
-                Severity::Error => Color::Red,
-                Severity::Warning => Color::Yellow,
-                Severity::Note => Color::Cyan,
-            };
-
             let label_message = diagnostic.label.as_deref().unwrap_or(&diagnostic.message);
+            let mut label = Label::new(span.clone()).with_message(label_message);
+            if should_use_color() {
+                let color = match diagnostic.severity {
+                    Severity::Error => Color::Red,
+                    Severity::Warning => Color::Yellow,
+                    Severity::Note => Color::Cyan,
+                };
+                label = label.with_color(color);
+            }
+
             let report = Report::build(report_kind, span.clone())
                 .with_config(Config::default().with_color(should_use_color()))
                 .with_message(&diagnostic.message)
-                .with_label(
-                    Label::new(span)
-                        .with_message(label_message)
-                        .with_color(color),
-                )
+                .with_label(label)
                 .finish();
 
             report.write(&mut cache, &mut output).ok();

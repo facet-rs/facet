@@ -3,13 +3,13 @@
 //! This module provides utilities to generate help text from Schema,
 //! including doc comments, field names, and attribute information.
 
-use facet_core::Facet;
-use owo_colors::OwoColorize;
-use std::string::String;
-use std::vec::Vec;
-
 use crate::missing::normalize_program_name;
 use crate::schema::{ArgLevelSchema, ArgSchema, Schema, Subcommand};
+use facet_core::Facet;
+use owo_colors::OwoColorize;
+use owo_colors::Stream::Stdout;
+use std::string::String;
+use std::vec::Vec;
 
 /// Generate help text for a Facet type.
 ///
@@ -289,7 +289,10 @@ fn write_arg_help(out: &mut String, arg: &ArgSchema) {
 
     // Short flag (or spacing for alignment)
     if let Some(c) = arg.kind().short() {
-        out.push_str(&format!("{}, ", format!("-{c}").green()));
+        out.push_str(&format!(
+            "{}, ",
+            format!("-{c}").if_supports_color(Stdout, |text| text.green())
+        ));
     } else {
         // Add spacing to align with flags that have short options
         out.push_str("    ");
@@ -300,9 +303,15 @@ fn write_arg_help(out: &mut String, arg: &ArgSchema) {
     let is_counted = arg.kind().is_counted();
 
     if is_positional {
-        out.push_str(&format!("{}", format!("<{}>", name.to_uppercase()).green()));
+        out.push_str(&format!(
+            "{}",
+            format!("<{}>", name.to_uppercase()).if_supports_color(Stdout, |text| text.green())
+        ));
     } else {
-        out.push_str(&format!("{}", format!("--{name}").green()));
+        out.push_str(&format!(
+            "{}",
+            format!("--{name}").if_supports_color(Stdout, |text| text.green())
+        ));
 
         // Show value placeholder for non-bool, non-counted types
         if !is_counted && !arg.value().is_bool() {
@@ -335,7 +344,11 @@ fn write_arg_help(out: &mut String, arg: &ArgSchema) {
 fn write_subcommand_help(out: &mut String, sub: &Subcommand) {
     out.push_str("    ");
 
-    out.push_str(&format!("{}", sub.cli_name().green()));
+    out.push_str(&format!(
+        "{}",
+        sub.cli_name()
+            .if_supports_color(Stdout, |text| text.green())
+    ));
 
     // Doc comment
     if let Some(summary) = sub.docs().summary() {

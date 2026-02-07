@@ -617,10 +617,12 @@ mod ariadne_impl {
         /// The report uses `std::ops::Range<usize>` as the span type, suitable for
         /// use with `ariadne::Source::from(&self.flattened_args)`.
         pub fn to_ariadne_report(&self) -> Report<'static, core::ops::Range<usize>> {
+            let should_use_color = should_use_color();
+
             // Skip help requests - they're not real errors
             if self.is_help_request() {
                 return Report::build(ReportKind::Custom("Help", Color::Cyan), 0..0)
-                    .with_config(Config::default().with_color(should_use_color()))
+                    .with_config(Config::default().with_color(should_use_color))
                     .with_message(self.help_text().unwrap_or(""))
                     .finish();
             }
@@ -633,7 +635,7 @@ mod ariadne_impl {
                     let span = field_span.key.0..field_span.value.1;
 
                     let mut builder = Report::build(ReportKind::Error, span.clone())
-                        .with_config(Config::default().with_color(should_use_color()))
+                        .with_config(Config::default().with_color(should_use_color))
                         .with_code(self.inner.kind.code())
                         .with_message(self.inner.kind.label());
 
@@ -650,25 +652,27 @@ mod ariadne_impl {
                                 "definition location unavailable (enable facet/doc)".to_string()
                             });
 
-                        builder = builder.with_label(
-                            Label::new(type_label_span)
-                                .with_message(source_label)
-                                .with_color(Color::Blue),
-                        );
+                        let mut label = Label::new(type_label_span).with_message(source_label);
+                        if should_use_color {
+                            label = label.with_color(Color::Blue);
+                        }
+
+                        builder = builder.with_label(label);
                     }
 
-                    builder = builder.with_label(
-                        Label::new(span)
-                            .with_message("THIS IS WHERE YOU FORGOT A facet(args::) annotation")
-                            .with_color(Color::Red),
-                    );
+                    let mut label = Label::new(span)
+                        .with_message("THIS IS WHERE YOU FORGOT A facet(args::) annotation");
+                    if should_use_color {
+                        label = label.with_color(Color::Red);
+                    }
+                    builder = builder.with_label(label);
 
                     if let Some(def_end_span) = def_end_span {
-                        builder = builder.with_label(
-                            Label::new(def_end_span)
-                                .with_message("end of definition")
-                                .with_color(Color::Blue),
-                        );
+                        let mut label = Label::new(def_end_span).with_message("end of definition");
+                        if should_use_color {
+                            label = label.with_color(Color::Blue);
+                        }
+                        builder = builder.with_label(label);
                     }
 
                     return builder.finish();
@@ -680,16 +684,16 @@ mod ariadne_impl {
             let range = span.start..(span.start + span.len);
 
             let mut builder = Report::build(ReportKind::Error, range.clone())
-                .with_config(Config::default().with_color(should_use_color()))
+                .with_config(Config::default().with_color(should_use_color))
                 .with_code(self.inner.kind.code())
                 .with_message(self.inner.kind.label());
 
             // Add the primary label
-            builder = builder.with_label(
-                Label::new(range)
-                    .with_message(self.inner.kind.label())
-                    .with_color(Color::Red),
-            );
+            let mut label = Label::new(range).with_message(self.inner.kind.label());
+            if should_use_color {
+                label = label.with_color(Color::Red);
+            }
+            builder = builder.with_label(label);
 
             // Add help text as a note if available
             if let Some(help) = self.inner.kind.help() {

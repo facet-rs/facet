@@ -133,6 +133,7 @@ impl Diagnostic for SchemaError {
             .map(|span| span.key.0..span.value.1)
             .or_else(|| formatted.type_name_span.map(|(start, end)| start..end));
 
+        let should_use_color = should_use_color();
         match span {
             Some(span) => {
                 let mut labels = Vec::new();
@@ -156,7 +157,7 @@ impl Diagnostic for SchemaError {
                         span: type_label_span,
                         message: Cow::Owned(source_label),
                         is_primary: false,
-                        color: Some(ColorHint::Blue),
+                        color: should_use_color.then_some(ColorHint::Blue),
                     });
                 }
 
@@ -170,7 +171,7 @@ impl Diagnostic for SchemaError {
                     span: span.clone(),
                     message: primary_message,
                     is_primary: true,
-                    color: Some(ColorHint::Red),
+                    color: should_use_color.then_some(ColorHint::Red),
                 });
 
                 // Secondary labels
@@ -190,7 +191,7 @@ impl Diagnostic for SchemaError {
                             span: secondary_span,
                             message: secondary.message.clone(),
                             is_primary: false,
-                            color: Some(ColorHint::Red),
+                            color: should_use_color.then_some(ColorHint::Red),
                         });
                     }
                 }
@@ -201,7 +202,7 @@ impl Diagnostic for SchemaError {
                         span: def_end_span,
                         message: Cow::Borrowed("end of definition"),
                         is_primary: false,
-                        color: Some(ColorHint::Blue),
+                        color: should_use_color.then_some(ColorHint::Blue),
                     });
                 }
 
@@ -212,6 +213,7 @@ impl Diagnostic for SchemaError {
     }
 }
 
+#[must_use]
 fn color_from_hint(hint: ColorHint) -> Color {
     match hint {
         ColorHint::Red => Color::Red,
@@ -231,8 +233,9 @@ impl SchemaError {
             .map(|label| label.span.clone())
             .unwrap_or(0..0);
 
+        let should_use_color = should_use_color();
         let mut builder = Report::build(ReportKind::Error, primary_span.clone())
-            .with_config(Config::default().with_color(should_use_color()))
+            .with_config(Config::default().with_color(should_use_color))
             .with_message(self.label());
 
         for label in labels {
@@ -240,7 +243,7 @@ impl SchemaError {
                 continue;
             }
             let mut ar_label = Label::new(label.span).with_message(label.message);
-            if let Some(color) = label.color {
+            if should_use_color && let Some(color) = label.color {
                 ar_label = ar_label.with_color(color_from_hint(color));
             }
             builder = builder.with_label(ar_label);
