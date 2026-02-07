@@ -1,0 +1,24 @@
+---
+source: facet-path/tests/walk.rs
+expression: "v.events.join(\"\\n\")"
+---
+enter <root> (Packet)
+enter ::Single.data (Payload)
+enter ::Single.data (Vec)
+enter ::Single.data[0] (u8)
+leave ::Single.data[0] (u8)
+leave ::Single.data (Vec)
+leave ::Single.data (Payload)
+enter ::Multi.data (Payload)
+enter ::Multi.data (Vec)
+enter ::Multi.data[0] (u8)
+leave ::Multi.data[0] (u8)
+leave ::Multi.data (Vec)
+leave ::Multi.data (Payload)
+enter ::Multi (Payload)
+enter ::Multi.data (Vec)
+enter ::Multi.data[0] (u8)
+leave ::Multi.data[0] (u8)
+leave ::Multi.data (Vec)
+leave ::Multi (Payload)
+leave <root> (Packet)

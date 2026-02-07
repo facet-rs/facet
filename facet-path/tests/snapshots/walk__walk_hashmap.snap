@@ -1,0 +1,12 @@
+---
+source: facet-path/tests/walk.rs
+expression: "v.events.join(\"\\n\")"
+---
+enter <root> (Config)
+enter settings (HashMap)
+enter settings[key#0] (String)
+leave settings[key#0] (String)
+enter settings[value#0] (u32)
+leave settings[value#0] (u32)
+leave settings (HashMap)
+leave <root> (Config)

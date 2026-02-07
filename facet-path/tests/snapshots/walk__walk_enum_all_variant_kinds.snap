@@ -1,0 +1,12 @@
+---
+source: facet-path/tests/walk.rs
+expression: "v.events.join(\"\\n\")"
+---
+enter <root> (Message)
+enter ::Text (String)
+leave ::Text (String)
+enter ::Move (i32)
+leave ::Move (i32)
+enter ::Move (i32)
+leave ::Move (i32)
+leave <root> (Message)

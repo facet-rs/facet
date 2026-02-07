@@ -12,6 +12,9 @@ use core::fmt::Write;
 
 use facet_core::{Def, Field, Shape, StructKind, Type, UserType};
 
+pub mod walk;
+pub use walk::{ShapeVisitor, VisitDecision, WalkStatus, walk_shape};
+
 /// A single step in a path through a type structure.
 ///
 /// Each step records an index that can be used to navigate

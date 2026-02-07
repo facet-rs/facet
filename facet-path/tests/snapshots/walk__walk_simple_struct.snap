@@ -1,0 +1,10 @@
+---
+source: facet-path/tests/walk.rs
+expression: "v.events.join(\"\\n\")"
+---
+enter <root> (Point)
+enter x (f64)
+leave x (f64)
+enter y (f64)
+leave y (f64)
+leave <root> (Point)

@@ -1,0 +1,14 @@
+---
+source: facet-path/tests/walk.rs
+expression: "v1.events.join(\"\\n\")"
+---
+enter <root> (Ordered)
+enter alpha (u8)
+leave alpha (u8)
+enter beta (u16)
+leave beta (u16)
+enter gamma (u32)
+leave gamma (u32)
+enter delta (u64)
+leave delta (u64)
+leave <root> (Ordered)

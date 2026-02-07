@@ -1,0 +1,12 @@
+---
+source: facet-path/tests/walk.rs
+expression: "v.events.join(\"\\n\")"
+---
+enter <root> (Container)
+enter items (Vec)
+enter items[0] (Item)
+enter items[0].id (u32)
+leave items[0].id (u32)
+leave items[0] (Item)
+leave items (Vec)
+leave <root> (Container)
