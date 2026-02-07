@@ -418,9 +418,37 @@ fn apply_step_mut(
             }
         }
 
+        PathStep::OptionSome => {
+            if let Def::Option(option_def) = shape.def {
+                // Check if the option is Some
+                let is_some = unsafe { (option_def.vtable.is_some)(data.as_const()) };
+                if !is_some {
+                    return Err(PathAccessError::OptionIsNone { step_index, shape });
+                }
+                // Option is Some — get the inner value pointer.
+                // Use get_value to find the PtrConst, then compute the offset
+                // from the Option base to construct a PtrMut.
+                let inner_ptr_const = unsafe { (option_def.vtable.get_value)(data.as_const()) }
+                    .expect("is_some was true but get_value returned None");
+                // Compute offset from option base to inner value
+                let offset = unsafe {
+                    inner_ptr_const
+                        .as_byte_ptr()
+                        .offset_from(data.as_const().as_byte_ptr())
+                } as usize;
+                let inner_data = unsafe { data.field(offset) };
+                Ok((inner_data, option_def.t()))
+            } else {
+                Err(PathAccessError::WrongStepKind {
+                    step,
+                    step_index,
+                    shape,
+                })
+            }
+        }
+
         PathStep::MapKey(_)
         | PathStep::MapValue(_)
-        | PathStep::OptionSome
         | PathStep::Deref
         | PathStep::Inner
         | PathStep::Proxy => Err(PathAccessError::WrongStepKind {
