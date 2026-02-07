@@ -7,7 +7,7 @@ use facet_core::{
 };
 
 use crate::{PeekNdArray, PeekSet, ReflectError, ReflectErrorKind, ScalarType};
-use facet_path::Path;
+use facet_path::{Path, PathAccessError, PathStep};
 
 use super::{
     ListLikeDef, PeekDynamicValue, PeekEnum, PeekList, PeekListLike, PeekMap, PeekOption,
@@ -1088,6 +1088,340 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
             target_shape.deallocate_uninit(tptr).unwrap()
         };
         Err(self.err(err))
+    }
+
+    /// Navigate to a nested value by following a [`Path`].
+    ///
+    /// Each [`PathStep`] in the path is applied in order, descending into
+    /// structs, enums, lists, maps, options, pointers, etc. If any step
+    /// cannot be applied, a [`PathAccessError`] is returned with the step
+    /// index and context about what went wrong.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PathAccessError`] if:
+    /// - The path's root shape doesn't match this value's shape
+    /// - A step kind doesn't apply to the current shape
+    /// - A field/list index is out of bounds
+    /// - An enum variant doesn't match the runtime variant
+    /// - A deref/inner/proxy target is missing
+    /// - An option is `None` when `OptionSome` is requested
+    pub fn at_path(self, path: &Path) -> Result<Peek<'mem, 'facet>, PathAccessError> {
+        if self.shape != path.shape {
+            return Err(PathAccessError::RootShapeMismatch {
+                expected: path.shape,
+                actual: self.shape,
+            });
+        }
+
+        let mut current = self;
+
+        for (step_index, step) in path.steps().iter().enumerate() {
+            current = current.apply_step(*step, step_index)?;
+        }
+
+        Ok(current)
+    }
+
+    /// Apply a single [`PathStep`] to this value, returning the resulting [`Peek`].
+    fn apply_step(
+        self,
+        step: PathStep,
+        step_index: usize,
+    ) -> Result<Peek<'mem, 'facet>, PathAccessError> {
+        match step {
+            PathStep::Field(idx) => {
+                let idx = idx as usize;
+                match self.shape.ty {
+                    // Struct field access
+                    Type::User(UserType::Struct(sd)) => {
+                        if idx >= sd.fields.len() {
+                            return Err(PathAccessError::IndexOutOfBounds {
+                                step,
+                                step_index,
+                                shape: self.shape,
+                                index: idx,
+                                bound: sd.fields.len(),
+                            });
+                        }
+                        let field = &sd.fields[idx];
+                        let field_data = unsafe { self.data.field(field.offset) };
+                        Ok(unsafe { Peek::unchecked_new(field_data, field.shape()) })
+                    }
+                    // Enum variant field access — a preceding Variant step verified
+                    // which variant is active and returned the enum Peek as-is.
+                    // Now we read the active variant's field by index.
+                    Type::User(UserType::Enum(_)) => {
+                        let peek_enum =
+                            self.into_enum()
+                                .map_err(|_| PathAccessError::WrongStepKind {
+                                    step,
+                                    step_index,
+                                    shape: self.shape,
+                                })?;
+                        let variant = peek_enum.active_variant().map_err(|_| {
+                            PathAccessError::WrongStepKind {
+                                step,
+                                step_index,
+                                shape: self.shape,
+                            }
+                        })?;
+                        if idx >= variant.data.fields.len() {
+                            return Err(PathAccessError::IndexOutOfBounds {
+                                step,
+                                step_index,
+                                shape: self.shape,
+                                index: idx,
+                                bound: variant.data.fields.len(),
+                            });
+                        }
+                        peek_enum
+                            .field(idx)
+                            .map_err(|_| PathAccessError::WrongStepKind {
+                                step,
+                                step_index,
+                                shape: self.shape,
+                            })?
+                            .ok_or(PathAccessError::IndexOutOfBounds {
+                                step,
+                                step_index,
+                                shape: self.shape,
+                                index: idx,
+                                bound: variant.data.fields.len(),
+                            })
+                    }
+                    _ => Err(PathAccessError::WrongStepKind {
+                        step,
+                        step_index,
+                        shape: self.shape,
+                    }),
+                }
+            }
+
+            PathStep::Variant(expected_idx) => {
+                let expected_idx = expected_idx as usize;
+                let peek_enum = self
+                    .into_enum()
+                    .map_err(|_| PathAccessError::WrongStepKind {
+                        step,
+                        step_index,
+                        shape: self.shape,
+                    })?;
+
+                if expected_idx >= peek_enum.variants().len() {
+                    return Err(PathAccessError::IndexOutOfBounds {
+                        step,
+                        step_index,
+                        shape: self.shape,
+                        index: expected_idx,
+                        bound: peek_enum.variants().len(),
+                    });
+                }
+
+                let actual_idx =
+                    peek_enum
+                        .variant_index()
+                        .map_err(|_| PathAccessError::WrongStepKind {
+                            step,
+                            step_index,
+                            shape: self.shape,
+                        })?;
+
+                if actual_idx != expected_idx {
+                    return Err(PathAccessError::VariantMismatch {
+                        step_index,
+                        shape: self.shape,
+                        expected_variant: expected_idx,
+                        actual_variant: actual_idx,
+                    });
+                }
+
+                // After verifying the variant matches, we return the enum Peek
+                // unchanged. The next Field step will use the active variant's
+                // fields (handled in the Field arm's Enum branch).
+                Ok(self)
+            }
+
+            PathStep::Index(idx) => {
+                let idx = idx as usize;
+                match self.shape.def {
+                    Def::List(def) => {
+                        let list = unsafe { super::PeekList::new(self, def) };
+                        let len = list.len();
+                        list.get(idx).ok_or(PathAccessError::IndexOutOfBounds {
+                            step,
+                            step_index,
+                            shape: self.shape,
+                            index: idx,
+                            bound: len,
+                        })
+                    }
+                    Def::Array(def) => {
+                        let list_like =
+                            unsafe { super::PeekListLike::new(self, ListLikeDef::Array(def)) };
+                        let len = list_like.len();
+                        list_like.get(idx).ok_or(PathAccessError::IndexOutOfBounds {
+                            step,
+                            step_index,
+                            shape: self.shape,
+                            index: idx,
+                            bound: len,
+                        })
+                    }
+                    _ => Err(PathAccessError::WrongStepKind {
+                        step,
+                        step_index,
+                        shape: self.shape,
+                    }),
+                }
+            }
+
+            PathStep::MapKey(entry_idx) => {
+                let entry_idx = entry_idx as usize;
+                if let Def::Map(def) = self.shape.def {
+                    let map = unsafe { super::PeekMap::new(self, def) };
+                    let len = map.len();
+                    if entry_idx >= len {
+                        return Err(PathAccessError::IndexOutOfBounds {
+                            step,
+                            step_index,
+                            shape: self.shape,
+                            index: entry_idx,
+                            bound: len,
+                        });
+                    }
+                    // Iterate to the nth entry and return the key
+                    for (i, (key, _value)) in map.iter().enumerate() {
+                        if i == entry_idx {
+                            return Ok(key);
+                        }
+                    }
+                    // Should be unreachable given the bounds check above
+                    Err(PathAccessError::IndexOutOfBounds {
+                        step,
+                        step_index,
+                        shape: self.shape,
+                        index: entry_idx,
+                        bound: len,
+                    })
+                } else {
+                    Err(PathAccessError::WrongStepKind {
+                        step,
+                        step_index,
+                        shape: self.shape,
+                    })
+                }
+            }
+
+            PathStep::MapValue(entry_idx) => {
+                let entry_idx = entry_idx as usize;
+                if let Def::Map(def) = self.shape.def {
+                    let map = unsafe { super::PeekMap::new(self, def) };
+                    let len = map.len();
+                    if entry_idx >= len {
+                        return Err(PathAccessError::IndexOutOfBounds {
+                            step,
+                            step_index,
+                            shape: self.shape,
+                            index: entry_idx,
+                            bound: len,
+                        });
+                    }
+                    for (i, (_key, value)) in map.iter().enumerate() {
+                        if i == entry_idx {
+                            return Ok(value);
+                        }
+                    }
+                    Err(PathAccessError::IndexOutOfBounds {
+                        step,
+                        step_index,
+                        shape: self.shape,
+                        index: entry_idx,
+                        bound: len,
+                    })
+                } else {
+                    Err(PathAccessError::WrongStepKind {
+                        step,
+                        step_index,
+                        shape: self.shape,
+                    })
+                }
+            }
+
+            PathStep::OptionSome => {
+                if let Def::Option(def) = self.shape.def {
+                    let opt = PeekOption { value: self, def };
+                    opt.value().ok_or(PathAccessError::OptionIsNone {
+                        step_index,
+                        shape: self.shape,
+                    })
+                } else {
+                    Err(PathAccessError::WrongStepKind {
+                        step,
+                        step_index,
+                        shape: self.shape,
+                    })
+                }
+            }
+
+            PathStep::Deref => {
+                if let Def::Pointer(def) = self.shape.def {
+                    let ptr = PeekPointer { value: self, def };
+                    ptr.borrow_inner().ok_or(PathAccessError::MissingTarget {
+                        step,
+                        step_index,
+                        shape: self.shape,
+                    })
+                } else {
+                    Err(PathAccessError::WrongStepKind {
+                        step,
+                        step_index,
+                        shape: self.shape,
+                    })
+                }
+            }
+
+            PathStep::Inner => {
+                let inner_shape = self.shape.inner.ok_or(PathAccessError::MissingTarget {
+                    step,
+                    step_index,
+                    shape: self.shape,
+                })?;
+
+                let result = unsafe { self.shape.call_try_borrow_inner(self.data) };
+                match result {
+                    Some(Ok(inner_data)) => Ok(Peek {
+                        data: inner_data.as_const(),
+                        shape: inner_shape,
+                        _invariant: PhantomData,
+                    }),
+                    _ => Err(PathAccessError::MissingTarget {
+                        step,
+                        step_index,
+                        shape: self.shape,
+                    }),
+                }
+            }
+
+            PathStep::Proxy => {
+                let proxy_def =
+                    self.shape
+                        .effective_proxy(None)
+                        .ok_or(PathAccessError::MissingTarget {
+                            step,
+                            step_index,
+                            shape: self.shape,
+                        })?;
+                // Proxy navigation requires converting out, which allocates.
+                // For read-only path access, we can't do that without ownership.
+                // Return MissingTarget since proxy traversal isn't supported in at_path.
+                Err(PathAccessError::MissingTarget {
+                    step,
+                    step_index,
+                    shape: proxy_def.shape,
+                })
+            }
+        }
     }
 }
 

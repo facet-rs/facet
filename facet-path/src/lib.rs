@@ -1,8 +1,6 @@
 #![warn(missing_docs)]
 #![cfg_attr(not(feature = "std"), no_std)]
-//! See README.md for documentation.
-
-//! Path tracking for navigating Facet type structures.
+#![doc = include_str!("../README.md")]
 
 extern crate alloc;
 
@@ -11,6 +9,9 @@ use alloc::vec::Vec;
 use core::fmt::Write;
 
 use facet_core::{Def, Field, Shape, StructKind, Type, UserType};
+
+pub mod access;
+pub use access::PathAccessError;
 
 pub mod walk;
 pub use walk::{ShapeVisitor, VisitDecision, WalkStatus, walk_shape};

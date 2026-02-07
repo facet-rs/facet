@@ -1,9 +1,9 @@
 use core::marker::PhantomData;
 
 use facet_core::{Def, Facet, PtrConst, PtrMut, Shape, Type, UserType};
-use facet_path::Path;
+use facet_path::{Path, PathAccessError, PathStep};
 
-use crate::{ReflectError, ReflectErrorKind};
+use crate::{ReflectError, ReflectErrorKind, peek::VariantError};
 
 use super::{PokeList, PokeStruct};
 
@@ -218,6 +218,294 @@ impl<'mem, 'facet> Poke<'mem, 'facet> {
     #[inline]
     pub fn as_peek(&self) -> crate::Peek<'_, 'facet> {
         unsafe { crate::Peek::unchecked_new(self.data.as_const(), self.shape) }
+    }
+
+    /// Navigate to a nested value by following a [`Path`], returning a mutable view.
+    ///
+    /// Each [`PathStep`] in the path is applied in order, descending into
+    /// structs, enums, and lists. If any step cannot be applied, a
+    /// [`PathAccessError`] is returned with the step index and context.
+    ///
+    /// # Supported steps
+    ///
+    /// - `Field` — struct fields and enum variant fields (after `Variant`)
+    /// - `Variant` — verify enum variant matches, then allow `Field` access
+    /// - `Index` — list/array element access
+    ///
+    /// Steps like `MapKey`, `MapValue`, `OptionSome`, `Deref`, `Inner`, and
+    /// `Proxy` are not supported for mutable access and will return
+    /// [`PathAccessError::WrongStepKind`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PathAccessError`] if:
+    /// - The path's root shape doesn't match this value's shape
+    /// - A step kind doesn't apply to the current shape
+    /// - A field/list index is out of bounds
+    /// - An enum variant doesn't match the runtime variant
+    pub fn at_path_mut(self, path: &Path) -> Result<Poke<'mem, 'facet>, PathAccessError> {
+        if self.shape != path.shape {
+            return Err(PathAccessError::RootShapeMismatch {
+                expected: path.shape,
+                actual: self.shape,
+            });
+        }
+
+        let mut data = self.data;
+        let mut shape: &'static Shape = self.shape;
+
+        for (step_index, step) in path.steps().iter().enumerate() {
+            let (new_data, new_shape) = apply_step_mut(data, shape, *step, step_index)?;
+            data = new_data;
+            shape = new_shape;
+        }
+
+        Ok(unsafe { Poke::from_raw_parts(data, shape) })
+    }
+}
+
+/// Apply a single [`PathStep`] to mutable data, returning the new pointer and shape.
+///
+/// This is a free function rather than a method to avoid lifetime issues with
+/// chaining mutable borrows through `Poke`.
+fn apply_step_mut(
+    data: PtrMut,
+    shape: &'static Shape,
+    step: PathStep,
+    step_index: usize,
+) -> Result<(PtrMut, &'static Shape), PathAccessError> {
+    match step {
+        PathStep::Field(idx) => {
+            let idx = idx as usize;
+            match shape.ty {
+                Type::User(UserType::Struct(sd)) => {
+                    if idx >= sd.fields.len() {
+                        return Err(PathAccessError::IndexOutOfBounds {
+                            step,
+                            step_index,
+                            shape,
+                            index: idx,
+                            bound: sd.fields.len(),
+                        });
+                    }
+                    let field = &sd.fields[idx];
+                    let field_data = unsafe { data.field(field.offset) };
+                    Ok((field_data, field.shape()))
+                }
+                Type::User(UserType::Enum(enum_type)) => {
+                    // Determine active variant to get field layout
+                    let variant_idx = variant_index_from_raw(data.as_const(), shape, enum_type)
+                        .map_err(|_| PathAccessError::WrongStepKind {
+                            step,
+                            step_index,
+                            shape,
+                        })?;
+                    let variant = &enum_type.variants[variant_idx];
+                    if idx >= variant.data.fields.len() {
+                        return Err(PathAccessError::IndexOutOfBounds {
+                            step,
+                            step_index,
+                            shape,
+                            index: idx,
+                            bound: variant.data.fields.len(),
+                        });
+                    }
+                    let field = &variant.data.fields[idx];
+                    let field_data = unsafe { data.field(field.offset) };
+                    Ok((field_data, field.shape()))
+                }
+                _ => Err(PathAccessError::WrongStepKind {
+                    step,
+                    step_index,
+                    shape,
+                }),
+            }
+        }
+
+        PathStep::Variant(expected_idx) => {
+            let expected_idx = expected_idx as usize;
+            let enum_type = match shape.ty {
+                Type::User(UserType::Enum(et)) => et,
+                _ => {
+                    return Err(PathAccessError::WrongStepKind {
+                        step,
+                        step_index,
+                        shape,
+                    });
+                }
+            };
+
+            if expected_idx >= enum_type.variants.len() {
+                return Err(PathAccessError::IndexOutOfBounds {
+                    step,
+                    step_index,
+                    shape,
+                    index: expected_idx,
+                    bound: enum_type.variants.len(),
+                });
+            }
+
+            let actual_idx =
+                variant_index_from_raw(data.as_const(), shape, enum_type).map_err(|_| {
+                    PathAccessError::WrongStepKind {
+                        step,
+                        step_index,
+                        shape,
+                    }
+                })?;
+
+            if actual_idx != expected_idx {
+                return Err(PathAccessError::VariantMismatch {
+                    step_index,
+                    shape,
+                    expected_variant: expected_idx,
+                    actual_variant: actual_idx,
+                });
+            }
+
+            // Stay at the same location — next Field step reads variant fields
+            Ok((data, shape))
+        }
+
+        PathStep::Index(idx) => {
+            let idx = idx as usize;
+            match shape.def {
+                Def::List(def) => {
+                    let get_mut_fn = def.vtable.get_mut.ok_or(PathAccessError::WrongStepKind {
+                        step,
+                        step_index,
+                        shape,
+                    })?;
+                    let len = unsafe { (def.vtable.len)(data.as_const()) };
+                    let item = unsafe { get_mut_fn(data, idx, shape) };
+                    item.map(|ptr| (ptr, def.t()))
+                        .ok_or(PathAccessError::IndexOutOfBounds {
+                            step,
+                            step_index,
+                            shape,
+                            index: idx,
+                            bound: len,
+                        })
+                }
+                Def::Array(def) => {
+                    // Arrays have a fixed element type and contiguous layout
+                    let elem_shape = def.t();
+                    let layout = elem_shape.layout.sized_layout().map_err(|_| {
+                        PathAccessError::WrongStepKind {
+                            step,
+                            step_index,
+                            shape,
+                        }
+                    })?;
+                    let len = def.n;
+                    if idx >= len {
+                        return Err(PathAccessError::IndexOutOfBounds {
+                            step,
+                            step_index,
+                            shape,
+                            index: idx,
+                            bound: len,
+                        });
+                    }
+                    let elem_data = unsafe { data.field(layout.size() * idx) };
+                    Ok((elem_data, elem_shape))
+                }
+                _ => Err(PathAccessError::WrongStepKind {
+                    step,
+                    step_index,
+                    shape,
+                }),
+            }
+        }
+
+        PathStep::MapKey(_)
+        | PathStep::MapValue(_)
+        | PathStep::OptionSome
+        | PathStep::Deref
+        | PathStep::Inner
+        | PathStep::Proxy => Err(PathAccessError::WrongStepKind {
+            step,
+            step_index,
+            shape,
+        }),
+    }
+}
+
+/// Determine the active variant index from raw data, replicating the logic
+/// from `PeekEnum::variant_index` without constructing a `Peek`.
+fn variant_index_from_raw(
+    data: PtrConst,
+    shape: &'static Shape,
+    enum_type: facet_core::EnumType,
+) -> Result<usize, VariantError> {
+    use facet_core::EnumRepr;
+
+    // For Option<T>, use the OptionVTable
+    if let Def::Option(option_def) = shape.def {
+        let is_some = unsafe { (option_def.vtable.is_some)(data) };
+        return Ok(enum_type
+            .variants
+            .iter()
+            .position(|variant| {
+                let has_fields = !variant.data.fields.is_empty();
+                has_fields == is_some
+            })
+            .expect("No variant found matching Option state"));
+    }
+
+    if enum_type.enum_repr == EnumRepr::RustNPO {
+        let layout = shape
+            .layout
+            .sized_layout()
+            .map_err(|_| VariantError::Unsized)?;
+        let slice = unsafe { core::slice::from_raw_parts(data.as_byte_ptr(), layout.size()) };
+        let all_zero = slice.iter().all(|v| *v == 0);
+
+        Ok(enum_type
+            .variants
+            .iter()
+            .position(|variant| {
+                let mut max_offset = 0;
+                for field in variant.data.fields {
+                    let offset = field.offset
+                        + field
+                            .shape()
+                            .layout
+                            .sized_layout()
+                            .map(|v| v.size())
+                            .unwrap_or(0);
+                    max_offset = core::cmp::max(max_offset, offset);
+                }
+                if all_zero {
+                    max_offset == 0
+                } else {
+                    max_offset != 0
+                }
+            })
+            .expect("No variant found with matching discriminant"))
+    } else {
+        let discriminant = match enum_type.enum_repr {
+            EnumRepr::Rust => {
+                panic!("cannot read discriminant from Rust enum with unspecified layout")
+            }
+            EnumRepr::RustNPO => 0,
+            EnumRepr::U8 => unsafe { data.read::<u8>() as i64 },
+            EnumRepr::U16 => unsafe { data.read::<u16>() as i64 },
+            EnumRepr::U32 => unsafe { data.read::<u32>() as i64 },
+            EnumRepr::U64 => unsafe { data.read::<u64>() as i64 },
+            EnumRepr::USize => unsafe { data.read::<usize>() as i64 },
+            EnumRepr::I8 => unsafe { data.read::<i8>() as i64 },
+            EnumRepr::I16 => unsafe { data.read::<i16>() as i64 },
+            EnumRepr::I32 => unsafe { data.read::<i32>() as i64 },
+            EnumRepr::I64 => unsafe { data.read::<i64>() },
+            EnumRepr::ISize => unsafe { data.read::<isize>() as i64 },
+        };
+
+        Ok(enum_type
+            .variants
+            .iter()
+            .position(|variant| variant.discriminant == Some(discriminant))
+            .expect("No variant found with matching discriminant"))
     }
 }
 
