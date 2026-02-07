@@ -7,8 +7,8 @@ use crate::{
     provenance::{FilePathStatus, FileResolution, Provenance},
     schema::{ConfigValueSchema, Schema},
 };
-use owo_colors::OwoColorize;
 use owo_colors::Stream::Stdout;
+use owo_colors::{OwoColorize, Style};
 use std::collections::HashMap;
 use std::io::Write;
 use unicode_width::UnicodeWidthStr;
@@ -44,7 +44,11 @@ impl DumpEntry {
         Self {
             key: key.into(),
             value: String::new(), // Empty - will be filled with dots
-            provenance: format!("{} {}", "⨯".red(), "MISSING".red().bold()),
+            provenance: format!(
+                "{} {}",
+                "⨯".if_supports_color(Stdout, |text| text.red()),
+                "MISSING".if_supports_color(Stdout, |text| text.style(Style::new().red().bold()))
+            ),
             children: Vec::new(),
         }
     }
@@ -52,8 +56,12 @@ impl DumpEntry {
     fn default_value(key: impl Into<String>) -> Self {
         Self::leaf(
             key,
-            "<default>".bright_black().to_string(),
-            "DEFAULT".bright_black().to_string(),
+            "<default>"
+                .if_supports_color(Stdout, |text| text.bright_black())
+                .to_string(),
+            "DEFAULT"
+                .if_supports_color(Stdout, |text| text.bright_black())
+                .to_string(),
         )
     }
 

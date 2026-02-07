@@ -5,35 +5,6 @@
 use facet::Facet;
 use figue as args;
 
-/// Strip ANSI color codes for stable snapshot testing.
-/// ANSI escape sequences follow the pattern: ESC [ <params> m
-fn strip_ansi(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
-
-    while let Some(c) = chars.next() {
-        if c == '\x1B' {
-            // Check for '[' (CSI sequence)
-            if chars.peek() == Some(&'[') {
-                chars.next(); // consume '['
-                // Skip until we see 'm' (end of SGR sequence)
-                while let Some(&next) = chars.peek() {
-                    chars.next();
-                    if next == 'm' {
-                        break;
-                    }
-                }
-            } else {
-                result.push(c);
-            }
-        } else {
-            result.push(c);
-        }
-    }
-
-    result
-}
-
 #[test]
 fn test_ariadne_unknown_flag_with_suggestion() {
     #[derive(Facet, Debug)]
@@ -43,7 +14,7 @@ fn test_ariadne_unknown_flag_with_suggestion() {
     }
     let err = figue::from_slice::<Args>(&["--c0ncurrency", "4"]).unwrap_err();
 
-    let ariadne_output = strip_ansi(&err.to_string());
+    let ariadne_output = strip_ansi_escapes::strip_str(err.to_string());
     insta::assert_snapshot!("ariadne_unknown_flag_with_suggestion", ariadne_output);
 }
 
@@ -56,7 +27,7 @@ fn test_ariadne_missing_argument() {
     }
     let err = figue::from_slice::<Args>(&[]).unwrap_err();
 
-    let ariadne_output = strip_ansi(&err.to_string());
+    let ariadne_output = strip_ansi_escapes::strip_str(err.to_string());
     insta::assert_snapshot!("ariadne_missing_argument", ariadne_output);
 }
 
@@ -69,7 +40,7 @@ fn test_ariadne_invalid_value() {
     }
     let err = figue::from_slice::<Args>(&["--count", "not-a-number"]).unwrap_err();
 
-    let ariadne_output = strip_ansi(&err.to_string());
+    let ariadne_output = strip_ansi_escapes::strip_str(err.to_string());
     insta::assert_snapshot!("ariadne_invalid_value", ariadne_output);
 }
 
@@ -92,7 +63,7 @@ fn test_ariadne_unknown_subcommand() {
 
     let err = figue::from_slice::<Args>(&["buidl"]).unwrap_err();
 
-    let ariadne_output = strip_ansi(&err.to_string());
+    let ariadne_output = strip_ansi_escapes::strip_str(err.to_string());
     insta::assert_snapshot!("ariadne_unknown_subcommand", ariadne_output);
 }
 
@@ -105,7 +76,7 @@ fn test_ariadne_unexpected_positional() {
     }
     let err = figue::from_slice::<Args>(&["unexpected", "--name", "value"]).unwrap_err();
 
-    let ariadne_output = strip_ansi(&err.to_string());
+    let ariadne_output = strip_ansi_escapes::strip_str(err.to_string());
     insta::assert_snapshot!("ariadne_unexpected_positional", ariadne_output);
 }
 
@@ -118,6 +89,6 @@ fn test_ariadne_expected_value_got_eof() {
     }
     let err = figue::from_slice::<Args>(&["--concurrency"]).unwrap_err();
 
-    let ariadne_output = strip_ansi(&err.to_string());
+    let ariadne_output = strip_ansi_escapes::strip_str(err.to_string());
     insta::assert_snapshot!("ariadne_expected_value_got_eof", ariadne_output);
 }
