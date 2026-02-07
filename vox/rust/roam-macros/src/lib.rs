@@ -442,6 +442,10 @@ fn generate_dispatch_method(method: &ServiceMethod, roam: &TokenStream2) -> Toke
                         conn_id,
                         request_id,
                     ).await;
+
+                    if #method_name_str != "emit_tracing" {
+                        #roam::tracing::debug!(target: "roam::rpc", request_id, method = #method_name_str, elapsed = ?_handler_elapsed, "ok");
+                    }
                 }
                 Err(error) => {
                     // Create SendPeek before calling async function
@@ -466,6 +470,10 @@ fn generate_dispatch_method(method: &ServiceMethod, roam: &TokenStream2) -> Toke
                         conn_id,
                         request_id,
                     ).await;
+
+                    if #method_name_str != "emit_tracing" {
+                        #roam::tracing::debug!(target: "roam::rpc", request_id, method = #method_name_str, elapsed = ?_handler_elapsed, "err");
+                    }
                 }
             }
         }
@@ -494,6 +502,10 @@ fn generate_dispatch_method(method: &ServiceMethod, roam: &TokenStream2) -> Toke
                 conn_id,
                 request_id,
             ).await;
+
+            if #method_name_str != "emit_tracing" {
+                #roam::tracing::debug!(target: "roam::rpc", request_id, method = #method_name_str, elapsed = ?_handler_elapsed, "ok");
+            }
         }
     };
 
@@ -537,6 +549,9 @@ fn generate_dispatch_method(method: &ServiceMethod, roam: &TokenStream2) -> Toke
                 )
             } {
                 return Box::pin(async move {
+                    if #method_name_str != "emit_tracing" {
+                        #roam::tracing::debug!(target: "roam::rpc", request_id, method = #method_name_str, error = %e, "prepare failed");
+                    }
                     #roam::session::send_prepare_error(e, &driver_tx, conn_id, request_id).await;
                 });
             }
@@ -587,13 +602,15 @@ fn generate_dispatch_method(method: &ServiceMethod, roam: &TokenStream2) -> Toke
                 // can access extensions set by middleware.
                 use #roam::facet_pretty::FacetPretty;
                 if #method_name_str != "emit_tracing" {
-                    #roam::tracing::debug!(target: "roam::rpc", method = #method_name_str, args = %#args_log, "handling");
+                    #roam::tracing::debug!(target: "roam::rpc", request_id, method = #method_name_str, args = %#args_log, "handling");
                 }
                 #args_binding
+                let _handler_start = std::time::Instant::now();
                 let result = #roam::session::CURRENT_EXTENSIONS.scope(
                     cx.extensions.clone(),
                     handler.#method_name(&cx, #args_call)
                 ).await;
+                let _handler_elapsed = _handler_start.elapsed();
 
                 // 6. Send response
                 #send_response
