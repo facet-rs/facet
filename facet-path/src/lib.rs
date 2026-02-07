@@ -8,7 +8,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt::Write;
 
-use facet_core::{Def, Field, Shape, StructKind, Type, UserType};
+use facet_core::{Def, Field, Shape, Type, UserType};
 
 pub mod access;
 pub use access::PathAccessError;
@@ -151,70 +151,82 @@ impl Path {
     pub fn format_with_shape(&self, shape: &'static Shape) -> String {
         let mut result = String::new();
         let mut current_shape = shape;
+        let mut current_variant_idx: Option<usize> = None;
 
         for step in &self.steps {
             match step {
                 PathStep::Field(idx) => {
                     let idx = *idx as usize;
-                    if let Some(field_name) = get_field_name(current_shape, idx) {
+                    if let Some(field_name) =
+                        get_field_name_with_variant(current_shape, idx, current_variant_idx)
+                    {
                         if !result.is_empty() {
                             result.push('.');
                         }
                         result.push_str(field_name);
-                        if let Some(field_shape) = get_field_shape(current_shape, idx) {
-                            current_shape = field_shape;
-                        }
                     }
+                    if let Some(field_shape) =
+                        get_field_shape_with_variant(current_shape, idx, current_variant_idx)
+                    {
+                        current_shape = field_shape;
+                    }
+                    current_variant_idx = None;
                 }
                 PathStep::Index(idx) => {
                     write!(result, "[{}]", idx).unwrap();
                     if let Some(elem_shape) = get_element_shape(current_shape) {
                         current_shape = elem_shape;
                     }
+                    current_variant_idx = None;
                 }
                 PathStep::Variant(idx) => {
                     let idx = *idx as usize;
                     if let Some(variant_name) = get_variant_name(current_shape, idx) {
                         result.push_str("::");
                         result.push_str(variant_name);
-                        if let Some(variant_shape) = get_variant_shape(current_shape, idx) {
-                            current_shape = variant_shape;
-                        }
                     }
+                    // Don't advance current_shape — the next Field step will
+                    // use the variant index to look up fields within the enum.
+                    current_variant_idx = Some(idx);
                 }
                 PathStep::MapKey(idx) => {
                     write!(result, "[key#{}]", idx).unwrap();
                     if let Some(key_shape) = get_map_key_shape(current_shape) {
                         current_shape = key_shape;
                     }
+                    current_variant_idx = None;
                 }
                 PathStep::MapValue(idx) => {
                     write!(result, "[value#{}]", idx).unwrap();
                     if let Some(value_shape) = get_map_value_shape(current_shape) {
                         current_shape = value_shape;
                     }
+                    current_variant_idx = None;
                 }
                 PathStep::OptionSome => {
+                    result.push_str("::Some");
                     if let Some(inner_shape) = get_option_inner_shape(current_shape) {
                         current_shape = inner_shape;
                     }
+                    current_variant_idx = None;
                 }
                 PathStep::Deref => {
                     if let Some(inner_shape) = get_pointer_inner_shape(current_shape) {
                         current_shape = inner_shape;
                     }
+                    current_variant_idx = None;
                 }
                 PathStep::Inner => {
                     if let Some(inner_shape) = get_inner_shape(current_shape) {
                         current_shape = inner_shape;
                     }
+                    current_variant_idx = None;
                 }
                 PathStep::Proxy => {
-                    // Proxy navigates to the proxy type (e.g., InnerProxy for Inner)
-                    // The proxy shape is resolved via the shape's effective_proxy
                     if let Some(proxy_def) = current_shape.effective_proxy(None) {
                         current_shape = proxy_def.shape;
                     }
+                    current_variant_idx = None;
                 }
             }
         }
@@ -333,24 +345,13 @@ fn get_field_shape_with_variant(
     get_field_with_variant(shape, idx, variant_idx).map(|f| f.shape())
 }
 
-/// Get the name of a field at the given index.
-fn get_field_name(shape: &Shape, idx: usize) -> Option<&'static str> {
-    match shape.ty {
-        Type::User(UserType::Struct(sd)) => sd.fields.get(idx).map(|f| f.name),
-        Type::User(UserType::Enum(_)) => {
-            // For enums, we'd need the variant to get field names
-            None
-        }
-        _ => None,
-    }
-}
-
-/// Get the shape of a field at the given index.
-fn get_field_shape(shape: &Shape, idx: usize) -> Option<&'static Shape> {
-    match shape.ty {
-        Type::User(UserType::Struct(sd)) => sd.fields.get(idx).map(|f| f.shape()),
-        _ => None,
-    }
+/// Get the name of a field at the given index, handling both structs and enum variants.
+fn get_field_name_with_variant(
+    shape: &Shape,
+    idx: usize,
+    variant_idx: Option<usize>,
+) -> Option<&'static str> {
+    get_field_with_variant(shape, idx, variant_idx).map(|f| f.name)
 }
 
 /// Get the element shape for a list/array.
@@ -367,21 +368,6 @@ const fn get_element_shape(shape: &Shape) -> Option<&'static Shape> {
 fn get_variant_name(shape: &Shape, idx: usize) -> Option<&'static str> {
     match shape.ty {
         Type::User(UserType::Enum(ed)) => ed.variants.get(idx).map(|v| v.name),
-        _ => None,
-    }
-}
-
-/// Get the "shape" for a variant - returns the first field's shape if present.
-fn get_variant_shape(shape: &Shape, idx: usize) -> Option<&'static Shape> {
-    match shape.ty {
-        Type::User(UserType::Enum(ed)) => {
-            let variant = ed.variants.get(idx)?;
-            if variant.data.kind == StructKind::Unit {
-                None
-            } else {
-                variant.data.fields.first().map(|f| f.shape())
-            }
-        }
         _ => None,
     }
 }

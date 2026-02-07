@@ -2,4 +2,4 @@
 source: facet-path/tests/path_formatting.rs
 expression: formatted
 ---
-::WithData
+::WithData.name

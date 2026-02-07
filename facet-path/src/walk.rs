@@ -138,9 +138,10 @@ fn walk_recursive(
 /// Some types use both (e.g. `Option<T>` is an enum in `ty` and has `Def::Option`),
 /// so we must avoid double-visiting. The rule:
 ///
-/// 1. If `ty` is `Struct` or `Enum`, walk children through `ty` (fields/variants).
-/// 2. Otherwise, walk children through `def` (container element shapes).
-/// 3. Walk `shape.inner` only if neither `ty` nor `def` provided child access.
+/// 1. `Def::Option` takes priority — Option is a container, not an enum to iterate.
+/// 2. If `ty` is `Struct` or `Enum`, walk children through `ty` (fields/variants).
+/// 3. Otherwise, walk children through `def` (container element shapes).
+/// 4. Walk `shape.inner` only if none of the above provided child access.
 fn walk_children(
     shape: &'static Shape,
     visitor: &mut impl ShapeVisitor,
@@ -150,6 +151,20 @@ fn walk_children(
     // Track whether we found children via ty or def, to avoid
     // double-visiting through `inner`.
     let mut has_structural_children = false;
+
+    // Option<T> is both UserType::Enum and Def::Option. We handle it via
+    // Def::Option (using OptionSome) because Option is semantically a
+    // container — the None/Some distinction is a runtime concern, not
+    // something a shape-only walk should iterate as enum variants.
+    if let Def::Option(od) = shape.def {
+        path.push(PathStep::OptionSome);
+        if walk_recursive(od.t(), visitor, path, ancestors) {
+            return true;
+        }
+        path.pop();
+        // Skip the Enum branch below — we already handled Option's children.
+        return false;
+    }
 
     match shape.ty {
         Type::User(UserType::Struct(st)) => {
