@@ -46,7 +46,7 @@
 //! cannot see into the type system**.
 //!
 //! When a proc macro sees `Tx<String>` in a method signature, it sees tokens — it has
-//! no idea if `Tx` refers to `roam::stream::Tx` or some user-defined type. It cannot
+//! no idea if `Tx` refers to `roam::channel::Tx` or some user-defined type. It cannot
 //! resolve type aliases, follow generic parameters, or inspect nested types.
 //!
 //! But here, with `facet::Shape`, we have **full type introspection**:
@@ -60,8 +60,8 @@
 //! ```
 //!
 //! This is why validation happens here:
-//! - Is this actually roam's `Tx`/`Rx` streaming type?
-//! - Are streaming types incorrectly used in error positions?
+//! - Is this actually roam's `Tx`/`Rx` channel type?
+//! - Are channel types incorrectly used in error positions?
 //! - What serialization does this nested type require?
 //!
 //! Additional benefits of build scripts:

@@ -58,7 +58,7 @@ async fn data_after_close_is_rejected() {
     let (tx, _rx) = crate::runtime::channel(10);
     registry.register_incoming(42, tx);
 
-    // Close the stream
+    // Close the channel
     registry.close(42);
 
     // Data after close should fail
@@ -69,26 +69,26 @@ async fn data_after_close_is_rejected() {
 // r[verify channeling.data]
 // r[verify channeling.unknown]
 #[tokio::test]
-async fn channel_registry_routes_data_to_registered_stream() {
+async fn channel_registry_routes_data_to_registered_channel() {
     let mut registry = test_registry();
 
-    // Register a stream
+    // Register a channel
     let (tx, mut rx) = crate::runtime::channel(10);
     registry.register_incoming(42, tx);
 
-    // Data to registered stream should succeed
+    // Data to registered channel should succeed
     assert!(registry.route_data(42, b"hello".to_vec()).await.is_ok());
 
     // Should receive the data
     assert_eq!(rx.recv().await, Some(b"hello".to_vec()));
 
-    // Data to unregistered stream should fail
+    // Data to unregistered channel should fail
     assert!(registry.route_data(999, b"nope".to_vec()).await.is_err());
 }
 
 // r[verify channeling.close]
 #[tokio::test]
-async fn channel_registry_close_terminates_stream() {
+async fn channel_registry_close_terminates_channel() {
     let mut registry = test_registry();
     let (tx, mut rx) = crate::runtime::channel(10);
     registry.register_incoming(42, tx);
@@ -96,7 +96,7 @@ async fn channel_registry_close_terminates_stream() {
     // Send some data
     registry.route_data(42, b"data1".to_vec()).await.unwrap();
 
-    // Close the stream
+    // Close the channel
     registry.close(42);
 
     // Should still receive buffered data
@@ -105,7 +105,7 @@ async fn channel_registry_close_terminates_stream() {
     // Then channel closes (sender dropped)
     assert_eq!(rx.recv().await, None);
 
-    // Stream no longer registered
+    // Channel no longer registered
     assert!(!registry.contains(42));
 }
 
@@ -202,7 +202,7 @@ async fn pump_rx_to_write_writes_chunks() {
 
 #[tokio::test]
 async fn tunnel_stream_bidirectional() {
-    // Create a duplex stream (simulates a socket)
+    // Create a duplex pair (simulates a socket)
     let (client, server) = tokio::io::duplex(1024);
 
     // Create tunnel pair
@@ -348,12 +348,12 @@ fn collect_channel_ids_deeply_nested() {
 
     #[derive(facet::Facet)]
     struct Inner {
-        stream: Tx<u8>,
+        channel: Tx<u8>,
     }
 
     let args = Outer {
         inner: Inner {
-            stream: Tx::try_from(777u64).unwrap(),
+            channel: Tx::try_from(777u64).unwrap(),
         },
     };
     let ids = collect_channel_ids(&args);
@@ -370,16 +370,16 @@ fn collect_channel_ids_large_bytes_payload_is_empty() {
 
 // r[verify call.request.channels]
 #[test]
-fn collect_channel_ids_large_bytes_payload_with_stream() {
+fn collect_channel_ids_large_bytes_payload_with_channel() {
     #[derive(facet::Facet)]
     struct ResponseLike {
         payload: Vec<u8>,
-        stream: Tx<u8>,
+        channel: Tx<u8>,
     }
 
     let args = ResponseLike {
         payload: vec![0xCDu8; 512 * 1024],
-        stream: Tx::try_from(4242u64).unwrap(),
+        channel: Tx::try_from(4242u64).unwrap(),
     };
     let ids = collect_channel_ids(&args);
     assert_eq!(ids, vec![4242]);
@@ -440,7 +440,7 @@ fn collect_channel_ids_array_tuple_and_map_coverage() {
 fn collect_channel_ids_shared_shape_branches_not_order_sensitive() {
     #[derive(facet::Facet)]
     struct Leaf {
-        stream: Option<Tx<u8>>,
+        channel: Option<Tx<u8>>,
         payload: Vec<u8>,
     }
 
@@ -452,11 +452,11 @@ fn collect_channel_ids_shared_shape_branches_not_order_sensitive() {
 
     let value = Root {
         a: Leaf {
-            stream: Some(Tx::try_from(5u64).unwrap()),
+            channel: Some(Tx::try_from(5u64).unwrap()),
             payload: vec![1; 64 * 1024],
         },
         b: Leaf {
-            stream: Some(Tx::try_from(6u64).unwrap()),
+            channel: Some(Tx::try_from(6u64).unwrap()),
             payload: vec![2; 64 * 1024],
         },
     };

@@ -328,22 +328,22 @@ where
         }
     }
 
-    fn bind_response_streams<R: Facet<'static>>(&self, response: &mut R, channels: &[u64]) {
+    fn bind_response_channels<R: Facet<'static>>(&self, response: &mut R, channels: &[u64]) {
         // Client wraps a ConnectionHandle, but we don't have direct access to it
-        // during bind_response_streams. For reconnecting clients, response stream binding
+        // during bind_response_channels. For reconnecting clients, response channel binding
         // would need to be handled at a higher level or the client would need to store
         // the current handle.
         // For now, this is a no-op - Client users should use ConnectionHandle
-        // directly if they need response stream binding.
+        // directly if they need response channel binding.
         let _ = (response, channels);
     }
 
     #[allow(unsafe_code)]
-    fn call_with_metadata_by_shape(
+    fn call_with_metadata_by_plan(
         &self,
         method_id: u64,
         args_ptr: SendPtr,
-        args_shape: &'static facet::Shape,
+        args_plan: &'static std::sync::Arc<roam_session::RpcPlan>,
         metadata: roam_wire::Metadata,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send {
         let this = self.clone();
@@ -374,10 +374,10 @@ where
 
                 // SAFETY: args_ptr was created from valid, initialized, Send data
                 match unsafe {
-                    handle.call_with_metadata_by_shape(
+                    handle.call_with_metadata_by_plan(
                         method_id,
                         args_ptr.as_ptr(),
-                        args_shape,
+                        args_plan,
                         metadata.clone(),
                     )
                 }
@@ -407,14 +407,14 @@ where
     }
 
     #[allow(unsafe_code)]
-    unsafe fn bind_response_streams_by_shape(
+    unsafe fn bind_response_channels_by_plan(
         &self,
         response_ptr: *mut (),
-        response_shape: &'static facet::Shape,
+        response_plan: &roam_session::RpcPlan,
         channels: &[u64],
     ) {
-        // Same as bind_response_streams - this is a no-op for Client.
-        let _ = (response_ptr, response_shape, channels);
+        // Same as bind_response_channels - this is a no-op for reconnecting Client.
+        let _ = (response_ptr, response_plan, channels);
     }
 }
 

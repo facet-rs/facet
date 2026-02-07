@@ -16,13 +16,13 @@ import type {
   LookupError,
 } from "@bearcove/roam-generated/testbed.ts";
 import {
-  testbed_streamingHandlers,
+  testbed_channelingHandlers,
   TestbedClient,
   type ChannelingMethodHandler,
 } from "@bearcove/roam-generated/testbed.ts";
 import { Server } from "@bearcove/roam-tcp";
 import {
-  type StreamingDispatcher,
+  type ChannelingDispatcher,
   type ChannelRegistry,
   type TaskSender,
   type Tx,
@@ -161,13 +161,13 @@ class TestbedService implements TestbedHandler {
   }
 }
 
-// Streaming dispatcher that uses the generated streaming handlers
-class TestbedStreamingDispatcher implements StreamingDispatcher {
+// Channeling dispatcher that uses the generated channeling handlers
+class TestbedChannelingDispatcher implements ChannelingDispatcher {
   private service = new TestbedService();
   private handlers: Map<bigint, ChannelingMethodHandler<TestbedHandler>>;
 
   constructor() {
-    this.handlers = testbed_streamingHandlers;
+    this.handlers = testbed_channelingHandlers;
   }
 
   async dispatch(
@@ -206,7 +206,7 @@ async function runServer() {
   const conn = await server.connect(addr, { acceptConnections });
 
   try {
-    await conn.runStreaming(new TestbedStreamingDispatcher());
+    await conn.runChanneling(new TestbedChannelingDispatcher());
   } catch (e) {
     if (e instanceof ConnectionError && e.kind === "closed") {
       // Clean shutdown
@@ -297,14 +297,23 @@ async function runClient() {
         result.shapes[1]?.tag !== "Circle" ||
         result.shapes[1].radius !== 2.5
       ) {
-        throw new Error(`create_canvas returned unexpected shapes: ${JSON.stringify(result.shapes)}`);
+        throw new Error(
+          `create_canvas returned unexpected shapes: ${JSON.stringify(result.shapes)}`,
+        );
       }
       console.error(`create_canvas result OK`);
       break;
     }
     case "process_message": {
-      const result = await client.processMessage({ tag: "Data", value: new Uint8Array([1, 2, 3, 4]) });
-      if (result.tag !== "Data" || result.value.length !== 4 || result.value.join(",") !== "4,3,2,1") {
+      const result = await client.processMessage({
+        tag: "Data",
+        value: new Uint8Array([1, 2, 3, 4]),
+      });
+      if (
+        result.tag !== "Data" ||
+        result.value.length !== 4 ||
+        result.value.join(",") !== "4,3,2,1"
+      ) {
         throw new Error(`process_message returned unexpected value`);
       }
       console.error(`process_message result OK`);

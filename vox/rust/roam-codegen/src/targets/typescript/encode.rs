@@ -122,7 +122,7 @@ pub fn generate_encode_expr(shape: &'static Shape, expr: &str) -> String {
             )
         }
         ShapeKind::Tx { .. } | ShapeKind::Rx { .. } => {
-            // Streaming types encode as u64 stream ID (varint)
+            // Channel types encode as u64 channel ID (varint)
             // r[impl channeling.type] - Tx/Rx serialize as channel_id on wire.
             format!("pc.encodeU64({expr}.channelId)")
         }

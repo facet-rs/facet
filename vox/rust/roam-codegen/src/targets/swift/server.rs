@@ -19,8 +19,8 @@ use crate::render::hex_u64;
 pub fn generate_server(service: &ServiceDetail) -> String {
     let mut out = String::new();
     out.push_str(&generate_handler_protocol(service));
-    out.push_str(&generate_dispatcher(service));
-    out.push_str(&generate_streaming_dispatcher(service));
+    // Emit only the channel-capable dispatcher.
+    out.push_str(&generate_channeling_dispatcher(service));
     out
 }
 
@@ -73,6 +73,7 @@ fn generate_handler_protocol(service: &ServiceDetail) -> String {
     out
 }
 
+#[cfg(test)]
 /// Generate dispatcher for handling incoming calls.
 fn generate_dispatcher(service: &ServiceDetail) -> String {
     let mut out = String::new();
@@ -126,10 +127,11 @@ fn generate_dispatcher(service: &ServiceDetail) -> String {
     out
 }
 
-/// Generate a single dispatch method for non-streaming dispatcher.
+#[cfg(test)]
+/// Generate a single dispatch method for non-channeling dispatcher.
 fn generate_dispatch_method(w: &mut CodeWriter<&mut String>, method: &MethodDetail) {
     let method_name = method.method_name.to_lower_camel_case();
-    let has_streaming =
+    let has_channeling =
         method.args.iter().any(|a| is_stream(a.ty)) || is_stream(method.return_type);
 
     cw_writeln!(
@@ -140,8 +142,8 @@ fn generate_dispatch_method(w: &mut CodeWriter<&mut String>, method: &MethodDeta
     {
         let _indent = w.indent();
 
-        if has_streaming {
-            w.writeln("// TODO: Implement streaming dispatch").unwrap();
+        if has_channeling {
+            w.writeln("// TODO: Implement channeling dispatch").unwrap();
             w.writeln("throw RoamError.notImplemented").unwrap();
         } else {
             // Decode arguments
@@ -186,6 +188,7 @@ fn generate_dispatch_method(w: &mut CodeWriter<&mut String>, method: &MethodDeta
     w.writeln("}").unwrap();
 }
 
+#[cfg(test)]
 /// Generate code to decode method arguments (for dispatcher).
 fn generate_decode_args(w: &mut CodeWriter<&mut String>, args: &[roam_schema::ArgDetail]) {
     if args.is_empty() {
@@ -204,13 +207,17 @@ fn generate_decode_args(w: &mut CodeWriter<&mut String>, args: &[roam_schema::Ar
     }
 }
 
-/// Generate streaming dispatcher for handling incoming calls with channel support.
-fn generate_streaming_dispatcher(service: &ServiceDetail) -> String {
+/// Generate channeling dispatcher for handling incoming calls with channel support.
+fn generate_channeling_dispatcher(service: &ServiceDetail) -> String {
     let mut out = String::new();
     let mut w = CodeWriter::with_indent_spaces(&mut out, 4);
     let service_name = service.name.to_upper_camel_case();
 
-    cw_writeln!(w, "public final class {service_name}StreamingDispatcher {{").unwrap();
+    cw_writeln!(
+        w,
+        "public final class {service_name}ChannelingDispatcher {{"
+    )
+    .unwrap();
     {
         let _indent = w.indent();
         cw_writeln!(w, "private let handler: {service_name}Handler").unwrap();
@@ -267,7 +274,7 @@ fn generate_streaming_dispatcher(service: &ServiceDetail) -> String {
 
         // Individual dispatch methods
         for method in &service.methods {
-            generate_streaming_dispatch_method(&mut w, method);
+            generate_channeling_dispatch_method(&mut w, method);
             w.blank_line().unwrap();
         }
     }
@@ -321,7 +328,7 @@ fn generate_preregister_channels(w: &mut CodeWriter<&mut String>, service: &Serv
                         )
                         .unwrap();
                     } else {
-                        // Non-streaming arg - skip it based on type
+                        // Non-channeling arg - skip it based on type
                         generate_skip_arg(w, &arg_name, arg.ty, "        ", &cursor_var);
                     }
                 }
@@ -404,10 +411,10 @@ fn generate_skip_arg(
     }
 }
 
-/// Generate a single streaming dispatch method.
-fn generate_streaming_dispatch_method(w: &mut CodeWriter<&mut String>, method: &MethodDetail) {
+/// Generate a single channeling dispatch method.
+fn generate_channeling_dispatch_method(w: &mut CodeWriter<&mut String>, method: &MethodDetail) {
     let method_name = method.method_name.to_lower_camel_case();
-    let has_streaming =
+    let has_channeling =
         method.args.iter().any(|a| is_stream(a.ty)) || is_stream(method.return_type);
 
     cw_writeln!(
@@ -423,10 +430,10 @@ fn generate_streaming_dispatch_method(w: &mut CodeWriter<&mut String>, method: &
             let cursor_var = unique_decode_cursor_name(&method.args);
             cw_writeln!(w, "var {cursor_var} = 0").unwrap();
 
-            // Decode arguments - for streaming, decode channel IDs and create Tx/Rx
+            // Decode arguments - for channeling, decode channel IDs and create Tx/Rx
             for arg in &method.args {
                 let arg_name = arg.name.to_lower_camel_case();
-                generate_streaming_decode_arg(w, &arg_name, arg.ty, &cursor_var);
+                generate_channeling_decode_arg(w, &arg_name, arg.ty, &cursor_var);
             }
 
             // Call handler
@@ -441,8 +448,8 @@ fn generate_streaming_dispatch_method(w: &mut CodeWriter<&mut String>, method: &
 
             let ret_type = swift_type_server_return(method.return_type);
 
-            if has_streaming {
-                // For streaming methods, close any Tx channels after handler completes
+            if has_channeling {
+                // For channeling methods, close any Tx channels after handler completes
                 if ret_type == "Void" {
                     cw_writeln!(
                         w,
@@ -479,7 +486,7 @@ fn generate_streaming_dispatch_method(w: &mut CodeWriter<&mut String>, method: &
                     .unwrap();
                 }
             } else {
-                // Non-streaming method
+                // Non-channeling method
                 if ret_type == "Void" {
                     cw_writeln!(
                         w,
@@ -529,8 +536,8 @@ fn generate_streaming_dispatch_method(w: &mut CodeWriter<&mut String>, method: &
     w.writeln("}").unwrap();
 }
 
-/// Generate code to decode a single argument for streaming dispatch.
-fn generate_streaming_decode_arg(
+/// Generate code to decode a single argument for channeling dispatch.
+fn generate_channeling_decode_arg(
     w: &mut CodeWriter<&mut String>,
     name: &str,
     shape: &'static Shape,
@@ -576,7 +583,7 @@ fn generate_streaming_decode_arg(
             .unwrap();
         }
         _ => {
-            // Non-streaming argument - use standard decode
+            // Non-channeling argument - use standard decode
             let decode_stmt = generate_decode_stmt_with_cursor(shape, name, "", cursor_var);
             for line in decode_stmt.lines() {
                 w.writeln(line).unwrap();
@@ -690,11 +697,11 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_streaming_dispatcher() {
+    fn test_generate_channeling_dispatcher() {
         let service = sample_service();
-        let code = generate_streaming_dispatcher(&service);
+        let code = generate_channeling_dispatcher(&service);
 
-        assert!(code.contains("class EchoStreamingDispatcher"));
+        assert!(code.contains("class EchoChannelingDispatcher"));
         assert!(code.contains("preregisterChannels"));
         assert!(code.contains("IncomingChannelRegistry"));
     }

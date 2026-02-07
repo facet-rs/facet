@@ -75,6 +75,7 @@ facet-core = { version = "0.43.0", git = "https://github.com/facet-rs/facet", br
 facet-postcard = { version = "0.43.0", git = "https://github.com/facet-rs/facet", branch = "main", features = [
   "camino",
 ] }
+facet-path = { version = "0.43.0", git = "https://github.com/facet-rs/facet", branch = "main" }
 facet-reflect = { version = "0.43.0", git = "https://github.com/facet-rs/facet", branch = "main" }
 facet-format = { version = "0.43.0", git = "https://github.com/facet-rs/facet", branch = "main" }
 facet-pretty = { version = "0.43.0", git = "https://github.com/facet-rs/facet", branch = "main" }
@@ -97,5 +98,21 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 static_assertions = "1.1.0"
 
+# [patch."https://github.com/facet-rs/facet"]
+# facet = { path = "../facet/facet" }
+# facet-core = { path = "../facet/facet-core" }
+# facet-postcard = { path = "../facet/facet-postcard" }
+# facet-path = { path = "../facet/facet-path" }
+# facet-reflect = { path = "../facet/facet-reflect" }
+# facet-format = { path = "../facet/facet-format" }
+# facet-pretty = { path = "../facet/facet-pretty" }
+# facet-json = { path = "../facet/facet-json" }
+# facet-value = { path = "../facet/facet-value" }
+# facet-testhelpers = { path = "../facet/facet-testhelpers" }
+
 [profile.release]
 debug = 1
+
+[profile.samply]
+inherits = "release"
+debug = true

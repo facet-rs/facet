@@ -195,8 +195,8 @@ fn rpc_payload_over_max_triggers_goodbye() {
     .unwrap();
 }
 
-// r[verify channeling.id.zero-reserved] - Stream ID 0 is reserved; if a peer
-// receives a stream message with channel_id of 0, it MUST send a Goodbye message.
+// r[verify channeling.id.zero-reserved] - Channel ID 0 is reserved; if a peer
+// receives a channel message with channel_id of 0, it MUST send a Goodbye message.
 #[test]
 fn channel_id_zero_triggers_goodbye() {
     run_async(async {
@@ -214,7 +214,7 @@ fn channel_id_zero_triggers_goodbye() {
             .await
             .map_err(|e| e.to_string())?;
 
-        // Violate stream-id=0 reserved.
+        // Violate channel-id=0 reserved.
         io.send(&Message::Close {
             conn_id: roam_wire::ConnectionId::ROOT,
             channel_id: 0,
@@ -243,7 +243,7 @@ fn channel_id_zero_triggers_goodbye() {
             || reason.contains("core.stream.id.zero-reserved");
         if !ok {
             return Err(format!(
-                "Goodbye reason must mention a stream-id-zero rule id, got {reason:?}"
+                "Goodbye reason must mention a channel-id-zero rule id, got {reason:?}"
             ));
         }
 
@@ -253,10 +253,10 @@ fn channel_id_zero_triggers_goodbye() {
     .unwrap();
 }
 
-// r[verify channeling.unknown] - If a peer receives a stream message with a
+// r[verify channeling.unknown] - If a peer receives a channel message with a
 // channel_id that was never opened, it MUST send a Goodbye message.
 #[test]
-fn stream_unknown_id_triggers_goodbye() {
+fn channel_unknown_id_triggers_goodbye() {
     run_async(async {
         let (mut io, mut child) = accept_subject().await?;
 
@@ -271,8 +271,8 @@ fn stream_unknown_id_triggers_goodbye() {
             .await
             .map_err(|e| e.to_string())?;
 
-        // Send Data on a stream ID that was never opened.
-        // (Stream ID 42 was never established via Request/Response)
+        // Send Data on a channel ID that was never opened.
+        // (Channel ID 42 was never established via Request/Response)
         io.send(&Message::Data {
             conn_id: roam_wire::ConnectionId::ROOT,
             channel_id: 42,
@@ -314,7 +314,7 @@ fn stream_unknown_id_triggers_goodbye() {
 // r[verify channeling.id.zero-reserved] - Verify Data message with channel_id=0
 // also triggers Goodbye (not just Close).
 #[test]
-fn stream_data_id_zero_triggers_goodbye() {
+fn channel_data_id_zero_triggers_goodbye() {
     run_async(async {
         let (mut io, mut child) = accept_subject().await?;
 
@@ -360,7 +360,7 @@ fn stream_data_id_zero_triggers_goodbye() {
             || reason.contains("core.stream.id.zero-reserved");
         if !ok {
             return Err(format!(
-                "Goodbye reason must mention a stream-id-zero rule id, got {reason:?}"
+                "Goodbye reason must mention a channel-id-zero rule id, got {reason:?}"
             ));
         }
 

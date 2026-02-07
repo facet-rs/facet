@@ -9,6 +9,32 @@ use roam_schema::{
 
 use super::types::{ts_type_base_named, ts_type_client_return, ts_type_server_arg};
 
+fn generate_decode_stmt_with_channel_ids(
+    shape: &'static Shape,
+    var_name: &str,
+    offset_var: &str,
+    ts_type_for_channel: fn(&'static Shape) -> String,
+) -> String {
+    match classify_shape(shape) {
+        ShapeKind::Tx { inner } => {
+            // r[impl channeling.type] - Channel types decode as channel_id on wire.
+            let inner_type = ts_type_for_channel(inner);
+            format!(
+                "const _{var_name}_r = pc.decodeU64(buf, {offset_var}); const {var_name} = {{ channelId: _{var_name}_r.value }} as Tx<{inner_type}>; {offset_var} = _{var_name}_r.next; /* TODO: create real Tx handle */"
+            )
+        }
+        ShapeKind::Rx { inner } => {
+            // r[impl channeling.type] - Channel types decode as channel_id on wire.
+            let inner_type = ts_type_for_channel(inner);
+            format!(
+                "const _{var_name}_r = pc.decodeU64(buf, {offset_var}); const {var_name} = {{ channelId: _{var_name}_r.value }} as Rx<{inner_type}>; {offset_var} = _{var_name}_r.next; /* TODO: create real Rx handle */"
+            )
+        }
+        // Channeling and non-channeling types share one decode path.
+        _ => generate_decode_stmt(shape, var_name, offset_var),
+    }
+}
+
 /// Generate TypeScript code that decodes a value from a buffer for CLIENT context.
 /// Schema is from server's perspective - types match on both sides.
 pub fn generate_decode_stmt_client(
@@ -16,28 +42,7 @@ pub fn generate_decode_stmt_client(
     var_name: &str,
     offset_var: &str,
 ) -> String {
-    match classify_shape(shape) {
-        ShapeKind::Tx { inner } => {
-            // Caller's Tx (caller sends) - decode channel_id and create Tx handle
-            // r[impl channeling.type] - Channel types decode as channel_id on wire.
-            // TODO: Need Connection access to create proper Tx handle
-            let inner_type = ts_type_client_return(inner);
-            format!(
-                "const _{var_name}_r = pc.decodeU64(buf, {offset_var}); const {var_name} = {{ channelId: _{var_name}_r.value }} as Tx<{inner_type}>; {offset_var} = _{var_name}_r.next; /* TODO: create real Tx handle */"
-            )
-        }
-        ShapeKind::Rx { inner } => {
-            // Caller's Rx (caller receives) - decode channel_id and create Rx handle
-            // r[impl channeling.type] - Channel types decode as channel_id on wire.
-            // TODO: Need Connection access to create proper Rx handle
-            let inner_type = ts_type_client_return(inner);
-            format!(
-                "const _{var_name}_r = pc.decodeU64(buf, {offset_var}); const {var_name} = {{ channelId: _{var_name}_r.value }} as Rx<{inner_type}>; {offset_var} = _{var_name}_r.next; /* TODO: create real Rx handle */"
-            )
-        }
-        // For non-streaming types, use the regular decode
-        _ => generate_decode_stmt(shape, var_name, offset_var),
-    }
+    generate_decode_stmt_with_channel_ids(shape, var_name, offset_var, ts_type_client_return)
 }
 
 /// Generate TypeScript code that decodes a value from a buffer for SERVER context.
@@ -49,31 +54,12 @@ pub fn generate_decode_stmt_server(
     var_name: &str,
     offset_var: &str,
 ) -> String {
-    match classify_shape(shape) {
-        ShapeKind::Tx { inner } => {
-            // Schema Tx → server sends via Tx
-            // r[impl channeling.type] - Channel types decode as channel_id on wire.
-            let inner_type = ts_type_server_arg(inner);
-            format!(
-                "const _{var_name}_r = pc.decodeU64(buf, {offset_var}); const {var_name} = {{ channelId: _{var_name}_r.value }} as Tx<{inner_type}>; {offset_var} = _{var_name}_r.next; /* TODO: create real Tx handle */"
-            )
-        }
-        ShapeKind::Rx { inner } => {
-            // Schema Rx → server receives via Rx
-            // r[impl channeling.type] - Channel types decode as channel_id on wire.
-            let inner_type = ts_type_server_arg(inner);
-            format!(
-                "const _{var_name}_r = pc.decodeU64(buf, {offset_var}); const {var_name} = {{ channelId: _{var_name}_r.value }} as Rx<{inner_type}>; {offset_var} = _{var_name}_r.next; /* TODO: create real Rx handle */"
-            )
-        }
-        // For non-streaming types, use the regular decode
-        _ => generate_decode_stmt(shape, var_name, offset_var),
-    }
+    generate_decode_stmt_with_channel_ids(shape, var_name, offset_var, ts_type_server_arg)
 }
 
-/// Generate decode statement for server-side streaming context.
+/// Generate decode statement for server context with channel binding support.
 /// Creates real Tx/Rx handles using the registry and taskSender.
-pub fn generate_decode_stmt_server_streaming(
+pub fn generate_decode_stmt_server_channels(
     shape: &'static Shape,
     var_name: &str,
     offset_var: &str,
@@ -104,7 +90,7 @@ pub fn generate_decode_stmt_server_streaming(
                  {offset_var} = _{var_name}_r.next;"
             )
         }
-        // For non-streaming types, use the regular decode
+        // Channeling and non-channeling types share one decode path.
         _ => generate_decode_stmt(shape, var_name, offset_var),
     }
 }

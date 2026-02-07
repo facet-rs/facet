@@ -1,4 +1,4 @@
-//! Channeling (streaming) RPC compliance tests.
+//! Channeling RPC compliance tests.
 //!
 //! Tests the channeling methods from the `Testbed` service:
 //! - `sum(numbers: Rx<i32>) -> i64` - client-to-server channel
@@ -48,13 +48,13 @@ async fn hello_exchange(io: &mut spec_tests::harness::LengthPrefixedFramed) -> R
 }
 
 // r[verify channeling.type] - Client pushes data, server aggregates
-// r[verify channeling.data] - Data messages carry stream payloads
-// r[verify channeling.close] - Close terminates stream gracefully
-// r[verify channeling.id.parity] - Client uses odd stream IDs (initiator)
+// r[verify channeling.data] - Data messages carry channel payloads
+// r[verify channeling.close] - Close terminates channel gracefully
+// r[verify channeling.id.parity] - Client uses odd channel IDs (initiator)
 // r[verify channeling.caller-pov] - Rx<i32> means caller receives (server sends), but here caller transmits via the channel
 // r[verify channeling.allocation.caller] - Caller allocates channel ID (channel_id = 1)
 #[test]
-fn streaming_sum_client_to_server() {
+fn channeling_sum_client_to_server() {
     run_async(async {
         let (mut io, mut child) = accept_subject().await?;
         hello_exchange(&mut io).await?;
@@ -62,10 +62,10 @@ fn streaming_sum_client_to_server() {
         // Get the method ID for `sum(numbers: Rx<i32>) -> i64`
         let method_id = method_id::sum();
 
-        // Allocate stream ID (odd = initiator)
+        // Allocate channel ID (odd = initiator)
         let channel_id: u64 = 1;
 
-        // Send Request with stream ID as the payload
+        // Send Request with channel ID as the payload
         // Payload: tuple of (channel_id: u64)
         let req_payload =
             facet_postcard::to_vec(&(channel_id,)).map_err(|e| format!("postcard args: {e}"))?;
@@ -92,7 +92,7 @@ fn streaming_sum_client_to_server() {
             .map_err(|e| e.to_string())?;
         }
 
-        // Send Close to end the stream
+        // Send Close to end the channel
         io.send(&Message::Close {
             conn_id: roam_wire::ConnectionId::ROOT,
             channel_id,
@@ -142,10 +142,10 @@ fn streaming_sum_client_to_server() {
 }
 
 // r[verify channeling.type] - Server pushes data to client
-// r[verify channeling.data] - Data messages carry stream payloads
-// r[verify channeling.close] - Close terminates stream gracefully
+// r[verify channeling.data] - Data messages carry channel payloads
+// r[verify channeling.close] - Close terminates channel gracefully
 #[test]
-fn streaming_generate_server_to_client() {
+fn channeling_generate_server_to_client() {
     run_async(async {
         let (mut io, mut child) = accept_subject().await?;
         hello_exchange(&mut io).await?;
@@ -153,7 +153,7 @@ fn streaming_generate_server_to_client() {
         // Get the method ID for `generate(count: u32, output: Tx<i32>)`
         let method_id = method_id::generate();
 
-        // Allocate stream ID (odd = initiator)
+        // Allocate channel ID (odd = initiator)
         let channel_id: u64 = 1;
         let count: u32 = 5;
 
@@ -171,7 +171,7 @@ fn streaming_generate_server_to_client() {
         io.send(&req).await.map_err(|e| e.to_string())?;
 
         // Collect Data messages from server
-        // Protocol requires: Data messages BEFORE Response (for server-to-client streaming)
+        // Protocol requires: Data messages BEFORE Response (for server-to-client channels)
         let mut received: Vec<i32> = Vec::new();
         let mut got_close = false;
         let mut got_response = false;
@@ -241,9 +241,9 @@ fn streaming_generate_server_to_client() {
 }
 
 // r[verify channeling.type] - Both sides can push data
-// r[verify channeling.lifecycle.immediate-data] - Input/output streams are independent
+// r[verify channeling.lifecycle.immediate-data] - Input/output channels are independent
 #[test]
-fn streaming_transform_bidirectional() {
+fn channeling_transform_bidirectional() {
     run_async(async {
         let (mut io, mut child) = accept_subject().await?;
         hello_exchange(&mut io).await?;
@@ -251,7 +251,7 @@ fn streaming_transform_bidirectional() {
         // Get the method ID for `transform(input: Rx<String>, output: Tx<String>)`
         let method_id = method_id::transform();
 
-        // Allocate stream IDs (odd = initiator)
+        // Allocate channel IDs (odd = initiator)
         let input_channel_id: u64 = 1;
         let output_channel_id: u64 = 3;
 
@@ -284,7 +284,7 @@ fn streaming_transform_bidirectional() {
             .await
             .map_err(|e| e.to_string())?;
 
-            // Receive echo on output stream
+            // Receive echo on output channel
             let resp_msg = io
                 .recv_timeout(Duration::from_millis(500))
                 .await
@@ -310,7 +310,7 @@ fn streaming_transform_bidirectional() {
             }
         }
 
-        // Close input stream
+        // Close input channel
         io.send(&Message::Close {
             conn_id: roam_wire::ConnectionId::ROOT,
             channel_id: input_channel_id,
@@ -318,7 +318,7 @@ fn streaming_transform_bidirectional() {
         .await
         .map_err(|e| e.to_string())?;
 
-        // Expect Close on output stream and Response (order may vary)
+        // Expect Close on output channel and Response (order may vary)
         let mut got_close = false;
         let mut got_response = false;
 

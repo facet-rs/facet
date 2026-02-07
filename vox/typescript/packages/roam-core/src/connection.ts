@@ -1,7 +1,7 @@
 // Connection state machine and message loop.
 //
 // Handles the protocol state machine including Hello exchange,
-// payload validation, and stream ID management.
+// payload validation, and channel ID management.
 //
 // Generic over MessageTransport to support different transports:
 // - LengthPrefixedFramed for TCP (byte streams with length-prefix framing)
@@ -44,7 +44,7 @@ import { tryDecodeRpcResult } from "@bearcove/roam-wire";
 export interface Negotiated {
   /** Effective max payload size (min of both peers). */
   maxPayloadSize: number;
-  /** Initial stream credit (min of both peers). */
+  /** Initial channel credit (min of both peers). */
   initialCredit: number;
 }
 
@@ -91,28 +91,28 @@ export interface ServiceDispatcher {
 }
 
 /**
- * Streaming-aware service dispatcher.
+ * Channel-aware service dispatcher.
  *
  * Unlike ServiceDispatcher which returns a response directly, this interface
- * sends responses (and streaming Data/Close messages) via a TaskSender callback.
+ * sends responses (and channel Data/Close messages) via a TaskSender callback.
  * This ensures proper ordering: all Data/Close messages are sent before Response.
  */
-export interface StreamingDispatcher {
+export interface ChannelingDispatcher {
   /**
-   * Dispatch a request that may involve streaming.
+   * Dispatch a request that may involve channels.
    *
    * The dispatcher is responsible for:
    * - Looking up the method by method_id
    * - Deserializing arguments from payload
-   * - Creating Rx/Tx handles for stream arguments using the registry
+   * - Creating Rx/Tx handles for channel arguments using the registry
    * - Calling the service method
-   * - Sending Data/Close messages for any Tx streams via taskSender
+   * - Sending Data/Close messages for any Tx channels via taskSender
    * - Sending the Response message via taskSender when done
    *
    * @param methodId - The method ID to dispatch
    * @param payload - The request payload
    * @param requestId - The request ID for the response
-   * @param registry - Stream registry for binding stream arguments
+   * @param registry - Channel registry for binding channel arguments
    * @param taskSender - Callback to send TaskMessage (Data/Close/Response)
    */
   dispatch(
@@ -313,12 +313,12 @@ export class Connection<T extends MessageTransport = MessageTransport> {
             return;
           }
 
-          // Handle streaming messages
+          // Handle channel messages
           if (msg.tag === "Data") {
             try {
               this.channelRegistry.routeData(msg.channelId, msg.payload);
             } catch {
-              // Ignore stream errors - connection still valid
+              // Ignore channel errors - connection still valid
             }
             continue;
           }
@@ -395,7 +395,7 @@ export class Connection<T extends MessageTransport = MessageTransport> {
       encodeMessage(messageRequest(requestId, methodId, payload, metadata, channels)),
     );
 
-    // Flush any pending outgoing stream data (for client-to-server streaming)
+    // Flush any pending outgoing channel data (for client-to-server channels)
     // r[impl channeling.data] - Send queued Data/Close messages after Request.
     await this.flushOutgoing();
 
@@ -424,18 +424,18 @@ export class Connection<T extends MessageTransport = MessageTransport> {
   }
 
   /**
-   * Run the message loop with a streaming-aware dispatcher.
+   * Run the message loop with a channel-aware dispatcher.
    *
    * This is the main event loop that:
    * - Receives messages from the peer
    * - Validates them according to protocol rules
-   * - Dispatches requests to the service with stream binding
+   * - Dispatches requests to the service with channel binding
    * - Collects TaskMessages and sends them in order (Data/Close before Response)
    *
    * r[impl call.pipelining.allowed] - Handle requests as they arrive.
    * r[impl call.pipelining.independence] - Each request handled independently.
    */
-  async runStreaming(dispatcher: StreamingDispatcher): Promise<void> {
+  async runChanneling(dispatcher: ChannelingDispatcher): Promise<void> {
     // Queue for task messages from handlers - handlers push, we flush
     const taskQueue: TaskMessage[] = [];
 
@@ -534,7 +534,7 @@ export class Connection<T extends MessageTransport = MessageTransport> {
       }
 
       try {
-        const handlerPromise = this.handleStreamingMessage(payload, dispatcher, taskSender);
+        const handlerPromise = this.handleChannelingMessage(payload, dispatcher, taskSender);
 
         // If this returned a handler promise, track it
         if (handlerPromise) {
@@ -558,14 +558,14 @@ export class Connection<T extends MessageTransport = MessageTransport> {
   }
 
   /**
-   * Handle a message in streaming mode.
+   * Handle a message in channeling mode.
    *
    * Returns a Promise for Request messages (the handler running concurrently),
    * or undefined for other message types that are processed synchronously.
    */
-  private handleStreamingMessage(
+  private handleChannelingMessage(
     payload: Uint8Array,
-    dispatcher: StreamingDispatcher,
+    dispatcher: ChannelingDispatcher,
     taskSender: TaskSender,
   ): Promise<void> | undefined {
     // Parse message using wire codec
@@ -623,7 +623,7 @@ export class Connection<T extends MessageTransport = MessageTransport> {
         });
       }
 
-      // Dispatch with streaming support - return the promise, don't await it!
+      // Dispatch with channeling support - return the promise, don't await it!
       // This allows the handler to run concurrently while we continue receiving messages.
       return dispatcher.dispatch(
         msg.methodId,
@@ -795,7 +795,7 @@ export class Connection<T extends MessageTransport = MessageTransport> {
       // r[impl call.lifecycle.single-response] - Exactly one Response per Request.
       await this.io.send(encodeMessage(messageResponse(msg.requestId, responsePayload)));
 
-      // Flush any outgoing stream data that handlers may have queued
+      // Flush any outgoing channel data that handlers may have queued
       await this.flushOutgoing();
       return;
     }
@@ -1062,7 +1062,7 @@ export class ConnectionCaller<T extends MessageTransport = MessageTransport> imp
       ),
     );
 
-    // Flush outgoing streams
+    // Flush outgoing channels
     await this.conn.flushOutgoing();
 
     // Wait for response and decode

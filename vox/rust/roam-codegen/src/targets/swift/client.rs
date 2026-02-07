@@ -280,7 +280,7 @@ fn generate_encode_args(w: &mut CodeWriter<&mut String>, args: &[roam_schema::Ar
     w.writeln("let payload = Data(payloadBytes)").unwrap();
 }
 
-/// Generate client body for streaming methods.
+/// Generate client body for channeled methods.
 fn generate_streaming_client_body(
     w: &mut CodeWriter<&mut String>,
     method: &MethodDetail,

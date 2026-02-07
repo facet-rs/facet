@@ -121,9 +121,9 @@ fn typescript_service_generation() {
     // Should contain handler interface
     assert!(out.contains("interface TestbedHandler"));
 
-    // Should contain method handlers Map (for use with RpcDispatcher)
-    assert!(out.contains("testbed_methodHandlers"));
-    assert!(out.contains("Map<bigint, MethodHandler<TestbedHandler>>"));
+    // Should contain channeling handlers Map (for use with ChannelingDispatcher)
+    assert!(out.contains("testbed_channelingHandlers"));
+    assert!(out.contains("Map<bigint, ChannelingMethodHandler<TestbedHandler>>"));
 }
 
 #[test]
@@ -142,8 +142,8 @@ fn swift_service_generation() {
 
     // Should contain handler
     assert!(out.contains("protocol TestbedHandler"));
-    // Should contain dispatcher class
-    assert!(out.contains("class TestbedDispatcher"));
+    // Should contain channeling dispatcher class
+    assert!(out.contains("class TestbedChannelingDispatcher"));
 
     // Print for inspection
     println!("{}", out);

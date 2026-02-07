@@ -29,14 +29,14 @@ fn client_mode_echo() {
     run_async(async { wire_server::run("echo", &method_ids()).await }).unwrap();
 }
 
-// r[verify channeling.type] - Generated client can send streaming data
+// r[verify channeling.type] - Generated client can send channel data
 // r[verify channeling.type] - Client pushes data via Rx channel
 #[test]
 fn client_mode_sum() {
     run_async(async { wire_server::run("sum", &method_ids()).await }).unwrap();
 }
 
-// r[verify channeling.type] - Generated client can receive streaming data
+// r[verify channeling.type] - Generated client can receive channel data
 // r[verify channeling.type] - Server pushes data via Tx channel
 #[test]
 fn client_mode_generate() {

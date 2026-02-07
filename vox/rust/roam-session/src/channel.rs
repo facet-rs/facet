@@ -10,11 +10,11 @@ use facet::Facet;
 use crate::runtime::{Receiver, Sender};
 use crate::{CHANNEL_SIZE, ChannelId, DriverMessage, get_dispatch_context};
 
-/// Create an unbound channel pair for streaming RPC.
+/// Create an unbound channel pair for channeled RPC.
 ///
 /// Returns `(Tx<T>, Rx<T>)` with `channel_id: 0`. The `ConnectionHandle::call`
-/// method will walk the args, find `Rx<T>` or `Tx<T>` fields, assign stream IDs,
-/// and take the internal channel handles to register with the stream registry.
+/// method will walk the args, find `Rx<T>` or `Tx<T>` fields, assign channel IDs,
+/// and take the internal channel handles to register with the channel registry.
 ///
 /// # Channel semantics (like regular mpsc)
 ///
@@ -57,7 +57,7 @@ pub fn channel<T: 'static>() -> (Tx<T>, Rx<T>) {
 ///
 /// This allows `Poke::get_mut::<SenderSlot>()` to work, enabling `.take()`
 /// via reflection. Used by `ConnectionHandle::call` to extract senders from
-/// `Tx<T>` arguments and register them with the stream registry.
+/// `Tx<T>` arguments and register them with the channel registry.
 #[derive(Facet)]
 #[facet(opaque)]
 pub struct SenderSlot {
@@ -93,7 +93,7 @@ impl SenderSlot {
 
     /// Set the sender in this slot.
     ///
-    /// Used by `ChannelRegistry::bind_streams` to hydrate a deserialized `Tx<T>`
+    /// Used by `ChannelRegistry::bind_channels` to hydrate a deserialized `Tx<T>`
     /// with an actual channel sender.
     pub fn set(&mut self, tx: Sender<Vec<u8>>) {
         self.inner = Some(tx);
@@ -144,8 +144,8 @@ impl DriverTxSlot {
 
     /// Set the task sender in this slot.
     ///
-    /// Used by `ChannelRegistry::bind_streams` to hydrate a deserialized `Tx<T>`
-    /// with the connection's task message channel.
+    /// Used by `ChannelRegistry::bind_channels` to hydrate a deserialized `Tx<T>`
+    /// with the connection's driver message channel.
     pub fn set(&mut self, tx: Sender<DriverMessage>) {
         self.inner = Some(tx);
     }
@@ -156,19 +156,19 @@ impl DriverTxSlot {
     }
 }
 
-/// Tx stream handle - caller sends data to callee.
+/// Tx channel handle - caller sends data to callee.
 ///
 /// r[impl channeling.caller-pov] - From caller's perspective, Tx means "I send".
-/// r[impl channeling.type] - Serializes as u64 stream ID on wire.
-/// r[impl channeling.holder-semantics] - The holder sends on this stream.
-/// r[impl channeling.channels-outlive-response] - Tx streams may outlive Response.
+/// r[impl channeling.type] - Serializes as u64 channel ID on wire.
+/// r[impl channeling.holder-semantics] - The holder sends on this channel.
+/// r[impl channeling.channels-outlive-response] - Tx channels may outlive Response.
 /// r[impl channeling.lifecycle.immediate-data] - Can send Data before Response.
 /// r[impl channeling.lifecycle.speculative] - Early Data may be wasted on error.
 ///
 /// # Facet Implementation
 ///
 /// Uses `#[facet(proxy = u64)]` so that:
-/// - `channel_id` is pokeable (Connection can walk args and set stream IDs)
+/// - `channel_id` is pokeable (Connection can walk args and set channel IDs)
 /// - Serializes as just a `u64` on the wire
 /// - `T` is exposed as a type parameter for codegen introspection
 ///
@@ -177,20 +177,20 @@ impl DriverTxSlot {
 /// - **Client side**: `sender` holds a channel to an intermediate drain task.
 ///   `ConnectionHandle::call` takes the receiver and drains it to wire.
 /// - **Server side**: `task_tx` holds a direct channel to the connection driver.
-///   `ChannelRegistry::bind_streams` sets this, and `send()` writes `DriverMessage::Data`.
+///   `ChannelRegistry::bind_channels` sets this, and `send()` writes `DriverMessage::Data`.
 #[derive(Facet)]
 #[facet(proxy = u64)]
 pub struct Tx<T: 'static> {
-    /// The connection ID this stream belongs to.
+    /// The connection ID this channel belongs to.
     pub conn_id: roam_wire::ConnectionId,
-    /// The unique stream ID for this stream.
-    /// Public so Connection can poke it when binding streams.
+    /// The unique channel ID for this channel.
+    /// Public so Connection can poke it when binding channels.
     pub channel_id: ChannelId,
     /// Channel sender for outgoing data (client-side mode).
     /// Used when Tx is created via `roam::channel()`.
     pub sender: SenderSlot,
     /// Direct driver message sender (server-side mode).
-    /// Used when Tx is hydrated by `ChannelRegistry::bind_streams`.
+    /// Used when Tx is hydrated by `ChannelRegistry::bind_channels`.
     pub driver_tx: DriverTxSlot,
     /// Phantom data for the element type.
     #[facet(opaque)]
@@ -211,7 +211,7 @@ impl<T: 'static> TryFrom<&Tx<T>> for u64 {
 /// Deserialization: u64 -> `Tx<T>` (creates a "hollow" Tx)
 ///
 /// Both sender slots are empty - the real sender gets set up by Connection
-/// after deserialization when it binds the stream.
+/// after deserialization when it binds the channel.
 ///
 /// Uses TryFrom rather than From because facet's proxy mechanism requires TryFrom.
 #[allow(clippy::infallible_try_from)]
@@ -231,7 +231,7 @@ impl<T: 'static> TryFrom<u64> for Tx<T> {
 }
 
 impl<T: 'static> Tx<T> {
-    /// Create a new Tx stream with the given ID and sender channel (client-side mode).
+    /// Create a new Tx handle with the given ID and sender (client-side mode).
     pub fn new(channel_id: ChannelId, tx: Sender<Vec<u8>>) -> Self {
         Self {
             conn_id: roam_wire::ConnectionId::ROOT,
@@ -275,12 +275,12 @@ impl<T: 'static> Tx<T> {
         }
     }
 
-    /// Get the stream ID.
+    /// Get the channel ID.
     pub fn channel_id(&self) -> ChannelId {
         self.channel_id
     }
 
-    /// Send a value on this stream.
+    /// Send a value on this channel.
     ///
     /// r[impl channeling.data] - Data messages carry serialized values.
     ///
@@ -321,7 +321,7 @@ impl<T: 'static> Tx<T> {
 
 /// When a Tx is dropped, send a Close message.
 ///
-/// r[impl channeling.close] - Close terminates the stream.
+/// r[impl channeling.close] - Close terminates the channel.
 ///
 /// The Close path depends on how data was sent:
 /// - If sender is present: data went through drain task, drain task sends Close when channel closes
@@ -369,12 +369,12 @@ impl<T: 'static> Drop for Tx<T> {
     }
 }
 
-/// Error when sending on a Tx stream.
+/// Error when sending on a Tx channel.
 #[derive(Debug)]
 pub enum TxError {
     /// Failed to serialize the value.
     Serialize(facet_postcard::SerializeError),
-    /// The stream channel is closed.
+    /// The channel is closed.
     Closed,
     /// The sender was already taken (e.g., by ConnectionHandle::call).
     Taken,
@@ -384,7 +384,7 @@ impl std::fmt::Display for TxError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             TxError::Serialize(e) => write!(f, "serialize error: {e}"),
-            TxError::Closed => write!(f, "stream closed"),
+            TxError::Closed => write!(f, "channel closed"),
             TxError::Taken => write!(f, "sender was taken"),
         }
     }
@@ -400,7 +400,7 @@ impl std::error::Error for TxError {}
 ///
 /// This allows `Poke::get_mut::<ReceiverSlot>()` to work, enabling `.take()`
 /// via reflection. Used by `ConnectionHandle::call` to extract receivers from
-/// `Rx<T>` arguments and register them with the stream registry.
+/// `Rx<T>` arguments and register them with the channel registry.
 #[derive(Facet)]
 #[facet(opaque)]
 pub struct ReceiverSlot {
@@ -436,34 +436,34 @@ impl ReceiverSlot {
 
     /// Set the receiver in this slot.
     ///
-    /// Used by `ChannelRegistry::bind_streams` to hydrate a deserialized `Rx<T>`
+    /// Used by `ChannelRegistry::bind_channels` to hydrate a deserialized `Rx<T>`
     /// with an actual channel receiver.
     pub fn set(&mut self, rx: Receiver<Vec<u8>>) {
         self.inner = Some(rx);
     }
 }
 
-/// Rx stream handle - caller receives data from callee.
+/// Rx channel handle - caller receives data from callee.
 ///
 /// r[impl channeling.caller-pov] - From caller's perspective, Rx means "I receive".
-/// r[impl channeling.type] - Serializes as u64 stream ID on wire.
-/// r[impl channeling.holder-semantics] - The holder receives from this stream.
+/// r[impl channeling.type] - Serializes as u64 channel ID on wire.
+/// r[impl channeling.holder-semantics] - The holder receives from this channel.
 ///
 /// # Facet Implementation
 ///
 /// Uses `#[facet(proxy = u64)]` so that:
-/// - `channel_id` is pokeable (Connection can walk args and set stream IDs)
+/// - `channel_id` is pokeable (Connection can walk args and set channel IDs)
 /// - Serializes as just a `u64` on the wire
 /// - `T` is exposed as a type parameter for codegen introspection
 ///
 /// The `receiver` field uses `ReceiverSlot` wrapper so that `ConnectionHandle::call`
 /// can use `Poke::get_mut::<ReceiverSlot>()` to `.take()` the receiver and register
-/// it with the stream registry.
+/// it with the channel registry.
 #[derive(Facet)]
 #[facet(proxy = u64)]
 pub struct Rx<T: 'static> {
-    /// The unique stream ID for this stream.
-    /// Public so Connection can poke it when binding streams.
+    /// The unique channel ID for this channel.
+    /// Public so Connection can poke it when binding channels.
     pub channel_id: ChannelId,
     /// Channel receiver for incoming data.
     /// Uses ReceiverSlot so it's pokeable (can .take() via Poke).
@@ -487,7 +487,7 @@ impl<T: 'static> TryFrom<&Rx<T>> for u64 {
 /// Deserialization: u64 -> `Rx<T>` (creates a "hollow" Rx)
 ///
 /// The receiver is a placeholder - the real receiver gets set up by Connection
-/// after deserialization when it binds the stream.
+/// after deserialization when it binds the channel.
 ///
 /// Uses TryFrom rather than From because facet's proxy mechanism requires TryFrom.
 #[allow(clippy::infallible_try_from)]
@@ -504,7 +504,7 @@ impl<T: 'static> TryFrom<u64> for Rx<T> {
 }
 
 impl<T: 'static> Rx<T> {
-    /// Create a new Rx stream with the given ID and receiver channel.
+    /// Create a new Rx handle with the given ID and receiver.
     pub fn new(channel_id: ChannelId, rx: Receiver<Vec<u8>>) -> Self {
         Self {
             channel_id,
@@ -538,15 +538,15 @@ impl<T: 'static> Rx<T> {
         }
     }
 
-    /// Get the stream ID.
+    /// Get the channel ID.
     pub fn channel_id(&self) -> ChannelId {
         self.channel_id
     }
 
-    /// Receive the next value from this stream.
+    /// Receive the next value from this channel.
     ///
     /// Returns `Ok(Some(value))` for each received value,
-    /// `Ok(None)` when the stream is closed,
+    /// `Ok(None)` when the channel is closed,
     /// or `Err` if deserialization fails.
     ///
     /// r[impl channeling.data] - Deserialize Data message payloads.
@@ -566,7 +566,7 @@ impl<T: 'static> Rx<T> {
     }
 }
 
-/// Error when receiving from a Rx stream.
+/// Error when receiving from an Rx channel.
 #[derive(Debug)]
 pub enum RxError {
     /// Failed to deserialize the value.

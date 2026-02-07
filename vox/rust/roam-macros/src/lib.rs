@@ -437,6 +437,7 @@ fn generate_dispatch_method(method: &ServiceMethod, roam: &TokenStream2) -> Toke
 
                     #roam::session::send_ok_response(
                         send_peek,
+                        response_plan,
                         &driver_tx,
                         conn_id,
                         request_id,
@@ -488,6 +489,7 @@ fn generate_dispatch_method(method: &ServiceMethod, roam: &TokenStream2) -> Toke
 
             #roam::session::send_ok_response(
                 send_peek,
+                response_plan,
                 &driver_tx,
                 conn_id,
                 request_id,
@@ -504,6 +506,13 @@ fn generate_dispatch_method(method: &ServiceMethod, roam: &TokenStream2) -> Toke
             registry: &mut #roam::session::ChannelRegistry,
         ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>> {
             use std::mem::MaybeUninit;
+            use std::sync::{Arc, OnceLock};
+
+            // Precompute plans via OnceLock (one per monomorphized type, program lifetime).
+            static ARGS_PLAN: OnceLock<Arc<#roam::session::RpcPlan>> = OnceLock::new();
+            let args_plan = ARGS_PLAN.get_or_init(|| Arc::new(#roam::session::RpcPlan::for_type::<#tuple_type>()));
+            static RESPONSE_PLAN: OnceLock<Arc<#roam::session::RpcPlan>> = OnceLock::new();
+            let response_plan = RESPONSE_PLAN.get_or_init(|| Arc::new(#roam::session::RpcPlan::for_type::<#result_type>()));
 
             let handler = self.handler.clone();
             let middleware = self.middleware.clone();
@@ -521,7 +530,7 @@ fn generate_dispatch_method(method: &ServiceMethod, roam: &TokenStream2) -> Toke
             if let Err(e) = unsafe {
                 #roam::session::prepare_sync(
                     args_slot.as_mut_ptr().cast(),
-                    <#tuple_type as #roam::facet::Facet>::SHAPE,
+                    args_plan,
                     &payload,
                     &channels,
                     registry,
@@ -691,10 +700,22 @@ fn generate_client_method(
     quote! {
         #method_doc
         pub fn #method_name(&self, #(#params),*) -> #call_future_return {
+            use std::sync::{Arc, OnceLock};
+
+            static ARGS_PLAN: OnceLock<Arc<#roam::session::RpcPlan>> = OnceLock::new();
+            let args_plan = ARGS_PLAN.get_or_init(|| Arc::new(#roam::session::RpcPlan::for_type::<#args_tuple_type>()));
+            static OK_PLAN: OnceLock<Arc<#roam::session::RpcPlan>> = OnceLock::new();
+            let ok_plan = OK_PLAN.get_or_init(|| Arc::new(#roam::session::RpcPlan::for_type::<#ok_ty>()));
+            static ERR_PLAN: OnceLock<Arc<#roam::session::RpcPlan>> = OnceLock::new();
+            let err_plan = ERR_PLAN.get_or_init(|| Arc::new(#roam::session::RpcPlan::for_type::<#err_ty>()));
+
             #roam::session::CallFuture::new(
                 self.caller.clone(),
                 #method_id_mod::#method_name(),
                 #args_tuple,
+                args_plan,
+                ok_plan,
+                err_plan,
             )
         }
     }

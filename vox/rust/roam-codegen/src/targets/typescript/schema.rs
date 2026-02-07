@@ -1,7 +1,7 @@
 //! TypeScript schema generation for runtime channel binding.
 //!
 //! Generates runtime schema information that allows the TypeScript runtime
-//! to discover and bind streaming channels (Tx/Rx) in method arguments.
+//! to discover and bind channels (Tx/Rx) in method arguments.
 //!
 //! The generated schemas use the new EnumVariant[] format:
 //! ```typescript
@@ -274,14 +274,14 @@ pub fn generate_schemas(service: &ServiceDetail) -> String {
     // Generate method schemas
     out.push_str(&generate_method_schemas(service));
 
-    // Check if any method uses streaming
+    // Check if any method uses channels
     let has_streaming = service.methods.iter().any(|m| {
         m.args.iter().any(|a| is_tx(a.ty) || is_rx(a.ty))
             || is_tx(m.return_type)
             || is_rx(m.return_type)
     });
 
-    // Generate serializers only if streaming is used
+    // Generate serializers only if channels are used
     if has_streaming {
         out.push_str(&generate_binding_serializers(service));
     }

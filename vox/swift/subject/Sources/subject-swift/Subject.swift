@@ -130,9 +130,9 @@ struct TestbedService: TestbedHandler {
     }
 }
 
-// MARK: - Streaming Dispatcher Adapter
+// MARK: - Channeling Dispatcher Adapter
 
-/// Adapter to make TestbedStreamingDispatcher conform to ServiceDispatcher.
+/// Adapter to make TestbedChannelingDispatcher conform to ServiceDispatcher.
 final class TestbedDispatcherAdapter: ServiceDispatcher, @unchecked Sendable {
     private let handler: TestbedHandler
 
@@ -147,7 +147,7 @@ final class TestbedDispatcherAdapter: ServiceDispatcher, @unchecked Sendable {
     ) async {
         // Pre-register channels before the handler task is spawned.
         // This ensures channels are known before any Data messages arrive.
-        await TestbedStreamingDispatcher.preregisterChannels(
+        await TestbedChannelingDispatcher.preregisterChannels(
             methodId: methodId,
             payload: Data(payload),
             registry: registry
@@ -161,7 +161,7 @@ final class TestbedDispatcherAdapter: ServiceDispatcher, @unchecked Sendable {
         registry: ChannelRegistry,
         taskTx: @escaping @Sendable (TaskMessage) -> Void
     ) async {
-        let dispatcher = TestbedStreamingDispatcher(
+        let dispatcher = TestbedChannelingDispatcher(
             handler: handler,
             registry: registry,
             taskSender: taskTx

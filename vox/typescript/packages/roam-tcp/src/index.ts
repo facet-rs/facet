@@ -14,7 +14,7 @@ export {
   helloExchangeInitiator,
   type HelloExchangeOptions,
   type ServiceDispatcher,
-  type StreamingDispatcher,
+  type ChannelingDispatcher,
   defaultHello,
 } from "@bearcove/roam-core";
 

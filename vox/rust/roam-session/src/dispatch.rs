@@ -6,17 +6,18 @@
 //! - [`ServiceDispatcher`] trait - implemented by generated service dispatchers
 //! - [`RoutedDispatcher`] - routes to different dispatchers by method ID
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use facet::Facet;
-use facet_core::{PtrConst, PtrMut, PtrUninit, Shape};
+use facet_core::{PtrConst, PtrMut, PtrUninit};
 use facet_format::{FormatDeserializer, MetaSource};
+use facet_path::PathAccessError;
 use facet_postcard::PostcardParser;
-use facet_reflect::{Partial, TypePlanCore};
+use facet_reflect::Partial;
 
 use crate::{
     ChannelId, ChannelIdAllocator, ChannelRegistry, DriverMessage, Extensions, Middleware,
-    Rejection, Rx, SendPeek, Tx, runtime::Sender,
+    Rejection, RpcPlan, SendPeek, runtime::Sender,
 };
 
 // ============================================================================
@@ -95,7 +96,7 @@ pub struct Context {
 
     /// Channel IDs from the request, in argument declaration order.
     ///
-    /// Used for stream binding. Proxies can use this to remap channel IDs.
+    /// Used for channel binding. Proxies can use this to remap channel IDs.
     pub channels: Vec<u64>,
 
     /// Type-safe extension storage.
@@ -236,7 +237,7 @@ impl Clone for Context {
 /// in `RoamError::User(e)` for wire serialization.
 ///
 /// The `channels` parameter contains channel IDs from the Request message framing.
-/// These are patched into the deserialized args before binding streams.
+/// These are patched into the deserialized args before binding channels.
 #[allow(unsafe_code)]
 pub fn dispatch_call<A, R, E, F, Fut>(
     cx: &Context,
@@ -251,6 +252,14 @@ where
     F: FnOnce(A) -> Fut + Send + 'static,
     Fut: std::future::Future<Output = Result<R, E>> + Send + 'static,
 {
+    // OnceLock is monomorphized per type — one per arg/response type for the program lifetime.
+    static ARGS_PLAN: OnceLock<Arc<RpcPlan>> = OnceLock::new();
+    let args_plan = ARGS_PLAN.get_or_init(|| Arc::new(RpcPlan::for_type::<A>()));
+
+    static RESPONSE_PLAN: OnceLock<Arc<RpcPlan>> = OnceLock::new();
+    let response_plan = RESPONSE_PLAN.get_or_init(|| Arc::new(RpcPlan::for_type::<R>()));
+    let response_plan = Arc::clone(response_plan);
+
     let conn_id = cx.conn_id;
     let request_id = cx.request_id.raw();
 
@@ -263,7 +272,7 @@ where
     let prepare_result = unsafe {
         prepare_sync(
             args_slot.as_mut_ptr().cast(),
-            A::SHAPE,
+            args_plan,
             &payload,
             &cx.channels,
             registry,
@@ -299,7 +308,7 @@ where
                 // and we don't mutate it while the Peek exists
                 let peek = facet::Peek::new(ok_result);
                 let send_peek = unsafe { SendPeek::new(peek) };
-                send_ok_response(send_peek, &task_tx, conn_id, request_id).await;
+                send_ok_response(send_peek, &response_plan, &task_tx, conn_id, request_id).await;
             }
             Err(ref user_error) => {
                 // Use non-generic send_error_response via SendPeek
@@ -329,6 +338,14 @@ where
     F: FnOnce(A) -> Fut + Send + 'static,
     Fut: std::future::Future<Output = R> + Send + 'static,
 {
+    // OnceLock is monomorphized per type — one per arg/response type for the program lifetime.
+    static ARGS_PLAN: OnceLock<Arc<RpcPlan>> = OnceLock::new();
+    let args_plan = ARGS_PLAN.get_or_init(|| Arc::new(RpcPlan::for_type::<A>()));
+
+    static RESPONSE_PLAN: OnceLock<Arc<RpcPlan>> = OnceLock::new();
+    let response_plan = RESPONSE_PLAN.get_or_init(|| Arc::new(RpcPlan::for_type::<R>()));
+    let response_plan = Arc::clone(response_plan);
+
     let conn_id = cx.conn_id;
     let request_id = cx.request_id.raw();
 
@@ -341,7 +358,7 @@ where
     let prepare_result = unsafe {
         prepare_sync(
             args_slot.as_mut_ptr().cast(),
-            A::SHAPE,
+            args_plan,
             &payload,
             &cx.channels,
             registry,
@@ -371,7 +388,7 @@ where
         // and we don't mutate it while the Peek exists
         let peek = facet::Peek::new(&result);
         let send_peek = unsafe { SendPeek::new(peek) };
-        send_ok_response(send_peek, &task_tx, conn_id, request_id).await;
+        send_ok_response(send_peek, &response_plan, &task_tx, conn_id, request_id).await;
     }))
 }
 
@@ -448,7 +465,7 @@ impl std::error::Error for PrepareError {}
 ///
 /// # Why Sync?
 ///
-/// Stream binding requires `&mut ChannelRegistry`, which cannot be held across
+/// Channel binding requires `&mut ChannelRegistry`, which cannot be held across
 /// await points. This function must complete before the async block starts.
 ///
 /// # Safety
@@ -485,22 +502,23 @@ impl std::error::Error for PrepareError {}
 #[allow(unsafe_code)]
 pub unsafe fn prepare_sync(
     args_ptr: *mut (),
-    args_shape: &'static Shape,
+    plan: &RpcPlan,
     payload: &[u8],
     channels: &[u64],
     registry: &mut ChannelRegistry,
 ) -> Result<(), PrepareError> {
-    // 1. Deserialize into args_ptr using reflection
-    // SAFETY: caller guarantees args_ptr is valid and properly sized
-    unsafe { deserialize_into(args_ptr, args_shape, payload) }?;
+    let shape = plan.type_plan.root().shape;
 
-    // 2. Collect expected channels and validate count
-    // SAFETY: args_ptr was just initialized by deserialize_into
+    // 1. Deserialize into args_ptr using the precomputed type plan
+    // SAFETY: caller guarantees args_ptr is valid and properly sized
+    unsafe { deserialize_into(args_ptr, &plan.type_plan, payload) }?;
+
+    // 2. Validate channel count against precomputed plan.
+    // The number of channel locations that are reachable (not behind None) must match.
     let expected_channels = {
-        // SAFETY: args_ptr is valid and initialized by deserialize_into above.
         let peek =
-            unsafe { facet::Peek::unchecked_new(PtrConst::new(args_ptr.cast::<u8>()), args_shape) };
-        collect_channel_ids_from_peek(peek).len()
+            unsafe { facet::Peek::unchecked_new(PtrConst::new(args_ptr.cast::<u8>()), shape) };
+        collect_channel_ids_with_plan(peek, plan).len()
     };
     if channels.len() != expected_channels {
         return Err(PrepareError::ChannelCountMismatch {
@@ -513,20 +531,20 @@ pub unsafe fn prepare_sync(
     trace!(channels = ?channels, "prepare_sync: patching channel IDs");
     // SAFETY: args_ptr is valid and initialized, channel count validated
     unsafe {
-        patch_channel_ids_by_shape(args_ptr, args_shape, channels);
+        patch_channel_ids_with_plan(args_ptr, plan, channels);
     }
 
-    // 4. Bind streams via reflection
-    trace!("prepare_sync: binding streams");
+    // 4. Bind channels via reflection
+    trace!("prepare_sync: binding channels");
     // SAFETY: args_ptr is valid and initialized
     unsafe {
-        registry.bind_streams_by_shape(args_ptr, args_shape);
+        registry.bind_channels_with_plan(args_ptr, plan);
     }
 
     Ok(())
 }
 
-/// Deserialize payload into a type-erased pointer using Shape.
+/// Deserialize payload into a type-erased pointer using a precomputed TypePlanCore.
 ///
 /// This is the non-generic deserialization function used by generated dispatchers.
 /// It deserializes directly into caller-provided memory (typically stack-allocated
@@ -536,26 +554,25 @@ pub unsafe fn prepare_sync(
 ///
 /// - `ptr` must point to valid, properly aligned memory for the type described by `shape`
 /// - The memory must have at least `shape.layout.size()` bytes available
+/// - `type_plan` must have been built from `shape`
 /// - On success, the memory at `ptr` will be initialized with the deserialized value
 /// - On error, the memory at `ptr` may be partially initialized and MUST NOT be read
 #[allow(unsafe_code)]
 pub unsafe fn deserialize_into(
     ptr: *mut (),
-    shape: &'static Shape,
+    type_plan: &Arc<facet_reflect::TypePlanCore>,
     payload: &[u8],
 ) -> Result<(), PrepareError> {
     // Create a Partial that writes directly into caller-provided memory.
     // This avoids heap allocation - the value is constructed in-place.
     let ptr_uninit = PtrUninit::new(ptr.cast::<u8>());
 
-    // SAFETY: shape is valid (comes from Facet impl)
-    let plan = unsafe { TypePlanCore::from_shape(shape) }
-        .map_err(|e| PrepareError::Deserialize(e.to_string()))?;
-    let root_id = plan.root_id();
+    let root_id = type_plan.root_id();
 
     // SAFETY: Caller guarantees ptr is valid, aligned, and properly sized
-    let partial: Partial<'_, false> = unsafe { Partial::from_raw(ptr_uninit, plan, root_id) }
-        .map_err(|e| PrepareError::Deserialize(e.to_string()))?;
+    let partial: Partial<'_, false> =
+        unsafe { Partial::from_raw(ptr_uninit, type_plan.clone(), root_id) }
+            .map_err(|e| PrepareError::Deserialize(e.to_string()))?;
 
     // Use facet-format's FormatDeserializer with PostcardParser to deserialize.
     // This is non-generic - it uses the Shape for all type information.
@@ -575,27 +592,39 @@ pub unsafe fn deserialize_into(
     Ok(())
 }
 
-/// Patch channel IDs into deserialized args by walking with Poke (non-generic).
-///
-/// This is the non-generic version of `patch_channel_ids()`. It walks the
-/// deserialized args and overwrites the `channel_id` field of any `Rx<T>` or
-/// `Tx<T>` with the authoritative channel IDs from the request framing.
+/// Patch channel IDs using a precomputed RpcPlan.
 ///
 /// # Safety
 ///
-/// - `args_ptr` must point to valid, initialized memory matching `args_shape`
+/// - `args_ptr` must point to valid, initialized memory matching the plan's shape
 #[allow(unsafe_code)]
-pub unsafe fn patch_channel_ids_by_shape(
-    args_ptr: *mut (),
-    args_shape: &'static Shape,
-    channels: &[u64],
-) {
-    trace!(channels = ?channels, "patch_channel_ids_by_shape: patching channels");
+pub unsafe fn patch_channel_ids_with_plan(args_ptr: *mut (), plan: &RpcPlan, channels: &[u64]) {
+    let shape = plan.type_plan.root().shape;
+    trace!(channels = ?channels, "patch_channel_ids_with_plan: patching channels");
     let mut idx = 0;
-    // SAFETY: Caller guarantees args_ptr is valid and initialized
-    let poke =
-        unsafe { facet::Poke::from_raw_parts(PtrMut::new(args_ptr.cast::<u8>()), args_shape) };
-    patch_channel_ids_recursive(poke, channels, &mut idx);
+    for loc in &plan.channel_locations {
+        // SAFETY: args_ptr is valid and initialized
+        let poke =
+            unsafe { facet::Poke::from_raw_parts(PtrMut::new(args_ptr.cast::<u8>()), shape) };
+        match poke.at_path_mut(&loc.path) {
+            Ok(channel_poke) => {
+                if let Ok(mut ps) = channel_poke.into_struct()
+                    && let Ok(mut channel_id_field) = ps.field_by_name("channel_id")
+                    && let Ok(channel_id_ref) = channel_id_field.get_mut::<ChannelId>()
+                    && idx < channels.len()
+                {
+                    *channel_id_ref = channels[idx];
+                    idx += 1;
+                }
+            }
+            Err(PathAccessError::OptionIsNone { .. }) => {
+                // Option<Rx/Tx> is None — skip this channel location
+            }
+            Err(_e) => {
+                warn!("patch_channel_ids_with_plan: unexpected path error: {_e}");
+            }
+        }
+    }
 }
 
 // ============================================================================
@@ -617,14 +646,15 @@ pub unsafe fn patch_channel_ids_by_shape(
 /// allowing this async function's Future to be Send.
 pub async fn send_ok_response(
     result: SendPeek<'_>,
+    response_plan: &RpcPlan,
     driver_tx: &Sender<DriverMessage>,
     conn_id: roam_wire::ConnectionId,
     request_id: u64,
 ) {
     let peek = result.peek();
 
-    // Collect channel IDs from the result (e.g., Rx<T> in return type)
-    let response_channels = collect_channel_ids_from_peek(peek);
+    // Collect channel IDs from the result using precomputed paths
+    let response_channels = collect_channel_ids_with_plan(peek, response_plan);
 
     // Result::Ok(0) + serialized value
     let mut payload = vec![0u8];
@@ -703,7 +733,7 @@ pub async fn send_error_response(
 
 /// Run pre-middleware on args via SendPeek.
 ///
-/// This is called from the async block in generated dispatchers, after stream
+/// This is called from the async block in generated dispatchers, after channel
 /// binding has completed synchronously. The caller creates a `SendPeek` from
 /// the owned args and passes it here.
 ///
@@ -785,21 +815,28 @@ pub async fn send_prepare_error(
         .await;
 }
 
-/// Collect channel IDs from a Peek value by walking its structure.
-///
-/// This is the non-generic version of `collect_channel_ids()`.
-fn collect_channel_ids_from_peek(peek: facet::Peek<'_, '_>) -> Vec<u64> {
+/// Collect channel IDs from a Peek value using a precomputed RpcPlan.
+pub fn collect_channel_ids_with_plan(peek: facet::Peek<'_, '_>, plan: &RpcPlan) -> Vec<u64> {
     let mut ids = Vec::new();
-    collect_channel_ids_recursive(peek, &mut ids);
+    for loc in &plan.channel_locations {
+        match peek.at_path(&loc.path) {
+            Ok(channel_peek) => {
+                if let Ok(ps) = channel_peek.into_struct()
+                    && let Ok(channel_id_field) = ps.field_by_name("channel_id")
+                    && let Ok(&channel_id) = channel_id_field.get::<ChannelId>()
+                {
+                    ids.push(channel_id);
+                }
+            }
+            Err(PathAccessError::OptionIsNone { .. }) => {
+                // Option<Rx/Tx> is None — skip this channel location
+            }
+            Err(_e) => {
+                warn!("collect_channel_ids_with_plan: unexpected path error: {_e}");
+            }
+        }
+    }
     ids
-}
-
-/// Collect channel IDs from a Peek value (public API for non-generic code paths).
-///
-/// This is used by `ConnectionHandle::call_with_metadata_by_shape` to avoid monomorphization.
-#[doc(hidden)]
-pub fn collect_channel_ids_from_peek_pub(peek: facet::Peek<'_, '_>) -> Vec<u64> {
-    collect_channel_ids_from_peek(peek)
 }
 
 // ============================================================================
@@ -813,119 +850,23 @@ pub fn collect_channel_ids_from_peek_pub(peek: facet::Peek<'_, '_>) -> Vec<u64> 
 ///
 /// r[impl call.request.channels] - Collects channel IDs in declaration order for the Request.
 pub fn collect_channel_ids<T: Facet<'static>>(args: &T) -> Vec<u64> {
-    let mut ids = Vec::new();
-    let poke = facet::Peek::new(args);
-    collect_channel_ids_recursive(poke, &mut ids);
-    ids
+    static PLAN: OnceLock<Arc<RpcPlan>> = OnceLock::new();
+    let plan = PLAN.get_or_init(|| Arc::new(RpcPlan::for_type::<T>()));
+    let peek = facet::Peek::new(args);
+    collect_channel_ids_with_plan(peek, plan)
 }
 
-fn collect_channel_ids_recursive(peek: facet::Peek<'_, '_>, ids: &mut Vec<u64>) {
-    let shape = peek.shape();
-
-    // Check if this is an Rx or Tx type
-    if shape.decl_id == Rx::<()>::SHAPE.decl_id || shape.decl_id == Tx::<()>::SHAPE.decl_id {
-        // Read the channel_id field
-        if let Ok(ps) = peek.into_struct()
-            && let Ok(channel_id_field) = ps.field_by_name("channel_id")
-            && let Ok(&channel_id) = channel_id_field.get::<ChannelId>()
-        {
-            ids.push(channel_id);
-        }
-        return;
-    }
-
-    // Recurse into struct/tuple fields
-    if let Ok(ps) = peek.into_struct() {
-        let field_count = ps.field_count();
-        for i in 0..field_count {
-            if let Ok(field_peek) = ps.field(i) {
-                collect_channel_ids_recursive(field_peek, ids);
-            }
-        }
-        return;
-    }
-
-    // Recurse into Option<T> (specialized handling)
-    if let Ok(po) = peek.into_option() {
-        if let Some(inner) = po.value() {
-            collect_channel_ids_recursive(inner, ids);
-        }
-        return;
-    }
-
-    // Recurse into enum variants (for other enums with data)
-    if let Ok(pe) = peek.into_enum() {
-        for i in 0usize.. {
-            match pe.field(i) {
-                Ok(Some(variant_peek)) => collect_channel_ids_recursive(variant_peek, ids),
-                Ok(None) | Err(_) => break,
-            }
-        }
-    }
-}
-
-/// Patch channel IDs into deserialized args by walking with Poke.
+/// Patch channel IDs into deserialized args.
 ///
 /// Overwrites channel_id fields in Rx/Tx in declaration order.
 /// Used by the server to apply the authoritative `channels` vec from Request.
-pub fn patch_channel_ids<T: Facet<'static>>(args: &mut T, channels: &[u64]) {
-    trace!(channels = ?channels, "patch_channel_ids: patching channels");
-    let mut idx = 0;
-    let poke = facet::Poke::new(args);
-    patch_channel_ids_recursive(poke, channels, &mut idx);
-}
-
 #[allow(unsafe_code)]
-fn patch_channel_ids_recursive(poke: facet::Poke<'_, '_>, channels: &[u64], idx: &mut usize) {
-    use facet::Def;
-
-    let shape = poke.shape();
-
-    // Check if this is an Rx or Tx type
-    if shape.decl_id == Rx::<()>::SHAPE.decl_id || shape.decl_id == Tx::<()>::SHAPE.decl_id {
-        // Overwrite the channel_id field
-        if let Ok(mut ps) = poke.into_struct()
-            && let Ok(mut channel_id_field) = ps.field_by_name("channel_id")
-            && let Ok(channel_id_ref) = channel_id_field.get_mut::<ChannelId>()
-            && *idx < channels.len()
-        {
-            *channel_id_ref = channels[*idx];
-            *idx += 1;
-        }
-        return;
-    }
-
-    // Dispatch based on the shape's definition
-    match shape.def {
-        Def::Scalar => {}
-
-        // Recurse into struct/tuple fields
-        _ if poke.is_struct() => {
-            let mut ps = poke.into_struct().expect("is_struct was true");
-            let field_count = ps.field_count();
-            for i in 0..field_count {
-                if let Ok(field_poke) = ps.field(i) {
-                    patch_channel_ids_recursive(field_poke, channels, idx);
-                }
-            }
-        }
-
-        // Recurse into enum fields (includes Option<T>)
-        _ if poke.is_enum() => {
-            if let Ok(mut pe) = poke.into_enum() {
-                for i in 0usize.. {
-                    match pe.field(i) {
-                        Ok(Some(variant_poke)) => {
-                            patch_channel_ids_recursive(variant_poke, channels, idx)
-                        }
-                        Ok(None) | Err(_) => break,
-                    }
-                }
-            }
-        }
-
-        _ => {}
-    }
+pub fn patch_channel_ids<T: Facet<'static>>(args: &mut T, channels: &[u64]) {
+    static PLAN: OnceLock<Arc<RpcPlan>> = OnceLock::new();
+    let plan = PLAN.get_or_init(|| Arc::new(RpcPlan::for_type::<T>()));
+    trace!(channels = ?channels, "patch_channel_ids: patching channels");
+    let args_ptr = args as *mut T as *mut ();
+    unsafe { patch_channel_ids_with_plan(args_ptr, plan, channels) };
 }
 
 // ============================================================================
@@ -935,7 +876,7 @@ fn patch_channel_ids_recursive(poke: facet::Poke<'_, '_>, channels: &[u64], idx:
 /// Trait for dispatching requests to a service.
 ///
 /// The dispatcher handles both simple and channeling methods uniformly.
-/// Stream binding is done via reflection (Poke) on the deserialized args.
+/// Channel binding is done via reflection (Poke) on the deserialized args.
 pub trait ServiceDispatcher: Send + Sync {
     /// Returns the method IDs this dispatcher handles.
     ///
@@ -949,13 +890,13 @@ pub trait ServiceDispatcher: Send + Sync {
     /// - Looking up the method by `cx.method_id()`
     /// - Deserializing arguments from payload
     /// - Patching channel IDs from `cx.channels()` into deserialized args via `patch_channel_ids()`
-    /// - Binding any Tx/Rx streams via the registry
+    /// - Binding any Tx/Rx channels via the registry
     /// - Calling the service method
-    /// - Sending Data/Close messages for any Tx streams
+    /// - Sending Data/Close messages for any Tx channels
     /// - Sending the Response message via DriverMessage::Response
     ///
     /// By using a single channel for Data/Close/Response, correct ordering is guaranteed:
-    /// all stream Data and Close messages are sent before the Response.
+    /// all channel Data and Close messages are sent before the Response.
     ///
     /// The `cx.channels()` contains channel IDs from the Request message framing,
     /// in declaration order. For a ForwardingDispatcher, this enables transparent proxying
@@ -964,7 +905,7 @@ pub trait ServiceDispatcher: Send + Sync {
     /// Returns a boxed future with `'static` lifetime so it can be spawned.
     /// Implementations should clone their service into the future to achieve this.
     ///
-    /// r[impl channeling.allocation.caller] - Stream IDs are from Request.channels (caller allocated).
+    /// r[impl channeling.allocation.caller] - Channel IDs are from Request.channels (caller allocated).
     fn dispatch(
         &self,
         cx: Context,

@@ -21,12 +21,12 @@ pub enum DispatchError {
     Encode(facet_postcard::SerializeError),
 }
 
-/// Error when routing stream data.
+/// Error when routing channel data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChannelError {
-    /// Stream ID not found in registry.
+    /// Channel ID not found in registry.
     Unknown,
-    /// Data received after stream was closed.
+    /// Data received after channel was closed.
     DataAfterClose,
     /// r[impl flow.channel.credit-overrun] - Data exceeded remaining credit.
     CreditOverrun,

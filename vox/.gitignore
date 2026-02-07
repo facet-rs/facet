@@ -1,3 +1,5 @@
+# samply
+profile.json.gz
 target/
 .handoffs/
 fuzz/**/in/

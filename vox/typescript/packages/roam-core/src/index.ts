@@ -201,7 +201,7 @@ export {
   ConnectionError,
   type Negotiated,
   type ServiceDispatcher,
-  type StreamingDispatcher,
+  type ChannelingDispatcher,
   type HelloExchangeOptions,
   helloExchangeAcceptor,
   helloExchangeInitiator,

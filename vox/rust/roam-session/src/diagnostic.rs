@@ -105,7 +105,7 @@ pub enum ChannelDirection {
     Rx,
 }
 
-/// An open streaming channel.
+/// An open channel.
 #[derive(Debug, Clone)]
 pub struct OpenChannel {
     pub channel_id: u64,

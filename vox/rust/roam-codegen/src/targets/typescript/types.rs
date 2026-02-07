@@ -349,10 +349,10 @@ pub fn ts_type(shape: &'static Shape) -> String {
 }
 
 /// Check if a type can be fully encoded/decoded.
-/// Streaming types (Tx/Rx) are supported - they encode as stream IDs.
+/// Channel types (Tx/Rx) are supported - they encode as channel IDs.
 pub fn is_fully_supported(shape: &'static Shape) -> bool {
     match classify_shape(shape) {
-        // Streaming types are supported - they encode/decode as stream IDs
+        // Channel types are supported - they encode/decode as channel IDs
         ShapeKind::Tx { inner } | ShapeKind::Rx { inner } => is_fully_supported(inner),
         ShapeKind::List { element }
         | ShapeKind::Option { inner: element }

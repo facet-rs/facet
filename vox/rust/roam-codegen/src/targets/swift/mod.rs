@@ -7,7 +7,7 @@
 //! - Handler protocol for implementing services
 //! - Dispatcher for routing incoming calls
 //! - Encoding/decoding logic for all types
-//! - Runtime schema information for streaming channel binding
+//! - Runtime schema information for channel binding
 
 pub mod client;
 pub mod decode;
@@ -86,18 +86,9 @@ pub fn generate_service(service: &ServiceDetail) -> String {
     out.push_str(&format!("// MARK: - {service_name} Server\n\n"));
     out.push_str(&generate_server(service));
 
-    // Generate schemas if streaming is used
-    let has_streaming = service.methods.iter().any(|m| {
-        use roam_schema::{is_rx, is_tx};
-        m.args.iter().any(|a| is_tx(a.ty) || is_rx(a.ty))
-            || is_tx(m.return_type)
-            || is_rx(m.return_type)
-    });
-
-    if has_streaming {
-        out.push_str(&format!("// MARK: - {service_name} Schemas\n\n"));
-        out.push_str(&generate_schemas(service));
-    }
+    // Always generate runtime schema info used for channel binding.
+    out.push_str(&format!("// MARK: - {service_name} Schemas\n\n"));
+    out.push_str(&generate_schemas(service));
 
     out
 }
@@ -134,7 +125,7 @@ mod tests {
         assert!(code.contains("protocol EchoCaller"));
         assert!(code.contains("protocol EchoHandler"));
         assert!(code.contains("EchoClient"));
-        assert!(code.contains("EchoDispatcher"));
+        assert!(code.contains("EchoChannelingDispatcher"));
         assert!(code.contains("EchoMethodId"));
     }
 }

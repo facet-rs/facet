@@ -251,34 +251,34 @@ impl<C: Caller> Caller for TracingCaller<C> {
         result
     }
 
-    fn bind_response_streams<T: Facet<'static>>(&self, response: &mut T, channels: &[u64]) {
-        self.inner.bind_response_streams(response, channels)
+    fn bind_response_channels<T: Facet<'static>>(&self, response: &mut T, channels: &[u64]) {
+        self.inner.bind_response_channels(response, channels)
     }
 
     #[allow(unsafe_code)]
-    fn call_with_metadata_by_shape(
+    fn call_with_metadata_by_plan(
         &self,
         method_id: u64,
         args_ptr: SendPtr,
-        args_shape: &'static facet::Shape,
+        args_plan: &'static std::sync::Arc<roam_session::RpcPlan>,
         metadata: roam_wire::Metadata,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send {
         // TracingCaller just delegates to inner - tracing happens at the generic call level
         self.inner
-            .call_with_metadata_by_shape(method_id, args_ptr, args_shape, metadata)
+            .call_with_metadata_by_plan(method_id, args_ptr, args_plan, metadata)
     }
 
     #[allow(unsafe_code)]
-    unsafe fn bind_response_streams_by_shape(
+    unsafe fn bind_response_channels_by_plan(
         &self,
         response_ptr: *mut (),
-        response_shape: &'static facet::Shape,
+        response_plan: &roam_session::RpcPlan,
         channels: &[u64],
     ) {
         // SAFETY: Caller guarantees response_ptr is valid and initialized
         unsafe {
             self.inner
-                .bind_response_streams_by_shape(response_ptr, response_shape, channels)
+                .bind_response_channels_by_plan(response_ptr, response_plan, channels)
         }
     }
 }

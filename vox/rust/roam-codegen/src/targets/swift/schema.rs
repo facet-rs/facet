@@ -1,6 +1,6 @@
 //! Swift schema generation for runtime channel binding.
 //!
-//! Generates runtime schema information for streaming channel discovery.
+//! Generates runtime schema information for channel discovery.
 
 use facet_core::{ScalarType, Shape};
 use heck::{ToLowerCamelCase, ToUpperCamelCase};

@@ -272,38 +272,33 @@ Method `TemplateHost.load_template` signature mismatch:
 Certain roam types have special wire representations that differ from
 their Rust representation.
 
-## Stream<T>
+## Tx<T> / Rx<T> (Channeling)
 
-> r[wire.stream]
->
-> `Stream<T>` MUST be encoded on the wire as a `u64` stream ID.
+Roam uses directional channel handles in Rust:
+- `Tx<T>` for caller → callee data flow
+- `Rx<T>` for callee → caller data flow
 
-In Rust code, `Stream<T>` is a typed handle for sending/receiving values.
-But when serialized in Request/Response payloads, only the stream ID is
-sent — the type `T` is known from the method signature.
+On the wire, both are encoded as `u64` channel IDs in payload values.
+The element type `T` is known from the method schema.
 
-> r[signature.stream]
->
-> `Stream<T>` MUST be encoded in signature hashing as:
-> `0x26 + encode(T)`.
+Channel IDs are also carried in Request/Response framing (`channels` fields),
+and payload IDs are patched from framing IDs during prepare/bind. See
+`r[call.request.channels]` and `r[call.request.channels.schema-driven]` in the
+main specification.
 
 ```rust
 // Method signature:
-async fn process(&self, input: Stream<Chunk>) -> Stream<Result>;
+async fn sum(&self, numbers: Tx<u32>) -> u32;
+async fn range(&self, n: u32, output: Rx<u32>);
 
-// Wire encoding of arguments: just the stream ID
-// payload = postcard::to_vec(&(input_stream_id: u64))?;
-
-// Wire encoding of response: just the stream ID
-// payload = postcard::to_vec(&Result::<u64, RoamError<Infallible>>::Ok(output_stream_id))?;
+// Payload representation: channel IDs only
+// payload(sum)   = postcard::to_vec(&(numbers_channel_id: u64,))?;
+// payload(range) = postcard::to_vec(&(n, output_channel_id: u64))?;
 ```
 
-> r[wire.stream.not-in-errors]
->
-> The `#[roam::service]` proc macro MUST reject methods where `Stream<T>`
-> appears inside the error type `E` of a `Result<T, E>` return type. This
-> is a compile-time check that enforces `r[streaming.error-no-streams]`
-> from the main specification.
+The `#[roam::service]` proc macro MUST reject methods where `Tx<T>` or `Rx<T>`
+appear inside the error type `E` of `Result<T, E>`, enforcing
+`r[streaming.error-no-streams]` from the main specification.
 
 # RoamError
 

@@ -98,7 +98,7 @@ pub fn generate_client_impl(service: &ServiceDetail) -> String {
         let method_name = method.method_name.to_lower_camel_case();
         let id = crate::method_id(method);
 
-        // Check if this method has streaming args (Tx or Rx)
+        // Check if this method has channel args (Tx or Rx)
         let has_streaming_args = method.args.iter().any(|a| is_tx(a.ty) || is_rx(a.ty));
 
         // Build args list
@@ -142,7 +142,7 @@ pub fn generate_client_impl(service: &ServiceDetail) -> String {
             "    const schema = {service_name_lower}_schemas.{method_name};\n"
         ));
 
-        // If method has streaming args, bind channels first (outside the executor)
+        // If method has channel args, bind channels first (outside the executor)
         if has_streaming_args {
             let arg_names: Vec<_> = method
                 .args

@@ -275,10 +275,10 @@ async function testFallible(client: TestbedClient): Promise<void> {
   addResult("lookup (null email)", true);
 }
 
-async function testStreaming(client: TestbedClient): Promise<void> {
-  // Test: sum - client-to-server streaming
+async function testChanneling(client: TestbedClient): Promise<void> {
+  // Test: sum - client-to-server channel
   // Client sends numbers via Tx, server returns their sum
-  log("Testing sum (client-to-server streaming)...");
+  log("Testing sum (client-to-server channel)...");
   {
     // Create unbound channel pair
     const [tx, rx] = channel<number>();
@@ -302,14 +302,14 @@ async function testStreaming(client: TestbedClient): Promise<void> {
     addResult("sum (client-to-server)", true);
   }
 
-  // Test: generate - server-to-client streaming
-  // Client sends count, server streams numbers back via Tx
-  log("Testing generate (server-to-client streaming)...");
+  // Test: generate - server-to-client channel
+  // Client sends count, server sends numbers back via Tx
+  log("Testing generate (server-to-client channel)...");
   {
     // Create unbound channel pair
     const [tx, rx] = channel<number>();
 
-    // Make the call - server will stream data via tx's paired rx
+    // Make the call - server will send data via tx's paired rx
     await client.generate(5, tx);
 
     // Collect all values from the channel
@@ -330,9 +330,9 @@ async function testStreaming(client: TestbedClient): Promise<void> {
     addResult("generate (server-to-client)", true);
   }
 
-  // Test: transform - bidirectional streaming
+  // Test: transform - bidirectional channels
   // Client sends strings, server echoes each back
-  log("Testing transform (bidirectional streaming)...");
+  log("Testing transform (bidirectional channels)...");
   {
     // Create two channel pairs - one for sending, one for receiving
     const [inputTx, inputRx] = channel<string>();
@@ -389,8 +389,8 @@ async function runTests(wsUrl: string): Promise<void> {
     // Run Fallible tests (methods returning Result<T, E>)
     await testFallible(client);
 
-    // Run Streaming tests
-    await testStreaming(client);
+    // Run Channeling tests
+    await testChanneling(client);
 
     conn.getIo().close();
     log("All tests passed!");

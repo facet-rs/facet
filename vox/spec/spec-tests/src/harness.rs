@@ -75,19 +75,19 @@ fn format_message(msg: &Message, direction: &str) -> String {
             payload,
             ..
         } => format!(
-            "{direction} Data {{ stream: {channel_id}, payload: {} bytes }}",
+            "{direction} Data {{ channel: {channel_id}, payload: {} bytes }}",
             payload.len()
         ),
         Message::Close { channel_id, .. } => {
-            format!("{direction} Close {{ stream: {channel_id} }}")
+            format!("{direction} Close {{ channel: {channel_id} }}")
         }
         Message::Reset { channel_id, .. } => {
-            format!("{direction} Reset {{ stream: {channel_id} }}")
+            format!("{direction} Reset {{ channel: {channel_id} }}")
         }
         Message::Credit {
             channel_id, bytes, ..
         } => {
-            format!("{direction} Credit {{ stream: {channel_id}, bytes: {bytes} }}")
+            format!("{direction} Credit {{ channel: {channel_id}, bytes: {bytes} }}")
         }
         Message::Connect { .. } => format!("{direction} Connect {{ ... }}"),
         Message::Accept { .. } => format!("{direction} Accept {{ ... }}"),
