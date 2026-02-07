@@ -565,9 +565,15 @@ public enum ConnectionError: Error {
 public func establishInitiator(
     transport: any MessageTransport,
     dispatcher: any ServiceDispatcher,
-    acceptConnections: Bool = false
+    acceptConnections: Bool = false,
+    maxPayloadSize: UInt32? = nil
 ) async throws -> (ConnectionHandle, Driver) {
-    let ourHello = defaultHello()
+    let ourHello: Hello =
+        if let maxPayloadSize {
+            .v4(maxPayloadSize: maxPayloadSize, initialChannelCredit: 64 * 1024)
+        } else {
+            defaultHello()
+        }
     // Send our hello
     try await transport.send(.hello(ourHello))
 
@@ -616,9 +622,15 @@ public func establishInitiator(
 public func establishAcceptor(
     transport: any MessageTransport,
     dispatcher: any ServiceDispatcher,
-    acceptConnections: Bool = false
+    acceptConnections: Bool = false,
+    maxPayloadSize: UInt32? = nil
 ) async throws -> (ConnectionHandle, Driver) {
-    let ourHello = defaultHello()
+    let ourHello: Hello =
+        if let maxPayloadSize {
+            .v4(maxPayloadSize: maxPayloadSize, initialChannelCredit: 64 * 1024)
+        } else {
+            defaultHello()
+        }
     // Send our hello immediately
     try await transport.send(.hello(ourHello))
 
