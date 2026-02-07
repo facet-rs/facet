@@ -74,7 +74,11 @@ public final class NIOTransport: MessageTransport, @unchecked Sendable {
 /// NIO handler that decodes length-prefixed messages.
 final class LengthPrefixDecoder: ByteToMessageDecoder, @unchecked Sendable {
     typealias InboundOut = [UInt8]
-    private static let maxBufferedFrameBytes = 16 * 1024 * 1024
+    private let maxFrameBytes: Int
+
+    init(maxFrameBytes: Int = 16 * 1024 * 1024) {
+        self.maxFrameBytes = maxFrameBytes
+    }
 
     func decode(context: ChannelHandlerContext, buffer: inout ByteBuffer) throws -> DecodingState {
         guard let frameLen: UInt32 = buffer.getInteger(at: buffer.readerIndex, endianness: .little)
@@ -83,9 +87,9 @@ final class LengthPrefixDecoder: ByteToMessageDecoder, @unchecked Sendable {
         }
 
         let frameLength = Int(frameLen)
-        if frameLength > Self.maxBufferedFrameBytes {
+        if frameLength > maxFrameBytes {
             throw TransportError.decodeFailed(
-                "Frame exceeds \(Self.maxBufferedFrameBytes) bytes")
+                "Frame exceeds \(maxFrameBytes) bytes")
         }
 
         let needed = 4 + frameLength
@@ -162,7 +166,24 @@ final class MessageStreamHandler: ChannelInboundHandler, @unchecked Sendable {
 // MARK: - Connection Factory
 
 /// Connect to a TCP server and return a transport.
-public func connect(host: String, port: Int) async throws -> NIOTransport {
+///
+/// - Parameters:
+///   - host: The host to connect to.
+///   - port: The port to connect to.
+///   - maxPayloadSize: The maximum payload size that will be negotiated. The frame decoder
+///     limit is set to `maxPayloadSize + 64` to account for message header overhead.
+///     Defaults to 16 MiB if not specified.
+public func connect(host: String, port: Int, maxPayloadSize: UInt32? = nil) async throws
+    -> NIOTransport
+{
+    // Frame limit must accommodate the payload plus message header overhead.
+    let maxFrameBytes: Int =
+        if let maxPayloadSize {
+            Int(maxPayloadSize) + 64
+        } else {
+            16 * 1024 * 1024
+        }
+
     let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
 
     var inboundContinuation: AsyncStream<Result<Message, Error>>.Continuation!
@@ -176,7 +197,9 @@ public func connect(host: String, port: Int) async throws -> NIOTransport {
         .channelInitializer { channel in
             // Note: ByteToMessageHandler is explicitly non-Sendable in SwiftNIO.
             // This warning is benign - channel initializers run on the event loop.
-            channel.pipeline.addHandler(ByteToMessageHandler(LengthPrefixDecoder())).flatMap {
+            channel.pipeline.addHandler(
+                ByteToMessageHandler(LengthPrefixDecoder(maxFrameBytes: maxFrameBytes))
+            ).flatMap {
                 channel.pipeline.addHandler(MessageDecoder())
             }.flatMap {
                 channel.pipeline.addHandler(

@@ -333,8 +333,22 @@ public final class Driver: @unchecked Sendable {
             guard wasInFlight else {
                 return  // Already cancelled
             }
+            // r[impl flow.call.payload-limit] - Outgoing responses are also bounded
+            // by max_payload_size. If a handler produces a too-large response, send
+            // a Cancelled error instead so the call doesn't hang.
+            let checkedPayload: [UInt8]
+            if payload.count > Int(negotiated.maxPayloadSize) {
+                debugLog(
+                    "outgoing response for request \(requestId) exceeds max_payload_size "
+                        + "(\(payload.count) > \(negotiated.maxPayloadSize)), sending Cancelled")
+                // Cancelled error: Result::Err(1) + RoamError::Cancelled(3)
+                checkedPayload = [1, 3]
+            } else {
+                checkedPayload = payload
+            }
             wireMsg = .response(
-                connId: 0, requestId: requestId, metadata: [], channels: [], payload: payload)
+                connId: 0, requestId: requestId, metadata: [], channels: [],
+                payload: checkedPayload)
         }
         try await transport.send(wireMsg)
     }
@@ -605,6 +619,9 @@ public func establishInitiator(
         maxPayloadSize: min(ourHello.maxPayloadSize, peerHello.maxPayloadSize),
         initialCredit: min(ourHello.initialChannelCredit, peerHello.initialChannelCredit)
     )
+    debugLog(
+        "handshake complete: maxPayloadSize=\(negotiated.maxPayloadSize), initialCredit=\(negotiated.initialCredit)"
+    )
 
     return makeDriverAndHandle(
         transport: transport,
@@ -660,6 +677,9 @@ public func establishAcceptor(
     let negotiated = Negotiated(
         maxPayloadSize: min(ourHello.maxPayloadSize, peerHello.maxPayloadSize),
         initialCredit: min(ourHello.initialChannelCredit, peerHello.initialChannelCredit)
+    )
+    debugLog(
+        "handshake complete: maxPayloadSize=\(negotiated.maxPayloadSize), initialCredit=\(negotiated.initialCredit)"
     )
 
     return makeDriverAndHandle(

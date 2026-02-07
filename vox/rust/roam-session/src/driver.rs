@@ -1072,6 +1072,23 @@ where
                 if !should_send {
                     return Ok(());
                 }
+                // r[impl flow.call.payload-limit] - Outgoing responses are also bounded
+                // by max_payload_size. If a handler produces a too-large response, send
+                // a Cancelled error instead so the call doesn't hang.
+                let (payload, channels) = if payload.len() as u32 > self.negotiated.max_payload_size
+                {
+                    error!(
+                        conn_id = conn_id.raw(),
+                        request_id,
+                        payload_len = payload.len(),
+                        max_payload_size = self.negotiated.max_payload_size,
+                        "outgoing response exceeds max_payload_size, sending Cancelled"
+                    );
+                    // Cancelled error: Result::Err(1) + RoamError::Cancelled(3)
+                    (vec![1, 3], vec![])
+                } else {
+                    (payload, channels)
+                };
                 let wire_msg = Message::Response {
                     conn_id,
                     request_id,
@@ -1646,6 +1663,12 @@ where
         max_payload_size: *our_max.min(peer_max),
         initial_credit: *our_credit.min(peer_credit),
     };
+
+    debug!(
+        max_payload_size = negotiated.max_payload_size,
+        initial_credit = negotiated.initial_credit,
+        "handshake complete"
+    );
 
     // Create unified channel for all messages
     let (driver_tx, driver_rx) = channel(256);
