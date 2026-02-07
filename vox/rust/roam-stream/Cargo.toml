@@ -13,7 +13,6 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [features]
 default = []
-fuzzing = []
 
 [dependencies]
 facet.workspace = true
@@ -21,6 +20,7 @@ tokio = { workspace = true, features = ["net", "io-util", "rt", "time", "sync"] 
 roam-wire.workspace = true
 roam-session.workspace = true
 facet-postcard.workspace = true
+facet-reflect.workspace = true
 
 [dev-dependencies]
 spec-proto = { path = "../../spec/spec-proto" }

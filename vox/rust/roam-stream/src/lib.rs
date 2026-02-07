@@ -54,9 +54,6 @@ pub use driver::{Client, Connector, accept, connect, connect_with_policy};
 
 // length-prefixed framing
 pub use framing::LengthPrefixedFramed;
-#[cfg(feature = "fuzzing")]
-pub use framing::try_decode_one_from_buffer_for_fuzz;
-
 // Re-export types that moved to roam-session (backwards compat)
 pub use roam_session::{
     ConnectError, ConnectionError, Driver, FramedClient, HandshakeConfig, IncomingConnection,

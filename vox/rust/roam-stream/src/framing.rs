@@ -79,6 +79,19 @@ fn advance_past_frame(buf: &mut Vec<u8>, unread_start: &mut usize, frame_end: us
     compact_recv_buffer(buf, unread_start);
 }
 
+/// Cached TypePlan for Message deserialization.
+///
+/// Building a TypePlan walks the entire type tree (enum variants, fields, etc.)
+/// and allocates arena storage. Caching it here avoids rebuilding on every frame.
+/// This is safe because `try_decode_one_from_buffer` is a non-generic function,
+/// so the OnceLock static cannot be merged across monomorphizations.
+static MESSAGE_TYPE_PLAN: OnceLock<facet_reflect::TypePlan<Message>> = OnceLock::new();
+
+fn message_type_plan() -> &'static facet_reflect::TypePlan<Message> {
+    MESSAGE_TYPE_PLAN
+        .get_or_init(|| facet_reflect::TypePlan::<Message>::build().expect("TypePlan for Message"))
+}
+
 fn try_decode_one_from_buffer(
     buf: &mut Vec<u8>,
     unread_start: &mut usize,
@@ -105,8 +118,32 @@ fn try_decode_one_from_buffer(
 
     wire_spy_bytes("<-- frame", frame);
 
-    let msg: Message = match facet_postcard::from_slice(frame) {
-        Ok(msg) => msg,
+    let plan = message_type_plan();
+    let partial = plan
+        .partial_owned()
+        .map_err(|e| io::Error::other(format!("alloc: {e}")))?;
+    let msg: Message = match facet_postcard::from_slice_into(frame, partial) {
+        Ok(partial) => match partial.build() {
+            Ok(heap_value) => match heap_value.materialize::<Message>() {
+                Ok(msg) => msg,
+                Err(e) => {
+                    *last_decoded = frame.to_vec();
+                    advance_past_frame(buf, unread_start, frame_end);
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("materialize: {e}"),
+                    ));
+                }
+            },
+            Err(e) => {
+                *last_decoded = frame.to_vec();
+                advance_past_frame(buf, unread_start, frame_end);
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("build: {e}"),
+                ));
+            }
+        },
         Err(e) => {
             *last_decoded = frame.to_vec();
             advance_past_frame(buf, unread_start, frame_end);
@@ -121,16 +158,6 @@ fn try_decode_one_from_buffer(
     wire_spy_log("<--", &msg);
     advance_past_frame(buf, unread_start, frame_end);
     Ok(Some(msg))
-}
-
-#[cfg(feature = "fuzzing")]
-pub fn try_decode_one_from_buffer_for_fuzz(
-    buf: &mut Vec<u8>,
-    unread_start: &mut usize,
-    scan_from: &mut usize,
-    last_decoded: &mut Vec<u8>,
-) -> io::Result<Option<Message>> {
-    try_decode_one_from_buffer(buf, unread_start, scan_from, last_decoded)
 }
 
 /// A length-prefixed async stream connection.
