@@ -222,15 +222,29 @@ fn at_path_mut_variant_mismatch() {
 // ── Error: unsupported step kinds ───────────────────────────────────
 
 #[test]
-fn at_path_mut_option_unsupported() {
+fn at_path_mut_option_some() {
     let mut val = Some(42i32);
     let poke = Poke::new(&mut val);
 
     let mut path = Path::new(<Option<i32> as Facet>::SHAPE);
     path.push(PathStep::OptionSome);
 
+    let mut inner_poke = poke.at_path_mut(&path).unwrap();
+    inner_poke.set(99i32).unwrap();
+
+    assert_eq!(val, Some(99));
+}
+
+#[test]
+fn at_path_mut_option_none() {
+    let mut val: Option<i32> = None;
+    let poke = Poke::new(&mut val);
+
+    let mut path = Path::new(<Option<i32> as Facet>::SHAPE);
+    path.push(PathStep::OptionSome);
+
     let err = poke.at_path_mut(&path).unwrap_err();
-    assert!(matches!(err, PathAccessError::WrongStepKind { .. }));
+    assert!(matches!(err, PathAccessError::OptionIsNone { .. }));
 }
 
 #[test]
