@@ -1,0 +1,12 @@
+---
+source: facet-path/tests/walk.rs
+expression: "v.events.join(\"\\n\")"
+---
+enter <root> (Outer)
+enter label (String)
+leave label (String)
+enter inner (Inner)
+enter inner.value (i32)
+leave inner.value (i32)
+leave inner (Inner)
+leave <root> (Outer)

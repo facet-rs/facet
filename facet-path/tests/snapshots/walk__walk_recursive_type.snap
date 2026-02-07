@@ -1,0 +1,12 @@
+---
+source: facet-path/tests/walk.rs
+expression: "v.events.join(\"\\n\")"
+---
+enter <root> (TreeNode)
+enter value (i32)
+leave value (i32)
+enter children (Vec)
+enter children[0] (TreeNode)
+leave children[0] (TreeNode)
+leave children (Vec)
+leave <root> (TreeNode)

@@ -1,0 +1,10 @@
+---
+source: facet-path/tests/walk.rs
+expression: "v.events.join(\"\\n\")"
+---
+enter <root> (MaybeNamed)
+enter name (Option)
+enter name::Some (String)
+leave name::Some (String)
+leave name (Option)
+leave <root> (MaybeNamed)

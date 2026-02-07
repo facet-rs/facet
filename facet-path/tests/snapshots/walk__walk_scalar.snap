@@ -1,0 +1,6 @@
+---
+source: facet-path/tests/walk.rs
+expression: "v.events.join(\"\\n\")"
+---
+enter <root> (u32)
+leave <root> (u32)

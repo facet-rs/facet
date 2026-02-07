@@ -21,17 +21,29 @@ This crate provides lightweight path tracking that records navigation steps thro
 ## Usage
 
 ```rust
+use facet::Facet;
 use facet_path::{Path, PathStep};
 
-// Build a path during traversal
-let mut path = Path::new();
-path.push(PathStep::Field(0));      // first field
-path.push(PathStep::Index(2));       // third element
-path.push(PathStep::Field(1));      // second field of that element
+#[derive(Facet)]
+struct Outer {
+    items: Vec<Inner>,
+}
 
-// Format the path using the original Shape
-let formatted = path.format_with_shape(my_shape);
-// => "outer.items[2].name"
+#[derive(Facet)]
+struct Inner {
+    name: String,
+    value: u32,
+}
+
+// Build a path during traversal
+let mut path = Path::new(<Outer as Facet>::SHAPE);
+path.push(PathStep::Field(0));      // "items"
+path.push(PathStep::Index(2));       // [2]
+path.push(PathStep::Field(0));      // "name"
+
+// Format the path as a human-readable string
+let formatted = path.format();
+assert_eq!(formatted, "items[2].name");
 ```
 
 ## Feature Flags
