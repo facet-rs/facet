@@ -1,132 +1,45 @@
 ---
 source: facet-json-schema/src/lib.rs
+assertion_line: 648
 expression: schema
 ---
 {
-  "$schema": null,
-  "$ref": null,
-  "$defs": null,
-  "type": null,
-  "properties": null,
-  "required": null,
-  "additionalProperties": null,
-  "items": null,
-  "enum": null,
-  "minimum": null,
-  "maximum": null,
   "oneOf": [
     {
-      "$schema": null,
-      "$ref": null,
-      "$defs": null,
       "type": "object",
       "properties": {
         "text_message": {
-          "$schema": null,
-          "$ref": null,
-          "$defs": null,
           "type": "object",
           "properties": {
             "content": {
-              "$schema": null,
-              "$ref": null,
-              "$defs": null,
-              "type": "string",
-              "properties": null,
-              "required": null,
-              "additionalProperties": null,
-              "items": null,
-              "enum": null,
-              "minimum": null,
-              "maximum": null,
-              "oneOf": null,
-              "anyOf": null,
-              "allOf": null,
-              "description": null,
-              "title": null,
-              "const": null
+              "type": "string"
             }
           },
           "required": [
             "content"
           ],
           "additionalProperties": false,
-          "items": null,
-          "enum": null,
-          "minimum": null,
-          "maximum": null,
-          "oneOf": null,
-          "anyOf": null,
-          "allOf": null,
-          "description": null,
-          "title": "Message",
-          "const": null
+          "title": "Message"
         }
       },
       "required": [
         "text_message"
       ],
-      "additionalProperties": false,
-      "items": null,
-      "enum": null,
-      "minimum": null,
-      "maximum": null,
-      "oneOf": null,
-      "anyOf": null,
-      "allOf": null,
-      "description": null,
-      "title": null,
-      "const": null
+      "additionalProperties": false
     },
     {
-      "$schema": null,
-      "$ref": null,
-      "$defs": null,
       "type": "object",
       "properties": {
         "image_upload": {
-          "$schema": null,
-          "$ref": null,
-          "$defs": null,
           "type": "object",
           "properties": {
             "url": {
-              "$schema": null,
-              "$ref": null,
-              "$defs": null,
-              "type": "string",
-              "properties": null,
-              "required": null,
-              "additionalProperties": null,
-              "items": null,
-              "enum": null,
-              "minimum": null,
-              "maximum": null,
-              "oneOf": null,
-              "anyOf": null,
-              "allOf": null,
-              "description": null,
-              "title": null,
-              "const": null
+              "type": "string"
             },
             "width": {
-              "$schema": null,
-              "$ref": null,
-              "$defs": null,
               "type": "integer",
-              "properties": null,
-              "required": null,
-              "additionalProperties": null,
-              "items": null,
-              "enum": null,
               "minimum": "0",
-              "maximum": "4294967295",
-              "oneOf": null,
-              "anyOf": null,
-              "allOf": null,
-              "description": null,
-              "title": null,
-              "const": null
+              "maximum": "4294967295"
             }
           },
           "required": [
@@ -134,37 +47,14 @@ expression: schema
             "width"
           ],
           "additionalProperties": false,
-          "items": null,
-          "enum": null,
-          "minimum": null,
-          "maximum": null,
-          "oneOf": null,
-          "anyOf": null,
-          "allOf": null,
-          "description": null,
-          "title": "Message",
-          "const": null
+          "title": "Message"
         }
       },
       "required": [
         "image_upload"
       ],
-      "additionalProperties": false,
-      "items": null,
-      "enum": null,
-      "minimum": null,
-      "maximum": null,
-      "oneOf": null,
-      "anyOf": null,
-      "allOf": null,
-      "description": null,
-      "title": null,
-      "const": null
+      "additionalProperties": false
     }
   ],
-  "anyOf": null,
-  "allOf": null,
-  "description": null,
-  "title": "Message",
-  "const": null
+  "title": "Message"
 }

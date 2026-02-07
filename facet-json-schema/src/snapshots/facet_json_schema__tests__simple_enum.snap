@@ -1,27 +1,14 @@
 ---
 source: facet-json-schema/src/lib.rs
+assertion_line: 593
 expression: schema
 ---
 {
-  "$schema": null,
-  "$ref": null,
-  "$defs": null,
   "type": "string",
-  "properties": null,
-  "required": null,
-  "additionalProperties": null,
-  "items": null,
   "enum": [
     "Active",
     "Inactive",
     "Pending"
   ],
-  "minimum": null,
-  "maximum": null,
-  "oneOf": null,
-  "anyOf": null,
-  "allOf": null,
-  "description": null,
-  "title": "Status",
-  "const": null
+  "title": "Status"
 }
