@@ -27,20 +27,46 @@ public protocol MessageTransport: Sendable {
     /// Receive the next message, or nil on EOF.
     func recv() async throws -> Message?
 
+    /// Update the maximum frame size the transport will accept.
+    /// Called after handshake negotiation to match the negotiated max_payload_size.
+    func setMaxFrameSize(_ size: Int) async throws
+
     /// Close the transport.
     func close() async throws
 }
 
+// MARK: - Shared Frame Limit
+
+/// Shared mutable frame limit, referenced by both `NIOTransport` and `LengthPrefixDecoder`.
+/// Updates are performed on the NIO event loop via the channel, so no lock is needed.
+final class FrameLimit: @unchecked Sendable {
+    /// Current maximum frame size in bytes.
+    var maxFrameBytes: Int
+
+    init(_ maxFrameBytes: Int) {
+        self.maxFrameBytes = maxFrameBytes
+    }
+}
+
 // MARK: - Length-Prefixed NIO Transport
+
+/// Default frame limit: enough for Hello messages and small payloads during handshake.
+/// The real limit is set after handshake via `setMaxFrameSize()`.
+private let defaultMaxFrameBytes = 1024 * 1024  // 1 MiB
 
 /// Length-prefixed transport over a NIO channel.
 public final class NIOTransport: MessageTransport, @unchecked Sendable {
     private let channel: Channel
+    private let frameLimit: FrameLimit
     private let inboundStream: AsyncStream<Result<Message, Error>>
     private var inboundIterator: AsyncStream<Result<Message, Error>>.Iterator
 
-    init(channel: Channel, inboundStream: AsyncStream<Result<Message, Error>>) {
+    init(
+        channel: Channel, frameLimit: FrameLimit,
+        inboundStream: AsyncStream<Result<Message, Error>>
+    ) {
         self.channel = channel
+        self.frameLimit = frameLimit
         self.inboundStream = inboundStream
         self.inboundIterator = inboundStream.makeAsyncIterator()
     }
@@ -64,6 +90,16 @@ public final class NIOTransport: MessageTransport, @unchecked Sendable {
         return try result.get()
     }
 
+    /// Update the frame decoder's maximum frame size.
+    /// Called after handshake to allow frames up to the negotiated payload size.
+    public func setMaxFrameSize(_ size: Int) async throws {
+        let frameLimit = self.frameLimit
+        // Run on the event loop to safely update the shared limit
+        try await channel.eventLoop.submit {
+            frameLimit.maxFrameBytes = size
+        }.get()
+    }
+
     public func close() async throws {
         try await channel.close()
     }
@@ -72,12 +108,16 @@ public final class NIOTransport: MessageTransport, @unchecked Sendable {
 // MARK: - Length Prefix Decoder
 
 /// NIO handler that decodes length-prefixed messages.
+///
+/// The frame limit is shared via `FrameLimit` and can be updated after handshake
+/// by calling `NIOTransport.setMaxFrameSize()`. Starts with a small default
+/// (enough for Hello messages) and is resized once negotiation completes.
 final class LengthPrefixDecoder: ByteToMessageDecoder, @unchecked Sendable {
     typealias InboundOut = [UInt8]
-    private let maxFrameBytes: Int
+    private let frameLimit: FrameLimit
 
-    init(maxFrameBytes: Int = 16 * 1024 * 1024) {
-        self.maxFrameBytes = maxFrameBytes
+    init(frameLimit: FrameLimit) {
+        self.frameLimit = frameLimit
     }
 
     func decode(context: ChannelHandlerContext, buffer: inout ByteBuffer) throws -> DecodingState {
@@ -87,6 +127,7 @@ final class LengthPrefixDecoder: ByteToMessageDecoder, @unchecked Sendable {
         }
 
         let frameLength = Int(frameLen)
+        let maxFrameBytes = frameLimit.maxFrameBytes
         if frameLength > maxFrameBytes {
             throw TransportError.decodeFailed(
                 "Frame exceeds \(maxFrameBytes) bytes")
@@ -167,23 +208,11 @@ final class MessageStreamHandler: ChannelInboundHandler, @unchecked Sendable {
 
 /// Connect to a TCP server and return a transport.
 ///
-/// - Parameters:
-///   - host: The host to connect to.
-///   - port: The port to connect to.
-///   - maxPayloadSize: The maximum payload size that will be negotiated. The frame decoder
-///     limit is set to `maxPayloadSize + 64` to account for message header overhead.
-///     Defaults to 16 MiB if not specified.
-public func connect(host: String, port: Int, maxPayloadSize: UInt32? = nil) async throws
-    -> NIOTransport
-{
-    // Frame limit must accommodate the payload plus message header overhead.
-    let maxFrameBytes: Int =
-        if let maxPayloadSize {
-            Int(maxPayloadSize) + 64
-        } else {
-            16 * 1024 * 1024
-        }
-
+/// The transport starts with a small frame limit (1 MiB), sufficient for handshake
+/// messages. After negotiation, call `setMaxFrameSize()` to allow frames up to
+/// the negotiated `max_payload_size`.
+public func connect(host: String, port: Int) async throws -> NIOTransport {
+    let frameLimit = FrameLimit(defaultMaxFrameBytes)
     let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
 
     var inboundContinuation: AsyncStream<Result<Message, Error>>.Continuation!
@@ -198,7 +227,7 @@ public func connect(host: String, port: Int, maxPayloadSize: UInt32? = nil) asyn
             // Note: ByteToMessageHandler is explicitly non-Sendable in SwiftNIO.
             // This warning is benign - channel initializers run on the event loop.
             channel.pipeline.addHandler(
-                ByteToMessageHandler(LengthPrefixDecoder(maxFrameBytes: maxFrameBytes))
+                ByteToMessageHandler(LengthPrefixDecoder(frameLimit: frameLimit))
             ).flatMap {
                 channel.pipeline.addHandler(MessageDecoder())
             }.flatMap {
@@ -208,7 +237,7 @@ public func connect(host: String, port: Int, maxPayloadSize: UInt32? = nil) asyn
         }
 
     let channel = try await bootstrap.connect(host: host, port: port).get()
-    return NIOTransport(channel: channel, inboundStream: inboundStream)
+    return NIOTransport(channel: channel, frameLimit: frameLimit, inboundStream: inboundStream)
 }
 
 // MARK: - Errors

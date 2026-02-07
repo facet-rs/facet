@@ -623,6 +623,10 @@ public func establishInitiator(
         "handshake complete: maxPayloadSize=\(negotiated.maxPayloadSize), initialCredit=\(negotiated.initialCredit)"
     )
 
+    // Update the transport's frame limit to match the negotiated payload size.
+    // The +64 accounts for message header overhead (conn_id, request_id, metadata, etc.).
+    try await transport.setMaxFrameSize(Int(negotiated.maxPayloadSize) + 64)
+
     return makeDriverAndHandle(
         transport: transport,
         dispatcher: dispatcher,
@@ -681,6 +685,10 @@ public func establishAcceptor(
     debugLog(
         "handshake complete: maxPayloadSize=\(negotiated.maxPayloadSize), initialCredit=\(negotiated.initialCredit)"
     )
+
+    // Update the transport's frame limit to match the negotiated payload size.
+    // The +64 accounts for message header overhead (conn_id, request_id, metadata, etc.).
+    try await transport.setMaxFrameSize(Int(negotiated.maxPayloadSize) + 64)
 
     return makeDriverAndHandle(
         transport: transport,
