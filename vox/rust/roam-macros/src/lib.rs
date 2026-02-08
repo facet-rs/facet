@@ -605,12 +605,17 @@ fn generate_dispatch_method(method: &ServiceMethod, roam: &TokenStream2) -> Toke
                     #roam::tracing::debug!(target: "roam::rpc", request_id, method = #method_name_str, args = %#args_log, "handling");
                 }
                 #args_binding
+                // Instant::now() panics on wasm32-unknown-unknown
+                #[cfg(not(target_arch = "wasm32"))]
                 let _handler_start = std::time::Instant::now();
                 let result = #roam::session::CURRENT_EXTENSIONS.scope(
                     cx.extensions.clone(),
                     handler.#method_name(&cx, #args_call)
                 ).await;
+                #[cfg(not(target_arch = "wasm32"))]
                 let _handler_elapsed = _handler_start.elapsed();
+                #[cfg(target_arch = "wasm32")]
+                let _handler_elapsed = std::time::Duration::ZERO;
 
                 // 6. Send response
                 #send_response
