@@ -15,6 +15,13 @@ let package = Package(
             dependencies: [
                 .product(name: "RoamRuntime", package: "roam-runtime")
             ]
+        ),
+        .testTarget(
+            name: "subject-swiftTests",
+            dependencies: [
+                .byName(name: "subject-swift"),
+                .product(name: "RoamRuntime", package: "roam-runtime"),
+            ]
         )
     ]
 )

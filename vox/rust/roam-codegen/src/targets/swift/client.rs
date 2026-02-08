@@ -81,12 +81,14 @@ fn generate_client_impl(service: &ServiceDetail) -> String {
     {
         let _indent = w.indent();
         w.writeln("private let connection: RoamConnection").unwrap();
+        w.writeln("private let timeout: TimeInterval?").unwrap();
         w.blank_line().unwrap();
-        w.writeln("public init(connection: RoamConnection) {")
+        w.writeln("public init(connection: RoamConnection, timeout: TimeInterval? = 30.0) {")
             .unwrap();
         {
             let _indent = w.indent();
             w.writeln("self.connection = connection").unwrap();
+            w.writeln("self.timeout = timeout").unwrap();
         }
         w.writeln("}").unwrap();
 
@@ -158,7 +160,7 @@ fn generate_client_method(
             if ret_type == "Void" {
                 cw_writeln!(
                     w,
-                    "let response = try await connection.call(methodId: {}, payload: payload)",
+                    "let response = try await connection.call(methodId: {}, payload: payload, timeout: timeout)",
                     hex_u64(method_id)
                 )
                 .unwrap();
@@ -171,7 +173,7 @@ fn generate_client_method(
             } else {
                 cw_writeln!(
                     w,
-                    "let response = try await connection.call(methodId: {}, payload: payload)",
+                    "let response = try await connection.call(methodId: {}, payload: payload, timeout: timeout)",
                     hex_u64(method_id)
                 )
                 .unwrap();
@@ -338,7 +340,7 @@ fn generate_streaming_client_body(
     if ret_type == "Void" {
         cw_writeln!(
             w,
-            "let response = try await connection.call(methodId: {}, payload: payload)",
+            "let response = try await connection.call(methodId: {}, payload: payload, timeout: timeout)",
             hex_u64(method_id)
         )
         .unwrap();
@@ -351,7 +353,7 @@ fn generate_streaming_client_body(
     } else {
         cw_writeln!(
             w,
-            "let response = try await connection.call(methodId: {}, payload: payload)",
+            "let response = try await connection.call(methodId: {}, payload: payload, timeout: timeout)",
             hex_u64(method_id)
         )
         .unwrap();

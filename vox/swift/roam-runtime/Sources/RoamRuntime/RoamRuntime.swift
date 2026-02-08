@@ -11,7 +11,7 @@ public typealias PostcardDecoder<T> = ([UInt8]) throws -> T
 /// Protocol for roam connections (used by generated clients).
 public protocol RoamConnection: Sendable {
     /// Make a raw RPC call.
-    func call(methodId: UInt64, payload: Data) async throws -> Data
+    func call(methodId: UInt64, payload: Data, timeout: TimeInterval?) async throws -> Data
 
     /// Get the channel allocator.
     var channelAllocator: ChannelIdAllocator { get }
@@ -23,11 +23,18 @@ public protocol RoamConnection: Sendable {
     var taskSender: TaskSender { get }
 }
 
+public extension RoamConnection {
+    func call(methodId: UInt64, payload: Data) async throws -> Data {
+        try await call(methodId: methodId, payload: payload, timeout: nil)
+    }
+}
+
 // MARK: - ConnectionHandle RoamConnection Conformance
 
 extension ConnectionHandle: RoamConnection {
-    public func call(methodId: UInt64, payload: Data) async throws -> Data {
-        let response = try await callRaw(methodId: methodId, payload: Array(payload))
+    public func call(methodId: UInt64, payload: Data, timeout: TimeInterval?) async throws -> Data
+    {
+        let response = try await callRaw(methodId: methodId, payload: Array(payload), timeout: timeout)
         return Data(response)
     }
 

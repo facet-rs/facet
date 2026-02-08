@@ -47,6 +47,7 @@ public enum HandleCommand: Sendable {
         requestId: UInt64,
         methodId: UInt64,
         payload: [UInt8],
+        timeout: TimeInterval?,
         responseTx: @Sendable (Result<[UInt8], ConnectionError>) -> Void
     )
 }
@@ -82,7 +83,9 @@ public final class ConnectionHandle: @unchecked Sendable {
     }
 
     /// Make a raw RPC call.
-    public func callRaw(methodId: UInt64, payload: [UInt8]) async throws -> [UInt8] {
+    public func callRaw(methodId: UInt64, payload: [UInt8], timeout: TimeInterval? = nil) async throws
+        -> [UInt8]
+    {
         let requestId = await requestIdAllocator.allocate()
 
         return try await withCheckedThrowingContinuation { cont in
@@ -94,6 +97,7 @@ public final class ConnectionHandle: @unchecked Sendable {
                     requestId: requestId,
                     methodId: methodId,
                     payload: payload,
+                    timeout: timeout,
                     responseTx: responseTx
                 ))
         }
@@ -107,6 +111,7 @@ private enum DriverEvent: Sendable {
     case incomingMessage(Message)
     case taskMessage(TaskMessage)
     case command(HandleCommand)
+    case callTimeout(requestId: UInt64)
     case transportClosed
 }
 
@@ -116,19 +121,28 @@ private enum DriverEvent: Sendable {
 
 /// Actor that holds mutable driver state to avoid NSLock in async contexts.
 private actor DriverState {
-    var pendingResponses: [UInt64: @Sendable (Result<[UInt8], ConnectionError>) -> Void] = [:]
+    struct PendingCall: Sendable {
+        let responseTx: @Sendable (Result<[UInt8], ConnectionError>) -> Void
+        let timeoutTask: Task<Void, Never>?
+    }
+
+    var pendingResponses: [UInt64: PendingCall] = [:]
     var inFlightRequests: Set<UInt64> = []
+    var isClosed = false
 
     func addPendingResponse(
         _ requestId: UInt64,
-        _ handler: @escaping @Sendable (Result<[UInt8], ConnectionError>) -> Void
-    ) {
-        pendingResponses[requestId] = handler
+        _ handler: @escaping @Sendable (Result<[UInt8], ConnectionError>) -> Void,
+        timeoutTask: Task<Void, Never>?
+    ) -> Bool {
+        guard !isClosed else {
+            return false
+        }
+        pendingResponses[requestId] = PendingCall(responseTx: handler, timeoutTask: timeoutTask)
+        return true
     }
 
-    func removePendingResponse(_ requestId: UInt64) -> (
-        @Sendable (Result<[UInt8], ConnectionError>) -> Void
-    )? {
+    func removePendingResponse(_ requestId: UInt64) -> PendingCall? {
         pendingResponses.removeValue(forKey: requestId)
     }
 
@@ -140,7 +154,8 @@ private actor DriverState {
         inFlightRequests.remove(requestId) != nil
     }
 
-    func failAllPending() -> [UInt64: @Sendable (Result<[UInt8], ConnectionError>) -> Void] {
+    func failAllPending() -> [UInt64: PendingCall] {
+        isClosed = true
         let responses = pendingResponses
         pendingResponses.removeAll()
         return responses
@@ -313,6 +328,9 @@ public final class Driver: @unchecked Sendable {
             case .command(let cmd):
                 await handleCommand(cmd)
 
+            case .callTimeout(let requestId):
+                await handleCallTimeout(requestId: requestId)
+
             case .transportClosed:
                 await failAllPending()
                 return
@@ -356,8 +374,33 @@ public final class Driver: @unchecked Sendable {
     /// Handle a command from ConnectionHandle.
     private func handleCommand(_ cmd: HandleCommand) async {
         switch cmd {
-        case .call(let requestId, let methodId, let payload, let responseTx):
-            await state.addPendingResponse(requestId, responseTx)
+        case .call(let requestId, let methodId, let payload, let timeout, let responseTx):
+            let timeoutTask: Task<Void, Never>?
+            if let timeout {
+                let timeoutNs = Self.timeoutToNanoseconds(timeout)
+                let continuation = eventContinuation
+                timeoutTask = Task {
+                    do {
+                        try await Task.sleep(nanoseconds: timeoutNs)
+                    } catch {
+                        return
+                    }
+                    continuation.yield(.callTimeout(requestId: requestId))
+                }
+            } else {
+                timeoutTask = nil
+            }
+
+            let inserted = await state.addPendingResponse(
+                requestId,
+                responseTx,
+                timeoutTask: timeoutTask
+            )
+            guard inserted else {
+                timeoutTask?.cancel()
+                responseTx(.failure(.connectionClosed))
+                return
+            }
 
             let msg = Message.request(
                 connId: 0,
@@ -367,8 +410,25 @@ public final class Driver: @unchecked Sendable {
                 channels: [],  // TODO: Collect channel IDs for streaming methods
                 payload: payload
             )
-            try? await transport.send(msg)
+            do {
+                try await transport.send(msg)
+            } catch {
+                let pending = await state.removePendingResponse(requestId)
+                pending?.timeoutTask?.cancel()
+                pending?.responseTx(.failure(.connectionClosed))
+                await failAllPending()
+                eventContinuation.finish()
+            }
         }
+    }
+
+    private func handleCallTimeout(requestId: UInt64) async {
+        guard let pending = await state.removePendingResponse(requestId) else {
+            return
+        }
+        pending.timeoutTask?.cancel()
+        pending.responseTx(.failure(.timeout))
+        try? await transport.send(.cancel(connId: 0, requestId: requestId))
     }
 
     /// Handle an incoming message.
@@ -420,8 +480,9 @@ public final class Driver: @unchecked Sendable {
             // r[impl call.lifecycle.single-response] - One response per request.
             // r[impl call.complete] - Response completes the call.
             // r[impl call.response.encoding] - Response payload is Postcard-encoded.
-            let responseTx = await state.removePendingResponse(requestId)
-            responseTx?(.success(payload))
+            let pending = await state.removePendingResponse(requestId)
+            pending?.timeoutTask?.cancel()
+            pending?.responseTx(.success(payload))
 
         case .cancel(_, let requestId):
             // r[impl call.cancel.message] - Cancel requests termination.
@@ -552,9 +613,21 @@ public final class Driver: @unchecked Sendable {
     private func failAllPending() async {
         let responses = await state.failAllPending()
 
-        for (_, responseTx) in responses {
-            responseTx(.failure(.connectionClosed))
+        for (_, pending) in responses {
+            pending.timeoutTask?.cancel()
+            pending.responseTx(.failure(.connectionClosed))
         }
+    }
+
+    private static func timeoutToNanoseconds(_ timeout: TimeInterval) -> UInt64 {
+        if timeout <= 0 {
+            return 0
+        }
+        let nanoseconds = timeout * 1_000_000_000
+        if nanoseconds >= Double(UInt64.max) {
+            return UInt64.max
+        }
+        return UInt64(nanoseconds)
     }
 }
 
@@ -564,6 +637,7 @@ public final class Driver: @unchecked Sendable {
 /// r[impl call.error.protocol] - Protocol errors are connection-fatal.
 public enum ConnectionError: Error {
     case connectionClosed
+    case timeout
     case goodbye(reason: String)
     case protocolViolation(rule: String)
     case handshakeFailed(String)
@@ -717,7 +791,13 @@ private func makeDriverAndHandle(
 
     // Create command sender that uses this continuation
     let commandSender: @Sendable (HandleCommand) -> Void = { cmd in
-        capturedContinuation.yield(.command(cmd))
+        let result = capturedContinuation.yield(.command(cmd))
+        guard case .terminated = result else {
+            return
+        }
+        if case .call(_, _, _, _, let responseTx) = cmd {
+            responseTx(.failure(.connectionClosed))
+        }
     }
 
     // Create handle with the command sender
