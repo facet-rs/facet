@@ -50,6 +50,8 @@ pub struct Negotiated {
     pub max_payload_size: u32,
     /// Initial channel credit (min of both peers).
     pub initial_credit: u32,
+    /// Maximum concurrent in-flight requests per connection (min of both peers).
+    pub max_concurrent_requests: u32,
 }
 
 /// Error during connection handling.
@@ -82,7 +84,7 @@ impl std::fmt::Display for ConnectionError {
             ConnectionError::Dispatch(msg) => write!(f, "dispatch error: {msg}"),
             ConnectionError::Closed => write!(f, "connection closed"),
             ConnectionError::UnsupportedProtocolVersion => {
-                write!(f, "unsupported protocol version (expected V4)")
+                write!(f, "unsupported protocol version (expected V4 or V5)")
             }
         }
     }
@@ -110,6 +112,8 @@ pub struct HandshakeConfig {
     pub max_payload_size: u32,
     /// Initial credit for channels.
     pub initial_channel_credit: u32,
+    /// Maximum in-flight concurrent requests per connection.
+    pub max_concurrent_requests: u32,
 }
 
 impl Default for HandshakeConfig {
@@ -117,16 +121,18 @@ impl Default for HandshakeConfig {
         Self {
             max_payload_size: 1024 * 1024,     // 1 MiB
             initial_channel_credit: 64 * 1024, // 64 KiB
+            max_concurrent_requests: 64,
         }
     }
 }
 
 impl HandshakeConfig {
-    /// Convert to Hello message (v4 format).
+    /// Convert to Hello message (v5 format).
     pub fn to_hello(&self) -> Hello {
-        Hello::V4 {
+        Hello::V5 {
             max_payload_size: self.max_payload_size,
             initial_channel_credit: self.initial_channel_credit,
+            max_concurrent_requests: self.max_concurrent_requests,
         }
     }
 }
@@ -705,7 +711,7 @@ fn connection_error_to_io(e: ConnectionError) -> io::Error {
         }
         ConnectionError::UnsupportedProtocolVersion => io::Error::new(
             io::ErrorKind::InvalidData,
-            "unsupported protocol version (expected V4)",
+            "unsupported protocol version (expected V4 or V5)",
         ),
     }
 }
@@ -754,14 +760,16 @@ impl ConnectionState {
         driver_tx: crate::runtime::Sender<DriverMessage>,
         role: Role,
         initial_credit: u32,
+        max_concurrent_requests: u32,
         diagnostic_state: Option<Arc<crate::diagnostic::DiagnosticState>>,
         dispatcher: Option<Box<dyn ServiceDispatcher>>,
     ) -> Self {
-        let handle = ConnectionHandle::new_with_diagnostics(
+        let handle = ConnectionHandle::new_with_diagnostics_and_limits(
             conn_id,
             driver_tx.clone(),
             role,
             initial_credit,
+            max_concurrent_requests,
             diagnostic_state,
         );
         let server_channel_registry =
@@ -987,6 +995,7 @@ where
                     self.driver_tx.clone(),
                     self.role,
                     self.negotiated.initial_credit,
+                    self.negotiated.max_concurrent_requests,
                     self.diagnostic_state.clone(),
                     dispatcher,
                 );
@@ -1250,6 +1259,7 @@ where
                         self.driver_tx.clone(),
                         self.role,
                         self.negotiated.initial_credit,
+                        self.negotiated.max_concurrent_requests,
                         self.diagnostic_state.clone(),
                         pending.dispatcher,
                     );
@@ -1399,6 +1409,10 @@ where
         // r[impl call.request-id.duplicate-detection]
         if conn.in_flight_server_requests.contains_key(&request_id) {
             return Err(self.goodbye("call.request-id.duplicate-detection").await);
+        }
+        if conn.in_flight_server_requests.len() >= self.negotiated.max_concurrent_requests as usize
+        {
+            return Err(self.goodbye("flow.request.concurrent-overrun").await);
         }
 
         if let Err(rule_id) = roam_wire::validate_metadata(&metadata) {
@@ -1727,8 +1741,8 @@ where
         Ok(None) => return Err(ConnectionError::Closed),
         Err(e) => {
             let raw = io.last_decoded();
-            // Hello discriminants: V1=0, V2=1, V3=2, V4=3. Unknown if > 3.
-            let is_unknown_hello = raw.len() >= 2 && raw[0] == 0x00 && raw[1] > 0x03;
+            // Hello discriminants: V1=0, V2=1, V3=2, V4=3, V5=4. Unknown if > 4.
+            let is_unknown_hello = raw.len() >= 2 && raw[0] == 0x00 && raw[1] > 0x04;
             let version = if is_unknown_hello { raw[1] } else { 0 };
 
             if is_unknown_hello {
@@ -1747,30 +1761,50 @@ where
         }
     };
 
-    // Negotiate parameters (both sides MUST use V4)
-    let Hello::V4 {
-        max_payload_size: our_max,
-        initial_channel_credit: our_credit,
-    } = &our_hello
-    else {
-        return Err(ConnectionError::UnsupportedProtocolVersion);
+    // Negotiate parameters (both sides MUST use V4 or V5).
+    let (our_max, our_credit, our_max_concurrent_requests) = match &our_hello {
+        Hello::V4 {
+            max_payload_size,
+            initial_channel_credit,
+        } => (*max_payload_size, *initial_channel_credit, u32::MAX),
+        Hello::V5 {
+            max_payload_size,
+            initial_channel_credit,
+            max_concurrent_requests,
+        } => (
+            *max_payload_size,
+            *initial_channel_credit,
+            *max_concurrent_requests,
+        ),
+        _ => return Err(ConnectionError::UnsupportedProtocolVersion),
     };
-    let Hello::V4 {
-        max_payload_size: peer_max,
-        initial_channel_credit: peer_credit,
-    } = &peer_hello
-    else {
-        return Err(ConnectionError::UnsupportedProtocolVersion);
+    let (peer_max, peer_credit, peer_max_concurrent_requests) = match &peer_hello {
+        Hello::V4 {
+            max_payload_size,
+            initial_channel_credit,
+        } => (*max_payload_size, *initial_channel_credit, u32::MAX),
+        Hello::V5 {
+            max_payload_size,
+            initial_channel_credit,
+            max_concurrent_requests,
+        } => (
+            *max_payload_size,
+            *initial_channel_credit,
+            *max_concurrent_requests,
+        ),
+        _ => return Err(ConnectionError::UnsupportedProtocolVersion),
     };
 
     let negotiated = Negotiated {
-        max_payload_size: *our_max.min(peer_max),
-        initial_credit: *our_credit.min(peer_credit),
+        max_payload_size: our_max.min(peer_max),
+        initial_credit: our_credit.min(peer_credit),
+        max_concurrent_requests: our_max_concurrent_requests.min(peer_max_concurrent_requests),
     };
 
     debug!(
         max_payload_size = negotiated.max_payload_size,
         initial_credit = negotiated.initial_credit,
+        max_concurrent_requests = negotiated.max_concurrent_requests,
         "handshake complete"
     );
 
@@ -1785,6 +1819,7 @@ where
         driver_tx.clone(),
         role,
         negotiated.initial_credit,
+        negotiated.max_concurrent_requests,
         None,
         None,
     );
@@ -2174,6 +2209,62 @@ mod tests {
                 .iter()
                 .any(|msg| matches!(msg, Message::Goodbye { .. })),
             "dropped receiver path should not send Goodbye"
+        );
+    }
+
+    #[tokio::test]
+    async fn request_concurrency_overrun_sends_goodbye() {
+        let peer_hello = Message::Hello(Hello::V4 {
+            max_payload_size: 1024 * 1024,
+            initial_channel_credit: 64 * 1024,
+        });
+        let transport = TestTransport::scripted(vec![Ok(Some(peer_hello))], vec![]);
+        let probe = transport.clone();
+
+        let config = HandshakeConfig {
+            max_concurrent_requests: 1,
+            ..HandshakeConfig::default()
+        };
+
+        let (_handle, _incoming, mut driver) = initiate_framed(transport, config, NoDispatcher)
+            .await
+            .expect("handshake should succeed");
+
+        let root = driver
+            .connections
+            .get_mut(&ConnectionId::ROOT)
+            .expect("root connection exists");
+        let never_finishes = crate::runtime::spawn_with_abort(async {
+            std::future::pending::<()>().await;
+        });
+        root.in_flight_server_requests.insert(1, never_finishes);
+
+        let err = driver
+            .handle_message(Message::Request {
+                conn_id: ConnectionId::ROOT,
+                request_id: 2,
+                method_id: 42,
+                metadata: vec![],
+                channels: vec![],
+                payload: vec![],
+            })
+            .await
+            .expect_err("request overrun should fail connection");
+
+        assert!(matches!(
+            err,
+            ConnectionError::ProtocolViolation { rule_id, .. }
+            if rule_id == "flow.request.concurrent-overrun"
+        ));
+
+        let sent = probe.sent_messages();
+        assert!(
+            sent.iter().any(|msg| matches!(
+                msg,
+                Message::Goodbye { conn_id, reason }
+                    if conn_id.is_root() && reason == "flow.request.concurrent-overrun"
+            )),
+            "driver should send Goodbye(flow.request.concurrent-overrun) before closing"
         );
     }
 }

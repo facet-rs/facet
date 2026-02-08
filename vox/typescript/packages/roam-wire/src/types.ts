@@ -8,7 +8,7 @@
 // ============================================================================
 
 /**
- * Hello message variant V4 (supports virtual connections and metadata flags).
+ * Hello message variant V4.
  */
 export interface HelloV4 {
   tag: "V4";
@@ -17,11 +17,21 @@ export interface HelloV4 {
 }
 
 /**
+ * Hello message variant V5 (adds request concurrency limit).
+ */
+export interface HelloV5 {
+  tag: "V5";
+  maxPayloadSize: number;
+  initialChannelCredit: number;
+  maxConcurrentRequests: number;
+}
+
+/**
  * Hello message for handshake.
  *
  * r[impl message.hello.structure]
  */
-export type Hello = HelloV4;
+export type Hello = HelloV4 | HelloV5;
 
 // ============================================================================
 // MetadataValue
@@ -291,6 +301,7 @@ export const HelloDiscriminant = {
   V1: 0, // deprecated
   V2: 1, // deprecated
   V4: 3,
+  V5: 4,
 } as const;
 
 // ============================================================================
@@ -302,6 +313,17 @@ export const HelloDiscriminant = {
  */
 export function helloV4(maxPayloadSize: number, initialChannelCredit: number): HelloV4 {
   return { tag: "V4", maxPayloadSize, initialChannelCredit };
+}
+
+/**
+ * Create a Hello.V5 message.
+ */
+export function helloV5(
+  maxPayloadSize: number,
+  initialChannelCredit: number,
+  maxConcurrentRequests: number,
+): HelloV5 {
+  return { tag: "V5", maxPayloadSize, initialChannelCredit, maxConcurrentRequests };
 }
 
 /**

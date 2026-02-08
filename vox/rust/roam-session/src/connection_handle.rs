@@ -66,6 +66,9 @@ pub(crate) struct HandleShared {
     pub(crate) channel_registry: std::sync::Mutex<ChannelRegistry>,
     /// Optional diagnostic state for SIGUSR1 dumps.
     pub(crate) diagnostic_state: Option<Arc<crate::diagnostic::DiagnosticState>>,
+    /// Optional request concurrency limiter.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) request_semaphore: Option<Arc<tokio::sync::Semaphore>>,
 }
 
 /// Handle for making outgoing RPC calls.
@@ -113,7 +116,34 @@ impl ConnectionHandle {
         initial_credit: u32,
         diagnostic_state: Option<Arc<crate::diagnostic::DiagnosticState>>,
     ) -> Self {
+        Self::new_with_diagnostics_and_limits(
+            conn_id,
+            driver_tx,
+            role,
+            initial_credit,
+            u32::MAX,
+            diagnostic_state,
+        )
+    }
+
+    /// Create a new handle with explicit call concurrency limits.
+    pub fn new_with_diagnostics_and_limits(
+        conn_id: roam_wire::ConnectionId,
+        driver_tx: Sender<DriverMessage>,
+        role: Role,
+        initial_credit: u32,
+        max_concurrent_requests: u32,
+        diagnostic_state: Option<Arc<crate::diagnostic::DiagnosticState>>,
+    ) -> Self {
         let channel_registry = ChannelRegistry::new_with_credit(initial_credit, driver_tx.clone());
+        #[cfg(not(target_arch = "wasm32"))]
+        let request_semaphore = if max_concurrent_requests == u32::MAX {
+            None
+        } else {
+            Some(Arc::new(tokio::sync::Semaphore::new(
+                max_concurrent_requests as usize,
+            )))
+        };
         Self {
             shared: Arc::new(HandleShared {
                 conn_id,
@@ -122,8 +152,31 @@ impl ConnectionHandle {
                 channel_ids: ChannelIdAllocator::new(role),
                 channel_registry: std::sync::Mutex::new(channel_registry),
                 diagnostic_state,
+                #[cfg(not(target_arch = "wasm32"))]
+                request_semaphore,
             }),
         }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn acquire_request_slot(
+        &self,
+    ) -> Result<Option<tokio::sync::OwnedSemaphorePermit>, TransportError> {
+        if let Some(semaphore) = &self.shared.request_semaphore {
+            let permit = semaphore
+                .clone()
+                .acquire_owned()
+                .await
+                .map_err(|_| TransportError::DriverGone)?;
+            Ok(Some(permit))
+        } else {
+            Ok(None)
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    async fn acquire_request_slot(&self) -> Result<(), TransportError> {
+        Ok(())
     }
 
     /// Get the connection ID for this handle.
@@ -248,6 +301,11 @@ impl ConnectionHandle {
             )
             .await
         } else {
+            #[cfg(not(target_arch = "wasm32"))]
+            let _request_permit = self.acquire_request_slot().await?;
+            #[cfg(target_arch = "wasm32")]
+            self.acquire_request_slot().await?;
+
             // Has Rx streams - spawn tasks to drain them
             // IMPORTANT: We must send Request BEFORE spawning drain tasks to ensure ordering.
             // We need to actually send the DriverMessage::Call to the driver's queue
@@ -711,6 +769,11 @@ impl ConnectionHandle {
         payload: Vec<u8>,
         args_debug: Option<String>,
     ) -> Result<ResponseData, TransportError> {
+        #[cfg(not(target_arch = "wasm32"))]
+        let _request_permit = self.acquire_request_slot().await?;
+        #[cfg(target_arch = "wasm32")]
+        self.acquire_request_slot().await?;
+
         let request_id = self.shared.request_ids.next();
         let (response_tx, response_rx) = oneshot();
 
@@ -1073,5 +1136,64 @@ mod tests {
             matches!(result, Err(TransportError::DriverGone)),
             "call should fail once driver side is gone"
         );
+    }
+
+    #[tokio::test]
+    async fn call_respects_max_concurrent_requests_limit() {
+        let (driver_tx, mut driver_rx) = crate::runtime::channel(8);
+        let handle = ConnectionHandle::new_with_diagnostics_and_limits(
+            roam_wire::ConnectionId::ROOT,
+            driver_tx,
+            Role::Initiator,
+            u32::MAX,
+            1,
+            None,
+        );
+
+        let first = tokio::spawn({
+            let handle = handle.clone();
+            async move { handle.call_raw(1, vec![1]).await }
+        });
+
+        let first_msg = driver_rx.recv().await.expect("first call should be sent");
+        let first_response_tx = match first_msg {
+            DriverMessage::Call { response_tx, .. } => response_tx,
+            _ => panic!("expected DriverMessage::Call for first request"),
+        };
+
+        let second = tokio::spawn({
+            let handle = handle.clone();
+            async move { handle.call_raw(2, vec![2]).await }
+        });
+
+        let blocked = tokio::time::timeout(Duration::from_millis(100), driver_rx.recv()).await;
+        assert!(
+            blocked.is_err(),
+            "second call should wait for first response slot"
+        );
+
+        first_response_tx
+            .send(Ok(ResponseData {
+                payload: vec![10],
+                channels: vec![],
+            }))
+            .expect("first response receiver should still exist");
+        let first_result = first.await.expect("first task should not panic");
+        assert_eq!(first_result.expect("first call should succeed"), vec![10]);
+
+        let second_msg = driver_rx.recv().await.expect("second call should be sent");
+        let second_response_tx = match second_msg {
+            DriverMessage::Call { response_tx, .. } => response_tx,
+            _ => panic!("expected DriverMessage::Call for second request"),
+        };
+        second_response_tx
+            .send(Ok(ResponseData {
+                payload: vec![20],
+                channels: vec![],
+            }))
+            .expect("second response receiver should still exist");
+
+        let second_result = second.await.expect("second task should not panic");
+        assert_eq!(second_result.expect("second call should succeed"), vec![20]);
     }
 }

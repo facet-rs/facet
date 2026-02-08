@@ -9,10 +9,12 @@ import Foundation
 public struct Negotiated: Sendable {
     public let maxPayloadSize: UInt32
     public let initialCredit: UInt32
+    public let maxConcurrentRequests: UInt32
 
-    public init(maxPayloadSize: UInt32, initialCredit: UInt32) {
+    public init(maxPayloadSize: UInt32, initialCredit: UInt32, maxConcurrentRequests: UInt32) {
         self.maxPayloadSize = maxPayloadSize
         self.initialCredit = initialCredit
+        self.maxConcurrentRequests = maxConcurrentRequests
     }
 }
 
@@ -693,7 +695,11 @@ public func establishInitiator(
 ) async throws -> (ConnectionHandle, Driver) {
     let ourHello: Hello =
         if let maxPayloadSize {
-            .v4(maxPayloadSize: maxPayloadSize, initialChannelCredit: 64 * 1024)
+            .v5(
+                maxPayloadSize: maxPayloadSize,
+                initialChannelCredit: 64 * 1024,
+                maxConcurrentRequests: 64
+            )
         } else {
             defaultHello()
         }
@@ -719,17 +725,21 @@ public func establishInitiator(
         try? await transport.send(.goodbye(connId: 0, reason: reason))
         throw ConnectionError.handshakeFailed(reason)
     }
-    guard case .v4 = peerHello else {
+    switch peerHello {
+    case .v4, .v5:
+        break
+    default:
         try? await transport.send(.goodbye(connId: 0, reason: "message.hello.unknown-version"))
         throw ConnectionError.handshakeFailed("message.hello.unknown-version")
     }
 
     let negotiated = Negotiated(
         maxPayloadSize: min(ourHello.maxPayloadSize, peerHello.maxPayloadSize),
-        initialCredit: min(ourHello.initialChannelCredit, peerHello.initialChannelCredit)
+        initialCredit: min(ourHello.initialChannelCredit, peerHello.initialChannelCredit),
+        maxConcurrentRequests: min(ourHello.maxConcurrentRequests, peerHello.maxConcurrentRequests)
     )
     debugLog(
-        "handshake complete: maxPayloadSize=\(negotiated.maxPayloadSize), initialCredit=\(negotiated.initialCredit)"
+        "handshake complete: maxPayloadSize=\(negotiated.maxPayloadSize), initialCredit=\(negotiated.initialCredit), maxConcurrentRequests=\(negotiated.maxConcurrentRequests)"
     )
 
     // Update the transport's frame limit to match the negotiated payload size.
@@ -757,7 +767,11 @@ public func establishAcceptor(
 ) async throws -> (ConnectionHandle, Driver) {
     let ourHello: Hello =
         if let maxPayloadSize {
-            .v4(maxPayloadSize: maxPayloadSize, initialChannelCredit: 64 * 1024)
+            .v5(
+                maxPayloadSize: maxPayloadSize,
+                initialChannelCredit: 64 * 1024,
+                maxConcurrentRequests: 64
+            )
         } else {
             defaultHello()
         }
@@ -782,17 +796,21 @@ public func establishAcceptor(
         try? await transport.send(.goodbye(connId: 0, reason: reason))
         throw ConnectionError.handshakeFailed(reason)
     }
-    guard case .v4 = peerHello else {
+    switch peerHello {
+    case .v4, .v5:
+        break
+    default:
         try? await transport.send(.goodbye(connId: 0, reason: "message.hello.unknown-version"))
         throw ConnectionError.handshakeFailed("message.hello.unknown-version")
     }
 
     let negotiated = Negotiated(
         maxPayloadSize: min(ourHello.maxPayloadSize, peerHello.maxPayloadSize),
-        initialCredit: min(ourHello.initialChannelCredit, peerHello.initialChannelCredit)
+        initialCredit: min(ourHello.initialChannelCredit, peerHello.initialChannelCredit),
+        maxConcurrentRequests: min(ourHello.maxConcurrentRequests, peerHello.maxConcurrentRequests)
     )
     debugLog(
-        "handshake complete: maxPayloadSize=\(negotiated.maxPayloadSize), initialCredit=\(negotiated.initialCredit)"
+        "handshake complete: maxPayloadSize=\(negotiated.maxPayloadSize), initialCredit=\(negotiated.initialCredit), maxConcurrentRequests=\(negotiated.maxConcurrentRequests)"
     )
 
     // Update the transport's frame limit to match the negotiated payload size.

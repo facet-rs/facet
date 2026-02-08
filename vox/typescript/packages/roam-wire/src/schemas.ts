@@ -19,6 +19,7 @@ import type { Schema, SchemaRegistry, EnumSchema, TupleSchema } from "@bearcove/
  *     V1 { max_payload_size: u32, initial_channel_credit: u32 } = 0,
  *     V2 { max_payload_size: u32, initial_channel_credit: u32 } = 1,
  *     V4 { max_payload_size: u32, initial_channel_credit: u32 } = 3,
+ *     V5 { max_payload_size: u32, initial_channel_credit: u32, max_concurrent_requests: u32 } = 4,
  * }
  * ```
  */
@@ -47,6 +48,15 @@ export const HelloSchema: EnumSchema = {
       fields: {
         maxPayloadSize: { kind: "u32" },
         initialChannelCredit: { kind: "u32" },
+      },
+    },
+    {
+      name: "V5",
+      discriminant: 4,
+      fields: {
+        maxPayloadSize: { kind: "u32" },
+        initialChannelCredit: { kind: "u32" },
+        maxConcurrentRequests: { kind: "u32" },
       },
     },
   ],

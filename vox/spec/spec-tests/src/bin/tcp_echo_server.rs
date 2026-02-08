@@ -72,9 +72,10 @@ async fn handle_connection(stream: TcpStream) -> Result<(), Box<dyn std::error::
     let mut io = LengthPrefixedFramed::new(stream);
 
     // Send our Hello
-    let our_hello = Hello::V4 {
+    let our_hello = Hello::V5 {
         max_payload_size: 1024 * 1024,
         initial_channel_credit: 64 * 1024,
+        max_concurrent_requests: 64,
     };
     io.send(&Message::Hello(our_hello)).await?;
 
@@ -84,7 +85,10 @@ async fn handle_connection(stream: TcpStream) -> Result<(), Box<dyn std::error::
         Message::Hello(Hello::V4 {
             max_payload_size, ..
         }) => max_payload_size,
-        _ => return Err("expected Hello::V4".into()),
+        Message::Hello(Hello::V5 {
+            max_payload_size, ..
+        }) => max_payload_size,
+        _ => return Err("expected Hello::V4/V5".into()),
     };
 
     // Handle requests

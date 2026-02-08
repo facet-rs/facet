@@ -11,6 +11,7 @@ import {
   HelloDiscriminant,
   // Factory functions
   helloV4,
+  helloV5,
   MetadataFlags,
   metadataString,
   metadataBytes,
@@ -73,6 +74,7 @@ describe("wire discriminants", () => {
     expect(HelloDiscriminant.V1).toBe(0);
     expect(HelloDiscriminant.V2).toBe(1);
     expect(HelloDiscriminant.V4).toBe(3);
+    expect(HelloDiscriminant.V5).toBe(4);
   });
 });
 
@@ -87,6 +89,14 @@ describe("factory functions", () => {
       expect(hello.tag).toBe("V4");
       expect(hello.maxPayloadSize).toBe(65536);
       expect(hello.initialChannelCredit).toBe(1024);
+    });
+
+    it("creates Hello.V5", () => {
+      const hello = helloV5(65536, 1024, 64);
+      expect(hello.tag).toBe("V5");
+      expect(hello.maxPayloadSize).toBe(65536);
+      expect(hello.initialChannelCredit).toBe(1024);
+      expect(hello.maxConcurrentRequests).toBe(64);
     });
   });
 
@@ -209,13 +219,15 @@ describe("factory functions", () => {
 describe("wire schemas", () => {
   it("HelloSchema has correct structure", () => {
     expect(HelloSchema.kind).toBe("enum");
-    expect(HelloSchema.variants).toHaveLength(3);
+    expect(HelloSchema.variants).toHaveLength(4);
     expect(HelloSchema.variants[0].name).toBe("V1");
     expect(HelloSchema.variants[0].discriminant).toBe(0);
     expect(HelloSchema.variants[1].name).toBe("V2");
     expect(HelloSchema.variants[1].discriminant).toBe(1);
     expect(HelloSchema.variants[2].name).toBe("V4");
     expect(HelloSchema.variants[2].discriminant).toBe(3);
+    expect(HelloSchema.variants[3].name).toBe("V5");
+    expect(HelloSchema.variants[3].discriminant).toBe(4);
   });
 
   it("MetadataValueSchema has correct structure", () => {
@@ -284,6 +296,14 @@ describe("wire schemas", () => {
 describe("Hello codec", () => {
   it("roundtrips Hello.V4", () => {
     const hello = helloV4(65536, 1024);
+    const encoded = encodeHello(hello);
+    const decoded = decodeHello(encoded);
+    expect(decoded.value).toEqual(hello);
+    expect(decoded.next).toBe(encoded.length);
+  });
+
+  it("roundtrips Hello.V5", () => {
+    const hello = helloV5(65536, 1024, 64);
     const encoded = encodeHello(hello);
     const decoded = decodeHello(encoded);
     expect(decoded.value).toEqual(hello);

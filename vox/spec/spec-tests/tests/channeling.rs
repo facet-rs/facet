@@ -36,8 +36,8 @@ async fn hello_exchange(io: &mut spec_tests::harness::LengthPrefixedFramed) -> R
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "expected Hello from subject".to_string())?;
     match msg {
-        Message::Hello(Hello::V4 { .. }) => {}
-        _ => return Err(format!("first message must be Hello::V4, got {msg:?}")),
+        Message::Hello(Hello::V4 { .. } | Hello::V5 { .. }) => {}
+        _ => return Err(format!("first message must be Hello::V4/V5, got {msg:?}")),
     }
 
     io.send(&Message::Hello(our_hello(1024 * 1024)))

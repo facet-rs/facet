@@ -34,7 +34,12 @@ async fn complete_hello_handshake(
             max_payload_size,
             initial_channel_credit,
         }) => (max_payload_size, initial_channel_credit),
-        other => return Err(format!("expected Hello::V4, got {other:?}")),
+        Message::Hello(Hello::V5 {
+            max_payload_size,
+            initial_channel_credit,
+            ..
+        }) => (max_payload_size, initial_channel_credit),
+        other => return Err(format!("expected Hello::V4/V5, got {other:?}")),
     };
 
     // Send our Hello

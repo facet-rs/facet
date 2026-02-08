@@ -25,8 +25,8 @@ fn handshake_subject_sends_hello_without_prompt() {
             .ok_or_else(|| "did not receive any message (expected Hello)".to_string())?;
 
         match msg {
-            Message::Hello(Hello::V4 { .. }) => {}
-            other => return Err(format!("first message must be Hello::V4, got {other:?}")),
+            Message::Hello(Hello::V4 { .. } | Hello::V5 { .. }) => {}
+            other => return Err(format!("first message must be Hello::V4/V5, got {other:?}")),
         }
 
         // Clean shutdown: send our Hello so a well-behaved subject can proceed.
@@ -92,9 +92,10 @@ fn handshake_unknown_hello_variant_triggers_goodbye() {
         // Send a malformed Hello-in-Message: Message::Hello + unknown Hello variant discriminant.
         //
         // Postcard enum encoding uses a varint discriminant. For `Message`, `Hello` is variant 0,
-        // and for `Hello`, `V1` is variant 0, `V2` is variant 1, `V3` is variant 2, `V4` is variant 3.
-        // We send Hello discriminant=4 to simulate an unknown future version.
-        let malformed = vec![0x00, 0x04]; // Message::Hello (0), Hello::<unknown v5> (4)
+        // and for `Hello`, `V1` is variant 0, `V2` is variant 1, `V3` is variant 2,
+        // `V4` is variant 3, `V5` is variant 4.
+        // We send Hello discriminant=5 to simulate an unknown future version.
+        let malformed = vec![0x00, 0x05]; // Message::Hello (0), Hello::<unknown v6> (5)
         let mut framed = Vec::with_capacity(4 + malformed.len());
         framed.extend_from_slice(&(malformed.len() as u32).to_le_bytes());
         framed.extend_from_slice(&malformed);

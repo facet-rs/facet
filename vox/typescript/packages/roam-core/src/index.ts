@@ -81,6 +81,7 @@ export {
 export type {
   Hello,
   HelloV4,
+  HelloV5,
   MetadataValue,
   MetadataValueString,
   MetadataValueBytes,
@@ -110,6 +111,7 @@ export {
   MetadataFlags,
   // Wire factory functions
   helloV4,
+  helloV5,
   metadataString,
   metadataBytes,
   metadataU64,

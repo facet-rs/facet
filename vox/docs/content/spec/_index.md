@@ -1200,10 +1200,18 @@ many small Credit messages.
 > r[flow.call.payload-limit]
 >
 > RPC call (Request/Response) payloads are bounded by `max_payload_size`
-> negotiated during handshake. No credit-based flow control is used.
+> negotiated during handshake.
 
-The natural pipelining limit (waiting for responses) provides implicit
-flow control for RPC calls.
+> r[flow.request.concurrent-limit]
+>
+> RPC Request messages are bounded by negotiated
+> `max_concurrent_requests` per connection.
+
+> r[flow.request.concurrent-overrun]
+>
+> If receiving a Request would exceed negotiated
+> `max_concurrent_requests`, the peer MUST send Goodbye
+> (reason: `flow.request.concurrent-overrun`) and close the connection.
 
 # Messages
 
@@ -1288,6 +1296,11 @@ enum Hello {
         max_payload_size: u32,
         initial_channel_credit: u32,
     },
+    V5 {
+        max_payload_size: u32,
+        initial_channel_credit: u32,
+        max_concurrent_requests: u32,
+    },
 }
 ```
 
@@ -1295,6 +1308,7 @@ enum Hello {
 |-------|-------------|
 | `max_payload_size` | Maximum bytes in a Request/Response payload |
 | `initial_channel_credit` | Bytes of credit each channel starts with |
+| `max_concurrent_requests` | Maximum in-flight requests per connection |
 
 > r[message.hello.negotiation]
 >

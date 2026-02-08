@@ -50,6 +50,13 @@ fn format_message(msg: &Message, direction: &str) -> String {
             } => format!(
                 "{direction} Hello::V4 {{ max_payload: {max_payload_size}, credit: {initial_channel_credit} }}"
             ),
+            Hello::V5 {
+                max_payload_size,
+                initial_channel_credit,
+                max_concurrent_requests,
+            } => format!(
+                "{direction} Hello::V5 {{ max_payload: {max_payload_size}, credit: {initial_channel_credit}, max_concurrent_requests: {max_concurrent_requests} }}"
+            ),
         },
         Message::Goodbye { reason, .. } => format!("{direction} Goodbye {{ reason: {reason:?} }}"),
         Message::Request {
@@ -119,9 +126,10 @@ pub fn run_async<T>(f: impl std::future::Future<Output = T>) -> T {
 }
 
 pub fn our_hello(max_payload_size: u32) -> Hello {
-    Hello::V4 {
+    Hello::V5 {
         max_payload_size,
         initial_channel_credit: 64 * 1024,
+        max_concurrent_requests: 64,
     }
 }
 
@@ -386,8 +394,8 @@ pub mod wire_server {
             .ok_or("connection closed before hello")?;
 
         match msg {
-            Message::Hello(Hello::V4 { .. }) => {}
-            other => return Err(format!("expected Hello::V4, got {other:?}")),
+            Message::Hello(Hello::V4 { .. } | Hello::V5 { .. }) => {}
+            other => return Err(format!("expected Hello::V4/V5, got {other:?}")),
         }
 
         // Handle requests until client disconnects

@@ -11,27 +11,43 @@ public enum Hello: Sendable {
     case v2(maxPayloadSize: UInt32, initialChannelCredit: UInt32)
     case v3(maxPayloadSize: UInt32, initialChannelCredit: UInt32)
     case v4(maxPayloadSize: UInt32, initialChannelCredit: UInt32)
+    case v5(maxPayloadSize: UInt32, initialChannelCredit: UInt32, maxConcurrentRequests: UInt32)
 }
 
 /// Returns a Hello message using the current protocol version with default parameters.
 ///
 /// r[impl message.hello.version] - Use v4 protocol defaults.
 public func defaultHello() -> Hello {
-    .v4(maxPayloadSize: 1024 * 1024, initialChannelCredit: 64 * 1024)
+    .v5(
+        maxPayloadSize: 1024 * 1024,
+        initialChannelCredit: 64 * 1024,
+        maxConcurrentRequests: 64
+    )
 }
 
 extension Hello {
     public var maxPayloadSize: UInt32 {
         switch self {
-        case .v1(let size, _), .v2(let size, _), .v3(let size, _), .v4(let size, _):
+        case .v1(let size, _), .v2(let size, _), .v3(let size, _), .v4(let size, _),
+            .v5(let size, _, _):
             return size
         }
     }
 
     public var initialChannelCredit: UInt32 {
         switch self {
-        case .v1(_, let credit), .v2(_, let credit), .v3(_, let credit), .v4(_, let credit):
+        case .v1(_, let credit), .v2(_, let credit), .v3(_, let credit), .v4(_, let credit),
+            .v5(_, let credit, _):
             return credit
+        }
+    }
+
+    public var maxConcurrentRequests: UInt32 {
+        switch self {
+        case .v5(_, _, let maxConcurrentRequests):
+            return maxConcurrentRequests
+        default:
+            return UInt32.max
         }
     }
 
@@ -61,6 +77,13 @@ extension Hello {
             out += encodeVarint(UInt64(maxPayload))
             out += encodeVarint(UInt64(initialCredit))
             return out
+        case .v5(let maxPayload, let initialCredit, let maxConcurrentRequests):
+            var out: [UInt8] = []
+            out += encodeVarint(4)  // V5 discriminant
+            out += encodeVarint(UInt64(maxPayload))
+            out += encodeVarint(UInt64(initialCredit))
+            out += encodeVarint(UInt64(maxConcurrentRequests))
+            return out
         }
     }
 
@@ -83,6 +106,15 @@ extension Hello {
             let maxPayload = try decodeVarintU32(from: data, offset: &offset)
             let initialCredit = try decodeVarintU32(from: data, offset: &offset)
             return .v4(maxPayloadSize: maxPayload, initialChannelCredit: initialCredit)
+        case 4:
+            let maxPayload = try decodeVarintU32(from: data, offset: &offset)
+            let initialCredit = try decodeVarintU32(from: data, offset: &offset)
+            let maxConcurrentRequests = try decodeVarintU32(from: data, offset: &offset)
+            return .v5(
+                maxPayloadSize: maxPayload,
+                initialChannelCredit: initialCredit,
+                maxConcurrentRequests: maxConcurrentRequests
+            )
         default:
             throw WireError.unknownHelloVariant
         }

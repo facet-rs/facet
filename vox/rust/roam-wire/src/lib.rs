@@ -155,6 +155,13 @@ pub enum Hello {
         max_payload_size: u32,
         initial_channel_credit: u32,
     } = 3,
+
+    /// Spec v5 Hello - adds request/response concurrency negotiation.
+    V5 {
+        max_payload_size: u32,
+        initial_channel_credit: u32,
+        max_concurrent_requests: u32,
+    } = 4,
 }
 
 /// Metadata value.
