@@ -9,7 +9,7 @@ Styx is a configuration language. Compared to JSON:
 
 - **Bare scalars** — quotes only when necessary
 - **Whitespace separation** — no `:` between keys and values
-- **Flexible separators** — commas or newlines, not both
+- **Flexible separators** — commas, newlines, or both
 - **Scalars are opaque** — the parser assigns no type information
 - **Two-dimensional values** — every value has a tag and a payload
 

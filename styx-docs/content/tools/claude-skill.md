@@ -376,15 +376,6 @@ styx lsp
 
 ## Common Mistakes
 
-**Wrong**: Mixing separators in objects
-```styx
-// WRONG - can't mix newlines and commas
-server {
-    host localhost, port 8080
-}
-```
-**Right**: Pick one separator style per block.
-
 **Wrong**: Space around `=` in attributes
 ```styx
 // WRONG

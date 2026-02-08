@@ -34,7 +34,7 @@ an-object {
     can be
     multi line
 }
-or {inline style, with commas, never both}
+or {inline style, with commas}
 ```
 
 </div>

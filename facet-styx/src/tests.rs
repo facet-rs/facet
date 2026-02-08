@@ -802,6 +802,7 @@ fn test_metadata_container_as_map_key() {
     #[derive(Debug, Facet)]
     #[facet(rename_all = "lowercase")]
     #[repr(u8)]
+    #[allow(dead_code)]
     enum Decl {
         Select(Select),
     }

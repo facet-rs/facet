@@ -181,27 +181,22 @@ questions {
             ```
             DOC
         options (
-            {text "Yes", help "Objects must use one separator style consistently"}
-            {text "No", correct true}
+            {text "Yes", correct true}
+            {text "No", help "Objects can mix commas and newlines freely"}
         )
         explanation <<DOC,markdown
-            Objects must use either commas:
+            Objects can use commas, newlines, or both as separators. You can mix them freely:
+
+            ```styx
+            {a 1, b 2
+            c 3}
+            ```
+
+            is equivalent to:
 
             ```styx
             {a 1, b 2, c 3}
             ```
-
-            or newlines:
-
-            ```styx
-            {
-                a 1
-                b 2
-                c 3
-            }
-            ```
-
-            but never both.
             DOC
     }
     basics-duplicate-keys {
