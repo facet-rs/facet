@@ -95,7 +95,7 @@ impl InputCore {
             let bytes = (self.encode_record)(dyn_key, entry.value.as_ref(), entry.changed_at)?;
             records.push(bytes);
         }
-        debug!(
+        trace!(
             kind = self.kind.0,
             records = records.len(),
             "save_records (input, erased)"
@@ -129,7 +129,7 @@ impl InputCore {
             }
         }
 
-        debug!(
+        trace!(
             kind = self.kind.0,
             changes = changes.len(),
             since_revision,

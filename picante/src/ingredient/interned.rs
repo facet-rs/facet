@@ -70,7 +70,7 @@ where
                 let id = InternId(self.next_id.fetch_add(1, Ordering::AcqRel));
                 self.by_id.insert(id, Arc::new(value));
                 e.insert(id);
-                debug!(
+                trace!(
                     kind = self.kind.0,
                     key_hash = %format!("{:016x}", key_hash),
                     id = id.0,
@@ -160,7 +160,7 @@ where
                 records.push(bytes);
             }
 
-            debug!(
+            trace!(
                 kind = self.kind.0,
                 records = records.len(),
                 "save_records (interned)"
@@ -230,7 +230,7 @@ where
             // when each ID was first interned, but that adds overhead for
             // minimal benefit.
 
-            debug!(
+            trace!(
                 kind = self.kind.0,
                 "save_incremental_records (interned): not supported, use full snapshot"
             );

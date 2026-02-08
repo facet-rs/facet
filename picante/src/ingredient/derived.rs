@@ -109,7 +109,11 @@ fn encode_with_peek(peek: Peek<'_, '_>, what: &'static str) -> PicanteResult<Vec
 ///
 /// `shape` must be the correct shape for the target type being decoded.
 #[inline(never)]
-unsafe fn decode_to_heap_value(bytes: &[u8], shape: &'static Shape, what: &'static str) -> PicanteResult<HeapValue<'static, false>> {
+unsafe fn decode_to_heap_value(
+    bytes: &[u8],
+    shape: &'static Shape,
+    what: &'static str,
+) -> PicanteResult<HeapValue<'static, false>> {
     // SAFETY: caller guarantees `shape` is correct for the target type
     let partial = unsafe { Partial::alloc_shape_owned(shape) }.map_err(|e| {
         Arc::new(PicanteError::Decode {
@@ -620,7 +624,7 @@ impl DerivedCore {
                     let frame = ActiveFrameHandle::new(requested.clone(), rev);
                     let _frame_guard = frame::push_frame(frame.clone());
 
-                    debug!(
+                    trace!(
                         kind = self.kind.0,
                         key_hash = %format!("{:016x}", key_hash),
                         rev = rev.0,
@@ -688,7 +692,7 @@ impl DerivedCore {
                             // Complete the global in-flight entry so followers can use the result.
                             guard.complete(out, deps, changed_at);
 
-                            debug!(
+                            trace!(
                                 kind = self.kind.0,
                                 key_hash = %format!("{:016x}", key_hash),
                                 rev = rev.0,
@@ -716,7 +720,7 @@ impl DerivedCore {
                             // Fail the global in-flight entry so followers get the error.
                             guard.fail(err.clone());
 
-                            debug!(
+                            trace!(
                                 kind = self.kind.0,
                                 key_hash = %format!("{:016x}", key_hash),
                                 rev = rev.0,
@@ -744,7 +748,7 @@ impl DerivedCore {
                             // Fail the global in-flight entry so followers get the panic error.
                             guard.fail(err.clone());
 
-                            debug!(
+                            trace!(
                                 kind = self.kind.0,
                                 key_hash = %format!("{:016x}", key_hash),
                                 rev = rev.0,
@@ -835,7 +839,7 @@ impl DerivedCore {
             )?;
             records.push(bytes);
         }
-        debug!(
+        trace!(
             kind = self.kind.0,
             records = records.len(),
             "save_records (derived, erased)"
@@ -903,7 +907,7 @@ impl DerivedCore {
             changes.push((changed_at.0, key_bytes, Some(value_bytes)));
         }
 
-        debug!(
+        trace!(
             kind = self.kind.0,
             changes = changes.len(),
             since_revision,
@@ -956,7 +960,7 @@ impl DerivedCore {
             runtime.update_query_deps(dyn_key, deps.clone());
         }
 
-        debug!(kind = self.kind.0, "restore_runtime_state (derived)");
+        trace!(kind = self.kind.0, "restore_runtime_state (derived)");
         Ok(())
     }
 
@@ -1120,7 +1124,9 @@ where
 {
     |kind, bytes| {
         // SAFETY: <DerivedRecord<K, V>>::SHAPE is the correct shape for DerivedRecord<K, V>
-        let heap_value = unsafe { decode_to_heap_value(&bytes, <DerivedRecord<K, V>>::SHAPE, "derived record") }?;
+        let heap_value = unsafe {
+            decode_to_heap_value(&bytes, <DerivedRecord<K, V>>::SHAPE, "derived record")
+        }?;
         let rec: DerivedRecord<K, V> = heap_value.materialize().map_err(|e| {
             Arc::new(PicanteError::Decode {
                 what: "derived record (materialize)",
@@ -1217,7 +1223,8 @@ where
 {
     |kind, key_bytes, value_bytes| {
         // SAFETY: K::SHAPE is the correct shape for K
-        let heap_value = unsafe { decode_to_heap_value(&key_bytes, K::SHAPE, "derived key from WAL") }?;
+        let heap_value =
+            unsafe { decode_to_heap_value(&key_bytes, K::SHAPE, "derived key from WAL") }?;
         let key: K = heap_value.materialize().map_err(|e| {
             Arc::new(PicanteError::Decode {
                 what: "derived key from WAL (materialize)",
@@ -1232,7 +1239,13 @@ where
 
         if let Some(value_bytes) = value_bytes {
             // SAFETY: <DerivedRecord<K, V>>::SHAPE is the correct shape for DerivedRecord<K, V>
-            let heap_value = unsafe { decode_to_heap_value(&value_bytes, <DerivedRecord<K, V>>::SHAPE, "derived record from WAL") }?;
+            let heap_value = unsafe {
+                decode_to_heap_value(
+                    &value_bytes,
+                    <DerivedRecord<K, V>>::SHAPE,
+                    "derived record from WAL",
+                )
+            }?;
             let rec: DerivedRecord<K, V> = heap_value.materialize().map_err(|e| {
                 Arc::new(PicanteError::Decode {
                     what: "derived record from WAL (materialize)",

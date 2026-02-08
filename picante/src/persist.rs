@@ -10,7 +10,7 @@ use futures_util::future::BoxFuture;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, trace, warn};
 
 // r[persist.format]
 // r[persist.load-version]
@@ -181,7 +181,7 @@ pub async fn save_cache_with_options(
 
     let total_start = Instant::now();
     let path = path.as_ref();
-    debug!(path = %path.display(), "save_cache: start");
+    trace!(path = %path.display(), "save_cache: start");
 
     ensure_unique_kinds(ingredients)?;
 
@@ -260,7 +260,7 @@ pub async fn save_cache_with_options(
     let write_elapsed = write_start.elapsed();
 
     let total_elapsed = total_start.elapsed();
-    info!(
+    trace!(
         path = %path.display(),
         bytes = bytes.len(),
         rev = runtime.current_revision().0,
@@ -329,7 +329,7 @@ async fn load_cache_inner(
     use std::time::Instant;
 
     let total_start = Instant::now();
-    debug!(path = %path.display(), "load_cache: start");
+    trace!(path = %path.display(), "load_cache: start");
 
     ensure_unique_kinds(ingredients)?;
 
@@ -426,7 +426,7 @@ async fn load_cache_inner(
     runtime.set_current_revision(Revision(cache.current_revision));
 
     let total_elapsed = total_start.elapsed();
-    info!(
+    trace!(
         path = %path.display(),
         bytes = bytes.len(),
         rev = runtime.current_revision().0,
@@ -515,7 +515,7 @@ fn shrink_cache_to_fit(cache: &mut CacheFile, max_bytes: usize) -> PicanteResult
     for _ in 0..3 {
         let bytes = encode_cache_file(cache)?;
         if bytes.len() <= max_bytes {
-            info!(
+            trace!(
                 before_bytes = bytes.len(),
                 max_bytes, "save_cache: cache truncated to fit"
             );
@@ -632,7 +632,7 @@ pub async fn append_to_wal(
         }
     }
 
-    debug!("Appended {entry_count} entries to WAL");
+    trace!("Appended {entry_count} entries to WAL");
     Ok(entry_count)
 }
 
@@ -653,7 +653,7 @@ pub async fn replay_wal(
     if let Err(e) = std::fs::metadata(path)
         && e.kind() == std::io::ErrorKind::NotFound
     {
-        debug!("No WAL file found at {}, skipping replay", path.display());
+        trace!("No WAL file found at {}, skipping replay", path.display());
         return Ok(0);
     }
     // For other IO errors when checking metadata, fall through and let
@@ -675,7 +675,7 @@ pub async fn replay_wal(
         }));
     }
 
-    info!(
+    trace!(
         "Replaying WAL from {} (base revision: {})",
         path.display(),
         base_revision
@@ -719,7 +719,7 @@ pub async fn replay_wal(
     // Update runtime revision to the latest from the WAL
     if max_revision > base_revision {
         runtime.set_current_revision(Revision(max_revision));
-        debug!("Set runtime revision to {max_revision} from WAL");
+        trace!("Set runtime revision to {max_revision} from WAL");
     }
 
     // Restore runtime state (rebuild dependency graph, etc.)
@@ -727,7 +727,7 @@ pub async fn replay_wal(
         ingredient.restore_runtime_state(runtime).await?;
     }
 
-    info!("Replayed {entry_count} WAL entries");
+    trace!("Replayed {entry_count} WAL entries");
     Ok(entry_count)
 }
 
@@ -755,7 +755,7 @@ pub async fn compact_wal(
     let cache_path = cache_path.as_ref();
     let wal_path = wal_path.as_ref();
 
-    info!("Compacting WAL: creating new snapshot");
+    trace!("Compacting WAL: creating new snapshot");
 
     // Create new snapshot at a temporary path. Use a ".compact.tmp" suffix to avoid
     // collision with the ".tmp" suffix that save_cache_with_options uses internally.
@@ -795,7 +795,7 @@ pub async fn compact_wal(
             ),
         }));
     }
-    debug!("Atomically installed new snapshot");
+    trace!("Atomically installed new snapshot");
 
     // Now that the new snapshot is in place, delete the old WAL
     if wal_path.exists() {
@@ -804,15 +804,15 @@ pub async fn compact_wal(
                 message: format!("Failed to delete old WAL at {}: {}", wal_path.display(), e),
             })
         })?;
-        debug!("Deleted old WAL file");
+        trace!("Deleted old WAL file");
     }
 
     // Optionally create a new empty WAL at the snapshot revision
     if create_new_wal {
         let _new_wal = WalWriter::create(wal_path, new_revision)?;
-        debug!("Created new WAL at revision {new_revision}");
+        trace!("Created new WAL at revision {new_revision}");
     }
 
-    info!("WAL compaction complete at revision {new_revision}");
+    trace!("WAL compaction complete at revision {new_revision}");
     Ok(new_revision)
 }
