@@ -355,14 +355,26 @@ impl<T: 'static> Drop for Tx<T> {
                 })
                 .is_err()
             {
+                warn!(
+                    conn_id = conn_id.raw(),
+                    channel_id,
+                    "failed to queue DriverMessage::Close with try_send, falling back to async send"
+                );
                 // Channel full or closed - spawn as fallback (see warning above)
                 crate::runtime::spawn(async move {
-                    let _ = task_tx
+                    if task_tx
                         .send(DriverMessage::Close {
                             conn_id,
                             channel_id,
                         })
-                        .await;
+                        .await
+                        .is_err()
+                    {
+                        warn!(
+                            conn_id = conn_id.raw(),
+                            channel_id, "failed to send DriverMessage::Close from drop fallback"
+                        );
+                    }
                 });
             }
         }
@@ -585,3 +597,36 @@ impl std::fmt::Display for RxError {
 }
 
 impl std::error::Error for RxError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use roam_wire::ConnectionId;
+
+    #[tokio::test]
+    async fn tx_drop_fallback_handles_closed_driver_channel() {
+        let (driver_tx, mut driver_rx) = crate::runtime::channel::<DriverMessage>(1);
+
+        driver_tx
+            .try_send(DriverMessage::Data {
+                conn_id: ConnectionId::ROOT,
+                channel_id: 777,
+                payload: vec![1],
+            })
+            .expect("seed message should fill single-slot channel");
+
+        let (inner_tx, _inner_rx) = crate::runtime::channel::<Vec<u8>>(1);
+        let mut tx: Tx<Vec<u8>> = Tx::new(4242, inner_tx);
+        tx.conn_id = ConnectionId::ROOT;
+        tx.sender = SenderSlot::empty();
+        tx.driver_tx = DriverTxSlot::new(driver_tx.clone());
+
+        drop(driver_rx.recv().await);
+        drop(driver_rx);
+
+        drop(tx);
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+    }
+}

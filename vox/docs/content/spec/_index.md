@@ -775,11 +775,19 @@ The complete lifecycle of an RPC call:
 > Responses MAY arrive in any order. The caller MUST use `request_id`
 > for correlation, not arrival order.
 
-> r[call.lifecycle.unknown-request-id]
+> r[call.response.unknown-request-id]
 >
 > If a caller receives a Response with a `request_id` that does not match
-> any in-flight request, it MUST treat this as a protocol violation.
-> Implementations SHOULD log a warning and close the connection.
+> any in-flight request, it MUST treat this as a protocol violation:
+> send `Goodbye` on connection 0 (reason: `call.response.unknown-request-id`)
+> and close the link.
+
+> r[call.response.stale-timeout]
+>
+> Implementations MAY enforce a timeout for pending responses. If the timeout
+> is exceeded, they MUST fail pending calls with a connection error, send
+> `Goodbye` on connection 0 (reason: `call.response.stale-timeout`), and close
+> the link.
 
 ## Cancellation
 

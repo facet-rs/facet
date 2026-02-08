@@ -118,6 +118,8 @@ pub enum DriverMessage {
         /// If None, the connection can only make calls, not receive them.
         dispatcher: Option<Box<dyn ServiceDispatcher>>,
     },
+    /// Internal watchdog signal to sweep stale pending responses.
+    SweepPendingResponses,
 }
 
 /// Registry of active channels for a connection.

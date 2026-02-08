@@ -298,13 +298,21 @@ impl ConnectionHandle {
                                     channel_id
                                 );
                                 // Send data to driver
-                                let _ = task_tx
+                                if task_tx
                                     .send(DriverMessage::Data {
                                         conn_id,
                                         channel_id,
                                         payload,
                                     })
-                                    .await;
+                                    .await
+                                    .is_err()
+                                {
+                                    warn!(
+                                        conn_id = conn_id.raw(),
+                                        channel_id, "drain task failed to send DriverMessage::Data"
+                                    );
+                                    break;
+                                }
                                 debug!(
                                     "drain task: sent DriverMessage::Data for channel {}",
                                     channel_id
@@ -313,12 +321,20 @@ impl ConnectionHandle {
                             None => {
                                 debug!("drain task: channel {} closed", channel_id);
                                 // Channel closed, send Close and exit
-                                let _ = task_tx
+                                if task_tx
                                     .send(DriverMessage::Close {
                                         conn_id,
                                         channel_id,
                                     })
-                                    .await;
+                                    .await
+                                    .is_err()
+                                {
+                                    warn!(
+                                        conn_id = conn_id.raw(),
+                                        channel_id,
+                                        "drain task failed to send DriverMessage::Close"
+                                    );
+                                }
                                 debug!(
                                     "drain task: sent DriverMessage::Close for channel {}",
                                     channel_id
@@ -488,13 +504,22 @@ impl ConnectionHandle {
                                         payload.len(),
                                         channel_id
                                     );
-                                    let _ = task_tx
+                                    if task_tx
                                         .send(DriverMessage::Data {
                                             conn_id,
                                             channel_id,
                                             payload,
                                         })
-                                        .await;
+                                        .await
+                                        .is_err()
+                                    {
+                                        warn!(
+                                            conn_id = conn_id.raw(),
+                                            channel_id,
+                                            "drain task failed to send DriverMessage::Data"
+                                        );
+                                        break;
+                                    }
                                     debug!(
                                         "drain task: sent DriverMessage::Data for channel {}",
                                         channel_id
@@ -502,12 +527,20 @@ impl ConnectionHandle {
                                 }
                                 None => {
                                     debug!("drain task: channel {} closed", channel_id);
-                                    let _ = task_tx
+                                    if task_tx
                                         .send(DriverMessage::Close {
                                             conn_id,
                                             channel_id,
                                         })
-                                        .await;
+                                        .await
+                                        .is_err()
+                                    {
+                                        warn!(
+                                            conn_id = conn_id.raw(),
+                                            channel_id,
+                                            "drain task failed to send DriverMessage::Close"
+                                        );
+                                    }
                                     debug!(
                                         "drain task: sent DriverMessage::Close for channel {}",
                                         channel_id
@@ -1001,5 +1034,44 @@ impl ConnectionHandle {
 
         // Bind response channels using precomputed paths
         unsafe { self.bind_response_channels_with_plan(response_ptr, response_plan) };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn drain_task_exits_when_driver_data_send_fails() {
+        let (driver_tx, mut driver_rx) = crate::runtime::channel(8);
+        let handle = ConnectionHandle::new(driver_tx, Role::Initiator, u32::MAX);
+
+        let (stream_tx, stream_rx) = crate::channel::<Vec<u8>>();
+        let mut args = (stream_rx,);
+        let call_task = tokio::spawn(async move { handle.call(42, &mut args).await });
+
+        let call_msg = driver_rx
+            .recv()
+            .await
+            .expect("expected DriverMessage::Call");
+        assert!(
+            matches!(call_msg, DriverMessage::Call { .. }),
+            "first message must be DriverMessage::Call"
+        );
+
+        drop(driver_rx);
+
+        stream_tx.send(&b"payload".to_vec()).await.unwrap();
+        drop(call_msg);
+
+        let result = tokio::time::timeout(Duration::from_secs(1), call_task)
+            .await
+            .expect("call should terminate once driver side is closed")
+            .expect("call task should not panic");
+        assert!(
+            matches!(result, Err(TransportError::DriverGone)),
+            "call should fail once driver side is gone"
+        );
     }
 }

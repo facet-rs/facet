@@ -507,6 +507,11 @@ where
                     metadata,
                 }
             }
+            DriverMessage::SweepPendingResponses => {
+                // Session driver's stale-response watchdog is link-local and does not
+                // map to any wire message on SHM transports.
+                return Ok(());
+            }
             _ => {
                 trace!("handle_driver_message: ignoring unsupported driver message variant");
                 return Ok(());
@@ -2031,6 +2036,11 @@ impl MultiPeerHostDriver {
                     request_id,
                     metadata,
                 }
+            }
+            DriverMessage::SweepPendingResponses => {
+                // Session driver's stale-response watchdog is link-local and does not
+                // map to any wire message on SHM transports.
+                return Ok(());
             }
             _ => {
                 trace!(
