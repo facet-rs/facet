@@ -3,38 +3,20 @@
 //! shm[verify shm.topology.hub]
 //! shm[verify shm.topology.hub.calls]
 
-use roam_frame::{Frame, INLINE_PAYLOAD_LEN, INLINE_PAYLOAD_SLOT, MsgDesc, Payload};
 use roam_shm::guest::ShmGuest;
 use roam_shm::host::{PollResult, ShmHost};
 use roam_shm::layout::SegmentConfig;
+use roam_shm::msg::ShmMsg;
 use roam_shm::msg_type;
 
-/// Create a simple request frame with inline payload.
-fn make_request(id: u32, payload: &[u8]) -> Frame {
-    let mut desc = MsgDesc::new(msg_type::REQUEST, id, 0);
-    if payload.len() <= INLINE_PAYLOAD_LEN {
-        desc.payload_slot = INLINE_PAYLOAD_SLOT;
-        desc.payload_len = payload.len() as u32;
-        desc.inline_payload[..payload.len()].copy_from_slice(payload);
-    }
-    Frame {
-        desc,
-        payload: Payload::Inline,
-    }
+/// Create a simple request message with payload.
+fn make_request(id: u32, payload: &[u8]) -> ShmMsg {
+    ShmMsg::new(msg_type::REQUEST, id, 0, payload.to_vec())
 }
 
-/// Create a response frame.
-fn make_response(id: u32, payload: &[u8]) -> Frame {
-    let mut desc = MsgDesc::new(msg_type::RESPONSE, id, 0);
-    if payload.len() <= INLINE_PAYLOAD_LEN {
-        desc.payload_slot = INLINE_PAYLOAD_SLOT;
-        desc.payload_len = payload.len() as u32;
-        desc.inline_payload[..payload.len()].copy_from_slice(payload);
-    }
-    Frame {
-        desc,
-        payload: Payload::Inline,
-    }
+/// Create a response message.
+fn make_response(id: u32, payload: &[u8]) -> ShmMsg {
+    ShmMsg::new(msg_type::RESPONSE, id, 0, payload.to_vec())
 }
 
 /// shm[verify shm.guest.attach]
@@ -51,17 +33,17 @@ fn guest_to_host_inline_message() {
 
     // Guest sends a request to host
     let request = make_request(1, b"hello host");
-    guest.send(request).unwrap();
+    guest.send(&request).unwrap();
 
     // Host polls and receives the message
     let PollResult { messages, .. } = host.poll();
     assert_eq!(messages.len(), 1);
 
-    let (recv_peer_id, frame) = &messages[0];
+    let (recv_peer_id, msg) = &messages[0];
     assert_eq!(*recv_peer_id, peer_id);
-    assert_eq!(frame.desc.msg_type, msg_type::REQUEST);
-    assert_eq!(frame.desc.id, 1);
-    assert_eq!(frame.payload_bytes(), b"hello host");
+    assert_eq!(msg.msg_type, msg_type::REQUEST);
+    assert_eq!(msg.id, 1);
+    assert_eq!(msg.payload_bytes(), b"hello host");
 }
 
 /// shm[verify shm.ordering.ring-publish]
@@ -77,13 +59,13 @@ fn host_to_guest_inline_message() {
 
     // Host sends a response to guest
     let response = make_response(42, b"hello guest");
-    host.send(peer_id, response).unwrap();
+    host.send(peer_id, &response).unwrap();
 
     // Guest receives the message
-    let frame = guest.recv().unwrap();
-    assert_eq!(frame.desc.msg_type, msg_type::RESPONSE);
-    assert_eq!(frame.desc.id, 42);
-    assert_eq!(frame.payload_bytes(), b"hello guest");
+    let msg = guest.recv().unwrap();
+    assert_eq!(msg.msg_type, msg_type::RESPONSE);
+    assert_eq!(msg.id, 42);
+    assert_eq!(msg.payload_bytes(), b"hello guest");
 }
 
 #[test]
@@ -97,21 +79,21 @@ fn bidirectional_roundtrip() {
 
     // Guest sends request
     let request = make_request(100, b"ping");
-    guest.send(request).unwrap();
+    guest.send(&request).unwrap();
 
     // Host receives and responds
     let PollResult { messages, .. } = host.poll();
     assert_eq!(messages.len(), 1);
-    assert_eq!(messages[0].1.desc.id, 100);
+    assert_eq!(messages[0].1.id, 100);
 
     let response = make_response(100, b"pong");
-    host.send(peer_id, response).unwrap();
+    host.send(peer_id, &response).unwrap();
 
     // Guest receives response
-    let frame = guest.recv().unwrap();
-    assert_eq!(frame.desc.msg_type, msg_type::RESPONSE);
-    assert_eq!(frame.desc.id, 100);
-    assert_eq!(frame.payload_bytes(), b"pong");
+    let msg = guest.recv().unwrap();
+    assert_eq!(msg.msg_type, msg_type::RESPONSE);
+    assert_eq!(msg.id, 100);
+    assert_eq!(msg.payload_bytes(), b"pong");
 }
 
 /// shm[verify shm.topology.peer-id]
@@ -130,8 +112,8 @@ fn multiple_guests_isolated() {
     assert_ne!(peer1, peer2);
 
     // Each guest sends a message
-    guest1.send(make_request(1, b"from guest1")).unwrap();
-    guest2.send(make_request(2, b"from guest2")).unwrap();
+    guest1.send(&make_request(1, b"from guest1")).unwrap();
+    guest2.send(&make_request(2, b"from guest2")).unwrap();
 
     // Host receives both
     let PollResult { messages, .. } = host.poll();
@@ -140,19 +122,19 @@ fn multiple_guests_isolated() {
     // Verify messages came from correct guests
     let msg1 = messages.iter().find(|(p, _)| *p == peer1).unwrap();
     let msg2 = messages.iter().find(|(p, _)| *p == peer2).unwrap();
-    assert_eq!(msg1.1.desc.id, 1);
-    assert_eq!(msg2.1.desc.id, 2);
+    assert_eq!(msg1.1.id, 1);
+    assert_eq!(msg2.1.id, 2);
 
     // Host sends different responses to each guest
-    host.send(peer1, make_response(1, b"reply to g1")).unwrap();
-    host.send(peer2, make_response(2, b"reply to g2")).unwrap();
+    host.send(peer1, &make_response(1, b"reply to g1")).unwrap();
+    host.send(peer2, &make_response(2, b"reply to g2")).unwrap();
 
     // Each guest receives only their response
-    let frame1 = guest1.recv().unwrap();
-    let frame2 = guest2.recv().unwrap();
+    let msg1 = guest1.recv().unwrap();
+    let msg2 = guest2.recv().unwrap();
 
-    assert_eq!(frame1.desc.id, 1);
-    assert_eq!(frame2.desc.id, 2);
+    assert_eq!(msg1.id, 1);
+    assert_eq!(msg2.id, 2);
 
     // No cross-talk
     assert!(guest1.recv().is_none());
@@ -173,26 +155,21 @@ fn large_payload_via_slot() {
     // Create a payload larger than inline capacity (32 bytes)
     let large_payload: Vec<u8> = (0..1000).map(|i| (i % 256) as u8).collect();
 
-    let desc = MsgDesc::new(msg_type::DATA, 999, 0);
-
-    let frame = Frame {
-        desc,
-        payload: Payload::Owned(large_payload.clone()),
-    };
+    let msg = ShmMsg::new(msg_type::DATA, 999, 0, large_payload.clone());
 
     // Guest sends large message
-    guest.send(frame).unwrap();
+    guest.send(&msg).unwrap();
 
     // Host receives it
     let PollResult { messages, .. } = host.poll();
     assert_eq!(messages.len(), 1);
 
-    let (recv_peer_id, frame) = &messages[0];
+    let (recv_peer_id, recv_msg) = &messages[0];
     assert_eq!(*recv_peer_id, peer_id);
-    assert_eq!(frame.desc.msg_type, msg_type::DATA);
+    assert_eq!(recv_msg.msg_type, msg_type::DATA);
     // Verify payload content
-    assert_eq!(frame.payload_bytes().len(), 1000);
-    assert_eq!(frame.payload_bytes(), &large_payload[..]);
+    assert_eq!(recv_msg.payload_bytes().len(), 1000);
+    assert_eq!(recv_msg.payload_bytes(), &large_payload[..]);
 }
 
 /// shm[verify shm.goodbye.host]
@@ -211,7 +188,7 @@ fn host_goodbye_prevents_guest_send() {
     assert!(guest.is_host_goodbye());
 
     // Guest send should fail
-    let result = guest.send(make_request(1, b"test"));
+    let result = guest.send(&make_request(1, b"test"));
     assert!(result.is_err());
 }
 
@@ -229,16 +206,16 @@ fn many_messages_in_sequence() {
     // Send many messages
     for i in 0..NUM_MESSAGES {
         let payload = format!("message {}", i);
-        guest.send(make_request(i, payload.as_bytes())).unwrap();
+        guest.send(&make_request(i, payload.as_bytes())).unwrap();
     }
 
     // Receive all
     let PollResult { messages, .. } = host.poll();
     assert_eq!(messages.len(), NUM_MESSAGES as usize);
 
-    for (i, (recv_peer_id, frame)) in messages.iter().enumerate() {
+    for (i, (recv_peer_id, msg)) in messages.iter().enumerate() {
         assert_eq!(*recv_peer_id, peer_id);
-        assert_eq!(frame.desc.id, i as u32);
+        assert_eq!(msg.id, i as u32);
     }
 }
 
@@ -258,7 +235,7 @@ fn ring_backpressure() {
     // Fill the bipbuf until backpressure kicks in
     let mut sent = 0u32;
     loop {
-        match guest.send(make_request(sent, b"x")) {
+        match guest.send(&make_request(sent, b"x")) {
             Ok(()) => sent += 1,
             Err(roam_shm::guest::SendError::RingFull) => break,
             Err(e) => panic!("unexpected error: {:?}", e),
@@ -271,7 +248,7 @@ fn ring_backpressure() {
     assert_eq!(messages.len(), sent as usize);
 
     // Now guest can send again
-    guest.send(make_request(sent + 1, b"x")).unwrap();
+    guest.send(&make_request(sent + 1, b"x")).unwrap();
 }
 
 /// shm[verify shm.slot.free]
@@ -293,16 +270,13 @@ fn slot_reclamation_guest_to_host() {
     // This should work because host frees slots after consuming
     for i in 0..20u32 {
         // Guest sends
-        let frame = Frame {
-            desc: MsgDesc::new(msg_type::DATA, i, 0),
-            payload: Payload::Owned(large_payload.clone()),
-        };
-        guest.send(frame).unwrap();
+        let msg = ShmMsg::new(msg_type::DATA, i, 0, large_payload.clone());
+        guest.send(&msg).unwrap();
 
         // Host consumes (and frees slot)
         let PollResult { messages, .. } = host.poll();
         assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].1.desc.id, i);
+        assert_eq!(messages[0].1.id, i);
     }
 }
 
@@ -325,14 +299,11 @@ fn slot_reclamation_host_to_guest() {
     // Send more messages than we have slots
     for i in 0..20u32 {
         // Host sends
-        let frame = Frame {
-            desc: MsgDesc::new(msg_type::DATA, i, 0),
-            payload: Payload::Owned(large_payload.clone()),
-        };
-        host.send(peer_id, frame).unwrap();
+        let msg = ShmMsg::new(msg_type::DATA, i, 0, large_payload.clone());
+        host.send(peer_id, &msg).unwrap();
 
         // Guest consumes (and frees slot)
-        let frame = guest.recv().unwrap();
-        assert_eq!(frame.desc.id, i);
+        let recv_msg = guest.recv().unwrap();
+        assert_eq!(recv_msg.id, i);
     }
 }

@@ -65,6 +65,37 @@ pub const fn msg_type_name(msg_type: u8) -> &'static str {
     }
 }
 
+/// Decoded SHM message — v2-native representation.
+///
+/// Carries just the fields needed for BipBuffer frame encoding:
+/// msg_type, id, method_id, and payload bytes.
+#[derive(Debug, Clone)]
+pub struct ShmMsg {
+    pub msg_type: u8,
+    pub id: u32,
+    pub method_id: u64,
+    pub payload: Vec<u8>,
+}
+
+impl ShmMsg {
+    /// Create a new ShmMsg.
+    #[inline]
+    pub fn new(msg_type: u8, id: u32, method_id: u64, payload: Vec<u8>) -> Self {
+        Self {
+            msg_type,
+            id,
+            method_id,
+            payload,
+        }
+    }
+
+    /// Get payload bytes.
+    #[inline]
+    pub fn payload_bytes(&self) -> &[u8] {
+        &self.payload
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

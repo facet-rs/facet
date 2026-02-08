@@ -10,7 +10,7 @@
 use roam_shm::guest::ShmGuest;
 use roam_shm::host::{PollResult, ShmHost};
 use roam_shm::layout::SegmentConfig;
-use roam_shm::transport::{ShmGuestTransport, frame_to_message, message_to_frame};
+use roam_shm::transport::{ShmGuestTransport, message_to_shm_msg, shm_msg_to_message};
 use roam_wire::{Message, MetadataValue};
 
 fn create_host_and_guest() -> (ShmHost, ShmGuest) {
@@ -53,11 +53,11 @@ async fn guest_transport_send_request() {
     let PollResult { mut messages, .. } = host.poll();
     assert_eq!(messages.len(), 1);
 
-    let (recv_peer_id, frame) = messages.pop().unwrap();
+    let (recv_peer_id, shm_msg) = messages.pop().unwrap();
     assert_eq!(recv_peer_id, peer_id);
 
     // Convert back to Message and verify
-    let decoded = frame_to_message(frame).unwrap();
+    let decoded = shm_msg_to_message(shm_msg).unwrap();
     assert_eq!(decoded, msg);
 }
 
@@ -76,8 +76,8 @@ async fn guest_transport_recv_response() {
         payload: b"response body".to_vec(),
     };
 
-    let frame = message_to_frame(&msg).unwrap();
-    host.send(peer_id, frame).unwrap();
+    let shm_msg = message_to_shm_msg(&msg).unwrap();
+    host.send(peer_id, &shm_msg).unwrap();
 
     // Guest transport should receive it
     let received = transport.try_recv().unwrap().unwrap();
@@ -115,8 +115,8 @@ async fn host_guest_transport_roundtrip() {
     // Host receives and processes
     let PollResult { mut messages, .. } = host.poll();
     assert_eq!(messages.len(), 1);
-    let (_, frame) = messages.pop().unwrap();
-    let decoded_request = frame_to_message(frame).unwrap();
+    let (_, shm_msg) = messages.pop().unwrap();
+    let decoded_request = shm_msg_to_message(shm_msg).unwrap();
     assert_eq!(decoded_request, request);
 
     // Host sends response
@@ -127,8 +127,8 @@ async fn host_guest_transport_roundtrip() {
         channels: vec![],
         payload: b"hello client".to_vec(),
     };
-    let response_frame = message_to_frame(&response).unwrap();
-    host.send(peer_id, response_frame).unwrap();
+    let response_shm_msg = message_to_shm_msg(&response).unwrap();
+    host.send(peer_id, &response_shm_msg).unwrap();
 
     // Guest receives response
     let decoded_response = guest_transport.try_recv().unwrap().unwrap();
@@ -165,16 +165,16 @@ async fn streaming_data_messages() {
     // Reverse to pop in order
     messages.reverse();
     for i in 0..5 {
-        let (_, frame) = messages.pop().unwrap();
-        let msg = frame_to_message(frame).unwrap();
+        let (_, shm_msg) = messages.pop().unwrap();
+        let msg = shm_msg_to_message(shm_msg).unwrap();
         assert!(matches!(msg, Message::Data { channel_id: 7, .. }));
         if let Message::Data { payload, .. } = msg {
             assert_eq!(payload, format!("chunk {}", i).into_bytes());
         }
     }
 
-    let (_, last_frame) = messages.pop().unwrap();
-    let last_msg = frame_to_message(last_frame).unwrap();
+    let (_, last_shm_msg) = messages.pop().unwrap();
+    let last_msg = shm_msg_to_message(last_shm_msg).unwrap();
     assert!(matches!(last_msg, Message::Close { channel_id: 7, .. }));
 }
 
@@ -205,10 +205,10 @@ async fn cancel_message() {
     assert_eq!(messages.len(), 2);
 
     messages.reverse();
-    let (_, frame1) = messages.pop().unwrap();
-    let (_, frame2) = messages.pop().unwrap();
-    let msg1 = frame_to_message(frame1).unwrap();
-    let msg2 = frame_to_message(frame2).unwrap();
+    let (_, shm_msg1) = messages.pop().unwrap();
+    let (_, shm_msg2) = messages.pop().unwrap();
+    let msg1 = shm_msg_to_message(shm_msg1).unwrap();
+    let msg2 = shm_msg_to_message(shm_msg2).unwrap();
 
     assert!(matches!(msg1, Message::Request { request_id: 99, .. }));
     assert!(matches!(msg2, Message::Cancel { request_id: 99, .. }));
@@ -225,8 +225,8 @@ async fn reset_message() {
         conn_id: roam_wire::ConnectionId::ROOT,
         channel_id: 42,
     };
-    let frame = message_to_frame(&reset).unwrap();
-    host.send(peer_id, frame).unwrap();
+    let shm_msg = message_to_shm_msg(&reset).unwrap();
+    host.send(peer_id, &shm_msg).unwrap();
 
     // Guest receives it
     let received = guest_transport.try_recv().unwrap().unwrap();
@@ -249,8 +249,8 @@ async fn goodbye_message() {
     let PollResult { mut messages, .. } = host.poll();
     assert_eq!(messages.len(), 1);
 
-    let (_, frame) = messages.pop().unwrap();
-    let msg = frame_to_message(frame).unwrap();
+    let (_, shm_msg) = messages.pop().unwrap();
+    let msg = shm_msg_to_message(shm_msg).unwrap();
     assert_eq!(msg, goodbye);
 }
 
@@ -283,8 +283,8 @@ async fn large_metadata() {
     let PollResult { mut messages, .. } = host.poll();
     assert_eq!(messages.len(), 1);
 
-    let (_, frame) = messages.pop().unwrap();
-    let decoded = frame_to_message(frame).unwrap();
+    let (_, shm_msg) = messages.pop().unwrap();
+    let decoded = shm_msg_to_message(shm_msg).unwrap();
     assert_eq!(decoded, request);
 }
 
@@ -305,8 +305,8 @@ async fn empty_metadata_and_payload() {
     guest_transport.send(&request).await.unwrap();
 
     let PollResult { mut messages, .. } = host.poll();
-    let (_, frame) = messages.pop().unwrap();
-    let decoded = frame_to_message(frame).unwrap();
+    let (_, shm_msg) = messages.pop().unwrap();
+    let decoded = shm_msg_to_message(shm_msg).unwrap();
     assert_eq!(decoded, request);
 }
 

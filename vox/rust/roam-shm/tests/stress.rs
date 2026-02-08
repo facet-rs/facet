@@ -6,18 +6,14 @@
 //! shm[verify shm.host.poll-peers]
 //! shm[verify shm.topology.max-guests]
 
-use roam_frame::{Frame, MsgDesc, Payload};
 use roam_shm::guest::ShmGuest;
 use roam_shm::host::{PollResult, ShmHost};
 use roam_shm::layout::SegmentConfig;
+use roam_shm::msg::ShmMsg;
 use roam_shm::msg_type;
 
-fn make_data_frame(seq: u32, payload: Vec<u8>) -> Frame {
-    let desc = MsgDesc::new(msg_type::DATA, seq, 0);
-    Frame {
-        desc,
-        payload: Payload::Owned(payload),
-    }
+fn make_data_msg(seq: u32, payload: Vec<u8>) -> ShmMsg {
+    ShmMsg::new(msg_type::DATA, seq, 0, payload)
 }
 
 #[test]
@@ -41,7 +37,7 @@ fn stress_single_guest_high_throughput() {
         // Send a batch (as many as the ring allows)
         while sent < TOTAL_MESSAGES && sent - received < BATCH_SIZE {
             let payload = vec![(sent % 256) as u8; 16];
-            match guest.send(make_data_frame(sent, payload)) {
+            match guest.send(&make_data_msg(sent, payload)) {
                 Ok(()) => sent += 1,
                 Err(roam_shm::guest::SendError::RingFull) => break,
                 Err(e) => panic!("Unexpected error: {:?}", e),
@@ -50,8 +46,8 @@ fn stress_single_guest_high_throughput() {
 
         // Receive what's available
         let PollResult { messages, .. } = host.poll();
-        for (_, frame) in messages {
-            assert_eq!(frame.desc.id, received);
+        for (_, msg) in messages {
+            assert_eq!(msg.id, received);
             received += 1;
         }
     }
@@ -89,7 +85,7 @@ fn stress_multiple_guests_interleaved() {
             if sent_per_guest[i] < MESSAGES_PER_GUEST {
                 let seq = sent_per_guest[i];
                 let payload = vec![i as u8; 8];
-                match guest.send(make_data_frame(seq, payload)) {
+                match guest.send(&make_data_msg(seq, payload)) {
                     Ok(()) => sent_per_guest[i] += 1,
                     Err(roam_shm::guest::SendError::RingFull) => {}
                     Err(e) => panic!("Guest {} error: {:?}", i, e),
@@ -99,9 +95,9 @@ fn stress_multiple_guests_interleaved() {
 
         // Host receives from all
         let PollResult { messages, .. } = host.poll();
-        for (peer_id, frame) in messages {
+        for (peer_id, msg) in messages {
             let guest_idx = peer_id.index() as usize;
-            assert_eq!(frame.desc.id, received_per_guest[guest_idx]);
+            assert_eq!(msg.id, received_per_guest[guest_idx]);
             received_per_guest[guest_idx] += 1;
             total_received += 1;
         }
@@ -127,20 +123,20 @@ fn stress_bidirectional_ping_pong() {
 
     for i in 0..ITERATIONS {
         // Guest sends ping
-        let ping = make_data_frame(i, vec![0xAA; 4]);
-        guest.send(ping).unwrap();
+        let ping = make_data_msg(i, vec![0xAA; 4]);
+        guest.send(&ping).unwrap();
 
         // Host receives and sends pong
         let PollResult { messages, .. } = host.poll();
         assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].1.desc.id, i);
+        assert_eq!(messages[0].1.id, i);
 
-        let pong = make_data_frame(i, vec![0xBB; 4]);
-        host.send(peer_id, pong).unwrap();
+        let pong = make_data_msg(i, vec![0xBB; 4]);
+        host.send(peer_id, &pong).unwrap();
 
         // Guest receives pong
-        let frame = guest.recv().unwrap();
-        assert_eq!(frame.desc.id, i);
+        let msg = guest.recv().unwrap();
+        assert_eq!(msg.id, i);
     }
 }
 
@@ -162,17 +158,17 @@ fn stress_varying_payload_sizes() {
 
     for (i, &size) in sizes.iter().enumerate() {
         let payload: Vec<u8> = (0..size).map(|j| ((i + j) % 256) as u8).collect();
-        let frame = make_data_frame(i as u32, payload.clone());
-        guest.send(frame).unwrap();
+        let msg = make_data_msg(i as u32, payload.clone());
+        guest.send(&msg).unwrap();
 
         let PollResult { messages, .. } = host.poll();
         assert_eq!(messages.len(), 1, "Failed at size {}", size);
 
-        let (_, recv_frame) = &messages[0];
+        let (_, recv_msg) = &messages[0];
 
         // Verify payload content via payload_bytes() (v2 always returns Owned)
         assert_eq!(
-            recv_frame.payload_bytes(),
+            recv_msg.payload_bytes(),
             payload.as_slice(),
             "Payload mismatch at size {}",
             size
@@ -201,7 +197,7 @@ fn stress_slot_exhaustion_recovery() {
     while received < TOTAL_MESSAGES {
         // Try to send (may fail due to slot exhaustion)
         if sent < TOTAL_MESSAGES {
-            match guest.send(make_data_frame(sent, large_payload.clone())) {
+            match guest.send(&make_data_msg(sent, large_payload.clone())) {
                 Ok(()) => sent += 1,
                 Err(roam_shm::guest::SendError::SlotExhausted) => {
                     // Expected when slots are full - need to drain first
@@ -240,8 +236,8 @@ fn stress_guest_attach_detach_cycle() {
 
         // Each sends a message
         for (i, guest) in guests.iter_mut().enumerate() {
-            let frame = make_data_frame((cycle * 100 + i) as u32, vec![i as u8; 4]);
-            guest.send(frame).unwrap();
+            let msg = make_data_msg((cycle * 100 + i) as u32, vec![i as u8; 4]);
+            guest.send(&msg).unwrap();
         }
 
         // Host receives all
@@ -276,9 +272,6 @@ fn stress_concurrent_send_recv() {
 
     const ITERATIONS: u32 = 500;
 
-    // Since we can't easily share mutable host/guest across threads,
-    // we'll do a coordinated dance in a single thread with simulated concurrency
-
     let mut guest_sent = 0u32;
     let mut host_received = 0u32;
     let mut host_sent = 0u32;
@@ -286,23 +279,19 @@ fn stress_concurrent_send_recv() {
 
     while guest_received < ITERATIONS {
         // Guest sends if possible
-        if guest_sent < ITERATIONS
-            && guest
-                .send(make_data_frame(guest_sent, vec![0u8; 8]))
-                .is_ok()
-        {
+        if guest_sent < ITERATIONS && guest.send(&make_data_msg(guest_sent, vec![0u8; 8])).is_ok() {
             guest_sent += 1;
         }
 
         // Host polls and responds
         let PollResult { messages, .. } = host.poll();
-        for (pid, frame) in messages {
+        for (pid, msg) in messages {
             assert_eq!(pid, peer_id);
             host_received += 1;
 
             // Send response
             if host
-                .send(peer_id, make_data_frame(frame.desc.id, vec![1u8; 8]))
+                .send(peer_id, &make_data_msg(msg.id, vec![1u8; 8]))
                 .is_ok()
             {
                 host_sent += 1;
@@ -310,8 +299,8 @@ fn stress_concurrent_send_recv() {
         }
 
         // Guest receives
-        while let Some(frame) = guest.recv() {
-            assert_eq!(frame.desc.id, guest_received);
+        while let Some(msg) = guest.recv() {
+            assert_eq!(msg.id, guest_received);
             guest_received += 1;
         }
     }
@@ -344,7 +333,7 @@ fn stress_max_guests() {
     // Each sends one message
     for (i, guest) in guests.iter_mut().enumerate() {
         guest
-            .send(make_data_frame(i as u32, vec![i as u8; 4]))
+            .send(&make_data_msg(i as u32, vec![i as u8; 4]))
             .unwrap();
     }
 

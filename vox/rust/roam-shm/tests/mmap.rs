@@ -5,7 +5,7 @@
 //! shm[verify shm.file.create]
 //! shm[verify shm.file.attach]
 
-use roam_frame::{Frame, MsgDesc, Payload};
+use roam_shm::msg::ShmMsg;
 use roam_shm::{AddPeerOptions, PollResult, SegmentConfig, ShmGuest, ShmHost, SpawnArgs, msg_type};
 
 /// Test basic file-backed segment creation and attachment.
@@ -27,12 +27,8 @@ fn test_file_backed_segment() {
     assert_eq!(guest.peer_id().get(), 1);
 
     // Send message host -> guest
-    let desc = MsgDesc::new(msg_type::DATA, 1, 0);
-    let frame = Frame {
-        desc,
-        payload: Payload::Owned(b"hello from host".to_vec()),
-    };
-    host.send(guest.peer_id(), frame).unwrap();
+    let msg = ShmMsg::new(msg_type::DATA, 1, 0, b"hello from host".to_vec());
+    host.send(guest.peer_id(), &msg).unwrap();
 
     // Guest receives
     let received = guest.recv().unwrap();
@@ -50,23 +46,15 @@ fn test_file_backed_bidirectional() {
     let mut guest = ShmGuest::attach_path(&path).unwrap();
 
     // Host -> Guest
-    let desc = MsgDesc::new(msg_type::DATA, 1, 0);
-    let frame = Frame {
-        desc,
-        payload: Payload::Owned(b"ping".to_vec()),
-    };
-    host.send(guest.peer_id(), frame).unwrap();
+    let msg = ShmMsg::new(msg_type::DATA, 1, 0, b"ping".to_vec());
+    host.send(guest.peer_id(), &msg).unwrap();
 
     let received = guest.recv().unwrap();
     assert_eq!(received.payload_bytes(), b"ping");
 
     // Guest -> Host
-    let desc = MsgDesc::new(msg_type::DATA, 2, 0);
-    let frame = Frame {
-        desc,
-        payload: Payload::Owned(b"pong".to_vec()),
-    };
-    guest.send(frame).unwrap();
+    let msg = ShmMsg::new(msg_type::DATA, 2, 0, b"pong".to_vec());
+    guest.send(&msg).unwrap();
 
     let PollResult { messages, .. } = host.poll();
     assert_eq!(messages.len(), 1);
@@ -103,12 +91,8 @@ fn test_file_backed_large_payload() {
 
     // Send large payload (requires slot)
     let large_payload = vec![0xAB; 1024];
-    let desc = MsgDesc::new(msg_type::DATA, 1, 0);
-    let frame = Frame {
-        desc,
-        payload: Payload::Owned(large_payload.clone()),
-    };
-    host.send(guest.peer_id(), frame).unwrap();
+    let msg = ShmMsg::new(msg_type::DATA, 1, 0, large_payload.clone());
+    host.send(guest.peer_id(), &msg).unwrap();
 
     let received = guest.recv().unwrap();
     assert_eq!(received.payload_bytes(), large_payload.as_slice());
@@ -133,20 +117,12 @@ fn test_file_backed_multiple_guests() {
     assert_eq!(guest2.peer_id().get(), 2);
 
     // Send to guest1
-    let desc = MsgDesc::new(msg_type::DATA, 1, 0);
-    let frame = Frame {
-        desc,
-        payload: Payload::Owned(b"for guest1".to_vec()),
-    };
-    host.send(guest1.peer_id(), frame).unwrap();
+    let msg = ShmMsg::new(msg_type::DATA, 1, 0, b"for guest1".to_vec());
+    host.send(guest1.peer_id(), &msg).unwrap();
 
     // Send to guest2
-    let desc = MsgDesc::new(msg_type::DATA, 2, 0);
-    let frame = Frame {
-        desc,
-        payload: Payload::Owned(b"for guest2".to_vec()),
-    };
-    host.send(guest2.peer_id(), frame).unwrap();
+    let msg = ShmMsg::new(msg_type::DATA, 2, 0, b"for guest2".to_vec());
+    host.send(guest2.peer_id(), &msg).unwrap();
 
     // Each guest receives their own message
     let msg1 = guest1.recv().unwrap();
@@ -184,12 +160,8 @@ fn test_cross_process_ipc() {
             let mut guest = ShmGuest::attach_path(path).unwrap();
 
             // Send message to host
-            let desc = MsgDesc::new(msg_type::DATA, 1, 0);
-            let frame = Frame {
-                desc,
-                payload: Payload::Owned(b"hello from child".to_vec()),
-            };
-            guest.send(frame).unwrap();
+            let msg = ShmMsg::new(msg_type::DATA, 1, 0, b"hello from child".to_vec());
+            guest.send(&msg).unwrap();
 
             // Wait for response
             std::thread::sleep(Duration::from_millis(50));
@@ -211,12 +183,8 @@ fn test_cross_process_ipc() {
             let peer_id = messages[0].0;
 
             // Send response
-            let desc = MsgDesc::new(msg_type::DATA, 2, 0);
-            let frame = Frame {
-                desc,
-                payload: Payload::Owned(b"hello from parent".to_vec()),
-            };
-            host.send(peer_id, frame).unwrap();
+            let msg = ShmMsg::new(msg_type::DATA, 2, 0, b"hello from parent".to_vec());
+            host.send(peer_id, &msg).unwrap();
 
             // Wait for child to exit
             let mut status: i32 = 0;
@@ -296,12 +264,8 @@ fn test_spawn_ticket_workflow() {
             assert_eq!(guest.peer_id().get(), 1);
 
             // Send message to host
-            let desc = MsgDesc::new(msg_type::DATA, 1, 0);
-            let frame = Frame {
-                desc,
-                payload: Payload::Owned(b"spawned guest says hi".to_vec()),
-            };
-            guest.send(frame).unwrap();
+            let msg = ShmMsg::new(msg_type::DATA, 1, 0, b"spawned guest says hi".to_vec());
+            guest.send(&msg).unwrap();
 
             // Wait for response with retry
             for _ in 0..20 {
@@ -339,12 +303,8 @@ fn test_spawn_ticket_workflow() {
             assert_eq!(peer_id.get(), 1);
 
             // Send response
-            let desc = MsgDesc::new(msg_type::DATA, 2, 0);
-            let frame = Frame {
-                desc,
-                payload: Payload::Owned(b"host acknowledges".to_vec()),
-            };
-            host.send(peer_id, frame).unwrap();
+            let msg = ShmMsg::new(msg_type::DATA, 2, 0, b"host acknowledges".to_vec());
+            host.send(peer_id, &msg).unwrap();
 
             // Wait for child to exit
             let mut status: i32 = 0;

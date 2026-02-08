@@ -88,12 +88,9 @@ pub use channel::{
 pub use layout::{
     HEADER_SIZE, MAGIC, SegmentConfig, SegmentHeader, SegmentLayout, SizeClass, VERSION,
 };
-pub use msg::msg_type;
+pub use msg::{ShmMsg, msg_type};
 pub use peer::{PeerEntry, PeerId, PeerState};
 pub use var_slot_pool::{SizeClassHeader, VarFreeError, VarSlotHandle, VarSlotPool};
-
-// Re-export MsgDesc from roam-frame
-pub use roam_frame::{Frame, INLINE_PAYLOAD_LEN, INLINE_PAYLOAD_SLOT, MsgDesc, Payload};
 
 // Re-export FileCleanup from shm-primitives
 pub use shm_primitives::FileCleanup;
@@ -105,7 +102,7 @@ pub use host::{PollResult, ShmHost};
 pub use guest::ShmGuest;
 
 pub use transport::{
-    ConvertError, ShmGuestTransport, ShmHostGuestTransport, frame_to_message, message_to_frame,
+    ConvertError, ShmGuestTransport, ShmHostGuestTransport, message_to_shm_msg, shm_msg_to_message,
 };
 
 pub use spawn::{

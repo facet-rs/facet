@@ -9,9 +9,11 @@ use std::path::Path;
 use std::ptr;
 
 use roam_frame::{
-    Frame, MsgDesc, SHM_FRAME_HEADER_SIZE, SLOT_REF_FRAME_SIZE, ShmFrameHeader, SlotRef,
-    encode_inline_frame, encode_slot_ref_frame, inline_frame_size, should_inline,
+    SHM_FRAME_HEADER_SIZE, SLOT_REF_FRAME_SIZE, ShmFrameHeader, SlotRef, encode_inline_frame,
+    encode_slot_ref_frame, inline_frame_size, should_inline,
 };
+
+use crate::msg::ShmMsg;
 use shm_primitives::{BipBufRaw, HeapRegion, MmapRegion, Region};
 
 use crate::channel::ChannelEntry;
@@ -418,22 +420,22 @@ impl ShmGuest {
 
     /// Send a message to the host.
     ///
-    /// The frame is encoded into the G2H BipBuffer as an SHM frame. Small
+    /// The message is encoded into the G2H BipBuffer as an SHM frame. Small
     /// payloads go inline; large payloads are placed in the shared VarSlotPool
     /// and referenced via a SlotRef in the frame.
     ///
     /// shm[impl shm.topology.hub.calls]
-    pub fn send(&mut self, frame: Frame) -> Result<(), SendError> {
+    pub fn send(&mut self, msg: &ShmMsg) -> Result<(), SendError> {
         if self.is_host_goodbye() {
             return Err(SendError::HostGoodbye);
         }
 
-        let msg_type = frame.desc.msg_type;
-        let id = frame.desc.id;
-        let method_id = frame.desc.method_id;
+        let msg_type = msg.msg_type;
+        let id = msg.id;
+        let method_id = msg.method_id;
 
         // Get the payload bytes
-        let payload_data: &[u8] = frame.payload.as_slice(&frame.desc);
+        let payload_data: &[u8] = &msg.payload;
         let payload_len = payload_data.len() as u32;
 
         if payload_len > self.layout.config.max_payload_size {
@@ -507,7 +509,7 @@ impl ShmGuest {
     /// again for the next.
     ///
     /// shm[impl shm.ordering.ring-consume]
-    pub fn recv(&mut self) -> Option<Frame> {
+    pub fn recv(&mut self) -> Option<ShmMsg> {
         if self.is_host_goodbye() {
             return None;
         }
@@ -553,7 +555,7 @@ impl ShmGuest {
         &self,
         shm_header: &ShmFrameHeader,
         frame_bytes: &[u8],
-    ) -> Result<Frame, RecvError> {
+    ) -> Result<ShmMsg, RecvError> {
         let msg_type = shm_header.msg_type;
         let id = shm_header.id;
         let method_id = shm_header.method_id;
@@ -594,8 +596,7 @@ impl ShmGuest {
                 .ok_or(RecvError::InvalidSlotPtr)?;
 
             // Copy payload out of the slot
-            let payload_data =
-                unsafe { std::slice::from_raw_parts(slot_ptr, payload_len) }.to_vec();
+            let payload = unsafe { std::slice::from_raw_parts(slot_ptr, payload_len) }.to_vec();
 
             // Free the slot (return to shared pool)
             // shm[impl shm.slot.free]
@@ -603,8 +604,12 @@ impl ShmGuest {
                 .free(handle)
                 .map_err(|_| RecvError::FreeFailed)?;
 
-            let desc = MsgDesc::new(msg_type, id, method_id);
-            Ok(Frame::with_owned_payload(desc, payload_data))
+            Ok(ShmMsg {
+                msg_type,
+                id,
+                method_id,
+                payload,
+            })
         } else {
             // Inline frame: payload follows the header in the BipBuffer
             let payload_start = SHM_FRAME_HEADER_SIZE;
@@ -613,13 +618,18 @@ impl ShmGuest {
                 return Err(RecvError::TruncatedFrame);
             }
 
-            let desc = MsgDesc::new(msg_type, id, method_id);
-            if payload_len == 0 {
-                Ok(Frame::new(desc))
+            let payload = if payload_len == 0 {
+                Vec::new()
             } else {
-                let payload_data = frame_bytes[payload_start..payload_end].to_vec();
-                Ok(Frame::with_owned_payload(desc, payload_data))
-            }
+                frame_bytes[payload_start..payload_end].to_vec()
+            };
+
+            Ok(ShmMsg {
+                msg_type,
+                id,
+                method_id,
+                payload,
+            })
         }
     }
 

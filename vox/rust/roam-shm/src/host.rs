@@ -12,7 +12,8 @@ use std::sync::atomic::Ordering;
 use roam_frame::shm_frame::{
     self, SHM_FRAME_HEADER_SIZE, SLOT_REF_FRAME_SIZE, ShmFrameHeader, SlotRef,
 };
-use roam_frame::{Frame, MsgDesc, Payload};
+
+use crate::msg::ShmMsg;
 use shm_primitives::{
     BipBufHeader, BipBufRaw, Doorbell, HeapRegion, MmapRegion, Region, SignalResult,
 };
@@ -43,8 +44,8 @@ enum RecvError {
 /// Result of polling the host for incoming messages.
 #[derive(Debug, Default)]
 pub struct PollResult {
-    /// Messages received from guests, as (peer_id, frame) pairs.
-    pub messages: Vec<(PeerId, Frame)>,
+    /// Messages received from guests, as (peer_id, shm_msg) pairs.
+    pub messages: Vec<(PeerId, ShmMsg)>,
 
     /// Peers whose slots were freed during this poll.
     ///
@@ -491,17 +492,13 @@ impl ShmHost {
                             result.slots_freed_for.push(peer_id);
                         }
 
-                        // Build a Frame from the ShmFrameHeader
-                        let desc = MsgDesc::new(
-                            frame_header.msg_type,
-                            frame_header.id,
-                            frame_header.method_id,
-                        );
-                        let frame = match payload {
-                            Payload::Owned(data) => Frame::with_owned_payload(desc, data),
-                            _ => Frame::new(desc),
+                        let shm_msg = ShmMsg {
+                            msg_type: frame_header.msg_type,
+                            id: frame_header.id,
+                            method_id: frame_header.method_id,
+                            payload,
                         };
-                        result.messages.push((peer_id, frame));
+                        result.messages.push((peer_id, shm_msg));
                     }
                     Err(_e) => {
                         // Protocol violation: release this frame and schedule cleanup.
@@ -552,14 +549,14 @@ impl ShmHost {
         result
     }
 
-    /// Extract payload from a received SHM frame.
+    /// Extract payload bytes from a received SHM frame.
     fn extract_payload(
         &self,
         header: &ShmFrameHeader,
         frame_bytes: &[u8],
         _peer_id: PeerId,
         _inline_threshold: u32,
-    ) -> Result<Payload, RecvError> {
+    ) -> Result<Vec<u8>, RecvError> {
         if header.has_slot_ref() {
             // Payload is in VarSlotPool, referenced by SlotRef after header
             if frame_bytes.len() < SLOT_REF_FRAME_SIZE {
@@ -598,7 +595,7 @@ impl ShmHost {
             // Free the slot
             var_pool.free(handle).map_err(|_| RecvError::FreeFailed)?;
 
-            Ok(Payload::Owned(payload))
+            Ok(payload)
         } else {
             // Inline payload: bytes are in the frame after the header
             let payload_len = header.payload_len as usize;
@@ -613,10 +610,9 @@ impl ShmHost {
             }
 
             if payload_len == 0 {
-                Ok(Payload::Inline)
+                Ok(Vec::new())
             } else {
-                let payload = frame_bytes[payload_start..payload_end].to_vec();
-                Ok(Payload::Owned(payload))
+                Ok(frame_bytes[payload_start..payload_end].to_vec())
             }
         }
     }
@@ -624,7 +620,7 @@ impl ShmHost {
     /// Send a message to a specific guest.
     ///
     /// shm[impl shm.topology.hub.calls]
-    pub fn send(&mut self, peer_id: PeerId, frame: Frame) -> Result<(), SendError> {
+    pub fn send(&mut self, peer_id: PeerId, msg: &ShmMsg) -> Result<(), SendError> {
         // Check peer state
         let (peer_state, current_epoch) = {
             let entry = self.peer_entry(peer_id);
@@ -637,8 +633,7 @@ impl ShmHost {
 
         let inline_threshold = self.layout.config.effective_inline_threshold();
 
-        // Get the actual payload bytes
-        let payload_data: &[u8] = frame.payload.as_slice(&frame.desc);
+        let payload_data: &[u8] = &msg.payload;
         let payload_len = payload_data.len() as u32;
 
         if payload_data.len() > self.layout.config.max_payload_size as usize {
@@ -656,9 +651,9 @@ impl ShmHost {
             };
 
             shm_frame::encode_inline_frame(
-                frame.desc.msg_type,
-                frame.desc.id,
-                frame.desc.method_id,
+                msg.msg_type,
+                msg.id,
+                msg.method_id,
                 payload_data,
                 grant,
             );
@@ -680,7 +675,6 @@ impl ShmHost {
 
             // Copy payload into the slot
             let Some(slot_ptr) = var_pool.payload_ptr(handle) else {
-                // Should never happen if alloc succeeded, but be safe
                 let _ = var_pool.free_allocated(handle);
                 return Err(SendError::PayloadTooLarge);
             };
@@ -704,15 +698,14 @@ impl ShmHost {
 
             let total_len = SLOT_REF_FRAME_SIZE as u32;
             let Some(grant) = h2g.try_grant(total_len) else {
-                // BipBuffer full -- free the slot we just allocated
                 let _ = var_pool.free(handle);
                 return Err(SendError::RingFull);
             };
 
             shm_frame::encode_slot_ref_frame(
-                frame.desc.msg_type,
-                frame.desc.id,
-                frame.desc.method_id,
+                msg.msg_type,
+                msg.id,
+                msg.method_id,
                 payload_len,
                 &slot_ref,
                 grant,

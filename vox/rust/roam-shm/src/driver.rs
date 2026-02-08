@@ -29,7 +29,7 @@ use tokio::sync::{mpsc, oneshot};
 use crate::auditable::{self, AuditableDequeMap, AuditableReceiver, AuditableSender};
 use crate::host::ShmHost;
 use crate::peer::PeerId;
-use crate::transport::{ShmGuestTransport, frame_to_message, message_to_frame};
+use crate::transport::{ShmGuestTransport, message_to_shm_msg, shm_msg_to_message};
 
 /// Get a human-readable name for a message type.
 fn msg_type_name(msg: &Message) -> &'static str {
@@ -1642,10 +1642,10 @@ impl MultiPeerHostDriver {
                         }
                     }
 
-                    for (pid, frame) in result.messages {
-                        self.last_decoded = frame.payload_bytes().to_vec();
+                    for (pid, shm_msg) in result.messages {
+                        self.last_decoded = shm_msg.payload_bytes().to_vec();
 
-                        let msg = match frame_to_message(frame).map_err(|e| {
+                        let msg = match shm_msg_to_message(shm_msg).map_err(|e| {
                             ShmConnectionError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
                         }) {
                             Ok(m) => m,
@@ -2648,11 +2648,11 @@ impl MultiPeerHostDriver {
         peer_id: PeerId,
         msg: &Message,
     ) -> Result<bool, ShmConnectionError> {
-        let frame = message_to_frame(msg).map_err(|e| {
+        let shm_msg = message_to_shm_msg(msg).map_err(|e| {
             ShmConnectionError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
         })?;
 
-        match self.host.send(peer_id, frame) {
+        match self.host.send(peer_id, &shm_msg) {
             Ok(()) => {
                 // Ring doorbell to wake up guest waiting for messages
                 if let Some(doorbell) = self.doorbells.get(&peer_id) {

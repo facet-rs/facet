@@ -1,9 +1,9 @@
 //! Transport abstraction for SHM.
 //!
 //! This module provides the bridge between roam's `MessageTransport` trait
-//! and the SHM Frame-based communication. It handles:
+//! and the SHM v2-native `ShmMsg` type. It handles:
 //!
-//! - Converting between `roam_wire::Message` and SHM `Frame`
+//! - Converting between `roam_wire::Message` and `ShmMsg`
 //! - Encoding/decoding metadata alongside payload
 //! - Async wrappers for the synchronous SHM operations
 //!
@@ -12,16 +12,15 @@
 use std::io;
 use std::time::Duration;
 
-use roam_frame::{Frame, INLINE_PAYLOAD_LEN, INLINE_PAYLOAD_SLOT, MsgDesc, Payload};
 use roam_wire::Message;
 
 use crate::guest::{SendError, ShmGuest};
-use crate::msg::msg_type;
+use crate::msg::{ShmMsg, msg_type};
 
-/// Conversion error when mapping between Message and Frame.
+/// Conversion error when mapping between Message and ShmMsg.
 #[derive(Debug)]
 pub enum ConvertError {
-    /// Unknown message type in frame
+    /// Unknown message type
     UnknownMsgType(u8),
     /// Payload decode error
     DecodeError(String),
@@ -49,13 +48,13 @@ impl std::fmt::Display for ConvertError {
 
 impl std::error::Error for ConvertError {}
 
-/// Convert a `roam_wire::Message` to an SHM `Frame`.
+/// Convert a `roam_wire::Message` to an `ShmMsg`.
 ///
 /// shm[impl shm.metadata.in-payload]
 ///
 /// For Request and Response, metadata is prepended to the payload and
 /// encoded together using postcard.
-pub fn message_to_frame(msg: &Message) -> Result<Frame, ConvertError> {
+pub fn message_to_shm_msg(msg: &Message) -> Result<ShmMsg, ConvertError> {
     match msg {
         Message::Hello(_) => {
             // shm[impl shm.handshake]
@@ -63,22 +62,12 @@ pub fn message_to_frame(msg: &Message) -> Result<Frame, ConvertError> {
             Err(ConvertError::HelloNotSupported)
         }
 
-        Message::Goodbye { reason, .. } => {
-            // Goodbye uses the payload for the reason string
-            let mut desc = MsgDesc::new(msg_type::GOODBYE, 0, 0);
-            let reason_bytes = reason.as_bytes();
-
-            let payload = if reason_bytes.len() <= INLINE_PAYLOAD_LEN {
-                desc.payload_slot = INLINE_PAYLOAD_SLOT;
-                desc.payload_len = reason_bytes.len() as u32;
-                desc.inline_payload[..reason_bytes.len()].copy_from_slice(reason_bytes);
-                Payload::Inline
-            } else {
-                Payload::Owned(reason_bytes.to_vec())
-            };
-
-            Ok(Frame { desc, payload })
-        }
+        Message::Goodbye { reason, .. } => Ok(ShmMsg::new(
+            msg_type::GOODBYE,
+            0,
+            0,
+            reason.as_bytes().to_vec(),
+        )),
 
         Message::Request {
             conn_id,
@@ -89,25 +78,13 @@ pub fn message_to_frame(msg: &Message) -> Result<Frame, ConvertError> {
             payload,
         } => {
             // shm[impl shm.metadata.in-payload]
-            // Encode conn_id + metadata + channels + payload together
             let combined = encode_request_payload(*conn_id, metadata, channels, payload);
-
-            let mut desc = MsgDesc::new(msg_type::REQUEST, *request_id as u32, *method_id);
-
-            let frame_payload = if combined.len() <= INLINE_PAYLOAD_LEN {
-                desc.payload_slot = INLINE_PAYLOAD_SLOT;
-                desc.payload_len = combined.len() as u32;
-                desc.inline_payload[..combined.len()].copy_from_slice(&combined);
-                Payload::Inline
-            } else {
-                desc.payload_len = combined.len() as u32;
-                Payload::Owned(combined)
-            };
-
-            Ok(Frame {
-                desc,
-                payload: frame_payload,
-            })
+            Ok(ShmMsg::new(
+                msg_type::REQUEST,
+                *request_id as u32,
+                *method_id,
+                combined,
+            ))
         }
 
         Message::Response {
@@ -119,127 +96,68 @@ pub fn message_to_frame(msg: &Message) -> Result<Frame, ConvertError> {
         } => {
             // shm[impl shm.metadata.in-payload]
             let combined = encode_response_payload(*conn_id, metadata, channels, payload);
-
-            let mut desc = MsgDesc::new(msg_type::RESPONSE, *request_id as u32, 0);
-
-            let frame_payload = if combined.len() <= INLINE_PAYLOAD_LEN {
-                desc.payload_slot = INLINE_PAYLOAD_SLOT;
-                desc.payload_len = combined.len() as u32;
-                desc.inline_payload[..combined.len()].copy_from_slice(&combined);
-                Payload::Inline
-            } else {
-                desc.payload_len = combined.len() as u32;
-                Payload::Owned(combined)
-            };
-
-            Ok(Frame {
-                desc,
-                payload: frame_payload,
-            })
+            Ok(ShmMsg::new(
+                msg_type::RESPONSE,
+                *request_id as u32,
+                0,
+                combined,
+            ))
         }
 
         Message::Cancel {
             conn_id,
             request_id,
-        } => {
-            let mut desc = MsgDesc::new(msg_type::CANCEL, *request_id as u32, 0);
-            // Encode conn_id in payload
-            let conn_id_bytes = conn_id.0.to_le_bytes();
-            desc.payload_slot = INLINE_PAYLOAD_SLOT;
-            desc.payload_len = conn_id_bytes.len() as u32;
-            desc.inline_payload[..conn_id_bytes.len()].copy_from_slice(&conn_id_bytes);
-            Ok(Frame {
-                desc,
-                payload: Payload::Inline,
-            })
-        }
+        } => Ok(ShmMsg::new(
+            msg_type::CANCEL,
+            *request_id as u32,
+            0,
+            conn_id.0.to_le_bytes().to_vec(),
+        )),
 
         Message::Data {
             conn_id,
             channel_id,
             payload,
         } => {
-            let mut desc = MsgDesc::new(msg_type::DATA, *channel_id as u32, 0);
-
             // Prepend conn_id to payload for virtual connection support
             let conn_id_bytes = conn_id.0.to_le_bytes();
-            let total_len = conn_id_bytes.len() + payload.len();
-
-            let frame_payload = if total_len <= INLINE_PAYLOAD_LEN {
-                desc.payload_slot = INLINE_PAYLOAD_SLOT;
-                desc.payload_len = total_len as u32;
-                desc.inline_payload[..conn_id_bytes.len()].copy_from_slice(&conn_id_bytes);
-                desc.inline_payload[conn_id_bytes.len()..total_len].copy_from_slice(payload);
-                Payload::Inline
-            } else {
-                desc.payload_len = total_len as u32;
-                let mut combined = Vec::with_capacity(total_len);
-                combined.extend_from_slice(&conn_id_bytes);
-                combined.extend_from_slice(payload);
-                Payload::Owned(combined)
-            };
-
-            Ok(Frame {
-                desc,
-                payload: frame_payload,
-            })
+            let mut combined = Vec::with_capacity(conn_id_bytes.len() + payload.len());
+            combined.extend_from_slice(&conn_id_bytes);
+            combined.extend_from_slice(payload);
+            Ok(ShmMsg::new(msg_type::DATA, *channel_id as u32, 0, combined))
         }
 
         Message::Close {
             conn_id,
             channel_id,
-        } => {
-            let mut desc = MsgDesc::new(msg_type::CLOSE, *channel_id as u32, 0);
-            // Encode conn_id in payload
-            let conn_id_bytes = conn_id.0.to_le_bytes();
-            desc.payload_slot = INLINE_PAYLOAD_SLOT;
-            desc.payload_len = conn_id_bytes.len() as u32;
-            desc.inline_payload[..conn_id_bytes.len()].copy_from_slice(&conn_id_bytes);
-            Ok(Frame {
-                desc,
-                payload: Payload::Inline,
-            })
-        }
+        } => Ok(ShmMsg::new(
+            msg_type::CLOSE,
+            *channel_id as u32,
+            0,
+            conn_id.0.to_le_bytes().to_vec(),
+        )),
 
         Message::Reset {
             conn_id,
             channel_id,
-        } => {
-            let mut desc = MsgDesc::new(msg_type::RESET, *channel_id as u32, 0);
-            // Encode conn_id in payload
-            let conn_id_bytes = conn_id.0.to_le_bytes();
-            desc.payload_slot = INLINE_PAYLOAD_SLOT;
-            desc.payload_len = conn_id_bytes.len() as u32;
-            desc.inline_payload[..conn_id_bytes.len()].copy_from_slice(&conn_id_bytes);
-            Ok(Frame {
-                desc,
-                payload: Payload::Inline,
-            })
-        }
+        } => Ok(ShmMsg::new(
+            msg_type::RESET,
+            *channel_id as u32,
+            0,
+            conn_id.0.to_le_bytes().to_vec(),
+        )),
 
         Message::Connect {
             request_id,
             metadata,
         } => {
-            // Encode metadata in payload
             let payload_bytes = facet_postcard::to_vec(metadata).unwrap_or_default();
-
-            let mut desc = MsgDesc::new(msg_type::CONNECT, *request_id as u32, 0);
-
-            let frame_payload = if payload_bytes.len() <= INLINE_PAYLOAD_LEN {
-                desc.payload_slot = INLINE_PAYLOAD_SLOT;
-                desc.payload_len = payload_bytes.len() as u32;
-                desc.inline_payload[..payload_bytes.len()].copy_from_slice(&payload_bytes);
-                Payload::Inline
-            } else {
-                desc.payload_len = payload_bytes.len() as u32;
-                Payload::Owned(payload_bytes)
-            };
-
-            Ok(Frame {
-                desc,
-                payload: frame_payload,
-            })
+            Ok(ShmMsg::new(
+                msg_type::CONNECT,
+                *request_id as u32,
+                0,
+                payload_bytes,
+            ))
         }
 
         Message::Accept {
@@ -247,26 +165,14 @@ pub fn message_to_frame(msg: &Message) -> Result<Frame, ConvertError> {
             conn_id,
             metadata,
         } => {
-            // Encode conn_id + metadata in payload (clone to satisfy lifetime requirements)
             let payload_bytes =
                 facet_postcard::to_vec(&(conn_id.0, metadata.clone())).unwrap_or_default();
-
-            let mut desc = MsgDesc::new(msg_type::ACCEPT, *request_id as u32, 0);
-
-            let frame_payload = if payload_bytes.len() <= INLINE_PAYLOAD_LEN {
-                desc.payload_slot = INLINE_PAYLOAD_SLOT;
-                desc.payload_len = payload_bytes.len() as u32;
-                desc.inline_payload[..payload_bytes.len()].copy_from_slice(&payload_bytes);
-                Payload::Inline
-            } else {
-                desc.payload_len = payload_bytes.len() as u32;
-                Payload::Owned(payload_bytes)
-            };
-
-            Ok(Frame {
-                desc,
-                payload: frame_payload,
-            })
+            Ok(ShmMsg::new(
+                msg_type::ACCEPT,
+                *request_id as u32,
+                0,
+                payload_bytes,
+            ))
         }
 
         Message::Reject {
@@ -274,26 +180,14 @@ pub fn message_to_frame(msg: &Message) -> Result<Frame, ConvertError> {
             reason,
             metadata,
         } => {
-            // Encode reason + metadata in payload (clone to satisfy lifetime requirements)
             let payload_bytes =
                 facet_postcard::to_vec(&(reason.clone(), metadata.clone())).unwrap_or_default();
-
-            let mut desc = MsgDesc::new(msg_type::REJECT, *request_id as u32, 0);
-
-            let frame_payload = if payload_bytes.len() <= INLINE_PAYLOAD_LEN {
-                desc.payload_slot = INLINE_PAYLOAD_SLOT;
-                desc.payload_len = payload_bytes.len() as u32;
-                desc.inline_payload[..payload_bytes.len()].copy_from_slice(&payload_bytes);
-                Payload::Inline
-            } else {
-                desc.payload_len = payload_bytes.len() as u32;
-                Payload::Owned(payload_bytes)
-            };
-
-            Ok(Frame {
-                desc,
-                payload: frame_payload,
-            })
+            Ok(ShmMsg::new(
+                msg_type::REJECT,
+                *request_id as u32,
+                0,
+                payload_bytes,
+            ))
         }
 
         Message::Credit { .. } => {
@@ -304,18 +198,16 @@ pub fn message_to_frame(msg: &Message) -> Result<Frame, ConvertError> {
     }
 }
 
-/// Convert an SHM `Frame` to a `roam_wire::Message`.
+/// Convert an `ShmMsg` to a `roam_wire::Message`.
 ///
 /// shm[impl shm.metadata.in-payload]
-pub fn frame_to_message(frame: Frame) -> Result<Message, ConvertError> {
-    let payload_bytes = frame.payload_bytes();
+pub fn shm_msg_to_message(msg: ShmMsg) -> Result<Message, ConvertError> {
+    let payload_bytes = &msg.payload;
 
-    // SHM transport always uses ROOT connection ID since it's a 1:1 mapping
-    let conn_id = roam_wire::ConnectionId::ROOT;
-
-    match frame.desc.msg_type {
+    match msg.msg_type {
         msg_type::GOODBYE => {
             let reason = String::from_utf8_lossy(payload_bytes).into_owned();
+            let conn_id = roam_wire::ConnectionId::ROOT;
             Ok(Message::Goodbye { conn_id, reason })
         }
 
@@ -326,8 +218,8 @@ pub fn frame_to_message(frame: Frame) -> Result<Message, ConvertError> {
 
             Ok(Message::Request {
                 conn_id: decoded_conn_id,
-                request_id: frame.desc.id as u64,
-                method_id: frame.desc.method_id,
+                request_id: msg.id as u64,
+                method_id: msg.method_id,
                 metadata,
                 channels,
                 payload,
@@ -341,7 +233,7 @@ pub fn frame_to_message(frame: Frame) -> Result<Message, ConvertError> {
 
             Ok(Message::Response {
                 conn_id: decoded_conn_id,
-                request_id: frame.desc.id as u64,
+                request_id: msg.id as u64,
                 metadata,
                 channels,
                 payload,
@@ -349,7 +241,6 @@ pub fn frame_to_message(frame: Frame) -> Result<Message, ConvertError> {
         }
 
         msg_type::CANCEL => {
-            // Decode conn_id from payload (8 bytes little-endian)
             if payload_bytes.len() < 8 {
                 return Err(ConvertError::DecodeError(
                     "Cancel payload too short for conn_id".into(),
@@ -359,12 +250,11 @@ pub fn frame_to_message(frame: Frame) -> Result<Message, ConvertError> {
                 roam_wire::ConnectionId(u64::from_le_bytes(payload_bytes[..8].try_into().unwrap()));
             Ok(Message::Cancel {
                 conn_id: decoded_conn_id,
-                request_id: frame.desc.id as u64,
+                request_id: msg.id as u64,
             })
         }
 
         msg_type::DATA => {
-            // Decode conn_id from first 8 bytes, rest is actual payload
             if payload_bytes.len() < 8 {
                 return Err(ConvertError::DecodeError(
                     "Data payload too short for conn_id".into(),
@@ -374,13 +264,12 @@ pub fn frame_to_message(frame: Frame) -> Result<Message, ConvertError> {
                 roam_wire::ConnectionId(u64::from_le_bytes(payload_bytes[..8].try_into().unwrap()));
             Ok(Message::Data {
                 conn_id: decoded_conn_id,
-                channel_id: frame.desc.id as u64,
+                channel_id: msg.id as u64,
                 payload: payload_bytes[8..].to_vec(),
             })
         }
 
         msg_type::CLOSE => {
-            // Decode conn_id from payload (8 bytes little-endian)
             if payload_bytes.len() < 8 {
                 return Err(ConvertError::DecodeError(
                     "Close payload too short for conn_id".into(),
@@ -390,12 +279,11 @@ pub fn frame_to_message(frame: Frame) -> Result<Message, ConvertError> {
                 roam_wire::ConnectionId(u64::from_le_bytes(payload_bytes[..8].try_into().unwrap()));
             Ok(Message::Close {
                 conn_id: decoded_conn_id,
-                channel_id: frame.desc.id as u64,
+                channel_id: msg.id as u64,
             })
         }
 
         msg_type::RESET => {
-            // Decode conn_id from payload (8 bytes little-endian)
             if payload_bytes.len() < 8 {
                 return Err(ConvertError::DecodeError(
                     "Reset payload too short for conn_id".into(),
@@ -405,7 +293,7 @@ pub fn frame_to_message(frame: Frame) -> Result<Message, ConvertError> {
                 roam_wire::ConnectionId(u64::from_le_bytes(payload_bytes[..8].try_into().unwrap()));
             Ok(Message::Reset {
                 conn_id: decoded_conn_id,
-                channel_id: frame.desc.id as u64,
+                channel_id: msg.id as u64,
             })
         }
 
@@ -413,7 +301,7 @@ pub fn frame_to_message(frame: Frame) -> Result<Message, ConvertError> {
             let metadata: roam_wire::Metadata = facet_postcard::from_slice(payload_bytes)
                 .map_err(|e| ConvertError::DecodeError(e.to_string()))?;
             Ok(Message::Connect {
-                request_id: frame.desc.id as u64,
+                request_id: msg.id as u64,
                 metadata,
             })
         }
@@ -423,7 +311,7 @@ pub fn frame_to_message(frame: Frame) -> Result<Message, ConvertError> {
                 facet_postcard::from_slice(payload_bytes)
                     .map_err(|e| ConvertError::DecodeError(e.to_string()))?;
             Ok(Message::Accept {
-                request_id: frame.desc.id as u64,
+                request_id: msg.id as u64,
                 conn_id: roam_wire::ConnectionId(conn_id_val),
                 metadata,
             })
@@ -434,7 +322,7 @@ pub fn frame_to_message(frame: Frame) -> Result<Message, ConvertError> {
                 facet_postcard::from_slice(payload_bytes)
                     .map_err(|e| ConvertError::DecodeError(e.to_string()))?;
             Ok(Message::Reject {
-                request_id: frame.desc.id as u64,
+                request_id: msg.id as u64,
                 reason,
                 metadata,
             })
@@ -444,7 +332,6 @@ pub fn frame_to_message(frame: Frame) -> Result<Message, ConvertError> {
     }
 }
 
-/// Combined payload for Request/Response messages.
 /// Combined payload for Request/Response messages.
 /// Includes conn_id to support virtual connections over SHM.
 #[derive(facet::Facet)]
@@ -615,14 +502,14 @@ impl ShmGuestTransport {
 
     /// Send a message (async with backpressure).
     ///
-    /// If slots are exhausted, waits for the doorbell (host signals when slots are freed)
-    /// and retries. This provides backpressure instead of failing immediately.
+    /// Encodes the message once as an ShmMsg, then retries with `&ShmMsg`
+    /// (no clone) if slots are exhausted or the ring is full.
     pub async fn send(&mut self, msg: &Message) -> io::Result<()> {
-        let frame =
-            message_to_frame(msg).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        let shm_msg =
+            message_to_shm_msg(msg).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
         loop {
-            match self.guest.send(frame.clone()) {
+            match self.guest.send(&shm_msg) {
                 Ok(()) => {
                     // Ring doorbell to notify host of new message
                     if let Some(doorbell) = &self.doorbell {
@@ -636,15 +523,12 @@ impl ShmGuestTransport {
                         debug!("slot exhaustion: waiting for doorbell");
                         doorbell.wait().await?;
                         debug!("slot exhaustion: doorbell rang, retrying send");
-                        // Retry after wakeup
                         continue;
                     } else {
-                        // No doorbell - can't wait, must fail
                         return Err(io::Error::other("slot exhausted"));
                     }
                 }
                 Err(SendError::RingFull) => {
-                    // Ring full - also wait for doorbell and retry
                     if let Some(doorbell) = &self.doorbell {
                         debug!("ring full: waiting for doorbell");
                         doorbell.wait().await?;
@@ -673,20 +557,18 @@ impl ShmGuestTransport {
     /// Try to receive a message (non-blocking).
     pub fn try_recv(&mut self) -> io::Result<Option<Message>> {
         match self.guest.recv() {
-            Some(frame) => {
+            Some(shm_msg) => {
                 // Store raw bytes for error detection
-                self.last_decoded = frame.payload_bytes().to_vec();
+                self.last_decoded = shm_msg.payload.clone();
 
-                let msg = frame_to_message(frame)
+                let msg = shm_msg_to_message(shm_msg)
                     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
                 Ok(Some(msg))
             }
             None => {
                 if self.guest.is_host_goodbye() {
-                    // Connection closed
                     Ok(None)
                 } else {
-                    // No message available
                     Err(io::Error::new(io::ErrorKind::WouldBlock, "no message"))
                 }
             }
@@ -704,7 +586,6 @@ impl ShmGuestTransport {
                     if start.elapsed() >= timeout {
                         return Ok(None);
                     }
-                    // Yield to avoid busy-spinning
                     std::thread::yield_now();
                 }
                 Err(e) => return Err(e),
@@ -741,7 +622,7 @@ pub struct ShmHostGuestTransport<'a> {
     /// Buffer for last decoded bytes
     last_decoded: Vec<u8>,
     /// Pending messages from poll
-    pending: Vec<Frame>,
+    pending: Vec<ShmMsg>,
 }
 
 impl<'a> ShmHostGuestTransport<'a> {
@@ -757,10 +638,10 @@ impl<'a> ShmHostGuestTransport<'a> {
 
     /// Send a message to the guest.
     pub fn send(&mut self, msg: &Message) -> io::Result<()> {
-        let frame =
-            message_to_frame(msg).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        let shm_msg =
+            message_to_shm_msg(msg).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
-        self.host.send(self.peer_id, frame).map_err(|e| {
+        self.host.send(self.peer_id, &shm_msg).map_err(|e| {
             use crate::host::SendError;
             match e {
                 SendError::PeerNotAttached => {
@@ -778,9 +659,9 @@ impl<'a> ShmHostGuestTransport<'a> {
     /// Try to receive a message from this guest (non-blocking).
     pub fn try_recv(&mut self) -> io::Result<Option<Message>> {
         // Check pending first
-        if let Some(frame) = self.pending.pop() {
-            self.last_decoded = frame.payload_bytes().to_vec();
-            let msg = frame_to_message(frame)
+        if let Some(shm_msg) = self.pending.pop() {
+            self.last_decoded = shm_msg.payload.clone();
+            let msg = shm_msg_to_message(shm_msg)
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
             return Ok(Some(msg));
         }
@@ -789,15 +670,12 @@ impl<'a> ShmHostGuestTransport<'a> {
         // Note: slots_freed_for is ignored here - this transport doesn't have doorbell access
         // (the MultiPeerHostDriver handles backpressure signaling properly)
         let result = self.host.poll();
-        for (peer_id, frame) in result.messages {
+        for (peer_id, shm_msg) in result.messages {
             if peer_id == self.peer_id {
-                self.last_decoded = frame.payload_bytes().to_vec();
-                let msg = frame_to_message(frame)
+                self.last_decoded = shm_msg.payload.clone();
+                let msg = shm_msg_to_message(shm_msg)
                     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
                 return Ok(Some(msg));
-            } else {
-                // Store for other transports (would need shared state for this)
-                // For now, we just process our own messages
             }
         }
 
@@ -817,26 +695,16 @@ mod async_transport {
     use std::time::Duration;
 
     impl MessageTransport for ShmGuestTransport {
-        /// Send a message over the SHM transport.
-        ///
-        /// If slots are exhausted, waits for the doorbell (host signals when slots are freed)
-        /// and retries. This provides backpressure instead of failing immediately.
         async fn send(&mut self, msg: &Message) -> io::Result<()> {
             ShmGuestTransport::send(self, msg).await
         }
 
-        /// Receive a message with timeout.
-        ///
-        /// Waits on doorbell for host notifications, with a timeout.
         async fn recv_timeout(&mut self, timeout: Duration) -> io::Result<Option<Message>> {
-            // Helper to signal doorbell after receiving
             async fn signal_and_return(
                 doorbell: &Option<shm_primitives::Doorbell>,
                 msg: Option<Message>,
             ) -> io::Result<Option<Message>> {
                 if msg.is_some() {
-                    // Signal doorbell to notify host that we consumed a message
-                    // (host may have pending sends waiting for slots to free up)
                     // shm[impl shm.backpressure.host-to-guest]
                     if let Some(doorbell) = doorbell {
                         doorbell.signal().await;
@@ -855,19 +723,15 @@ mod async_transport {
             // Wait on doorbell with timeout
             if let Some(doorbell) = &self.doorbell {
                 match tokio::time::timeout(timeout, doorbell.wait()).await {
-                    Ok(Ok(())) => {
-                        // Doorbell rang, try to receive
-                        match self.try_recv() {
-                            Ok(msg) => signal_and_return(&self.doorbell, msg).await,
-                            Err(e) if e.kind() == io::ErrorKind::WouldBlock => Ok(None),
-                            Err(e) => Err(e),
-                        }
-                    }
+                    Ok(Ok(())) => match self.try_recv() {
+                        Ok(msg) => signal_and_return(&self.doorbell, msg).await,
+                        Err(e) if e.kind() == io::ErrorKind::WouldBlock => Ok(None),
+                        Err(e) => Err(e),
+                    },
                     Ok(Err(e)) => Err(e),
                     Err(_timeout) => Ok(None),
                 }
             } else {
-                // No doorbell - fall back to yielding (shouldn't happen in practice)
                 tokio::task::yield_now().await;
                 match self.try_recv() {
                     Ok(msg) => signal_and_return(&self.doorbell, msg).await,
@@ -877,14 +741,10 @@ mod async_transport {
             }
         }
 
-        /// Receive a message (waits on doorbell until one arrives or connection closes).
         async fn recv(&mut self) -> io::Result<Option<Message>> {
             loop {
-                // First check if there's already a message waiting
                 match self.try_recv() {
                     Ok(msg) => {
-                        // Signal doorbell to notify host that we consumed a message
-                        // (host may have pending sends waiting for slots to free up)
                         // shm[impl shm.backpressure.host-to-guest]
                         if let Some(doorbell) = &self.doorbell {
                             doorbell.signal().await;
@@ -895,11 +755,9 @@ mod async_transport {
                     Err(e) => return Err(e),
                 }
 
-                // Wait on doorbell for host notification
                 if let Some(doorbell) = &self.doorbell {
                     doorbell.wait().await?;
                 } else {
-                    // No doorbell - yield and retry (shouldn't happen in practice)
                     tokio::task::yield_now().await;
                 }
             }
@@ -925,14 +783,14 @@ mod tests {
             metadata: vec![(
                 "key".to_string(),
                 MetadataValue::String("value".to_string()),
-                0, // flags
+                0,
             )],
             channels: vec![],
             payload: b"hello world".to_vec(),
         };
 
-        let frame = message_to_frame(&msg).unwrap();
-        let decoded = frame_to_message(frame).unwrap();
+        let shm_msg = message_to_shm_msg(&msg).unwrap();
+        let decoded = shm_msg_to_message(shm_msg).unwrap();
 
         assert_eq!(msg, decoded);
     }
@@ -948,8 +806,8 @@ mod tests {
             payload: b"hello world".to_vec(),
         };
 
-        let frame = message_to_frame(&msg).unwrap();
-        let decoded = frame_to_message(frame).unwrap();
+        let shm_msg = message_to_shm_msg(&msg).unwrap();
+        let decoded = shm_msg_to_message(shm_msg).unwrap();
 
         assert_eq!(msg, decoded);
     }
@@ -964,8 +822,8 @@ mod tests {
             payload: b"response data".to_vec(),
         };
 
-        let frame = message_to_frame(&msg).unwrap();
-        let decoded = frame_to_message(frame).unwrap();
+        let shm_msg = message_to_shm_msg(&msg).unwrap();
+        let decoded = shm_msg_to_message(shm_msg).unwrap();
 
         assert_eq!(msg, decoded);
     }
@@ -980,8 +838,8 @@ mod tests {
             payload: b"response data".to_vec(),
         };
 
-        let frame = message_to_frame(&msg).unwrap();
-        let decoded = frame_to_message(frame).unwrap();
+        let shm_msg = message_to_shm_msg(&msg).unwrap();
+        let decoded = shm_msg_to_message(shm_msg).unwrap();
 
         assert_eq!(msg, decoded);
     }
@@ -994,8 +852,8 @@ mod tests {
             payload: b"stream chunk".to_vec(),
         };
 
-        let frame = message_to_frame(&msg).unwrap();
-        let decoded = frame_to_message(frame).unwrap();
+        let shm_msg = message_to_shm_msg(&msg).unwrap();
+        let decoded = shm_msg_to_message(shm_msg).unwrap();
 
         assert_eq!(msg, decoded);
     }
@@ -1022,8 +880,8 @@ mod tests {
         ];
 
         for msg in messages {
-            let frame = message_to_frame(&msg).unwrap();
-            let decoded = frame_to_message(frame).unwrap();
+            let shm_msg = message_to_shm_msg(&msg).unwrap();
+            let decoded = shm_msg_to_message(shm_msg).unwrap();
             assert_eq!(msg, decoded);
         }
     }
@@ -1036,7 +894,7 @@ mod tests {
         });
 
         assert!(matches!(
-            message_to_frame(&msg),
+            message_to_shm_msg(&msg),
             Err(ConvertError::HelloNotSupported)
         ));
     }
@@ -1050,35 +908,37 @@ mod tests {
         };
 
         assert!(matches!(
-            message_to_frame(&msg),
+            message_to_shm_msg(&msg),
             Err(ConvertError::CreditNotSupported)
         ));
     }
 
     #[test]
-    fn inline_payload() {
-        // Small payload should be inlined
+    fn small_payload_roundtrip() {
         let msg = Message::Data {
             conn_id: ConnectionId::ROOT,
             channel_id: 1,
             payload: b"tiny".to_vec(),
         };
 
-        let frame = message_to_frame(&msg).unwrap();
-        assert_eq!(frame.desc.payload_slot, INLINE_PAYLOAD_SLOT);
-        assert!(matches!(frame.payload, Payload::Inline));
+        let shm_msg = message_to_shm_msg(&msg).unwrap();
+        // Payload is conn_id (8 bytes) + "tiny" (4 bytes) = 12 bytes
+        assert_eq!(shm_msg.payload.len(), 12);
+        let decoded = shm_msg_to_message(shm_msg).unwrap();
+        assert_eq!(msg, decoded);
     }
 
     #[test]
-    fn large_payload() {
-        // Large payload should not be inlined
+    fn large_payload_roundtrip() {
         let msg = Message::Data {
             conn_id: ConnectionId::ROOT,
             channel_id: 1,
             payload: vec![0u8; 100],
         };
 
-        let frame = message_to_frame(&msg).unwrap();
-        assert!(matches!(frame.payload, Payload::Owned(_)));
+        let shm_msg = message_to_shm_msg(&msg).unwrap();
+        assert_eq!(shm_msg.payload.len(), 108); // 8 bytes conn_id + 100
+        let decoded = shm_msg_to_message(shm_msg).unwrap();
+        assert_eq!(msg, decoded);
     }
 }
