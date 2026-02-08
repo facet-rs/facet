@@ -1,7 +1,7 @@
 //! SHM diagnostic utilities for SIGUSR1 dumps.
 //!
 //! Provides functions to dump the state of shared memory segments,
-//! slot pools, ring buffers, and peer connections.
+//! slot pools, BipBuffers, and peer connections.
 
 use std::fmt::Write as _;
 use std::path::PathBuf;
@@ -12,16 +12,7 @@ use shm_primitives::Region;
 use crate::host::ShmHost;
 use crate::layout::SegmentLayout;
 use crate::peer::{PeerId, PeerState};
-use crate::slot_pool::SlotPool;
 use crate::var_slot_pool::VarSlotPool;
-
-/// Diagnostic stats for a slot pool.
-#[derive(Debug, Clone)]
-pub struct SlotPoolStats {
-    pub total_slots: u32,
-    pub allocated_slots: u32,
-    pub free_slots: u32,
-}
 
 /// Diagnostic stats for a variable slot pool (all size classes).
 #[derive(Debug, Clone)]
@@ -39,14 +30,10 @@ pub struct VarSlotClassStats {
     pub total_slots: u32,
 }
 
-/// Diagnostic stats for a ring buffer.
+/// Diagnostic stats for a BipBuffer.
 #[derive(Debug, Clone)]
-pub struct RingStats {
-    pub head: u32,
-    pub tail: u32,
+pub struct BipBufStats {
     pub capacity: u32,
-    pub used: u32,
-    pub free: u32,
 }
 
 /// Diagnostic stats for a single peer slot.
@@ -57,8 +44,8 @@ pub struct PeerSlotStats {
     pub epoch: u32,
     pub last_heartbeat_ns: u64,
     pub time_since_heartbeat_ms: Option<u64>,
-    pub host_to_guest_ring: RingStats,
-    pub guest_to_host_ring: RingStats,
+    pub host_to_guest_bipbuf: BipBufStats,
+    pub guest_to_host_bipbuf: BipBufStats,
     /// Only present for tracked guests (those we've communicated with)
     pub tracked_state: Option<TrackedGuestStats>,
 }
@@ -77,22 +64,21 @@ pub struct TrackedGuestStats {
     pub bytes_received: u64,
 }
 
-/// Full diagnostic snapshot of an SHM segment.
+/// Full diagnostic snapshot of an SHM segment (v2).
 #[derive(Debug, Clone)]
 pub struct ShmDiagnostics {
     pub segment_path: Option<String>,
     pub total_size: u64,
     pub current_size: u64,
     pub max_peers: u32,
-    pub host_slots: SlotPoolStats,
-    pub var_pool: Option<VarSlotPoolStats>,
+    pub var_pool: VarSlotPoolStats,
     pub peer_slots: Vec<PeerSlotStats>,
     pub host_goodbye: bool,
 }
 
 impl ShmDiagnostics {
     /// Format the diagnostics as a compact human-readable string.
-    /// Only shows non-empty peers with ring activity.
+    /// Only shows non-empty peers with activity.
     pub fn format(&self) -> String {
         let mut output = String::new();
 
@@ -108,18 +94,15 @@ impl ShmDiagnostics {
 
         let _ = write!(output, "[SHM] {} peers", attached);
         if self.host_goodbye {
-            let _ = write!(output, " ⚠️GOODBYE");
+            let _ = write!(output, " GOODBYE");
         }
         let _ = writeln!(output);
 
-        // Only show attached peers with ring activity
+        // Only show attached peers
         for peer in &self.peer_slots {
             if peer.state != PeerState::Attached {
                 continue;
             }
-
-            let h2g = &peer.host_to_guest_ring;
-            let g2h = &peer.guest_to_host_ring;
 
             // Get name if available, otherwise use peer_id
             let name = peer
@@ -129,17 +112,11 @@ impl ShmDiagnostics {
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| format!("peer#{}", peer.peer_id.get()));
 
-            // Compact format: [name] H→G:used/cap G→H:used/cap [bytes]
             let _ = write!(
                 output,
-                "  [{}] H→G:{}/{} G→H:{}/{}",
-                name, h2g.used, h2g.capacity, g2h.used, g2h.capacity
+                "  [{}] bipbuf_cap:{}",
+                name, peer.host_to_guest_bipbuf.capacity
             );
-
-            // Flag if G→H has pending messages (cell sent but host hasn't read)
-            if g2h.used > 0 {
-                let _ = write!(output, " ⚠️PENDING");
-            }
 
             // Show byte stats if available
             if let Some(ref tracked) = peer.tracked_state
@@ -147,7 +124,7 @@ impl ShmDiagnostics {
             {
                 let _ = write!(
                     output,
-                    " ({}↑ {}↓)",
+                    " ({}up {}down)",
                     format_bytes(tracked.bytes_sent),
                     format_bytes(tracked.bytes_received)
                 );
@@ -224,25 +201,16 @@ impl ShmDiagnosticView {
         let current_size = header.current_size.load(Ordering::Acquire);
         let host_goodbye = header.host_goodbye.load(Ordering::Acquire) != 0;
 
-        // Get host slot pool stats
-        let host_slots = {
-            let pool = SlotPool::new(
-                self.region,
-                self.layout.host_slot_pool_offset(),
-                &self.layout.config,
-            );
+        // Get variable slot pool stats
+        let var_pool = {
+            let offset = self.layout.var_slot_pool_offset;
+            let classes = &self.layout.config.var_slot_classes;
+            let pool = VarSlotPool::new(self.region, offset, classes.to_vec());
             pool.stats()
         };
 
-        // Get variable slot pool stats (if present)
-        let var_pool = self.layout.var_slot_pool_offset().and_then(|offset| {
-            self.layout.config.var_slot_classes.as_ref().map(|classes| {
-                let pool = VarSlotPool::new(self.region, offset, classes.to_vec());
-                pool.stats()
-            })
-        });
-
         // Get peer slot diagnostics
+        let bipbuf_capacity = self.layout.config.bipbuf_capacity;
         let mut peer_slots = Vec::with_capacity(self.layout.config.max_guests as usize);
         for i in 0..self.layout.config.max_guests {
             let Some(peer_id) = PeerId::from_index(i as u8) else {
@@ -262,35 +230,17 @@ impl ShmDiagnosticView {
                 None
             };
 
-            let ring_size = self.layout.config.ring_size;
-
-            let h2g_head = entry.h2g_head();
-            let h2g_tail = entry.h2g_tail();
-            let h2g_used = h2g_head.wrapping_sub(h2g_tail);
-
-            let g2h_head = entry.g2h_head();
-            let g2h_tail = entry.g2h_tail();
-            let g2h_used = g2h_head.wrapping_sub(g2h_tail);
-
             peer_slots.push(PeerSlotStats {
                 peer_id,
                 state,
                 epoch,
                 last_heartbeat_ns,
                 time_since_heartbeat_ms,
-                host_to_guest_ring: RingStats {
-                    head: h2g_head,
-                    tail: h2g_tail,
-                    capacity: ring_size,
-                    used: h2g_used,
-                    free: ring_size.saturating_sub(h2g_used),
+                host_to_guest_bipbuf: BipBufStats {
+                    capacity: bipbuf_capacity,
                 },
-                guest_to_host_ring: RingStats {
-                    head: g2h_head,
-                    tail: g2h_tail,
-                    capacity: ring_size,
-                    used: g2h_used,
-                    free: ring_size.saturating_sub(g2h_used),
+                guest_to_host_bipbuf: BipBufStats {
+                    capacity: bipbuf_capacity,
                 },
                 // No tracked state available from the view (that's in the driver)
                 tracked_state: None,
@@ -302,23 +252,9 @@ impl ShmDiagnosticView {
             total_size: self.layout.total_size,
             current_size,
             max_peers: self.layout.config.max_guests,
-            host_slots,
             var_pool,
             peer_slots,
             host_goodbye,
-        }
-    }
-}
-
-impl SlotPool {
-    /// Get diagnostic stats for this slot pool.
-    pub fn stats(&self) -> SlotPoolStats {
-        let allocated = self.allocated_count();
-        let total = self.total_slots();
-        SlotPoolStats {
-            total_slots: total,
-            allocated_slots: allocated,
-            free_slots: total.saturating_sub(allocated),
         }
     }
 }
@@ -399,25 +335,19 @@ impl ShmHost {
             total_size: layout.total_size,
             current_size: self.current_size_for_diagnostic(),
             max_peers: layout.config.max_guests,
-            host_slots: self.host_slots_stats_for_diagnostic(),
             var_pool: self.var_pool_stats_for_diagnostic(),
             peer_slots: self.all_peer_diagnostics(),
             host_goodbye: self.is_goodbye(),
         }
     }
 
-    /// Get diagnostic stats for the host's slot pool.
-    fn host_slots_stats_for_diagnostic(&self) -> SlotPoolStats {
-        self.host_slots.stats()
-    }
-
-    /// Get diagnostic stats for the variable slot pool (if present).
-    fn var_pool_stats_for_diagnostic(&self) -> Option<VarSlotPoolStats> {
+    /// Get diagnostic stats for the variable slot pool.
+    fn var_pool_stats_for_diagnostic(&self) -> VarSlotPoolStats {
         let layout = self.layout();
-        let var_pool_offset = layout.var_slot_pool_offset()?;
-        let var_classes = layout.config.var_slot_classes.as_ref()?;
+        let var_pool_offset = layout.var_slot_pool_offset();
+        let var_classes = &layout.config.var_slot_classes;
         let var_pool = VarSlotPool::new(self.region(), var_pool_offset, var_classes.to_vec());
-        Some(var_pool.stats())
+        var_pool.stats()
     }
 
     /// Get diagnostic stats for ALL peer slots (not just connected ones).
@@ -428,6 +358,8 @@ impl ShmHost {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)
             .unwrap_or(0);
+
+        let bipbuf_capacity = layout.config.bipbuf_capacity;
 
         for i in 0..layout.config.max_guests {
             let Some(peer_id) = PeerId::from_index(i as u8) else {
@@ -445,17 +377,6 @@ impl ShmHost {
             } else {
                 None
             };
-
-            // Get ring stats
-            let ring_size = layout.config.ring_size;
-
-            let h2g_head = entry.h2g_head();
-            let h2g_tail = entry.h2g_tail();
-            let h2g_used = h2g_head.wrapping_sub(h2g_tail);
-
-            let g2h_head = entry.g2h_head();
-            let g2h_tail = entry.g2h_tail();
-            let g2h_used = g2h_head.wrapping_sub(g2h_tail);
 
             // Get tracked state if we have it
             let tracked_state = self.guests.get(&peer_id).map(|guest| {
@@ -479,19 +400,11 @@ impl ShmHost {
                 epoch,
                 last_heartbeat_ns,
                 time_since_heartbeat_ms,
-                host_to_guest_ring: RingStats {
-                    head: h2g_head,
-                    tail: h2g_tail,
-                    capacity: ring_size,
-                    used: h2g_used,
-                    free: ring_size.saturating_sub(h2g_used),
+                host_to_guest_bipbuf: BipBufStats {
+                    capacity: bipbuf_capacity,
                 },
-                guest_to_host_ring: RingStats {
-                    head: g2h_head,
-                    tail: g2h_tail,
-                    capacity: ring_size,
-                    used: g2h_used,
-                    free: ring_size.saturating_sub(g2h_used),
+                guest_to_host_bipbuf: BipBufStats {
+                    capacity: bipbuf_capacity,
                 },
                 tracked_state,
             });

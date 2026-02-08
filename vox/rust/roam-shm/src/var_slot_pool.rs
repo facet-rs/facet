@@ -747,6 +747,18 @@ impl VarSlotPool {
         }
     }
 
+    /// Check if a slot has been freed (state is Free or generation has advanced).
+    pub fn is_slot_free(&self, handle: &VarSlotHandle) -> bool {
+        let Some(meta) = self.slot_meta_ext(
+            handle.class_idx as usize,
+            handle.extent_idx as usize,
+            handle.slot_idx,
+        ) else {
+            return true; // Invalid handle, treat as freed
+        };
+        meta.state() == SlotState::Free || meta.generation() != handle.generation
+    }
+
     /// Get the number of size classes.
     pub fn class_count(&self) -> usize {
         self.classes.len()

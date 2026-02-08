@@ -23,8 +23,7 @@ fn make_data_frame(seq: u32, payload: Vec<u8>) -> Frame {
 #[test]
 fn stress_single_guest_high_throughput() {
     let config = SegmentConfig {
-        ring_size: 256,
-        slots_per_guest: 32,
+        bipbuf_capacity: 65536,
         ..SegmentConfig::default()
     };
     let mut host = ShmHost::create_heap(config).unwrap();
@@ -65,8 +64,7 @@ fn stress_single_guest_high_throughput() {
 fn stress_multiple_guests_interleaved() {
     let config = SegmentConfig {
         max_guests: 8,
-        ring_size: 64,
-        slots_per_guest: 16,
+        bipbuf_capacity: 16384,
         ..SegmentConfig::default()
     };
     let mut host = ShmHost::create_heap(config).unwrap();
@@ -149,7 +147,6 @@ fn stress_bidirectional_ping_pong() {
 #[test]
 fn stress_varying_payload_sizes() {
     let config = SegmentConfig {
-        slot_size: 4096,
         max_payload_size: 4092,
         ..SegmentConfig::default()
     };
@@ -172,16 +169,10 @@ fn stress_varying_payload_sizes() {
         assert_eq!(messages.len(), 1, "Failed at size {}", size);
 
         let (_, recv_frame) = &messages[0];
-        assert_eq!(recv_frame.desc.payload_len as usize, size);
 
-        // Verify payload content
-        let recv_payload = match &recv_frame.payload {
-            Payload::Inline => &recv_frame.desc.inline_payload[..size],
-            Payload::Owned(data) => data.as_slice(),
-            Payload::Bytes(data) => data.as_ref(),
-        };
+        // Verify payload content via payload_bytes() (v2 always returns Owned)
         assert_eq!(
-            recv_payload,
+            recv_frame.payload_bytes(),
             payload.as_slice(),
             "Payload mismatch at size {}",
             size
@@ -193,8 +184,7 @@ fn stress_varying_payload_sizes() {
 #[test]
 fn stress_slot_exhaustion_recovery() {
     let config = SegmentConfig {
-        slots_per_guest: 4, // Very few slots
-        ring_size: 256,
+        bipbuf_capacity: 4096,
         ..SegmentConfig::default()
     };
     let mut host = ShmHost::create_heap(config).unwrap();
@@ -274,7 +264,7 @@ fn stress_concurrent_send_recv() {
     }
 
     let config = SegmentConfig {
-        ring_size: 256,
+        bipbuf_capacity: 65536,
         ..SegmentConfig::default()
     };
 
@@ -336,8 +326,7 @@ fn stress_concurrent_send_recv() {
 fn stress_max_guests() {
     let config = SegmentConfig {
         max_guests: 255, // Maximum allowed
-        ring_size: 16,
-        slots_per_guest: 4,
+        bipbuf_capacity: 4096,
         ..SegmentConfig::default()
     };
     let mut host = ShmHost::create_heap(config).unwrap();

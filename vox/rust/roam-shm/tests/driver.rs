@@ -644,8 +644,7 @@ async fn host_to_guest_backpressure_streaming() {
 
     // Configure with very few host slots to trigger exhaustion quickly
     let config = SegmentConfig {
-        slots_per_guest: 4, // Very few slots - will exhaust quickly
-        ring_size: 64,
+        bipbuf_capacity: 4096,
         max_guests: 4,
         ..SegmentConfig::default()
     };
@@ -752,8 +751,7 @@ async fn host_to_guest_backpressure_host_streaming() {
 
     // Configure with very few host slots to trigger exhaustion quickly
     let config = SegmentConfig {
-        slots_per_guest: 4, // Very few slots - will exhaust quickly
-        ring_size: 64,
+        bipbuf_capacity: 4096,
         max_guests: 4,
         ..SegmentConfig::default()
     };
@@ -855,8 +853,7 @@ async fn slot_exhaustion_should_not_corrupt_channel_state() {
 
     // Configure with very few slots to trigger exhaustion quickly
     let config = SegmentConfig {
-        slots_per_guest: 4, // Very few slots
-        ring_size: 64,
+        bipbuf_capacity: 4096,
         max_guests: 4,
         ..SegmentConfig::default()
     };
@@ -977,10 +974,10 @@ async fn streaming_errors_should_not_corrupt_channel_state() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("streaming_errors.shm");
 
-    // Configure with very few slots to increase contention
+    // BipBuffer needs enough capacity for 20 concurrent streaming calls
+    // with multiple in-flight messages each (v2 frames are larger than v1 MsgDesc)
     let config = SegmentConfig {
-        slots_per_guest: 4,
-        ring_size: 64,
+        bipbuf_capacity: 65536,
         max_guests: 4,
         ..SegmentConfig::default()
     };
@@ -1130,8 +1127,7 @@ async fn mixed_calls_with_slot_exhaustion() {
     let path = dir.path().join("mixed_calls.shm");
 
     let config = SegmentConfig {
-        slots_per_guest: 4,
-        ring_size: 64,
+        bipbuf_capacity: 4096,
         max_guests: 4,
         ..SegmentConfig::default()
     };
@@ -1314,8 +1310,7 @@ async fn recursive_calls_with_slot_exhaustion() {
 
     // Very few slots - recursive calls will exhaust them quickly
     let config = SegmentConfig {
-        slots_per_guest: 4,
-        ring_size: 64,
+        bipbuf_capacity: 4096,
         max_guests: 4,
         ..SegmentConfig::default()
     };
@@ -1693,8 +1688,7 @@ async fn recursive_streaming_calls_with_slot_exhaustion() {
 
     // Very few slots - streaming recursive calls will exhaust them quickly
     let config = SegmentConfig {
-        slots_per_guest: 4,
-        ring_size: 64,
+        bipbuf_capacity: 4096,
         max_guests: 4,
         ..SegmentConfig::default()
     };

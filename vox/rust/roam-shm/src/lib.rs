@@ -69,7 +69,6 @@ pub mod channel;
 pub mod layout;
 pub mod msg;
 pub mod peer;
-pub(crate) mod slot_pool;
 pub mod var_slot_pool;
 
 pub mod auditable;

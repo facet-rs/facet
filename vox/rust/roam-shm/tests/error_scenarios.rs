@@ -559,7 +559,6 @@ fn test_attach_error_invalid_peer_id() {
 fn test_send_error_payload_too_large_guest() {
     let config = SegmentConfig {
         max_payload_size: 100, // Small limit
-        slot_size: 128,
         ..SegmentConfig::default()
     };
     let host = ShmHost::create_heap(config).unwrap();
@@ -588,7 +587,6 @@ fn test_send_error_payload_too_large_guest() {
 fn test_send_error_payload_too_large_host() {
     let config = SegmentConfig {
         max_payload_size: 100,
-        slot_size: 128,
         ..SegmentConfig::default()
     };
     let mut host = ShmHost::create_heap(config).unwrap();
@@ -613,22 +611,25 @@ fn test_send_error_payload_too_large_host() {
     );
 }
 
-/// Test SendError::PayloadTooLarge with inline payload that claims wrong length.
+/// Test SendError::PayloadTooLarge for guest with small max_payload_size (inline path).
+/// Even payloads that would fit inline must respect max_payload_size.
 #[test]
 fn test_send_error_inline_payload_too_large() {
-    let config = SegmentConfig::default();
+    let config = SegmentConfig {
+        max_payload_size: 10, // Very small limit
+        ..SegmentConfig::default()
+    };
     let host = ShmHost::create_heap(config).unwrap();
     let region = host.region();
 
     let mut guest = ShmGuest::attach(region).unwrap();
 
-    // Create a descriptor with inline payload but payload_len > INLINE_PAYLOAD_LEN
-    let mut desc = MsgDesc::new(msg_type::DATA, 1, 0);
-    desc.payload_len = 100; // Too large for inline (max is 32)
-
+    // 20 bytes would fit inline but exceeds max_payload_size of 10
+    let payload = vec![0u8; 20];
+    let desc = MsgDesc::new(msg_type::DATA, 1, 0);
     let frame = Frame {
         desc,
-        payload: Payload::Inline,
+        payload: Payload::Owned(payload),
     };
 
     let result = guest.send(frame);

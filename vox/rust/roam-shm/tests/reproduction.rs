@@ -30,8 +30,7 @@ async fn verify_queuing_order_on_exhaustion() {
 
     // 1 slot only!
     let config = SegmentConfig {
-        slots_per_guest: 1,
-        ring_size: 64,
+        bipbuf_capacity: 4096,
         max_guests: 1,
         ..SegmentConfig::default()
     };
@@ -117,7 +116,11 @@ async fn verify_queuing_order_on_exhaustion() {
 
     // Read Msg 1
     let frame1 = guest.recv().expect("Msg 1 missing");
-    assert!(!frame1.payload.is_inline(), "Msg 1 should be large");
+    assert!(
+        frame1.payload_bytes().len() > 100,
+        "Msg 1 should be large, got {} bytes",
+        frame1.payload_bytes().len()
+    );
     println!("Received Msg 1");
 
     // Reading Msg 1 frees the slot in the guest's view, but Host needs doorbell to know!
@@ -132,12 +135,20 @@ async fn verify_queuing_order_on_exhaustion() {
 
     // Check Msg 2
     let frame2 = guest.recv().expect("Msg 2 missing after retry");
-    assert!(!frame2.payload.is_inline(), "Msg 2 should be large");
+    assert!(
+        frame2.payload_bytes().len() > 100,
+        "Msg 2 should be large, got {} bytes",
+        frame2.payload_bytes().len()
+    );
     println!("Received Msg 2");
 
     // Check Msg 3
     let frame3 = guest.recv().expect("Msg 3 missing after retry");
-    assert!(frame3.payload.is_inline(), "Msg 3 should be inline (small)");
+    assert!(
+        frame3.payload_bytes().len() < 100,
+        "Msg 3 should be small, got {} bytes",
+        frame3.payload_bytes().len()
+    );
     println!("Received Msg 3");
 
     // Ring empty

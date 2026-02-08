@@ -158,7 +158,6 @@ impl SlotPool {
     }
 
     pub(crate) fn payload_ptr(&self, index: u32, payload_offset: u32) -> Option<*mut u8> {
-        // shm[impl shm.slot.payload-offset]
         let base = self.slot_base_offset(index)?;
         Some(self.region.offset(base + 4 + payload_offset as usize))
     }

@@ -61,7 +61,7 @@ fn guest_to_host_inline_message() {
     assert_eq!(*recv_peer_id, peer_id);
     assert_eq!(frame.desc.msg_type, msg_type::REQUEST);
     assert_eq!(frame.desc.id, 1);
-    assert_eq!(&frame.desc.inline_payload[..10], b"hello host");
+    assert_eq!(frame.payload_bytes(), b"hello host");
 }
 
 /// shm[verify shm.ordering.ring-publish]
@@ -83,7 +83,7 @@ fn host_to_guest_inline_message() {
     let frame = guest.recv().unwrap();
     assert_eq!(frame.desc.msg_type, msg_type::RESPONSE);
     assert_eq!(frame.desc.id, 42);
-    assert_eq!(&frame.desc.inline_payload[..11], b"hello guest");
+    assert_eq!(frame.payload_bytes(), b"hello guest");
 }
 
 #[test]
@@ -111,7 +111,7 @@ fn bidirectional_roundtrip() {
     let frame = guest.recv().unwrap();
     assert_eq!(frame.desc.msg_type, msg_type::RESPONSE);
     assert_eq!(frame.desc.id, 100);
-    assert_eq!(&frame.desc.inline_payload[..4], b"pong");
+    assert_eq!(frame.payload_bytes(), b"pong");
 }
 
 /// shm[verify shm.topology.peer-id]
@@ -190,16 +190,9 @@ fn large_payload_via_slot() {
     let (recv_peer_id, frame) = &messages[0];
     assert_eq!(*recv_peer_id, peer_id);
     assert_eq!(frame.desc.msg_type, msg_type::DATA);
-    assert_eq!(frame.desc.payload_len, 1000);
-
     // Verify payload content
-    match &frame.payload {
-        Payload::Owned(data) => {
-            assert_eq!(data.len(), 1000);
-            assert_eq!(*data, large_payload);
-        }
-        _ => panic!("Expected Owned payload"),
-    }
+    assert_eq!(frame.payload_bytes().len(), 1000);
+    assert_eq!(frame.payload_bytes(), &large_payload[..]);
 }
 
 /// shm[verify shm.goodbye.host]
@@ -249,12 +242,12 @@ fn many_messages_in_sequence() {
     }
 }
 
-/// shm[verify shm.ring.full]
+/// shm[verify shm.bipbuf.full]
 #[test]
 fn ring_backpressure() {
     // Use a small ring to test backpressure
     let config = SegmentConfig {
-        ring_size: 4, // Very small ring
+        bipbuf_capacity: 128, // Very small bipbuf so backpressure kicks in quickly
         ..SegmentConfig::default()
     };
     let mut host = ShmHost::create_heap(config).unwrap();
@@ -262,21 +255,23 @@ fn ring_backpressure() {
 
     let mut guest = ShmGuest::attach(region).unwrap();
 
-    // Fill the ring (ring_size - 1 = 3 messages before full)
-    for i in 0..3 {
-        guest.send(make_request(i, b"x")).unwrap();
+    // Fill the bipbuf until backpressure kicks in
+    let mut sent = 0u32;
+    loop {
+        match guest.send(make_request(sent, b"x")) {
+            Ok(()) => sent += 1,
+            Err(roam_shm::guest::SendError::RingFull) => break,
+            Err(e) => panic!("unexpected error: {:?}", e),
+        }
     }
-
-    // Next send should fail with RingFull
-    let result = guest.send(make_request(99, b"x"));
-    assert!(matches!(result, Err(roam_shm::guest::SendError::RingFull)));
+    assert!(sent > 0, "should have sent at least one message");
 
     // After host polls, ring has space again
     let PollResult { messages, .. } = host.poll();
-    assert_eq!(messages.len(), 3);
+    assert_eq!(messages.len(), sent as usize);
 
     // Now guest can send again
-    guest.send(make_request(100, b"x")).unwrap();
+    guest.send(make_request(sent + 1, b"x")).unwrap();
 }
 
 /// shm[verify shm.slot.free]
@@ -284,8 +279,7 @@ fn ring_backpressure() {
 fn slot_reclamation_guest_to_host() {
     // Test that slots are properly reclaimed after host consumes messages
     let config = SegmentConfig {
-        slots_per_guest: 4, // Very few slots to force exhaustion
-        ring_size: 256,
+        bipbuf_capacity: 4096,
         ..SegmentConfig::default()
     };
     let mut host = ShmHost::create_heap(config).unwrap();
@@ -317,8 +311,7 @@ fn slot_reclamation_guest_to_host() {
 fn slot_reclamation_host_to_guest() {
     // Test that slots are properly reclaimed after guest consumes messages
     let config = SegmentConfig {
-        slots_per_guest: 4, // Very few slots
-        ring_size: 256,
+        bipbuf_capacity: 4096,
         ..SegmentConfig::default()
     };
     let mut host = ShmHost::create_heap(config).unwrap();

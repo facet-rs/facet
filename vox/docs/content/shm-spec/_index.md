@@ -52,7 +52,8 @@ that communicate via shared memory.
 > r[shm.topology.hub.communication]
 >
 > Guests communicate only with the host, not with each other. Each
-> guest has its own rings and slot pool within the shared segment.
+> guest has its own BipBuffers and channel table within the shared
+> segment, and all guests share the VarSlotPool.
 
 > r[shm.topology.hub.calls]
 >
@@ -77,7 +78,7 @@ that communicate via shared memory.
 ## ID Widths
 
 Core defines `request_id` and `channel_id` as u64. SHM uses narrower
-encodings to fit in the 64-byte descriptor:
+encodings to fit in the 24-byte frame header:
 
 > r[shm.id.request-id]
 >
@@ -113,7 +114,7 @@ encodings to fit in the 64-byte descriptor:
 >
 > Request IDs are scoped to the guest-host pair. Two different guests
 > may use the same `request_id` value without collision because their
-> rings are separate.
+> BipBuffers are separate.
 
 # Handshake
 
@@ -148,21 +149,23 @@ state for all guests.
 Offset  Size   Field                Description
 ──────  ────   ─────                ───────────
 0       8      magic                Magic bytes: "RAPAHUB\x01"
-8       4      version              Segment format version (1)
-12      4      header_size          Size of this header
-16      8      total_size           Total segment size in bytes
+8       4      version              Segment format version (2)
+12      4      header_size          Size of this header (128)
+16      8      total_size           Initial segment size in bytes
 24      4      max_payload_size     Maximum payload per message
 28      4      initial_credit       Initial channel credit (bytes)
 32      4      max_guests           Maximum number of guests (≤ 255)
-36      4      ring_size            Descriptor ring capacity (power of 2)
+36      4      bipbuf_capacity      BipBuffer data region size in bytes per direction
 40      8      peer_table_offset    Offset to peer table
-48      8      slot_region_offset   Offset to payload slot region
-56      4      slot_size            Size of each payload slot
-60      4      slots_per_guest      Number of slots per guest
+48      8      slot_region_offset   (legacy, unused in v2)
+56      4      slot_size            Must be 0 in v2 (fixed pools eliminated)
+60      4      inline_threshold     Max frame size for inline payloads (0 = default 256)
 64      4      max_channels         Max concurrent channels per guest
 68      4      host_goodbye         Host goodbye flag (0 = active)
 72      8      heartbeat_interval   Heartbeat interval in nanoseconds (0 = disabled)
-80      48     reserved             Reserved for future use (zero)
+80      8      var_slot_pool_offset Offset to shared VarSlotPool (must be non-zero in v2)
+88      8      current_size         Current segment size (≥ total_size if extents appended)
+96      32     reserved             Reserved for future use (zero)
 ```
 
 > r[shm.segment.header-size]
@@ -182,20 +185,21 @@ Offset  Size   Field                Description
 ```rust
 #[repr(C)]
 struct PeerEntry {
-    state: AtomicU32,           // 0=Empty, 1=Attached, 2=Goodbye
+    state: AtomicU32,           // 0=Empty, 1=Attached, 2=Goodbye, 3=Reserved
     epoch: AtomicU32,           // Incremented on attach
-    guest_to_host_head: AtomicU32,  // Ring head (guest writes)
-    guest_to_host_tail: AtomicU32,  // Ring tail (host reads)
-    host_to_guest_head: AtomicU32,  // Ring head (host writes)
-    host_to_guest_tail: AtomicU32,  // Ring tail (guest reads)
+    _reserved_head_tail: [AtomicU32; 4], // Reserved (v1 ring indices, zeroed in v2)
     last_heartbeat: AtomicU64,  // Monotonic tick count (see r[shm.crash.heartbeat-clock])
-    ring_offset: u64,           // Offset to this guest's descriptor rings
-    slot_pool_offset: u64,      // Offset to this guest's slot pool
+    ring_offset: u64,           // Offset to this guest's area (BipBuffers)
+    slot_pool_offset: u64,      // Reserved in v2 (0)
     channel_table_offset: u64,  // Offset to this guest's channel table
     reserved: [u8; 8],          // Reserved (zero)
 }
 // Total: 64 bytes per entry
 ```
+>
+> In v2, the four ring head/tail fields are reserved (zeroed). Ring state
+> (write, read, watermark) lives in the BipBuffer headers within the
+> guest area instead of in the peer table.
 
 > r[shm.segment.peer-state]
 >
@@ -205,136 +209,171 @@ struct PeerEntry {
 > - **Goodbye (2)**: Guest is shutting down or has crashed
 > - **Reserved (3)**: Host has allocated slot, guest not yet attached (see `r[shm.spawn.reserved-state]`)
 
-## Per-Guest Rings
+## Per-Guest BipBuffers
 
-> r[shm.segment.guest-rings]
+Each guest has two BipBuffers (variable-length byte SPSC ring buffers):
+- **Guest→Host BipBuffer**: Guest produces frames, host consumes
+- **Host→Guest BipBuffer**: Host produces frames, guest consumes
+
+> r[shm.bipbuf.layout]
 >
-> Each guest has two descriptor rings:
-> - **Guest→Host ring**: Guest produces, host consumes
-> - **Host→Guest ring**: Host produces, guest consumes
-
-Each ring is an array of `ring_size` descriptors. Head/tail indices are
-stored in the peer table entry.
-
-> r[shm.ring.layout]
+> Each guest's area (at `PeerEntry.ring_offset`) contains:
+> 1. Guest→Host BipBuffer: 128-byte header + `bipbuf_capacity` bytes data
+> 2. Host→Guest BipBuffer: 128-byte header + `bipbuf_capacity` bytes data
+> 3. Channel table: `max_channels × 16` bytes
 >
-> At the offset specified by `PeerEntry.ring_offset`:
-> 1. Guest→Host ring: `ring_size * 64` bytes (ring_size descriptors)
-> 2. Host→Guest ring: `ring_size * 64` bytes (ring_size descriptors)
->
-> Both rings are contiguous. Total size per guest: `2 * ring_size * 64` bytes.
+> Total per guest: `align64(2 × (128 + bipbuf_capacity)) + align64(max_channels × 16)`.
 
-> r[shm.ring.alignment]
+> r[shm.bipbuf.header]
 >
-> Each ring MUST be aligned to 64 bytes (cache line). Since descriptors
-> are 64 bytes and rings are contiguous, this is naturally satisfied if
-> `ring_offset` is 64-byte aligned.
-
-> r[shm.ring.initialization]
+> Each BipBuffer has a 128-byte header (two cache lines):
 >
-> On segment creation, all ring memory MUST be zeroed. On guest attach,
-> the guest MUST NOT assume ring contents are valid — it should wait
-> for head != tail before reading.
-
-> r[shm.ring.capacity]
+> ```rust
+> #[repr(C, align(64))]
+> struct BipBufHeader {
+>     // --- Cache line 0: producer-owned ---
+>     write: AtomicU32,       // Next write position (byte offset)
+>     watermark: AtomicU32,   // Wrap boundary (0 = no wrap active)
+>     capacity: u32,          // Data region size in bytes (immutable)
+>     _pad0: [u8; 52],
 >
-> A ring can hold at most `ring_size - 1` descriptors. The ring is
-> full when `(head + 1) % ring_size == tail`. The ring is empty when
-> `head == tail`.
-
-> r[shm.ring.full]
+>     // --- Cache line 1: consumer-owned ---
+>     read: AtomicU32,        // Consumed frontier (byte offset)
+>     _pad1: [u8; 60],
+> }
+> ```
 >
-> If the ring is full, the producer MUST wait before enqueueing.
-> Implementations SHOULD use futex on the tail index to avoid busy-wait.
-> Ring fullness is not a protocol error — it indicates backpressure
-> from a slow consumer.
+> Splitting producer and consumer fields onto separate cache lines avoids
+> false sharing.
 
-## Slot Pools
-
-> r[shm.segment.slot-pools]
+> r[shm.bipbuf.initialization]
 >
-> Each guest has a dedicated pool of `slots_per_guest` payload slots.
-> Slots are used for payloads that exceed inline capacity.
+> On segment creation, all BipBuffer memory MUST be zeroed (write=0,
+> watermark=0, read=0). On guest attach, the guest MUST NOT assume buffer
+> contents are valid.
 
-> r[shm.segment.slot-ownership]
+> r[shm.bipbuf.grant]
 >
-> Slots from a guest's pool are used for messages **sent by that guest**.
-> After the host processes a message, the slot is returned to the guest's
-> pool.
+> To reserve `n` contiguous bytes for writing (**grant**):
+>
+> 1. If `write >= read`:
+>    - If `capacity - write >= n`: grant `[write..write+n)`. Done.
+>    - Else if `read > 0`: set `watermark = write`, `write = 0`. If
+>      `n <= read`, grant `[0..n)`. Else undo (`write = old`, `watermark = 0`)
+>      and return full.
+>    - Else (`read == 0`): no room to wrap, return full.
+> 2. If `write < read`:
+>    - If `write + n <= read`: grant `[write..write+n)`. Done.
+>    - Else return full.
 
-> r[shm.segment.pool-size]
+> r[shm.bipbuf.commit]
 >
-> Each slot pool (host or guest) has the same size:
-> `pool_size = slot_pool_header_size + slots_per_guest * slot_size`
-> where `slot_pool_header_size` is the bitmap header rounded up to
-> 64 bytes (see `r[shm.slot.pool-header-size]`).
+> After writing data into a granted region, the producer commits by
+> advancing `write += n` with **Release** ordering. This makes the
+> written bytes visible to the consumer.
 
-> r[shm.segment.host-slots]
+> r[shm.bipbuf.read]
 >
-> The host has its own slot pool for messages it sends to guests. The
-> host slot pool is located at offset `slot_region_offset` in the
-> segment (position 0), before the per-guest slot pools.
+> To read available bytes:
+>
+> 1. Load `write` with **Acquire**.
+> 2. If `read < write`: readable region is `[read..write)`.
+> 3. If `read >= write` and `watermark != 0`:
+>    - If `read < watermark`: readable region is `[read..watermark)`.
+>    - If `read >= watermark`: set `read = 0`, `watermark = 0`, retry.
+> 4. Otherwise the buffer is empty.
 
-> r[shm.segment.guest-slot-offset]
+> r[shm.bipbuf.release]
 >
-> A guest with `peer_id = P` (where P ≥ 1) has its slot pool at:
-> `slot_region_offset + P * pool_size`
+> After processing `n` bytes, the consumer releases by advancing
+> `read += n` with **Release** ordering. If `read` reaches or exceeds
+> `watermark`, set `read = 0` and `watermark = 0` (wrap to beginning).
+
+> r[shm.bipbuf.full]
+>
+> If the BipBuffer has no room for the requested grant, the producer
+> MUST wait. Implementations SHOULD use a doorbell signal or polling
+> with backoff. A full BipBuffer indicates backpressure from a slow
+> consumer, not a protocol error.
+
+> r[shm.backpressure.host-to-guest]
+>
+> When the host cannot write to a guest's H→G BipBuffer (buffer full
+> or no slots available), it MUST queue the message and retry when
+> capacity becomes available. The guest signals the doorbell after
+> consuming messages, which the host uses as a cue to drain its
+> pending send queue.
 
 # Message Encoding
 
-All abstract messages from Core are encoded as 64-byte descriptors.
+All abstract messages from Core are encoded as variable-length frames
+written into BipBuffers.
 
-## MsgDesc (64 bytes)
+## ShmFrameHeader (24 bytes)
 
-> r[shm.desc.size]
+> r[shm.frame.header]
 >
-> Message descriptors MUST be exactly 64 bytes (one cache line).
-
-```rust
-#[repr(C, align(64))]
-pub struct MsgDesc {
-    // Identity (16 bytes)
-    pub msg_type: u8,             // Message type
-    pub flags: u8,                // Message flags (reserved, must be 0)
-    pub _reserved: [u8; 2],       // Reserved (must be zero)
-    pub id: u32,                  // request_id or channel_id
-    pub method_id: u64,           // Method ID (for Request only, else 0)
-
-    // Payload location (16 bytes)
-    pub payload_slot: u32,        // Slot index (0xFFFFFFFF = inline)
-    pub payload_generation: u32,  // ABA counter (0 for inline payloads)
-    pub payload_offset: u32,      // Offset in payload area (0 for inline)
-    pub payload_len: u32,         // Payload length in bytes
-
-    // Inline payload (32 bytes)
-    pub inline_payload: [u8; 32], // Used when payload_slot == 0xFFFFFFFF
-}
-```
-
-> r[shm.desc.flags]
+> Each frame begins with a 24-byte header (little-endian):
 >
-> The `flags` field is reserved for future use and MUST be zero.
-> Receivers SHOULD ignore this field (do not reject non-zero values)
-> to allow forward compatibility.
+> ```text
+> Offset  Size  Field        Description
+> ──────  ────  ─────        ───────────
+> 0       4     total_len    Frame size in bytes (including this field), padded to 4
+> 4       1     msg_type     Message type (see r[shm.desc.msg-type])
+> 5       1     flags        Bit 0: FLAG_SLOT_REF (payload in VarSlotPool)
+> 6       2     _reserved    Reserved (zero)
+> 8       4     id           request_id or channel_id (u32)
+> 12      8     method_id    Method hash (u64, 0 for non-Request messages)
+> 20      4     payload_len  Actual payload byte count
+> ```
 
-> r[shm.desc.inline-fields]
+> r[shm.frame.alignment]
 >
-> For inline payloads (`payload_slot == 0xFFFFFFFF`):
-> - `payload_generation` MUST be 0
-> - `payload_offset` MUST be 0
-> - `payload_len` indicates bytes used in `inline_payload`
+> `total_len` MUST be padded up to a 4-byte boundary. The padding
+> bytes (between the end of the payload or slot reference and the next
+> 4-byte boundary) SHOULD be zeroed.
+
+> r[shm.frame.inline]
+>
+> When `FLAG_SLOT_REF` is clear (flags bit 0 = 0), the payload bytes
+> immediately follow the 24-byte header inline in the BipBuffer.
+> The frame occupies `align4(24 + payload_len)` bytes total.
+
+> r[shm.frame.slot-ref]
+>
+> When `FLAG_SLOT_REF` is set (flags bit 0 = 1), a 12-byte `SlotRef`
+> follows the header instead of inline payload:
+>
+> ```text
+> Offset  Size  Field            Description
+> ──────  ────  ─────            ───────────
+> 0       1     class_idx        Size class index in VarSlotPool
+> 1       1     extent_idx       Extent index within the class
+> 2       2     _pad             Reserved (zero)
+> 4       4     slot_idx         Slot index within the extent
+> 8       4     slot_generation  ABA generation counter
+> ```
+>
+> The actual payload is stored in the VarSlotPool slot identified by
+> this reference. The frame occupies 36 bytes (`align4(24 + 12)`).
+
+> r[shm.frame.threshold]
+>
+> A frame with `24 + payload_len <= inline_threshold` SHOULD be sent
+> inline. Larger payloads MUST use a slot reference. The default
+> inline threshold is 256 bytes (configurable via the segment header's
+> `inline_threshold` field; 0 means use the default).
 
 ## Metadata Encoding
 
 The abstract Message type (see [CORE-SPEC]) has separate `metadata` and
-`payload` fields. SHM's 64-byte descriptor cannot carry both separately,
-so they are combined:
+`payload` fields. SHM frames carry both in the payload region, combined
+into a single encoded value:
 
 > r[shm.metadata.in-payload]
 >
-> For Request and Response messages, the descriptor's payload contains
-> both metadata and arguments/result, encoded as a single [POSTCARD]
-> value:
+> For Request and Response messages, the frame's payload contains both
+> metadata and arguments/result, encoded as a single [POSTCARD] value:
 >
 > ```rust
 > struct RequestPayload {
@@ -360,8 +399,8 @@ so they are combined:
 
 > r[shm.desc.msg-type]
 >
-> The `msg_type` field identifies the abstract message:
-> 
+> The `msg_type` field in `ShmFrameHeader` identifies the abstract message:
+>
 > | Value | Message | `id` Field Contains |
 > |-------|---------|---------------------|
 > | 1 | Request | `request_id` |
@@ -371,9 +410,14 @@ so they are combined:
 > | 5 | Close | `channel_id` |
 > | 6 | Reset | `channel_id` |
 > | 7 | Goodbye | (unused) |
+> | 8 | Connect | `request_id` |
+> | 9 | Accept | `request_id` |
+> | 10 | Reject | `request_id` |
 
-Note: There is no Credit message type. Credit is conveyed via shared
-counters (see [Flow Control](#flow-control)).
+> r[shm.flow.no-credit-message]
+>
+> There is no Credit message type. Credit is conveyed via shared
+> atomic counters in the channel table (see [Flow Control](#flow-control)).
 
 ## Payload Encoding
 
@@ -383,73 +427,39 @@ counters (see [Flow Control](#flow-control)).
 
 > r[shm.payload.inline]
 >
-> If `payload_len <= 32`, the payload MUST be stored inline and
-> `payload_slot` MUST be `0xFFFFFFFF`.
+> If `24 + payload_len <= inline_threshold`, the payload SHOULD be
+> stored inline in the BipBuffer frame (see `r[shm.frame.inline]`).
+> The default inline threshold is 256 bytes.
 
 > r[shm.payload.slot]
 >
-> If `payload_len > 32`, the payload MUST be stored in a slot from
-> the sender's pool.
-
-## Slot Pool Structure
-
-> r[shm.slot.pool-layout]
->
-> A slot pool is an array of slots, each `slot_size` bytes. Before
-> the slots is a slot header:
->
-> ```rust
-> #[repr(C)]
-> struct SlotPoolHeader {
->     free_bitmap: [AtomicU64; N],  // 1 bit per slot, 1 = free
-> }
-> ```
->
-> The bitmap size N = ceil(slots_per_guest / 64). Slots are numbered
-> 0 to `slots_per_guest - 1`. Bit `i` of word `i / 64` represents
-> slot `i`.
-
-> r[shm.slot.pool-header-size]
->
-> The slot pool header is padded to a multiple of 64 bytes for
-> alignment. Slot 0 begins immediately after the header.
+> If `24 + payload_len > inline_threshold`, the payload MUST be stored
+> in the shared VarSlotPool and referenced via a `SlotRef` in the frame
+> (see `r[shm.frame.slot-ref]`).
 
 ## Slot Lifecycle
 
 > r[shm.slot.allocate]
 >
-> To allocate a slot:
-> 1. Scan the free_bitmap for a set bit (any strategy: linear, random)
-> 2. Atomically clear the bit (CAS from 1 to 0)
-> 3. If CAS fails, retry with another slot
+> To allocate a slot from the VarSlotPool:
+> 1. Find the smallest size class where `slot_size >= payload_len`
+> 2. Pop from that class's Treiber stack free list (see `r[shm.varslot.allocation]`)
+> 3. If exhausted, try the next larger class
 > 4. Increment the slot's generation counter
-> 5. Write payload to the slot
+> 5. Write payload to the slot's data region
 
 > r[shm.slot.free]
 >
 > To free a slot:
-> 1. Set the corresponding bit in free_bitmap (atomic OR)
+> 1. Push it back onto the size class's Treiber stack free list
+>    (see `r[shm.varslot.freeing]`)
 >
-> The receiver frees slots after processing the message. This returns
-> the slot to the sender's pool.
-
-> r[shm.slot.generation]
->
-> Each slot's first 4 bytes are an `AtomicU32` generation counter,
-> incremented on allocation. The usable payload area is `slot_size - 4`
-> bytes starting at byte 4 of the slot. The receiver verifies
-> `payload_generation` matches to detect ABA issues.
-
-> r[shm.slot.payload-offset]
->
-> The `payload_offset` field in MsgDesc is relative to the payload
-> area (after the generation counter), not the slot start. A
-> `payload_offset` of 0 means the payload begins at byte 4 of the slot.
+> The receiver frees slots after processing the message.
 
 > r[shm.slot.exhaustion]
 >
-> If no free slots are available, the sender MUST wait. Use futex on
-> a bitmap word or poll with backoff. Slot exhaustion is not a protocol
+> If no free slots are available in any suitable size class, the sender
+> MUST wait. Use polling with backoff. Slot exhaustion is not a protocol
 > error — it indicates backpressure.
 
 # Ordering and Synchronization
@@ -458,34 +468,35 @@ counters (see [Flow Control](#flow-control)).
 
 > r[shm.ordering.ring-publish]
 >
-> When enqueueing a descriptor:
-> 1. Write descriptor and payload with Release ordering
-> 2. Increment ring head with Release ordering
+> When writing a frame to a BipBuffer:
+> 1. Grant contiguous space (check write vs read positions)
+> 2. Write frame header and payload into the granted region
+> 3. Commit: advance `write += total_len` with **Release** ordering
 
 > r[shm.ordering.ring-consume]
 >
-> When dequeueing a descriptor:
-> 1. Load head with Acquire ordering
-> 2. If head != tail, load descriptor with Acquire ordering
-> 3. Process message
-> 4. Increment tail with Release ordering
+> When reading frames from a BipBuffer:
+> 1. Load `write` with **Acquire** ordering
+> 2. If readable bytes available, read frame(s)
+> 3. Process message(s)
+> 4. Release: advance `read += bytes_consumed` with **Release** ordering
 
 ## Wakeup Mechanism
 
-On Linux, use futex for efficient waiting. Each wait site has a
-corresponding wake site:
+Use doorbells for efficient cross-process notification, complemented by
+polling with backoff:
 
 > r[shm.wakeup.consumer-wait]
 >
-> **Consumer waiting for messages** (ring empty):
-> - Wait: futex_wait on ring head when `head == tail`
-> - Wake: Producer calls futex_wake on head after incrementing it
+> **Consumer waiting for messages** (BipBuffer empty):
+> - Wait: poll on doorbell fd (or busy-wait with backoff)
+> - Wake: Producer signals doorbell after committing bytes
 
 > r[shm.wakeup.producer-wait]
 >
-> **Producer waiting for space** (ring full):
-> - Wait: futex_wait on ring tail when `(head + 1) % ring_size == tail`
-> - Wake: Consumer calls futex_wake on tail after incrementing it
+> **Producer waiting for space** (BipBuffer full):
+> - Wait: poll on doorbell fd (or busy-wait with backoff)
+> - Wake: Consumer signals doorbell after releasing bytes
 
 > r[shm.wakeup.credit-wait]
 >
@@ -495,9 +506,9 @@ corresponding wake site:
 
 > r[shm.wakeup.slot-wait]
 >
-> **Sender waiting for slots** (pool exhausted):
-> - Wait: futex_wait on a bitmap word (implementation-defined which)
-> - Wake: Receiver calls futex_wake on that word after freeing a slot
+> **Sender waiting for slots** (VarSlotPool exhausted):
+> - Wait: poll with backoff (implementation-defined strategy)
+> - Wake: Receiver signals after freeing a slot back to the pool
 
 > r[shm.wakeup.fallback]
 >
@@ -659,7 +670,7 @@ struct ChannelEntry {
 > r[shm.goodbye.guest]
 >
 > A guest signals shutdown by setting its peer state to Goodbye.
-> It MAY send a Goodbye descriptor with reason first.
+> It MAY send a Goodbye frame with reason first.
 
 > r[shm.goodbye.host]
 >
@@ -669,7 +680,7 @@ struct ChannelEntry {
 
 > r[shm.goodbye.payload]
 >
-> A Goodbye descriptor's payload is a [POSTCARD]-encoded `String`
+> A Goodbye frame's payload is a [POSTCARD]-encoded `String`
 > containing the reason. Per `r[core.error.goodbye-reason]`, the
 > reason MUST contain the rule ID that was violated.
 
@@ -728,8 +739,10 @@ additional mechanisms to detect a guest that crashed while attached.
 > On detecting a crashed guest, the host MUST:
 > 1. Set the peer state to Goodbye
 > 2. Treat all in-flight operations as failed
-> 3. Reset rings to empty (head = tail = 0)
-> 4. Return all slots to free
+> 3. Reset BipBuffer headers (write=0, read=0, watermark=0) for both
+>    the G→H and H→G buffers
+> 4. Scan VarSlotPool for slots owned by the crashed peer
+>    (`owner_peer == peer_id`) and return them to their free lists
 > 5. Reset channel table entries to Free
 > 6. Set state to Empty (allowing new guest to attach)
 
@@ -737,9 +750,9 @@ additional mechanisms to detect a guest that crashed while attached.
 
 > r[shm.bytes.what-counts]
 >
-> For flow control, "bytes" = `payload_len` of Data descriptors
-> (the [POSTCARD]-encoded element size). Descriptor overhead and
-> slot padding do NOT count.
+> For flow control, "bytes" = `payload_len` of Data frames (the
+> [POSTCARD]-encoded element size). Frame header overhead and slot
+> padding do NOT count.
 
 # File-Backed Segments
 
@@ -765,7 +778,8 @@ file that can be memory-mapped by multiple processes.
 > 1. Open or create the file with read/write permissions
 > 2. Truncate to the required `total_size`
 > 3. Memory-map the entire file with `MAP_SHARED`
-> 4. Initialize all data structures (header, peer table, rings, slots)
+> 4. Initialize all data structures (header, peer table, BipBuffers,
+>    VarSlotPool, channel tables)
 > 5. Write header magic last (signals segment is ready)
 
 > r[shm.file.attach]
@@ -878,7 +892,7 @@ pub enum PeerState {
 # Doorbell Mechanism
 
 Doorbells provide instant cross-process wakeup and death detection,
-complementing the futex-based wakeup for ring operations.
+complementing BipBuffer-based communication.
 
 ## Purpose
 
@@ -941,14 +955,14 @@ complementing the futex-based wakeup for ring operations.
 > kernel. The surviving process sees `POLLHUP` or `POLLERR` on its end,
 > providing immediate death notification without polling.
 
-## Integration with Rings
+## Integration with BipBuffers
 
 > r[shm.doorbell.ring-integration]
 >
-> Doorbells complement ring-based messaging:
-> - After enqueueing a descriptor and updating head, signal the doorbell
+> Doorbells complement BipBuffer-based messaging:
+> - After committing a frame to the BipBuffer, signal the doorbell
 > - The receiver can `poll()` both the doorbell fd and other I/O
-> - On doorbell signal, check rings for new messages
+> - On doorbell signal, check BipBuffers for new frames
 >
 > This avoids busy-waiting and integrates with async I/O frameworks.
 
@@ -1022,15 +1036,15 @@ clean up resources and optionally restart them.
 > On guest death detection, per `r[shm.crash.recovery]`:
 > 1. Invoke the death callback (if registered)
 > 2. Set peer state to Goodbye, then Empty
-> 3. Reset rings and free slots
+> 3. Reset BipBuffers and reclaim VarSlotPool slots
 > 4. Close host's doorbell end
 > 5. Optionally respawn the guest
 
 # Variable-Size Slot Pools
 
-For applications with diverse payload sizes (e.g., small RPC arguments
-vs. large binary blobs), a single fixed slot size is inefficient.
-Variable-size pools use multiple size classes.
+In v2, the shared VarSlotPool is the **only** slot mechanism. All
+payloads that exceed the inline threshold are stored in the VarSlotPool.
+Fixed-size per-guest bitmap pools (v1) have been eliminated.
 
 ## Size Classes
 
@@ -1061,10 +1075,9 @@ Variable-size pools use multiple size classes.
 
 > r[shm.varslot.shared]
 >
-> Unlike fixed-size per-guest pools, variable-size pools are typically
-> **shared** across all guests:
-> - One pool region for the entire hub
-> - All guests allocate from the same size classes
+> The VarSlotPool is **shared** across all guests:
+> - One pool region for the entire hub (at `var_slot_pool_offset`)
+> - All guests and the host allocate from the same size classes
 > - Slot ownership is tracked per-allocation
 >
 > This allows efficient use of memory when different guests have

@@ -1,5 +1,6 @@
 #![cfg(all(test, loom))]
 
+use crate::bipbuf::{BIPBUF_HEADER_SIZE, BipBuf, BipBufHeader, BipBufRaw};
 use crate::region::HeapRegion;
 use crate::spsc::{SpscRing, SpscRingHeader, SpscRingRaw};
 use crate::sync::{AtomicU32, Ordering, thread};
@@ -831,5 +832,101 @@ fn treiber_slab_raw_mark_in_flight_race() {
 
         // Exactly one thread should succeed
         assert_eq!(success_count.load(Ordering::SeqCst), 1);
+    });
+}
+
+// =============================================================================
+// BipBuffer Tests
+// =============================================================================
+
+/// Test BipBuf with concurrent producer and consumer.
+#[test]
+fn bipbuf_concurrent() {
+    loom::model(|| {
+        let region_owner = Arc::new(HeapRegion::new_zeroed(BIPBUF_HEADER_SIZE + 64));
+        let region = region_owner.region();
+        let buf = unsafe { BipBuf::init(region, 0, 64) };
+        let buf = Arc::new(buf);
+
+        let producer_buf = buf.clone();
+        let producer_owner = region_owner.clone();
+        let producer_thread = thread::spawn(move || {
+            let _keep = producer_owner;
+            let (mut producer, _) = producer_buf.split();
+            loop {
+                if let Some(grant) = producer.try_grant(8) {
+                    grant.copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
+                    producer.commit(8);
+                    break;
+                }
+                thread::yield_now();
+            }
+        });
+
+        let consumer_buf = buf.clone();
+        let consumer_owner = region_owner.clone();
+        let consumer_thread = thread::spawn(move || {
+            let _keep = consumer_owner;
+            let (_, mut consumer) = consumer_buf.split();
+            loop {
+                if let Some(data) = consumer.try_read() {
+                    let result: Vec<u8> = data[..8].to_vec();
+                    consumer.release(8);
+                    return result;
+                }
+                thread::yield_now();
+            }
+        });
+
+        producer_thread.join().unwrap();
+        let received = consumer_thread.join().unwrap();
+        assert_eq!(received, vec![1, 2, 3, 4, 5, 6, 7, 8]);
+    });
+}
+
+/// Test BipBufRaw with concurrent producer and consumer.
+#[test]
+fn bipbuf_raw_concurrent() {
+    loom::model(|| {
+        let region_owner = Arc::new(HeapRegion::new_zeroed(BIPBUF_HEADER_SIZE + 64));
+
+        let header_ptr = region_owner.region().as_ptr() as *mut BipBufHeader;
+        let data_ptr = unsafe { region_owner.region().as_ptr().add(BIPBUF_HEADER_SIZE) };
+
+        unsafe { (*header_ptr).init(64) };
+        let raw = unsafe { BipBufRaw::from_raw(header_ptr, data_ptr) };
+        let raw = Arc::new(raw);
+
+        let producer_raw = raw.clone();
+        let producer_owner = region_owner.clone();
+        let producer_thread = thread::spawn(move || {
+            let _keep = producer_owner;
+            loop {
+                if let Some(grant) = producer_raw.try_grant(4) {
+                    grant.copy_from_slice(&[10, 20, 30, 40]);
+                    producer_raw.commit(4);
+                    break;
+                }
+                thread::yield_now();
+            }
+        });
+
+        let consumer_raw = raw.clone();
+        let consumer_owner = region_owner.clone();
+        let consumer_thread = thread::spawn(move || {
+            let _keep = consumer_owner;
+            loop {
+                if let Some(data) = consumer_raw.try_read() {
+                    let result: Vec<u8> = data[..4].to_vec();
+                    consumer_raw.release(4);
+                    return result;
+                }
+                thread::yield_now();
+            }
+        });
+
+        producer_thread.join().unwrap();
+        let received = consumer_thread.join().unwrap();
+        assert_eq!(received, vec![10, 20, 30, 40]);
     });
 }

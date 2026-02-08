@@ -95,7 +95,6 @@ fn test_file_backed_large_payload() {
     let path = dir.path().join("large.shm");
 
     let config = SegmentConfig {
-        slot_size: 64 * 1024,
         max_payload_size: 64 * 1024 - 4,
         ..SegmentConfig::default()
     };
@@ -423,11 +422,11 @@ fn test_grow_size_class() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("grow.shm");
 
-    // Configure with variable-size slot pools using with_var_slots()
-    // which sets max_payload_size appropriately
-    let mut config = SegmentConfig::with_var_slots();
-    // Reduce max_guests to keep segment size reasonable
-    config.max_guests = 2;
+    // Default config has variable-size slot pools configured
+    let config = SegmentConfig {
+        max_guests: 2, // Reduce to keep segment size reasonable
+        ..SegmentConfig::default()
+    };
 
     let mut host = ShmHost::create(&path, config).unwrap();
 
@@ -457,25 +456,13 @@ fn test_grow_size_class() {
 /// Test that growing fails appropriately for heap-backed segments.
 #[test]
 fn test_grow_heap_backed_fails() {
-    // Heap-backed segments can't grow - use with_var_slots()
-    let mut config = SegmentConfig::with_var_slots();
-    config.max_guests = 2;
+    // Heap-backed segments can't grow - default has var_slot_classes
+    let config = SegmentConfig {
+        max_guests: 2,
+        ..SegmentConfig::default()
+    };
 
     let mut host = ShmHost::create_heap(config).unwrap();
-
-    let result = host.grow_size_class(0);
-    assert!(result.is_err());
-}
-
-/// Test that growing fails for segments without var slot pools.
-#[test]
-fn test_grow_no_var_pool_fails() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("no_var.shm");
-
-    // No var_slot_classes configured
-    let config = SegmentConfig::default();
-    let mut host = ShmHost::create(&path, config).unwrap();
 
     let result = host.grow_size_class(0);
     assert!(result.is_err());

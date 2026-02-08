@@ -1,11 +1,15 @@
 #![doc = include_str!("../README.md")]
 
+pub mod bipbuf;
 pub mod region;
 pub mod slot;
 pub mod spsc;
 pub mod sync;
 pub mod treiber;
 
+pub use bipbuf::{
+    BIPBUF_HEADER_SIZE, BipBuf, BipBufConsumer, BipBufFull, BipBufHeader, BipBufProducer, BipBufRaw,
+};
 pub use region::HeapRegion;
 pub use region::Region;
 pub use slot::{SlotMeta, SlotState, VarSlotMeta};
