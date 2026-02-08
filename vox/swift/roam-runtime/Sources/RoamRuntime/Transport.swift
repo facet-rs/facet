@@ -12,9 +12,15 @@ private let debugEnabled = ProcessInfo.processInfo.environment["ROAM_DEBUG"] != 
 func debugLog(_ message: String) {
     if debugEnabled {
         let pid = ProcessInfo.processInfo.processIdentifier
-        let data = "[\(pid)] DEBUG: \(message)\n".data(using: .utf8)!
-        FileHandle.standardError.write(data)
+        let line = "[\(pid)] DEBUG: \(message)"
+        NSLog("%@", line)
     }
+}
+
+func warnLog(_ message: String) {
+    let pid = ProcessInfo.processInfo.processIdentifier
+    let line = "[\(pid)] WARN: \(message)"
+    NSLog("%@", line)
 }
 
 // MARK: - Transport Protocol
@@ -102,6 +108,12 @@ public final class NIOTransport: MessageTransport, @unchecked Sendable {
 
     public func close() async throws {
         try await channel.close()
+    }
+
+    // Internal testing hook to verify socket options configured by connect().
+    func socketKeepaliveEnabled() async throws -> Bool {
+        let value = try await channel.getOption(ChannelOptions.socketOption(.so_keepalive)).get()
+        return value != 0
     }
 }
 
@@ -223,6 +235,7 @@ public func connect(host: String, port: Int) async throws -> NIOTransport {
     let capturedContinuation = inboundContinuation!
 
     let bootstrap = ClientBootstrap(group: group)
+        .channelOption(ChannelOptions.socketOption(.so_keepalive), value: 1)
         .channelInitializer { channel in
             // Note: ByteToMessageHandler is explicitly non-Sendable in SwiftNIO.
             // This warning is benign - channel initializers run on the event loop.

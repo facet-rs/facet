@@ -33,8 +33,21 @@ private actor ScriptedTransport: MessageTransport {
         failNextRequestSend = true
     }
 
+    func enqueueMessage(_ message: Message) {
+        enqueueInbound(.message(message))
+    }
+
     func sent() -> [Message] {
         sentMessages
+    }
+
+    func sentRequestIds() -> [UInt64] {
+        sentMessages.compactMap { message in
+            if case .request(_, let requestId, _, _, _, _) = message {
+                return requestId
+            }
+            return nil
+        }
     }
 
     func send(_ message: Message) async throws {
@@ -132,11 +145,56 @@ private func awaitHasCancel(
     return false
 }
 
+private func awaitRequestId(
+    _ transport: ScriptedTransport,
+    index: Int,
+    timeoutMs: UInt64 = 1_000
+) async -> UInt64? {
+    let start = ContinuousClock.now
+    let timeout = Duration.milliseconds(Int64(timeoutMs))
+    while ContinuousClock.now - start < timeout {
+        let requestIds = await transport.sentRequestIds()
+        if requestIds.count > index {
+            return requestIds[index]
+        }
+        try? await Task.sleep(nanoseconds: 5_000_000)
+    }
+    return nil
+}
+
+private func awaitGoodbyeReason(
+    _ transport: ScriptedTransport,
+    timeoutMs: UInt64 = 1_000
+) async -> String? {
+    let start = ContinuousClock.now
+    let timeout = Duration.milliseconds(Int64(timeoutMs))
+    while ContinuousClock.now - start < timeout {
+        let sent = await transport.sent()
+        for msg in sent {
+            if case .goodbye(_, let reason) = msg {
+                return reason
+            }
+        }
+        try? await Task.sleep(nanoseconds: 5_000_000)
+    }
+    return nil
+}
+
 private func isConnectionClosed(_ error: Error) -> Bool {
     guard let connError = error as? ConnectionError else {
         return false
     }
     if case .connectionClosed = connError {
+        return true
+    }
+    return false
+}
+
+private func isTransportError(_ error: Error) -> Bool {
+    guard let connError = error as? ConnectionError else {
+        return false
+    }
+    if case .transportError = connError {
         return true
     }
     return false
@@ -152,7 +210,87 @@ private func isTimeout(_ error: Error) -> Bool {
     return false
 }
 
+private func isProtocolViolation(_ error: Error, rule: String) -> Bool {
+    guard let connError = error as? ConnectionError else {
+        return false
+    }
+    if case .protocolViolation(let actualRule) = connError {
+        return actualRule == rule
+    }
+    return false
+}
+
 struct ConnectionFailureTests {
+    @Test func immediateResponseAfterSendStillCompletesCall() async throws {
+        let transport = ScriptedTransport(autoRespondRequestCount: 1)
+        let (handle, driver) = try await establishInitiator(
+            transport: transport,
+            dispatcher: NoopDispatcher()
+        )
+        let driverTask = Task {
+            try await driver.run()
+        }
+        defer {
+            Task {
+                try? await transport.close()
+            }
+            driverTask.cancel()
+        }
+
+        let payload = try await handle.callRaw(methodId: 1, payload: [1, 2, 3], timeout: 2.0)
+        #expect(payload == [0])
+    }
+
+    @Test func callFailsFastAfterDriverExit() async throws {
+        let transport = ScriptedTransport()
+        let (handle, driver) = try await establishInitiator(
+            transport: transport,
+            dispatcher: NoopDispatcher()
+        )
+        let driverTask = Task {
+            try await driver.run()
+        }
+
+        try? await transport.close()
+        _ = try? await driverTask.value
+
+        let start = ContinuousClock.now
+        do {
+            _ = try await handle.callRaw(methodId: 123, payload: [1], timeout: 2.0)
+            Issue.record("expected connection closed")
+        } catch {
+            #expect(isConnectionClosed(error))
+        }
+        let elapsed = ContinuousClock.now - start
+        #expect(elapsed < .milliseconds(250))
+    }
+
+    @Test func zeroTimeoutDoesNotOrphanContinuation() async throws {
+        let transport = ScriptedTransport()
+        let (handle, driver) = try await establishInitiator(
+            transport: transport,
+            dispatcher: NoopDispatcher()
+        )
+        let driverTask = Task {
+            try await driver.run()
+        }
+        defer {
+            Task {
+                try? await transport.close()
+            }
+            driverTask.cancel()
+        }
+
+        do {
+            _ = try await handle.callRaw(methodId: 1, payload: [], timeout: 0.0)
+            Issue.record("expected timeout")
+        } catch {
+            #expect(isTimeout(error))
+        }
+
+        #expect(await awaitHasCancel(transport))
+    }
+
     @Test func callTimesOutAndSendsCancel() async throws {
         let transport = ScriptedTransport()
         let (handle, driver) = try await establishInitiator(
@@ -193,13 +331,127 @@ struct ConnectionFailureTests {
 
         do {
             _ = try await handle.callRaw(methodId: 1, payload: [], timeout: 2.0)
+            Issue.record("expected transport error")
+        } catch {
+            #expect(isTransportError(error))
+        }
+
+        try? await transport.close()
+        _ = try? await driverTask.value
+    }
+
+    @Test func unknownResponseRequestIdClosesConnectionAndFailsPendingCalls() async throws {
+        let transport = ScriptedTransport()
+        let (handle, driver) = try await establishInitiator(
+            transport: transport,
+            dispatcher: NoopDispatcher()
+        )
+        let driverTask = Task {
+            try await driver.run()
+        }
+
+        let callTask = Task { try await handle.callRaw(methodId: 1, payload: [], timeout: 2.0) }
+        let requestId = await awaitRequestId(transport, index: 0)
+        #expect(requestId != nil)
+        await transport.enqueueMessage(
+            .response(connId: 0, requestId: 999, metadata: [], channels: [], payload: [7, 7, 7])
+        )
+
+        do {
+            _ = try await callTask.value
             Issue.record("expected connection closed")
         } catch {
             #expect(isConnectionClosed(error))
         }
 
-        try? await transport.close()
-        _ = try? await driverTask.value
+        do {
+            try await driverTask.value
+            Issue.record("expected protocol violation")
+        } catch {
+            #expect(isProtocolViolation(error, rule: "call.lifecycle.unknown-request-id"))
+        }
+
+        let goodbyeReason = await awaitGoodbyeReason(transport)
+        #expect(goodbyeReason == "call.lifecycle.unknown-request-id")
+    }
+
+    @Test func lateResponseAfterTimeoutTriggersProtocolViolation() async throws {
+        let transport = ScriptedTransport()
+        let (handle, driver) = try await establishInitiator(
+            transport: transport,
+            dispatcher: NoopDispatcher()
+        )
+        let driverTask = Task {
+            try await driver.run()
+        }
+
+        let timedOutCall = Task { try await handle.callRaw(methodId: 42, payload: [4, 2], timeout: 0.05) }
+        guard let timedOutRequestId = await awaitRequestId(transport, index: 0) else {
+            Issue.record("expected first request to be sent")
+            return
+        }
+
+        do {
+            _ = try await timedOutCall.value
+            Issue.record("expected timeout")
+        } catch {
+            #expect(isTimeout(error))
+        }
+
+        await transport.enqueueMessage(
+            .response(
+                connId: 0,
+                requestId: timedOutRequestId,
+                metadata: [],
+                channels: [],
+                payload: [0xAA]
+            )
+        )
+
+        do {
+            try await driverTask.value
+            Issue.record("expected protocol violation")
+        } catch {
+            #expect(isProtocolViolation(error, rule: "call.lifecycle.unknown-request-id"))
+        }
+
+        do {
+            _ = try await handle.callRaw(methodId: 99, payload: [9], timeout: 2.0)
+            Issue.record("expected connection closed")
+        } catch {
+            #expect(isConnectionClosed(error))
+        }
+    }
+
+    @Test func protocolViolationFromIncomingMessageFailsPendingCalls() async throws {
+        let transport = ScriptedTransport()
+        let (handle, driver) = try await establishInitiator(
+            transport: transport,
+            dispatcher: NoopDispatcher()
+        )
+        let driverTask = Task {
+            try await driver.run()
+        }
+
+        let pendingCall = Task { try await handle.callRaw(methodId: 7, payload: [7], timeout: 2.0) }
+        let reqId = await awaitRequestId(transport, index: 0)
+        #expect(reqId != nil)
+
+        await transport.enqueueMessage(.data(connId: 0, channelId: 0, payload: [1]))
+
+        do {
+            _ = try await pendingCall.value
+            Issue.record("expected connection closed")
+        } catch {
+            #expect(isConnectionClosed(error))
+        }
+
+        do {
+            try await driverTask.value
+            Issue.record("expected protocol violation")
+        } catch {
+            #expect(isProtocolViolation(error, rule: "channeling.id.zero-reserved"))
+        }
     }
 
     @Test func manyCallsFailFastWhenConnectionDrops() async throws {

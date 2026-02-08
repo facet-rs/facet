@@ -397,6 +397,7 @@ where
         &mut self,
         msg: DriverMessage,
     ) -> Result<(), ShmConnectionError> {
+        #[allow(unreachable_patterns)]
         let wire_msg = match msg {
             DriverMessage::Call {
                 conn_id,
@@ -505,6 +506,10 @@ where
                     request_id,
                     metadata,
                 }
+            }
+            _ => {
+                trace!("handle_driver_message: ignoring unsupported driver message variant");
+                return Ok(());
             }
         };
         trace!("handle_driver_message: sending wire message");
@@ -1909,6 +1914,7 @@ impl MultiPeerHostDriver {
         peer_id: PeerId,
         msg: DriverMessage,
     ) -> Result<(), ShmConnectionError> {
+        #[allow(unreachable_patterns)]
         let wire_msg = match msg {
             DriverMessage::Call {
                 conn_id,
@@ -2025,6 +2031,13 @@ impl MultiPeerHostDriver {
                     request_id,
                     metadata,
                 }
+            }
+            _ => {
+                trace!(
+                    peer = ?peer_id,
+                    "MultiPeerHostDriver: ignoring unsupported driver message variant"
+                );
+                return Ok(());
             }
         };
 

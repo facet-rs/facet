@@ -175,8 +175,8 @@ final class TestbedDispatcherAdapter: ServiceDispatcher, @unchecked Sendable {
 // MARK: - Logging
 
 func log(_ message: String) {
-    let data = "[\(ProcessInfo.processInfo.processIdentifier)] \(message)\n".data(using: .utf8)!
-    FileHandle.standardError.write(data)
+    let pid = ProcessInfo.processInfo.processIdentifier
+    NSLog("%@", "[\(pid)] \(message)")
 }
 
 // MARK: - Server Mode

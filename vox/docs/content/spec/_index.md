@@ -778,8 +778,8 @@ The complete lifecycle of an RPC call:
 > r[call.lifecycle.unknown-request-id]
 >
 > If a caller receives a Response with a `request_id` that does not match
-> any in-flight request, it MUST ignore the response. Implementations
-> SHOULD log this as a warning.
+> any in-flight request, it MUST treat this as a protocol violation.
+> Implementations SHOULD log a warning and close the connection.
 
 ## Cancellation
 
