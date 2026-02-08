@@ -575,37 +575,37 @@ public final class TestbedChannelingDispatcher {
     public func dispatch(methodId: UInt64, requestId: UInt64, payload: Data) async {
         switch methodId {
         case 0x9aabc4ba61fd5df3:
-            await dispatchecho(requestId: requestId, payload: payload)
+            await dispatch_echo(requestId: requestId, payload: payload)
         case 0xcba154600f640175:
-            await dispatchreverse(requestId: requestId, payload: payload)
+            await dispatch_reverse(requestId: requestId, payload: payload)
         case 0xc3964cbee4b1d590:
-            await dispatchdivide(requestId: requestId, payload: payload)
+            await dispatch_divide(requestId: requestId, payload: payload)
         case 0xe71a0faedd014e59:
-            await dispatchlookup(requestId: requestId, payload: payload)
+            await dispatch_lookup(requestId: requestId, payload: payload)
         case 0x855b3a25d97bfefd:
-            await dispatchsum(requestId: requestId, payload: payload)
+            await dispatch_sum(requestId: requestId, payload: payload)
         case 0x54d2273d8cdb9c38:
-            await dispatchgenerate(requestId: requestId, payload: payload)
+            await dispatch_generate(requestId: requestId, payload: payload)
         case 0x5d9895604eb18b19:
-            await dispatchtransform(requestId: requestId, payload: payload)
+            await dispatch_transform(requestId: requestId, payload: payload)
         case 0x453fa9bf6932528c:
-            await dispatchechoPoint(requestId: requestId, payload: payload)
+            await dispatch_echoPoint(requestId: requestId, payload: payload)
         case 0x3dd231f57b1bca21:
-            await dispatchcreatePerson(requestId: requestId, payload: payload)
+            await dispatch_createPerson(requestId: requestId, payload: payload)
         case 0x04ef653fdf0653c4:
-            await dispatchrectangleArea(requestId: requestId, payload: payload)
+            await dispatch_rectangleArea(requestId: requestId, payload: payload)
         case 0xe285f31c6dfffbfc:
-            await dispatchparseColor(requestId: requestId, payload: payload)
+            await dispatch_parseColor(requestId: requestId, payload: payload)
         case 0x6e706354167c00c2:
-            await dispatchshapeArea(requestId: requestId, payload: payload)
+            await dispatch_shapeArea(requestId: requestId, payload: payload)
         case 0xa914982e7d3c7b55:
-            await dispatchcreateCanvas(requestId: requestId, payload: payload)
+            await dispatch_createCanvas(requestId: requestId, payload: payload)
         case 0xed1dc0c625889d30:
-            await dispatchprocessMessage(requestId: requestId, payload: payload)
+            await dispatch_processMessage(requestId: requestId, payload: payload)
         case 0x5c8707f5ae4ccbcc:
-            await dispatchgetPoints(requestId: requestId, payload: payload)
+            await dispatch_getPoints(requestId: requestId, payload: payload)
         case 0xacd19a29fe0d470c:
-            await dispatchswapPair(requestId: requestId, payload: payload)
+            await dispatch_swapPair(requestId: requestId, payload: payload)
         default:
             taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
         }
@@ -638,7 +638,7 @@ public final class TestbedChannelingDispatcher {
         }
     }
 
-    private func dispatchecho(requestId: UInt64, payload: Data) async {
+    private func dispatch_echo(requestId: UInt64, payload: Data) async {
         do {
             var cursor = 0
             let message = try decodeString(from: payload, offset: &cursor)
@@ -649,7 +649,7 @@ public final class TestbedChannelingDispatcher {
         }
     }
 
-    private func dispatchreverse(requestId: UInt64, payload: Data) async {
+    private func dispatch_reverse(requestId: UInt64, payload: Data) async {
         do {
             var cursor = 0
             let message = try decodeString(from: payload, offset: &cursor)
@@ -660,7 +660,7 @@ public final class TestbedChannelingDispatcher {
         }
     }
 
-    private func dispatchdivide(requestId: UInt64, payload: Data) async {
+    private func dispatch_divide(requestId: UInt64, payload: Data) async {
         do {
             var cursor = 0
             let dividend = try decodeI64(from: payload, offset: &cursor)
@@ -679,7 +679,7 @@ public final class TestbedChannelingDispatcher {
         }
     }
 
-    private func dispatchlookup(requestId: UInt64, payload: Data) async {
+    private func dispatch_lookup(requestId: UInt64, payload: Data) async {
         do {
             var cursor = 0
             let id = try decodeU32(from: payload, offset: &cursor)
@@ -697,7 +697,7 @@ public final class TestbedChannelingDispatcher {
         }
     }
 
-    private func dispatchsum(requestId: UInt64, payload: Data) async {
+    private func dispatch_sum(requestId: UInt64, payload: Data) async {
         do {
             var cursor = 0
             let numbersChannelId = try decodeVarint(from: payload, offset: &cursor)
@@ -713,7 +713,7 @@ public final class TestbedChannelingDispatcher {
         }
     }
 
-    private func dispatchgenerate(requestId: UInt64, payload: Data) async {
+    private func dispatch_generate(requestId: UInt64, payload: Data) async {
         do {
             var cursor = 0
             let count = try decodeU32(from: payload, offset: &cursor)
@@ -727,7 +727,7 @@ public final class TestbedChannelingDispatcher {
         }
     }
 
-    private func dispatchtransform(requestId: UInt64, payload: Data) async {
+    private func dispatch_transform(requestId: UInt64, payload: Data) async {
         do {
             var cursor = 0
             let inputChannelId = try decodeVarint(from: payload, offset: &cursor)
@@ -746,7 +746,7 @@ public final class TestbedChannelingDispatcher {
         }
     }
 
-    private func dispatchechoPoint(requestId: UInt64, payload: Data) async {
+    private func dispatch_echoPoint(requestId: UInt64, payload: Data) async {
         do {
             var cursor = 0
             let _point_x = try decodeI32(from: payload, offset: &cursor)
@@ -759,7 +759,7 @@ public final class TestbedChannelingDispatcher {
         }
     }
 
-    private func dispatchcreatePerson(requestId: UInt64, payload: Data) async {
+    private func dispatch_createPerson(requestId: UInt64, payload: Data) async {
         do {
             var cursor = 0
             let name = try decodeString(from: payload, offset: &cursor)
@@ -772,7 +772,7 @@ public final class TestbedChannelingDispatcher {
         }
     }
 
-    private func dispatchrectangleArea(requestId: UInt64, payload: Data) async {
+    private func dispatch_rectangleArea(requestId: UInt64, payload: Data) async {
         do {
             var cursor = 0
             let __rect_topLeft_x = try decodeI32(from: payload, offset: &cursor)
@@ -790,7 +790,7 @@ public final class TestbedChannelingDispatcher {
         }
     }
 
-    private func dispatchparseColor(requestId: UInt64, payload: Data) async {
+    private func dispatch_parseColor(requestId: UInt64, payload: Data) async {
         do {
             var cursor = 0
             let name = try decodeString(from: payload, offset: &cursor)
@@ -810,7 +810,7 @@ public final class TestbedChannelingDispatcher {
         }
     }
 
-    private func dispatchshapeArea(requestId: UInt64, payload: Data) async {
+    private func dispatch_shapeArea(requestId: UInt64, payload: Data) async {
         do {
             var cursor = 0
             let _shape_disc = try decodeU8(from: payload, offset: &cursor)
@@ -835,7 +835,7 @@ public final class TestbedChannelingDispatcher {
         }
     }
 
-    private func dispatchcreateCanvas(requestId: UInt64, payload: Data) async {
+    private func dispatch_createCanvas(requestId: UInt64, payload: Data) async {
         do {
             var cursor = 0
             let name = try decodeString(from: payload, offset: &cursor)
@@ -894,7 +894,7 @@ public final class TestbedChannelingDispatcher {
         }
     }
 
-    private func dispatchprocessMessage(requestId: UInt64, payload: Data) async {
+    private func dispatch_processMessage(requestId: UInt64, payload: Data) async {
         do {
             var cursor = 0
             let _msg_disc = try decodeU8(from: payload, offset: &cursor)
@@ -928,7 +928,7 @@ public final class TestbedChannelingDispatcher {
         }
     }
 
-    private func dispatchgetPoints(requestId: UInt64, payload: Data) async {
+    private func dispatch_getPoints(requestId: UInt64, payload: Data) async {
         do {
             var cursor = 0
             let count = try decodeU32(from: payload, offset: &cursor)
@@ -939,7 +939,7 @@ public final class TestbedChannelingDispatcher {
         }
     }
 
-    private func dispatchswapPair(requestId: UInt64, payload: Data) async {
+    private func dispatch_swapPair(requestId: UInt64, payload: Data) async {
         do {
             var cursor = 0
             let pair = try decodeTuple2(from: payload, offset: &cursor, decoderA: { data, off in try decodeI32(from: data, offset: &off) }, decoderB: { data, off in try decodeString(from: data, offset: &off) })

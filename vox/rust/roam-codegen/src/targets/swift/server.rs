@@ -15,6 +15,10 @@ use crate::code_writer::CodeWriter;
 use crate::cw_writeln;
 use crate::render::hex_u64;
 
+fn dispatch_helper_name(method_name: &str) -> String {
+    format!("dispatch_{method_name}")
+}
+
 /// Generate complete server code (handler protocol + dispatchers).
 pub fn generate_server(service: &ServiceDetail) -> String {
     let mut out = String::new();
@@ -102,12 +106,9 @@ fn generate_dispatcher(service: &ServiceDetail) -> String {
             for method in &service.methods {
                 let method_name = method.method_name.to_lower_camel_case();
                 let method_id = crate::method_id(method);
+                let dispatch_name = dispatch_helper_name(&method_name);
                 cw_writeln!(w, "case {}:", hex_u64(method_id)).unwrap();
-                cw_writeln!(
-                    w,
-                    "    return try await dispatch{method_name}(payload: payload)"
-                )
-                .unwrap();
+                cw_writeln!(w, "    return try await {dispatch_name}(payload: payload)").unwrap();
             }
             w.writeln("default:").unwrap();
             w.writeln("    throw RoamError.unknownMethod").unwrap();
@@ -131,12 +132,13 @@ fn generate_dispatcher(service: &ServiceDetail) -> String {
 /// Generate a single dispatch method for non-channeling dispatcher.
 fn generate_dispatch_method(w: &mut CodeWriter<&mut String>, method: &MethodDetail) {
     let method_name = method.method_name.to_lower_camel_case();
+    let dispatch_name = dispatch_helper_name(&method_name);
     let has_channeling =
         method.args.iter().any(|a| is_stream(a.ty)) || is_stream(method.return_type);
 
     cw_writeln!(
         w,
-        "private func dispatch{method_name}(payload: Data) async throws -> Data {{"
+        "private func {dispatch_name}(payload: Data) async throws -> Data {{"
     )
     .unwrap();
     {
@@ -251,10 +253,11 @@ fn generate_channeling_dispatcher(service: &ServiceDetail) -> String {
             for method in &service.methods {
                 let method_name = method.method_name.to_lower_camel_case();
                 let method_id = crate::method_id(method);
+                let dispatch_name = dispatch_helper_name(&method_name);
                 cw_writeln!(w, "case {}:", hex_u64(method_id)).unwrap();
                 cw_writeln!(
                     w,
-                    "    await dispatch{method_name}(requestId: requestId, payload: payload)"
+                    "    await {dispatch_name}(requestId: requestId, payload: payload)"
                 )
                 .unwrap();
             }
@@ -414,12 +417,13 @@ fn generate_skip_arg(
 /// Generate a single channeling dispatch method.
 fn generate_channeling_dispatch_method(w: &mut CodeWriter<&mut String>, method: &MethodDetail) {
     let method_name = method.method_name.to_lower_camel_case();
+    let dispatch_name = dispatch_helper_name(&method_name);
     let has_channeling =
         method.args.iter().any(|a| is_stream(a.ty)) || is_stream(method.return_type);
 
     cw_writeln!(
         w,
-        "private func dispatch{method_name}(requestId: UInt64, payload: Data) async {{"
+        "private func {dispatch_name}(requestId: UInt64, payload: Data) async {{"
     )
     .unwrap();
     {
@@ -427,13 +431,21 @@ fn generate_channeling_dispatch_method(w: &mut CodeWriter<&mut String>, method: 
         w.writeln("do {").unwrap();
         {
             let _indent = w.indent();
-            let cursor_var = unique_decode_cursor_name(&method.args);
-            cw_writeln!(w, "var {cursor_var} = 0").unwrap();
+            let cursor_var = if method.args.is_empty() {
+                None
+            } else {
+                let name = unique_decode_cursor_name(&method.args);
+                cw_writeln!(w, "var {name} = 0").unwrap();
+                Some(name)
+            };
 
             // Decode arguments - for channeling, decode channel IDs and create Tx/Rx
             for arg in &method.args {
                 let arg_name = arg.name.to_lower_camel_case();
-                generate_channeling_decode_arg(w, &arg_name, arg.ty, &cursor_var);
+                let cursor_var = cursor_var
+                    .as_deref()
+                    .expect("cursor must exist for methods with arguments");
+                generate_channeling_decode_arg(w, &arg_name, arg.ty, cursor_var);
             }
 
             // Call handler
@@ -693,7 +705,7 @@ mod tests {
         assert!(code.contains("class EchoDispatcher"));
         assert!(code.contains("EchoHandler"));
         assert!(code.contains("dispatch(methodId:"));
-        assert!(code.contains("dispatchecho"));
+        assert!(code.contains("dispatch_echo"));
     }
 
     #[test]
@@ -704,6 +716,28 @@ mod tests {
         assert!(code.contains("class EchoChannelingDispatcher"));
         assert!(code.contains("preregisterChannels"));
         assert!(code.contains("IncomingChannelRegistry"));
+        assert!(code.contains("dispatch_echo"));
+    }
+
+    #[test]
+    fn test_channeling_dispatcher_omits_cursor_for_no_args() {
+        let service = ServiceDetail {
+            name: Cow::Borrowed("Ping"),
+            doc: None,
+            methods: vec![MethodDetail {
+                service_name: Cow::Borrowed("Ping"),
+                method_name: Cow::Borrowed("ping"),
+                args: vec![],
+                return_type: <String as Facet>::SHAPE,
+                doc: None,
+            }],
+        };
+        let code = generate_channeling_dispatcher(&service);
+
+        assert!(
+            code.contains("private func dispatch_ping(requestId: UInt64, payload: Data) async {")
+        );
+        assert!(!code.contains("var cursor = 0"));
     }
 
     #[test]
