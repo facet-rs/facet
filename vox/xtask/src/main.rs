@@ -44,6 +44,12 @@ enum Commands {
         /// Generate Swift bindings into `swift/generated/`
         #[facet(args::named, default)]
         swift: bool,
+        /// Generate Swift client-only bindings
+        #[facet(args::named, default)]
+        swift_client: bool,
+        /// Generate Swift server-only bindings
+        #[facet(args::named, default)]
+        swift_server: bool,
     },
 }
 
@@ -183,12 +189,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        Commands::Codegen { typescript, swift } => {
+        Commands::Codegen {
+            typescript,
+            swift,
+            swift_client,
+            swift_server,
+        } => {
             if typescript {
                 codegen_typescript(&workspace_root)?;
             }
-            if swift {
-                codegen_swift(&workspace_root)?;
+            if swift || swift_client || swift_server {
+                codegen_swift(&workspace_root, swift, swift_client, swift_server)?;
             }
         }
     }
@@ -212,7 +223,12 @@ fn codegen_typescript(workspace_root: &std::path::Path) -> Result<(), Box<dyn st
     Ok(())
 }
 
-fn codegen_swift(workspace_root: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+fn codegen_swift(
+    workspace_root: &std::path::Path,
+    swift: bool,
+    swift_client: bool,
+    swift_server: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     // Output directly to subject sources
     let out_dir = workspace_root
         .join("swift")
@@ -222,11 +238,33 @@ fn codegen_swift(workspace_root: &std::path::Path) -> Result<(), Box<dyn std::er
     std::fs::create_dir_all(&out_dir)?;
 
     let testbed = spec_proto::testbed_service_detail();
-    let swift = roam_codegen::targets::swift::generate_service(&testbed);
+    if swift && !swift_client && !swift_server {
+        let code = roam_codegen::targets::swift::generate_service(&testbed);
+        let out_path = out_dir.join("Testbed.swift");
+        std::fs::write(&out_path, code)?;
+        println!("Wrote {}", out_path.display());
+        return Ok(());
+    }
 
-    let out_path = out_dir.join("Testbed.swift");
-    std::fs::write(&out_path, swift)?;
-    println!("Wrote {}", out_path.display());
+    if swift_client || (swift && !swift_server) {
+        let code = roam_codegen::targets::swift::generate_service_with_bindings(
+            &testbed,
+            roam_codegen::targets::swift::SwiftBindings::Client,
+        );
+        let out_path = out_dir.join("TestbedClient.swift");
+        std::fs::write(&out_path, code)?;
+        println!("Wrote {}", out_path.display());
+    }
+
+    if swift_server || (swift && !swift_client) {
+        let code = roam_codegen::targets::swift::generate_service_with_bindings(
+            &testbed,
+            roam_codegen::targets::swift::SwiftBindings::Server,
+        );
+        let out_path = out_dir.join("TestbedServer.swift");
+        std::fs::write(&out_path, code)?;
+        println!("Wrote {}", out_path.display());
+    }
 
     Ok(())
 }

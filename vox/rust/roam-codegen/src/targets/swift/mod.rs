@@ -23,6 +23,17 @@ pub use schema::generate_schemas;
 pub use server::generate_server;
 pub use types::{collect_named_types, generate_named_types};
 
+/// Controls which Swift bindings are generated for a service.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SwiftBindings {
+    /// Generate client-side bindings (`*Caller`, `*Client`) and shared support code.
+    Client,
+    /// Generate server-side bindings (`*Handler`, `*ChannelingDispatcher`) and shared support code.
+    Server,
+    /// Generate both client and server bindings (legacy default behavior).
+    ClientAndServer,
+}
+
 /// Generate method IDs as a Swift enum.
 pub fn generate_method_ids(methods: &[MethodDetail]) -> String {
     use crate::render::{fq_name, hex_u64};
@@ -50,6 +61,13 @@ pub fn generate_method_ids(methods: &[MethodDetail]) -> String {
 ///
 /// This is the main entry point for Swift code generation.
 pub fn generate_service(service: &ServiceDetail) -> String {
+    generate_service_with_bindings(service, SwiftBindings::ClientAndServer)
+}
+
+/// Generate a Swift module for a service with explicit client/server selection.
+///
+/// Shared sections (method IDs, named types, schemas) are always included.
+pub fn generate_service_with_bindings(service: &ServiceDetail, bindings: SwiftBindings) -> String {
     use crate::render::hex_u64;
     use heck::{ToLowerCamelCase, ToUpperCamelCase};
 
@@ -79,12 +97,23 @@ pub fn generate_service(service: &ServiceDetail) -> String {
     let named_types = collect_named_types(service);
     out.push_str(&generate_named_types(&named_types));
 
-    // Generate protocols and implementations
-    out.push_str(&format!("// MARK: - {service_name} Client\n\n"));
-    out.push_str(&generate_client(service));
+    match bindings {
+        SwiftBindings::Client => {
+            out.push_str(&format!("// MARK: - {service_name} Client\n\n"));
+            out.push_str(&generate_client(service));
+        }
+        SwiftBindings::Server => {
+            out.push_str(&format!("// MARK: - {service_name} Server\n\n"));
+            out.push_str(&generate_server(service));
+        }
+        SwiftBindings::ClientAndServer => {
+            out.push_str(&format!("// MARK: - {service_name} Client\n\n"));
+            out.push_str(&generate_client(service));
 
-    out.push_str(&format!("// MARK: - {service_name} Server\n\n"));
-    out.push_str(&generate_server(service));
+            out.push_str(&format!("// MARK: - {service_name} Server\n\n"));
+            out.push_str(&generate_server(service));
+        }
+    }
 
     // Always generate runtime schema info used for channel binding.
     out.push_str(&format!("// MARK: - {service_name} Schemas\n\n"));
@@ -127,5 +156,31 @@ mod tests {
         assert!(code.contains("EchoClient"));
         assert!(code.contains("EchoChannelingDispatcher"));
         assert!(code.contains("EchoMethodId"));
+    }
+
+    #[test]
+    fn test_generate_service_client_only() {
+        let service = sample_service();
+        let code = generate_service_with_bindings(&service, SwiftBindings::Client);
+
+        assert!(code.contains("protocol EchoCaller"));
+        assert!(code.contains("EchoClient"));
+        assert!(!code.contains("protocol EchoHandler"));
+        assert!(!code.contains("EchoChannelingDispatcher"));
+        assert!(code.contains("EchoMethodId"));
+        assert!(code.contains("echo_schemas"));
+    }
+
+    #[test]
+    fn test_generate_service_server_only() {
+        let service = sample_service();
+        let code = generate_service_with_bindings(&service, SwiftBindings::Server);
+
+        assert!(!code.contains("protocol EchoCaller"));
+        assert!(!code.contains("EchoClient"));
+        assert!(code.contains("protocol EchoHandler"));
+        assert!(code.contains("EchoChannelingDispatcher"));
+        assert!(code.contains("EchoMethodId"));
+        assert!(code.contains("echo_schemas"));
     }
 }
