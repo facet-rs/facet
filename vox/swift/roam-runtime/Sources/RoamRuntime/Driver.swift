@@ -726,7 +726,7 @@ public func establishInitiator(
         throw ConnectionError.handshakeFailed(reason)
     }
     switch peerHello {
-    case .v4, .v5:
+    case .v5:
         break
     default:
         try? await transport.send(.goodbye(connId: 0, reason: "message.hello.unknown-version"))
@@ -797,7 +797,7 @@ public func establishAcceptor(
         throw ConnectionError.handshakeFailed(reason)
     }
     switch peerHello {
-    case .v4, .v5:
+    case .v5:
         break
     default:
         try? await transport.send(.goodbye(connId: 0, reason: "message.hello.unknown-version"))
