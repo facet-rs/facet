@@ -8,8 +8,9 @@ use facet_core::PtrMut;
 
 use crate::{
     ChannelError, ChannelId, ChannelIdAllocator, ChannelRegistry, DriverMessage,
-    RX_STREAM_BUFFER_SIZE, ReceiverSlot, ResponseData, SenderSlot, ServiceDispatcher,
-    TransportError, collect_channel_ids, diagnostic, patch_channel_ids, runtime::oneshot,
+    IncomingChannelMessage, RX_STREAM_BUFFER_SIZE, ReceiverSlot, ResponseData, SenderSlot,
+    ServiceDispatcher, TransportError, collect_channel_ids, diagnostic, patch_channel_ids,
+    runtime::oneshot,
 };
 use crate::{
     Role,
@@ -349,7 +350,7 @@ impl ConnectionHandle {
                 crate::runtime::spawn(async move {
                     loop {
                         match rx.recv().await {
-                            Some(payload) => {
+                            Some(IncomingChannelMessage::Data(payload)) => {
                                 debug!(
                                     "drain task: received {} bytes on channel {}",
                                     payload.len(),
@@ -376,7 +377,7 @@ impl ConnectionHandle {
                                     channel_id
                                 );
                             }
-                            None => {
+                            Some(IncomingChannelMessage::Close) | None => {
                                 debug!("drain task: channel {} closed", channel_id);
                                 // Channel closed, send Close and exit
                                 if task_tx
@@ -556,7 +557,7 @@ impl ConnectionHandle {
                     crate::runtime::spawn(async move {
                         loop {
                             match rx.recv().await {
-                                Some(payload) => {
+                                Some(IncomingChannelMessage::Data(payload)) => {
                                     debug!(
                                         "drain task: received {} bytes on channel {}",
                                         payload.len(),
@@ -583,7 +584,7 @@ impl ConnectionHandle {
                                         channel_id
                                     );
                                 }
-                                None => {
+                                Some(IncomingChannelMessage::Close) | None => {
                                     debug!("drain task: channel {} closed", channel_id);
                                     if task_tx
                                         .send(DriverMessage::Close {
@@ -631,7 +632,7 @@ impl ConnectionHandle {
     fn bind_rx_channel(
         &self,
         poke: facet::Poke<'_, '_>,
-        drains: &mut Vec<(ChannelId, Receiver<Vec<u8>>)>,
+        drains: &mut Vec<(ChannelId, Receiver<IncomingChannelMessage>)>,
     ) {
         let channel_id = self.alloc_channel_id();
         debug!(
@@ -884,7 +885,7 @@ impl ConnectionHandle {
     /// Register an incoming channel (we receive data from peer).
     ///
     /// Used when schema has `Tx<T>` (callee sends to caller) - we receive that data.
-    pub fn register_incoming(&self, channel_id: ChannelId, tx: Sender<Vec<u8>>) {
+    pub fn register_incoming(&self, channel_id: ChannelId, tx: Sender<IncomingChannelMessage>) {
         // Track channel for diagnostics (request_id not available here)
         if let Some(diag) = &self.shared.diagnostic_state {
             diag.record_channel_open(channel_id, crate::diagnostic::ChannelDirection::Rx, None);
@@ -925,7 +926,7 @@ impl ConnectionHandle {
             .unwrap()
             .prepare_route_data(channel_id, payload)?;
         // Send without holding the lock
-        let _ = tx.send(payload).await;
+        let _ = tx.send(IncomingChannelMessage::Data(payload)).await;
         Ok(())
     }
 

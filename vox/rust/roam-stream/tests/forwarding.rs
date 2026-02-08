@@ -266,6 +266,31 @@ async fn test_forwarding_client_to_server_streaming() {
     assert_eq!(call_count.load(Ordering::SeqCst), 1);
 }
 
+/// r[verify channeling.lifecycle.caller-closes-pushes] - Empty client streams still close through proxy
+#[tokio::test]
+async fn test_forwarding_client_to_server_empty_stream() {
+    let service = StreamingService::new();
+    let call_count = service.call_count.clone();
+
+    let (backend_addr, _backend_handle) = start_backend(service).await;
+    let (proxy_addr, _proxy_handle) = start_proxy(backend_addr).await;
+
+    let connector = TcpConnector { addr: proxy_addr };
+    let client = connect(connector, HandshakeConfig::default(), NoDispatcher);
+    let handle = client.handle().await.unwrap();
+
+    // Create stream then close immediately without sending data.
+    let (tx, rx) = channel::<i32>();
+    drop(tx);
+
+    let mut args = rx;
+    let response = handle.call(METHOD_SUM, &mut args).await.unwrap();
+    let result: Result<i64, RoamError<()>> = decode_result(response.payload);
+
+    assert_eq!(result.unwrap(), 0);
+    assert_eq!(call_count.load(Ordering::SeqCst), 1);
+}
+
 /// r[verify channeling.request.channels] - Server-to-client streaming works through proxy
 #[tokio::test]
 async fn test_forwarding_server_to_client_streaming() {
@@ -423,4 +448,31 @@ async fn test_forwarding_multiple_streaming_calls() {
     }
 
     assert_eq!(call_count.load(Ordering::SeqCst), 3);
+}
+
+/// r[verify channeling.request.channels] - Empty stream close survives multi-hop forwarding
+#[tokio::test]
+async fn test_forwarding_client_to_server_empty_stream_multi_hop() {
+    let service = StreamingService::new();
+    let call_count = service.call_count.clone();
+
+    let (backend_addr, _backend_handle) = start_backend(service).await;
+    let (mid_proxy_addr, _mid_proxy_handle) = start_proxy(backend_addr).await;
+    let (edge_proxy_addr, _edge_proxy_handle) = start_proxy(mid_proxy_addr).await;
+
+    let connector = TcpConnector {
+        addr: edge_proxy_addr,
+    };
+    let client = connect(connector, HandshakeConfig::default(), NoDispatcher);
+    let handle = client.handle().await.unwrap();
+
+    let (tx, rx) = channel::<i32>();
+    drop(tx);
+
+    let mut args = rx;
+    let response = handle.call(METHOD_SUM, &mut args).await.unwrap();
+    let result: Result<i64, RoamError<()>> = decode_result(response.payload);
+
+    assert_eq!(result.unwrap(), 0);
+    assert_eq!(call_count.load(Ordering::SeqCst), 1);
 }

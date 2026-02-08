@@ -6,7 +6,8 @@
 use std::sync::Arc;
 
 use crate::{
-    ChannelRegistry, ConnectionHandle, Context, DriverMessage, ServiceDispatcher, TransportError,
+    ChannelRegistry, ConnectionHandle, Context, DriverMessage, IncomingChannelMessage,
+    ServiceDispatcher, TransportError,
 };
 
 // ============================================================================
@@ -116,7 +117,7 @@ impl ServiceDispatcher for ForwardingDispatcher {
                         );
 
                         // Set up forwarding: upstream → downstream
-                        let (tx, mut rx) = crate::runtime::channel::<Vec<u8>>(64);
+                        let (tx, mut rx) = crate::runtime::channel::<IncomingChannelMessage>(64);
                         upstream.register_incoming(upstream_id, tx);
 
                         let task_tx_clone = task_tx.clone();
@@ -125,33 +126,34 @@ impl ServiceDispatcher for ForwardingDispatcher {
                                 upstream_id,
                                 downstream_id, "ForwardingDispatcher: forwarding task started"
                             );
-                            while let Some(data) = rx.recv().await {
-                                debug!(
-                                    upstream_id,
-                                    downstream_id,
-                                    data_len = data.len(),
-                                    "ForwardingDispatcher: forwarding data"
-                                );
-                                let _ = task_tx_clone
-                                    .send(DriverMessage::Data {
-                                        conn_id,
-                                        channel_id: downstream_id,
-                                        payload: data,
-                                    })
-                                    .await;
+                            while let Some(msg) = rx.recv().await {
+                                match msg {
+                                    IncomingChannelMessage::Data(data) => {
+                                        debug!(
+                                            upstream_id,
+                                            downstream_id,
+                                            data_len = data.len(),
+                                            "ForwardingDispatcher: forwarding data"
+                                        );
+                                        let _ = task_tx_clone
+                                            .send(DriverMessage::Data {
+                                                conn_id,
+                                                channel_id: downstream_id,
+                                                payload: data,
+                                            })
+                                            .await;
+                                    }
+                                    IncomingChannelMessage::Close => {
+                                        let _ = task_tx_clone
+                                            .send(DriverMessage::Close {
+                                                conn_id,
+                                                channel_id: downstream_id,
+                                            })
+                                            .await;
+                                        break;
+                                    }
+                                }
                             }
-                            debug!(
-                                upstream_id,
-                                downstream_id,
-                                "ForwardingDispatcher: forwarding task ended, sending Close"
-                            );
-                            // Channel closed
-                            let _ = task_tx_clone
-                                .send(DriverMessage::Close {
-                                    conn_id,
-                                    channel_id: downstream_id,
-                                })
-                                .await;
                         });
                     }
                 }
@@ -214,22 +216,28 @@ impl ServiceDispatcher for ForwardingDispatcher {
                     let upstream_id = channel_map[i].1;
                     let upstream_task_tx = upstream_task_tx.clone();
                     crate::runtime::spawn(async move {
-                        while let Some(data) = rx.recv().await {
-                            let _ = upstream_task_tx
-                                .send(DriverMessage::Data {
-                                    conn_id: upstream_conn_id,
-                                    channel_id: upstream_id,
-                                    payload: data,
-                                })
-                                .await;
+                        while let Some(msg) = rx.recv().await {
+                            match msg {
+                                IncomingChannelMessage::Data(data) => {
+                                    let _ = upstream_task_tx
+                                        .send(DriverMessage::Data {
+                                            conn_id: upstream_conn_id,
+                                            channel_id: upstream_id,
+                                            payload: data,
+                                        })
+                                        .await;
+                                }
+                                IncomingChannelMessage::Close => {
+                                    let _ = upstream_task_tx
+                                        .send(DriverMessage::Close {
+                                            conn_id: upstream_conn_id,
+                                            channel_id: upstream_id,
+                                        })
+                                        .await;
+                                    break;
+                                }
+                            }
                         }
-                        // Channel closed
-                        let _ = upstream_task_tx
-                            .send(DriverMessage::Close {
-                                conn_id: upstream_conn_id,
-                                channel_id: upstream_id,
-                            })
-                            .await;
                     });
                 }
 
@@ -237,22 +245,28 @@ impl ServiceDispatcher for ForwardingDispatcher {
                     let downstream_id = channel_map[i].0;
                     let task_tx = task_tx.clone();
                     crate::runtime::spawn(async move {
-                        while let Some(data) = rx.recv().await {
-                            let _ = task_tx
-                                .send(DriverMessage::Data {
-                                    conn_id,
-                                    channel_id: downstream_id,
-                                    payload: data,
-                                })
-                                .await;
+                        while let Some(msg) = rx.recv().await {
+                            match msg {
+                                IncomingChannelMessage::Data(data) => {
+                                    let _ = task_tx
+                                        .send(DriverMessage::Data {
+                                            conn_id,
+                                            channel_id: downstream_id,
+                                            payload: data,
+                                        })
+                                        .await;
+                                }
+                                IncomingChannelMessage::Close => {
+                                    let _ = task_tx
+                                        .send(DriverMessage::Close {
+                                            conn_id,
+                                            channel_id: downstream_id,
+                                        })
+                                        .await;
+                                    break;
+                                }
+                            }
                         }
-                        // Channel closed
-                        let _ = task_tx
-                            .send(DriverMessage::Close {
-                                conn_id,
-                                channel_id: downstream_id,
-                            })
-                            .await;
                     });
                 }
 

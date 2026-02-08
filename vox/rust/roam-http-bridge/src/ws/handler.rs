@@ -11,7 +11,7 @@ use facet_core::{Def, Shape};
 use futures_util::{SinkExt, StreamExt};
 #[allow(unused_imports)]
 use roam_schema::{MethodDetail, contains_stream, is_rx, is_tx};
-use roam_session::{ResponseData, TransportError};
+use roam_session::{IncomingChannelMessage, ResponseData, TransportError};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{BridgeError, BridgeService, ProtocolErrorKind};
@@ -308,7 +308,7 @@ struct StreamingCallState {
     request_id: u64,
     ws_to_roam_rx_map: HashMap<u64, (u64, &'static Shape)>,
     roam_to_ws_tx_map: HashMap<u64, (u64, &'static Shape)>,
-    roam_receivers: Vec<(u64, mpsc::Receiver<Vec<u8>>)>,
+    roam_receivers: Vec<(u64, mpsc::Receiver<IncomingChannelMessage>)>,
     /// Response receiver - the call has already been sent when this is set
     response_rx: oneshot::Receiver<Result<ResponseData, TransportError>>,
     return_shape: &'static Shape,
@@ -395,9 +395,9 @@ async fn setup_streaming_call(
     let postcard_payload = crate::transcode::json_args_to_postcard(&args_json, &arg_shapes)?;
 
     // Set up channels for receiving data from roam (Tx channels)
-    let mut roam_receivers: Vec<(u64, mpsc::Receiver<Vec<u8>>)> = Vec::new();
+    let mut roam_receivers: Vec<(u64, mpsc::Receiver<IncomingChannelMessage>)> = Vec::new();
     for &roam_channel_id in roam_to_ws_tx_map.keys() {
-        let (tx, rx) = mpsc::channel::<Vec<u8>>(256);
+        let (tx, rx) = mpsc::channel::<IncomingChannelMessage>(256);
         handle.register_incoming(roam_channel_id, tx);
         roam_receivers.push((roam_channel_id, rx));
     }
@@ -495,18 +495,29 @@ async fn run_streaming_call(
         let (ws_channel_id, elem_shape) = roam_to_ws_tx_map[&roam_channel_id];
         let outgoing_tx = outgoing_tx.clone();
         tokio::spawn(async move {
-            while let Some(postcard_data) = rx.recv().await {
-                match crate::transcode::postcard_to_json_with_shape(&postcard_data, elem_shape) {
-                    Ok(json_bytes) => {
-                        if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&json_bytes)
-                        {
-                            let _ = outgoing_tx
-                                .send(ServerMessage::data(ws_channel_id, value))
-                                .await;
+            while let Some(msg) = rx.recv().await {
+                match msg {
+                    IncomingChannelMessage::Data(postcard_data) => {
+                        match crate::transcode::postcard_to_json_with_shape(
+                            &postcard_data,
+                            elem_shape,
+                        ) {
+                            Ok(json_bytes) => {
+                                if let Ok(value) =
+                                    serde_json::from_slice::<serde_json::Value>(&json_bytes)
+                                {
+                                    let _ = outgoing_tx
+                                        .send(ServerMessage::data(ws_channel_id, value))
+                                        .await;
+                                }
+                            }
+                            Err(e) => {
+                                warn!("Failed to transcode channel data: {}", e);
+                            }
                         }
                     }
-                    Err(e) => {
-                        warn!("Failed to transcode channel data: {}", e);
+                    IncomingChannelMessage::Close => {
+                        break;
                     }
                 }
             }

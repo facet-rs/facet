@@ -17,6 +17,15 @@ use std::sync::{
 /// Channel ID type.
 pub type ChannelId = u64;
 
+/// Event delivered to channel receivers.
+///
+/// This distinguishes explicit peer Close from channel teardown/drop.
+#[derive(Debug, PartialEq, Eq)]
+pub enum IncomingChannelMessage {
+    Data(Vec<u8>),
+    Close,
+}
+
 /// Connection role - determines channel ID parity.
 ///
 /// The initiator is whoever opened the connection (e.g. connected to a TCP socket,
@@ -135,7 +144,7 @@ pub struct ChannelRegistry {
 
     /// Channels where we receive Data messages (backing `Rx<T>` or `Tx<T>` handles on our side).
     /// Key: channel_id, Value: sender to route Data payloads to the handle.
-    incoming: HashMap<ChannelId, Sender<Vec<u8>>>,
+    incoming: HashMap<ChannelId, Sender<IncomingChannelMessage>>,
 
     /// Channel IDs that have been closed.
     /// Used to detect data-after-close violations.
@@ -260,7 +269,7 @@ impl ChannelRegistry {
     /// Used for both `Rx<T>` (caller receives from callee) and `Tx<T>` (callee sends to caller).
     ///
     /// r[impl flow.channel.initial-credit] - Channel starts with initial credit.
-    pub fn register_incoming(&mut self, channel_id: ChannelId, tx: Sender<Vec<u8>>) {
+    pub fn register_incoming(&mut self, channel_id: ChannelId, tx: Sender<IncomingChannelMessage>) {
         self.incoming.insert(channel_id, tx);
         // Grant initial credit - peer can send us this many bytes
         self.incoming_credit.insert(channel_id, self.initial_credit);
@@ -293,7 +302,7 @@ impl ChannelRegistry {
         &mut self,
         channel_id: ChannelId,
         payload: Vec<u8>,
-    ) -> Result<(Sender<Vec<u8>>, Vec<u8>), ChannelError> {
+    ) -> Result<(Sender<IncomingChannelMessage>, Vec<u8>), ChannelError> {
         // Check for data-after-close
         if self.closed.contains(&channel_id) {
             return Err(ChannelError::DataAfterClose);
@@ -335,7 +344,7 @@ impl ChannelRegistry {
     ) -> Result<(), ChannelError> {
         let (tx, payload) = self.prepare_route_data(channel_id, payload)?;
         // If send fails, the Rx<T> was dropped - that's okay, just drop the data
-        let _ = tx.send(payload).await;
+        let _ = tx.send(IncomingChannelMessage::Data(payload)).await;
         Ok(())
     }
 
@@ -346,7 +355,17 @@ impl ChannelRegistry {
     /// r[impl channeling.close] - Close terminates the channel.
     /// r[impl flow.channel.close-exempt] - Close doesn't consume credit.
     pub fn close(&mut self, channel_id: ChannelId) {
-        self.incoming.remove(&channel_id);
+        if let Some(tx) = self.incoming.remove(&channel_id) {
+            // Best-effort delivery of explicit Close to preserve channel semantics.
+            match tx.try_send(IncomingChannelMessage::Close) {
+                Ok(()) => {}
+                Err(_e) => {
+                    crate::runtime::spawn(async move {
+                        let _ = tx.send(IncomingChannelMessage::Close).await;
+                    });
+                }
+            }
+        }
         self.incoming_credit.remove(&channel_id);
         self.outgoing_credit.remove(&channel_id);
         self.closed.insert(channel_id);

@@ -36,11 +36,15 @@ async fn tx_serializes_and_rx_deserializes() {
     tx.send(&200).await.unwrap();
 
     // Receive raw bytes and deserialize
-    let bytes1 = taken_rx.recv().await.unwrap();
+    let IncomingChannelMessage::Data(bytes1) = taken_rx.recv().await.unwrap() else {
+        panic!("expected data event");
+    };
     let val1: i32 = facet_postcard::from_slice(&bytes1).unwrap();
     assert_eq!(val1, 100);
 
-    let bytes2 = taken_rx.recv().await.unwrap();
+    let IncomingChannelMessage::Data(bytes2) = taken_rx.recv().await.unwrap() else {
+        panic!("expected data event");
+    };
     let val2: i32 = facet_postcard::from_slice(&bytes2).unwrap();
     assert_eq!(val2, 200);
 }
@@ -80,7 +84,10 @@ async fn channel_registry_routes_data_to_registered_channel() {
     assert!(registry.route_data(42, b"hello".to_vec()).await.is_ok());
 
     // Should receive the data
-    assert_eq!(rx.recv().await, Some(b"hello".to_vec()));
+    assert_eq!(
+        rx.recv().await,
+        Some(IncomingChannelMessage::Data(b"hello".to_vec()))
+    );
 
     // Data to unregistered channel should fail
     assert!(registry.route_data(999, b"nope".to_vec()).await.is_err());
@@ -100,13 +107,29 @@ async fn channel_registry_close_terminates_channel() {
     registry.close(42);
 
     // Should still receive buffered data
-    assert_eq!(rx.recv().await, Some(b"data1".to_vec()));
+    assert_eq!(
+        rx.recv().await,
+        Some(IncomingChannelMessage::Data(b"data1".to_vec()))
+    );
 
-    // Then channel closes (sender dropped)
-    assert_eq!(rx.recv().await, None);
+    // Then explicit close is delivered
+    assert_eq!(rx.recv().await, Some(IncomingChannelMessage::Close));
 
     // Channel no longer registered
     assert!(!registry.contains(42));
+}
+
+#[tokio::test]
+async fn channel_registry_drop_does_not_emit_explicit_close() {
+    let (task_tx, _task_rx) = crate::runtime::channel(10);
+    let mut registry = ChannelRegistry::new(task_tx);
+
+    let (tx, mut rx) = crate::runtime::channel(10);
+    registry.register_incoming(42, tx);
+    drop(registry);
+
+    // Registry teardown drops sender; this is distinct from peer Close.
+    assert_eq!(rx.recv().await, None);
 }
 
 #[test]
