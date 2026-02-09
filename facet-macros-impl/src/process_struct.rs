@@ -730,7 +730,20 @@ pub(crate) fn gen_field_from_pfield(
 
     let field_orig_ident_span = match &field.name.raw {
         facet_macro_parse::IdentOrLiteral::Ident(ident) => ident.span(),
-        _ => proc_macro2::Span::call_site(),
+        facet_macro_parse::IdentOrLiteral::Literal(_) => {
+            // For tuple fields, use the #[facet(default = ...)] span if present,
+            // otherwise use the field type span.
+            field.attrs.get_builtin_span("default").unwrap_or_else(|| {
+                // Try to get the span of the first token of the type
+                field
+                    .ty
+                    .clone()
+                    .into_iter()
+                    .next()
+                    .map(|t| t.span())
+                    .unwrap_or_else(proc_macro2::Span::call_site)
+            })
+        }
     };
 
     let mut want_truthy_skip = skip_all_unless_truthy;
