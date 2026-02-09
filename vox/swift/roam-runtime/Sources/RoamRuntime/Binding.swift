@@ -8,6 +8,7 @@ public final class UnboundTx<T: Sendable>: @unchecked Sendable {
     private var taskTx: (@Sendable (TaskMessage) -> Void)?
     private let serialize: @Sendable (T) -> [UInt8]
     private var bound = false
+    weak var pairedRx: AnyObject?
 
     public init(serialize: @escaping @Sendable (T) -> [UInt8]) {
         self.serialize = serialize
@@ -115,6 +116,7 @@ public func channel<T: Sendable>(
 ) -> (UnboundTx<T>, UnboundRx<T>) {
     let tx = UnboundTx<T>(serialize: serialize)
     let rx = UnboundRx<T>(deserialize: deserialize)
+    tx.pairedRx = rx
     rx.pairedTx = tx
     return (tx, rx)
 }
@@ -149,6 +151,48 @@ public func bindChannels(
             taskSender: taskSender,
             serializers: serializers
         )
+    }
+}
+
+/// Collect bound channel IDs in argument declaration order.
+public func collectChannelIds(schemas: [Schema], args: [Any]) -> [UInt64] {
+    var channelIds: [UInt64] = []
+    for (schema, arg) in zip(schemas, args) {
+        collectChannelIdsFromValue(schema: schema, value: arg, out: &channelIds)
+    }
+    return channelIds
+}
+
+private func collectChannelIdsFromValue(schema: Schema, value: Any, out: inout [UInt64]) {
+    switch schema {
+    case .rx:
+        if let rx = value as? AnyUnboundRx {
+            out.append(rx.channelIdForSchema())
+        }
+    case .tx:
+        if let tx = value as? AnyUnboundTx {
+            out.append(tx.channelIdForSchema())
+        }
+    case .vec(let element):
+        if let arr = value as? [Any] {
+            for item in arr {
+                collectChannelIdsFromValue(schema: element, value: item, out: &out)
+            }
+        }
+    case .option(let inner):
+        let mirror = Mirror(reflecting: value)
+        if mirror.displayStyle == .optional, let (_, unwrapped) = mirror.children.first {
+            collectChannelIdsFromValue(schema: inner, value: unwrapped, out: &out)
+        }
+    case .struct(let fields):
+        let mirror = Mirror(reflecting: value)
+        for (fieldName, fieldSchema) in fields {
+            if let child = mirror.children.first(where: { $0.label == fieldName }) {
+                collectChannelIdsFromValue(schema: fieldSchema, value: child.value, out: &out)
+            }
+        }
+    default:
+        break
     }
 }
 
@@ -234,11 +278,13 @@ private func bindValue(
 /// Protocol for type-erased UnboundRx binding.
 protocol AnyUnboundRx: AnyObject {
     func bindForSchema(channelId: ChannelId, taskSender: @escaping TaskSender)
+    func channelIdForSchema() -> ChannelId
 }
 
 /// Protocol for type-erased UnboundTx binding.
 protocol AnyUnboundTx: AnyObject {
     func bindForSchema(channelId: ChannelId, receiver: ChannelReceiver)
+    func channelIdForSchema() -> ChannelId
 }
 
 extension UnboundRx: AnyUnboundRx {
@@ -249,14 +295,23 @@ extension UnboundRx: AnyUnboundRx {
         }
         self.setChannelIdOnly(channelId: channelId)
     }
+
+    func channelIdForSchema() -> ChannelId {
+        channelId
+    }
 }
 
 extension UnboundTx: AnyUnboundTx {
     func bindForSchema(channelId: ChannelId, receiver: ChannelReceiver) {
         // Schema Tx = client receives via Rx, so this Tx just gets ID
         self.setChannelIdOnly(channelId: channelId)
-        // The Rx would be paired but we don't have reference here
-        // Client needs to track the Rx separately
+        if let pairedRx = self.pairedRx as? AnyUnboundRxReceiver {
+            pairedRx.bindForReceiving(channelId: channelId, receiver: receiver)
+        }
+    }
+
+    func channelIdForSchema() -> ChannelId {
+        channelId
     }
 }
 
@@ -268,5 +323,15 @@ protocol AnyUnboundTxSender: AnyObject {
 extension UnboundTx: AnyUnboundTxSender {
     func bindForSending(channelId: ChannelId, taskSender: @escaping TaskSender) {
         self.bind(channelId: channelId, taskTx: taskSender)
+    }
+}
+
+protocol AnyUnboundRxReceiver: AnyObject {
+    func bindForReceiving(channelId: ChannelId, receiver: ChannelReceiver)
+}
+
+extension UnboundRx: AnyUnboundRxReceiver {
+    func bindForReceiving(channelId: ChannelId, receiver: ChannelReceiver) {
+        self.bind(channelId: channelId, receiver: receiver)
     }
 }

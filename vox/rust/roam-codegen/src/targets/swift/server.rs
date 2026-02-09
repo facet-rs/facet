@@ -2,11 +2,9 @@
 //!
 //! Generates handler protocol and dispatcher for routing incoming calls.
 
-use facet_core::{ScalarType, Shape};
+use facet_core::Shape;
 use heck::{ToLowerCamelCase, ToUpperCamelCase};
-use roam_schema::{
-    MethodDetail, ServiceDetail, ShapeKind, StructInfo, classify_shape, is_rx, is_tx,
-};
+use roam_schema::{MethodDetail, ServiceDetail, ShapeKind, classify_shape, is_rx, is_tx};
 
 use super::decode::{generate_decode_stmt_with_cursor, generate_inline_decode};
 use super::encode::generate_encode_closure;
@@ -244,7 +242,7 @@ fn generate_channeling_dispatcher(service: &ServiceDetail) -> String {
 
         // Main dispatch method
         w.writeln(
-            "public func dispatch(methodId: UInt64, requestId: UInt64, payload: Data) async {",
+            "public func dispatch(methodId: UInt64, requestId: UInt64, channels: [UInt64], payload: Data) async {",
         )
         .unwrap();
         {
@@ -257,7 +255,7 @@ fn generate_channeling_dispatcher(service: &ServiceDetail) -> String {
                 cw_writeln!(w, "case {}:", hex_u64(method_id)).unwrap();
                 cw_writeln!(
                     w,
-                    "    await {dispatch_name}(requestId: requestId, payload: payload)"
+                    "    await {dispatch_name}(requestId: requestId, channels: channels, payload: payload)"
                 )
                 .unwrap();
             }
@@ -289,13 +287,13 @@ fn generate_channeling_dispatcher(service: &ServiceDetail) -> String {
 
 /// Generate preregisterChannels method.
 fn generate_preregister_channels(w: &mut CodeWriter<&mut String>, service: &ServiceDetail) {
-    w.writeln("/// Pre-register channel IDs from a request payload.")
+    w.writeln("/// Pre-register Rx channel IDs from request channels.")
         .unwrap();
     w.writeln("/// Call this synchronously before spawning the dispatch task to avoid")
         .unwrap();
     w.writeln("/// race conditions where Data arrives before channels are registered.")
         .unwrap();
-    w.writeln("public static func preregisterChannels(methodId: UInt64, payload: Data, registry: ChannelRegistry) async {")
+    w.writeln("public static func preregisterChannels(methodId: UInt64, channels: [UInt64], registry: ChannelRegistry) async {")
         .unwrap();
     {
         let _indent = w.indent();
@@ -306,40 +304,32 @@ fn generate_preregister_channels(w: &mut CodeWriter<&mut String>, service: &Serv
             let has_rx_args = method.args.iter().any(|a| is_rx(a.ty));
 
             if has_rx_args {
+                let channel_arg_count = method
+                    .args
+                    .iter()
+                    .filter(|a| is_rx(a.ty) || is_tx(a.ty))
+                    .count();
                 cw_writeln!(w, "case {}:", hex_u64(method_id)).unwrap();
-                w.writeln("    do {").unwrap();
-                let cursor_var = unique_decode_cursor_name(&method.args);
-                cw_writeln!(w, "        var {cursor_var} = 0").unwrap();
+                cw_writeln!(w, "    guard channels.count >= {channel_arg_count} else {{").unwrap();
+                w.writeln("        return").unwrap();
+                w.writeln("    }").unwrap();
+                w.writeln("    var channelCursor = 0").unwrap();
 
-                // Parse channel IDs and mark them as known
+                // Channel IDs are provided in declaration order.
                 for arg in &method.args {
                     let arg_name = arg.name.to_lower_camel_case();
                     if is_rx(arg.ty) {
                         // Schema Rx = client sends, server receives → need to preregister
-                        cw_writeln!(
-                            w,
-                            "        let {arg_name}ChannelId = try decodeVarint(from: payload, offset: &{cursor_var})"
-                        )
-                        .unwrap();
-                        cw_writeln!(w, "        await registry.markKnown({arg_name}ChannelId)")
+                        cw_writeln!(w, "    let {arg_name}ChannelId = channels[channelCursor]")
+                            .unwrap();
+                        w.writeln("    channelCursor += 1").unwrap();
+                        cw_writeln!(w, "    await registry.markKnown({arg_name}ChannelId)")
                             .unwrap();
                     } else if is_tx(arg.ty) {
-                        // Schema Tx = server sends → just skip the varint
-                        cw_writeln!(
-                            w,
-                            "        _ = try decodeVarint(from: payload, offset: &{cursor_var}) // {arg_name}"
-                        )
-                        .unwrap();
-                    } else {
-                        // Non-channeling arg - skip it based on type
-                        generate_skip_arg(w, &arg_name, arg.ty, "        ", &cursor_var);
+                        cw_writeln!(w, "    _ = channels[channelCursor] // {arg_name}").unwrap();
+                        w.writeln("    channelCursor += 1").unwrap();
                     }
                 }
-
-                w.writeln("    } catch {").unwrap();
-                w.writeln("        // Ignore parse errors - dispatch will handle them")
-                    .unwrap();
-                w.writeln("    }").unwrap();
             }
         }
 
@@ -348,70 +338,6 @@ fn generate_preregister_channels(w: &mut CodeWriter<&mut String>, service: &Serv
         w.writeln("}").unwrap();
     }
     w.writeln("}").unwrap();
-}
-
-/// Generate code to skip over an argument during preregistration.
-fn generate_skip_arg(
-    w: &mut CodeWriter<&mut String>,
-    name: &str,
-    shape: &'static Shape,
-    indent: &str,
-    cursor_var: &str,
-) {
-    use roam_schema::is_bytes;
-
-    if is_bytes(shape) {
-        cw_writeln!(
-            w,
-            "{indent}_ = try decodeBytes(from: payload, offset: &{cursor_var}) // {name}"
-        )
-        .unwrap();
-        return;
-    }
-
-    match classify_shape(shape) {
-        ShapeKind::Scalar(scalar) => {
-            let skip_code = match scalar {
-                ScalarType::Bool | ScalarType::U8 | ScalarType::I8 => {
-                    format!("{cursor_var} += 1")
-                }
-                ScalarType::U16 | ScalarType::I16 => format!("{cursor_var} += 2"),
-                ScalarType::U32 | ScalarType::I32 | ScalarType::U64 | ScalarType::I64 => {
-                    format!("_ = try decodeVarint(from: payload, offset: &{cursor_var})")
-                }
-                ScalarType::F32 => format!("{cursor_var} += 4"),
-                ScalarType::F64 => format!("{cursor_var} += 8"),
-                ScalarType::Unit => String::new(),
-                ScalarType::Char => {
-                    format!("_ = try decodeVarint(from: payload, offset: &{cursor_var})")
-                }
-                _ => String::from("// unknown scalar type"),
-            };
-            if !skip_code.is_empty() {
-                cw_writeln!(w, "{indent}{skip_code} // {name}").unwrap();
-            }
-        }
-        ShapeKind::List { .. } | ShapeKind::Slice { .. } | ShapeKind::Array { .. } => {
-            cw_writeln!(
-                w,
-                "{indent}_ = try decodeBytes(from: payload, offset: &{cursor_var}) // {name} (skipped)"
-            )
-            .unwrap();
-        }
-        ShapeKind::Option { .. } => {
-            cw_writeln!(w, "{indent}// TODO: skip option {name}").unwrap();
-        }
-        ShapeKind::Struct(StructInfo { fields, .. }) => {
-            // For structs, recursively skip each field
-            for field in fields {
-                let field_name = format!("{}.{}", name, field.name);
-                generate_skip_arg(w, &field_name, field.shape(), indent, cursor_var);
-            }
-        }
-        _ => {
-            cw_writeln!(w, "{indent}// TODO: skip {name}").unwrap();
-        }
-    }
 }
 
 /// Generate a single channeling dispatch method.
@@ -423,7 +349,7 @@ fn generate_channeling_dispatch_method(w: &mut CodeWriter<&mut String>, method: 
 
     cw_writeln!(
         w,
-        "private func {dispatch_name}(requestId: UInt64, payload: Data) async {{"
+        "private func {dispatch_name}(requestId: UInt64, channels: [UInt64], payload: Data) async {{"
     )
     .unwrap();
     {
@@ -431,21 +357,30 @@ fn generate_channeling_dispatch_method(w: &mut CodeWriter<&mut String>, method: 
         w.writeln("do {").unwrap();
         {
             let _indent = w.indent();
-            let cursor_var = if method.args.is_empty() {
-                None
-            } else {
+            let has_payload_args = method.args.iter().any(|a| !is_rx(a.ty) && !is_tx(a.ty));
+            let has_channel_args = method.args.iter().any(|a| is_rx(a.ty) || is_tx(a.ty));
+            let cursor_var = if has_payload_args {
                 let name = unique_decode_cursor_name(&method.args);
                 cw_writeln!(w, "var {name} = 0").unwrap();
                 Some(name)
+            } else {
+                None
             };
+            if has_channel_args {
+                w.writeln("var channelCursor = 0").unwrap();
+            }
 
-            // Decode arguments - for channeling, decode channel IDs and create Tx/Rx
+            // Decode arguments - channel IDs come from Request.channels.
             for arg in &method.args {
                 let arg_name = arg.name.to_lower_camel_case();
-                let cursor_var = cursor_var
-                    .as_deref()
-                    .expect("cursor must exist for methods with arguments");
-                generate_channeling_decode_arg(w, &arg_name, arg.ty, cursor_var);
+                generate_channeling_decode_arg(
+                    w,
+                    &arg_name,
+                    arg.ty,
+                    cursor_var.as_deref(),
+                    "channels",
+                    Some("channelCursor"),
+                );
             }
 
             // Call handler
@@ -553,18 +488,28 @@ fn generate_channeling_decode_arg(
     w: &mut CodeWriter<&mut String>,
     name: &str,
     shape: &'static Shape,
-    cursor_var: &str,
+    cursor_var: Option<&str>,
+    channels_var: &str,
+    channel_cursor_var: Option<&str>,
 ) {
     match classify_shape(shape) {
         ShapeKind::Rx { inner } => {
             // Schema Rx = client passes Rx to method, sends via paired Tx
             // Server needs to receive → create server Rx
             let inline_decode = generate_inline_decode(inner, "Data(bytes)", "off");
+            let channel_cursor_var =
+                channel_cursor_var.expect("channel cursor required for channeling args");
             cw_writeln!(
                 w,
-                "let {name}ChannelId = try decodeVarint(from: payload, offset: &{cursor_var})"
+                "guard {channel_cursor_var} < {channels_var}.count else {{ throw RoamError.decodeError(\"missing channel id for {name}\") }}"
             )
             .unwrap();
+            cw_writeln!(
+                w,
+                "let {name}ChannelId = {channels_var}[{channel_cursor_var}]"
+            )
+            .unwrap();
+            cw_writeln!(w, "{channel_cursor_var} += 1").unwrap();
             cw_writeln!(
                 w,
                 "let {name}Receiver = await registry.register({name}ChannelId)"
@@ -583,11 +528,19 @@ fn generate_channeling_decode_arg(
             // Schema Tx = client passes Tx to method, receives via paired Rx
             // Server needs to send → create server Tx
             let encode_closure = generate_encode_closure(inner);
+            let channel_cursor_var =
+                channel_cursor_var.expect("channel cursor required for channeling args");
             cw_writeln!(
                 w,
-                "let {name}ChannelId = try decodeVarint(from: payload, offset: &{cursor_var})"
+                "guard {channel_cursor_var} < {channels_var}.count else {{ throw RoamError.decodeError(\"missing channel id for {name}\") }}"
             )
             .unwrap();
+            cw_writeln!(
+                w,
+                "let {name}ChannelId = {channels_var}[{channel_cursor_var}]"
+            )
+            .unwrap();
+            cw_writeln!(w, "{channel_cursor_var} += 1").unwrap();
             cw_writeln!(
                 w,
                 "let {name} = createServerTx(channelId: {name}ChannelId, taskSender: taskSender, serialize: ({encode_closure}))"
@@ -596,6 +549,7 @@ fn generate_channeling_decode_arg(
         }
         _ => {
             // Non-channeling argument - use standard decode
+            let cursor_var = cursor_var.expect("payload cursor required for non-channel args");
             let decode_stmt = generate_decode_stmt_with_cursor(shape, name, "", cursor_var);
             for line in decode_stmt.lines() {
                 w.writeln(line).unwrap();
@@ -735,7 +689,9 @@ mod tests {
         let code = generate_channeling_dispatcher(&service);
 
         assert!(
-            code.contains("private func dispatch_ping(requestId: UInt64, payload: Data) async {")
+            code.contains(
+                "private func dispatch_ping(requestId: UInt64, channels: [UInt64], payload: Data) async {"
+            )
         );
         assert!(!code.contains("var cursor = 0"));
     }

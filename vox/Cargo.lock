@@ -2362,6 +2362,7 @@ dependencies = [
  "roam-tracing",
  "roam-wire",
  "shm-primitives",
+ "spec-proto",
  "tempfile",
  "tokio",
  "tracing",

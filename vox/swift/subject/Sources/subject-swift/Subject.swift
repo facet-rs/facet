@@ -143,13 +143,14 @@ final class TestbedDispatcherAdapter: ServiceDispatcher, @unchecked Sendable {
     func preregister(
         methodId: UInt64,
         payload: [UInt8],
+        channels: [UInt64],
         registry: ChannelRegistry
     ) async {
         // Pre-register channels before the handler task is spawned.
         // This ensures channels are known before any Data messages arrive.
         await TestbedChannelingDispatcher.preregisterChannels(
             methodId: methodId,
-            payload: Data(payload),
+            channels: channels,
             registry: registry
         )
     }
@@ -157,6 +158,7 @@ final class TestbedDispatcherAdapter: ServiceDispatcher, @unchecked Sendable {
     func dispatch(
         methodId: UInt64,
         payload: [UInt8],
+        channels: [UInt64],
         requestId: UInt64,
         registry: ChannelRegistry,
         taskTx: @escaping @Sendable (TaskMessage) -> Void
@@ -168,7 +170,12 @@ final class TestbedDispatcherAdapter: ServiceDispatcher, @unchecked Sendable {
         )
 
         // Dispatch the request
-        await dispatcher.dispatch(methodId: methodId, requestId: requestId, payload: Data(payload))
+        await dispatcher.dispatch(
+            methodId: methodId,
+            requestId: requestId,
+            channels: channels,
+            payload: Data(payload)
+        )
     }
 }
 
@@ -225,50 +232,7 @@ func runServer() async throws {
 
 // MARK: - Client Mode
 
-func runClient() async throws {
-    guard let addr = ProcessInfo.processInfo.environment["PEER_ADDR"] else {
-        log("PEER_ADDR not set")
-        throw SubjectError.missingEnv
-    }
-
-    log("connecting to \(addr)")
-
-    // Parse host:port
-    let parts = addr.split(separator: ":")
-    guard parts.count == 2, let port = Int(parts[1]) else {
-        log("invalid PEER_ADDR format")
-        throw SubjectError.invalidAddr
-    }
-    let host = String(parts[0])
-
-    // Use roam-runtime's connect function
-    let transport = try await connect(host: host, port: port)
-    log("connected")
-
-    let handler = TestbedService()
-    let dispatcher = TestbedDispatcherAdapter(handler: handler)
-
-    let (handle, driver) = try await establishInitiator(
-        transport: transport,
-        dispatcher: dispatcher
-    )
-
-    log("handshake complete")
-
-    // Spawn driver
-    Task {
-        do {
-            try await driver.run()
-        } catch {
-            log("driver error: \(error)")
-        }
-    }
-
-    // Create client
-    let client = TestbedClient(connection: handle)
-
-    // Run test scenario
-    let scenario = ProcessInfo.processInfo.environment["CLIENT_SCENARIO"] ?? "echo"
+func runClientScenario(client: TestbedClient, scenario: String) async throws {
     log("running client scenario: \(scenario)")
 
     switch scenario {
@@ -276,8 +240,31 @@ func runClient() async throws {
         let result = try await client.echo(message: "hello from swift")
         log("echo result: \(result)")
     case "sum":
-        log("sum scenario skipped for swift client mode")
-        return
+        let (tx, rx) = channel(
+            serialize: { encodeI32($0) },
+            deserialize: { bytes in
+                var offset = 0
+                return try decodeI32(from: Data(bytes), offset: &offset)
+            }
+        )
+
+        let sender = Task {
+            try await Task.sleep(nanoseconds: 50_000_000)
+            try tx.send(1)
+            try tx.send(2)
+            try tx.send(3)
+            try tx.send(4)
+            try tx.send(5)
+            tx.close()
+        }
+
+        let result = try await client.sum(numbers: rx)
+        _ = try await sender.value
+        guard result == 15 else {
+            log("sum expected 15, got \(result)")
+            throw SubjectError.invalidResponse
+        }
+        log("sum result: \(result)")
     case "generate":
         let (tx, rx) = channel(
             serialize: { encodeI32($0) },
@@ -289,21 +276,22 @@ func runClient() async throws {
 
         try await client.generate(count: 5, output: tx)
 
-        // The paired Rx may not be bound by the runtime yet; avoid failing
-        // the entire conformance run if streaming receive is unavailable.
-        if rx.isBound {
-            var received: [Int32] = []
-            for try await n in rx {
-                received.append(n)
-            }
-            guard received == [0, 1, 2, 3, 4] else {
-                log("generate expected [0, 1, 2, 3, 4], got \(received)")
-                throw SubjectError.invalidResponse
-            }
-            log("generate result OK: \(received)")
-        } else {
-            log("generate Rx not bound by runtime; call completed")
+        var received: [Int32] = []
+        for try await n in rx {
+            received.append(n)
         }
+        guard received == [0, 1, 2, 3, 4] else {
+            log("generate expected [0, 1, 2, 3, 4], got \(received)")
+            throw SubjectError.invalidResponse
+        }
+        log("generate result OK: \(received)")
+    case "divide_error":
+        let result = try await client.divide(dividend: 10, divisor: 0)
+        guard case .failure(.divisionByZero) = result else {
+            log("divide_error expected division_by_zero")
+            throw SubjectError.invalidResponse
+        }
+        log("divide_error result OK")
     case "shape_area":
         let result = try await client.shapeArea(shape: .rectangle(width: 3.0, height: 4.0))
         guard result == 12.0 else {
@@ -352,6 +340,87 @@ func runClient() async throws {
     }
 }
 
+func runClient() async throws {
+    guard let addr = ProcessInfo.processInfo.environment["PEER_ADDR"] else {
+        log("PEER_ADDR not set")
+        throw SubjectError.missingEnv
+    }
+
+    log("connecting to \(addr)")
+
+    // Parse host:port
+    let parts = addr.split(separator: ":")
+    guard parts.count == 2, let port = Int(parts[1]) else {
+        log("invalid PEER_ADDR format")
+        throw SubjectError.invalidAddr
+    }
+    let host = String(parts[0])
+
+    // Use roam-runtime's connect function
+    let transport = try await connect(host: host, port: port)
+    log("connected")
+
+    let handler = TestbedService()
+    let dispatcher = TestbedDispatcherAdapter(handler: handler)
+
+    let (handle, driver) = try await establishInitiator(
+        transport: transport,
+        dispatcher: dispatcher
+    )
+
+    log("handshake complete")
+
+    // Spawn driver
+    Task {
+        do {
+            try await driver.run()
+        } catch {
+            log("driver error: \(error)")
+        }
+    }
+
+    // Create client
+    let client = TestbedClient(connection: handle)
+    let scenario = ProcessInfo.processInfo.environment["CLIENT_SCENARIO"] ?? "echo"
+    try await runClientScenario(client: client, scenario: scenario)
+}
+
+func runShmClient() async throws {
+    guard let controlSock = ProcessInfo.processInfo.environment["SHM_CONTROL_SOCK"] else {
+        log("SHM_CONTROL_SOCK not set")
+        throw SubjectError.missingEnv
+    }
+    guard let sid = ProcessInfo.processInfo.environment["SHM_SESSION_ID"] else {
+        log("SHM_SESSION_ID not set")
+        throw SubjectError.missingEnv
+    }
+
+    let ticket = try requestShmBootstrapTicket(controlSocketPath: controlSock, sid: sid)
+    let transport = try ShmGuestTransport.attach(ticket: ticket)
+
+    let handler = TestbedService()
+    let dispatcher = TestbedDispatcherAdapter(handler: handler)
+    let (handle, driver) = establishShmGuest(
+        transport: transport,
+        dispatcher: dispatcher
+    )
+
+    let driverTask = Task {
+        do {
+            try await driver.run()
+        } catch {
+            log("driver error: \(error)")
+        }
+    }
+
+    let client = TestbedClient(connection: handle)
+    let scenario = ProcessInfo.processInfo.environment["CLIENT_SCENARIO"] ?? "echo"
+    try await runClientScenario(client: client, scenario: scenario)
+
+    try await transport.close()
+    _ = await driverTask.result
+}
+
 // MARK: - Errors
 
 enum SubjectError: Error {
@@ -375,6 +444,8 @@ struct SubjectMain {
                 try await runServer()
             case "client":
                 try await runClient()
+            case "shm-client":
+                try await runShmClient()
             default:
                 log("unknown SUBJECT_MODE: \(mode)")
                 exit(1)

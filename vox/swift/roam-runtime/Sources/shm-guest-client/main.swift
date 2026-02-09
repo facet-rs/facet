@@ -22,20 +22,23 @@ final class InteropCounter: @unchecked Sendable {
 struct InteropDispatcher: ServiceDispatcher {
     let counter: InteropCounter
 
-    func preregister(methodId: UInt64, payload: [UInt8], registry: ChannelRegistry) async {
+    func preregister(methodId: UInt64, payload: [UInt8], channels: [UInt64], registry: ChannelRegistry) async {
         _ = methodId
         _ = payload
+        _ = channels
         _ = registry
     }
 
     func dispatch(
         methodId: UInt64,
         payload: [UInt8],
+        channels: [UInt64],
         requestId: UInt64,
         registry: ChannelRegistry,
         taskTx: @escaping @Sendable (TaskMessage) -> Void
     ) async {
         _ = registry
+        _ = channels
         switch methodId {
         case 1:
             let input = String(decoding: payload, as: UTF8.self)

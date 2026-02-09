@@ -319,7 +319,9 @@ fn generate_streaming_client_body(
     w.writeln(")").unwrap();
     w.blank_line().unwrap();
 
-    // Encode payload (channel IDs for Tx/Rx, values for regular args)
+    // Encode payload as the full argument tuple.
+    // Channel IDs are still included here for payload shape fidelity, and also sent
+    // in Request.channels for schema-driven discovery.
     w.writeln("// Encode payload with channel IDs").unwrap();
     w.writeln("var payloadBytes: [UInt8] = []").unwrap();
     for arg in &method.args {
@@ -332,6 +334,12 @@ fn generate_streaming_client_body(
         }
     }
     w.writeln("let payload = Data(payloadBytes)").unwrap();
+    cw_writeln!(
+        w,
+        "let channels = collectChannelIds(schemas: {service_name_lower}_schemas[\"{method_id_name}\"]!.args, args: [{}])",
+        arg_names.join(", ")
+    )
+    .unwrap();
     w.blank_line().unwrap();
 
     // Make the call
@@ -340,7 +348,7 @@ fn generate_streaming_client_body(
     if ret_type == "Void" {
         cw_writeln!(
             w,
-            "let response = try await connection.call(methodId: {}, payload: payload, timeout: timeout)",
+            "let response = try await connection.call(methodId: {}, payload: payload, channels: channels, timeout: timeout)",
             hex_u64(method_id)
         )
         .unwrap();
@@ -353,7 +361,7 @@ fn generate_streaming_client_body(
     } else {
         cw_writeln!(
             w,
-            "let response = try await connection.call(methodId: {}, payload: payload, timeout: timeout)",
+            "let response = try await connection.call(methodId: {}, payload: payload, channels: channels, timeout: timeout)",
             hex_u64(method_id)
         )
         .unwrap();

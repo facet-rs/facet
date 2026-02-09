@@ -47,6 +47,7 @@ roam-tracing.workspace = true
 futures = "0.3.31"
 facet-testhelpers.workspace = true
 facet.workspace = true
+spec-proto = { path = "../../spec/spec-proto" }
 
 [[bin]]
 name = "guest_process"

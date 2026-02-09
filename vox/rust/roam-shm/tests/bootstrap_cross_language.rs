@@ -4,7 +4,9 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
+use roam_session::{Rx, Tx};
 use roam_shm::bootstrap::{SessionId, SessionPaths, unix};
+use roam_shm::driver::establish_multi_peer_host;
 use roam_shm::layout::{SegmentConfig, SizeClass};
 use roam_shm::msg::ShmMsg;
 use roam_shm::peer::PeerId;
@@ -12,6 +14,10 @@ use roam_shm::transport::{message_to_shm_msg, shm_msg_to_message};
 use roam_shm::{AddPeerOptions, ShmHost, msg_type};
 use roam_wire::{ConnectionId, Message};
 use shm_primitives::Doorbell;
+use spec_proto::{
+    Canvas, Color, LookupError, MathError, Person, Point, Rectangle, Shape, Testbed,
+    TestbedDispatcher,
+};
 
 fn swift_package_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -52,6 +58,229 @@ fn swift_shm_guest_client_path() -> PathBuf {
     }
 
     panic!("shm-guest-client binary not found; ensure nextest setup built swift target");
+}
+
+fn swift_subject_client_path() -> PathBuf {
+    let pkg = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../swift/subject")
+        .canonicalize()
+        .expect("swift subject package path");
+    let candidates = [
+        pkg.join(".build/release/subject-swift"),
+        pkg.join(".build/arm64-apple-macosx/release/subject-swift"),
+        pkg.join(".build/x86_64-apple-macosx/release/subject-swift"),
+    ];
+
+    for candidate in candidates {
+        if candidate.exists() {
+            return candidate;
+        }
+    }
+
+    panic!("subject-swift binary not found; ensure nextest setup built swift target");
+}
+
+#[derive(Clone)]
+struct TestbedHostService;
+
+impl Testbed for TestbedHostService {
+    async fn echo(&self, _cx: &roam_session::Context, message: String) -> String {
+        message
+    }
+
+    async fn reverse(&self, _cx: &roam_session::Context, message: String) -> String {
+        message.chars().rev().collect()
+    }
+
+    async fn divide(
+        &self,
+        _cx: &roam_session::Context,
+        dividend: i64,
+        divisor: i64,
+    ) -> Result<i64, MathError> {
+        if divisor == 0 {
+            Err(MathError::DivisionByZero)
+        } else {
+            Ok(dividend / divisor)
+        }
+    }
+
+    async fn lookup(&self, _cx: &roam_session::Context, id: u32) -> Result<Person, LookupError> {
+        if id == 1 {
+            Ok(Person {
+                name: "Alice".to_string(),
+                age: 30,
+                email: Some("alice@example.com".to_string()),
+            })
+        } else {
+            Err(LookupError::NotFound)
+        }
+    }
+
+    async fn sum(&self, _cx: &roam_session::Context, mut numbers: Rx<i32>) -> i64 {
+        let mut total = 0;
+        while let Ok(Some(value)) = numbers.recv().await {
+            total += i64::from(value);
+        }
+        total
+    }
+
+    async fn generate(&self, _cx: &roam_session::Context, count: u32, output: Tx<i32>) {
+        for value in 0..count {
+            let _ = output.send(&(value as i32)).await;
+        }
+    }
+
+    async fn transform(
+        &self,
+        _cx: &roam_session::Context,
+        mut input: Rx<String>,
+        output: Tx<String>,
+    ) {
+        while let Ok(Some(value)) = input.recv().await {
+            let _ = output.send(&value.to_uppercase()).await;
+        }
+    }
+
+    async fn echo_point(&self, _cx: &roam_session::Context, point: Point) -> Point {
+        point
+    }
+
+    async fn create_person(
+        &self,
+        _cx: &roam_session::Context,
+        name: String,
+        age: u8,
+        email: Option<String>,
+    ) -> Person {
+        Person { name, age, email }
+    }
+
+    async fn rectangle_area(&self, _cx: &roam_session::Context, rect: Rectangle) -> f64 {
+        let w = f64::from((rect.bottom_right.x - rect.top_left.x).abs());
+        let h = f64::from((rect.bottom_right.y - rect.top_left.y).abs());
+        w * h
+    }
+
+    async fn parse_color(&self, _cx: &roam_session::Context, name: String) -> Option<Color> {
+        match name.to_lowercase().as_str() {
+            "red" => Some(Color::Red),
+            "green" => Some(Color::Green),
+            "blue" => Some(Color::Blue),
+            _ => None,
+        }
+    }
+
+    async fn shape_area(&self, _cx: &roam_session::Context, shape: Shape) -> f64 {
+        match shape {
+            Shape::Circle { radius } => std::f64::consts::PI * radius * radius,
+            Shape::Rectangle { width, height } => width * height,
+            Shape::Point => 0.0,
+        }
+    }
+
+    async fn create_canvas(
+        &self,
+        _cx: &roam_session::Context,
+        name: String,
+        shapes: Vec<Shape>,
+        background: Color,
+    ) -> Canvas {
+        Canvas {
+            name,
+            shapes,
+            background,
+        }
+    }
+
+    async fn process_message(
+        &self,
+        _cx: &roam_session::Context,
+        msg: spec_proto::Message,
+    ) -> spec_proto::Message {
+        match msg {
+            spec_proto::Message::Text(s) => spec_proto::Message::Text(format!("processed: {s}")),
+            spec_proto::Message::Number(n) => spec_proto::Message::Number(n * 2),
+            spec_proto::Message::Data(d) => {
+                spec_proto::Message::Data(d.into_iter().rev().collect())
+            }
+        }
+    }
+
+    async fn get_points(&self, _cx: &roam_session::Context, count: u32) -> Vec<Point> {
+        (0..count as i32)
+            .map(|i| Point { x: i, y: i * 2 })
+            .collect()
+    }
+
+    async fn swap_pair(&self, _cx: &roam_session::Context, pair: (i32, String)) -> (String, i32) {
+        (pair.1, pair.0)
+    }
+}
+
+fn spawn_swift_subject_shm_client(
+    control_sock: &std::path::Path,
+    sid: &str,
+    scenario: &str,
+) -> std::process::Child {
+    Command::new(swift_subject_client_path())
+        .env("SUBJECT_MODE", "shm-client")
+        .env("SHM_CONTROL_SOCK", control_sock)
+        .env("SHM_SESSION_ID", sid)
+        .env("CLIENT_SCENARIO", scenario)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn swift subject shm client")
+}
+
+async fn run_swift_generated_client_over_bootstrap_shm(scenario: &str) {
+    let tmp = tempfile::Builder::new()
+        .prefix("rshm-subject-")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let container_root = tmp.path().join("app-group");
+    std::fs::create_dir_all(&container_root).unwrap();
+
+    let sid_str = "123e4567-e89b-12d3-a456-426614174000";
+    let sid = SessionId::parse(sid_str).unwrap();
+    let paths = SessionPaths::new(&container_root, sid.clone()).unwrap();
+    let listener = unix::bind_control_socket(&paths).unwrap();
+
+    let mut host = ShmHost::create(paths.shm_path(), SegmentConfig::default()).unwrap();
+    let ticket = host.add_peer(AddPeerOptions::default()).unwrap();
+    let peer_id = ticket.peer_id;
+    let doorbell_fd = ticket.doorbell_handle().as_raw_fd();
+    let hub_path = ticket.hub_path.clone();
+
+    let bootstrap_task = tokio::spawn(async move {
+        unix::accept_and_send_ticket(&listener, &sid, peer_id, &hub_path, doorbell_fd).await
+    });
+
+    let dispatcher = TestbedDispatcher::new(TestbedHostService);
+    let (host_driver, _handles, _host_incoming, _host_driver_handle) =
+        establish_multi_peer_host(host, vec![(peer_id, dispatcher)]);
+    let driver_task = tokio::spawn(host_driver.run());
+
+    let child = spawn_swift_subject_shm_client(&paths.control_sock_path(), sid_str, scenario);
+    let output = tokio::task::spawn_blocking(move || child.wait_with_output())
+        .await
+        .expect("join wait_with_output task")
+        .expect("wait for swift subject shm client");
+
+    bootstrap_task.await.unwrap().unwrap();
+    drop(ticket);
+
+    driver_task.abort();
+    let _ = driver_task.await;
+
+    if !output.status.success() {
+        panic!(
+            "swift subject shm client failed (scenario={scenario}):\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }
 
 #[tokio::test]
@@ -112,6 +341,17 @@ async fn rust_host_bootstrap_to_swift_client() {
     );
 
     host_task.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn rust_host_bootstrap_to_swift_generated_client_unary_and_error() {
+    run_swift_generated_client_over_bootstrap_shm("echo").await;
+    run_swift_generated_client_over_bootstrap_shm("divide_error").await;
+}
+
+#[tokio::test]
+async fn rust_host_bootstrap_to_swift_generated_client_channeling() {
+    run_swift_generated_client_over_bootstrap_shm("generate").await;
 }
 
 #[tokio::test]

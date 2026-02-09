@@ -229,6 +229,24 @@ jobs:
         env:
           SUBJECT_CMD: "sh swift/subject/subject-swift.sh"
 
+  shm-generated-client:
+    name: SHM / Generated Clients
+    runs-on: depot-macos-15
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run SHM cross-language regression tests
+        run: cargo nextest run -p roam-shm --test bootstrap_cross_language
+
   rust-wasm:
     name: Rust / WebAssembly
     runs-on: depot-ubuntu-24.04-4

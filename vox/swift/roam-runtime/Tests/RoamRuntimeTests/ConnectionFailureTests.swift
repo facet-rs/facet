@@ -118,11 +118,17 @@ private actor ScriptedTransport: MessageTransport {
 }
 
 private struct NoopDispatcher: ServiceDispatcher {
-    func preregister(methodId _: UInt64, payload _: [UInt8], registry _: ChannelRegistry) async {}
+    func preregister(
+        methodId _: UInt64,
+        payload _: [UInt8],
+        channels _: [UInt64],
+        registry _: ChannelRegistry
+    ) async {}
 
     func dispatch(
         methodId _: UInt64,
         payload _: [UInt8],
+        channels _: [UInt64],
         requestId _: UInt64,
         registry _: ChannelRegistry,
         taskTx _: @escaping @Sendable (TaskMessage) -> Void

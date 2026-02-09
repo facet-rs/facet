@@ -28,6 +28,7 @@ public protocol ServiceDispatcher: Sendable {
     func preregister(
         methodId: UInt64,
         payload: [UInt8],
+        channels: [UInt64],
         registry: ChannelRegistry
     ) async
 
@@ -35,6 +36,7 @@ public protocol ServiceDispatcher: Sendable {
     func dispatch(
         methodId: UInt64,
         payload: [UInt8],
+        channels: [UInt64],
         requestId: UInt64,
         registry: ChannelRegistry,
         taskTx: @escaping @Sendable (TaskMessage) -> Void
@@ -49,6 +51,7 @@ public enum HandleCommand: Sendable {
         requestId: UInt64,
         methodId: UInt64,
         payload: [UInt8],
+        channels: [UInt64],
         timeout: TimeInterval?,
         responseTx: @Sendable (Result<[UInt8], ConnectionError>) -> Void
     )
@@ -70,6 +73,7 @@ private actor RequestIdAllocator {
 /// Handle for making outgoing RPC calls.
 public final class ConnectionHandle: @unchecked Sendable {
     private let commandTx: @Sendable (HandleCommand) -> Bool
+    private let taskTx: @Sendable (TaskMessage) -> Bool
     private let requestIdAllocator = RequestIdAllocator()
 
     public let channelAllocator: ChannelIdAllocator
@@ -77,15 +81,22 @@ public final class ConnectionHandle: @unchecked Sendable {
 
     init(
         commandTx: @escaping @Sendable (HandleCommand) -> Bool,
+        taskTx: @escaping @Sendable (TaskMessage) -> Bool,
         role: Role
     ) {
         self.commandTx = commandTx
+        self.taskTx = taskTx
         self.channelAllocator = ChannelIdAllocator(role: role)
         self.channelRegistry = ChannelRegistry()
     }
 
     /// Make a raw RPC call.
-    public func callRaw(methodId: UInt64, payload: [UInt8], timeout: TimeInterval? = nil) async throws
+    public func callRaw(
+        methodId: UInt64,
+        payload: [UInt8],
+        channels: [UInt64] = [],
+        timeout: TimeInterval? = nil
+    ) async throws
         -> [UInt8]
     {
         let requestId = await requestIdAllocator.allocate()
@@ -99,6 +110,7 @@ public final class ConnectionHandle: @unchecked Sendable {
                     requestId: requestId,
                     methodId: methodId,
                     payload: payload,
+                    channels: channels,
                     timeout: timeout,
                     responseTx: responseTx
                 ))
@@ -107,6 +119,10 @@ public final class ConnectionHandle: @unchecked Sendable {
                 return
             }
         }
+    }
+
+    public func sendTaskMessage(_ msg: TaskMessage) {
+        _ = taskTx(msg)
     }
 }
 
@@ -393,7 +409,7 @@ public final class Driver: @unchecked Sendable {
     /// Handle a command from ConnectionHandle.
     private func handleCommand(_ cmd: HandleCommand) async {
         switch cmd {
-        case .call(let requestId, let methodId, let payload, let timeout, let responseTx):
+        case .call(let requestId, let methodId, let payload, let channels, let timeout, let responseTx):
             let isClosed = await state.isConnectionClosed()
             guard !isClosed else {
                 responseTx(.failure(.connectionClosed))
@@ -415,7 +431,7 @@ public final class Driver: @unchecked Sendable {
                 requestId: requestId,
                 methodId: methodId,
                 metadata: [],
-                channels: [],  // TODO: Collect channel IDs for streaming methods
+                channels: channels,
                 payload: payload
             )
             do {
@@ -501,9 +517,13 @@ public final class Driver: @unchecked Sendable {
             // r[impl core.conn.independence] - Ignore Goodbye on unknown connection.
             await removeVirtualConnection(connId)
 
-        case .request(_, let requestId, let methodId, _, _, let payload):
-            // Note: connId and channels field is ignored for now - server uses payload parsing for channel IDs
-            try await handleRequest(requestId: requestId, methodId: methodId, payload: payload)
+        case .request(_, let requestId, let methodId, _, let channels, let payload):
+            try await handleRequest(
+                requestId: requestId,
+                methodId: methodId,
+                channels: channels,
+                payload: payload
+            )
 
         case .response(_, let requestId, _, _, let payload):
             // r[impl call.lifecycle.single-response] - One response per request.
@@ -556,7 +576,12 @@ public final class Driver: @unchecked Sendable {
     /// r[impl message.hello.enforcement] - Exceeding limit requires Goodbye.
     /// r[impl call.request-id.in-flight] - Request IDs must be tracked while in-flight.
     /// r[impl call.request-id.uniqueness] - Each request uses a unique ID.
-    private func handleRequest(requestId: UInt64, methodId: UInt64, payload: [UInt8]) async throws {
+    private func handleRequest(
+        requestId: UInt64,
+        methodId: UInt64,
+        channels: [UInt64],
+        payload: [UInt8]
+    ) async throws {
         // r[impl call.request-id.duplicate-detection]
         let inserted = await state.addInFlight(requestId)
 
@@ -576,6 +601,7 @@ public final class Driver: @unchecked Sendable {
         await dispatcher.preregister(
             methodId: methodId,
             payload: payload,
+            channels: channels,
             registry: serverRegistry
         )
 
@@ -587,6 +613,7 @@ public final class Driver: @unchecked Sendable {
             await dispatcher.dispatch(
                 methodId: methodId,
                 payload: payload,
+                channels: channels,
                 requestId: requestId,
                 registry: serverRegistry,
                 taskTx: taskTx
@@ -868,10 +895,18 @@ func makeDriverAndHandle(
         }
         return false
     }
+    let taskSender: @Sendable (TaskMessage) -> Bool = { msg in
+        let result = capturedContinuation.yield(.taskMessage(msg))
+        guard case .terminated = result else {
+            return true
+        }
+        return false
+    }
 
     // Create handle with the command sender
     let handle = ConnectionHandle(
         commandTx: commandSender,
+        taskTx: taskSender,
         role: role
     )
 
