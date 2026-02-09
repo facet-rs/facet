@@ -17,6 +17,24 @@ const fn get_option_def(shape: &'static Shape) -> Option<&'static OptionDef> {
     }
 }
 
+fn option_type_name(
+    shape: &'static Shape,
+    f: &mut core::fmt::Formatter<'_>,
+    opts: crate::TypeNameOpts,
+) -> core::fmt::Result {
+    write!(f, "Option")?;
+    if let Some(opts) = opts.for_children() {
+        write!(f, "<")?;
+        if let Some(tp) = shape.type_params.first() {
+            tp.shape.write_type_name(f, opts)?;
+        }
+        write!(f, ">")?;
+    } else {
+        write!(f, "<…>")?;
+    }
+    Ok(())
+}
+
 /// Display for `Option<T>` - delegates to inner T's display if available
 unsafe fn option_display(
     ox: OxPtrConst,
@@ -249,6 +267,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
 
         ShapeBuilder::for_sized::<Option<T>>("Option")
             .module_path("core::option")
+            .type_name(option_type_name)
             .ty(Type::User(
                 // Null-Pointer-Optimization check
                 if core::mem::size_of::<T>() == core::mem::size_of::<Option<T>>()
