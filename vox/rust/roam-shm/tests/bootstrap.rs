@@ -20,6 +20,7 @@ async fn bootstrap_transfers_doorbell_fd_and_supports_signaling() {
     let (host_doorbell, guest_handle) = Doorbell::create_pair().unwrap();
     let peer_id = PeerId::new(1).unwrap();
     let hub_path = paths.shm_path();
+    std::fs::write(&hub_path, b"bootstrap").unwrap();
     let hub_path_for_host = hub_path.clone();
 
     let host_task = tokio::spawn(async move {
@@ -79,6 +80,7 @@ async fn bootstrap_rejects_wrong_sid() {
 
     let (_host_doorbell, guest_handle) = Doorbell::create_pair().unwrap();
     let hub_path = paths.shm_path();
+    std::fs::write(&hub_path, b"bootstrap").unwrap();
 
     let host_task = tokio::spawn(async move {
         unix::accept_and_send_ticket(

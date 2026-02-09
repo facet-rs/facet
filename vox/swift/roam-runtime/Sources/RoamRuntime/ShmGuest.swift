@@ -639,7 +639,12 @@ public final class ShmGuestRuntime: @unchecked Sendable {
     }
 
     public static func attach(ticket: ShmBootstrapTicket) throws -> ShmGuestRuntime {
-        let region = try ShmRegion.attach(path: ticket.hubPath)
+        let region: ShmRegion
+        if ticket.shmFd >= 0 {
+            region = try ShmRegion.attach(fd: ticket.shmFd, pathHint: ticket.hubPath)
+        } else {
+            region = try ShmRegion.attach(path: ticket.hubPath)
+        }
         return try attach(region: region, ticket: ticket)
     }
 

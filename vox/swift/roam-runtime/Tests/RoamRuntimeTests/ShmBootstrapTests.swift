@@ -2,6 +2,7 @@
 import Darwin
 import Foundation
 import Testing
+import CRoamShm
 
 @testable import RoamRuntime
 
@@ -54,46 +55,20 @@ private func makeUnixListener(path: String) throws -> Int32 {
     return fd
 }
 
-private func sendPassedFd(sock: Int32, fd: Int32) -> Bool {
-    var payload = [UInt8](repeating: 1, count: 1)
-    var iov = iovec(iov_base: nil, iov_len: 1)
-
-    let controlLen = cmsgSpace(MemoryLayout<Int32>.size)
-    var control = [UInt8](repeating: 0, count: controlLen)
-
-    return payload.withUnsafeMutableBytes { payloadBuf in
-        iov.iov_base = payloadBuf.baseAddress
-        return withUnsafeMutablePointer(to: &iov) { iovPtr in
-            control.withUnsafeMutableBytes { raw in
-                guard let base = raw.baseAddress else {
-                    return false
-                }
-
-                let cmsg = base.assumingMemoryBound(to: cmsghdr.self)
-                cmsg.pointee.cmsg_level = SOL_SOCKET
-                cmsg.pointee.cmsg_type = SCM_RIGHTS
-                cmsg.pointee.cmsg_len = socklen_t(cmsgLen(MemoryLayout<Int32>.size))
-
-                base
-                    .advanced(by: cmsgDataOffset())
-                    .assumingMemoryBound(to: Int32.self)
-                    .pointee = fd
-
-                var msg = msghdr()
-                msg.msg_iov = iovPtr
-                msg.msg_iovlen = 1
-                msg.msg_control = base
-                msg.msg_controllen = socklen_t(raw.count)
-
-                let sent = sendmsg(sock, &msg, 0)
-                return sent == 1
-            }
+private func sendPassedFds(sock: Int32, fds: [Int32]) -> Bool {
+    guard !fds.isEmpty else { return true }
+    return fds.withUnsafeBufferPointer { fdsBuf in
+        guard let base = fdsBuf.baseAddress else {
+            return false
         }
+        let rc = roam_send_fds(sock, base, Int32(fdsBuf.count))
+        return rc > 0
     }
 }
 
 private func cmsgAlign(_ n: Int) -> Int {
-    (n + 3) & ~3
+    let align = MemoryLayout<Int>.size
+    return (n + align - 1) & ~(align - 1)
 }
 
 private func cmsgLen(_ dataLen: Int) -> Int {
@@ -158,7 +133,8 @@ private func startBootstrapServer(
     responseStatus: UInt8,
     responsePeerId: UInt8,
     responsePayload: String,
-    sendFd: Int32?
+    sendDoorbellFd: Int32?,
+    sendShmFd: Int32?
 ) throws -> BootstrapServerHandle {
     let tmp = try XCTUnwrap(tempfile())
     let socketPath = tmp + "/control.sock"
@@ -202,8 +178,15 @@ private func startBootstrapServer(
             return
         }
 
-        if let fd = sendFd {
-            _ = sendPassedFd(sock: client, fd: fd)
+        var fdsToSend: [Int32] = []
+        if let fd = sendDoorbellFd {
+            fdsToSend.append(fd)
+        }
+        if let fd = sendShmFd {
+            fdsToSend.append(fd)
+        }
+        if !fdsToSend.isEmpty {
+            _ = sendPassedFds(sock: client, fds: fdsToSend)
         }
     }
     thread.start()
@@ -241,13 +224,17 @@ struct ShmBootstrapTests {
         let file = open("/dev/null", O_RDONLY)
         #expect(file >= 0)
         defer { close(file) }
+        let shmFile = open("/dev/null", O_RDONLY)
+        #expect(shmFile >= 0)
+        defer { close(shmFile) }
 
         let server = try startBootstrapServer(
             expectedSid: sid,
             responseStatus: 0,
             responsePeerId: 1,
             responsePayload: "/tmp/test.shm",
-            sendFd: file
+            sendDoorbellFd: file,
+            sendShmFd: shmFile
         )
         defer { server.thread.cancel() }
 
@@ -258,7 +245,10 @@ struct ShmBootstrapTests {
 
         let flags = fcntl(ticket.doorbellFd, F_GETFD)
         #expect(flags != -1)
+        let shmFlags = fcntl(ticket.shmFd, F_GETFD)
+        #expect(shmFlags != -1)
         close(ticket.doorbellFd)
+        close(ticket.shmFd)
     }
 
     @Test func failsWhenNoFdIsPassed() throws {
@@ -269,7 +259,8 @@ struct ShmBootstrapTests {
             responseStatus: 0,
             responsePeerId: 1,
             responsePayload: "/tmp/test.shm",
-            sendFd: nil
+            sendDoorbellFd: nil,
+            sendShmFd: nil
         )
         defer { server.thread.cancel() }
 
@@ -294,7 +285,8 @@ struct ShmBootstrapTests {
             responseStatus: 1,
             responsePeerId: 0,
             responsePayload: "sid mismatch",
-            sendFd: nil
+            sendDoorbellFd: nil,
+            sendShmFd: nil
         )
         defer { server.thread.cancel() }
 

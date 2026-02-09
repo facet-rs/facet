@@ -101,7 +101,13 @@ public final class ShmRegion: @unchecked Sendable {
         guard fd >= 0 else {
             throw ShmRegionError.openFailed(errno: errno)
         }
+        return try attach(fd: fd, pathHint: path)
+    }
 
+    public static func attach(fd: Int32, pathHint: String = "<fd>") throws -> ShmRegion {
+        guard fd >= 0 else {
+            throw ShmRegionError.openFailed(errno: EBADF)
+        }
         var statBuf = stat()
         guard fstat(fd, &statBuf) == 0 else {
             let err = errno
@@ -123,7 +129,7 @@ public final class ShmRegion: @unchecked Sendable {
             throw ShmRegionError.mmapFailed(errno: err)
         }
 
-        return ShmRegion(path: path, length: size, pointer: mapped, fd: fd, ownsFile: false)
+        return ShmRegion(path: pathHint, length: size, pointer: mapped, fd: fd, ownsFile: false)
     }
 
     public func takeOwnership() {
@@ -203,6 +209,11 @@ public final class ShmRegion: @unchecked Sendable {
     }
 
     public static func attach(path: String) throws -> ShmRegion {
+        throw ShmRegionError.unsupportedPlatform
+    }
+    public static func attach(fd: Int32, pathHint: String = "<fd>") throws -> ShmRegion {
+        _ = fd
+        _ = pathHint
         throw ShmRegionError.unsupportedPlatform
     }
 

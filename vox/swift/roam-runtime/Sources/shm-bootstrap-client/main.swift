@@ -22,11 +22,16 @@ func main() -> Int32 {
             fputs("invalid received fd\n", stderr)
             return 3
         }
+        if fcntl(ticket.shmFd, F_GETFD) == -1 {
+            fputs("invalid received shm fd\n", stderr)
+            return 3
+        }
 
         print("peer_id=\(ticket.peerId)")
         print("hub_path=\(ticket.hubPath)")
 
         close(ticket.doorbellFd)
+        close(ticket.shmFd)
         return 0
     } catch {
         fputs("bootstrap failed: \(error)\n", stderr)

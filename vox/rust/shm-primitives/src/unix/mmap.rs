@@ -43,7 +43,7 @@ impl MmapRegion {
     /// Create a new file-backed region.
     ///
     /// This creates the file, truncates it to the given size, and maps it
-    /// into memory with `MAP_SHARED`. The file is created with permissions 0600.
+    /// into memory with `MAP_SHARED`. The file is created with permissions 0666.
     ///
     /// shm[impl shm.file.create]
     /// shm[impl shm.file.permissions]
@@ -67,8 +67,10 @@ impl MmapRegion {
                 io::Error::new(e.kind(), msg)
             })?;
 
-        // 2. Set permissions to 0600 (owner read/write only)
-        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        // 2. Set permissions to 0666.
+        // On macOS FS extensions, host and extension may run under different
+        // effective identities; owner-only mode can cause EPERM at attach time.
+        file.set_permissions(std::fs::Permissions::from_mode(0o666))?;
 
         // 3. Truncate to desired size
         file.set_len(size as u64)?;
@@ -387,7 +389,7 @@ mod tests {
 
         let metadata = std::fs::metadata(&path).unwrap();
         let mode = metadata.permissions().mode() & 0o777;
-        assert_eq!(mode, 0o600);
+        assert_eq!(mode, 0o666);
     }
 
     #[test]

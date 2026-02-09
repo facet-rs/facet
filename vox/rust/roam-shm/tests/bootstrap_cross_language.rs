@@ -299,6 +299,7 @@ async fn rust_host_bootstrap_to_swift_client() {
     let (_host_doorbell, guest_handle) = Doorbell::create_pair().unwrap();
     let peer_id = PeerId::new(1).unwrap();
     let hub_path = paths.shm_path();
+    std::fs::write(&hub_path, b"bootstrap").unwrap();
     let hub_path_for_host = hub_path.clone();
 
     let host_task = tokio::spawn(async move {

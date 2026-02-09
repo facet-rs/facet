@@ -1,5 +1,6 @@
 import Foundation
 #if os(macOS)
+import CRoamShm
 import Darwin
 #endif
 
@@ -7,11 +8,13 @@ public struct ShmBootstrapTicket: Sendable {
     public let peerId: UInt8
     public let hubPath: String
     public let doorbellFd: Int32
+    public let shmFd: Int32
 
-    public init(peerId: UInt8, hubPath: String, doorbellFd: Int32) {
+    public init(peerId: UInt8, hubPath: String, doorbellFd: Int32, shmFd: Int32 = -1) {
         self.peerId = peerId
         self.hubPath = hubPath
         self.doorbellFd = doorbellFd
+        self.shmFd = shmFd
     }
 }
 
@@ -63,9 +66,17 @@ public func requestShmBootstrapTicket(controlSocketPath: String, sid: String) th
                 throw ShmBootstrapError.protocolError("hub path not utf-8")
             }
 
-            let passedFd = try recvPassedFd(fd: fd)
+            _ = try? writeFdAck(fd: fd)
+            let fds = try recvPassedFds(fd: fd, expected: 2)
+            let doorbellFd = fds[0]
+            let shmFd = fds[1]
             close(fd)
-            return ShmBootstrapTicket(peerId: response.peerId, hubPath: hubPath, doorbellFd: passedFd)
+            return ShmBootstrapTicket(
+                peerId: response.peerId,
+                hubPath: hubPath,
+                doorbellFd: doorbellFd,
+                shmFd: shmFd
+            )
 
         case shmBootstrapStatusError:
             let msg = String(bytes: response.payload, encoding: .utf8) ?? "bootstrap error"
@@ -118,6 +129,11 @@ private func readBootstrapResponse(fd: Int32) throws -> BootstrapResponse {
 }
 
 private func connectUnixSocket(fd: Int32, path: String) throws {
+    let one: Int32 = 1
+    _ = withUnsafePointer(to: one) { ptr in
+        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, ptr, socklen_t(MemoryLayout<Int32>.size))
+    }
+
     var addr = sockaddr_un()
     addr.sun_family = sa_family_t(AF_UNIX)
 
@@ -148,7 +164,7 @@ private func writeAll(fd: Int32, bytes: [UInt8]) throws {
     var offset = 0
     while offset < bytes.count {
         let written = bytes.withUnsafeBytes { rawBuf in
-            write(fd, rawBuf.baseAddress!.advanced(by: offset), bytes.count - offset)
+            send(fd, rawBuf.baseAddress!.advanced(by: offset), bytes.count - offset, 0)
         }
         if written < 0 {
             if errno == EINTR {
@@ -190,87 +206,29 @@ private func readExactly(fd: Int32, count: Int) throws -> [UInt8] {
     return out
 }
 
-private func recvPassedFd(fd: Int32) throws -> Int32 {
-    var byte = [UInt8](repeating: 0, count: 1)
-    var iov = iovec(iov_base: nil, iov_len: 1)
-
-    let controlLen = cmsgSpace(MemoryLayout<Int32>.size)
-    var control = [UInt8](repeating: 0, count: controlLen)
-    let receivedFd: Int32? = byte.withUnsafeMutableBytes { byteBuf in
-        iov.iov_base = byteBuf.baseAddress
-        return withUnsafeMutablePointer(to: &iov) { iovPtr in
-            control.withUnsafeMutableBytes { controlBuf in
-                var msg = msghdr()
-                msg.msg_iov = iovPtr
-                msg.msg_iovlen = 1
-                msg.msg_control = controlBuf.baseAddress
-                msg.msg_controllen = socklen_t(controlBuf.count)
-
-                while true {
-                    let n = recvmsg(fd, &msg, 0)
-                    if n < 0 {
-                        if errno == EINTR {
-                            continue
-                        }
-                        return nil
-                    }
-                    if n == 0 {
-                        return nil
-                    }
-                    break
-                }
-
-                guard msg.msg_controllen >= MemoryLayout<cmsghdr>.size else {
-                    return nil
-                }
-                guard let base = controlBuf.baseAddress else {
-                    return nil
-                }
-
-                let cmsg = base.assumingMemoryBound(to: cmsghdr.self)
-                if cmsg.pointee.cmsg_level != SOL_SOCKET || cmsg.pointee.cmsg_type != SCM_RIGHTS {
-                    return nil
-                }
-
-                let minLen = cmsgLen(MemoryLayout<Int32>.size)
-                if Int(cmsg.pointee.cmsg_len) < minLen {
-                    return nil
-                }
-
-                let dataOffset = cmsgDataOffset()
-                guard dataOffset + MemoryLayout<Int32>.size <= controlBuf.count else {
-                    return nil
-                }
-
-                return base
-                    .advanced(by: dataOffset)
-                    .assumingMemoryBound(to: Int32.self)
-                    .pointee
+private func recvPassedFds(fd: Int32, expected: Int) throws -> [Int32] {
+    var out = [Int32](repeating: -1, count: max(expected, 1))
+    while true {
+        let rc = roam_recv_fds(fd, &out, Int32(out.count))
+        if rc > 0 {
+            if rc < expected {
+                throw ShmBootstrapError.missingFileDescriptor
             }
+            return Array(out.prefix(Int(rc)))
         }
-    }
-
-    guard let receivedFd else {
+        if rc == 0 {
+            throw ShmBootstrapError.missingFileDescriptor
+        }
+        if errno == EINTR {
+            continue
+        }
         throw ShmBootstrapError.missingFileDescriptor
     }
-
-    return receivedFd
 }
 
-private func cmsgAlign(_ n: Int) -> Int {
-    (n + 3) & ~3
-}
-
-private func cmsgLen(_ dataLen: Int) -> Int {
-    cmsgAlign(MemoryLayout<cmsghdr>.size) + dataLen
-}
-
-private func cmsgSpace(_ dataLen: Int) -> Int {
-    cmsgAlign(MemoryLayout<cmsghdr>.size) + cmsgAlign(dataLen)
-}
-
-private func cmsgDataOffset() -> Int {
-    cmsgAlign(MemoryLayout<cmsghdr>.size)
+private func writeFdAck(fd: Int32) throws {
+    let ack: [UInt8] = [0xA5]
+    try writeAll(fd: fd, bytes: ack)
 }
 
 private func isValidSid(_ sid: String) -> Bool {
