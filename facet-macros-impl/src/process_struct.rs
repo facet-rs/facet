@@ -728,6 +728,11 @@ pub(crate) fn gen_field_from_pfield(
     let mut metadata_value: Option<String> = None;
     let mut attribute_list: Vec<TokenStream> = Vec::new();
 
+    let field_orig_ident_span = match &field.name.raw {
+        facet_macro_parse::IdentOrLiteral::Ident(ident) => ident.span(),
+        _ => proc_macro2::Span::call_site(),
+    };
+
     let mut want_truthy_skip = skip_all_unless_truthy;
 
     for attr in &field.attrs.facet {
@@ -1103,9 +1108,37 @@ pub(crate) fn gen_field_from_pfield(
             // This allows `default = "foo"` to work for String fields,
             // and `default = 42` to work for any integer type.
             // If the types are the same, we just write directly.
+            let panic_failed = quote_spanned! { field_orig_ident_span =>
+                panic!("Field '{}' expects {}, but default function returns {}: {}",
+                    #field_name,
+                    ShapePrinter(__dst_shape),
+                    ShapePrinter(__src_shape),
+                    e
+                )
+            };
+            let panic_unsupported = quote_spanned! { field_orig_ident_span =>
+                panic!("Field '{}' expects {}, but default function returns {}",
+                    #field_name,
+                    ShapePrinter(__dst_shape),
+                    ShapePrinter(__src_shape)
+                )
+            };
+
             quote! {
                 𝟋Some(𝟋DS::Custom({
                     unsafe fn __default(__ptr: #facet_crate::PtrUninit) -> #facet_crate::PtrMut {
+                        // Helper to print shapes without allocation
+                        struct ShapePrinter<'a>(&'a #facet_crate::Shape);
+                        impl<'a> core::fmt::Display for ShapePrinter<'a> {
+                            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                                if let Some(inner) = self.0.inner {
+                                    write!(f, "{}<{}>", self.0.type_identifier, ShapePrinter(inner))
+                                } else {
+                                    f.write_str(self.0.type_identifier)
+                                }
+                            }
+                        }
+
                         // Helper function to get shape from a value via type inference
                         #[inline]
                         fn __shape_of_val<'a, T: #facet_crate::Facet<'a>>(_: &T) -> &'static #facet_crate::Shape {
@@ -1136,12 +1169,14 @@ pub(crate) fn gen_field_from_pfield(
                             Some(#facet_crate::TryFromOutcome::Failed(e)) => {
                                 // Source was consumed, forget it
                                 𝟋forget(__src_value);
-                                panic!("default value conversion failed: {}", e)
+                                #panic_failed
                             },
                             Some(#facet_crate::TryFromOutcome::Unsupported) => {
-                                panic!("type {} does not support conversion from {}", __dst_shape.type_identifier, __src_shape.type_identifier)
+                                #panic_unsupported
                             },
-                            None => panic!("type {} does not support try_from", __dst_shape.type_identifier),
+                            None => {
+                                #panic_unsupported
+                            },
                         }
                     }
                     __default
