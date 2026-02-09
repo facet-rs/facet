@@ -898,6 +898,21 @@ public final class ShmGuestRuntime: @unchecked Sendable {
         while (try? receive()) != nil {}
     }
 
+    public func isHostGoodbye() -> Bool {
+        fatalError || hostGoodbyeFlag()
+    }
+
+    public func signalDoorbell() throws {
+        try doorbell?.signal()
+    }
+
+    public func waitForDoorbell(timeoutMs: Int32? = nil) throws -> ShmDoorbellWaitResult? {
+        guard let doorbell else {
+            return nil
+        }
+        return try doorbell.wait(timeoutMs: timeoutMs)
+    }
+
     public func peerState() throws -> ShmPeerState {
         let ptr = try peerStatePointer()
         let raw = atomicLoadU32Acquire(UnsafeRawPointer(ptr))

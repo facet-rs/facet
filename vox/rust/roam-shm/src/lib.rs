@@ -97,7 +97,10 @@ pub use var_slot_pool::{SizeClassHeader, VarFreeError, VarSlotHandle, VarSlotPoo
 pub use shm_primitives::FileCleanup;
 
 pub use auditable::dump_all_channels;
-pub use diagnostic::{ShmDiagnosticView, ShmDiagnostics};
+pub use diagnostic::{
+    ShmDiagnosticView, ShmDiagnostics, dump_all_shm_diagnostics, dump_all_state,
+    register_shm_diagnostic_view,
+};
 pub use host::{PollResult, ShmHost};
 
 pub use guest::ShmGuest;

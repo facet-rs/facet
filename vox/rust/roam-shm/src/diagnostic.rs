@@ -1,4 +1,4 @@
-//! SHM diagnostic utilities for SIGUSR1 dumps.
+//! SHM diagnostic utilities for application-triggered diagnostics dumps.
 //!
 //! Provides functions to dump the state of shared memory segments,
 //! slot pools, BipBuffers, and peer connections.
@@ -6,6 +6,7 @@
 use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock, RwLock, Weak};
 
 use shm_primitives::Region;
 
@@ -13,6 +14,74 @@ use crate::host::ShmHost;
 use crate::layout::SegmentLayout;
 use crate::peer::{PeerId, PeerState};
 use crate::var_slot_pool::VarSlotPool;
+
+/// Global registry of SHM diagnostic views (host segments).
+static SHM_DIAGNOSTIC_REGISTRY: LazyLock<RwLock<Vec<Weak<ShmDiagnosticView>>>> =
+    LazyLock::new(|| RwLock::new(Vec::new()));
+
+/// Register an SHM diagnostic view for global dumps.
+pub fn register_shm_diagnostic_view(view: &Arc<ShmDiagnosticView>) {
+    if let Ok(mut registry) = SHM_DIAGNOSTIC_REGISTRY.write() {
+        registry.retain(|weak| weak.strong_count() > 0);
+        registry.push(Arc::downgrade(view));
+    }
+}
+
+/// Dump all registered SHM segments to a string.
+pub fn dump_all_shm_diagnostics() -> String {
+    let views: Vec<Arc<ShmDiagnosticView>> = {
+        let Ok(registry) = SHM_DIAGNOSTIC_REGISTRY.try_read() else {
+            return "ERROR: Could not acquire SHM diagnostic registry lock\n".to_string();
+        };
+        registry.iter().filter_map(|weak| weak.upgrade()).collect()
+    };
+
+    if views.is_empty() {
+        return "(no shm segments registered)\n".to_string();
+    }
+
+    let mut out = String::new();
+    for view in views {
+        let diag = view.diagnostics();
+        let formatted = diag.format();
+        if formatted.is_empty() {
+            let path = diag
+                .segment_path
+                .as_deref()
+                .unwrap_or("<unknown-segment-path>");
+            let _ = writeln!(out, "[SHM] {path}: idle");
+        } else {
+            out.push_str(&formatted);
+        }
+    }
+    out
+}
+
+/// Dump all diagnostics relevant to SHM transports.
+///
+/// Includes:
+/// - roam-session in-flight call/channel diagnostics
+/// - roam-shm auditable queue diagnostics
+/// - SHM segment diagnostics
+pub fn dump_all_state() -> String {
+    let mut out = String::new();
+
+    let session = roam_session::diagnostic::dump_all_diagnostics();
+    if !session.is_empty() {
+        out.push_str("=== roam-session ===\n");
+        out.push_str(&session);
+    }
+
+    let channels = crate::auditable::dump_all_channels();
+    if !channels.is_empty() {
+        out.push_str("=== roam-shm channels ===\n");
+        out.push_str(&channels);
+    }
+
+    out.push_str("=== roam-shm segments ===\n");
+    out.push_str(&dump_all_shm_diagnostics());
+    out
+}
 
 /// Diagnostic stats for a variable slot pool (all size classes).
 #[derive(Debug, Clone)]

@@ -682,6 +682,24 @@ public enum ConnectionError: Error {
 
 // MARK: - Establish Connection
 
+/// Establish a SHM guest connection without Hello exchange.
+///
+/// SHM negotiated values are derived from the segment header at attach time.
+public func establishShmGuest<D: ServiceDispatcher>(
+    transport: ShmGuestTransport,
+    dispatcher: D,
+    role: Role = .initiator,
+    acceptConnections: Bool = false
+) -> (ConnectionHandle, Driver) {
+    makeDriverAndHandle(
+        transport: transport,
+        dispatcher: dispatcher,
+        role: role,
+        negotiated: transport.negotiated,
+        acceptConnections: acceptConnections
+    )
+}
+
 /// Establish a connection as initiator.
 ///
 /// r[impl message.hello.ordering] - Hello is the first message sent.
@@ -827,7 +845,7 @@ public func establishAcceptor(
 }
 
 /// Create a Driver and ConnectionHandle with properly wired command/task channels.
-private func makeDriverAndHandle(
+func makeDriverAndHandle(
     transport: any MessageTransport,
     dispatcher: any ServiceDispatcher,
     role: Role,

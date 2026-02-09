@@ -1,7 +1,7 @@
 //! Auditable channels for debugging queue depths.
 //!
 //! Provides bounded channels that register themselves in a global registry,
-//! allowing SIGUSR1 handlers to dump the state of all queues.
+//! allowing applications to dump the state of all queues for diagnostics.
 
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock, Weak};
@@ -34,7 +34,7 @@ fn register_channel(channel: Arc<dyn ChannelDiagnostic + Send + Sync>) {
     }
 }
 
-/// Dump all registered channels to a string (for SIGUSR1).
+/// Dump all registered channels to a string for diagnostics.
 pub fn dump_all_channels() -> String {
     let channels: Vec<Arc<dyn ChannelDiagnostic + Send + Sync>> = {
         let Ok(registry) = CHANNEL_REGISTRY.read() else {
@@ -215,8 +215,8 @@ impl<T> AuditableReceiver<T> {
 
 /// Create a bounded, auditable channel.
 ///
-/// The channel registers itself in a global registry, allowing SIGUSR1 handlers
-/// to dump the state of all queues via `dump_all_channels()`.
+/// The channel registers itself in a global registry, allowing callers to dump
+/// the state of all queues via `dump_all_channels()`.
 pub fn channel<T>(
     name: impl Into<String>,
     capacity: usize,
