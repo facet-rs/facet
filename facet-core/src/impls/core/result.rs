@@ -17,6 +17,28 @@ const fn get_result_def(shape: &'static Shape) -> Option<&'static ResultDef> {
     }
 }
 
+fn result_type_name(
+    shape: &'static Shape,
+    f: &mut core::fmt::Formatter<'_>,
+    opts: crate::TypeNameOpts,
+) -> core::fmt::Result {
+    write!(f, "Result")?;
+    if let Some(opts) = opts.for_children() {
+        write!(f, "<")?;
+        if let Some(t) = shape.type_params.first() {
+            t.shape.write_type_name(f, opts)?;
+        }
+        if let Some(e) = shape.type_params.get(1) {
+            write!(f, ", ")?;
+            e.shape.write_type_name(f, opts)?;
+        }
+        write!(f, ">")?;
+    } else {
+        write!(f, "<…>")?;
+    }
+    Ok(())
+}
+
 /// Debug for Result<T, E> - delegates to inner T/E's debug if available
 unsafe fn result_debug(
     ox: OxPtrConst,
@@ -236,6 +258,7 @@ unsafe impl<'a, T: Facet<'a>, E: Facet<'a>> Facet<'a> for Result<T, E> {
 
         ShapeBuilder::for_sized::<Result<T, E>>("Result")
             .module_path("core::result")
+            .type_name(result_type_name)
             .ty(Type::User(UserType::Opaque))
             .def(Def::Result(ResultDef::new(
                 &const { build_result_vtable::<T, E>() },
