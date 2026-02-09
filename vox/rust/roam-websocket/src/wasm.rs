@@ -6,7 +6,10 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use futures_util::StreamExt;
-use roam_session::MessageTransport;
+use roam_session::{
+    FramedClient, HandshakeConfig, MessageConnector, MessageTransport, RetryPolicy,
+    ServiceDispatcher, connect_framed, connect_framed_with_policy,
+};
 use roam_wire::Message;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
@@ -145,6 +148,50 @@ impl WsTransport {
             .close()
             .map_err(|e| io::Error::other(format!("close failed: {e:?}")))
     }
+}
+
+/// URL-based connector for WebSocket client connections on WASM.
+#[derive(Debug, Clone)]
+pub struct WsConnector {
+    url: String,
+}
+
+impl WsConnector {
+    /// Create a new WebSocket connector for the given URL.
+    pub fn new(url: impl Into<String>) -> Self {
+        Self { url: url.into() }
+    }
+}
+
+impl MessageConnector for WsConnector {
+    type Transport = WsTransport;
+
+    async fn connect(&self) -> io::Result<WsTransport> {
+        WsTransport::connect(&self.url).await
+    }
+}
+
+/// Connect via WebSocket with automatic reconnection.
+pub fn ws_connect<C, D>(connector: C, config: HandshakeConfig, dispatcher: D) -> FramedClient<C, D>
+where
+    C: MessageConnector,
+    D: ServiceDispatcher + Clone,
+{
+    connect_framed(connector, config, dispatcher)
+}
+
+/// Connect via WebSocket with a custom retry policy.
+pub fn ws_connect_with_policy<C, D>(
+    connector: C,
+    config: HandshakeConfig,
+    dispatcher: D,
+    retry_policy: RetryPolicy,
+) -> FramedClient<C, D>
+where
+    C: MessageConnector,
+    D: ServiceDispatcher + Clone,
+{
+    connect_framed_with_policy(connector, config, dispatcher, retry_policy)
 }
 
 impl MessageTransport for WsTransport {

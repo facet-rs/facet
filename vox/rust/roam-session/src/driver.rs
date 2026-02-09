@@ -141,12 +141,26 @@ impl HandshakeConfig {
 ///
 /// Used by [`connect_framed()`] for reconnection with transports that
 /// already provide message framing (like WebSocket).
+#[cfg(not(target_arch = "wasm32"))]
 pub trait MessageConnector: Send + Sync + 'static {
     /// The message transport type (e.g., `WsTransport`).
     type Transport: MessageTransport;
 
     /// Establish a new connection.
     fn connect(&self) -> impl Future<Output = io::Result<Self::Transport>> + Send;
+}
+
+/// A factory that creates new message-based connections on demand (WASM version).
+///
+/// On WASM, connectors and connection futures do not need `Send` because
+/// browser runtimes are single-threaded.
+#[cfg(target_arch = "wasm32")]
+pub trait MessageConnector: 'static {
+    /// The message transport type (e.g., `WsTransport`).
+    type Transport: MessageTransport;
+
+    /// Establish a new connection.
+    fn connect(&self) -> impl Future<Output = io::Result<Self::Transport>>;
 }
 
 /// Configuration for reconnection behavior.
@@ -476,7 +490,7 @@ where
 
 impl<C, D> crate::Caller for FramedClient<C, D>
 where
-    C: MessageConnector,
+    C: MessageConnector + Send + Sync,
     D: ServiceDispatcher + Clone + 'static,
 {
     async fn call_with_metadata<T: Facet<'static> + Send>(
