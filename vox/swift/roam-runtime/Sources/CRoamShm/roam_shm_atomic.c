@@ -140,6 +140,16 @@ void roam_atomic_store_u32_release(uint32_t *ptr, uint32_t value) {
   atomic_store_explicit(a, value, memory_order_release);
 }
 
+int roam_atomic_compare_exchange_u32(uint32_t *ptr, uint32_t *expected, uint32_t desired) {
+  _Atomic(uint32_t) *a = (_Atomic(uint32_t) *)ptr;
+  return atomic_compare_exchange_weak_explicit(a, expected, desired, memory_order_acq_rel, memory_order_acquire);
+}
+
+uint32_t roam_atomic_fetch_add_u32(uint32_t *ptr, uint32_t value) {
+  _Atomic(uint32_t) *a = (_Atomic(uint32_t) *)ptr;
+  return atomic_fetch_add_explicit(a, value, memory_order_acq_rel);
+}
+
 uint64_t roam_atomic_load_u64_relaxed(const uint64_t *ptr) {
   const _Atomic(uint64_t) *a = (const _Atomic(uint64_t) *)ptr;
   return atomic_load_explicit(a, memory_order_relaxed);
@@ -153,4 +163,9 @@ uint64_t roam_atomic_load_u64_acquire(const uint64_t *ptr) {
 void roam_atomic_store_u64_release(uint64_t *ptr, uint64_t value) {
   _Atomic(uint64_t) *a = (_Atomic(uint64_t) *)ptr;
   atomic_store_explicit(a, value, memory_order_release);
+}
+
+int roam_atomic_compare_exchange_u64(uint64_t *ptr, uint64_t *expected, uint64_t desired) {
+  _Atomic(uint64_t) *a = (_Atomic(uint64_t) *)ptr;
+  return atomic_compare_exchange_weak_explicit(a, expected, desired, memory_order_acq_rel, memory_order_acquire);
 }
