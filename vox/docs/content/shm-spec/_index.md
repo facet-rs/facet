@@ -259,11 +259,11 @@ Each guest has two BipBuffers (variable-length byte SPSC ring buffers):
 > 1. If `write >= read`:
 >    - If `capacity - write >= n`: grant `[write..write+n)`. Done.
 >    - Else if `read > 0`: set `watermark = write`, `write = 0`. If
->      `n <= read`, grant `[0..n)`. Else undo (`write = old`, `watermark = 0`)
+>      `n < read`, grant `[0..n)`. Else undo (`write = old`, `watermark = 0`)
 >      and return full.
 >    - Else (`read == 0`): no room to wrap, return full.
 > 2. If `write < read`:
->    - If `write + n <= read`: grant `[write..write+n)`. Done.
+>    - If `write + n < read`: grant `[write..write+n)`. Done.
 >    - Else return full.
 
 > r[shm.bipbuf.commit]
@@ -276,12 +276,13 @@ Each guest has two BipBuffers (variable-length byte SPSC ring buffers):
 >
 > To read available bytes:
 >
-> 1. Load `write` with **Acquire**.
-> 2. If `read < write`: readable region is `[read..write)`.
-> 3. If `read >= write` and `watermark != 0`:
+> 1. Load `watermark` with **Acquire**.
+> 2. If `watermark != 0` (wrap active):
 >    - If `read < watermark`: readable region is `[read..watermark)`.
 >    - If `read >= watermark`: set `read = 0`, `watermark = 0`, retry.
-> 4. Otherwise the buffer is empty.
+> 3. If `watermark == 0`, load `write` with **Acquire**:
+>    - If `read < write`: readable region is `[read..write)`.
+>    - Otherwise the buffer is empty.
 
 > r[shm.bipbuf.release]
 >

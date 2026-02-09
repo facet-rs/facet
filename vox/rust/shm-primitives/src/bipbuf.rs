@@ -289,7 +289,7 @@ impl BipBufRaw {
             header.write.store(0, Ordering::Release);
 
             // Now check if the request fits before read.
-            if len <= read {
+            if len < read {
                 let ptr = self.data;
                 return Some(unsafe { core::slice::from_raw_parts_mut(ptr, len as usize) });
             }
@@ -302,7 +302,7 @@ impl BipBufRaw {
         } else {
             // Case 2: write < read (we previously wrapped).
             // Available space is [write..read).
-            if write + len <= read {
+            if write + len < read {
                 let ptr = unsafe { self.data.add(write as usize) };
                 Some(unsafe { core::slice::from_raw_parts_mut(ptr, len as usize) })
             } else {
@@ -340,40 +340,35 @@ impl BipBufRaw {
     pub fn try_read(&self) -> Option<&[u8]> {
         let header = self.header();
         let read = header.read.load(Ordering::Relaxed);
-        let write = header.write.load(Ordering::Acquire);
+        let watermark = header.watermark.load(Ordering::Acquire);
 
+        // If wrap is active, consume tail [read..watermark) before front data.
+        if watermark != 0 {
+            if read < watermark {
+                let len = watermark - read;
+                let ptr = unsafe { self.data.add(read as usize) };
+                return Some(unsafe { core::slice::from_raw_parts(ptr, len as usize) });
+            }
+
+            // Tail consumed: wrap to front and clear watermark.
+            header.read.store(0, Ordering::Release);
+            header.watermark.store(0, Ordering::Release);
+            let write = header.write.load(Ordering::Acquire);
+            if write > 0 {
+                let ptr = self.data;
+                return Some(unsafe { core::slice::from_raw_parts(ptr, write as usize) });
+            }
+            return None;
+        }
+
+        let write = header.write.load(Ordering::Acquire);
         if read < write {
             // Normal case: readable region is [read..write).
             let len = write - read;
             let ptr = unsafe { self.data.add(read as usize) };
             Some(unsafe { core::slice::from_raw_parts(ptr, len as usize) })
-        } else if read > write || (read == write && read > 0) {
-            // We're past the write cursor. Check watermark.
-            let watermark = header.watermark.load(Ordering::Acquire);
-            if watermark != 0 && read < watermark {
-                // Readable region is [read..watermark).
-                let len = watermark - read;
-                let ptr = unsafe { self.data.add(read as usize) };
-                Some(unsafe { core::slice::from_raw_parts(ptr, len as usize) })
-            } else if watermark != 0 && read >= watermark {
-                // We've reached or passed the watermark. Wrap to beginning.
-                // Reset read to 0 and clear watermark.
-                header.read.store(0, Ordering::Release);
-                header.watermark.store(0, Ordering::Release);
-                // Now try again from position 0.
-                let write = header.write.load(Ordering::Acquire);
-                if write > 0 {
-                    let ptr = self.data;
-                    Some(unsafe { core::slice::from_raw_parts(ptr, write as usize) })
-                } else {
-                    None
-                }
-            } else {
-                // No watermark and read >= write: buffer is empty.
-                None
-            }
         } else {
-            // read == write == 0: buffer is empty.
+            // No watermark and read >= write: buffer is empty.
             None
         }
     }
@@ -722,6 +717,43 @@ mod tests {
         raw.release(20);
 
         assert!(raw.is_empty());
+    }
+
+    #[test]
+    fn watermark_priority_reads_tail_before_front() {
+        let region = HeapRegion::new_zeroed(BIPBUF_HEADER_SIZE + 64);
+        let header_ptr = region.region().as_ptr() as *mut BipBufHeader;
+        let data_ptr = unsafe { region.region().as_ptr().add(BIPBUF_HEADER_SIZE) };
+
+        unsafe { (*header_ptr).init(64) };
+        let raw = unsafe { BipBufRaw::from_raw(header_ptr, data_ptr) };
+
+        // Synthetic wrapped state:
+        // - unread tail [20..40)
+        // - wrapped front [0..10)
+        unsafe {
+            (*header_ptr).read.store(20, Ordering::Release);
+            (*header_ptr).watermark.store(40, Ordering::Release);
+            (*header_ptr).write.store(10, Ordering::Release);
+        }
+
+        for i in 20u8..40 {
+            unsafe { *data_ptr.add(i as usize) = i };
+        }
+        for i in 0u8..10 {
+            unsafe { *data_ptr.add(i as usize) = 100 + i };
+        }
+
+        let tail = raw.try_read().expect("expected tail first");
+        assert_eq!(tail.len(), 20);
+        assert_eq!(tail[0], 20);
+        assert_eq!(tail[19], 39);
+        raw.release(20);
+
+        let front = raw.try_read().expect("expected wrapped front second");
+        assert_eq!(front.len(), 10);
+        assert_eq!(front[0], 100);
+        assert_eq!(front[9], 109);
     }
 
     #[test]

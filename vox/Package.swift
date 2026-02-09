@@ -16,11 +16,17 @@ let package = Package(
         .target(
             name: "RoamRuntime",
             dependencies: [
+                "CRoamShm",
                 .product(name: "NIO", package: "swift-nio"),
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),
             ],
             path: "swift/roam-runtime/Sources/RoamRuntime"
+        ),
+        .target(
+            name: "CRoamShm",
+            path: "swift/roam-runtime/Sources/CRoamShm",
+            publicHeadersPath: "include"
         ),
         .testTarget(
             name: "RoamRuntimeTests",
