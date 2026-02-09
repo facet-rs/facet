@@ -1,9 +1,11 @@
 //! Diagnostic state tracking for SIGUSR1 dumps.
 //!
-//! Tracks in-flight RPC requests and open channels to help debug hung connections.
+//! Tracks in-flight RPC requests, open channels, and recent completed operations
+//! to help debug hung connections.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fmt::Write as _;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, RwLock, Weak};
 use std::time::Instant;
 
@@ -22,6 +24,9 @@ static METHOD_NAMES: LazyLock<RwLock<HashMap<u64, &'static str>>> =
 /// Whether to record extra debug info (checked once at startup).
 /// Set ROAM_DEBUG=1 to enable.
 static DEBUG_ENABLED: LazyLock<bool> = LazyLock::new(|| std::env::var("ROAM_DEBUG").is_ok());
+
+/// Maximum number of recent completions to keep per connection.
+const MAX_RECENT_COMPLETIONS: usize = 16;
 
 /// Check if debug recording is enabled.
 pub fn debug_enabled() -> bool {
@@ -50,6 +55,8 @@ pub fn register_diagnostic_state(state: &Arc<DiagnosticState>) {
 }
 
 /// Dump all diagnostic states to a string.
+///
+/// Always produces output for every registered connection, even when idle.
 pub fn dump_all_diagnostics() -> String {
     let mut output = String::new();
 
@@ -63,13 +70,23 @@ pub fn dump_all_diagnostics() -> String {
     };
 
     if states.is_empty() {
-        return String::new();
+        output.push_str("(no roam connections registered)\n");
+        return output;
     }
 
-    for state in states {
-        // Only include states that have something to report
-        if let Some(content) = state.dump_if_nonempty() {
-            let _ = writeln!(output, "[{}] {}", state.name, content);
+    for state in &states {
+        let _ = writeln!(output, "{}", state.dump());
+    }
+
+    // Dump registered method names for reference
+    if let Ok(names) = METHOD_NAMES.try_read()
+        && !names.is_empty()
+    {
+        let _ = writeln!(output, "Registered methods:");
+        let mut sorted: Vec<_> = names.iter().collect();
+        sorted.sort_by_key(|(id, _)| *id);
+        for (id, name) in sorted {
+            let _ = writeln!(output, "  0x{id:x} = {name}");
         }
     }
 
@@ -85,6 +102,15 @@ pub enum RequestDirection {
     Incoming,
 }
 
+impl std::fmt::Display for RequestDirection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RequestDirection::Outgoing => write!(f, "⬆"),
+            RequestDirection::Incoming => write!(f, "⬇"),
+        }
+    }
+}
+
 /// An in-flight RPC request.
 #[derive(Debug, Clone)]
 pub struct InFlightRequest {
@@ -92,8 +118,17 @@ pub struct InFlightRequest {
     pub method_id: u64,
     pub started: Instant,
     pub direction: RequestDirection,
-    /// Optional structured arguments (only recorded when ROAM_DEBUG_ARGS is set).
+    /// Optional structured arguments (only recorded when ROAM_DEBUG is set).
     pub args: Option<HashMap<String, String>>,
+}
+
+/// A recently completed RPC request.
+#[derive(Debug, Clone)]
+pub struct CompletedRequest {
+    pub method_id: u64,
+    pub direction: RequestDirection,
+    pub duration: std::time::Duration,
+    pub completed_at: Instant,
 }
 
 /// Direction of a channel.
@@ -117,11 +152,20 @@ pub struct OpenChannel {
 
 /// Diagnostic state for a single connection.
 pub struct DiagnosticState {
-    /// Human-readable name for this connection (e.g., "cell-http", "host→markdown")
+    /// Human-readable name for this connection (e.g., "client", "server")
     pub name: String,
+
+    /// When this connection was established
+    created_at: Instant,
+
+    /// Total requests completed over the lifetime of this connection
+    total_completed: AtomicU64,
 
     /// In-flight requests
     requests: RwLock<HashMap<u64, InFlightRequest>>,
+
+    /// Recently completed requests (ring buffer, newest last)
+    recent_completions: RwLock<VecDeque<CompletedRequest>>,
 
     /// Open channels
     channels: RwLock<HashMap<u64, OpenChannel>>,
@@ -135,7 +179,10 @@ impl DiagnosticState {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
+            created_at: Instant::now(),
+            total_completed: AtomicU64::new(0),
             requests: RwLock::new(HashMap::new()),
+            recent_completions: RwLock::new(VecDeque::with_capacity(MAX_RECENT_COMPLETIONS)),
             channels: RwLock::new(HashMap::new()),
             custom_diagnostics: RwLock::new(Vec::new()),
         }
@@ -183,10 +230,28 @@ impl DiagnosticState {
         }
     }
 
-    /// Mark a request as completed.
+    /// Mark a request as completed and record it in the recent completions ring buffer.
     pub fn complete_request(&self, request_id: u64) {
-        if let Ok(mut requests) = self.requests.write() {
-            requests.remove(&request_id);
+        let completed = if let Ok(mut requests) = self.requests.write() {
+            requests.remove(&request_id)
+        } else {
+            None
+        };
+
+        if let Some(req) = completed {
+            self.total_completed.fetch_add(1, Ordering::Relaxed);
+            let duration = req.started.elapsed();
+            if let Ok(mut completions) = self.recent_completions.write() {
+                if completions.len() >= MAX_RECENT_COMPLETIONS {
+                    completions.pop_front();
+                }
+                completions.push_back(CompletedRequest {
+                    method_id: req.method_id,
+                    direction: req.direction,
+                    duration,
+                    completed_at: Instant::now(),
+                });
+            }
         }
     }
 
@@ -238,15 +303,25 @@ impl DiagnosticState {
         }
     }
 
-    /// Dump this state if non-empty, returning None if there's nothing to report.
-    /// Uses try_read() to avoid deadlocking when called from signal handlers.
-    /// Output is compact: single line for summary, one line per request.
-    pub fn dump_if_nonempty(&self) -> Option<String> {
+    /// Dump this connection's full diagnostic state.
+    ///
+    /// Always produces output — shows connection age, in-flight count (even if 0),
+    /// recent completions, and open channels.
+    pub fn dump(&self) -> String {
         let now = Instant::now();
-        let mut parts = Vec::new();
-        let mut details = Vec::new();
+        let age = now.duration_since(self.created_at);
+        let total = self.total_completed.load(Ordering::Relaxed);
+        let mut output = String::new();
 
-        // Check requests
+        let _ = writeln!(
+            output,
+            "[{}] age={:.1}s total_completed={}",
+            self.name,
+            age.as_secs_f64(),
+            total,
+        );
+
+        // ── In-flight requests ───────────────────────────────────
         if let Ok(requests) = self.requests.try_read() {
             let mut outgoing: Vec<_> = requests
                 .values()
@@ -257,83 +332,110 @@ impl DiagnosticState {
                 .filter(|r| r.direction == RequestDirection::Incoming)
                 .collect();
 
-            outgoing.sort_by_key(|r| std::cmp::Reverse(r.started));
-            incoming.sort_by_key(|r| std::cmp::Reverse(r.started));
+            // Sort oldest first (most likely to be stuck)
+            outgoing.sort_by_key(|r| r.started);
+            incoming.sort_by_key(|r| r.started);
 
-            if !outgoing.is_empty() {
-                parts.push(format!("{}⬆", outgoing.len()));
-                for req in outgoing {
-                    let elapsed = now.duration_since(req.started);
-                    let method_name = get_method_name(req.method_id).unwrap_or("?");
-                    let mut line = format!(
-                        "  ⬆#{} {} {:.1}s",
-                        req.request_id,
-                        method_name,
-                        elapsed.as_secs_f64()
-                    );
-                    if let Some(args) = &req.args {
-                        let args_str: Vec<_> =
-                            args.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
-                        if !args_str.is_empty() {
-                            let _ = write!(line, " ({})", args_str.join(", "));
-                        }
+            let _ = writeln!(
+                output,
+                "  In-flight: {}⬆ {}⬇",
+                outgoing.len(),
+                incoming.len()
+            );
+
+            for req in &outgoing {
+                let elapsed = now.duration_since(req.started);
+                let method_name = get_method_name(req.method_id).unwrap_or("?");
+                let _ = write!(
+                    output,
+                    "    ⬆#{} {} {:.3}s",
+                    req.request_id,
+                    method_name,
+                    elapsed.as_secs_f64()
+                );
+                if let Some(args) = &req.args {
+                    let args_str: Vec<_> = args.iter().map(|(k, v)| format!("{k}={v}")).collect();
+                    if !args_str.is_empty() {
+                        let _ = write!(output, " ({})", args_str.join(", "));
                     }
-                    details.push(line);
+                }
+                output.push('\n');
+            }
+
+            for req in &incoming {
+                let elapsed = now.duration_since(req.started);
+                let method_name = get_method_name(req.method_id).unwrap_or("?");
+                let _ = write!(
+                    output,
+                    "    ⬇#{} {} {:.3}s",
+                    req.request_id,
+                    method_name,
+                    elapsed.as_secs_f64()
+                );
+                if let Some(args) = &req.args {
+                    let args_str: Vec<_> = args.iter().map(|(k, v)| format!("{k}={v}")).collect();
+                    if !args_str.is_empty() {
+                        let _ = write!(output, " ({})", args_str.join(", "));
+                    }
+                }
+                output.push('\n');
+            }
+        } else {
+            let _ = writeln!(output, "  In-flight: (lock held, cannot read)");
+        }
+
+        // ── Open channels ────────────────────────────────────────
+        if let Ok(channels) = self.channels.try_read() {
+            if channels.is_empty() {
+                let _ = writeln!(output, "  Channels: 0");
+            } else {
+                let tx_count = channels
+                    .values()
+                    .filter(|c| c.direction == ChannelDirection::Tx)
+                    .count();
+                let rx_count = channels
+                    .values()
+                    .filter(|c| c.direction == ChannelDirection::Rx)
+                    .count();
+                let _ = writeln!(output, "  Channels: {tx_count}tx {rx_count}rx");
+            }
+        }
+
+        // ── Recent completions ───────────────────────────────────
+        if let Ok(completions) = self.recent_completions.try_read() {
+            if completions.is_empty() {
+                let _ = writeln!(output, "  Recent: (none)");
+            } else {
+                let _ = writeln!(output, "  Recent ({}):", completions.len());
+                // Show newest first
+                for req in completions.iter().rev() {
+                    let method_name = get_method_name(req.method_id).unwrap_or("?");
+                    let ago = now.duration_since(req.completed_at);
+                    let _ = writeln!(
+                        output,
+                        "    {} {} took {:.3}s ({:.1}s ago)",
+                        req.direction,
+                        method_name,
+                        req.duration.as_secs_f64(),
+                        ago.as_secs_f64(),
+                    );
                 }
             }
+        }
 
-            if !incoming.is_empty() {
-                parts.push(format!("{}⬇", incoming.len()));
-                for req in incoming {
-                    let elapsed = now.duration_since(req.started);
-                    let method_name = get_method_name(req.method_id).unwrap_or("?");
-                    let mut line = format!(
-                        "  ⬇#{} {} {:.1}s",
-                        req.request_id,
-                        method_name,
-                        elapsed.as_secs_f64()
-                    );
-                    if let Some(args) = &req.args {
-                        let args_str: Vec<_> =
-                            args.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
-                        if !args_str.is_empty() {
-                            let _ = write!(line, " ({})", args_str.join(", "));
-                        }
-                    }
-                    details.push(line);
-                }
+        // ── Custom diagnostics ───────────────────────────────────
+        if let Ok(customs) = self.custom_diagnostics.try_read() {
+            for callback in customs.iter() {
+                callback(&mut output);
             }
         }
 
-        // Check channels
-        if let Ok(channels) = self.channels.try_read()
-            && !channels.is_empty()
-        {
-            let tx_count = channels
-                .values()
-                .filter(|c| c.direction == ChannelDirection::Tx)
-                .count();
-            let rx_count = channels
-                .values()
-                .filter(|c| c.direction == ChannelDirection::Rx)
-                .count();
-            if tx_count > 0 {
-                parts.push(format!("{}tx", tx_count));
-            }
-            if rx_count > 0 {
-                parts.push(format!("{}rx", rx_count));
-            }
-        }
+        output
+    }
 
-        if parts.is_empty() {
-            return None;
-        }
-
-        let mut output = parts.join(" ");
-        for detail in details {
-            let _ = write!(output, "\n{}", detail);
-        }
-        Some(output)
+    /// Legacy compat — same as `dump()` but returns `Option`.
+    pub fn dump_if_nonempty(&self) -> Option<String> {
+        Some(self.dump())
     }
 }
 

@@ -1811,6 +1811,20 @@ where
     // Create unified channel for all messages
     let (driver_tx, driver_rx) = channel(256);
 
+    // Create diagnostic state when the feature is enabled.
+    #[cfg(feature = "diagnostics")]
+    let diagnostic_state = {
+        let role_name = match role {
+            Role::Initiator => "client",
+            Role::Acceptor => "server",
+        };
+        let state = Arc::new(crate::diagnostic::DiagnosticState::new(role_name));
+        crate::diagnostic::register_diagnostic_state(&state);
+        Some(state)
+    };
+    #[cfg(not(feature = "diagnostics"))]
+    let diagnostic_state: Option<Arc<crate::diagnostic::DiagnosticState>> = None;
+
     // Create root connection (connection 0)
     // r[impl core.link.connection-zero]
     // Root uses None for dispatcher - it uses the link's dispatcher
@@ -1820,7 +1834,7 @@ where
         role,
         negotiated.initial_credit,
         negotiated.max_concurrent_requests,
-        None,
+        diagnostic_state.clone(),
         None,
     );
     let handle = root_conn.handle.clone();
@@ -1848,7 +1862,7 @@ where
         incoming_connections_tx: Some(incoming_connections_tx), // Always created upfront
         incoming_response_rx: Some(incoming_response_rx),
         incoming_response_tx,
-        diagnostic_state: None,
+        diagnostic_state,
     };
 
     #[cfg(not(target_arch = "wasm32"))]
