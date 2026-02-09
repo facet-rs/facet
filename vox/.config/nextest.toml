@@ -5,7 +5,7 @@ experimental = ["setup-scripts"]
 command = "cargo build --release -p subject-rust"
 
 [scripts.setup.build-guest-process]
-command = "cargo build -p roam-shm --bin guest_process --all-features"
+command = "./scripts/build-roam-shm-test-setup.sh"
 slow-timeout = { period = "60s" }
 
 [profile.loom]

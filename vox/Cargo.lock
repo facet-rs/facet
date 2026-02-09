@@ -2355,6 +2355,7 @@ dependencies = [
  "libc",
  "libproc",
  "roam",
+ "roam-fdpass",
  "roam-frame",
  "roam-session",
  "roam-stream",

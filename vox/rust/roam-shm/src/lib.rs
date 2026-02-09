@@ -72,6 +72,7 @@ pub mod peer;
 pub mod var_slot_pool;
 
 pub mod auditable;
+pub mod bootstrap;
 pub mod cleanup;
 pub mod diagnostic;
 pub mod driver;

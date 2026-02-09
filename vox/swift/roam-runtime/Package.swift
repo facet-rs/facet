@@ -7,7 +7,8 @@ let package = Package(
         .macOS(.v13)
     ],
     products: [
-        .library(name: "RoamRuntime", targets: ["RoamRuntime"])
+        .library(name: "RoamRuntime", targets: ["RoamRuntime"]),
+        .executable(name: "shm-bootstrap-client", targets: ["shm-bootstrap-client"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.92.0")
@@ -21,6 +22,11 @@ let package = Package(
                 .product(name: "NIOPosix", package: "swift-nio"),
             ],
             path: "Sources/RoamRuntime"
+        ),
+        .executableTarget(
+            name: "shm-bootstrap-client",
+            dependencies: ["RoamRuntime"],
+            path: "Sources/shm-bootstrap-client"
         ),
         .testTarget(
             name: "RoamRuntimeTests",
