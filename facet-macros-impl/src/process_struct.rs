@@ -728,6 +728,24 @@ pub(crate) fn gen_field_from_pfield(
     let mut metadata_value: Option<String> = None;
     let mut attribute_list: Vec<TokenStream> = Vec::new();
 
+    let field_orig_ident_span = match &field.name.raw {
+        facet_macro_parse::IdentOrLiteral::Ident(ident) => ident.span(),
+        facet_macro_parse::IdentOrLiteral::Literal(_) => {
+            // For tuple fields, use the #[facet(default = ...)] span if present,
+            // otherwise use the field type span.
+            field.attrs.get_builtin_span("default").unwrap_or_else(|| {
+                // Try to get the span of the first token of the type.
+                field
+                    .ty
+                    .clone()
+                    .into_iter()
+                    .next()
+                    .map(|t| t.span())
+                    .unwrap_or_else(proc_macro2::Span::call_site)
+            })
+        }
+    };
+
     let mut want_truthy_skip = skip_all_unless_truthy;
 
     for attr in &field.attrs.facet {
@@ -1103,6 +1121,21 @@ pub(crate) fn gen_field_from_pfield(
             // This allows `default = "foo"` to work for String fields,
             // and `default = 42` to work for any integer type.
             // If the types are the same, we just write directly.
+            let panic_failed = quote_spanned! { field_orig_ident_span =>
+                panic!("Field '{}' expects {}, but default function returns {}: {}",
+                    #field_name,
+                    __dst_shape,
+                    __src_shape,
+                    e
+                )
+            };
+            let panic_unsupported = quote_spanned! { field_orig_ident_span =>
+                panic!("Field '{}' expects {}, but default function returns {}",
+                    #field_name,
+                    __dst_shape,
+                    __src_shape
+                )
+            };
             quote! {
                 𝟋Some(𝟋DS::Custom({
                     unsafe fn __default(__ptr: #facet_crate::PtrUninit) -> #facet_crate::PtrMut {
@@ -1136,12 +1169,14 @@ pub(crate) fn gen_field_from_pfield(
                             Some(#facet_crate::TryFromOutcome::Failed(e)) => {
                                 // Source was consumed, forget it
                                 𝟋forget(__src_value);
-                                panic!("default value conversion failed: {}", e)
+                                #panic_failed
                             },
                             Some(#facet_crate::TryFromOutcome::Unsupported) => {
-                                panic!("type {} does not support conversion from {}", __dst_shape.type_identifier, __src_shape.type_identifier)
+                                #panic_unsupported
                             },
-                            None => panic!("type {} does not support try_from", __dst_shape.type_identifier),
+                            None => {
+                                #panic_unsupported
+                            },
                         }
                     }
                     __default
