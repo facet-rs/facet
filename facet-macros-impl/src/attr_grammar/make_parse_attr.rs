@@ -1565,33 +1565,51 @@ impl ParsedGrammar {
                         quote! {
                             // Field-level: no args → None
                             (@ns { $ns:path } #key_ident { $field:tt : $ty:ty }) => {{
-                                static __ATTR_DATA: #crate_path::Attr = #crate_path::Attr::#variant_name(𝟋None);
-                                ::facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
+                                ::facet::Attr::new(
+                                    #ns_expr,
+                                    #key_str,
+                                    &const { #crate_path::Attr::#variant_name(𝟋None) }
+                                )
                             }};
                             // Field-level with `= "value"` → Some(value)
                             (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | = $val:expr }) => {{
-                                static __ATTR_DATA: #crate_path::Attr = #crate_path::Attr::#variant_name(𝟋Some($val));
-                                ::facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
+                                ::facet::Attr::new(
+                                    #ns_expr,
+                                    #key_str,
+                                    &const { #crate_path::Attr::#variant_name(𝟋Some($val)) }
+                                )
                             }};
                             // Field-level with just expr → Some(value)
                             (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | $val:expr }) => {{
-                                static __ATTR_DATA: #crate_path::Attr = #crate_path::Attr::#variant_name(𝟋Some($val));
-                                ::facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
+                                ::facet::Attr::new(
+                                    #ns_expr,
+                                    #key_str,
+                                    &const { #crate_path::Attr::#variant_name(𝟋Some($val)) }
+                                )
                             }};
                             // Container-level: no args → None
                             (@ns { $ns:path } #key_ident { }) => {{
-                                static __ATTR_DATA: #crate_path::Attr = #crate_path::Attr::#variant_name(𝟋None);
-                                ::facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
+                                ::facet::Attr::new(
+                                    #ns_expr,
+                                    #key_str,
+                                    &const { #crate_path::Attr::#variant_name(𝟋None) }
+                                )
                             }};
                             // Container-level with `= "value"` → Some(value)
                             (@ns { $ns:path } #key_ident { | = $val:expr }) => {{
-                                static __ATTR_DATA: #crate_path::Attr = #crate_path::Attr::#variant_name(𝟋Some($val));
-                                ::facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
+                                ::facet::Attr::new(
+                                    #ns_expr,
+                                    #key_str,
+                                    &const { #crate_path::Attr::#variant_name(𝟋Some($val)) }
+                                )
                             }};
                             // Container-level with just expr → Some(value)
                             (@ns { $ns:path } #key_ident { | $val:expr }) => {{
-                                static __ATTR_DATA: #crate_path::Attr = #crate_path::Attr::#variant_name(𝟋Some($val));
-                                ::facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
+                                ::facet::Attr::new(
+                                    #ns_expr,
+                                    #key_str,
+                                    &const { #crate_path::Attr::#variant_name(𝟋Some($val)) }
+                                )
                             }};
                         }
                     }
