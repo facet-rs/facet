@@ -1124,34 +1124,22 @@ pub(crate) fn gen_field_from_pfield(
             let panic_failed = quote_spanned! { field_orig_ident_span =>
                 panic!("Field '{}' expects {}, but default function returns {}: {}",
                     #field_name,
-                    ShapePrinter(__dst_shape),
-                    ShapePrinter(__src_shape),
+                    __dst_shape,
+                    __src_shape,
                     e
                 )
             };
             let panic_unsupported = quote_spanned! { field_orig_ident_span =>
                 panic!("Field '{}' expects {}, but default function returns {}",
                     #field_name,
-                    ShapePrinter(__dst_shape),
-                    ShapePrinter(__src_shape)
+                    __dst_shape,
+                    __src_shape
                 )
             };
 
             quote! {
                 𝟋Some(𝟋DS::Custom({
                     unsafe fn __default(__ptr: #facet_crate::PtrUninit) -> #facet_crate::PtrMut {
-                        // Helper to print shapes without allocation
-                        struct ShapePrinter<'a>(&'a #facet_crate::Shape);
-                        impl<'a> core::fmt::Display for ShapePrinter<'a> {
-                            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-                                if let Some(inner) = self.0.inner {
-                                    write!(f, "{}<{}>", self.0.type_identifier, ShapePrinter(inner))
-                                } else {
-                                    f.write_str(self.0.type_identifier)
-                                }
-                            }
-                        }
-
                         // Helper function to get shape from a value via type inference
                         #[inline]
                         fn __shape_of_val<'a, T: #facet_crate::Facet<'a>>(_: &T) -> &'static #facet_crate::Shape {
