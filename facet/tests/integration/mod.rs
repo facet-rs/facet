@@ -7,6 +7,7 @@ mod empty;
 mod enums;
 mod expanded;
 mod extension_attr_generic_opt_str;
+mod extension_attr_generic_payload;
 mod functions;
 mod generics;
 mod simd;
