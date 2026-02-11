@@ -219,7 +219,7 @@ describe("factory functions", () => {
 describe("wire schemas", () => {
   it("HelloSchema has correct structure", () => {
     expect(HelloSchema.kind).toBe("enum");
-    expect(HelloSchema.variants).toHaveLength(4);
+    expect(HelloSchema.variants).toHaveLength(5);
     expect(HelloSchema.variants[0].name).toBe("V1");
     expect(HelloSchema.variants[0].discriminant).toBe(0);
     expect(HelloSchema.variants[1].name).toBe("V2");
@@ -228,6 +228,8 @@ describe("wire schemas", () => {
     expect(HelloSchema.variants[2].discriminant).toBe(3);
     expect(HelloSchema.variants[3].name).toBe("V5");
     expect(HelloSchema.variants[3].discriminant).toBe(4);
+    expect(HelloSchema.variants[4].name).toBe("V6");
+    expect(HelloSchema.variants[4].discriminant).toBe(5);
   });
 
   it("MetadataValueSchema has correct structure", () => {

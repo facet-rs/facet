@@ -888,9 +888,11 @@ mod tests {
 
     #[test]
     fn hello_not_supported() {
-        let msg = Message::Hello(Hello::V4 {
+        let msg = Message::Hello(Hello::V6 {
             max_payload_size: 64 * 1024,
             initial_channel_credit: 64 * 1024,
+            max_concurrent_requests: 64,
+            metadata: vec![],
         });
 
         assert!(matches!(

@@ -9,8 +9,7 @@ use facet_core::PtrMut;
 use crate::{
     ChannelError, ChannelId, ChannelIdAllocator, ChannelRegistry, DriverMessage,
     IncomingChannelMessage, RX_STREAM_BUFFER_SIZE, ReceiverSlot, ResponseData, SenderSlot,
-    ServiceDispatcher, TransportError, collect_channel_ids, diagnostic, patch_channel_ids,
-    runtime::oneshot,
+    ServiceDispatcher, TransportError, collect_channel_ids, patch_channel_ids, runtime::oneshot,
 };
 use crate::{
     Role,
@@ -284,7 +283,7 @@ impl ConnectionHandle {
         let payload = facet_postcard::to_vec(args).map_err(TransportError::Encode)?;
 
         // Generate args debug info for diagnostics when enabled
-        let args_debug = if diagnostic::debug_enabled() {
+        let args_debug = if cfg!(feature = "diagnostics") {
             Some(
                 facet_pretty::PrettyPrinter::new()
                     .with_colors(facet_pretty::ColorMode::Never)
@@ -489,7 +488,7 @@ impl ConnectionHandle {
         let payload_result = facet_postcard::peek_to_vec(peek);
 
         // Generate args debug info for diagnostics when enabled
-        let args_debug = if diagnostic::debug_enabled() {
+        let args_debug = if cfg!(feature = "diagnostics") {
             let peek = unsafe {
                 facet::Peek::unchecked_new(
                     facet_core::PtrConst::new(args_ptr.cast::<u8>()),

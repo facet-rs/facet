@@ -16,9 +16,11 @@ fn main() {
     // Send Hello
     let mut hello = Vec::new();
     write_varint(&mut hello, 0); // Message::Hello
-    write_varint(&mut hello, 3); // Hello::V4 (discriminant 3)
+    write_varint(&mut hello, 5); // Hello::V6 (discriminant 5)
     write_varint(&mut hello, 1024 * 1024); // max_payload
     write_varint(&mut hello, 64 * 1024); // initial_channel_credit
+    write_varint(&mut hello, 64); // max_concurrent_requests
+    write_varint(&mut hello, 0); // metadata length = 0
     write_message(&mut stream, &hello).expect("Failed to send hello");
 
     // Read Hello from server

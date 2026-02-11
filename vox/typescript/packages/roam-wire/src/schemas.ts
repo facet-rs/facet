@@ -59,6 +59,16 @@ export const HelloSchema: EnumSchema = {
         maxConcurrentRequests: { kind: "u32" },
       },
     },
+    {
+      name: "V6",
+      discriminant: 5,
+      fields: {
+        maxPayloadSize: { kind: "u32" },
+        initialChannelCredit: { kind: "u32" },
+        maxConcurrentRequests: { kind: "u32" },
+        metadata: { kind: "vec", element: { kind: "ref", name: "MetadataEntry" } },
+      },
+    },
   ],
 };
 

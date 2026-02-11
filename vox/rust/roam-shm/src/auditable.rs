@@ -57,6 +57,13 @@ pub fn dump_all_channels() -> String {
     out
 }
 
+/// Collect all live channel diagnostic references.
+pub fn collect_live_channels() -> Vec<Arc<dyn ChannelDiagnostic + Send + Sync>> {
+    let Ok(registry) = CHANNEL_REGISTRY.read() else {
+        return Vec::new();
+    };
+    registry.iter().filter_map(|weak| weak.upgrade()).collect()
+}
 // ============================================================================
 // Auditable MPSC Channel
 // ============================================================================

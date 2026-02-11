@@ -30,16 +30,12 @@ async fn complete_hello_handshake(
         .ok_or_else(|| "expected Hello from subject".to_string())?;
 
     let (their_max_payload, their_credit) = match msg {
-        Message::Hello(Hello::V4 {
-            max_payload_size,
-            initial_channel_credit,
-        }) => (max_payload_size, initial_channel_credit),
-        Message::Hello(Hello::V5 {
+        Message::Hello(Hello::V6 {
             max_payload_size,
             initial_channel_credit,
             ..
         }) => (max_payload_size, initial_channel_credit),
-        other => return Err(format!("expected Hello::V4/V5, got {other:?}")),
+        other => return Err(format!("expected Hello::V6, got {other:?}")),
     };
 
     // Send our Hello

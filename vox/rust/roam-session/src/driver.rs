@@ -38,8 +38,8 @@ use facet::Facet;
 
 use crate::runtime::{Mutex, Receiver, channel, sleep, spawn, spawn_with_abort};
 use crate::{
-    ChannelError, ChannelRegistry, ConnectionHandle, Context, DriverMessage, MessageTransport,
-    ResponseData, RoamError, Role, ServiceDispatcher, TransportError,
+    ChannelError, ChannelRegistry, ConnectionHandle, Context, DiagnosticTransport, DriverMessage,
+    MessageTransport, ResponseData, RoamError, Role, ServiceDispatcher, TransportError,
 };
 use roam_wire::{ConnectionId, Hello, Message};
 
@@ -52,6 +52,8 @@ pub struct Negotiated {
     pub initial_credit: u32,
     /// Maximum concurrent in-flight requests per connection (min of both peers).
     pub max_concurrent_requests: u32,
+    /// Peer's self-reported name (from V6 Hello metadata), if any.
+    pub peer_name: Option<String>,
 }
 
 /// Error during connection handling.
@@ -84,7 +86,7 @@ impl std::fmt::Display for ConnectionError {
             ConnectionError::Dispatch(msg) => write!(f, "dispatch error: {msg}"),
             ConnectionError::Closed => write!(f, "connection closed"),
             ConnectionError::UnsupportedProtocolVersion => {
-                write!(f, "unsupported protocol version (expected V4 or V5)")
+                write!(f, "unsupported protocol version (expected V6)")
             }
         }
     }
@@ -114,6 +116,8 @@ pub struct HandshakeConfig {
     pub initial_channel_credit: u32,
     /// Maximum in-flight concurrent requests per connection.
     pub max_concurrent_requests: u32,
+    /// Optional peer name for identification in diagnostics.
+    pub name: Option<String>,
 }
 
 impl Default for HandshakeConfig {
@@ -122,17 +126,27 @@ impl Default for HandshakeConfig {
             max_payload_size: 1024 * 1024,     // 1 MiB
             initial_channel_credit: 64 * 1024, // 64 KiB
             max_concurrent_requests: 64,
+            name: None,
         }
     }
 }
 
 impl HandshakeConfig {
-    /// Convert to Hello message (v5 format).
+    /// Convert to Hello message (always v6 format).
     pub fn to_hello(&self) -> Hello {
-        Hello::V5 {
+        let metadata = match self.name {
+            Some(ref name) => vec![(
+                "name".to_string(),
+                roam_wire::MetadataValue::String(name.clone()),
+                0,
+            )],
+            None => vec![],
+        };
+        Hello::V6 {
             max_payload_size: self.max_payload_size,
             initial_channel_credit: self.initial_channel_credit,
             max_concurrent_requests: self.max_concurrent_requests,
+            metadata,
         }
     }
 }
@@ -288,7 +302,14 @@ pub async fn accept_framed<T, D>(
     transport: T,
     config: HandshakeConfig,
     dispatcher: D,
-) -> Result<(ConnectionHandle, IncomingConnections, Driver<T, D>), ConnectionError>
+) -> Result<
+    (
+        ConnectionHandle,
+        IncomingConnections,
+        Driver<DiagnosticTransport<T>, D>,
+    ),
+    ConnectionError,
+>
 where
     T: MessageTransport,
     D: ServiceDispatcher,
@@ -725,7 +746,7 @@ fn connection_error_to_io(e: ConnectionError) -> io::Error {
         }
         ConnectionError::UnsupportedProtocolVersion => io::Error::new(
             io::ErrorKind::InvalidData,
-            "unsupported protocol version (expected V4 or V5)",
+            "unsupported protocol version (expected V6)",
         ),
     }
 }
@@ -1120,6 +1141,11 @@ where
                 if !should_send {
                     return Ok(());
                 }
+
+                // Track completion for diagnostics
+                if let Some(ref diag) = self.diagnostic_state {
+                    diag.complete_request(request_id);
+                }
                 // r[impl flow.call.payload-limit] - Outgoing responses are also bounded
                 // by max_payload_size. If a handler produces a too-large response, send
                 // a Cancelled error instead so the call doesn't hang.
@@ -1399,6 +1425,10 @@ where
                 self.handle_credit(conn_id, channel_id, bytes)?;
             }
         }
+
+        // Update per-channel credit snapshot in diagnostics
+        self.update_credit_snapshot();
+
         Ok(())
     }
 
@@ -1466,6 +1496,12 @@ where
         });
         conn.in_flight_server_requests
             .insert(request_id, abort_handle);
+
+        // Track incoming request for diagnostics
+        if let Some(ref diag) = self.diagnostic_state {
+            diag.record_incoming_request(request_id, method_id, None);
+        }
+
         Ok(())
     }
 
@@ -1492,6 +1528,11 @@ where
         if let Some(abort_handle) = conn.in_flight_server_requests.remove(&request_id) {
             // Abort the handler task (best-effort)
             abort_handle.abort();
+
+            // Track cancellation for diagnostics
+            if let Some(ref diag) = self.diagnostic_state {
+                diag.complete_request(request_id);
+            }
 
             // Send a Cancelled response
             // r[impl call.cancel.best-effort] - The callee MUST still send a Response.
@@ -1608,6 +1649,17 @@ where
         Ok(())
     }
 
+    /// Update per-channel credit snapshot in diagnostic state.
+    fn update_credit_snapshot(&self) {
+        if let Some(ref diag) = self.diagnostic_state {
+            let mut all_credits = Vec::new();
+            for conn in self.connections.values() {
+                all_credits.extend(conn.server_channel_registry.snapshot_credits());
+            }
+            diag.update_channel_credits(all_credits);
+        }
+    }
+
     async fn goodbye(&mut self, rule_id: &'static str) -> ConnectionError {
         // Fail all pending responses and abort in-flight requests on all connections
         for (_, conn) in self.connections.iter_mut() {
@@ -1703,7 +1755,14 @@ pub async fn initiate_framed<T, D>(
     transport: T,
     config: HandshakeConfig,
     dispatcher: D,
-) -> Result<(ConnectionHandle, IncomingConnections, Driver<T, D>), ConnectionError>
+) -> Result<
+    (
+        ConnectionHandle,
+        IncomingConnections,
+        Driver<DiagnosticTransport<T>, D>,
+    ),
+    ConnectionError,
+>
 where
     T: MessageTransport,
     D: ServiceDispatcher,
@@ -1729,7 +1788,14 @@ async fn establish<T, D>(
     our_hello: Hello,
     dispatcher: D,
     role: Role,
-) -> Result<(ConnectionHandle, IncomingConnections, Driver<T, D>), ConnectionError>
+) -> Result<
+    (
+        ConnectionHandle,
+        IncomingConnections,
+        Driver<DiagnosticTransport<T>, D>,
+    ),
+    ConnectionError,
+>
 where
     T: MessageTransport,
     D: ServiceDispatcher,
@@ -1755,8 +1821,8 @@ where
         Ok(None) => return Err(ConnectionError::Closed),
         Err(e) => {
             let raw = io.last_decoded();
-            // Hello discriminants: V1=0, V2=1, V3=2, V4=3, V5=4. Unknown if > 4.
-            let is_unknown_hello = raw.len() >= 2 && raw[0] == 0x00 && raw[1] > 0x04;
+            // Hello discriminants: V1=0, V2=1, V3=2, V4=3, V5=4, V6=5. Unknown if > 5.
+            let is_unknown_hello = raw.len() >= 2 && raw[0] == 0x00 && raw[1] > 0x05;
             let version = if is_unknown_hello { raw[1] } else { 0 };
 
             if is_unknown_hello {
@@ -1775,44 +1841,42 @@ where
         }
     };
 
-    // Negotiate parameters (both sides MUST use V4 or V5).
-    let (our_max, our_credit, our_max_concurrent_requests) = match &our_hello {
-        Hello::V4 {
-            max_payload_size,
-            initial_channel_credit,
-        } => (*max_payload_size, *initial_channel_credit, u32::MAX),
-        Hello::V5 {
-            max_payload_size,
-            initial_channel_credit,
-            max_concurrent_requests,
-        } => (
-            *max_payload_size,
-            *initial_channel_credit,
-            *max_concurrent_requests,
-        ),
-        _ => return Err(ConnectionError::UnsupportedProtocolVersion),
-    };
-    let (peer_max, peer_credit, peer_max_concurrent_requests) = match &peer_hello {
-        Hello::V4 {
-            max_payload_size,
-            initial_channel_credit,
-        } => (*max_payload_size, *initial_channel_credit, u32::MAX),
-        Hello::V5 {
-            max_payload_size,
-            initial_channel_credit,
-            max_concurrent_requests,
-        } => (
-            *max_payload_size,
-            *initial_channel_credit,
-            *max_concurrent_requests,
-        ),
-        _ => return Err(ConnectionError::UnsupportedProtocolVersion),
-    };
+    // Extract (max_payload, credit, max_concurrent, peer_name) from a Hello.
+    fn hello_params(hello: &Hello) -> Result<(u32, u32, u32, Option<String>), ConnectionError> {
+        match hello {
+            Hello::V6 {
+                max_payload_size,
+                initial_channel_credit,
+                max_concurrent_requests,
+                metadata,
+            } => {
+                let name = metadata
+                    .iter()
+                    .find(|(k, _, _)| k == "name")
+                    .and_then(|(_, v, _)| match v {
+                        roam_wire::MetadataValue::String(s) => Some(s.clone()),
+                        _ => None,
+                    });
+                Ok((
+                    *max_payload_size,
+                    *initial_channel_credit,
+                    *max_concurrent_requests,
+                    name,
+                ))
+            }
+            _ => Err(ConnectionError::UnsupportedProtocolVersion),
+        }
+    }
+
+    let (our_max, our_credit, our_max_concurrent_requests, _our_name) = hello_params(&our_hello)?;
+    let (peer_max, peer_credit, peer_max_concurrent_requests, peer_name) =
+        hello_params(&peer_hello)?;
 
     let negotiated = Negotiated {
         max_payload_size: our_max.min(peer_max),
         initial_credit: our_credit.min(peer_credit),
         max_concurrent_requests: our_max_concurrent_requests.min(peer_max_concurrent_requests),
+        peer_name: peer_name.clone(),
     };
 
     debug!(
@@ -1832,12 +1896,23 @@ where
             Role::Initiator => "client",
             Role::Acceptor => "server",
         };
-        let state = Arc::new(crate::diagnostic::DiagnosticState::new(role_name));
+        let state = crate::diagnostic::DiagnosticState::new(role_name);
+        if let Some(ref name) = negotiated.peer_name {
+            state.set_peer_name(name.clone());
+        }
+        state.set_negotiated_params(
+            negotiated.max_concurrent_requests,
+            negotiated.initial_credit,
+        );
+        let state = Arc::new(state);
         crate::diagnostic::register_diagnostic_state(&state);
         Some(state)
     };
     #[cfg(not(feature = "diagnostics"))]
     let diagnostic_state: Option<Arc<crate::diagnostic::DiagnosticState>> = None;
+
+    // Wrap transport with diagnostic recording
+    let io = DiagnosticTransport::new(io, diagnostic_state.clone());
 
     // Create root connection (connection 0)
     // r[impl core.link.connection-zero]
@@ -2040,9 +2115,11 @@ mod tests {
 
     #[tokio::test]
     async fn response_with_unknown_conn_id_is_protocol_violation() {
-        let peer_hello = Message::Hello(Hello::V4 {
+        let peer_hello = Message::Hello(Hello::V6 {
             max_payload_size: 1024 * 1024,
             initial_channel_credit: 64 * 1024,
+            max_concurrent_requests: 64,
+            metadata: vec![],
         });
         let unknown_conn_response = Message::Response {
             conn_id: ConnectionId::new(999),
@@ -2081,9 +2158,11 @@ mod tests {
 
     #[tokio::test]
     async fn response_with_unknown_request_id_is_protocol_violation() {
-        let peer_hello = Message::Hello(Hello::V4 {
+        let peer_hello = Message::Hello(Hello::V6 {
             max_payload_size: 1024 * 1024,
             initial_channel_credit: 64 * 1024,
+            max_concurrent_requests: 64,
+            metadata: vec![],
         });
         let unknown_request_response = Message::Response {
             conn_id: ConnectionId::ROOT,
@@ -2123,9 +2202,11 @@ mod tests {
 
     #[tokio::test]
     async fn stale_pending_response_triggers_teardown_and_fails_pending() {
-        let peer_hello = Message::Hello(Hello::V4 {
+        let peer_hello = Message::Hello(Hello::V6 {
             max_payload_size: 1024 * 1024,
             initial_channel_credit: 64 * 1024,
+            max_concurrent_requests: 64,
+            metadata: vec![],
         });
         let transport = TestTransport::scripted(vec![Ok(Some(peer_hello))], vec![]);
         let probe = transport.clone();
@@ -2182,9 +2263,11 @@ mod tests {
 
     #[tokio::test]
     async fn response_delivery_to_dropped_receiver_is_non_fatal() {
-        let peer_hello = Message::Hello(Hello::V4 {
+        let peer_hello = Message::Hello(Hello::V6 {
             max_payload_size: 1024 * 1024,
             initial_channel_credit: 64 * 1024,
+            max_concurrent_requests: 64,
+            metadata: vec![],
         });
         let transport = TestTransport::scripted(vec![Ok(Some(peer_hello))], vec![]);
         let probe = transport.clone();
@@ -2242,9 +2325,11 @@ mod tests {
 
     #[tokio::test]
     async fn request_concurrency_overrun_sends_goodbye() {
-        let peer_hello = Message::Hello(Hello::V4 {
+        let peer_hello = Message::Hello(Hello::V6 {
             max_payload_size: 1024 * 1024,
             initial_channel_credit: 64 * 1024,
+            max_concurrent_requests: 64,
+            metadata: vec![],
         });
         let transport = TestTransport::scripted(vec![Ok(Some(peer_hello))], vec![]);
         let probe = transport.clone();

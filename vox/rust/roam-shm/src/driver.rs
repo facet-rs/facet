@@ -1166,6 +1166,7 @@ where
     #[cfg(feature = "diagnostics")]
     let diagnostic_state = diagnostic_state.or_else(|| {
         let state = Arc::new(DiagnosticState::new("shm-guest"));
+        // Note: guest name can be set later via state.set_peer_name() if needed
         roam_session::diagnostic::register_diagnostic_state(&state);
         Some(state)
     });
@@ -1386,7 +1387,7 @@ pub struct MultiPeerHostDriverHandle {
 /// Builder for `MultiPeerHostDriver`.
 pub struct MultiPeerHostDriverBuilder {
     host: ShmHost,
-    peers: Vec<(PeerId, Box<dyn ServiceDispatcher>)>,
+    peers: Vec<(PeerId, Box<dyn ServiceDispatcher>, Option<String>)>,
 }
 
 impl MultiPeerHostDriverBuilder {
@@ -1399,7 +1400,22 @@ impl MultiPeerHostDriverBuilder {
     where
         D: ServiceDispatcher + 'static,
     {
-        self.peers.push((peer_id, Box::new(dispatcher)));
+        self.peers.push((peer_id, Box::new(dispatcher), None));
+        self
+    }
+
+    /// Add a peer with its dispatcher and a human-readable name for diagnostics.
+    pub fn add_peer_named<D>(
+        mut self,
+        peer_id: PeerId,
+        dispatcher: D,
+        name: impl Into<String>,
+    ) -> Self
+    where
+        D: ServiceDispatcher + 'static,
+    {
+        self.peers
+            .push((peer_id, Box::new(dispatcher), Some(name.into())));
         self
     }
 
@@ -1446,7 +1462,7 @@ impl MultiPeerHostDriverBuilder {
         let (incoming_response_tx, incoming_response_rx) =
             auditable::channel("incoming_responses", 256);
 
-        for (peer_id, dispatcher) in self.peers {
+        for (peer_id, dispatcher, _peer_name) in self.peers {
             // Create single unified channel for all messages (Call/Data/Close/Response).
             // Single channel ensures FIFO ordering.
             let (driver_tx, mut driver_rx) = mpsc::channel(256);
@@ -1474,10 +1490,12 @@ impl MultiPeerHostDriverBuilder {
 
             #[cfg(feature = "diagnostics")]
             let peer_diagnostic_state = {
-                let state = Arc::new(DiagnosticState::new(format!(
-                    "shm-host-peer-{}",
-                    peer_id.get()
-                )));
+                let diag_name = if let Some(ref name) = _peer_name {
+                    format!("shm-host {}", name)
+                } else {
+                    format!("shm-host-peer-{}", peer_id.get())
+                };
+                let state = Arc::new(DiagnosticState::new(diag_name));
                 roam_session::diagnostic::register_diagnostic_state(&state);
                 Some(state)
             };

@@ -16,7 +16,7 @@ use crate::peer::{PeerId, PeerState};
 use crate::var_slot_pool::VarSlotPool;
 
 /// Global registry of SHM diagnostic views (host segments).
-static SHM_DIAGNOSTIC_REGISTRY: LazyLock<RwLock<Vec<Weak<ShmDiagnosticView>>>> =
+pub(crate) static SHM_DIAGNOSTIC_REGISTRY: LazyLock<RwLock<Vec<Weak<ShmDiagnosticView>>>> =
     LazyLock::new(|| RwLock::new(Vec::new()));
 
 /// Register an SHM diagnostic view for global dumps.

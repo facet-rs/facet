@@ -162,6 +162,14 @@ pub enum Hello {
         initial_channel_credit: u32,
         max_concurrent_requests: u32,
     } = 4,
+
+    /// Spec v6 Hello - adds arbitrary metadata (peer identity, etc.).
+    V6 {
+        max_payload_size: u32,
+        initial_channel_credit: u32,
+        max_concurrent_requests: u32,
+        metadata: Metadata,
+    } = 5,
 }
 
 /// Metadata value.

@@ -26,37 +26,15 @@ fn wire_spy_enabled() -> bool {
 fn format_message(msg: &Message, direction: &str) -> String {
     match msg {
         Message::Hello(hello) => match hello {
-            Hello::V1 {
-                max_payload_size,
-                initial_channel_credit,
-            } => format!(
-                "{direction} Hello::V1 {{ max_payload: {max_payload_size}, credit: {initial_channel_credit} }}"
-            ),
-            Hello::V2 {
-                max_payload_size,
-                initial_channel_credit,
-            } => format!(
-                "{direction} Hello::V2 {{ max_payload: {max_payload_size}, credit: {initial_channel_credit} }}"
-            ),
-            Hello::V3 {
-                max_payload_size,
-                initial_channel_credit,
-            } => format!(
-                "{direction} Hello::V3 {{ max_payload: {max_payload_size}, credit: {initial_channel_credit} }}"
-            ),
-            Hello::V4 {
-                max_payload_size,
-                initial_channel_credit,
-            } => format!(
-                "{direction} Hello::V4 {{ max_payload: {max_payload_size}, credit: {initial_channel_credit} }}"
-            ),
-            Hello::V5 {
+            Hello::V6 {
                 max_payload_size,
                 initial_channel_credit,
                 max_concurrent_requests,
+                metadata,
             } => format!(
-                "{direction} Hello::V5 {{ max_payload: {max_payload_size}, credit: {initial_channel_credit}, max_concurrent_requests: {max_concurrent_requests} }}"
+                "{direction} Hello::V6 {{ max_payload: {max_payload_size}, credit: {initial_channel_credit}, max_concurrent_requests: {max_concurrent_requests}, metadata: {metadata:?} }}"
             ),
+            other => format!("{direction} {other:?}"),
         },
         Message::Goodbye { reason, .. } => format!("{direction} Goodbye {{ reason: {reason:?} }}"),
         Message::Request {
@@ -126,10 +104,11 @@ pub fn run_async<T>(f: impl std::future::Future<Output = T>) -> T {
 }
 
 pub fn our_hello(max_payload_size: u32) -> Hello {
-    Hello::V5 {
+    Hello::V6 {
         max_payload_size,
         initial_channel_credit: 64 * 1024,
         max_concurrent_requests: 64,
+        metadata: vec![],
     }
 }
 
@@ -394,8 +373,8 @@ pub mod wire_server {
             .ok_or("connection closed before hello")?;
 
         match msg {
-            Message::Hello(Hello::V4 { .. } | Hello::V5 { .. }) => {}
-            other => return Err(format!("expected Hello::V4/V5, got {other:?}")),
+            Message::Hello(Hello::V6 { .. }) => {}
+            other => return Err(format!("expected Hello::V6, got {other:?}")),
         }
 
         // Handle requests until client disconnects

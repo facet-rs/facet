@@ -18,6 +18,7 @@ export type {
   // Hello
   HelloV4,
   HelloV5,
+  HelloV6,
   Hello,
   // MetadataValue
   MetadataValueString,
@@ -51,6 +52,7 @@ export {
   // Factory functions
   helloV4,
   helloV5,
+  helloV6,
   metadataString,
   metadataBytes,
   metadataU64,

@@ -72,23 +72,21 @@ async fn handle_connection(stream: TcpStream) -> Result<(), Box<dyn std::error::
     let mut io = LengthPrefixedFramed::new(stream);
 
     // Send our Hello
-    let our_hello = Hello::V5 {
+    let our_hello = Hello::V6 {
         max_payload_size: 1024 * 1024,
         initial_channel_credit: 64 * 1024,
         max_concurrent_requests: 64,
+        metadata: vec![],
     };
     io.send(&Message::Hello(our_hello)).await?;
 
     // Wait for client Hello
     let msg = io.recv().await?.ok_or("expected Hello")?;
     let _negotiated_max = match msg {
-        Message::Hello(Hello::V4 {
+        Message::Hello(Hello::V6 {
             max_payload_size, ..
         }) => max_payload_size,
-        Message::Hello(Hello::V5 {
-            max_payload_size, ..
-        }) => max_payload_size,
-        _ => return Err("expected Hello::V4/V5".into()),
+        _ => return Err("expected Hello::V6".into()),
     };
 
     // Handle requests

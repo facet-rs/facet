@@ -11,6 +11,7 @@ import {
   type Hello,
   type MetadataEntry,
   helloV5,
+  helloV6,
   messageHello,
   messageGoodbye,
   messageRequest,
@@ -907,8 +908,8 @@ export async function helloExchangeInitiator<T extends MessageTransport>(
     maxPayloadSize: Math.min(ourHello.maxPayloadSize, peerHello.maxPayloadSize),
     initialCredit: Math.min(ourHello.initialChannelCredit, peerHello.initialChannelCredit),
     maxConcurrentRequests: Math.min(
-      ourHello.tag === "V5" ? ourHello.maxConcurrentRequests : 0xffffffff,
-      peerHello.tag === "V5" ? peerHello.maxConcurrentRequests : 0xffffffff,
+      ourHello.tag === "V5" || ourHello.tag === "V6" ? ourHello.maxConcurrentRequests : 0xffffffff,
+      peerHello.tag === "V5" || peerHello.tag === "V6" ? peerHello.maxConcurrentRequests : 0xffffffff,
     ),
   };
 
@@ -933,8 +934,8 @@ export async function helloExchangeAcceptor<T extends MessageTransport>(
     maxPayloadSize: Math.min(ourHello.maxPayloadSize, peerHello.maxPayloadSize),
     initialCredit: Math.min(ourHello.initialChannelCredit, peerHello.initialChannelCredit),
     maxConcurrentRequests: Math.min(
-      ourHello.tag === "V5" ? ourHello.maxConcurrentRequests : 0xffffffff,
-      peerHello.tag === "V5" ? peerHello.maxConcurrentRequests : 0xffffffff,
+      ourHello.tag === "V5" || ourHello.tag === "V6" ? ourHello.maxConcurrentRequests : 0xffffffff,
+      peerHello.tag === "V5" || peerHello.tag === "V6" ? peerHello.maxConcurrentRequests : 0xffffffff,
     ),
   };
 
@@ -955,7 +956,7 @@ async function waitForPeerHello<T extends MessageTransport>(
     } catch {
       // r[impl message.hello.unknown-version] - Reject unknown Hello versions.
       const raw = io.lastDecoded;
-      if (raw.length >= 2 && raw[0] === 0x00 && raw[1] > 0x04) {
+      if (raw.length >= 2 && raw[0] === 0x00 && raw[1] > 0x05) {
         await io.send(encodeMessage(messageGoodbye("message.hello.unknown-version")));
         io.close();
         throw ConnectionError.protocol({
@@ -991,7 +992,7 @@ async function waitForPeerHello<T extends MessageTransport>(
 
     if (msg.tag === "Hello") {
       // r[impl message.hello.unknown-version] - reject unknown Hello versions
-      if (msg.value.tag !== "V4" && msg.value.tag !== "V5") {
+      if (msg.value.tag !== "V4" && msg.value.tag !== "V5" && msg.value.tag !== "V6") {
         await io.send(encodeMessage(messageGoodbye("message.hello.unknown-version")));
         io.close();
         throw ConnectionError.protocol({
@@ -1013,9 +1014,9 @@ async function waitForPeerHello<T extends MessageTransport>(
   }
 }
 
-/** Default Hello message (V5). */
+/** Default Hello message (V6). */
 export function defaultHello(): Hello {
-  return helloV5(1024 * 1024, 64 * 1024, 64);
+  return helloV6(1024 * 1024, 64 * 1024, 64);
 }
 
 /**

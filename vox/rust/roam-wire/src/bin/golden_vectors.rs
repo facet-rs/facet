@@ -28,24 +28,28 @@ fn main() {
     let wire_dir = out_dir.join("wire");
     fs::create_dir_all(&wire_dir).expect("failed to create wire directory");
 
-    // Hello messages (V4 for spec v4.0.0)
-    let hello_small = Hello::V4 {
+    // Hello messages (V6 for spec v6.0.0)
+    let hello_small = Hello::V6 {
         max_payload_size: 1024,
         initial_channel_credit: 64,
+        max_concurrent_requests: 64,
+        metadata: vec![],
     };
     write_vector(
         &wire_dir,
-        "hello_v4_small",
+        "hello_v6_small",
         &facet_postcard::to_vec(&hello_small).unwrap(),
     );
 
-    let hello_typical = Hello::V4 {
+    let hello_typical = Hello::V6 {
         max_payload_size: 1024 * 1024,
         initial_channel_credit: 64 * 1024,
+        max_concurrent_requests: 64,
+        metadata: vec![],
     };
     write_vector(
         &wire_dir,
-        "hello_v4_typical",
+        "hello_v6_typical",
         &facet_postcard::to_vec(&hello_typical).unwrap(),
     );
 

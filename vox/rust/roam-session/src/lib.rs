@@ -9,6 +9,7 @@
 mod macros;
 
 pub mod diagnostic;
+pub mod diagnostic_snapshot;
 pub mod driver;
 pub mod runtime;
 pub mod transport;
@@ -18,7 +19,7 @@ pub use driver::{
     IncomingConnections, MessageConnector, Negotiated, NoDispatcher, RetryPolicy, accept_framed,
     connect_framed, connect_framed_with_policy, initiate_framed,
 };
-pub use transport::MessageTransport;
+pub use transport::{DiagnosticTransport, MessageTransport};
 
 pub use roam_frame::{Frame, MsgDesc, OwnedMessage, Payload};
 

@@ -559,4 +559,23 @@ impl ChannelRegistry {
             }
         }
     }
+
+    /// Snapshot current per-channel credit state for diagnostics.
+    pub fn snapshot_credits(&self) -> Vec<crate::diagnostic::ChannelCreditInfo> {
+        // Collect all channel IDs that have either incoming or outgoing credit
+        let mut channel_ids: std::collections::HashSet<u64> = std::collections::HashSet::new();
+        channel_ids.extend(self.incoming_credit.keys());
+        channel_ids.extend(self.outgoing_credit.keys());
+
+        let mut result: Vec<crate::diagnostic::ChannelCreditInfo> = channel_ids
+            .into_iter()
+            .map(|ch_id| crate::diagnostic::ChannelCreditInfo {
+                channel_id: ch_id,
+                incoming_credit: self.incoming_credit.get(&ch_id).copied().unwrap_or(0),
+                outgoing_credit: self.outgoing_credit.get(&ch_id).copied().unwrap_or(0),
+            })
+            .collect();
+        result.sort_by_key(|c| c.channel_id);
+        result
+    }
 }

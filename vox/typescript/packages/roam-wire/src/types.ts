@@ -27,11 +27,22 @@ export interface HelloV5 {
 }
 
 /**
+ * Hello message variant V6 (adds metadata for peer identity, etc.).
+ */
+export interface HelloV6 {
+  tag: "V6";
+  maxPayloadSize: number;
+  initialChannelCredit: number;
+  maxConcurrentRequests: number;
+  metadata: MetadataEntry[];
+}
+
+/**
  * Hello message for handshake.
  *
  * r[impl message.hello.structure]
  */
-export type Hello = HelloV4 | HelloV5;
+export type Hello = HelloV4 | HelloV5 | HelloV6;
 
 // ============================================================================
 // MetadataValue
@@ -302,6 +313,7 @@ export const HelloDiscriminant = {
   V2: 1, // deprecated
   V4: 3,
   V5: 4,
+  V6: 5,
 } as const;
 
 // ============================================================================
@@ -324,6 +336,18 @@ export function helloV5(
   maxConcurrentRequests: number,
 ): HelloV5 {
   return { tag: "V5", maxPayloadSize, initialChannelCredit, maxConcurrentRequests };
+}
+
+/**
+ * Create a Hello.V6 message.
+ */
+export function helloV6(
+  maxPayloadSize: number,
+  initialChannelCredit: number,
+  maxConcurrentRequests: number,
+  metadata: MetadataEntry[] = [],
+): HelloV6 {
+  return { tag: "V6", maxPayloadSize, initialChannelCredit, maxConcurrentRequests, metadata };
 }
 
 /**

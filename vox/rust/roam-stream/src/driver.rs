@@ -16,7 +16,7 @@ use tokio::task::JoinHandle;
 
 use crate::framing::LengthPrefixedFramed;
 use roam_session::{
-    Caller, ConnectError, ConnectionError, ConnectionHandle, Driver, HandshakeConfig, ResponseData,
+    Caller, ConnectError, ConnectionError, ConnectionHandle, HandshakeConfig, ResponseData,
     RetryPolicy, SendPtr, ServiceDispatcher, TransportError,
 };
 
@@ -54,7 +54,7 @@ pub async fn accept<S, D>(
     (
         ConnectionHandle,
         roam_session::IncomingConnections,
-        Driver<LengthPrefixedFramed<S>, D>,
+        roam_session::Driver<roam_session::DiagnosticTransport<LengthPrefixedFramed<S>>, D>,
     ),
     ConnectionError,
 >

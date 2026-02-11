@@ -140,7 +140,7 @@ pub async fn ws_accept<S, D>(
     (
         ConnectionHandle,
         roam_session::IncomingConnections,
-        Driver<WsTransport<S>, D>,
+        Driver<roam_session::DiagnosticTransport<WsTransport<S>>, D>,
     ),
     ConnectionError,
 >
