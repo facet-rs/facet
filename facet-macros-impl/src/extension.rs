@@ -24,8 +24,21 @@ pub fn emit_extension_attr_for_field(
     field_name: &impl ToTokens,
     field_type: &TokenStream,
     facet_crate: &TokenStream,
+    needs_const_dispatch: bool,
 ) -> TokenStream {
-    if args.is_empty() {
+    if needs_const_dispatch {
+        if args.is_empty() {
+            // No args: ::facet::__ext!(@const ns::key { field : Type })
+            quote! {
+                #facet_crate::__ext!(@const #ns_ident::#key_ident { #field_name : #field_type })
+            }
+        } else {
+            // With args: ::facet::__ext!(@const ns::key { field : Type | args })
+            quote! {
+                #facet_crate::__ext!(@const #ns_ident::#key_ident { #field_name : #field_type | #args })
+            }
+        }
+    } else if args.is_empty() {
         // No args: ::facet::__ext!(ns::key { field : Type })
         quote! {
             #facet_crate::__ext!(#ns_ident::#key_ident { #field_name : #field_type })
@@ -56,8 +69,21 @@ pub fn emit_extension_attr(
     key_ident: &impl ToTokens,
     args: &TokenStream,
     facet_crate: &TokenStream,
+    needs_const_dispatch: bool,
 ) -> TokenStream {
-    if args.is_empty() {
+    if needs_const_dispatch {
+        if args.is_empty() {
+            // No args: ::facet::__ext!(@const ns::key { })
+            quote! {
+                #facet_crate::__ext!(@const #ns_ident::#key_ident { })
+            }
+        } else {
+            // With args: ::facet::__ext!(@const ns::key { | args })
+            quote! {
+                #facet_crate::__ext!(@const #ns_ident::#key_ident { | #args })
+            }
+        }
+    } else if args.is_empty() {
         // No args: ::facet::__ext!(ns::key { })
         quote! {
             #facet_crate::__ext!(#ns_ident::#key_ident { })
@@ -74,18 +100,32 @@ pub fn emit_extension_attr(
 ///
 /// - Builtin attrs (no namespace) → `::facet::__attr!(...)`
 /// - Namespaced attrs → `::facet::__ext!(ns::key ...)`
-pub fn emit_attr(attr: &PFacetAttr, facet_crate: &TokenStream) -> TokenStream {
+pub fn emit_attr(
+    attr: &PFacetAttr,
+    facet_crate: &TokenStream,
+    needs_const_dispatch: bool,
+) -> TokenStream {
     let key = &attr.key;
     let args = &attr.args;
 
     match &attr.ns {
         Some(ns) => {
             // Namespaced: use __ext! which routes to ns::__attr!
-            emit_extension_attr(ns, key, args, facet_crate)
+            emit_extension_attr(ns, key, args, facet_crate, needs_const_dispatch)
         }
         None => {
             // Builtin: route directly to ::facet::__attr! (macro_export puts it at crate root)
-            if args.is_empty() {
+            if needs_const_dispatch {
+                if args.is_empty() {
+                    quote! {
+                        #facet_crate::__attr!(@const @ns { #facet_crate::builtin } #key { })
+                    }
+                } else {
+                    quote! {
+                        #facet_crate::__attr!(@const @ns { #facet_crate::builtin } #key { | #args })
+                    }
+                }
+            } else if args.is_empty() {
                 quote! {
                     #facet_crate::__attr!(@ns { #facet_crate::builtin } #key { })
                 }
@@ -107,6 +147,7 @@ pub fn emit_attr_for_field(
     field_name: &impl ToTokens,
     field_type: &TokenStream,
     facet_crate: &TokenStream,
+    needs_const_dispatch: bool,
 ) -> TokenStream {
     let key = &attr.key;
     let args = &attr.args;
@@ -114,11 +155,29 @@ pub fn emit_attr_for_field(
     match &attr.ns {
         Some(ns) => {
             // Namespaced: use existing helper
-            emit_extension_attr_for_field(ns, key, args, field_name, field_type, facet_crate)
+            emit_extension_attr_for_field(
+                ns,
+                key,
+                args,
+                field_name,
+                field_type,
+                facet_crate,
+                needs_const_dispatch,
+            )
         }
         None => {
             // Builtin: route directly to ::facet::__attr! (macro_export puts it at crate root)
-            if args.is_empty() {
+            if needs_const_dispatch {
+                if args.is_empty() {
+                    quote! {
+                        #facet_crate::__attr!(@const @ns { #facet_crate::builtin } #key { #field_name : #field_type })
+                    }
+                } else {
+                    quote! {
+                        #facet_crate::__attr!(@const @ns { #facet_crate::builtin } #key { #field_name : #field_type | #args })
+                    }
+                }
+            } else if args.is_empty() {
                 quote! {
                     #facet_crate::__attr!(@ns { #facet_crate::builtin } #key { #field_name : #field_type })
                 }
@@ -137,10 +196,28 @@ pub fn emit_attr_for_field(
 /// to the extension crate's dispatcher macro while preserving spans for better
 /// error messages.
 ///
-/// Input format: `ns::attr_name { field : Type }` or `ns::attr_name { field : Type | args }`
-/// Output: `ns::__attr!(attr_name { field : Type })` or `ns::__attr!(attr_name { field : Type | args })`
+/// Input format: `ns::attr_name { field : Type }`, `@const ns::attr_name { ... }`, etc.
+/// Output: `ns::__attr!(@ns { ns } attr_name { ... })` (with optional `@const` prefix)
 pub fn ext_attr(input: TokenStream) -> TokenStream {
     let mut tokens = input.into_iter().peekable();
+
+    // Optional mode marker: @const
+    let mut use_const_dispatch = false;
+    if let Some(TokenTree::Punct(p)) = tokens.peek()
+        && p.as_char() == '@'
+    {
+        tokens.next(); // '@'
+        match tokens.next() {
+            Some(TokenTree::Ident(mode)) if mode == "const" => {
+                use_const_dispatch = true;
+            }
+            _ => {
+                return quote! {
+                    ::core::compile_error!("__ext!: expected `const` after `@`")
+                };
+            }
+        }
+    }
 
     // Parse: ns :: attr_name { ... }
     let ns_ident = match tokens.next() {
@@ -204,6 +281,10 @@ pub fn ext_attr(input: TokenStream) -> TokenStream {
 
     // Build the macro arguments: (@ns { ns_ident } attr_name { ... })
     let mut macro_args = TokenStream::new();
+    if use_const_dispatch {
+        macro_args.extend([TokenTree::Punct(Punct::new('@', Spacing::Alone))]);
+        macro_args.extend([TokenTree::Ident(Ident::new("const", attr_ident.span()))]);
+    }
     // @ns { ns_ident }
     macro_args.extend([TokenTree::Punct(at)]);
     macro_args.extend([TokenTree::Ident(ns_keyword)]);

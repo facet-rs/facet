@@ -676,6 +676,7 @@ pub(crate) fn gen_field_from_pfield(
     base_offset: Option<TokenStream>,
     facet_crate: &TokenStream,
     skip_all_unless_truthy: bool,
+    needs_const_dispatch: bool,
 ) -> TokenStream {
     let field_name = &field.name.original;
     let field_name_raw = &field.name.raw;
@@ -868,8 +869,13 @@ pub(crate) fn gen_field_from_pfield(
                 }
                 // Everything else goes to attributes slice
                 _ => {
-                    let ext_attr =
-                        emit_attr_for_field(attr, field_name_raw, field_type, facet_crate);
+                    let ext_attr = emit_attr_for_field(
+                        attr,
+                        field_name_raw,
+                        field_type,
+                        facet_crate,
+                        needs_const_dispatch,
+                    );
                     attribute_list.push(quote! { #ext_attr });
                 }
             }
@@ -940,7 +946,13 @@ pub(crate) fn gen_field_from_pfield(
                 format_proxies_list.push(format_proxy);
             } else {
                 // Other namespaced attrs go to attributes slice
-                let ext_attr = emit_attr_for_field(attr, field_name_raw, field_type, facet_crate);
+                let ext_attr = emit_attr_for_field(
+                    attr,
+                    field_name_raw,
+                    field_type,
+                    facet_crate,
+                    needs_const_dispatch,
+                );
                 attribute_list.push(quote! { #ext_attr });
             }
         }
@@ -1590,6 +1602,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                         None,
                         &facet_crate,
                         skip_all_unless_truthy,
+                        has_type_or_const_generics,
                     )
                 })
                 .collect::<Vec<_>>();
@@ -1607,6 +1620,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                         None,
                         &facet_crate,
                         skip_all_unless_truthy,
+                        has_type_or_const_generics,
                     )
                 })
                 .collect::<Vec<_>>();
@@ -1756,7 +1770,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                 }
             })
             .map(|attr| {
-                let ext_attr = emit_attr(attr, &facet_crate);
+                let ext_attr = emit_attr(attr, &facet_crate, has_type_or_const_generics);
                 quote! { #ext_attr }
             })
             .collect();
