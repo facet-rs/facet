@@ -1780,6 +1780,49 @@ impl ParsedGrammar {
                             // Field-level: @ns { path } attr { field : Type } or with args
                             // Note: $field is tt not ident because tuple struct fields are literals (0, 1, etc.)
                             (@ns { $ns:path } #key_ident { $field:tt : $ty:ty }) => {{
+                                static __ATTR_DATA: #crate_path::Attr = ::facet::__dispatch_attr!{
+                                    @crate_path { #crate_path }
+                                    @enum_name { #enum_name }
+                                    @variants { #(#variants_meta),* }
+                                    @name { #key_ident }
+                                    @rest { }
+                                };
+                                ::facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
+                            }};
+                            (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | $($args:tt)* }) => {{
+                                static __ATTR_DATA: #crate_path::Attr = ::facet::__dispatch_attr!{
+                                    @crate_path { #crate_path }
+                                    @enum_name { #enum_name }
+                                    @variants { #(#variants_meta),* }
+                                    @name { #key_ident }
+                                    @rest { $($args)* }
+                                };
+                                ::facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
+                            }};
+                            // Container-level: @ns { path } attr { } or with args
+                            (@ns { $ns:path } #key_ident { }) => {{
+                                static __ATTR_DATA: #crate_path::Attr = ::facet::__dispatch_attr!{
+                                    @crate_path { #crate_path }
+                                    @enum_name { #enum_name }
+                                    @variants { #(#variants_meta),* }
+                                    @name { #key_ident }
+                                    @rest { }
+                                };
+                                ::facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
+                            }};
+                            (@ns { $ns:path } #key_ident { | $($args:tt)* }) => {{
+                                static __ATTR_DATA: #crate_path::Attr = ::facet::__dispatch_attr!{
+                                    @crate_path { #crate_path }
+                                    @enum_name { #enum_name }
+                                    @variants { #(#variants_meta),* }
+                                    @name { #key_ident }
+                                    @rest { $($args)* }
+                                };
+                                ::facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
+                            }};
+
+                            // Generic-safe dispatch: use const payload generation.
+                            (@const @ns { $ns:path } #key_ident { $field:tt : $ty:ty }) => {{
                                 ::facet::Attr::new(
                                     #ns_expr,
                                     #key_str,
@@ -1794,7 +1837,7 @@ impl ParsedGrammar {
                                     }
                                 )
                             }};
-                            (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | $($args:tt)* }) => {{
+                            (@const @ns { $ns:path } #key_ident { $field:tt : $ty:ty | $($args:tt)* }) => {{
                                 ::facet::Attr::new(
                                     #ns_expr,
                                     #key_str,
@@ -1809,8 +1852,7 @@ impl ParsedGrammar {
                                     }
                                 )
                             }};
-                            // Container-level: @ns { path } attr { } or with args
-                            (@ns { $ns:path } #key_ident { }) => {{
+                            (@const @ns { $ns:path } #key_ident { }) => {{
                                 ::facet::Attr::new(
                                     #ns_expr,
                                     #key_str,
@@ -1825,7 +1867,7 @@ impl ParsedGrammar {
                                     }
                                 )
                             }};
-                            (@ns { $ns:path } #key_ident { | $($args:tt)* }) => {{
+                            (@const @ns { $ns:path } #key_ident { | $($args:tt)* }) => {{
                                 ::facet::Attr::new(
                                     #ns_expr,
                                     #key_str,
