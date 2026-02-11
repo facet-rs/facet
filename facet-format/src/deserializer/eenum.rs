@@ -48,7 +48,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         let is_numeric = shape.is_numeric();
         let is_untagged = shape.is_untagged();
 
-        if is_numeric {
+        if is_numeric & tag_attr.is_none() {
             return self.deserialize_numeric_enum(wip);
         }
 
@@ -376,18 +376,6 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         // Step 1: Probe to find the tag value (handles out-of-order fields)
         let evidence = self.collect_evidence()?;
 
-        let variant_name = find_tag_value(&evidence, tag_key)
-            .ok_or_else(|| {
-                self.mk_err(
-                    &wip,
-                    DeserializeErrorKind::MissingField {
-                        field: tag_key,
-                        container_shape: wip.shape(),
-                    },
-                )
-            })?
-            .to_string();
-
         // Step 2: Consume StructStart
         let event = self.expect_event("value")?;
         if !matches!(event.kind, ParseEventKind::StructStart(_)) {
@@ -414,8 +402,33 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 ));
             }
         };
-        let actual_variant = cow_redirect_variant_name::<BORROW>(enum_def, &variant_name);
-        wip = wip.select_variant_named(actual_variant)?;
+
+        if wip.shape().is_numeric() {
+            let discriminant = find_tag_discriminant(&evidence, tag_key).ok_or_else(|| {
+                self.mk_err(
+                    &wip,
+                    DeserializeErrorKind::MissingField {
+                        field: tag_key,
+                        container_shape: wip.shape(),
+                    },
+                )
+            })?;
+            wip = wip.select_variant(discriminant)?;
+        } else {
+            let variant_name = find_tag_value(&evidence, tag_key)
+                .ok_or_else(|| {
+                    self.mk_err(
+                        &wip,
+                        DeserializeErrorKind::MissingField {
+                            field: tag_key,
+                            container_shape: wip.shape(),
+                        },
+                    )
+                })?
+                .to_string();
+            let actual_variant = cow_redirect_variant_name::<BORROW>(enum_def, &variant_name);
+            wip = wip.select_variant_named(actual_variant)?;
+        }
 
         // Get the selected variant info
         let variant = wip.selected_variant().ok_or_else(|| DeserializeError {
@@ -1131,18 +1144,6 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         // Step 1: Probe to find the tag value (handles out-of-order fields)
         let evidence = self.collect_evidence()?;
 
-        let variant_name = find_tag_value(&evidence, tag_key)
-            .ok_or_else(|| {
-                self.mk_err(
-                    &wip,
-                    DeserializeErrorKind::MissingField {
-                        field: tag_key,
-                        container_shape: wip.shape(),
-                    },
-                )
-            })?
-            .to_string();
-
         // Step 2: Consume StructStart
         let event = self.expect_event("value")?;
         if !matches!(event.kind, ParseEventKind::StructStart(_)) {
@@ -1168,8 +1169,33 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 ));
             }
         };
-        let actual_variant = cow_redirect_variant_name::<BORROW>(enum_def, &variant_name);
-        wip = wip.select_variant_named(actual_variant)?;
+
+        if wip.shape().is_numeric() {
+            let discriminant = find_tag_discriminant(&evidence, tag_key).ok_or_else(|| {
+                self.mk_err(
+                    &wip,
+                    DeserializeErrorKind::MissingField {
+                        field: tag_key,
+                        container_shape: wip.shape(),
+                    },
+                )
+            })?;
+            wip = wip.select_variant(discriminant)?;
+        } else {
+            let variant_name = find_tag_value(&evidence, tag_key)
+                .ok_or_else(|| {
+                    self.mk_err(
+                        &wip,
+                        DeserializeErrorKind::MissingField {
+                            field: tag_key,
+                            container_shape: wip.shape(),
+                        },
+                    )
+                })?
+                .to_string();
+            let actual_variant = cow_redirect_variant_name::<BORROW>(enum_def, &variant_name);
+            wip = wip.select_variant_named(actual_variant)?;
+        }
 
         // Step 4: Process fields in any order
         let mut content_seen = false;
@@ -1867,6 +1893,22 @@ fn find_tag_value<'a, 'input>(
         .find(|e| e.name == tag_key)
         .and_then(|e| match &e.scalar_value {
             Some(ScalarValue::Str(s)) => Some(s.as_ref()),
+            _ => None,
+        })
+}
+
+/// Helper to find a tag discriminant from field evidence.
+fn find_tag_discriminant<'a, 'input>(
+    evidence: &'a [FieldEvidence<'input>],
+    tag_key: &str,
+) -> Option<i64> {
+    evidence
+        .iter()
+        .find(|e| e.name == tag_key)
+        .and_then(|e| match &e.scalar_value {
+            Some(ScalarValue::Str(s)) => s.parse().ok(),
+            Some(ScalarValue::U64(d)) => Some(*d as i64),
+            Some(ScalarValue::I64(d)) => Some(*d),
             _ => None,
         })
 }

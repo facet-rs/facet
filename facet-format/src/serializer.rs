@@ -1082,6 +1082,34 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
         Ok(())
     }
 
+    fn serialize_discriminant<'mem, 'facet>(
+        &mut self,
+        enum_: facet_reflect::PeekEnum<'mem, 'facet>,
+    ) -> Result<(), SerializeError<S::Error>> {
+        match enum_.ty().enum_repr {
+            facet_core::EnumRepr::Rust => Err(SerializeError::Internal(Cow::Borrowed(
+                "enum does not have an explicit representation",
+            ))),
+            facet_core::EnumRepr::RustNPO
+            | facet_core::EnumRepr::U8
+            | facet_core::EnumRepr::U16
+            | facet_core::EnumRepr::U32
+            | facet_core::EnumRepr::U64
+            | facet_core::EnumRepr::USize => self
+                .serializer
+                .scalar(ScalarValue::U64(enum_.discriminant() as u64))
+                .map_err(SerializeError::Backend),
+            facet_core::EnumRepr::I8
+            | facet_core::EnumRepr::I16
+            | facet_core::EnumRepr::I32
+            | facet_core::EnumRepr::I64
+            | facet_core::EnumRepr::ISize => self
+                .serializer
+                .scalar(ScalarValue::I64(enum_.discriminant()))
+                .map_err(SerializeError::Backend),
+        }
+    }
+
     fn serialize_enum<'mem, 'facet>(
         &mut self,
         shape: &'static Shape,
@@ -1146,7 +1174,7 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
         let tag = shape.get_tag_attr();
         let content = shape.get_content_attr();
 
-        if numeric {
+        if numeric && tag.is_none() {
             return serialize_numeric_enum(self.serializer, variant);
         }
         if untagged {
@@ -1182,9 +1210,14 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
                 self.serializer
                     .field_key(tag_key)
                     .map_err(SerializeError::Backend)?;
-                self.serializer
-                    .scalar(ScalarValue::Str(Cow::Borrowed(variant.effective_name())))
-                    .map_err(SerializeError::Backend)?;
+
+                if numeric {
+                    self.serialize_discriminant(enum_)?;
+                } else {
+                    self.serializer
+                        .scalar(ScalarValue::Str(Cow::Borrowed(variant.effective_name())))
+                        .map_err(SerializeError::Backend)?;
+                }
 
                 self.push(PathSegment::Variant(Cow::Borrowed(
                     variant.effective_name(),
@@ -1328,7 +1361,13 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
             }
             (Some(tag_key), Some(content_key)) => {
                 // Adjacently tagged
-                return self.serialize_adjacently_tagged_enum(enum_, variant, tag_key, content_key);
+                return self.serialize_adjacently_tagged_enum(
+                    enum_,
+                    variant,
+                    tag_key,
+                    content_key,
+                    numeric,
+                );
             }
             (None, Some(_)) => {
                 return Err(SerializeError::Unsupported(Cow::Borrowed(
@@ -1348,6 +1387,7 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
         variant: &'static facet_core::Variant,
         tag_key: &'static str,
         content_key: &'static str,
+        numeric: bool,
     ) -> Result<(), SerializeError<S::Error>> {
         let field_mode = self.serializer.struct_field_mode();
         self.serializer
@@ -1356,9 +1396,14 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
         self.serializer
             .field_key(tag_key)
             .map_err(SerializeError::Backend)?;
-        self.serializer
-            .scalar(ScalarValue::Str(Cow::Borrowed(variant.effective_name())))
-            .map_err(SerializeError::Backend)?;
+
+        if numeric {
+            self.serialize_discriminant(enum_)?;
+        } else {
+            self.serializer
+                .scalar(ScalarValue::Str(Cow::Borrowed(variant.effective_name())))
+                .map_err(SerializeError::Backend)?;
+        }
 
         self.push(PathSegment::Variant(Cow::Borrowed(
             variant.effective_name(),
