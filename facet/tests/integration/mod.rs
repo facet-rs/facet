@@ -8,6 +8,7 @@ mod enums;
 mod expanded;
 mod extension_attr_generic_opt_str;
 mod extension_attr_generic_payload;
+mod extension_attr_tuple_fields;
 mod functions;
 mod generics;
 mod simd;

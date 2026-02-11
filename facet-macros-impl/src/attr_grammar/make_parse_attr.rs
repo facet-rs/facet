@@ -1776,111 +1776,68 @@ impl ParsedGrammar {
                         let crate_path = self.crate_path.as_ref().expect(
                             "crate_path is required for non-unit variants; add `crate_path ::your_crate;` to the grammar"
                         );
+                        let dispatch_no_args = quote! {
+                            ::facet::__dispatch_attr!{
+                                @crate_path { #crate_path }
+                                @enum_name { #enum_name }
+                                @variants { #(#variants_meta),* }
+                                @name { #key_ident }
+                                @rest { }
+                            }
+                        };
+                        let dispatch_with_args = quote! {
+                            ::facet::__dispatch_attr!{
+                                @crate_path { #crate_path }
+                                @enum_name { #enum_name }
+                                @variants { #(#variants_meta),* }
+                                @name { #key_ident }
+                                @rest { $($args)* }
+                            }
+                        };
+                        let static_attr_body = |dispatch: TokenStream2| {
+                            quote! {
+                                static __ATTR_DATA: #crate_path::Attr = #dispatch;
+                                ::facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
+                            }
+                        };
+                        let const_attr_body = |dispatch: TokenStream2| {
+                            quote! {
+                                ::facet::Attr::new(#ns_expr, #key_str, &const { #dispatch })
+                            }
+                        };
+                        let static_no_args_body = static_attr_body(dispatch_no_args.clone());
+                        let static_with_args_body = static_attr_body(dispatch_with_args.clone());
+                        let const_no_args_body = const_attr_body(dispatch_no_args);
+                        let const_with_args_body = const_attr_body(dispatch_with_args);
                         quote! {
                             // Field-level: @ns { path } attr { field : Type } or with args
                             // Note: $field is tt not ident because tuple struct fields are literals (0, 1, etc.)
                             (@ns { $ns:path } #key_ident { $field:tt : $ty:ty }) => {{
-                                static __ATTR_DATA: #crate_path::Attr = ::facet::__dispatch_attr!{
-                                    @crate_path { #crate_path }
-                                    @enum_name { #enum_name }
-                                    @variants { #(#variants_meta),* }
-                                    @name { #key_ident }
-                                    @rest { }
-                                };
-                                ::facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
+                                #static_no_args_body
                             }};
                             (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | $($args:tt)* }) => {{
-                                static __ATTR_DATA: #crate_path::Attr = ::facet::__dispatch_attr!{
-                                    @crate_path { #crate_path }
-                                    @enum_name { #enum_name }
-                                    @variants { #(#variants_meta),* }
-                                    @name { #key_ident }
-                                    @rest { $($args)* }
-                                };
-                                ::facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
+                                #static_with_args_body
                             }};
                             // Container-level: @ns { path } attr { } or with args
                             (@ns { $ns:path } #key_ident { }) => {{
-                                static __ATTR_DATA: #crate_path::Attr = ::facet::__dispatch_attr!{
-                                    @crate_path { #crate_path }
-                                    @enum_name { #enum_name }
-                                    @variants { #(#variants_meta),* }
-                                    @name { #key_ident }
-                                    @rest { }
-                                };
-                                ::facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
+                                #static_no_args_body
                             }};
                             (@ns { $ns:path } #key_ident { | $($args:tt)* }) => {{
-                                static __ATTR_DATA: #crate_path::Attr = ::facet::__dispatch_attr!{
-                                    @crate_path { #crate_path }
-                                    @enum_name { #enum_name }
-                                    @variants { #(#variants_meta),* }
-                                    @name { #key_ident }
-                                    @rest { $($args)* }
-                                };
-                                ::facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
+                                #static_with_args_body
                             }};
 
                             // Generic-safe dispatch: use const payload generation.
                             (@const @ns { $ns:path } #key_ident { $field:tt : $ty:ty }) => {{
-                                ::facet::Attr::new(
-                                    #ns_expr,
-                                    #key_str,
-                                    &const {
-                                        ::facet::__dispatch_attr!{
-                                            @crate_path { #crate_path }
-                                            @enum_name { #enum_name }
-                                            @variants { #(#variants_meta),* }
-                                            @name { #key_ident }
-                                            @rest { }
-                                        }
-                                    }
-                                )
+                                #const_no_args_body
                             }};
                             (@const @ns { $ns:path } #key_ident { $field:tt : $ty:ty | $($args:tt)* }) => {{
-                                ::facet::Attr::new(
-                                    #ns_expr,
-                                    #key_str,
-                                    &const {
-                                        ::facet::__dispatch_attr!{
-                                            @crate_path { #crate_path }
-                                            @enum_name { #enum_name }
-                                            @variants { #(#variants_meta),* }
-                                            @name { #key_ident }
-                                            @rest { $($args)* }
-                                        }
-                                    }
-                                )
+                                #const_with_args_body
                             }};
                             (@const @ns { $ns:path } #key_ident { }) => {{
-                                ::facet::Attr::new(
-                                    #ns_expr,
-                                    #key_str,
-                                    &const {
-                                        ::facet::__dispatch_attr!{
-                                            @crate_path { #crate_path }
-                                            @enum_name { #enum_name }
-                                            @variants { #(#variants_meta),* }
-                                            @name { #key_ident }
-                                            @rest { }
-                                        }
-                                    }
-                                )
+                                #const_no_args_body
                             }};
                             (@const @ns { $ns:path } #key_ident { | $($args:tt)* }) => {{
-                                ::facet::Attr::new(
-                                    #ns_expr,
-                                    #key_str,
-                                    &const {
-                                        ::facet::__dispatch_attr!{
-                                            @crate_path { #crate_path }
-                                            @enum_name { #enum_name }
-                                            @variants { #(#variants_meta),* }
-                                            @name { #key_ident }
-                                            @rest { $($args)* }
-                                        }
-                                    }
-                                )
+                                #const_with_args_body
                             }};
                         }
                     }
