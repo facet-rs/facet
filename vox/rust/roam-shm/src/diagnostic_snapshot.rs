@@ -1,54 +1,18 @@
 //! Structured SHM diagnostic snapshots for JSON serialization.
+//!
+//! Uses types from peeps-types and registers as a diagnostics source
+//! via inventory so peeps can collect roam-shm diagnostics.
 
 use std::sync::Arc;
 
-use facet::Facet;
+use peeps_types::{
+    ChannelQueueSnapshot, ShmPeerSnapshot, ShmPeerState, ShmSegmentSnapshot, ShmSnapshot,
+    VarSlotClassSnapshot,
+};
+#[cfg(feature = "diagnostics")]
+use peeps_types::{Diagnostics, DiagnosticsSource};
 
 use crate::diagnostic::{self, SHM_DIAGNOSTIC_REGISTRY};
-
-/// Snapshot of all SHM diagnostic state.
-#[derive(Debug, Clone, Facet)]
-pub struct ShmSnapshot {
-    pub segments: Vec<ShmSegmentSnapshot>,
-    pub channels: Vec<ChannelQueueSnapshot>,
-}
-
-/// Snapshot of a single SHM segment.
-#[derive(Debug, Clone, Facet)]
-pub struct ShmSegmentSnapshot {
-    pub segment_path: Option<String>,
-    pub total_size: u64,
-    pub current_size: u64,
-    pub max_peers: u32,
-    pub host_goodbye: bool,
-    pub peers: Vec<ShmPeerSnapshot>,
-    pub var_pool: Vec<VarSlotClassSnapshot>,
-}
-
-/// Snapshot of a single SHM peer.
-#[derive(Debug, Clone, Facet)]
-pub struct ShmPeerSnapshot {
-    pub peer_id: u32,
-    pub state: ShmPeerState,
-    pub name: Option<String>,
-    pub bipbuf_capacity: u32,
-    pub bytes_sent: u64,
-    pub bytes_received: u64,
-    pub calls_sent: u64,
-    pub calls_received: u64,
-    pub time_since_heartbeat_ms: Option<u64>,
-}
-
-/// SHM peer state (serializable).
-#[derive(Debug, Clone, Facet)]
-#[repr(u8)]
-pub enum ShmPeerState {
-    Empty,
-    Reserved,
-    Attached,
-    Goodbye,
-    Unknown,
-}
 
 impl From<crate::peer::PeerState> for ShmPeerState {
     fn from(s: crate::peer::PeerState) -> Self {
@@ -61,22 +25,12 @@ impl From<crate::peer::PeerState> for ShmPeerState {
     }
 }
 
-/// Snapshot of a var slot pool size class.
-#[derive(Debug, Clone, Facet)]
-pub struct VarSlotClassSnapshot {
-    pub slot_size: u32,
-    pub slots_per_extent: u32,
-    pub extent_count: u32,
-    pub free_slots_approx: u32,
-    pub total_slots: u32,
-}
-
-/// Snapshot of an auditable channel queue.
-#[derive(Debug, Clone, Facet)]
-pub struct ChannelQueueSnapshot {
-    pub name: String,
-    pub len: u64,
-    pub capacity: u64,
+// Register with peeps diagnostics inventory
+#[cfg(feature = "diagnostics")]
+inventory::submit! {
+    DiagnosticsSource {
+        collect: || Diagnostics::RoamShm(snapshot_all_shm()),
+    }
 }
 
 /// Take a structured snapshot of all SHM state.

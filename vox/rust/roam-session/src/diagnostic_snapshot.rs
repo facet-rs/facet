@@ -1,25 +1,18 @@
 //! Structured diagnostic snapshots for JSON serialization.
 //!
-//! Parallel to `diagnostic.rs` but returns Facet-derivable types
-//! instead of formatted strings. Used by vixen's `vx debug` to
-//! write `/tmp/vx-dumps/{pid}.json`.
+//! Uses types from peeps-types and registers as a diagnostics source
+//! via inventory so peeps can collect roam-session diagnostics.
 
-use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 
-use facet::Facet;
+use peeps_types::{
+    ChannelCreditSnapshot, ChannelDir, ChannelSnapshot, CompletionSnapshot, ConnectionSnapshot,
+    Direction, RequestSnapshot, SessionSnapshot, TransportStats,
+};
+#[cfg(feature = "diagnostics")]
+use peeps_types::{Diagnostics, DiagnosticsSource};
 
 use crate::diagnostic::{self, ChannelDirection, RequestDirection, get_method_name};
-
-/// Direction of an RPC request (serializable).
-#[derive(Debug, Clone, Facet)]
-#[repr(u8)]
-pub enum Direction {
-    /// We sent the request, waiting for response.
-    Outgoing,
-    /// We received the request, processing it.
-    Incoming,
-}
 
 impl From<RequestDirection> for Direction {
     fn from(d: RequestDirection) -> Self {
@@ -28,14 +21,6 @@ impl From<RequestDirection> for Direction {
             RequestDirection::Incoming => Direction::Incoming,
         }
     }
-}
-
-/// Direction of a channel (serializable).
-#[derive(Debug, Clone, Facet)]
-#[repr(u8)]
-pub enum ChannelDir {
-    Tx,
-    Rx,
 }
 
 impl From<ChannelDirection> for ChannelDir {
@@ -47,91 +32,18 @@ impl From<ChannelDirection> for ChannelDir {
     }
 }
 
-/// Snapshot of all roam-session diagnostic state.
-#[derive(Debug, Clone, Facet)]
-pub struct DiagnosticSnapshot {
-    pub connections: Vec<ConnectionSnapshot>,
-    pub method_names: HashMap<u64, String>,
-}
-
-/// Snapshot of a single connection's diagnostic state.
-#[derive(Debug, Clone, Facet)]
-pub struct ConnectionSnapshot {
-    pub name: String,
-    pub peer_name: Option<String>,
-    pub age_secs: f64,
-    pub total_completed: u64,
-    pub max_concurrent_requests: u32,
-    pub initial_credit: u32,
-    pub in_flight: Vec<RequestSnapshot>,
-    pub recent_completions: Vec<CompletionSnapshot>,
-    pub channels: Vec<ChannelSnapshot>,
-    pub transport: TransportStats,
-    pub channel_credits: Vec<ChannelCreditSnapshot>,
-}
-
-/// Snapshot of an in-flight RPC request.
-#[derive(Debug, Clone, Facet)]
-pub struct RequestSnapshot {
-    pub request_id: u64,
-    pub method_name: Option<String>,
-    pub method_id: u64,
-    pub direction: Direction,
-    pub elapsed_secs: f64,
-    pub args: Option<HashMap<String, String>>,
-    pub backtrace: Option<String>,
-}
-
-/// Snapshot of a recently completed RPC request.
-#[derive(Debug, Clone, Facet)]
-pub struct CompletionSnapshot {
-    pub method_name: Option<String>,
-    pub method_id: u64,
-    pub direction: Direction,
-    pub duration_secs: f64,
-    pub age_secs: f64,
-}
-
-/// Snapshot of an open channel.
-#[derive(Debug, Clone, Facet)]
-pub struct ChannelSnapshot {
-    pub channel_id: u64,
-    pub direction: ChannelDir,
-    pub age_secs: f64,
-    pub request_id: Option<u64>,
-}
-
-/// Transport-level statistics for a connection.
-#[derive(Debug, Clone, Facet)]
-pub struct TransportStats {
-    /// Total frames sent.
-    pub frames_sent: u64,
-    /// Total frames received.
-    pub frames_received: u64,
-    /// Total payload bytes sent.
-    pub bytes_sent: u64,
-    /// Total payload bytes received.
-    pub bytes_received: u64,
-    /// Seconds since last frame was sent (None if never sent).
-    pub last_sent_ago_secs: Option<f64>,
-    /// Seconds since last frame was received (None if never received).
-    pub last_recv_ago_secs: Option<f64>,
-}
-
-/// Per-channel flow control credit snapshot.
-#[derive(Debug, Clone, Facet)]
-pub struct ChannelCreditSnapshot {
-    pub channel_id: u64,
-    /// Credit we granted to peer (bytes they can still send us).
-    pub incoming_credit: u32,
-    /// Credit peer granted us (bytes we can still send them).
-    pub outgoing_credit: u32,
+// Register with peeps diagnostics inventory
+#[cfg(feature = "diagnostics")]
+inventory::submit! {
+    DiagnosticsSource {
+        collect: || Diagnostics::RoamSession(snapshot_all_diagnostics()),
+    }
 }
 
 /// Take a structured snapshot of all registered diagnostic states.
 ///
 /// Safe to call from signal handlers (uses `try_read()` on all locks).
-pub fn snapshot_all_diagnostics() -> DiagnosticSnapshot {
+pub fn snapshot_all_diagnostics() -> SessionSnapshot {
     let now = std::time::Instant::now();
 
     let states = diagnostic::collect_live_states();
@@ -245,7 +157,7 @@ pub fn snapshot_all_diagnostics() -> DiagnosticSnapshot {
 
     let method_names = diagnostic::snapshot_method_names();
 
-    DiagnosticSnapshot {
+    SessionSnapshot {
         connections,
         method_names,
     }
