@@ -827,17 +827,17 @@ fn deserialize_enum<'facet>(
 ) -> Result<Partial<'facet, false>> {
     let shape = partial.shape();
 
+    let tag_key = shape.get_tag_attr();
+    let content_key = shape.get_content_attr();
+
     // Check for numeric enums first (like #[repr(u8)] enums)
-    if shape.is_numeric() {
+    if shape.is_numeric() && tag_key.is_none() {
         return deserialize_numeric_enum(value, partial);
     }
 
     if shape.is_untagged() {
         return deserialize_untagged_enum(value, partial);
     }
-
-    let tag_key = shape.get_tag_attr();
-    let content_key = shape.get_content_attr();
 
     match (tag_key, content_key) {
         // Internally tagged: {"type": "Circle", "radius": 5.0}
@@ -960,14 +960,26 @@ fn deserialize_internally_tagged_enum<'facet>(
         })
     })?;
 
-    let variant_name = tag_value.as_string().ok_or_else(|| {
-        ValueError::new(ValueErrorKind::TypeMismatch {
-            expected: "string for enum tag",
-            got: tag_value.value_type(),
-        })
-    })?;
-
-    partial = partial.select_variant_named(variant_name.as_str())?;
+    if partial.shape().is_numeric() {
+        let discriminant = tag_value
+            .as_number()
+            .and_then(VNumber::to_i64)
+            .ok_or_else(|| {
+                ValueError::new(ValueErrorKind::TypeMismatch {
+                    expected: "integer for enum discriminant",
+                    got: tag_value.value_type(),
+                })
+            })?;
+        partial = partial.select_variant(discriminant)?;
+    } else {
+        let variant_name = tag_value.as_string().ok_or_else(|| {
+            ValueError::new(ValueErrorKind::TypeMismatch {
+                expected: "string for enum tag",
+                got: tag_value.value_type(),
+            })
+        })?;
+        partial = partial.select_variant_named(variant_name.as_str())?;
+    }
 
     let variant = partial.selected_variant().ok_or_else(|| {
         ValueError::new(ValueErrorKind::Unsupported {
@@ -1021,14 +1033,26 @@ fn deserialize_adjacently_tagged_enum<'facet>(
         })
     })?;
 
-    let variant_name = tag_value.as_string().ok_or_else(|| {
-        ValueError::new(ValueErrorKind::TypeMismatch {
-            expected: "string for enum tag",
-            got: tag_value.value_type(),
-        })
-    })?;
-
-    partial = partial.select_variant_named(variant_name.as_str())?;
+    if partial.shape().is_numeric() {
+        let discriminant = tag_value
+            .as_number()
+            .and_then(VNumber::to_i64)
+            .ok_or_else(|| {
+                ValueError::new(ValueErrorKind::TypeMismatch {
+                    expected: "integer for enum discriminant",
+                    got: tag_value.value_type(),
+                })
+            })?;
+        partial = partial.select_variant(discriminant)?;
+    } else {
+        let variant_name = tag_value.as_string().ok_or_else(|| {
+            ValueError::new(ValueErrorKind::TypeMismatch {
+                expected: "string for enum tag",
+                got: tag_value.value_type(),
+            })
+        })?;
+        partial = partial.select_variant_named(variant_name.as_str())?;
+    }
 
     let variant = partial.selected_variant().ok_or_else(|| {
         ValueError::new(ValueErrorKind::Unsupported {
