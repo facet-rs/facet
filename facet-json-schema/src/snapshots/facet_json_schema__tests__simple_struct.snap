@@ -1,50 +1,18 @@
 ---
 source: facet-json-schema/src/lib.rs
+assertion_line: 567
 expression: schema
 ---
 {
-  "$schema": null,
-  "$ref": null,
-  "$defs": null,
   "type": "object",
   "properties": {
     "age": {
-      "$schema": null,
-      "$ref": null,
-      "$defs": null,
       "type": "integer",
-      "properties": null,
-      "required": null,
-      "additionalProperties": null,
-      "items": null,
-      "enum": null,
       "minimum": "0",
-      "maximum": "4294967295",
-      "oneOf": null,
-      "anyOf": null,
-      "allOf": null,
-      "description": null,
-      "title": null,
-      "const": null
+      "maximum": "4294967295"
     },
     "name": {
-      "$schema": null,
-      "$ref": null,
-      "$defs": null,
-      "type": "string",
-      "properties": null,
-      "required": null,
-      "additionalProperties": null,
-      "items": null,
-      "enum": null,
-      "minimum": null,
-      "maximum": null,
-      "oneOf": null,
-      "anyOf": null,
-      "allOf": null,
-      "description": null,
-      "title": null,
-      "const": null
+      "type": "string"
     }
   },
   "required": [
@@ -52,14 +20,5 @@ expression: schema
     "age"
   ],
   "additionalProperties": false,
-  "items": null,
-  "enum": null,
-  "minimum": null,
-  "maximum": null,
-  "oneOf": null,
-  "anyOf": null,
-  "allOf": null,
-  "description": null,
-  "title": "User",
-  "const": null
+  "title": "User"
 }

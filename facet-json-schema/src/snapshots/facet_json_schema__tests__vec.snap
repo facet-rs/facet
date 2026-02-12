@@ -1,63 +1,21 @@
 ---
 source: facet-json-schema/src/lib.rs
+assertion_line: 604
 expression: schema
 ---
 {
-  "$schema": null,
-  "$ref": null,
-  "$defs": null,
   "type": "object",
   "properties": {
     "items": {
-      "$schema": null,
-      "$ref": null,
-      "$defs": null,
       "type": "array",
-      "properties": null,
-      "required": null,
-      "additionalProperties": null,
       "items": {
-        "$schema": null,
-        "$ref": null,
-        "$defs": null,
-        "type": "string",
-        "properties": null,
-        "required": null,
-        "additionalProperties": null,
-        "items": null,
-        "enum": null,
-        "minimum": null,
-        "maximum": null,
-        "oneOf": null,
-        "anyOf": null,
-        "allOf": null,
-        "description": null,
-        "title": null,
-        "const": null
-      },
-      "enum": null,
-      "minimum": null,
-      "maximum": null,
-      "oneOf": null,
-      "anyOf": null,
-      "allOf": null,
-      "description": null,
-      "title": null,
-      "const": null
+        "type": "string"
+      }
     }
   },
   "required": [
     "items"
   ],
   "additionalProperties": false,
-  "items": null,
-  "enum": null,
-  "minimum": null,
-  "maximum": null,
-  "oneOf": null,
-  "anyOf": null,
-  "allOf": null,
-  "description": null,
-  "title": "Data",
-  "const": null
+  "title": "Data"
 }

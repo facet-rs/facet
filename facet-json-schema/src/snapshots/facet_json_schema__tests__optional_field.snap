@@ -1,103 +1,28 @@
 ---
 source: facet-json-schema/src/lib.rs
+assertion_line: 579
 expression: schema
 ---
 {
-  "$schema": null,
-  "$ref": null,
-  "$defs": null,
   "type": "object",
   "properties": {
     "optional": {
-      "$schema": null,
-      "$ref": null,
-      "$defs": null,
-      "type": null,
-      "properties": null,
-      "required": null,
-      "additionalProperties": null,
-      "items": null,
-      "enum": null,
-      "minimum": null,
-      "maximum": null,
-      "oneOf": null,
       "anyOf": [
         {
-          "$schema": null,
-          "$ref": null,
-          "$defs": null,
-          "type": "string",
-          "properties": null,
-          "required": null,
-          "additionalProperties": null,
-          "items": null,
-          "enum": null,
-          "minimum": null,
-          "maximum": null,
-          "oneOf": null,
-          "anyOf": null,
-          "allOf": null,
-          "description": null,
-          "title": null,
-          "const": null
+          "type": "string"
         },
         {
-          "$schema": null,
-          "$ref": null,
-          "$defs": null,
-          "type": "null",
-          "properties": null,
-          "required": null,
-          "additionalProperties": null,
-          "items": null,
-          "enum": null,
-          "minimum": null,
-          "maximum": null,
-          "oneOf": null,
-          "anyOf": null,
-          "allOf": null,
-          "description": null,
-          "title": null,
-          "const": null
+          "type": "null"
         }
-      ],
-      "allOf": null,
-      "description": null,
-      "title": null,
-      "const": null
+      ]
     },
     "required": {
-      "$schema": null,
-      "$ref": null,
-      "$defs": null,
-      "type": "string",
-      "properties": null,
-      "required": null,
-      "additionalProperties": null,
-      "items": null,
-      "enum": null,
-      "minimum": null,
-      "maximum": null,
-      "oneOf": null,
-      "anyOf": null,
-      "allOf": null,
-      "description": null,
-      "title": null,
-      "const": null
+      "type": "string"
     }
   },
   "required": [
     "required"
   ],
   "additionalProperties": false,
-  "items": null,
-  "enum": null,
-  "minimum": null,
-  "maximum": null,
-  "oneOf": null,
-  "anyOf": null,
-  "allOf": null,
-  "description": null,
-  "title": "Config",
-  "const": null
+  "title": "Config"
 }

@@ -34,6 +34,7 @@ use facet_core::{Def, Field, Shape, StructKind, Type, UserType};
 /// This is a simplified representation that covers the most common cases.
 /// It can be serialized to JSON using facet-json.
 #[derive(Debug, Clone, Facet)]
+#[facet(skip_all_unless_truthy)]
 pub struct JsonSchema {
     /// The JSON Schema dialect
     #[facet(rename = "$schema")]
