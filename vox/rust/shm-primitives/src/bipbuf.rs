@@ -294,10 +294,10 @@ impl BipBufRaw {
                 return Some(unsafe { core::slice::from_raw_parts_mut(ptr, len as usize) });
             }
 
-            // Doesn't fit even after wrapping. Undo the wrap.
-            // Restore write and clear watermark.
-            header.write.store(write, Ordering::Release);
-            header.watermark.store(0, Ordering::Release);
+            // Doesn't fit even after wrapping.
+            // Keep the wrapped state (watermark=old write, write=0) so the
+            // consumer can finish draining the tail safely. A later grant may
+            // succeed at the front once `read` advances.
             None
         } else {
             // Case 2: write < read (we previously wrapped).
@@ -604,6 +604,38 @@ mod tests {
         let grant = producer.try_grant(4).unwrap();
         grant.fill(0xBB);
         producer.commit(4);
+    }
+
+    #[test]
+    fn failed_wrap_grant_keeps_wrapped_state() {
+        let region = HeapRegion::new_zeroed(BIPBUF_HEADER_SIZE + 32);
+        let header_ptr = region.region().as_ptr() as *mut BipBufHeader;
+        let data_ptr = unsafe { region.region().as_ptr().add(BIPBUF_HEADER_SIZE) };
+
+        unsafe { (*header_ptr).init(32) };
+        let raw = unsafe { BipBufRaw::from_raw(header_ptr, data_ptr) };
+
+        // Fill [0..24), then consume 20 bytes so only [20..24) remains unread.
+        let grant = raw.try_grant(24).unwrap();
+        grant.fill(0xAA);
+        raw.commit(24);
+        let tail = raw.try_read().unwrap();
+        assert_eq!(tail.len(), 24);
+        raw.release(20);
+
+        // This cannot fit at end (8 bytes) nor before read (needs 21, read=20).
+        assert!(raw.try_grant(21).is_none());
+
+        // Failed wrap should remain wrapped instead of restoring write/watermark.
+        let header = unsafe { &*header_ptr };
+        assert_eq!(header.write.load(Ordering::Acquire), 0);
+        assert_eq!(header.watermark.load(Ordering::Acquire), 24);
+
+        // Consumer must only see the unread tail, then empty.
+        let remaining = raw.try_read().unwrap();
+        assert_eq!(remaining.len(), 4);
+        raw.release(4);
+        assert!(raw.try_read().is_none());
     }
 
     #[test]

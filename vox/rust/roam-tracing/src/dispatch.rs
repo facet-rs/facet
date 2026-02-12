@@ -81,7 +81,8 @@ struct CachedCallsite {
 type CallsiteKey = (Level, &'static str, Vec<&'static str>);
 
 /// Global cache of callsites, keyed by (level, target, field_names).
-static CALLSITE_CACHE: OnceLock<Mutex<HashMap<CallsiteKey, CachedCallsite>>> = OnceLock::new();
+static CALLSITE_CACHE: OnceLock<Mutex<HashMap<CallsiteKey, &'static CachedCallsite>>> =
+    OnceLock::new();
 
 /// Base field names that are always present in cell events.
 /// Note: "target" is part of event metadata, not a field.
@@ -112,11 +113,7 @@ fn get_or_create_callsite(
 
     // Check if we already have this callsite
     if let Some(cached) = cache_guard.get(&key) {
-        // SAFETY: We never remove entries from the cache, so this pointer
-        // remains valid for the lifetime of the program.
-        let ptr = cached as *const CachedCallsite;
-        drop(cache_guard);
-        return unsafe { &*ptr };
+        return cached;
     }
 
     // Create new callsite - this requires careful construction due to cyclic references
@@ -197,14 +194,9 @@ fn get_or_create_callsite(
         .collect();
 
     // 9. Store in cache (we don't need to keep the callsite pointer - it's registered globally)
-    let cached = CachedCallsite { metadata, fields };
-    cache_guard.insert(key.clone(), cached);
-
-    // Return reference to cached entry
-    // SAFETY: Entry was just inserted and will never be removed.
-    let ptr = cache_guard.get(&key).unwrap() as *const CachedCallsite;
-    drop(cache_guard);
-    unsafe { &*ptr }
+    let cached = Box::leak(Box::new(CachedCallsite { metadata, fields }));
+    cache_guard.insert(key, cached);
+    cached
 }
 
 // ============================================================================

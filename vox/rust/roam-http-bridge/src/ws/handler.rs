@@ -171,37 +171,33 @@ async fn handle_request(
     // Look up service and method
     let lookup_result = {
         let session_guard = session.lock().await;
-        let service = match session_guard.get_service(&service_name) {
-            Ok(s) => s,
-            Err(_) => {
-                // Unknown service - send error response, don't close connection
-                let _ = session_guard
-                    .send(ServerMessage::protocol_error(request_id, "unknown_service"))
-                    .await;
-                return Ok(());
+        let outgoing_tx = session_guard.outgoing_tx().clone();
+        match session_guard.get_service(&service_name) {
+            Ok(service) => {
+                let detail = service.service_detail();
+                match detail.methods.iter().find(|m| m.method_name == method_name) {
+                    Some(method) => {
+                        let method_id = roam_hash::method_id_from_detail(method);
+                        let has_channels = method.args.iter().any(|a| contains_stream(a.ty))
+                            || contains_stream(method.return_type);
+                        Ok((service, method.clone(), method_id, has_channels))
+                    }
+                    None => Err((outgoing_tx, "unknown_method")),
+                }
             }
-        };
-        let detail = service.service_detail();
-
-        let method = match detail.methods.iter().find(|m| m.method_name == method_name) {
-            Some(m) => m,
-            None => {
-                // Unknown method - send error response, don't close connection
-                let _ = session_guard
-                    .send(ServerMessage::protocol_error(request_id, "unknown_method"))
-                    .await;
-                return Ok(());
-            }
-        };
-
-        let method_id = roam_hash::method_id_from_detail(method);
-        let has_channels = method.args.iter().any(|a| contains_stream(a.ty))
-            || contains_stream(method.return_type);
-
-        (service, method.clone(), method_id, has_channels)
+            Err(_) => Err((outgoing_tx, "unknown_service")),
+        }
     };
 
-    let (service, method_detail, method_id, has_channels) = lookup_result;
+    let (service, method_detail, method_id, has_channels) = match lookup_result {
+        Ok(lookup) => lookup,
+        Err((outgoing_tx, error_kind)) => {
+            let _ = outgoing_tx
+                .send(ServerMessage::protocol_error(request_id, error_kind))
+                .await;
+            return Ok(());
+        }
+    };
 
     // Register the call
     {
@@ -286,19 +282,20 @@ async fn handle_simple_call(
         .call_json(&method.method_name, &args_json, metadata)
         .await;
 
-    // Send the response
-    let session_guard = session.lock().await;
-    match response {
-        Ok(bridge_response) => {
-            let msg = bridge_response_to_ws(request_id, bridge_response)?;
-            session_guard.send(msg).await
-        }
-        Err(_e) => {
-            session_guard
-                .send(ServerMessage::protocol_error(request_id, "bridge_error"))
-                .await
-        }
-    }
+    let outgoing_tx = {
+        let session_guard = session.lock().await;
+        session_guard.outgoing_tx().clone()
+    };
+
+    let msg = match response {
+        Ok(bridge_response) => bridge_response_to_ws(request_id, bridge_response)?,
+        Err(_e) => ServerMessage::protocol_error(request_id, "bridge_error"),
+    };
+
+    outgoing_tx
+        .send(msg)
+        .await
+        .map_err(|_| BridgeError::internal("WebSocket send channel closed"))
 }
 
 /// State needed to run a streaming call after setup.
@@ -540,115 +537,84 @@ async fn run_streaming_call(
         }
     }
 
-    // Send the response
-    let session_guard = session.lock().await;
-    match response {
+    // Send the response without holding the session mutex across await.
+    let msg = match response {
         Ok(response_data) => {
             let response_bytes = &response_data.payload;
             if response_bytes.is_empty() {
-                return session_guard
-                    .send(ServerMessage::protocol_error(request_id, "empty_response"))
-                    .await;
-            }
-
-            match response_bytes[0] {
-                0x00 => {
-                    let value_bytes = &response_bytes[1..];
-                    match crate::transcode::postcard_to_json_with_shape(value_bytes, return_shape) {
-                        Ok(json_bytes) => {
-                            let value: serde_json::Value = serde_json::from_slice(&json_bytes)
-                                .unwrap_or(serde_json::Value::Null);
-                            session_guard
-                                .send(ServerMessage::success(request_id, value))
-                                .await
-                        }
-                        Err(e) => {
-                            warn!("Failed to transcode response: {}", e);
-                            session_guard
-                                .send(ServerMessage::protocol_error(request_id, "transcode_error"))
-                                .await
-                        }
-                    }
-                }
-                0x01 => {
-                    if response_bytes.len() < 2 {
-                        return session_guard
-                            .send(ServerMessage::protocol_error(request_id, "truncated_error"))
-                            .await;
-                    }
-                    match response_bytes[1] {
-                        0x00 => {
-                            if let Some(err_shape) = error_shape {
-                                let error_bytes = &response_bytes[2..];
-                                match crate::transcode::postcard_to_json_with_shape(
-                                    error_bytes,
-                                    err_shape,
-                                ) {
-                                    Ok(json_bytes) => {
-                                        let value: serde_json::Value =
-                                            serde_json::from_slice(&json_bytes)
-                                                .unwrap_or(serde_json::Value::Null);
-                                        session_guard
-                                            .send(ServerMessage::user_error(request_id, value))
-                                            .await
-                                    }
-                                    Err(_) => {
-                                        session_guard
-                                            .send(ServerMessage::protocol_error(
-                                                request_id,
-                                                "transcode_error",
-                                            ))
-                                            .await
-                                    }
-                                }
-                            } else {
-                                session_guard
-                                    .send(ServerMessage::user_error(
-                                        request_id,
-                                        serde_json::Value::Null,
-                                    ))
-                                    .await
+                ServerMessage::protocol_error(request_id, "empty_response")
+            } else {
+                match response_bytes[0] {
+                    0x00 => {
+                        let value_bytes = &response_bytes[1..];
+                        match crate::transcode::postcard_to_json_with_shape(
+                            value_bytes,
+                            return_shape,
+                        ) {
+                            Ok(json_bytes) => {
+                                let value: serde_json::Value = serde_json::from_slice(&json_bytes)
+                                    .unwrap_or(serde_json::Value::Null);
+                                ServerMessage::success(request_id, value)
+                            }
+                            Err(e) => {
+                                warn!("Failed to transcode response: {}", e);
+                                ServerMessage::protocol_error(request_id, "transcode_error")
                             }
                         }
-                        0x01 => {
-                            session_guard
-                                .send(ServerMessage::protocol_error(request_id, "unknown_method"))
-                                .await
-                        }
-                        0x02 => {
-                            session_guard
-                                .send(ServerMessage::protocol_error(request_id, "invalid_payload"))
-                                .await
-                        }
-                        0x03 => {
-                            session_guard
-                                .send(ServerMessage::protocol_error(request_id, "cancelled"))
-                                .await
-                        }
-                        _ => {
-                            session_guard
-                                .send(ServerMessage::protocol_error(request_id, "unknown_error"))
-                                .await
+                    }
+                    0x01 => {
+                        if response_bytes.len() < 2 {
+                            ServerMessage::protocol_error(request_id, "truncated_error")
+                        } else {
+                            match response_bytes[1] {
+                                0x00 => {
+                                    if let Some(err_shape) = error_shape {
+                                        let error_bytes = &response_bytes[2..];
+                                        match crate::transcode::postcard_to_json_with_shape(
+                                            error_bytes,
+                                            err_shape,
+                                        ) {
+                                            Ok(json_bytes) => {
+                                                let value: serde_json::Value =
+                                                    serde_json::from_slice(&json_bytes)
+                                                        .unwrap_or(serde_json::Value::Null);
+                                                ServerMessage::user_error(request_id, value)
+                                            }
+                                            Err(_) => ServerMessage::protocol_error(
+                                                request_id,
+                                                "transcode_error",
+                                            ),
+                                        }
+                                    } else {
+                                        ServerMessage::user_error(
+                                            request_id,
+                                            serde_json::Value::Null,
+                                        )
+                                    }
+                                }
+                                0x01 => ServerMessage::protocol_error(request_id, "unknown_method"),
+                                0x02 => {
+                                    ServerMessage::protocol_error(request_id, "invalid_payload")
+                                }
+                                0x03 => ServerMessage::protocol_error(request_id, "cancelled"),
+                                _ => ServerMessage::protocol_error(request_id, "unknown_error"),
+                            }
                         }
                     }
-                }
-                _ => {
-                    session_guard
-                        .send(ServerMessage::protocol_error(
-                            request_id,
-                            "invalid_response",
-                        ))
-                        .await
+                    _ => ServerMessage::protocol_error(request_id, "invalid_response"),
                 }
             }
         }
         Err(e) => {
             error!("Streaming call {} failed: {:?}", request_id, e);
-            session_guard
-                .send(ServerMessage::protocol_error(request_id, "call_failed"))
-                .await
+            ServerMessage::protocol_error(request_id, "call_failed")
         }
-    }
+    };
+
+    outgoing_tx
+        .send(msg)
+        .await
+        .map_err(|_| BridgeError::internal("WebSocket send channel closed"))
 }
 
 /// Handle incoming data on a channel.

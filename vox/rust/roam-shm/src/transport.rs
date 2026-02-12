@@ -17,6 +17,30 @@ use roam_wire::Message;
 use crate::guest::{SendError, ShmGuest};
 use crate::msg::{ShmMsg, msg_type};
 
+const SYNC_RECV_YIELD_ITERS: u32 = 32;
+const SYNC_RECV_MAX_SLEEP: Duration = Duration::from_millis(2);
+const SYNC_RECV_BASE_SLEEP_US: u64 = 50;
+
+fn sync_recv_backoff(iteration: u32, remaining: Option<Duration>) {
+    if iteration < SYNC_RECV_YIELD_ITERS {
+        std::thread::yield_now();
+        return;
+    }
+
+    let shift = (iteration - SYNC_RECV_YIELD_ITERS).min(6);
+    let sleep_us = SYNC_RECV_BASE_SLEEP_US << shift;
+    let mut sleep_for = Duration::from_micros(sleep_us).min(SYNC_RECV_MAX_SLEEP);
+
+    if let Some(remaining) = remaining {
+        if remaining.is_zero() {
+            return;
+        }
+        sleep_for = sleep_for.min(remaining);
+    }
+
+    std::thread::sleep(sleep_for);
+}
+
 /// Conversion error when mapping between Message and ShmMsg.
 #[derive(Debug)]
 pub enum ConvertError {
@@ -578,15 +602,17 @@ impl ShmGuestTransport {
     /// Receive with timeout (blocking with spin/yield).
     pub fn recv_timeout(&mut self, timeout: Duration) -> io::Result<Option<Message>> {
         let start = std::time::Instant::now();
+        let mut backoff_iteration = 0u32;
 
         loop {
             match self.try_recv() {
                 Ok(msg) => return Ok(msg),
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                    if start.elapsed() >= timeout {
+                    let Some(remaining) = timeout.checked_sub(start.elapsed()) else {
                         return Ok(None);
-                    }
-                    std::thread::yield_now();
+                    };
+                    sync_recv_backoff(backoff_iteration, Some(remaining));
+                    backoff_iteration = backoff_iteration.saturating_add(1);
                 }
                 Err(e) => return Err(e),
             }
@@ -595,11 +621,14 @@ impl ShmGuestTransport {
 
     /// Receive (blocking until message arrives or connection closes).
     pub fn recv(&mut self) -> io::Result<Option<Message>> {
+        let mut backoff_iteration = 0u32;
+
         loop {
             match self.try_recv() {
                 Ok(msg) => return Ok(msg),
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                    std::thread::yield_now();
+                    sync_recv_backoff(backoff_iteration, None);
+                    backoff_iteration = backoff_iteration.saturating_add(1);
                 }
                 Err(e) => return Err(e),
             }
