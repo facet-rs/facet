@@ -90,6 +90,7 @@ impl<C: Caller> Caller for TracingCaller<C> {
         &self,
         method_id: u64,
         args: &mut T,
+        args_plan: &roam_session::RpcPlan,
         mut metadata: roam_wire::Metadata,
     ) -> Result<ResponseData, TransportError> {
         // Get trace context from CURRENT_EXTENSIONS (set by generated dispatch code)
@@ -127,7 +128,7 @@ impl<C: Caller> Caller for TracingCaller<C> {
         // Make the actual call
         let result = self
             .inner
-            .call_with_metadata(method_id, args, metadata)
+            .call_with_metadata(method_id, args, args_plan, metadata)
             .await;
 
         let end_time_ns = SystemTime::now()
@@ -176,6 +177,7 @@ impl<C: Caller> Caller for TracingCaller<C> {
         &self,
         method_id: u64,
         args: &mut T,
+        args_plan: &roam_session::RpcPlan,
         mut metadata: roam_wire::Metadata,
     ) -> Result<ResponseData, TransportError> {
         // WASM version - uses same CURRENT_EXTENSIONS task-local
@@ -209,7 +211,7 @@ impl<C: Caller> Caller for TracingCaller<C> {
 
         let result = self
             .inner
-            .call_with_metadata(method_id, args, metadata)
+            .call_with_metadata(method_id, args, args_plan, metadata)
             .await;
 
         let end_time_ns = SystemTime::now()
@@ -251,8 +253,13 @@ impl<C: Caller> Caller for TracingCaller<C> {
         result
     }
 
-    fn bind_response_channels<T: Facet<'static>>(&self, response: &mut T, channels: &[u64]) {
-        self.inner.bind_response_channels(response, channels)
+    fn bind_response_channels<T: Facet<'static>>(
+        &self,
+        response: &mut T,
+        plan: &roam_session::RpcPlan,
+        channels: &[u64],
+    ) {
+        self.inner.bind_response_channels(response, plan, channels)
     }
 
     #[allow(unsafe_code)]

@@ -299,6 +299,7 @@ where
         &self,
         method_id: u64,
         args: &mut T,
+        args_plan: &roam_session::RpcPlan,
         metadata: roam_wire::Metadata,
     ) -> Result<ResponseData, TransportError> {
         let mut attempt = 0u32;
@@ -326,7 +327,7 @@ where
             };
 
             match handle
-                .call_with_metadata(method_id, args, metadata.clone())
+                .call_with_metadata(method_id, args, args_plan, metadata.clone())
                 .await
             {
                 Ok(response) => return Ok(response),
@@ -355,7 +356,12 @@ where
         }
     }
 
-    fn bind_response_channels<R: Facet<'static>>(&self, response: &mut R, channels: &[u64]) {
+    fn bind_response_channels<R: Facet<'static>>(
+        &self,
+        response: &mut R,
+        plan: &roam_session::RpcPlan,
+        channels: &[u64],
+    ) {
         let handle = self
             .current_handle
             .read()
@@ -363,7 +369,7 @@ where
             .as_ref()
             .cloned();
         if let Some(handle) = handle {
-            handle.bind_response_channels(response, channels);
+            handle.bind_response_channels(response, plan, channels);
         } else {
             debug_assert!(
                 false,

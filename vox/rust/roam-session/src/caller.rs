@@ -63,13 +63,16 @@ pub trait Caller: Clone + Send + Sync + 'static {
     /// assigned channel IDs before serialization.
     ///
     /// Returns ResponseData containing the payload and any response channel IDs.
+    ///
+    /// The `args_plan` should be created once per type as a static in non-generic code.
     #[cfg(not(target_arch = "wasm32"))]
     fn call<T: Facet<'static> + Send>(
         &self,
         method_id: u64,
         args: &mut T,
+        args_plan: &RpcPlan,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send {
-        self.call_with_metadata(method_id, args, roam_wire::Metadata::default())
+        self.call_with_metadata(method_id, args, args_plan, roam_wire::Metadata::default())
     }
 
     /// Make an RPC call with the given method ID and arguments.
@@ -78,13 +81,16 @@ pub trait Caller: Clone + Send + Sync + 'static {
     /// assigned channel IDs before serialization.
     ///
     /// Returns ResponseData containing the payload and any response channel IDs.
+    ///
+    /// The `args_plan` should be created once per type as a static in non-generic code.
     #[cfg(target_arch = "wasm32")]
     fn call<T: Facet<'static> + Send>(
         &self,
         method_id: u64,
         args: &mut T,
+        args_plan: &RpcPlan,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> {
-        self.call_with_metadata(method_id, args, roam_wire::Metadata::default())
+        self.call_with_metadata(method_id, args, args_plan, roam_wire::Metadata::default())
     }
 
     /// Make an RPC call with the given method ID, arguments, and metadata.
@@ -93,11 +99,14 @@ pub trait Caller: Clone + Send + Sync + 'static {
     /// assigned channel IDs before serialization.
     ///
     /// Returns ResponseData containing the payload and any response channel IDs.
+    ///
+    /// The `args_plan` should be created once per type as a static in non-generic code.
     #[cfg(not(target_arch = "wasm32"))]
     fn call_with_metadata<T: Facet<'static> + Send>(
         &self,
         method_id: u64,
         args: &mut T,
+        args_plan: &RpcPlan,
         metadata: roam_wire::Metadata,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send;
 
@@ -107,11 +116,14 @@ pub trait Caller: Clone + Send + Sync + 'static {
     /// assigned channel IDs before serialization.
     ///
     /// Returns ResponseData containing the payload and any response channel IDs.
+    ///
+    /// The `args_plan` should be created once per type as a static in non-generic code.
     #[cfg(target_arch = "wasm32")]
     fn call_with_metadata<T: Facet<'static> + Send>(
         &self,
         method_id: u64,
         args: &mut T,
+        args_plan: &RpcPlan,
         metadata: roam_wire::Metadata,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>>;
 
@@ -121,7 +133,14 @@ pub trait Caller: Clone + Send + Sync + 'static {
     /// they have channel IDs but no actual receiver. This method walks the
     /// response and binds receivers for each Rx using the channel IDs from
     /// the Response message.
-    fn bind_response_channels<T: Facet<'static>>(&self, response: &mut T, channels: &[u64]);
+    ///
+    /// The `plan` should be created once per type as a static in non-generic code.
+    fn bind_response_channels<T: Facet<'static>>(
+        &self,
+        response: &mut T,
+        plan: &RpcPlan,
+        channels: &[u64],
+    );
 
     // ========================================================================
     // Non-generic methods (reduce monomorphization)
@@ -184,13 +203,19 @@ impl Caller for ConnectionHandle {
         &self,
         method_id: u64,
         args: &mut T,
+        args_plan: &RpcPlan,
         metadata: roam_wire::Metadata,
     ) -> Result<ResponseData, TransportError> {
-        ConnectionHandle::call_with_metadata(self, method_id, args, metadata).await
+        ConnectionHandle::call_with_metadata(self, method_id, args, args_plan, metadata).await
     }
 
-    fn bind_response_channels<T: Facet<'static>>(&self, response: &mut T, channels: &[u64]) {
-        ConnectionHandle::bind_response_channels(self, response, channels)
+    fn bind_response_channels<T: Facet<'static>>(
+        &self,
+        response: &mut T,
+        plan: &RpcPlan,
+        channels: &[u64],
+    ) {
+        ConnectionHandle::bind_response_channels(self, response, plan, channels)
     }
 
     #[allow(unsafe_code)]

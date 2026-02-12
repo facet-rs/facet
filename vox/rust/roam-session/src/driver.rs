@@ -39,7 +39,7 @@ use facet::Facet;
 use crate::runtime::{Mutex, Receiver, channel, sleep, spawn, spawn_with_abort};
 use crate::{
     ChannelError, ChannelRegistry, ConnectionHandle, Context, DiagnosticTransport, DriverMessage,
-    MessageTransport, ResponseData, RoamError, Role, ServiceDispatcher, TransportError,
+    MessageTransport, ResponseData, RoamError, Role, RpcPlan, ServiceDispatcher, TransportError,
 };
 use roam_wire::{ConnectionId, Hello, Message};
 
@@ -518,6 +518,7 @@ where
         &self,
         method_id: u64,
         args: &mut T,
+        args_plan: &RpcPlan,
         metadata: roam_wire::Metadata,
     ) -> Result<ResponseData, TransportError> {
         let mut attempt = 0u32;
@@ -545,7 +546,7 @@ where
             };
 
             match handle
-                .call_with_metadata(method_id, args, metadata.clone())
+                .call_with_metadata(method_id, args, args_plan, metadata.clone())
                 .await
             {
                 Ok(response) => return Ok(response),
@@ -570,14 +571,19 @@ where
         }
     }
 
-    fn bind_response_channels<R: Facet<'static>>(&self, response: &mut R, channels: &[u64]) {
+    fn bind_response_channels<R: Facet<'static>>(
+        &self,
+        response: &mut R,
+        plan: &RpcPlan,
+        channels: &[u64],
+    ) {
         // FramedClient wraps a ConnectionHandle, but we don't have direct access to it
         // during bind_response_channels. For reconnecting clients, response channel binding
         // would need to be handled at a higher level or the client would need to store
         // the current handle.
         // For now, this is a no-op - FramedClient users should use ConnectionHandle
         // directly if they need response channel binding.
-        let _ = (response, channels);
+        let _ = (response, plan, channels);
     }
 
     #[allow(unsafe_code)]

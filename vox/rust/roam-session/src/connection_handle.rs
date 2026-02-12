@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use facet::Facet;
@@ -221,26 +220,28 @@ impl ConnectionHandle {
     /// // tx.send(&42).await to push values
     /// ```
     /// Make an RPC call with default (empty) metadata.
+    ///
+    /// The `args_plan` should be created once per type as a static in non-generic code.
     pub async fn call<T: Facet<'static>>(
         &self,
         method_id: u64,
         args: &mut T,
+        args_plan: &crate::RpcPlan,
     ) -> Result<ResponseData, TransportError> {
-        self.call_with_metadata(method_id, args, roam_wire::Metadata::default())
+        self.call_with_metadata(method_id, args, args_plan, roam_wire::Metadata::default())
             .await
     }
 
     /// Make an RPC call with custom metadata.
+    ///
+    /// The `args_plan` should be created once per type as a static in non-generic code.
     pub async fn call_with_metadata<T: Facet<'static>>(
         &self,
         method_id: u64,
         args: &mut T,
+        args_plan: &crate::RpcPlan,
         metadata: roam_wire::Metadata,
     ) -> Result<ResponseData, TransportError> {
-        // Precompute plan via OnceLock (one per monomorphized type, program lifetime).
-        static ARGS_PLAN: OnceLock<Arc<crate::RpcPlan>> = OnceLock::new();
-        let args_plan = ARGS_PLAN.get_or_init(|| Arc::new(crate::RpcPlan::for_type::<T>()));
-
         // Walk args and bind any channels (allocates channel IDs)
         // This collects receivers that need to be drained but does NOT spawn
         let mut drains = Vec::new();
@@ -273,7 +274,7 @@ impl ConnectionHandle {
         }
 
         // Collect channel IDs for the Request message
-        let channels = collect_channel_ids(args);
+        let channels = collect_channel_ids(args, args_plan);
         trace!(
             channels = ?channels,
             drain_count = drains.len(),
@@ -1004,15 +1005,19 @@ impl ConnectionHandle {
     /// IMPORTANT: The `channels` parameter contains the authoritative channel IDs
     /// from the Response framing. For forwarded connections (via ForwardingDispatcher),
     /// these IDs may differ from the IDs serialized in the payload. We patch them first.
+    ///
+    /// The `plan` should be created once per type as a static in non-generic code.
     #[allow(unsafe_code)]
-    pub fn bind_response_channels<T: Facet<'static>>(&self, response: &mut T, channels: &[u64]) {
-        static PLAN: OnceLock<Arc<crate::RpcPlan>> = OnceLock::new();
-        let plan = PLAN.get_or_init(|| Arc::new(crate::RpcPlan::for_type::<T>()));
-
+    pub fn bind_response_channels<T: Facet<'static>>(
+        &self,
+        response: &mut T,
+        plan: &crate::RpcPlan,
+        channels: &[u64],
+    ) {
         // Patch channel IDs from Response.channels into the deserialized response.
         // This is critical for ForwardingDispatcher where the payload contains upstream
         // channel IDs but channels[] contains the remapped downstream IDs.
-        patch_channel_ids(response, channels);
+        patch_channel_ids(response, plan, channels);
 
         let response_ptr = response as *mut T as *mut ();
         unsafe { self.bind_response_channels_with_plan(response_ptr, plan) };
@@ -1107,6 +1112,7 @@ impl ConnectionHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::RpcPlan;
     use std::time::Duration;
 
     #[tokio::test]
@@ -1116,7 +1122,8 @@ mod tests {
 
         let (stream_tx, stream_rx) = crate::channel::<Vec<u8>>();
         let mut args = (stream_rx,);
-        let call_task = tokio::spawn(async move { handle.call(42, &mut args).await });
+        let args_plan = RpcPlan::for_type::<(crate::Rx<Vec<u8>>,)>();
+        let call_task = tokio::spawn(async move { handle.call(42, &mut args, &args_plan).await });
 
         let call_msg = driver_rx
             .recv()

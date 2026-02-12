@@ -449,10 +449,9 @@ impl ChannelRegistry {
     /// // ... call handler with input, output ...
     /// // When handler returns and Tx is dropped, Close is sent automatically
     /// ```
-    pub fn bind_channels<T: Facet<'static>>(&mut self, args: &mut T) {
-        static PLAN: std::sync::OnceLock<std::sync::Arc<crate::RpcPlan>> =
-            std::sync::OnceLock::new();
-        let plan = PLAN.get_or_init(|| std::sync::Arc::new(crate::RpcPlan::for_type::<T>()));
+    ///
+    /// The `plan` should be created once per type as a static in non-generic code.
+    pub fn bind_channels<T: Facet<'static>>(&mut self, args: &mut T, plan: &crate::RpcPlan) {
         let args_ptr = args as *mut T as *mut ();
         // SAFETY: args is valid and initialized
         #[allow(unsafe_code)]

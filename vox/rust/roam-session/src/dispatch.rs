@@ -6,7 +6,7 @@
 //! - [`ServiceDispatcher`] trait - implemented by generated service dispatchers
 //! - [`RoutedDispatcher`] - routes to different dispatchers by method ID
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use facet::Facet;
 use facet_core::{PtrConst, PtrMut, PtrUninit};
@@ -238,11 +238,16 @@ impl Clone for Context {
 ///
 /// The `channels` parameter contains channel IDs from the Request message framing.
 /// These are patched into the deserialized args before binding channels.
+///
+/// **IMPORTANT**: Create `ARGS_PLAN` and `RESPONSE_PLAN` statics in your generated
+/// dispatch code (one per endpoint), NOT inside a generic function, then pass them here.
 #[allow(unsafe_code)]
 pub fn dispatch_call<A, R, E, F, Fut>(
     cx: &Context,
     payload: Vec<u8>,
     registry: &mut ChannelRegistry,
+    args_plan: &RpcPlan,
+    response_plan: Arc<RpcPlan>,
     handler: F,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>>
 where
@@ -252,14 +257,6 @@ where
     F: FnOnce(A) -> Fut + Send + 'static,
     Fut: std::future::Future<Output = Result<R, E>> + Send + 'static,
 {
-    // OnceLock is monomorphized per type — one per arg/response type for the program lifetime.
-    static ARGS_PLAN: OnceLock<Arc<RpcPlan>> = OnceLock::new();
-    let args_plan = ARGS_PLAN.get_or_init(|| Arc::new(RpcPlan::for_type::<A>()));
-
-    static RESPONSE_PLAN: OnceLock<Arc<RpcPlan>> = OnceLock::new();
-    let response_plan = RESPONSE_PLAN.get_or_init(|| Arc::new(RpcPlan::for_type::<R>()));
-    let response_plan = Arc::clone(response_plan);
-
     let conn_id = cx.conn_id;
     let request_id = cx.request_id.raw();
 
@@ -269,14 +266,21 @@ where
 
     // SAFETY: args_slot is properly aligned and sized for A.
     // prepare_sync will initialize it on success.
-    let prepare_result = unsafe {
-        prepare_sync(
-            args_slot.as_mut_ptr().cast(),
-            args_plan,
-            &payload,
-            &cx.channels,
-            registry,
-        )
+    //
+    // TEMPORARY: mutex to test if facet has concurrency bug
+    use std::sync::Mutex;
+    static FACET_BUG_LOCK: Mutex<()> = Mutex::new(());
+    let prepare_result = {
+        let _guard = FACET_BUG_LOCK.lock().unwrap();
+        unsafe {
+            prepare_sync(
+                args_slot.as_mut_ptr().cast(),
+                args_plan,
+                &payload,
+                &cx.channels,
+                registry,
+            )
+        }
     };
 
     let task_tx = registry.driver_tx();
@@ -325,11 +329,14 @@ where
 /// Dispatch helper for infallible methods (those that return `T` instead of `Result<T, E>`).
 ///
 /// Same as `dispatch_call` but for handlers that cannot fail at the application level.
+/// Requires `args_plan` and `response_plan` - create these as statics in non-generic code.
 #[allow(unsafe_code)]
 pub fn dispatch_call_infallible<A, R, F, Fut>(
     cx: &Context,
     payload: Vec<u8>,
     registry: &mut ChannelRegistry,
+    args_plan: &RpcPlan,
+    response_plan: Arc<RpcPlan>,
     handler: F,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>>
 where
@@ -338,14 +345,6 @@ where
     F: FnOnce(A) -> Fut + Send + 'static,
     Fut: std::future::Future<Output = R> + Send + 'static,
 {
-    // OnceLock is monomorphized per type — one per arg/response type for the program lifetime.
-    static ARGS_PLAN: OnceLock<Arc<RpcPlan>> = OnceLock::new();
-    let args_plan = ARGS_PLAN.get_or_init(|| Arc::new(RpcPlan::for_type::<A>()));
-
-    static RESPONSE_PLAN: OnceLock<Arc<RpcPlan>> = OnceLock::new();
-    let response_plan = RESPONSE_PLAN.get_or_init(|| Arc::new(RpcPlan::for_type::<R>()));
-    let response_plan = Arc::clone(response_plan);
-
     let conn_id = cx.conn_id;
     let request_id = cx.request_id.raw();
 
@@ -355,14 +354,21 @@ where
 
     // SAFETY: args_slot is properly aligned and sized for A.
     // prepare_sync will initialize it on success.
-    let prepare_result = unsafe {
-        prepare_sync(
-            args_slot.as_mut_ptr().cast(),
-            args_plan,
-            &payload,
-            &cx.channels,
-            registry,
-        )
+    //
+    // TEMPORARY: mutex to test if facet has concurrency bug
+    use std::sync::Mutex;
+    static FACET_BUG_LOCK: Mutex<()> = Mutex::new(());
+    let prepare_result = {
+        let _guard = FACET_BUG_LOCK.lock().unwrap();
+        unsafe {
+            prepare_sync(
+                args_slot.as_mut_ptr().cast(),
+                args_plan,
+                &payload,
+                &cx.channels,
+                registry,
+            )
+        }
     };
 
     let task_tx = registry.driver_tx();
@@ -507,14 +513,13 @@ pub unsafe fn prepare_sync(
     channels: &[u64],
     registry: &mut ChannelRegistry,
 ) -> Result<(), PrepareError> {
-    let shape = plan.type_plan.root().shape;
-
     // 1. Deserialize into args_ptr using the precomputed type plan
     // SAFETY: caller guarantees args_ptr is valid and properly sized
     unsafe { deserialize_into(args_ptr, &plan.type_plan, payload) }?;
 
     // 2. Validate channel count against precomputed plan.
     // The number of channel locations that are reachable (not behind None) must match.
+    let shape = plan.type_plan.root().shape;
     let expected_channels = {
         let peek =
             unsafe { facet::Peek::unchecked_new(PtrConst::new(args_ptr.cast::<u8>()), shape) };
@@ -848,10 +853,10 @@ pub fn collect_channel_ids_with_plan(peek: facet::Peek<'_, '_>, plan: &RpcPlan) 
 /// Returns channel IDs in declaration order (depth-first traversal).
 /// Used by the client to populate the `channels` vec in Request messages.
 ///
+/// The `plan` should be created once per type as a static in non-generic code.
+///
 /// r[impl call.request.channels] - Collects channel IDs in declaration order for the Request.
-pub fn collect_channel_ids<T: Facet<'static>>(args: &T) -> Vec<u64> {
-    static PLAN: OnceLock<Arc<RpcPlan>> = OnceLock::new();
-    let plan = PLAN.get_or_init(|| Arc::new(RpcPlan::for_type::<T>()));
+pub fn collect_channel_ids<T: Facet<'static>>(args: &T, plan: &RpcPlan) -> Vec<u64> {
     let peek = facet::Peek::new(args);
     collect_channel_ids_with_plan(peek, plan)
 }
@@ -860,10 +865,10 @@ pub fn collect_channel_ids<T: Facet<'static>>(args: &T) -> Vec<u64> {
 ///
 /// Overwrites channel_id fields in Rx/Tx in declaration order.
 /// Used by the server to apply the authoritative `channels` vec from Request.
+///
+/// The `plan` should be created once per type as a static in non-generic code.
 #[allow(unsafe_code)]
-pub fn patch_channel_ids<T: Facet<'static>>(args: &mut T, channels: &[u64]) {
-    static PLAN: OnceLock<Arc<RpcPlan>> = OnceLock::new();
-    let plan = PLAN.get_or_init(|| Arc::new(RpcPlan::for_type::<T>()));
+pub fn patch_channel_ids<T: Facet<'static>>(args: &mut T, plan: &RpcPlan, channels: &[u64]) {
     trace!(channels = ?channels, "patch_channel_ids: patching channels");
     let args_ptr = args as *mut T as *mut ();
     unsafe { patch_channel_ids_with_plan(args_ptr, plan, channels) };

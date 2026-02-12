@@ -14,6 +14,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
+use facet::Facet;
+use once_cell::sync::Lazy;
 use roam_session::{
     Caller, ChannelRegistry, Context, RpcPlan, Rx, ServiceDispatcher, dispatch_call,
     dispatch_unknown_method,
@@ -23,6 +25,14 @@ use roam_stream::{
 };
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
+
+// ============================================================================
+// RPC Plans
+// ============================================================================
+
+static STRING_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(|| RpcPlan::for_type::<String>());
+static STRING_RESPONSE_PLAN: Lazy<Arc<RpcPlan>> =
+    Lazy::new(|| Arc::new(RpcPlan::for_type::<String>()));
 
 /// Test service that echoes strings and tracks call count.
 #[derive(Clone)]
@@ -57,6 +67,8 @@ impl ServiceDispatcher for TestService {
                 &cx,
                 payload,
                 registry,
+                &STRING_ARGS_PLAN,
+                STRING_RESPONSE_PLAN.clone(),
                 |input: String| async move { Ok(input) },
             ),
             _ => dispatch_unknown_method(&cx, registry),
@@ -365,7 +377,8 @@ async fn test_generated_client_binds_response_channels() {
 
     let mut response = Rx::<u32>::try_from(700u64).unwrap();
     assert!(response.receiver.is_none());
-    Caller::bind_response_channels(&client, &mut response, &[700u64]);
+    let rx_u32_plan = RpcPlan::for_type::<Rx<u32>>();
+    Caller::bind_response_channels(&client, &mut response, &rx_u32_plan, &[700u64]);
     assert!(response.receiver.is_some());
 
     let mut response_by_plan = Rx::<u32>::try_from(701u64).unwrap();

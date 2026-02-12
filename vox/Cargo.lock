@@ -791,7 +791,7 @@ dependencies = [
 [[package]]
 name = "facet-dessert"
 version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#e38260e30e02ffd3d5e67821bedfcd0750b06788"
+source = "git+https://github.com/facet-rs/facet?branch=main#910995c970b160809f678f87c5608082ec61a84d"
 dependencies = [
  "facet-core",
  "facet-reflect",
@@ -800,7 +800,7 @@ dependencies = [
 [[package]]
 name = "facet-error"
 version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#e38260e30e02ffd3d5e67821bedfcd0750b06788"
+source = "git+https://github.com/facet-rs/facet?branch=main#910995c970b160809f678f87c5608082ec61a84d"
 dependencies = [
  "facet",
 ]
@@ -808,7 +808,7 @@ dependencies = [
 [[package]]
 name = "facet-format"
 version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#e38260e30e02ffd3d5e67821bedfcd0750b06788"
+source = "git+https://github.com/facet-rs/facet?branch=main#910995c970b160809f678f87c5608082ec61a84d"
 dependencies = [
  "cranelift",
  "cranelift-jit",
@@ -827,7 +827,7 @@ dependencies = [
 [[package]]
 name = "facet-json"
 version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#e38260e30e02ffd3d5e67821bedfcd0750b06788"
+source = "git+https://github.com/facet-rs/facet?branch=main#910995c970b160809f678f87c5608082ec61a84d"
 dependencies = [
  "facet",
  "facet-core",
@@ -888,7 +888,7 @@ dependencies = [
 [[package]]
 name = "facet-postcard"
 version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#e38260e30e02ffd3d5e67821bedfcd0750b06788"
+source = "git+https://github.com/facet-rs/facet?branch=main#910995c970b160809f678f87c5608082ec61a84d"
 dependencies = [
  "camino",
  "facet-core",
@@ -902,7 +902,7 @@ dependencies = [
 [[package]]
 name = "facet-pretty"
 version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#e38260e30e02ffd3d5e67821bedfcd0750b06788"
+source = "git+https://github.com/facet-rs/facet?branch=main#910995c970b160809f678f87c5608082ec61a84d"
 dependencies = [
  "facet-core",
  "facet-reflect",
@@ -924,7 +924,7 @@ dependencies = [
 [[package]]
 name = "facet-solver"
 version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#e38260e30e02ffd3d5e67821bedfcd0750b06788"
+source = "git+https://github.com/facet-rs/facet?branch=main#910995c970b160809f678f87c5608082ec61a84d"
 dependencies = [
  "facet-core",
  "facet-reflect",
@@ -933,7 +933,7 @@ dependencies = [
 [[package]]
 name = "facet-testhelpers"
 version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#e38260e30e02ffd3d5e67821bedfcd0750b06788"
+source = "git+https://github.com/facet-rs/facet?branch=main#910995c970b160809f678f87c5608082ec61a84d"
 dependencies = [
  "color-backtrace",
  "facet-testhelpers-macros",
@@ -945,7 +945,7 @@ dependencies = [
 [[package]]
 name = "facet-testhelpers-macros"
 version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#e38260e30e02ffd3d5e67821bedfcd0750b06788"
+source = "git+https://github.com/facet-rs/facet?branch=main#910995c970b160809f678f87c5608082ec61a84d"
 dependencies = [
  "quote",
  "unsynn",
@@ -954,7 +954,7 @@ dependencies = [
 [[package]]
 name = "facet-toml"
 version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#e38260e30e02ffd3d5e67821bedfcd0750b06788"
+source = "git+https://github.com/facet-rs/facet?branch=main#910995c970b160809f678f87c5608082ec61a84d"
 dependencies = [
  "facet-core",
  "facet-format",
@@ -965,7 +965,7 @@ dependencies = [
 [[package]]
 name = "facet-value"
 version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#e38260e30e02ffd3d5e67821bedfcd0750b06788"
+source = "git+https://github.com/facet-rs/facet?branch=main#910995c970b160809f678f87c5608082ec61a84d"
 dependencies = [
  "facet-core",
  "facet-format",
@@ -2338,6 +2338,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "roam-miri-test"
+version = "3.0.0"
+dependencies = [
+ "facet",
+ "facet-postcard",
+ "facet-testhelpers",
+ "once_cell",
+ "roam",
+ "roam-session",
+ "roam-stream",
+ "roam-wire",
+ "tokio",
+]
+
+[[package]]
 name = "roam-schema"
 version = "3.0.0"
 dependencies = [
@@ -2398,6 +2413,7 @@ dependencies = [
  "inventory",
  "libc",
  "libproc",
+ "once_cell",
  "peeps-sync",
  "peeps-tasks",
  "peeps-types",
@@ -2423,6 +2439,7 @@ dependencies = [
  "facet",
  "facet-postcard",
  "facet-reflect",
+ "once_cell",
  "roam",
  "roam-session",
  "roam-wire",

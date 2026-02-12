@@ -292,7 +292,8 @@ async fn tunnel_close_propagates() {
 #[test]
 fn collect_channel_ids_simple_tx() {
     let tx: Tx<i32> = Tx::try_from(42u64).unwrap();
-    let ids = collect_channel_ids(&tx);
+    let plan = RpcPlan::for_type::<Tx<i32>>();
+    let ids = collect_channel_ids(&tx, &plan);
     assert_eq!(ids, vec![42]);
 }
 
@@ -300,7 +301,8 @@ fn collect_channel_ids_simple_tx() {
 #[test]
 fn collect_channel_ids_simple_rx() {
     let rx: Rx<i32> = Rx::try_from(99u64).unwrap();
-    let ids = collect_channel_ids(&rx);
+    let plan = RpcPlan::for_type::<Rx<i32>>();
+    let ids = collect_channel_ids(&rx, &plan);
     assert_eq!(ids, vec![99]);
 }
 
@@ -310,7 +312,8 @@ fn collect_channel_ids_tuple() {
     let rx: Rx<String> = Rx::try_from(10u64).unwrap();
     let tx: Tx<String> = Tx::try_from(20u64).unwrap();
     let args = (rx, tx);
-    let ids = collect_channel_ids(&args);
+    let plan = RpcPlan::for_type::<(Rx<String>, Tx<String>)>();
+    let ids = collect_channel_ids(&args, &plan);
     assert_eq!(ids, vec![10, 20]);
 }
 
@@ -329,7 +332,8 @@ fn collect_channel_ids_nested_in_struct() {
         output: Tx::try_from(200u64).unwrap(),
         count: 5,
     };
-    let ids = collect_channel_ids(&args);
+    let plan = RpcPlan::for_type::<StreamArgs>();
+    let ids = collect_channel_ids(&args, &plan);
     assert_eq!(ids, vec![100, 200]);
 }
 
@@ -338,7 +342,8 @@ fn collect_channel_ids_nested_in_struct() {
 fn collect_channel_ids_option_some() {
     let tx: Tx<i32> = Tx::try_from(55u64).unwrap();
     let args: Option<Tx<i32>> = Some(tx);
-    let ids = collect_channel_ids(&args);
+    let plan = RpcPlan::for_type::<Option<Tx<i32>>>();
+    let ids = collect_channel_ids(&args, &plan);
     assert_eq!(ids, vec![55]);
 }
 
@@ -346,7 +351,8 @@ fn collect_channel_ids_option_some() {
 #[test]
 fn collect_channel_ids_option_none() {
     let args: Option<Tx<i32>> = None;
-    let ids = collect_channel_ids(&args);
+    let plan = RpcPlan::for_type::<Option<Tx<i32>>>();
+    let ids = collect_channel_ids(&args, &plan);
     assert!(ids.is_empty());
 }
 
@@ -357,7 +363,8 @@ fn collect_channel_ids_vec() {
     let tx2: Tx<i32> = Tx::try_from(2u64).unwrap();
     let tx3: Tx<i32> = Tx::try_from(3u64).unwrap();
     let args: Vec<Tx<i32>> = vec![tx1, tx2, tx3];
-    let ids = collect_channel_ids(&args);
+    let plan = RpcPlan::for_type::<Vec<Tx<i32>>>();
+    let ids = collect_channel_ids(&args, &plan);
     assert!(ids.is_empty());
 }
 
@@ -379,7 +386,8 @@ fn collect_channel_ids_deeply_nested() {
             channel: Tx::try_from(777u64).unwrap(),
         },
     };
-    let ids = collect_channel_ids(&args);
+    let plan = RpcPlan::for_type::<Outer>();
+    let ids = collect_channel_ids(&args, &plan);
     assert_eq!(ids, vec![777]);
 }
 
@@ -387,7 +395,8 @@ fn collect_channel_ids_deeply_nested() {
 #[test]
 fn collect_channel_ids_large_bytes_payload_is_empty() {
     let args = vec![0xABu8; 512 * 1024];
-    let ids = collect_channel_ids(&args);
+    let plan = RpcPlan::for_type::<Vec<u8>>();
+    let ids = collect_channel_ids(&args, &plan);
     assert!(ids.is_empty());
 }
 
@@ -404,7 +413,8 @@ fn collect_channel_ids_large_bytes_payload_with_channel() {
         payload: vec![0xCDu8; 512 * 1024],
         channel: Tx::try_from(4242u64).unwrap(),
     };
-    let ids = collect_channel_ids(&args);
+    let plan = RpcPlan::for_type::<ResponseLike>();
+    let ids = collect_channel_ids(&args, &plan);
     assert_eq!(ids, vec![4242]);
 }
 
@@ -426,9 +436,10 @@ fn collect_channel_ids_enum_all_active_fields() {
         right: Tx::try_from(33u64).unwrap(),
     };
 
-    assert_eq!(collect_channel_ids(&pair), vec![11]);
-    assert_eq!(collect_channel_ids(&struct_variant), vec![22, 33]);
-    assert!(collect_channel_ids(&Multi::Unit).is_empty());
+    let plan = RpcPlan::for_type::<Multi>();
+    assert_eq!(collect_channel_ids(&pair, &plan), vec![11]);
+    assert_eq!(collect_channel_ids(&struct_variant, &plan), vec![22, 33]);
+    assert!(collect_channel_ids(&Multi::Unit, &plan).is_empty());
 }
 
 // r[verify call.request.channels]
@@ -454,7 +465,8 @@ fn collect_channel_ids_array_tuple_and_map_coverage() {
         bytes: [0u8; 16],
     };
 
-    let ids = collect_channel_ids(&value);
+    let plan = RpcPlan::for_type::<Complex>();
+    let ids = collect_channel_ids(&value, &plan);
     assert_eq!(ids, vec![100]);
 }
 
@@ -484,6 +496,7 @@ fn collect_channel_ids_shared_shape_branches_not_order_sensitive() {
         },
     };
 
-    let ids = collect_channel_ids(&value);
+    let plan = RpcPlan::for_type::<Root>();
+    let ids = collect_channel_ids(&value, &plan);
     assert_eq!(ids, vec![5, 6]);
 }

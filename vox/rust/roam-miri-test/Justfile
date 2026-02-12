@@ -1,0 +1,17 @@
+# Justfile for roam-miri-test - miri-compatible chaos testing
+
+# Run chaos test under Miri (using older nightly to avoid JSON bug)
+miri:
+    @echo "Running under Miri with isolation disabled (nightly-2026-02-05)..."
+    MIRIFLAGS="-Zmiri-disable-isolation" cargo +nightly-2026-02-05 miri test test_concurrent_mixed_types
+
+run:
+    cargo nextest run test_concurrent_mixed_types
+
+# Build with nightly
+build:
+    cargo +nightly-2026-02-05 build
+
+# Clean
+clean:
+    cargo clean

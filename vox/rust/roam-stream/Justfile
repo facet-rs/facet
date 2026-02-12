@@ -1,0 +1,85 @@
+# Justfile for roam-stream testing and profiling
+
+# Run the Unix socket load test
+load-test:
+    cargo run --example load_test_unix --release
+
+# Run the chaos load test (tries to break things)
+chaos:
+    cargo run --example load_test_chaos --release
+
+# Run chaos test under AddressSanitizer (fastest, catches memory bugs)
+asan:
+    RUSTFLAGS="-Z sanitizer=address" cargo +nightly run -Z build-std --target aarch64-unknown-linux-gnu --example load_test_chaos
+
+# Run chaos test under ASAN in debug mode (better symbols)
+asan-debug:
+    RUSTFLAGS="-Z sanitizer=address -C debuginfo=2" cargo +nightly build -Z build-std --target aarch64-unknown-linux-gnu --example load_test_chaos
+    ASAN_OPTIONS="symbolize=1:abort_on_error=1" ./target/aarch64-unknown-linux-gnu/debug/examples/load_test_chaos
+
+# Run chaos test under Valgrind (memcheck for memory errors)
+valgrind:
+    cargo build --example load_test_chaos
+    valgrind \
+        --leak-check=full \
+        --show-leak-kinds=all \
+        --track-origins=yes \
+        --verbose \
+        target/debug/examples/load_test_chaos
+
+# Run load test under Valgrind (memcheck for memory errors)
+valgrind-load:
+    cargo build --example load_test_unix
+    valgrind \
+        --leak-check=full \
+        --show-leak-kinds=all \
+        --track-origins=yes \
+        --verbose \
+        target/debug/examples/load_test_unix
+
+# Run load test under Valgrind with helgrind (thread errors)
+helgrind:
+    cargo build --example load_test_unix
+    valgrind \
+        --tool=helgrind \
+        --verbose \
+        target/debug/examples/load_test_unix
+
+# Run tests under Miri (undefined behavior detection)
+# With isolation disabled to allow real I/O
+miri:
+    @echo "Running under Miri with isolation disabled..."
+    MIRIFLAGS="-Zmiri-disable-isolation" cargo +nightly miri run --example load_test_chaos
+
+# Run just unit tests under Miri (isolated)
+miri-test:
+    @echo "Running unit tests under Miri..."
+    cargo +nightly miri nextest run --lib
+
+# Run all regular tests
+test:
+    cargo nextest run
+
+# Run tests with release optimizations
+test-release:
+    cargo nextest run --release
+
+# Build everything
+build:
+    cargo build --all-targets
+
+# Build in release mode
+build-release:
+    cargo build --all-targets --release
+
+# Clean build artifacts
+clean:
+    cargo clean
+
+# Run the Unix echo example
+example-echo:
+    cargo run --example unix_echo
+
+# Show available recipes
+help:
+    @just --list

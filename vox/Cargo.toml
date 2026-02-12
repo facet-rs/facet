@@ -30,7 +30,7 @@ members = [
   # Peer server for TypeScript browser tests
   "typescript/peer-server",
   # Wasm browser tests
-  "rust/wasm-browser-tests",
+  "rust/wasm-browser-tests", "rust/roam-miri-test",
 ]
 exclude = ["fuzz"]
 

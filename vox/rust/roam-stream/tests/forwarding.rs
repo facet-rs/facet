@@ -12,12 +12,31 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
+use facet::Facet;
+use once_cell::sync::Lazy;
 use roam_session::{
-    ChannelRegistry, Context, ForwardingDispatcher, RoamError, Rx, ServiceDispatcher, Tx, channel,
-    dispatch_call, dispatch_unknown_method,
+    ChannelRegistry, Context, ForwardingDispatcher, RoamError, RpcPlan, Rx, ServiceDispatcher, Tx,
+    channel, dispatch_call, dispatch_unknown_method,
 };
 use roam_stream::{Connector, HandshakeConfig, NoDispatcher, accept, connect};
 use tokio::net::TcpStream;
+
+// ============================================================================
+// RPC Plans
+// ============================================================================
+
+static STRING_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(|| RpcPlan::for_type::<String>());
+static STRING_RESPONSE_PLAN: Lazy<Arc<RpcPlan>> =
+    Lazy::new(|| Arc::new(RpcPlan::for_type::<String>()));
+
+static RX_I32_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(|| RpcPlan::for_type::<Rx<i32>>());
+static I64_RESPONSE_PLAN: Lazy<Arc<RpcPlan>> = Lazy::new(|| Arc::new(RpcPlan::for_type::<i64>()));
+
+static U32_TX_I32_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(|| RpcPlan::for_type::<(u32, Tx<i32>)>());
+static UNIT_RESPONSE_PLAN: Lazy<Arc<RpcPlan>> = Lazy::new(|| Arc::new(RpcPlan::for_type::<()>()));
+
+static RX_STRING_TX_STRING_ARGS_PLAN: Lazy<RpcPlan> =
+    Lazy::new(|| RpcPlan::for_type::<(Rx<String>, Tx<String>)>());
 
 // ============================================================================
 // Test Service (Backend)
@@ -61,6 +80,8 @@ impl ServiceDispatcher for StreamingService {
                 &cx,
                 payload,
                 registry,
+                &STRING_ARGS_PLAN,
+                STRING_RESPONSE_PLAN.clone(),
                 |input: String| async move { Ok(input) },
             ),
 
@@ -69,6 +90,8 @@ impl ServiceDispatcher for StreamingService {
                 &cx,
                 payload,
                 registry,
+                &RX_I32_ARGS_PLAN,
+                I64_RESPONSE_PLAN.clone(),
                 |mut numbers: Rx<i32>| async move {
                     let mut total: i64 = 0;
                     while let Ok(Some(n)) = numbers.recv().await {
@@ -83,6 +106,8 @@ impl ServiceDispatcher for StreamingService {
                 &cx,
                 payload,
                 registry,
+                &U32_TX_I32_ARGS_PLAN,
+                UNIT_RESPONSE_PLAN.clone(),
                 |(count, output): (u32, Tx<i32>)| async move {
                     for i in 0..count as i32 {
                         let _ = output.send(&i).await;
@@ -96,6 +121,8 @@ impl ServiceDispatcher for StreamingService {
                 &cx,
                 payload,
                 registry,
+                &RX_STRING_TX_STRING_ARGS_PLAN,
+                UNIT_RESPONSE_PLAN.clone(),
                 |(mut input, output): (Rx<String>, Tx<String>)| async move {
                     while let Ok(Some(s)) = input.recv().await {
                         let _ = output.send(&s).await;
@@ -258,7 +285,10 @@ async fn test_forwarding_client_to_server_streaming() {
 
     // Make the streaming call: sum(numbers: Rx<i32>) -> i64
     let mut args = rx;
-    let response = handle.call(METHOD_SUM, &mut args).await.unwrap();
+    let response = handle
+        .call(METHOD_SUM, &mut args, &RX_I32_ARGS_PLAN)
+        .await
+        .unwrap();
     let result: Result<i64, RoamError<()>> = decode_result(response.payload);
 
     // 1 + 2 + 3 + 4 + 5 = 15
@@ -284,7 +314,10 @@ async fn test_forwarding_client_to_server_empty_stream() {
     drop(tx);
 
     let mut args = rx;
-    let response = handle.call(METHOD_SUM, &mut args).await.unwrap();
+    let response = handle
+        .call(METHOD_SUM, &mut args, &RX_I32_ARGS_PLAN)
+        .await
+        .unwrap();
     let result: Result<i64, RoamError<()>> = decode_result(response.payload);
 
     assert_eq!(result.unwrap(), 0);
@@ -325,7 +358,10 @@ async fn test_forwarding_server_to_client_streaming() {
     // Make the streaming call: generate(count: u32, output: Tx<i32>)
     let count: u32 = 5;
     let mut args = (count, tx);
-    let response = handle.call(METHOD_GENERATE, &mut args).await.unwrap();
+    let response = handle
+        .call(METHOD_GENERATE, &mut args, &U32_TX_I32_ARGS_PLAN)
+        .await
+        .unwrap();
     let result: Result<(), RoamError<()>> = decode_result(response.payload);
     assert!(result.is_ok());
 
@@ -381,7 +417,10 @@ async fn test_forwarding_bidirectional_streaming() {
 
     // Make the bidirectional streaming call: transform(input: Rx<String>, output: Tx<String>)
     let mut args = (input_rx, output_tx);
-    let response = handle.call(METHOD_TRANSFORM, &mut args).await.unwrap();
+    let response = handle
+        .call(METHOD_TRANSFORM, &mut args, &RX_STRING_TX_STRING_ARGS_PLAN)
+        .await
+        .unwrap();
     let result: Result<(), RoamError<()>> = decode_result(response.payload);
     assert!(result.is_ok());
 
@@ -432,7 +471,10 @@ async fn test_forwarding_multiple_streaming_calls() {
 
             // Call sum
             let mut args = rx;
-            let response = conn_handle.call(METHOD_SUM, &mut args).await.unwrap();
+            let response = conn_handle
+                .call(METHOD_SUM, &mut args, &RX_I32_ARGS_PLAN)
+                .await
+                .unwrap();
             let result: Result<i64, RoamError<()>> = decode_result(response.payload);
 
             // Expected: (i*10+1) + (i*10+2) + (i*10+3) = i*30 + 6
@@ -470,7 +512,10 @@ async fn test_forwarding_client_to_server_empty_stream_multi_hop() {
     drop(tx);
 
     let mut args = rx;
-    let response = handle.call(METHOD_SUM, &mut args).await.unwrap();
+    let response = handle
+        .call(METHOD_SUM, &mut args, &RX_I32_ARGS_PLAN)
+        .await
+        .unwrap();
     let result: Result<i64, RoamError<()>> = decode_result(response.payload);
 
     assert_eq!(result.unwrap(), 0);

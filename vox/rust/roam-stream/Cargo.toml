@@ -27,3 +27,4 @@ facet-reflect.workspace = true
 spec-proto = { path = "../../spec/spec-proto" }
 roam = { path = "../roam" }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+once_cell = "1"
