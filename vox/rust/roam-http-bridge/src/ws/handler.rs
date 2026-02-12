@@ -39,7 +39,7 @@ pub async fn handle_websocket(
     // Spawn task to send outgoing messages
     let send_task = {
         let session = Arc::clone(&session);
-        tokio::spawn(async move {
+        peeps_tasks::spawn_tracked("bridge_ws_send_loop", async move {
             while let Some(msg) = outgoing_rx.recv().await {
                 let json = match serde_json::to_string(&msg) {
                     Ok(j) => j,
@@ -219,7 +219,7 @@ async fn handle_request(
 
         // Spawn a task to run the streaming call (channels are already registered)
         let session_clone = Arc::clone(&session);
-        tokio::spawn(async move {
+        peeps_tasks::spawn_tracked("bridge_ws_streaming_call", async move {
             let result = run_streaming_call(session_clone.clone(), streaming_state).await;
 
             // Complete the call
@@ -235,7 +235,7 @@ async fn handle_request(
     } else {
         // Simple calls can be spawned directly
         let session_clone = Arc::clone(&session);
-        tokio::spawn(async move {
+        peeps_tasks::spawn_tracked("bridge_ws_simple_call", async move {
             let result = handle_simple_call(
                 session_clone.clone(),
                 request_id,
@@ -490,7 +490,7 @@ async fn run_streaming_call(
     for (roam_channel_id, mut rx) in roam_receivers {
         let (ws_channel_id, elem_shape) = roam_to_ws_tx_map[&roam_channel_id];
         let outgoing_tx = outgoing_tx.clone();
-        tokio::spawn(async move {
+        peeps_tasks::spawn_tracked("bridge_ws_roam_to_ws_forward", async move {
             while let Some(msg) = rx.recv().await {
                 match msg {
                     IncomingChannelMessage::Data(postcard_data) => {

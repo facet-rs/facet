@@ -186,7 +186,7 @@ impl OtlpExporter {
 
         // Spawn the background export task
         let config_clone = config.clone();
-        tokio::spawn(async move {
+        peeps_tasks::spawn_tracked("roam_telemetry_export_loop", async move {
             export_loop(rx, config_clone).await;
         });
 

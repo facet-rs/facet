@@ -26,3 +26,4 @@ tracing-subscriber = { version = "0.3", features = ["registry", "env-filter", "s
 # Async runtime
 tokio = { version = "1", features = ["sync", "rt"] }
 peeps-sync.workspace = true
+peeps-tasks.workspace = true

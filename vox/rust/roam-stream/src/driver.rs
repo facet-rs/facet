@@ -215,7 +215,9 @@ where
         // Note: We drop `_incoming` - this client doesn't accept sub-connections.
         // Any Connect requests from the server will be automatically rejected.
 
-        let driver_handle = tokio::spawn(async move { driver.run().await });
+        let driver_handle = peeps_tasks::spawn_tracked("roam_stream_driver", async move {
+            driver.run().await
+        });
 
         Ok(ClientState {
             handle,

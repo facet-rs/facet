@@ -6,7 +6,7 @@ use std::process::ExitCode;
 
 use facet::Facet;
 use figue as args;
-use xshell::{Shell, cmd};
+use xshell::{cmd, Shell};
 
 /// Development tasks for roam
 #[derive(Facet)]

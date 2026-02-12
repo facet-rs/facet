@@ -21,6 +21,7 @@ roam-stream.workspace = true
 tokio = { workspace = true, features = ["net", "io-util", "rt", "time", "sync"] }
 tokio-tungstenite.workspace = true
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
+peeps-tasks.workspace = true
 
 # WASM dependencies
 [target.'cfg(target_arch = "wasm32")'.dependencies]
