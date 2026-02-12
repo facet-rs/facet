@@ -864,15 +864,17 @@ impl IncomingConnection {
         metadata: roam_wire::Metadata,
         dispatcher: Option<Box<dyn ServiceDispatcher>>,
     ) -> Result<ConnectionHandle, TransportError> {
-        let (handle_tx, handle_rx) = crate::runtime::oneshot();
+        let (handle_tx, handle_rx) = crate::runtime::oneshot("incoming_conn_accept");
         let _ = self.response_tx.send(IncomingConnectionResponse::Accept {
             request_id: self.request_id,
             metadata,
             dispatcher,
             handle_tx,
         });
-        let result: Result<ConnectionHandle, _> =
-            handle_rx.await.map_err(|_| TransportError::DriverGone)?;
+        let result: Result<ConnectionHandle, _> = handle_rx
+            .recv()
+            .await
+            .map_err(|_| TransportError::DriverGone)?;
         result
     }
 
@@ -1247,7 +1249,8 @@ where
                 // Only root connection can accept incoming connections
                 if let Some(tx) = &self.incoming_connections_tx {
                     // Create a oneshot that routes through incoming_response_tx
-                    let (response_tx, response_rx) = crate::runtime::oneshot();
+                    let (response_tx, response_rx) =
+                        crate::runtime::oneshot("incoming_conn_response");
                     let incoming = IncomingConnection {
                         request_id,
                         metadata,
@@ -1257,7 +1260,7 @@ where
                         // Spawn a task to forward the response
                         let incoming_response_tx = self.incoming_response_tx.clone();
                         spawn(async move {
-                            if let Ok(response) = response_rx.await {
+                            if let Ok(response) = response_rx.recv().await {
                                 let _ = incoming_response_tx.send(response).await;
                             }
                         });
@@ -1887,7 +1890,7 @@ where
     );
 
     // Create unified channel for all messages
-    let (driver_tx, driver_rx) = channel(256);
+    let (driver_tx, driver_rx) = channel("roam_driver", 256);
 
     // Create diagnostic state when the feature is enabled.
     #[cfg(feature = "diagnostics")]
@@ -1933,10 +1936,10 @@ where
 
     // Create channel for incoming connection requests
     // r[impl core.conn.accept-required]
-    let (incoming_connections_tx, incoming_connections_rx) = channel(64);
+    let (incoming_connections_tx, incoming_connections_rx) = channel("incoming_connections", 64);
 
     // Create channel for incoming connection responses (Accept/Reject from app code)
-    let (incoming_response_tx, incoming_response_rx) = channel(64);
+    let (incoming_response_tx, incoming_response_rx) = channel("incoming_conn_responses", 64);
 
     let driver = Driver {
         io,
@@ -2216,7 +2219,7 @@ mod tests {
                 .await
                 .expect("handshake should succeed");
 
-        let (response_tx, response_rx) = crate::runtime::oneshot();
+        let (response_tx, response_rx) = crate::runtime::oneshot("test_stale_pending");
         driver
             .connections
             .get_mut(&ConnectionId::ROOT)
@@ -2243,6 +2246,7 @@ mod tests {
         ));
 
         let pending_result = response_rx
+            .recv()
             .await
             .expect("pending response should be failed");
         assert!(matches!(
@@ -2277,7 +2281,7 @@ mod tests {
                 .await
                 .expect("handshake should succeed");
 
-        let (response_tx, response_rx) = crate::runtime::oneshot();
+        let (response_tx, response_rx) = crate::runtime::oneshot("test_dropped_receiver");
         drop(response_rx);
         driver
             .connections

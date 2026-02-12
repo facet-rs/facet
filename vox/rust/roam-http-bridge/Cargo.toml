@@ -30,6 +30,7 @@ facet-value.workspace = true
 
 axum = { version = "0.8", features = ["ws"] }
 tokio.workspace = true
+peeps-sync.workspace = true
 # Zero-cost tracing: compiles to nothing when feature is disabled
 tracing = { version = "0.1", default-features = false, features = ["std"], optional = true }
 http = "1"

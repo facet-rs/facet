@@ -311,7 +311,7 @@ impl ConnectionHandle {
             // We need to actually send the DriverMessage::Call to the driver's queue
             // before spawning drains, not just create the future.
             let request_id = self.shared.request_ids.next();
-            let (response_tx, response_rx) = oneshot();
+            let (response_tx, response_rx) = oneshot("call_with_rx_streams");
 
             // Track outgoing request for diagnostics
             if let Some(diag) = &self.shared.diagnostic_state {
@@ -406,6 +406,7 @@ impl ConnectionHandle {
 
             // Just await the response - drain tasks run independently
             let result = response_rx
+                .recv()
                 .await
                 .map_err(|_| TransportError::DriverGone)?
                 .map_err(|_| TransportError::ConnectionClosed);
@@ -519,7 +520,7 @@ impl ConnectionHandle {
                 // Has Rx streams - spawn tasks to drain them
                 // IMPORTANT: We must send Request BEFORE spawning drain tasks to ensure ordering.
                 let request_id = self.shared.request_ids.next();
-                let (response_tx, response_rx) = oneshot();
+                let (response_tx, response_rx) = oneshot("call_raw_with_rx_streams");
 
                 // Track outgoing request for diagnostics
                 if let Some(diag) = &self.shared.diagnostic_state {
@@ -612,6 +613,7 @@ impl ConnectionHandle {
 
                 // Just await the response - drain tasks run independently
                 let result = response_rx
+                    .recv()
                     .await
                     .map_err(|_| TransportError::DriverGone)?
                     .map_err(|_| TransportError::ConnectionClosed);
@@ -775,7 +777,7 @@ impl ConnectionHandle {
         self.acquire_request_slot().await?;
 
         let request_id = self.shared.request_ids.next();
-        let (response_tx, response_rx) = oneshot();
+        let (response_tx, response_rx) = oneshot("call_raw_with_channels");
 
         // Track outgoing request for diagnostics
         if let Some(diag) = &self.shared.diagnostic_state {
@@ -806,6 +808,7 @@ impl ConnectionHandle {
             .map_err(|_| TransportError::DriverGone)?;
 
         let result = response_rx
+            .recv()
             .await
             .map_err(|_| TransportError::DriverGone)?
             .map_err(|_| TransportError::ConnectionClosed);
@@ -849,7 +852,7 @@ impl ConnectionHandle {
         dispatcher: Option<Box<dyn ServiceDispatcher>>,
     ) -> Result<ConnectionHandle, crate::ConnectError> {
         let request_id = self.shared.request_ids.next();
-        let (response_tx, response_rx) = oneshot();
+        let (response_tx, response_rx) = oneshot("connect_virtual");
 
         let msg = DriverMessage::Connect {
             request_id,
@@ -863,6 +866,7 @@ impl ConnectionHandle {
         })?;
 
         response_rx
+            .recv()
             .await
             .map_err(|_| crate::ConnectError::ConnectFailed(std::io::Error::other("driver gone")))?
     }
@@ -1061,7 +1065,7 @@ impl ConnectionHandle {
             };
 
             // Create channel and set receiver slot
-            let (tx, rx) = crate::runtime::channel(RX_STREAM_BUFFER_SIZE);
+            let (tx, rx) = crate::runtime::channel("rx_stream_bind", RX_STREAM_BUFFER_SIZE);
 
             if let Ok(mut receiver_field) = ps.field_by_name("receiver")
                 && let Ok(slot) = receiver_field.get_mut::<ReceiverSlot>()
@@ -1107,7 +1111,7 @@ mod tests {
 
     #[tokio::test]
     async fn drain_task_exits_when_driver_data_send_fails() {
-        let (driver_tx, mut driver_rx) = crate::runtime::channel(8);
+        let (driver_tx, mut driver_rx) = crate::runtime::channel("test_driver", 8);
         let handle = ConnectionHandle::new(driver_tx, Role::Initiator, u32::MAX);
 
         let (stream_tx, stream_rx) = crate::channel::<Vec<u8>>();
@@ -1140,7 +1144,7 @@ mod tests {
 
     #[tokio::test]
     async fn call_respects_max_concurrent_requests_limit() {
-        let (driver_tx, mut driver_rx) = crate::runtime::channel(8);
+        let (driver_tx, mut driver_rx) = crate::runtime::channel("test_driver", 8);
         let handle = ConnectionHandle::new_with_diagnostics_and_limits(
             roam_wire::ConnectionId::ROOT,
             driver_tx,

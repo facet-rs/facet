@@ -4,8 +4,6 @@
 
 use std::sync::{Arc, RwLock};
 
-use tokio::sync::mpsc;
-
 use crate::record::TracingRecord;
 use crate::service::{HostTracing, TracingConfig};
 
@@ -29,9 +27,9 @@ pub struct TaggedRecord {
 /// instances (one per cell connection).
 pub struct HostTracingState {
     /// Channel for sending tagged records to consumers.
-    record_tx: mpsc::Sender<TaggedRecord>,
+    record_tx: peeps_sync::Sender<TaggedRecord>,
     /// Receiver end (taken by consumer).
-    record_rx: std::sync::Mutex<Option<mpsc::Receiver<TaggedRecord>>>,
+    record_rx: std::sync::Mutex<Option<peeps_sync::Receiver<TaggedRecord>>>,
     /// Current tracing configuration (shared across all cells).
     config: RwLock<TracingConfig>,
 }
@@ -42,7 +40,7 @@ impl HostTracingState {
     /// `buffer_size` is the capacity of the record channel.
     /// If the consumer is slow, newest records are dropped.
     pub fn new(buffer_size: usize) -> Arc<Self> {
-        let (record_tx, record_rx) = mpsc::channel(buffer_size);
+        let (record_tx, record_rx) = peeps_sync::channel("trace_host_records", buffer_size);
         Arc::new(Self {
             record_tx,
             record_rx: std::sync::Mutex::new(Some(record_rx)),
@@ -54,7 +52,7 @@ impl HostTracingState {
     ///
     /// Call this once to get the stream of tagged records from all cells.
     /// Returns `None` if already taken.
-    pub fn take_receiver(&self) -> Option<mpsc::Receiver<TaggedRecord>> {
+    pub fn take_receiver(&self) -> Option<peeps_sync::Receiver<TaggedRecord>> {
         self.record_rx.lock().unwrap().take()
     }
 

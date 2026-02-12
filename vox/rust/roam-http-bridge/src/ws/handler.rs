@@ -12,7 +12,6 @@ use futures_util::{SinkExt, StreamExt};
 #[allow(unused_imports)]
 use roam_schema::{MethodDetail, contains_stream, is_rx, is_tx};
 use roam_session::{IncomingChannelMessage, ResponseData, TransportError};
-use tokio::sync::{mpsc, oneshot};
 
 use crate::{BridgeError, BridgeService, ProtocolErrorKind};
 
@@ -29,7 +28,7 @@ pub async fn handle_websocket(
     let (mut ws_sink, mut ws_stream) = ws.split();
 
     // Channel for outgoing messages
-    let (outgoing_tx, mut outgoing_rx) = mpsc::channel::<ServerMessage>(256);
+    let (outgoing_tx, mut outgoing_rx) = peeps_sync::channel::<ServerMessage>("ws_outgoing", 256);
 
     // Create session state
     let session = Arc::new(tokio::sync::Mutex::new(WsSession::new(
@@ -305,9 +304,9 @@ struct StreamingCallState {
     request_id: u64,
     ws_to_roam_rx_map: HashMap<u64, (u64, &'static Shape)>,
     roam_to_ws_tx_map: HashMap<u64, (u64, &'static Shape)>,
-    roam_receivers: Vec<(u64, mpsc::Receiver<IncomingChannelMessage>)>,
+    roam_receivers: Vec<(u64, peeps_sync::Receiver<IncomingChannelMessage>)>,
     /// Response receiver - the call has already been sent when this is set
-    response_rx: oneshot::Receiver<Result<ResponseData, TransportError>>,
+    response_rx: peeps_sync::OneshotReceiver<Result<ResponseData, TransportError>>,
     return_shape: &'static Shape,
     error_shape: Option<&'static Shape>,
 }
@@ -392,9 +391,9 @@ async fn setup_streaming_call(
     let postcard_payload = crate::transcode::json_args_to_postcard(&args_json, &arg_shapes)?;
 
     // Set up channels for receiving data from roam (Tx channels)
-    let mut roam_receivers: Vec<(u64, mpsc::Receiver<IncomingChannelMessage>)> = Vec::new();
+    let mut roam_receivers: Vec<(u64, peeps_sync::Receiver<IncomingChannelMessage>)> = Vec::new();
     for &roam_channel_id in roam_to_ws_tx_map.keys() {
-        let (tx, rx) = mpsc::channel::<IncomingChannelMessage>(256);
+        let (tx, rx) = peeps_sync::channel::<IncomingChannelMessage>("ws_roam_incoming", 256);
         handle.register_incoming(roam_channel_id, tx);
         roam_receivers.push((roam_channel_id, rx));
     }
@@ -411,7 +410,7 @@ async fn setup_streaming_call(
         session_guard.set_driver_tx(driver_tx.clone());
 
         for (&ws_channel_id, &(roam_channel_id, elem_shape)) in &ws_to_roam_rx_map {
-            let (ws_data_tx, _ws_data_rx) = mpsc::channel::<Vec<u8>>(256);
+            let (ws_data_tx, _ws_data_rx) = peeps_sync::channel::<Vec<u8>>("ws_data", 256);
             session_guard.register_channel(
                 ws_channel_id,
                 request_id,
@@ -434,7 +433,7 @@ async fn setup_streaming_call(
 
     // Create the response channel and send the Call message IMMEDIATELY
     // This ensures the Request is queued before any Data messages can be forwarded
-    let (response_tx, response_rx) = oneshot::channel();
+    let (response_tx, response_rx) = peeps_sync::oneshot_channel("ws_streaming_response");
     let roam_request_id = handle.alloc_request_id();
 
     let call_msg = roam_session::DriverMessage::Call {
@@ -523,6 +522,7 @@ async fn run_streaming_call(
 
     // Wait for the response - the call was already sent in setup_streaming_call
     let response = response_rx
+        .recv()
         .await
         .map_err(|_| BridgeError::internal("Response channel closed"))?;
 

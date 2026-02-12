@@ -117,7 +117,8 @@ impl ServiceDispatcher for ForwardingDispatcher {
                         );
 
                         // Set up forwarding: upstream → downstream
-                        let (tx, mut rx) = crate::runtime::channel::<IncomingChannelMessage>(64);
+                        let (tx, mut rx) =
+                            crate::runtime::channel::<IncomingChannelMessage>("fwd_resp_chan", 64);
                         upstream.register_incoming(upstream_id, tx);
 
                         let task_tx_clone = task_tx.clone();
@@ -192,12 +193,12 @@ impl ServiceDispatcher for ForwardingDispatcher {
                 channel_map.push((downstream_id, upstream_id));
 
                 // Buffer for downstream → upstream (client sends Data)
-                let (ds_to_us_tx, ds_to_us_rx) = crate::runtime::channel(64);
+                let (ds_to_us_tx, ds_to_us_rx) = crate::runtime::channel("fwd_ds_to_us", 64);
                 registry.register_incoming(downstream_id, ds_to_us_tx);
                 ds_to_us_rxs.push(ds_to_us_rx);
 
                 // Buffer for upstream → downstream (server sends Data)
-                let (us_to_ds_tx, us_to_ds_rx) = crate::runtime::channel(64);
+                let (us_to_ds_tx, us_to_ds_rx) = crate::runtime::channel("fwd_us_to_ds", 64);
                 upstream.register_incoming(upstream_id, us_to_ds_tx);
                 us_to_ds_rxs.push(us_to_ds_rx);
             }

@@ -3,27 +3,31 @@
 use std::future::Future;
 use std::time::Duration;
 
-// Re-export tokio sync types directly
+// Re-export tokio Mutex (not wrapped by peeps-sync)
 pub use tokio::sync::Mutex;
-pub use tokio::sync::mpsc::{
-    Receiver, Sender, UnboundedReceiver, UnboundedSender, channel, error::SendError,
-    unbounded_channel,
+
+// Re-export peeps-sync channel types
+pub use peeps_sync::{
+    OneshotReceiver, OneshotSender, Receiver, Sender, UnboundedReceiver, UnboundedSender, channel,
+    oneshot_channel, unbounded_channel,
 };
-pub use tokio::sync::oneshot::{Receiver as OneshotReceiver, Sender as OneshotSender};
+
+// Re-export tokio error types (peeps-sync uses the same ones)
+pub use tokio::sync::mpsc::error::SendError;
 
 /// Create a bounded mpsc channel.
-pub fn bounded<T>(buffer: usize) -> (Sender<T>, Receiver<T>) {
-    channel(buffer)
+pub fn bounded<T>(name: impl Into<String>, buffer: usize) -> (Sender<T>, Receiver<T>) {
+    channel(name, buffer)
 }
 
 /// Create an unbounded mpsc channel.
-pub fn unbounded<T>() -> (UnboundedSender<T>, UnboundedReceiver<T>) {
-    unbounded_channel()
+pub fn unbounded<T>(name: impl Into<String>) -> (UnboundedSender<T>, UnboundedReceiver<T>) {
+    unbounded_channel(name)
 }
 
 /// Create a oneshot channel.
-pub fn oneshot<T>() -> (OneshotSender<T>, OneshotReceiver<T>) {
-    tokio::sync::oneshot::channel()
+pub fn oneshot<T>(name: impl Into<String>) -> (OneshotSender<T>, OneshotReceiver<T>) {
+    oneshot_channel(name)
 }
 
 /// Handle that can be used to abort a spawned task.

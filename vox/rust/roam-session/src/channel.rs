@@ -33,7 +33,7 @@ use crate::{CHANNEL_SIZE, ChannelId, DriverMessage, IncomingChannelMessage, get_
 /// let sum = fut.await?;
 /// ```
 pub fn channel<T: 'static>() -> (Tx<T>, Rx<T>) {
-    let (sender, receiver) = crate::runtime::channel(CHANNEL_SIZE);
+    let (sender, receiver) = crate::runtime::channel("roam_channel", CHANNEL_SIZE);
 
     // Check if we're in a dispatch context - if so, create bound channels
     if let Some(ctx) = get_dispatch_context() {
@@ -607,7 +607,7 @@ mod tests {
 
     #[tokio::test]
     async fn tx_drop_fallback_handles_closed_driver_channel() {
-        let (driver_tx, mut driver_rx) = crate::runtime::channel::<DriverMessage>(1);
+        let (driver_tx, mut driver_rx) = crate::runtime::channel::<DriverMessage>("test_driver", 1);
 
         driver_tx
             .try_send(DriverMessage::Data {
@@ -617,7 +617,8 @@ mod tests {
             })
             .expect("seed message should fill single-slot channel");
 
-        let (inner_tx, _inner_rx) = crate::runtime::channel::<IncomingChannelMessage>(1);
+        let (inner_tx, _inner_rx) =
+            crate::runtime::channel::<IncomingChannelMessage>("test_inner", 1);
         let mut tx: Tx<Vec<u8>> = Tx::new(4242, inner_tx);
         tx.conn_id = ConnectionId::ROOT;
         tx.sender = SenderSlot::empty();

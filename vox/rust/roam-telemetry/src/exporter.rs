@@ -7,8 +7,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::mpsc;
-
 use crate::otlp::{
     ExportTraceServiceRequest, InstrumentationScope, KeyValue, Resource, ResourceSpans, ScopeSpans,
     Span,
@@ -164,7 +162,7 @@ impl Default for ExporterConfig {
 /// - POSTs to the OTLP endpoint
 #[derive(Clone)]
 pub struct OtlpExporter {
-    tx: mpsc::Sender<Span>,
+    tx: peeps_sync::Sender<Span>,
     config: Arc<ExporterConfig>,
 }
 
@@ -183,7 +181,7 @@ impl OtlpExporter {
 
     /// Create a new exporter with full configuration.
     pub fn with_config(config: ExporterConfig) -> Self {
-        let (tx, rx) = mpsc::channel(4096);
+        let (tx, rx) = peeps_sync::channel("telemetry_export", 4096);
         let config = Arc::new(config);
 
         // Spawn the background export task
@@ -219,7 +217,7 @@ impl SpanExporter for OtlpExporter {
     }
 }
 
-async fn export_loop(mut rx: mpsc::Receiver<Span>, config: Arc<ExporterConfig>) {
+async fn export_loop(mut rx: peeps_sync::Receiver<Span>, config: Arc<ExporterConfig>) {
     let client = reqwest::Client::builder()
         .timeout(config.timeout)
         .build()

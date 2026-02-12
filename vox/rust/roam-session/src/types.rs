@@ -520,7 +520,7 @@ impl ChannelRegistry {
             trace!(channel_id, "bind_rx_channel: registering incoming channel");
 
             // Create channel and set receiver slot
-            let (tx, rx) = crate::runtime::channel(RX_STREAM_BUFFER_SIZE);
+            let (tx, rx) = crate::runtime::channel("rx_stream_bind", RX_STREAM_BUFFER_SIZE);
 
             if let Ok(mut receiver_field) = ps.field_by_name("receiver")
                 && let Ok(slot) = receiver_field.get_mut::<ReceiverSlot>()

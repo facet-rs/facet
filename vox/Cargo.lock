@@ -720,7 +720,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -753,7 +753,7 @@ dependencies = [
 [[package]]
 name = "facet"
 version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#e38260e30e02ffd3d5e67821bedfcd0750b06788"
+source = "git+https://github.com/facet-rs/facet?branch=main#910995c970b160809f678f87c5608082ec61a84d"
 dependencies = [
  "autocfg",
  "facet-core",
@@ -778,7 +778,7 @@ dependencies = [
 [[package]]
 name = "facet-core"
 version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#e38260e30e02ffd3d5e67821bedfcd0750b06788"
+source = "git+https://github.com/facet-rs/facet?branch=main#910995c970b160809f678f87c5608082ec61a84d"
 dependencies = [
  "autocfg",
  "camino",
@@ -839,7 +839,7 @@ dependencies = [
 [[package]]
 name = "facet-macro-parse"
 version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#e38260e30e02ffd3d5e67821bedfcd0750b06788"
+source = "git+https://github.com/facet-rs/facet?branch=main#910995c970b160809f678f87c5608082ec61a84d"
 dependencies = [
  "facet-macro-types",
  "proc-macro2",
@@ -849,7 +849,7 @@ dependencies = [
 [[package]]
 name = "facet-macro-types"
 version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#e38260e30e02ffd3d5e67821bedfcd0750b06788"
+source = "git+https://github.com/facet-rs/facet?branch=main#910995c970b160809f678f87c5608082ec61a84d"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -859,7 +859,7 @@ dependencies = [
 [[package]]
 name = "facet-macros"
 version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#e38260e30e02ffd3d5e67821bedfcd0750b06788"
+source = "git+https://github.com/facet-rs/facet?branch=main#910995c970b160809f678f87c5608082ec61a84d"
 dependencies = [
  "facet-macros-impl",
 ]
@@ -867,7 +867,7 @@ dependencies = [
 [[package]]
 name = "facet-macros-impl"
 version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#e38260e30e02ffd3d5e67821bedfcd0750b06788"
+source = "git+https://github.com/facet-rs/facet?branch=main#910995c970b160809f678f87c5608082ec61a84d"
 dependencies = [
  "facet-macro-parse",
  "facet-macro-types",
@@ -880,7 +880,7 @@ dependencies = [
 [[package]]
 name = "facet-path"
 version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#e38260e30e02ffd3d5e67821bedfcd0750b06788"
+source = "git+https://github.com/facet-rs/facet?branch=main#910995c970b160809f678f87c5608082ec61a84d"
 dependencies = [
  "facet-core",
 ]
@@ -912,7 +912,7 @@ dependencies = [
 [[package]]
 name = "facet-reflect"
 version = "0.43.2"
-source = "git+https://github.com/facet-rs/facet?branch=main#e38260e30e02ffd3d5e67821bedfcd0750b06788"
+source = "git+https://github.com/facet-rs/facet?branch=main#910995c970b160809f678f87c5608082ec61a84d"
 dependencies = [
  "facet-core",
  "facet-path",
@@ -1563,7 +1563,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1807,7 +1807,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1924,9 +1924,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "peeps-sync"
+version = "0.1.0"
+source = "git+https://github.com/bearcove/peeps?branch=main#33e4037744253c902c2f925c640cb6020ce1dc18"
+dependencies = [
+ "peeps-types",
+ "tokio",
+]
+
+[[package]]
 name = "peeps-tasks"
 version = "0.1.0"
-source = "git+https://github.com/bearcove/peeps?branch=main#2e00454e83aacd0a4d7e96a9f623131dc63e7985"
+source = "git+https://github.com/bearcove/peeps?branch=main#33e4037744253c902c2f925c640cb6020ce1dc18"
 dependencies = [
  "backtrace",
  "facet",
@@ -1937,7 +1946,7 @@ dependencies = [
 [[package]]
 name = "peeps-types"
 version = "0.1.0"
-source = "git+https://github.com/bearcove/peeps?branch=main#2e00454e83aacd0a4d7e96a9f623131dc63e7985"
+source = "git+https://github.com/bearcove/peeps?branch=main#33e4037744253c902c2f925c640cb6020ce1dc18"
 dependencies = [
  "facet",
  "inventory",
@@ -2058,7 +2067,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.60.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2296,6 +2305,7 @@ dependencies = [
  "facet-value",
  "futures-util",
  "http",
+ "peeps-sync",
  "reqwest",
  "roam-hash",
  "roam-schema",
@@ -2364,6 +2374,7 @@ dependencies = [
  "futures-util",
  "gloo-timers",
  "inventory",
+ "peeps-sync",
  "peeps-tasks",
  "peeps-types",
  "roam",
@@ -2387,6 +2398,7 @@ dependencies = [
  "inventory",
  "libc",
  "libproc",
+ "peeps-sync",
  "peeps-tasks",
  "peeps-types",
  "roam",
@@ -2432,6 +2444,7 @@ dependencies = [
  "facet",
  "facet-json",
  "facet-pretty",
+ "peeps-sync",
  "rand",
  "reqwest",
  "roam",
@@ -2448,6 +2461,7 @@ name = "roam-tracing"
 version = "3.0.0"
 dependencies = [
  "facet",
+ "peeps-sync",
  "roam",
  "tokio",
  "tracing",
@@ -2502,7 +2516,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2885,7 +2899,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3444,7 +3458,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

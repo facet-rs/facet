@@ -23,8 +23,8 @@
 //! runtime::spawn(async { /* ... */ });
 //!
 //! // Create channels
-//! let (tx, rx) = runtime::channel(16);
-//! let (otx, orx) = runtime::oneshot();
+//! let (tx, rx) = runtime::channel("my_channel", 16);
+//! let (otx, orx) = runtime::oneshot("my_oneshot");
 //!
 //! // Timeouts and sleeping
 //! runtime::sleep(Duration::from_secs(1)).await;

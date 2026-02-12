@@ -10,7 +10,21 @@ use std::future::Future;
 use std::time::Duration;
 
 // For oneshot, use futures-channel (async-channel doesn't have oneshot)
-pub use futures_channel::oneshot::{Receiver as OneshotReceiver, Sender as OneshotSender};
+pub use futures_channel::oneshot::Sender as OneshotSender;
+
+/// Wrapper around futures_channel oneshot Receiver to match peeps-sync's API
+/// (which requires `.recv().await` instead of just `.await`).
+pub struct OneshotReceiver<T>(futures_channel::oneshot::Receiver<T>);
+
+impl<T> OneshotReceiver<T> {
+    pub async fn recv(self) -> Result<T, futures_channel::oneshot::Canceled> {
+        self.0.await
+    }
+
+    pub fn try_recv(&mut self) -> Result<Option<T>, futures_channel::oneshot::Canceled> {
+        self.0.try_recv()
+    }
+}
 
 // Async mutex
 pub use futures_util::lock::Mutex;
@@ -96,20 +110,21 @@ pub type UnboundedSender<T> = Sender<T>;
 pub type UnboundedReceiver<T> = Receiver<T>;
 
 /// Create a bounded mpsc channel.
-pub fn channel<T>(buffer: usize) -> (Sender<T>, Receiver<T>) {
+pub fn channel<T>(_name: impl Into<String>, buffer: usize) -> (Sender<T>, Receiver<T>) {
     let (tx, rx) = async_channel::bounded(buffer);
     (Sender(tx), Receiver(rx))
 }
 
 /// Create an unbounded mpsc channel.
-pub fn unbounded_channel<T>() -> (Sender<T>, Receiver<T>) {
+pub fn unbounded_channel<T>(_name: impl Into<String>) -> (Sender<T>, Receiver<T>) {
     let (tx, rx) = async_channel::unbounded();
     (Sender(tx), Receiver(rx))
 }
 
 /// Create a oneshot channel.
-pub fn oneshot<T>() -> (OneshotSender<T>, OneshotReceiver<T>) {
-    futures_channel::oneshot::channel()
+pub fn oneshot<T>(_name: impl Into<String>) -> (OneshotSender<T>, OneshotReceiver<T>) {
+    let (tx, rx) = futures_channel::oneshot::channel();
+    (tx, OneshotReceiver(rx))
 }
 
 /// Handle that can be used to abort a spawned task.

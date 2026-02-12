@@ -60,6 +60,7 @@ ur-taking-me-with-you = { path = "rust/ur-taking-me-with-you", version = "3.0.0"
 roam-task-local = { path = "rust/roam-task-local", version = "3.0.0" }
 peeps-tasks = { version = "0.1.0", git = "https://github.com/bearcove/peeps", branch = "main" }
 peeps-types = { version = "0.1.0", git = "https://github.com/bearcove/peeps", branch = "main" }
+peeps-sync = { version = "0.1.0", git = "https://github.com/bearcove/peeps", branch = "main" }
 
 # # Uncomment to develop peeps
 # peeps = { path = "../peeps/crates/peeps" }
@@ -68,6 +69,7 @@ peeps-types = { version = "0.1.0", git = "https://github.com/bearcove/peeps", br
 # peeps-locks = { path = "../peeps/crates/peeps-locks" }
 # peeps-roam = { path = "../peeps/crates/peeps-roam" }
 # peeps-types = { path = "../peeps/crates/peeps-types" }
+# peeps-sync = { path = "../peeps/crates/peeps-sync" }
 
 inventory = "0.3"
 

@@ -51,7 +51,7 @@ async fn tx_serializes_and_rx_deserializes() {
 
 /// Create a test registry with a dummy task channel.
 fn test_registry() -> ChannelRegistry {
-    let (task_tx, _task_rx) = crate::runtime::channel(10);
+    let (task_tx, _task_rx) = crate::runtime::channel("test", 10);
     ChannelRegistry::new(task_tx)
 }
 
@@ -59,7 +59,7 @@ fn test_registry() -> ChannelRegistry {
 #[tokio::test]
 async fn data_after_close_is_rejected() {
     let mut registry = test_registry();
-    let (tx, _rx) = crate::runtime::channel(10);
+    let (tx, _rx) = crate::runtime::channel("test", 10);
     registry.register_incoming(42, tx);
 
     // Close the channel
@@ -77,7 +77,7 @@ async fn channel_registry_routes_data_to_registered_channel() {
     let mut registry = test_registry();
 
     // Register a channel
-    let (tx, mut rx) = crate::runtime::channel(10);
+    let (tx, mut rx) = crate::runtime::channel("test", 10);
     registry.register_incoming(42, tx);
 
     // Data to registered channel should succeed
@@ -97,7 +97,7 @@ async fn channel_registry_routes_data_to_registered_channel() {
 #[tokio::test]
 async fn channel_registry_close_terminates_channel() {
     let mut registry = test_registry();
-    let (tx, mut rx) = crate::runtime::channel(10);
+    let (tx, mut rx) = crate::runtime::channel("test", 10);
     registry.register_incoming(42, tx);
 
     // Send some data
@@ -121,10 +121,10 @@ async fn channel_registry_close_terminates_channel() {
 
 #[tokio::test]
 async fn channel_registry_drop_does_not_emit_explicit_close() {
-    let (task_tx, _task_rx) = crate::runtime::channel(10);
+    let (task_tx, _task_rx) = crate::runtime::channel("test", 10);
     let mut registry = ChannelRegistry::new(task_tx);
 
-    let (tx, mut rx) = crate::runtime::channel(10);
+    let (tx, mut rx) = crate::runtime::channel("test", 10);
     registry.register_incoming(42, tx);
     drop(registry);
 
