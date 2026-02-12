@@ -8,6 +8,7 @@
 use std::future::Future;
 use std::io;
 use std::sync::Arc;
+use std::sync::RwLock;
 
 use facet::Facet;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -87,6 +88,7 @@ where
         dispatcher,
         retry_policy: RetryPolicy::default(),
         state: Arc::new(Mutex::new(None)),
+        current_handle: Arc::new(RwLock::new(None)),
     }
 }
 
@@ -107,6 +109,7 @@ where
         dispatcher,
         retry_policy,
         state: Arc::new(Mutex::new(None)),
+        current_handle: Arc::new(RwLock::new(None)),
     }
 }
 
@@ -135,6 +138,7 @@ pub struct Client<C: Connector, D> {
     dispatcher: D,
     retry_policy: RetryPolicy,
     state: Arc<Mutex<Option<ClientState<C::Transport>>>>,
+    current_handle: Arc<RwLock<Option<ConnectionHandle>>>,
 }
 
 impl<C, D> Clone for Client<C, D>
@@ -149,6 +153,7 @@ where
             dispatcher: self.dispatcher.clone(),
             retry_policy: self.retry_policy.clone(),
             state: self.state.clone(),
+            current_handle: self.current_handle.clone(),
         }
     }
 }
@@ -168,14 +173,28 @@ where
 
         if let Some(ref conn) = *state {
             if conn.is_alive() {
-                return Ok(conn.handle.clone());
+                let handle = conn.handle.clone();
+                *self
+                    .current_handle
+                    .write()
+                    .expect("reconnecting client handle cache lock poisoned") =
+                    Some(handle.clone());
+                return Ok(handle);
             }
             *state = None;
+            *self
+                .current_handle
+                .write()
+                .expect("reconnecting client handle cache lock poisoned") = None;
         }
 
         let conn = self.connect_internal().await?;
         let handle = conn.handle.clone();
         *state = Some(conn);
+        *self
+            .current_handle
+            .write()
+            .expect("reconnecting client handle cache lock poisoned") = Some(handle.clone());
         Ok(handle)
     }
 
@@ -243,6 +262,10 @@ where
                         let mut state = self.state.lock().await;
                         *state = None;
                     }
+                    *self
+                        .current_handle
+                        .write()
+                        .expect("reconnecting client handle cache lock poisoned") = None;
 
                     attempt += 1;
                     if attempt >= self.retry_policy.max_attempts {
@@ -315,6 +338,10 @@ where
                         let mut state = self.state.lock().await;
                         *state = None;
                     }
+                    *self
+                        .current_handle
+                        .write()
+                        .expect("reconnecting client handle cache lock poisoned") = None;
 
                     attempt += 1;
                     if attempt >= self.retry_policy.max_attempts {
@@ -329,13 +356,20 @@ where
     }
 
     fn bind_response_channels<R: Facet<'static>>(&self, response: &mut R, channels: &[u64]) {
-        // Client wraps a ConnectionHandle, but we don't have direct access to it
-        // during bind_response_channels. For reconnecting clients, response channel binding
-        // would need to be handled at a higher level or the client would need to store
-        // the current handle.
-        // For now, this is a no-op - Client users should use ConnectionHandle
-        // directly if they need response channel binding.
-        let _ = (response, channels);
+        let handle = self
+            .current_handle
+            .read()
+            .expect("reconnecting client handle cache lock poisoned")
+            .as_ref()
+            .cloned();
+        if let Some(handle) = handle {
+            handle.bind_response_channels(response, channels);
+        } else {
+            debug_assert!(
+                false,
+                "Client::bind_response_channels called without an active ConnectionHandle"
+            );
+        }
     }
 
     #[allow(unsafe_code)]
@@ -392,6 +426,10 @@ where
                             let mut state = this.state.lock().await;
                             *state = None;
                         }
+                        *this
+                            .current_handle
+                            .write()
+                            .expect("reconnecting client handle cache lock poisoned") = None;
 
                         attempt += 1;
                         if attempt >= this.retry_policy.max_attempts {
@@ -413,8 +451,23 @@ where
         response_plan: &roam_session::RpcPlan,
         channels: &[u64],
     ) {
-        // Same as bind_response_channels - this is a no-op for reconnecting Client.
-        let _ = (response_ptr, response_plan, channels);
+        let handle = self
+            .current_handle
+            .read()
+            .expect("reconnecting client handle cache lock poisoned")
+            .as_ref()
+            .cloned();
+        if let Some(handle) = handle {
+            // SAFETY: The Caller trait contract guarantees these pointers/plans are valid.
+            unsafe {
+                handle.bind_response_channels_by_plan(response_ptr, response_plan, channels);
+            }
+        } else {
+            debug_assert!(
+                false,
+                "Client::bind_response_channels_by_plan called without an active ConnectionHandle"
+            );
+        }
     }
 }
 

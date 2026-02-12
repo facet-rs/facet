@@ -15,7 +15,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use roam_session::{
-    ChannelRegistry, Context, ServiceDispatcher, dispatch_call, dispatch_unknown_method,
+    Caller, ChannelRegistry, Context, RpcPlan, Rx, ServiceDispatcher, dispatch_call,
+    dispatch_unknown_method,
 };
 use roam_stream::{
     ConnectError, Connector, HandshakeConfig, RetryPolicy, accept, connect, connect_with_policy,
@@ -96,16 +97,19 @@ impl Connector for TcpConnector {
 }
 
 /// Helper to start a test server and return its address.
-async fn start_test_server(service: TestService) -> (SocketAddr, tokio::task::JoinHandle<()>) {
+async fn start_dispatcher_server<D>(dispatcher: D) -> (SocketAddr, tokio::task::JoinHandle<()>)
+where
+    D: ServiceDispatcher + Clone + Send + 'static,
+{
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
     let handle = tokio::spawn(async move {
         while let Ok((stream, _)) = listener.accept().await {
-            let service = service.clone();
+            let dispatcher = dispatcher.clone();
             tokio::spawn(async move {
                 if let Ok((handle, _incoming, driver)) =
-                    accept(stream, HandshakeConfig::default(), service).await
+                    accept(stream, HandshakeConfig::default(), dispatcher).await
                 {
                     let _ = driver.run().await;
                     let _ = handle;
@@ -118,6 +122,11 @@ async fn start_test_server(service: TestService) -> (SocketAddr, tokio::task::Jo
     tokio::time::sleep(Duration::from_millis(10)).await;
 
     (addr, handle)
+}
+
+/// Helper to start a test server and return its address.
+async fn start_test_server(service: TestService) -> (SocketAddr, tokio::task::JoinHandle<()>) {
+    start_dispatcher_server(service).await
 }
 
 // r[verify reconnect.test.lazy]
@@ -343,4 +352,33 @@ async fn test_reconnect_after_initial_failure() {
 
     // Should have tried 3 times (2 failures + 1 success)
     assert_eq!(attempt_count.load(Ordering::SeqCst), 3);
+}
+
+#[tokio::test]
+async fn test_generated_client_binds_response_channels() {
+    let service = TestService::new();
+    let (addr, _server_handle) = start_test_server(service.clone()).await;
+
+    let connector = TcpConnector::new(addr);
+    let client = connect(connector, HandshakeConfig::default(), service);
+    client.handle().await.unwrap();
+
+    let mut response = Rx::<u32>::try_from(700u64).unwrap();
+    assert!(response.receiver.is_none());
+    Caller::bind_response_channels(&client, &mut response, &[700u64]);
+    assert!(response.receiver.is_some());
+
+    let mut response_by_plan = Rx::<u32>::try_from(701u64).unwrap();
+    assert!(response_by_plan.receiver.is_none());
+    let plan = RpcPlan::for_type::<Rx<u32>>();
+    // SAFETY: response_by_plan points to a valid Rx<u32>, matching plan.
+    unsafe {
+        Caller::bind_response_channels_by_plan(
+            &client,
+            (&raw mut response_by_plan).cast::<()>(),
+            &plan,
+            &[701u64],
+        );
+    }
+    assert!(response_by_plan.receiver.is_some());
 }
