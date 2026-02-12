@@ -6,6 +6,7 @@ mod derive_with_extension_attrs;
 mod empty;
 mod enums;
 mod expanded;
+mod extension_attr_generic_opt_str;
 mod functions;
 mod generics;
 mod simd;

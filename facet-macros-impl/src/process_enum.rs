@@ -297,7 +297,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                 }
             }
             // All attributes go through grammar dispatch
-            let ext_attr = emit_attr(attr, &facet_crate);
+            let ext_attr = emit_attr(attr, &facet_crate, has_type_or_const_generics);
             attribute_tokens.push(quote! { #ext_attr });
         }
 
@@ -579,7 +579,8 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                         .facet
                         .iter()
                         .map(|attr| {
-                            let ext_attr = emit_attr(attr, &facet_crate);
+                            let ext_attr =
+                                emit_attr(attr, &facet_crate, has_type_or_const_generics);
                             quote! { #ext_attr }
                         })
                         .collect();
@@ -657,6 +658,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                                     Some(variant_offset.clone()),
                                     &facet_crate,
                                     skip_all_unless_truthy,
+                                    has_type_or_const_generics,
                                 )
                             })
                             .collect();
@@ -719,6 +721,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                                     Some(variant_offset.clone()),
                                     &facet_crate,
                                     skip_all_unless_truthy,
+                                    has_type_or_const_generics,
                                 )
                             })
                             .collect();
@@ -802,7 +805,8 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                         .facet
                         .iter()
                         .map(|attr| {
-                            let ext_attr = emit_attr(attr, &facet_crate);
+                            let ext_attr =
+                                emit_attr(attr, &facet_crate, has_type_or_const_generics);
                             quote! { #ext_attr }
                         })
                         .collect();
@@ -874,6 +878,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                                     None,
                                     &facet_crate,
                                     skip_all_unless_truthy,
+                                    has_type_or_const_generics,
                                 )
                             })
                             .collect();
@@ -937,6 +942,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                                     None,
                                     &facet_crate,
                                     skip_all_unless_truthy,
+                                    has_type_or_const_generics,
                                 )
                             })
                             .collect();

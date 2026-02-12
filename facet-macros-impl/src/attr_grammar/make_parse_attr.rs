@@ -1593,6 +1593,50 @@ impl ParsedGrammar {
                                 static __ATTR_DATA: #crate_path::Attr = #crate_path::Attr::#variant_name(𝟋Some($val));
                                 ::facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
                             }};
+
+                            // Generic-safe dispatch: use const payload generation.
+                            (@const @ns { $ns:path } #key_ident { $field:tt : $ty:ty }) => {{
+                                ::facet::Attr::new(
+                                    #ns_expr,
+                                    #key_str,
+                                    &const { #crate_path::Attr::#variant_name(𝟋None) }
+                                )
+                            }};
+                            (@const @ns { $ns:path } #key_ident { $field:tt : $ty:ty | = $val:expr }) => {{
+                                ::facet::Attr::new(
+                                    #ns_expr,
+                                    #key_str,
+                                    &const { #crate_path::Attr::#variant_name(𝟋Some($val)) }
+                                )
+                            }};
+                            (@const @ns { $ns:path } #key_ident { $field:tt : $ty:ty | $val:expr }) => {{
+                                ::facet::Attr::new(
+                                    #ns_expr,
+                                    #key_str,
+                                    &const { #crate_path::Attr::#variant_name(𝟋Some($val)) }
+                                )
+                            }};
+                            (@const @ns { $ns:path } #key_ident { }) => {{
+                                ::facet::Attr::new(
+                                    #ns_expr,
+                                    #key_str,
+                                    &const { #crate_path::Attr::#variant_name(𝟋None) }
+                                )
+                            }};
+                            (@const @ns { $ns:path } #key_ident { | = $val:expr }) => {{
+                                ::facet::Attr::new(
+                                    #ns_expr,
+                                    #key_str,
+                                    &const { #crate_path::Attr::#variant_name(𝟋Some($val)) }
+                                )
+                            }};
+                            (@const @ns { $ns:path } #key_ident { | $val:expr }) => {{
+                                ::facet::Attr::new(
+                                    #ns_expr,
+                                    #key_str,
+                                    &const { #crate_path::Attr::#variant_name(𝟋Some($val)) }
+                                )
+                            }};
                         }
                     }
                     VariantKind::NewtypeI64 => {
@@ -1796,11 +1840,18 @@ impl ParsedGrammar {
             /// Dispatcher macro for extension attributes.
             ///
             /// Called by the derive macro via `__ext!`. Returns `ExtensionAttr` values.
-            /// Input format: `@ns { namespace_path } attr_name { ... }`
+            /// Input format: `@ns { namespace_path } attr_name { ... }` (optionally prefixed with `@const`)
             #[macro_export]
             #[doc(hidden)]
             macro_rules! __attr {
                 #(#variant_arms)*
+
+                // Generic-context marker. Variants that need custom const dispatch
+                // can match `@const` explicitly; everything else falls back to
+                // normal dispatch.
+                (@const @ns { $ns:path } $name:ident $($rest:tt)*) => {
+                    $crate::__attr!(@ns { $ns } $name $($rest)*)
+                };
 
                 // Unknown attribute: use __attr_error! for typo suggestions
                 (@ns { $ns:path } $unknown:ident $($tt:tt)*) => {
