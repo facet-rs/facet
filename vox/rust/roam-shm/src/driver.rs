@@ -1543,7 +1543,7 @@ impl MultiPeerHostDriverBuilder {
 
             // Spawn forwarder task for this peer's driver messages
             let driver_msg_tx_clone = driver_msg_tx.clone();
-            tokio::spawn(async move {
+            peeps_tasks::spawn_tracked("roam_shm_peer_driver_fwd", async move {
                 while let Some(msg) = driver_rx.recv().await {
                     if driver_msg_tx_clone.send((peer_id, msg)).await.is_err() {
                         // Driver shut down
@@ -1559,7 +1559,7 @@ impl MultiPeerHostDriverBuilder {
 
                 // Spawn doorbell waiter task with cloned Arc
                 let ring_tx_clone = ring_tx.clone();
-                tokio::spawn(async move {
+                peeps_tasks::spawn_tracked("roam_shm_doorbell_waiter", async move {
                     trace!("Doorbell waiter task started for peer {:?}", peer_id);
                     // On Windows, accept the named pipe connection from the guest
                     if let Err(e) = doorbell.accept().await {
@@ -1877,7 +1877,7 @@ impl MultiPeerHostDriver {
                 >(
                     "shm_dynamic_peer_response", 64
                 );
-                tokio::spawn(async move {
+                peeps_tasks::spawn_tracked("roam_shm_peer_response_fwd", async move {
                     while let Some(resp) = peer_response_rx.recv().await {
                         if peer_incoming_response_tx
                             .send((peer_id, resp))
@@ -1905,7 +1905,7 @@ impl MultiPeerHostDriver {
 
                 // Spawn forwarder task for this peer's driver messages
                 let driver_msg_tx = self.driver_msg_tx.clone();
-                tokio::spawn(async move {
+                peeps_tasks::spawn_tracked("roam_shm_peer_driver_fwd", async move {
                     while let Some(msg) = driver_rx.recv().await {
                         if driver_msg_tx.send((peer_id, msg)).await.is_err() {
                             // Driver shut down
@@ -1926,7 +1926,7 @@ impl MultiPeerHostDriver {
 
                     // Spawn doorbell waiter task with cloned Arc
                     let ring_tx = self.ring_tx.clone();
-                    tokio::spawn(async move {
+                    peeps_tasks::spawn_tracked("roam_shm_doorbell_waiter", async move {
                         trace!("Doorbell waiter task started for peer {:?}", peer_id);
                         // On Windows, accept the named pipe connection from the guest
                         trace!("Doorbell waiter: calling accept() for {:?}", peer_id);
@@ -2174,7 +2174,7 @@ impl MultiPeerHostDriver {
                     if tx.try_send(incoming).is_ok() {
                         // Spawn a task to forward the response
                         let incoming_response_tx = state.incoming_response_tx.clone();
-                        tokio::spawn(async move {
+                        peeps_tasks::spawn_tracked("roam_shm_connect_response_relay", async move {
                             if let Ok(response) = response_rx.recv().await {
                                 let _ = incoming_response_tx.send(response).await;
                             }
