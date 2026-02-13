@@ -31,7 +31,7 @@ pub async fn handle_websocket(
     let (outgoing_tx, mut outgoing_rx) = peeps_sync::channel::<ServerMessage>("ws_outgoing", 256);
 
     // Create session state
-    let session = Arc::new(tokio::sync::Mutex::new(WsSession::new(
+    let session = Arc::new(std::sync::Mutex::new(WsSession::new(
         services,
         outgoing_tx.clone(),
     )));
@@ -138,7 +138,7 @@ pub async fn handle_websocket(
 /// Handle a parsed client message.
 async fn handle_client_message(
     msg: ClientMessage,
-    session: Arc<tokio::sync::Mutex<WsSession>>,
+    session: Arc<std::sync::Mutex<WsSession>>,
 ) -> Result<(), BridgeError> {
     match msg {
         ClientMessage::Request {
@@ -160,7 +160,7 @@ async fn handle_client_message(
 ///
 /// r[bridge.ws.request]
 async fn handle_request(
-    session: Arc<tokio::sync::Mutex<WsSession>>,
+    session: Arc<std::sync::Mutex<WsSession>>,
     request_id: u64,
     service_name: String,
     method_name: String,
@@ -169,7 +169,7 @@ async fn handle_request(
 ) -> Result<(), BridgeError> {
     // Look up service and method
     let lookup_result = {
-        let session_guard = session.lock().await;
+        let session_guard = session.lock().unwrap();
         let outgoing_tx = session_guard.outgoing_tx().clone();
         match session_guard.get_service(&service_name) {
             Ok(service) => {
@@ -200,7 +200,7 @@ async fn handle_request(
 
     // Register the call
     {
-        let mut session_guard = session.lock().await;
+        let mut session_guard = session.lock().unwrap();
         session_guard.register_call(request_id, service_name.clone(), method_name.clone());
     }
 
@@ -224,7 +224,7 @@ async fn handle_request(
 
             // Complete the call
             {
-                let mut session_guard = session_clone.lock().await;
+                let mut session_guard = session_clone.lock().unwrap();
                 session_guard.complete_call(request_id);
 
                 if let Err(e) = result {
@@ -248,7 +248,7 @@ async fn handle_request(
 
             // Complete the call and send response
             {
-                let mut session_guard = session_clone.lock().await;
+                let mut session_guard = session_clone.lock().unwrap();
                 session_guard.complete_call(request_id);
 
                 if let Err(e) = result {
@@ -263,7 +263,7 @@ async fn handle_request(
 
 /// Handle a simple (non-streaming) RPC call.
 async fn handle_simple_call(
-    session: Arc<tokio::sync::Mutex<WsSession>>,
+    session: Arc<std::sync::Mutex<WsSession>>,
     request_id: u64,
     service: Arc<dyn BridgeService>,
     method: &MethodDetail,
@@ -282,7 +282,7 @@ async fn handle_simple_call(
         .await;
 
     let outgoing_tx = {
-        let session_guard = session.lock().await;
+        let session_guard = session.lock().unwrap();
         session_guard.outgoing_tx().clone()
     };
 
@@ -300,7 +300,7 @@ async fn handle_simple_call(
 /// State needed to run a streaming call after setup.
 struct StreamingCallState {
     #[allow(dead_code)]
-    session: Arc<tokio::sync::Mutex<WsSession>>,
+    session: Arc<std::sync::Mutex<WsSession>>,
     request_id: u64,
     ws_to_roam_rx_map: HashMap<u64, (u64, &'static Shape)>,
     roam_to_ws_tx_map: HashMap<u64, (u64, &'static Shape)>,
@@ -318,7 +318,7 @@ struct StreamingCallState {
 ///
 /// r[bridge.ws.streaming]
 async fn setup_streaming_call(
-    session: Arc<tokio::sync::Mutex<WsSession>>,
+    session: Arc<std::sync::Mutex<WsSession>>,
     request_id: u64,
     service: Arc<dyn BridgeService>,
     method: &MethodDetail,
@@ -404,7 +404,7 @@ async fn setup_streaming_call(
     // Register WebSocket channels in the session BEFORE sending the call
     // This is critical - channels must be registered before any data messages arrive
     {
-        let mut session_guard = session.lock().await;
+        let mut session_guard = session.lock().unwrap();
 
         // Store driver_tx for handle_data to use
         session_guard.set_driver_tx(driver_tx.clone());
@@ -467,7 +467,7 @@ async fn setup_streaming_call(
 
 /// Run a streaming call after setup.
 async fn run_streaming_call(
-    session: Arc<tokio::sync::Mutex<WsSession>>,
+    session: Arc<std::sync::Mutex<WsSession>>,
     state: StreamingCallState,
 ) -> Result<(), BridgeError> {
     let StreamingCallState {
@@ -482,7 +482,7 @@ async fn run_streaming_call(
     } = state;
 
     let outgoing_tx = {
-        let session_guard = session.lock().await;
+        let session_guard = session.lock().unwrap();
         session_guard.outgoing_tx().clone()
     };
 
@@ -528,7 +528,7 @@ async fn run_streaming_call(
 
     // Clean up channels in session
     {
-        let mut session_guard = session.lock().await;
+        let mut session_guard = session.lock().unwrap();
         for &ws_channel_id in ws_to_roam_rx_map.keys() {
             session_guard.remove_channel(ws_channel_id);
         }
@@ -621,7 +621,7 @@ async fn run_streaming_call(
 ///
 /// r[bridge.ws.data]
 async fn handle_data(
-    session: Arc<tokio::sync::Mutex<WsSession>>,
+    session: Arc<std::sync::Mutex<WsSession>>,
     channel_id: u64,
     value: serde_json::Value,
 ) -> Result<(), BridgeError> {
@@ -629,7 +629,7 @@ async fn handle_data(
 
     trace!("handle_data: channel={}, value={}", channel_id, value);
 
-    let session_guard = session.lock().await;
+    let session_guard = session.lock().unwrap();
 
     let channel = session_guard.get_channel(channel_id);
     trace!(
@@ -689,12 +689,12 @@ async fn handle_data(
 ///
 /// r[bridge.ws.close]
 async fn handle_close(
-    session: Arc<tokio::sync::Mutex<WsSession>>,
+    session: Arc<std::sync::Mutex<WsSession>>,
     channel_id: u64,
 ) -> Result<(), BridgeError> {
     use roam_session::DriverMessage;
 
-    let mut session_guard = session.lock().await;
+    let mut session_guard = session.lock().unwrap();
 
     let channel = session_guard.get_channel(channel_id);
 
@@ -734,10 +734,10 @@ async fn handle_close(
 ///
 /// r[bridge.ws.reset]
 async fn handle_reset(
-    session: Arc<tokio::sync::Mutex<WsSession>>,
+    session: Arc<std::sync::Mutex<WsSession>>,
     channel_id: u64,
 ) -> Result<(), BridgeError> {
-    let mut session_guard = session.lock().await;
+    let mut session_guard = session.lock().unwrap();
 
     // Just remove the channel - reset is forceful
     session_guard.remove_channel(channel_id);
@@ -749,11 +749,11 @@ async fn handle_reset(
 ///
 /// r[bridge.ws.credit]
 async fn handle_credit(
-    session: Arc<tokio::sync::Mutex<WsSession>>,
+    session: Arc<std::sync::Mutex<WsSession>>,
     channel_id: u64,
     bytes: u64,
 ) -> Result<(), BridgeError> {
-    let mut session_guard = session.lock().await;
+    let mut session_guard = session.lock().unwrap();
     session_guard.add_credit(channel_id, bytes);
     Ok(())
 }
@@ -762,10 +762,10 @@ async fn handle_credit(
 ///
 /// r[bridge.ws.cancel]
 async fn handle_cancel(
-    session: Arc<tokio::sync::Mutex<WsSession>>,
+    session: Arc<std::sync::Mutex<WsSession>>,
     request_id: u64,
 ) -> Result<(), BridgeError> {
-    let mut session_guard = session.lock().await;
+    let mut session_guard = session.lock().unwrap();
 
     if session_guard.cancel_call(request_id) {
         // TODO: Actually propagate cancellation to the roam call
