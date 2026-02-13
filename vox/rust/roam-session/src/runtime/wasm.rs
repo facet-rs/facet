@@ -162,7 +162,7 @@ impl AbortHandle {
 ///
 /// On WASM, futures don't need to be `Send` since everything is single-threaded.
 /// This is fire-and-forget; there's no JoinHandle.
-pub fn spawn<F>(future: F)
+pub fn spawn<F>(_name: &'static str, future: F)
 where
     F: Future<Output = ()> + 'static,
 {
@@ -173,7 +173,7 @@ where
 ///
 /// On WASM, the abort handle is a no-op since tasks can't be cancelled.
 /// The task will still run to completion.
-pub fn spawn_with_abort<F>(future: F) -> AbortHandle
+pub fn spawn_with_abort<F>(_name: &'static str, future: F) -> AbortHandle
 where
     F: Future<Output = ()> + 'static,
 {

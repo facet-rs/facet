@@ -350,7 +350,7 @@ impl ConnectionHandle {
             // Spawn a task for each drain to forward data to driver
             for (channel_id, mut rx) in drains {
                 let task_tx = task_tx.clone();
-                crate::runtime::spawn(async move {
+                crate::runtime::spawn("roam_tx_drain", async move {
                     loop {
                         match rx.recv().await {
                             Some(IncomingChannelMessage::Data(payload)) => {
@@ -558,7 +558,7 @@ impl ConnectionHandle {
                 // Spawn a task for each drain to forward data to driver
                 for (channel_id, mut rx) in drains {
                     let task_tx = task_tx.clone();
-                    crate::runtime::spawn(async move {
+                    crate::runtime::spawn("roam_tx_drain", async move {
                         loop {
                             match rx.recv().await {
                                 Some(IncomingChannelMessage::Data(payload)) => {

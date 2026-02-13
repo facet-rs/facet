@@ -363,7 +363,7 @@ impl<T: 'static> Drop for Tx<T> {
                     "failed to queue DriverMessage::Close with try_send, falling back to async send"
                 );
                 // Channel full or closed - spawn as fallback (see warning above)
-                crate::runtime::spawn(async move {
+                crate::runtime::spawn("roam_channel_close_drop_fallback", async move {
                     if task_tx
                         .send(DriverMessage::Close {
                             conn_id,

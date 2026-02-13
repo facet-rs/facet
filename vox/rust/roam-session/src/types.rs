@@ -360,7 +360,7 @@ impl ChannelRegistry {
             match tx.try_send(IncomingChannelMessage::Close) {
                 Ok(()) => {}
                 Err(_e) => {
-                    crate::runtime::spawn(async move {
+                    crate::runtime::spawn("roam_channel_close_fallback", async move {
                         let _ = tx.send(IncomingChannelMessage::Close).await;
                     });
                 }

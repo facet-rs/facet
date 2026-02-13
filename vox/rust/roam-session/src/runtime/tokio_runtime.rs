@@ -54,12 +54,12 @@ impl AbortHandle {
 ///
 /// On native, this returns a JoinHandle. On WASM, spawning is fire-and-forget.
 #[track_caller]
-pub fn spawn<F>(future: F) -> tokio::task::JoinHandle<F::Output>
+pub fn spawn<F>(name: &'static str, future: F) -> tokio::task::JoinHandle<F::Output>
 where
     F: Future + Send + 'static,
     F::Output: Send + 'static,
 {
-    peeps_tasks::spawn_tracked("roam_session_spawn", future)
+    peeps_tasks::spawn_tracked(name, future)
 }
 
 /// Spawn a task and return an abort handle that can be used to cancel it.
@@ -67,11 +67,11 @@ where
 /// On native, this uses tokio's abort mechanism. On WASM, the abort handle
 /// is a no-op since tasks can't be cancelled.
 #[track_caller]
-pub fn spawn_with_abort<F>(future: F) -> AbortHandle
+pub fn spawn_with_abort<F>(name: &'static str, future: F) -> AbortHandle
 where
     F: Future<Output = ()> + Send + 'static,
 {
-    let handle = peeps_tasks::spawn_tracked("roam_session_spawn_abort", future);
+    let handle = peeps_tasks::spawn_tracked(name, future);
     AbortHandle(handle.abort_handle())
 }
 

@@ -122,7 +122,7 @@ impl ServiceDispatcher for ForwardingDispatcher {
                         upstream.register_incoming(upstream_id, tx);
 
                         let task_tx_clone = task_tx.clone();
-                        crate::runtime::spawn(async move {
+                        crate::runtime::spawn("roam_fwd_response_relay", async move {
                             debug!(
                                 upstream_id,
                                 downstream_id, "ForwardingDispatcher: forwarding task started"
@@ -216,7 +216,7 @@ impl ServiceDispatcher for ForwardingDispatcher {
                 for (i, mut rx) in ds_to_us_rxs.into_iter().enumerate() {
                     let upstream_id = channel_map[i].1;
                     let upstream_task_tx = upstream_task_tx.clone();
-                    crate::runtime::spawn(async move {
+                    crate::runtime::spawn("roam_fwd_ds_to_us_relay", async move {
                         while let Some(msg) = rx.recv().await {
                             match msg {
                                 IncomingChannelMessage::Data(data) => {
@@ -245,7 +245,7 @@ impl ServiceDispatcher for ForwardingDispatcher {
                 for (i, mut rx) in us_to_ds_rxs.into_iter().enumerate() {
                     let downstream_id = channel_map[i].0;
                     let task_tx = task_tx.clone();
-                    crate::runtime::spawn(async move {
+                    crate::runtime::spawn("roam_fwd_us_to_ds_relay", async move {
                         while let Some(msg) = rx.recv().await {
                             match msg {
                                 IncomingChannelMessage::Data(data) => {

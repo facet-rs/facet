@@ -443,7 +443,7 @@ where
         // Any Connect requests from the server will be automatically rejected.
 
         // Spawn driver using runtime abstraction (works on native and WASM)
-        spawn(async move {
+        spawn("roam_framed_client_driver", async move {
             let _ = driver.run().await;
         });
 
@@ -1268,7 +1268,7 @@ where
                     if tx.try_send(incoming).is_ok() {
                         // Spawn a task to forward the response
                         let incoming_response_tx = self.incoming_response_tx.clone();
-                        spawn(async move {
+                        spawn("roam_connect_response_relay", async move {
                             if let Ok(response) = response_rx.recv().await {
                                 let _ = incoming_response_tx.send(response).await;
                             }
@@ -1503,7 +1503,7 @@ where
         let handler_fut = dispatcher.dispatch(cx, payload, &mut conn.server_channel_registry);
 
         // r[impl call.cancel.best-effort] - Store abort handle for cancellation support
-        let abort_handle = spawn_with_abort(async move {
+        let abort_handle = spawn_with_abort("roam_request_handler", async move {
             handler_fut.await;
         });
         conn.in_flight_server_requests
@@ -1969,7 +1969,7 @@ where
     #[cfg(not(target_arch = "wasm32"))]
     {
         let watchdog_tx = driver.driver_tx.clone();
-        spawn(async move {
+        spawn("roam_response_sweep_watchdog", async move {
             loop {
                 sleep(PENDING_RESPONSE_SWEEP_INTERVAL).await;
                 if watchdog_tx
@@ -2360,7 +2360,7 @@ mod tests {
             .connections
             .get_mut(&ConnectionId::ROOT)
             .expect("root connection exists");
-        let never_finishes = crate::runtime::spawn_with_abort(async {
+        let never_finishes = crate::runtime::spawn_with_abort("roam_test_pending", async {
             std::future::pending::<()>().await;
         });
         root.in_flight_server_requests.insert(1, never_finishes);
