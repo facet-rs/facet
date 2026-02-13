@@ -44,7 +44,7 @@ pub fn snapshot_all_shm() -> ShmSnapshot {
 
 fn snapshot_segments() -> Vec<ShmSegmentSnapshot> {
     let views: Vec<Arc<diagnostic::ShmDiagnosticView>> = {
-        let Ok(registry) = SHM_DIAGNOSTIC_REGISTRY.try_read() else {
+        let Ok(registry) = SHM_DIAGNOSTIC_REGISTRY.try_lock() else {
             return Vec::new();
         };
         registry.iter().filter_map(|weak| weak.upgrade()).collect()

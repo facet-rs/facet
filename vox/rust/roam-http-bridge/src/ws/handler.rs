@@ -629,41 +629,43 @@ async fn handle_data(
 
     trace!("handle_data: channel={}, value={}", channel_id, value);
 
-    let session_guard = session.lock().unwrap();
+    // Extract everything we need under the lock, then drop it before any await
+    let (roam_channel_id, element_shape, driver_tx) = {
+        let session_guard = session.lock().unwrap();
 
-    let channel = session_guard.get_channel(channel_id);
-    trace!(
-        "handle_data: channel state = {:?}",
-        channel.map(|c| c.direction)
-    );
+        let channel = session_guard.get_channel(channel_id);
+        trace!(
+            "handle_data: channel state = {:?}",
+            channel.map(|c| c.direction)
+        );
 
-    let channel = channel
-        .ok_or_else(|| BridgeError::bad_request(format!("Unknown channel: {}", channel_id)))?;
+        let channel = channel
+            .ok_or_else(|| BridgeError::bad_request(format!("Unknown channel: {}", channel_id)))?;
 
-    // Verify direction (only client->server channels accept data from client)
-    if channel.direction != ChannelDirection::ClientToServer {
-        return Err(BridgeError::bad_request(format!(
-            "Channel {} is not a client-to-server channel",
-            channel_id
-        )));
-    }
+        // Verify direction (only client->server channels accept data from client)
+        if channel.direction != ChannelDirection::ClientToServer {
+            return Err(BridgeError::bad_request(format!(
+                "Channel {} is not a client-to-server channel",
+                channel_id
+            )));
+        }
 
-    // Get the roam channel ID
-    let roam_channel_id = channel.roam_channel_id.ok_or_else(|| {
-        BridgeError::internal(format!("No roam channel ID for channel {}", channel_id))
-    })?;
+        // Get the roam channel ID
+        let roam_channel_id = channel.roam_channel_id.ok_or_else(|| {
+            BridgeError::internal(format!("No roam channel ID for channel {}", channel_id))
+        })?;
 
-    // Get the element shape for transcoding
-    let element_shape = channel.element_shape;
+        // Get the element shape for transcoding
+        let element_shape = channel.element_shape;
 
-    // Get the driver_tx for sending to roam
-    let driver_tx = session_guard
-        .driver_tx()
-        .cloned()
-        .ok_or_else(|| BridgeError::internal("No driver_tx available"))?;
+        // Get the driver_tx for sending to roam
+        let driver_tx = session_guard
+            .driver_tx()
+            .cloned()
+            .ok_or_else(|| BridgeError::internal("No driver_tx available"))?;
 
-    // Drop the session guard before async operations
-    drop(session_guard);
+        (roam_channel_id, element_shape, driver_tx)
+    };
 
     // Convert JSON value to postcard using the element shape
     // Wrap value in an array for transcode (it expects array of args)
