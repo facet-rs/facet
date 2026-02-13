@@ -12,7 +12,7 @@
 //! | `tokio::sync::oneshot` | `futures_channel::oneshot` |
 //! | `tokio::time::timeout` | Manual with gloo-timers  |
 //! | `tokio::time::sleep` | `gloo_timers::future::sleep` |
-//! | `std::sync::Mutex`   | `std::sync::Mutex`           |
+//! | `peeps_locks::DiagnosticMutex` | `Mutex` (std wrapper) |
 //!
 //! # Usage
 //!

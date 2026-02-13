@@ -62,7 +62,7 @@ pub(crate) struct HandleShared {
     pub(crate) channel_ids: ChannelIdAllocator,
     /// Channel registry for routing incoming data.
     /// Protected by a mutex since handles may create channels concurrently.
-    pub(crate) channel_registry: std::sync::Mutex<ChannelRegistry>,
+    pub(crate) channel_registry: crate::runtime::Mutex<ChannelRegistry>,
     /// Optional diagnostic state for SIGUSR1 dumps.
     pub(crate) diagnostic_state: Option<Arc<crate::diagnostic::DiagnosticState>>,
     /// Optional request concurrency limiter.
@@ -149,7 +149,10 @@ impl ConnectionHandle {
                 driver_tx,
                 request_ids: RequestIdGenerator::new(),
                 channel_ids: ChannelIdAllocator::new(role),
-                channel_registry: std::sync::Mutex::new(channel_registry),
+                channel_registry: crate::runtime::Mutex::new(
+                    "ConnectionHandle.channel_registry",
+                    channel_registry,
+                ),
                 diagnostic_state,
                 #[cfg(not(target_arch = "wasm32"))]
                 request_semaphore,
@@ -341,7 +344,7 @@ impl ConnectionHandle {
                 return Err(TransportError::DriverGone);
             }
 
-            let task_tx = self.shared.channel_registry.lock().unwrap().driver_tx();
+            let task_tx = self.shared.channel_registry.lock().driver_tx();
             let conn_id = self.shared.conn_id;
 
             // Spawn a task for each drain to forward data to driver
@@ -549,7 +552,7 @@ impl ConnectionHandle {
                     return Err(TransportError::DriverGone);
                 }
 
-                let task_tx = self.shared.channel_registry.lock().unwrap().driver_tx();
+                let task_tx = self.shared.channel_registry.lock().driver_tx();
                 let conn_id = self.shared.conn_id;
 
                 // Spawn a task for each drain to forward data to driver
@@ -897,7 +900,6 @@ impl ConnectionHandle {
         self.shared
             .channel_registry
             .lock()
-            .unwrap()
             .register_incoming(channel_id, tx);
     }
 
@@ -912,7 +914,6 @@ impl ConnectionHandle {
         self.shared
             .channel_registry
             .lock()
-            .unwrap()
             .register_outgoing_credit(channel_id);
     }
 
@@ -927,7 +928,6 @@ impl ConnectionHandle {
             .shared
             .channel_registry
             .lock()
-            .unwrap()
             .prepare_route_data(channel_id, payload)?;
         // Send without holding the lock
         let _ = tx.send(IncomingChannelMessage::Data(payload)).await;
@@ -940,11 +940,7 @@ impl ConnectionHandle {
         if let Some(diag) = &self.shared.diagnostic_state {
             diag.record_channel_close(channel_id);
         }
-        self.shared
-            .channel_registry
-            .lock()
-            .unwrap()
-            .close(channel_id);
+        self.shared.channel_registry.lock().close(channel_id);
     }
 
     /// Reset a channel.
@@ -953,20 +949,12 @@ impl ConnectionHandle {
         if let Some(diag) = &self.shared.diagnostic_state {
             diag.record_channel_close(channel_id);
         }
-        self.shared
-            .channel_registry
-            .lock()
-            .unwrap()
-            .reset(channel_id);
+        self.shared.channel_registry.lock().reset(channel_id);
     }
 
     /// Check if a channel exists.
     pub fn contains_channel(&self, channel_id: ChannelId) -> bool {
-        self.shared
-            .channel_registry
-            .lock()
-            .unwrap()
-            .contains(channel_id)
+        self.shared.channel_registry.lock().contains(channel_id)
     }
 
     /// Receive credit for an outgoing channel.
@@ -974,7 +962,6 @@ impl ConnectionHandle {
         self.shared
             .channel_registry
             .lock()
-            .unwrap()
             .receive_credit(channel_id, bytes);
     }
 
@@ -983,7 +970,7 @@ impl ConnectionHandle {
     /// Used for forwarding/proxy scenarios where messages need to be sent
     /// on this connection's wire.
     pub fn driver_tx(&self) -> Sender<DriverMessage> {
-        self.shared.channel_registry.lock().unwrap().driver_tx()
+        self.shared.channel_registry.lock().driver_tx()
     }
 
     /// Bind receivers for `Rx<T>` channels in a deserialized response.

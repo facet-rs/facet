@@ -26,8 +26,21 @@ impl<T> OneshotReceiver<T> {
     }
 }
 
-// Use std Mutex (async mutexes are banned — cause deadlocks)
-pub use std::sync::Mutex;
+// Wrapper around std::sync::Mutex that accepts a name for API compatibility
+// with DiagnosticMutex on native. The name is ignored on wasm.
+pub struct Mutex<T>(std::sync::Mutex<T>);
+
+impl<T> Mutex<T> {
+    #[inline]
+    pub fn new(_name: &'static str, value: T) -> Self {
+        Self(std::sync::Mutex::new(value))
+    }
+
+    #[inline]
+    pub fn lock(&self) -> std::sync::MutexGuard<'_, T> {
+        self.0.lock().unwrap()
+    }
+}
 
 /// Wrapper around async-channel Sender to match tokio's API.
 pub struct Sender<T>(async_channel::Sender<T>);

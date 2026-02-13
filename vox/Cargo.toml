@@ -30,7 +30,8 @@ members = [
   # Peer server for TypeScript browser tests
   "typescript/peer-server",
   # Wasm browser tests
-  "rust/wasm-browser-tests", "rust/roam-miri-test",
+  "rust/wasm-browser-tests",
+  "rust/roam-miri-test",
 ]
 exclude = ["fuzz"]
 
@@ -61,6 +62,7 @@ roam-task-local = { path = "rust/roam-task-local", version = "3.0.0" }
 peeps-tasks = { version = "0.1.0", git = "https://github.com/bearcove/peeps", branch = "main" }
 peeps-types = { version = "0.1.0", git = "https://github.com/bearcove/peeps", branch = "main" }
 peeps-sync = { version = "0.1.0", git = "https://github.com/bearcove/peeps", branch = "main" }
+peeps-locks = { version = "0.1.0", git = "https://github.com/bearcove/peeps", branch = "main" }
 
 # # Uncomment to develop peeps
 # peeps = { path = "../peeps/crates/peeps" }
