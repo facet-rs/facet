@@ -406,17 +406,20 @@ where
     }
 
     async fn ensure_connected(&self) -> Result<ConnectionHandle, ConnectError> {
-        let mut state = self.state.lock().await;
-
-        if let Some(ref conn) = *state {
-            // Note: On WASM we can't detect dead connections via JoinHandle.
-            // The connection will fail on next use if dead.
-            return Ok(conn.handle.clone());
+        // Check under lock (don't hold across await)
+        {
+            let state = self.state.lock().unwrap();
+            if let Some(ref conn) = *state {
+                // Note: On WASM we can't detect dead connections via JoinHandle.
+                // The connection will fail on next use if dead.
+                return Ok(conn.handle.clone());
+            }
         }
 
+        // Not connected — connect without holding lock
         let conn = self.connect_internal().await?;
         let handle = conn.handle.clone();
-        *state = Some(conn);
+        *self.state.lock().unwrap() = Some(conn);
         Ok(handle)
     }
 
@@ -482,7 +485,7 @@ where
                 }
                 Err(TransportError::ConnectionClosed) | Err(TransportError::DriverGone) => {
                     {
-                        let mut state = self.state.lock().await;
+                        let mut state = self.state.lock().unwrap();
                         *state = None;
                     }
 
@@ -555,7 +558,7 @@ where
                 }
                 Err(TransportError::ConnectionClosed) | Err(TransportError::DriverGone) => {
                     {
-                        let mut state = self.state.lock().await;
+                        let mut state = self.state.lock().unwrap();
                         *state = None;
                     }
 
@@ -639,7 +642,7 @@ where
                     }
                     Err(TransportError::ConnectionClosed) | Err(TransportError::DriverGone) => {
                         {
-                            let mut state = this.state.lock().await;
+                            let mut state = this.state.lock().unwrap();
                             *state = None;
                         }
 
@@ -709,7 +712,7 @@ where
                     }
                     Err(TransportError::ConnectionClosed) | Err(TransportError::DriverGone) => {
                         {
-                            let mut state = this.state.lock().await;
+                            let mut state = this.state.lock().unwrap();
                             *state = None;
                         }
 

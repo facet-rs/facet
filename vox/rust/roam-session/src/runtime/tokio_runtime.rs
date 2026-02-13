@@ -3,8 +3,8 @@
 use std::future::Future;
 use std::time::Duration;
 
-// Re-export tokio Mutex (not wrapped by peeps-sync)
-pub use tokio::sync::Mutex;
+// Re-export std Mutex (tokio::sync::Mutex is banned — causes deadlocks)
+pub use std::sync::Mutex;
 
 // Re-export peeps-sync channel types
 pub use peeps_sync::{

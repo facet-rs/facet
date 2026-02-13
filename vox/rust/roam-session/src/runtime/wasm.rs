@@ -26,8 +26,8 @@ impl<T> OneshotReceiver<T> {
     }
 }
 
-// Async mutex
-pub use futures_util::lock::Mutex;
+// Use std Mutex (async mutexes are banned — cause deadlocks)
+pub use std::sync::Mutex;
 
 /// Wrapper around async-channel Sender to match tokio's API.
 pub struct Sender<T>(async_channel::Sender<T>);
