@@ -8,11 +8,10 @@
 use std::future::Future;
 use std::io;
 use std::sync::Arc;
-use std::sync::RwLock;
+use std::sync::Mutex;
 
 use facet::Facet;
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
 use crate::framing::LengthPrefixedFramed;
@@ -88,7 +87,7 @@ where
         dispatcher,
         retry_policy: RetryPolicy::default(),
         state: Arc::new(Mutex::new(None)),
-        current_handle: Arc::new(RwLock::new(None)),
+        current_handle: Arc::new(Mutex::new(None)),
     }
 }
 
@@ -109,7 +108,7 @@ where
         dispatcher,
         retry_policy,
         state: Arc::new(Mutex::new(None)),
-        current_handle: Arc::new(RwLock::new(None)),
+        current_handle: Arc::new(Mutex::new(None)),
     }
 }
 
@@ -138,7 +137,7 @@ pub struct Client<C: Connector, D> {
     dispatcher: D,
     retry_policy: RetryPolicy,
     state: Arc<Mutex<Option<ClientState<C::Transport>>>>,
-    current_handle: Arc<RwLock<Option<ConnectionHandle>>>,
+    current_handle: Arc<Mutex<Option<ConnectionHandle>>>,
 }
 
 impl<C, D> Clone for Client<C, D>
@@ -169,32 +168,25 @@ where
     }
 
     async fn ensure_connected(&self) -> Result<ConnectionHandle, ConnectError> {
-        let mut state = self.state.lock().await;
-
-        if let Some(ref conn) = *state {
-            if conn.is_alive() {
-                let handle = conn.handle.clone();
-                *self
-                    .current_handle
-                    .write()
-                    .expect("reconnecting client handle cache lock poisoned") =
-                    Some(handle.clone());
-                return Ok(handle);
+        // Check under lock (don't hold across await)
+        {
+            let mut state = self.state.lock().unwrap();
+            if let Some(ref conn) = *state {
+                if conn.is_alive() {
+                    let handle = conn.handle.clone();
+                    *self.current_handle.lock().unwrap() = Some(handle.clone());
+                    return Ok(handle);
+                }
+                *state = None;
+                *self.current_handle.lock().unwrap() = None;
             }
-            *state = None;
-            *self
-                .current_handle
-                .write()
-                .expect("reconnecting client handle cache lock poisoned") = None;
         }
 
+        // Not connected — connect without holding lock
         let conn = self.connect_internal().await?;
         let handle = conn.handle.clone();
-        *state = Some(conn);
-        *self
-            .current_handle
-            .write()
-            .expect("reconnecting client handle cache lock poisoned") = Some(handle.clone());
+        *self.state.lock().unwrap() = Some(conn);
+        *self.current_handle.lock().unwrap() = Some(handle.clone());
         Ok(handle)
     }
 
@@ -215,9 +207,8 @@ where
         // Note: We drop `_incoming` - this client doesn't accept sub-connections.
         // Any Connect requests from the server will be automatically rejected.
 
-        let driver_handle = peeps_tasks::spawn_tracked("roam_stream_driver", async move {
-            driver.run().await
-        });
+        let driver_handle =
+            peeps_tasks::spawn_tracked("roam_stream_driver", async move { driver.run().await });
 
         Ok(ClientState {
             handle,
@@ -261,12 +252,12 @@ where
                 }
                 Err(TransportError::ConnectionClosed) | Err(TransportError::DriverGone) => {
                     {
-                        let mut state = self.state.lock().await;
+                        let mut state = self.state.lock().unwrap();
                         *state = None;
                     }
                     *self
                         .current_handle
-                        .write()
+                        .lock()
                         .expect("reconnecting client handle cache lock poisoned") = None;
 
                     attempt += 1;
@@ -338,12 +329,12 @@ where
                 }
                 Err(TransportError::ConnectionClosed) | Err(TransportError::DriverGone) => {
                     {
-                        let mut state = self.state.lock().await;
+                        let mut state = self.state.lock().unwrap();
                         *state = None;
                     }
                     *self
                         .current_handle
-                        .write()
+                        .lock()
                         .expect("reconnecting client handle cache lock poisoned") = None;
 
                     attempt += 1;
@@ -366,7 +357,7 @@ where
     ) {
         let handle = self
             .current_handle
-            .read()
+            .lock()
             .expect("reconnecting client handle cache lock poisoned")
             .as_ref()
             .cloned();
@@ -431,12 +422,12 @@ where
                     }
                     Err(TransportError::ConnectionClosed) | Err(TransportError::DriverGone) => {
                         {
-                            let mut state = this.state.lock().await;
+                            let mut state = this.state.lock().unwrap();
                             *state = None;
                         }
                         *this
                             .current_handle
-                            .write()
+                            .lock()
                             .expect("reconnecting client handle cache lock poisoned") = None;
 
                         attempt += 1;
@@ -461,7 +452,7 @@ where
     ) {
         let handle = self
             .current_handle
-            .read()
+            .lock()
             .expect("reconnecting client handle cache lock poisoned")
             .as_ref()
             .cloned();

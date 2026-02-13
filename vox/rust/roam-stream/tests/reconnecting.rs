@@ -23,8 +23,8 @@ use roam_session::{
 use roam_stream::{
     ConnectError, Connector, HandshakeConfig, RetryPolicy, accept, connect, connect_with_policy,
 };
+use std::sync::Mutex;
 use tokio::net::TcpStream;
-use tokio::sync::Mutex;
 
 // ============================================================================
 // RPC Plans
@@ -322,7 +322,7 @@ impl Connector for FailingConnector {
 
     async fn connect(&self) -> io::Result<Self::Transport> {
         self.attempt_count.fetch_add(1, Ordering::SeqCst);
-        let mut failures = self.failures_remaining.lock().await;
+        let mut failures = self.failures_remaining.lock().unwrap();
         if *failures > 0 {
             *failures -= 1;
             return Err(io::Error::new(
