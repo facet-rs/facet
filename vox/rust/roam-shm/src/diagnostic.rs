@@ -6,7 +6,7 @@
 use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, LazyLock, RwLock, Weak};
+use std::sync::{Arc, LazyLock, Mutex, Weak};
 
 use shm_primitives::Region;
 
@@ -16,12 +16,12 @@ use crate::peer::{PeerId, PeerState};
 use crate::var_slot_pool::VarSlotPool;
 
 /// Global registry of SHM diagnostic views (host segments).
-pub(crate) static SHM_DIAGNOSTIC_REGISTRY: LazyLock<RwLock<Vec<Weak<ShmDiagnosticView>>>> =
-    LazyLock::new(|| RwLock::new(Vec::new()));
+pub(crate) static SHM_DIAGNOSTIC_REGISTRY: LazyLock<Mutex<Vec<Weak<ShmDiagnosticView>>>> =
+    LazyLock::new(|| Mutex::new(Vec::new()));
 
 /// Register an SHM diagnostic view for global dumps.
 pub fn register_shm_diagnostic_view(view: &Arc<ShmDiagnosticView>) {
-    if let Ok(mut registry) = SHM_DIAGNOSTIC_REGISTRY.write() {
+    if let Ok(mut registry) = SHM_DIAGNOSTIC_REGISTRY.lock() {
         registry.retain(|weak| weak.strong_count() > 0);
         registry.push(Arc::downgrade(view));
     }
@@ -30,7 +30,7 @@ pub fn register_shm_diagnostic_view(view: &Arc<ShmDiagnosticView>) {
 /// Dump all registered SHM segments to a string.
 pub fn dump_all_shm_diagnostics() -> String {
     let views: Vec<Arc<ShmDiagnosticView>> = {
-        let Ok(registry) = SHM_DIAGNOSTIC_REGISTRY.try_read() else {
+        let Ok(registry) = SHM_DIAGNOSTIC_REGISTRY.try_lock() else {
             return "ERROR: Could not acquire SHM diagnostic registry lock\n".to_string();
         };
         registry.iter().filter_map(|weak| weak.upgrade()).collect()

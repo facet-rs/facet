@@ -2,7 +2,7 @@
 //!
 //! Implements `HostTracing` service to receive tracing records from cells.
 
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex};
 
 use crate::record::TracingRecord;
 use crate::service::{HostTracing, TracingConfig};
@@ -31,7 +31,7 @@ pub struct HostTracingState {
     /// Receiver end (taken by consumer).
     record_rx: std::sync::Mutex<Option<peeps_sync::Receiver<TaggedRecord>>>,
     /// Current tracing configuration (shared across all cells).
-    config: RwLock<TracingConfig>,
+    config: Mutex<TracingConfig>,
 }
 
 impl HostTracingState {
@@ -44,7 +44,7 @@ impl HostTracingState {
         Arc::new(Self {
             record_tx,
             record_rx: std::sync::Mutex::new(Some(record_rx)),
-            config: RwLock::new(TracingConfig::default()),
+            config: Mutex::new(TracingConfig::default()),
         })
     }
 
@@ -62,12 +62,12 @@ impl HostTracingState {
     /// Existing cells won't see this until you call `CellTracingClient::configure()`
     /// on their handles.
     pub fn set_config(&self, config: TracingConfig) {
-        *self.config.write().unwrap() = config;
+        *self.config.lock().unwrap() = config;
     }
 
     /// Get the current tracing configuration.
     pub fn config(&self) -> TracingConfig {
-        self.config.read().unwrap().clone()
+        self.config.lock().unwrap().clone()
     }
 
     /// Create a service instance for a specific peer.

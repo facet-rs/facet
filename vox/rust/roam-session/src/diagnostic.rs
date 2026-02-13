@@ -6,7 +6,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Write as _;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, LazyLock, RwLock, Weak};
+use std::sync::{Arc, LazyLock, Mutex, Weak};
 use std::time::Instant;
 
 /// A callback that appends diagnostic info to a string.
@@ -14,12 +14,12 @@ pub type DiagnosticCallback = Box<dyn Fn(&mut String) + Send + Sync>;
 
 /// Global registry of all diagnostic states.
 /// Each connection/driver registers its state here.
-static DIAGNOSTIC_REGISTRY: LazyLock<RwLock<Vec<Weak<DiagnosticState>>>> =
-    LazyLock::new(|| RwLock::new(Vec::new()));
+static DIAGNOSTIC_REGISTRY: LazyLock<Mutex<Vec<Weak<DiagnosticState>>>> =
+    LazyLock::new(|| Mutex::new(Vec::new()));
 
 /// Method name registry - maps method_id to human-readable names.
-static METHOD_NAMES: LazyLock<RwLock<HashMap<u64, &'static str>>> =
-    LazyLock::new(|| RwLock::new(HashMap::new()));
+static METHOD_NAMES: LazyLock<Mutex<HashMap<u64, &'static str>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Whether to record extra debug info (checked once at startup).
 /// Set ROAM_DEBUG=1 to enable.
@@ -35,19 +35,19 @@ pub fn debug_enabled() -> bool {
 
 /// Register a method name for diagnostic display.
 pub fn register_method_name(method_id: u64, name: &'static str) {
-    if let Ok(mut names) = METHOD_NAMES.write() {
+    if let Ok(mut names) = METHOD_NAMES.lock() {
         names.insert(method_id, name);
     }
 }
 
 /// Look up a method name by ID.
 pub fn get_method_name(method_id: u64) -> Option<&'static str> {
-    METHOD_NAMES.read().ok()?.get(&method_id).copied()
+    METHOD_NAMES.lock().ok()?.get(&method_id).copied()
 }
 
 /// Register a diagnostic state for SIGUSR1 dumps.
 pub fn register_diagnostic_state(state: &Arc<DiagnosticState>) {
-    if let Ok(mut registry) = DIAGNOSTIC_REGISTRY.write() {
+    if let Ok(mut registry) = DIAGNOSTIC_REGISTRY.lock() {
         // Clean up dead entries while we're here
         registry.retain(|weak| weak.strong_count() > 0);
         registry.push(Arc::downgrade(state));
@@ -62,7 +62,7 @@ pub fn dump_all_diagnostics() -> String {
 
     let states: Vec<Arc<DiagnosticState>> = {
         // Use try_read to avoid deadlocking if called from signal handler
-        let Ok(registry) = DIAGNOSTIC_REGISTRY.try_read() else {
+        let Ok(registry) = DIAGNOSTIC_REGISTRY.try_lock() else {
             return "ERROR: Could not acquire diagnostic registry lock (held by another thread)\n"
                 .to_string();
         };
@@ -97,7 +97,7 @@ pub fn dump_all_diagnostics() -> String {
     }
 
     // Dump registered method names for reference
-    if let Ok(names) = METHOD_NAMES.try_read()
+    if let Ok(names) = METHOD_NAMES.try_lock()
         && !names.is_empty()
     {
         let _ = writeln!(output, "Registered methods:");
@@ -176,7 +176,7 @@ pub struct DiagnosticState {
     pub name: String,
 
     /// Peer's self-reported name (from Hello V6 metadata).
-    pub(crate) peer_name: RwLock<Option<String>>,
+    pub(crate) peer_name: Mutex<Option<String>>,
 
     /// Negotiated max concurrent requests.
     pub(crate) max_concurrent_requests: AtomicU32,
@@ -191,16 +191,16 @@ pub struct DiagnosticState {
     pub(crate) total_completed: AtomicU64,
 
     /// In-flight requests
-    pub(crate) requests: RwLock<HashMap<u64, InFlightRequest>>,
+    pub(crate) requests: Mutex<HashMap<u64, InFlightRequest>>,
 
     /// Recently completed requests (ring buffer, newest last)
-    pub(crate) recent_completions: RwLock<VecDeque<CompletedRequest>>,
+    pub(crate) recent_completions: Mutex<VecDeque<CompletedRequest>>,
 
     /// Open channels
-    pub(crate) channels: RwLock<HashMap<u64, OpenChannel>>,
+    pub(crate) channels: Mutex<HashMap<u64, OpenChannel>>,
 
     /// Custom diagnostic callbacks
-    pub(crate) custom_diagnostics: RwLock<Vec<DiagnosticCallback>>,
+    pub(crate) custom_diagnostics: Mutex<Vec<DiagnosticCallback>>,
 
     // ── Transport-level stats ────────────────────────────────
     /// Total frames sent on this connection.
@@ -223,7 +223,7 @@ pub struct DiagnosticState {
 
     /// Per-channel flow control credit snapshot (updated by the driver).
     /// Vec of (channel_id, incoming_credit, outgoing_credit).
-    pub(crate) channel_credits: RwLock<Vec<ChannelCreditInfo>>,
+    pub(crate) channel_credits: Mutex<Vec<ChannelCreditInfo>>,
 }
 
 /// Per-channel flow control credit info for diagnostics.
@@ -241,28 +241,28 @@ impl DiagnosticState {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
-            peer_name: RwLock::new(None),
+            peer_name: Mutex::new(None),
             max_concurrent_requests: AtomicU32::new(0),
             initial_credit: AtomicU32::new(0),
             created_at: Instant::now(),
             total_completed: AtomicU64::new(0),
-            requests: RwLock::new(HashMap::new()),
-            recent_completions: RwLock::new(VecDeque::with_capacity(MAX_RECENT_COMPLETIONS)),
-            channels: RwLock::new(HashMap::new()),
-            custom_diagnostics: RwLock::new(Vec::new()),
+            requests: Mutex::new(HashMap::new()),
+            recent_completions: Mutex::new(VecDeque::with_capacity(MAX_RECENT_COMPLETIONS)),
+            channels: Mutex::new(HashMap::new()),
+            custom_diagnostics: Mutex::new(Vec::new()),
             frames_sent: AtomicU64::new(0),
             frames_received: AtomicU64::new(0),
             bytes_sent: AtomicU64::new(0),
             bytes_received: AtomicU64::new(0),
             last_frame_sent_ms: AtomicU64::new(0),
             last_frame_received_ms: AtomicU64::new(0),
-            channel_credits: RwLock::new(Vec::new()),
+            channel_credits: Mutex::new(Vec::new()),
         }
     }
 
     /// Set the peer's name (from Hello V6 metadata).
     pub fn set_peer_name(&self, name: String) {
-        if let Ok(mut peer_name) = self.peer_name.write() {
+        if let Ok(mut peer_name) = self.peer_name.lock() {
             *peer_name = Some(name);
         }
     }
@@ -282,7 +282,7 @@ impl DiagnosticState {
         args: Option<HashMap<String, String>>,
     ) {
         let backtrace = Some(format_short_backtrace());
-        if let Ok(mut requests) = self.requests.write() {
+        if let Ok(mut requests) = self.requests.lock() {
             requests.insert(
                 request_id,
                 InFlightRequest {
@@ -304,7 +304,7 @@ impl DiagnosticState {
         method_id: u64,
         args: Option<HashMap<String, String>>,
     ) {
-        if let Ok(mut requests) = self.requests.write() {
+        if let Ok(mut requests) = self.requests.lock() {
             requests.insert(
                 request_id,
                 InFlightRequest {
@@ -321,7 +321,7 @@ impl DiagnosticState {
 
     /// Mark a request as completed and record it in the recent completions ring buffer.
     pub fn complete_request(&self, request_id: u64) {
-        let completed = if let Ok(mut requests) = self.requests.write() {
+        let completed = if let Ok(mut requests) = self.requests.lock() {
             requests.remove(&request_id)
         } else {
             None
@@ -330,7 +330,7 @@ impl DiagnosticState {
         if let Some(req) = completed {
             self.total_completed.fetch_add(1, Ordering::Relaxed);
             let duration = req.started.elapsed();
-            if let Ok(mut completions) = self.recent_completions.write() {
+            if let Ok(mut completions) = self.recent_completions.lock() {
                 if completions.len() >= MAX_RECENT_COMPLETIONS {
                     completions.pop_front();
                 }
@@ -351,7 +351,7 @@ impl DiagnosticState {
         direction: ChannelDirection,
         request_id: Option<u64>,
     ) {
-        if let Ok(mut channels) = self.channels.write() {
+        if let Ok(mut channels) = self.channels.lock() {
             channels.insert(
                 channel_id,
                 OpenChannel {
@@ -366,14 +366,14 @@ impl DiagnosticState {
 
     /// Record a channel being closed.
     pub fn record_channel_close(&self, channel_id: u64) {
-        if let Ok(mut channels) = self.channels.write() {
+        if let Ok(mut channels) = self.channels.lock() {
             channels.remove(&channel_id);
         }
     }
 
     /// Associate channels with a request (called after channels are opened but before request is sent).
     pub fn associate_channels_with_request(&self, channel_ids: &[u64], request_id: u64) {
-        if let Ok(mut channels) = self.channels.write() {
+        if let Ok(mut channels) = self.channels.lock() {
             for &channel_id in channel_ids {
                 if let Some(channel) = channels.get_mut(&channel_id) {
                     channel.request_id = Some(request_id);
@@ -387,7 +387,7 @@ impl DiagnosticState {
     where
         F: Fn(&mut String) + Send + Sync + 'static,
     {
-        if let Ok(mut diagnostics) = self.custom_diagnostics.write() {
+        if let Ok(mut diagnostics) = self.custom_diagnostics.lock() {
             diagnostics.push(Box::new(callback));
         }
     }
@@ -412,7 +412,7 @@ impl DiagnosticState {
 
     /// Update the per-channel credit snapshot.
     pub fn update_channel_credits(&self, credits: Vec<ChannelCreditInfo>) {
-        if let Ok(mut cc) = self.channel_credits.write() {
+        if let Ok(mut cc) = self.channel_credits.lock() {
             *cc = credits;
         }
     }
@@ -450,7 +450,7 @@ impl DiagnosticState {
         // Format header with optional peer name
         let peer_label = self
             .peer_name
-            .try_read()
+            .try_lock()
             .ok()
             .and_then(|g| g.as_ref().map(|n| format!(" {:?}", n)));
         let _ = writeln!(
@@ -495,7 +495,7 @@ impl DiagnosticState {
         }
 
         // ── Channel credits ──────────────────────────────────────
-        if let Ok(credits) = self.channel_credits.try_read()
+        if let Ok(credits) = self.channel_credits.try_lock()
             && !credits.is_empty()
         {
             let _ = writeln!(output, "  Channel credits ({}):", credits.len());
@@ -509,7 +509,7 @@ impl DiagnosticState {
         }
 
         // ── In-flight requests ───────────────────────────────────
-        if let Ok(requests) = self.requests.try_read() {
+        if let Ok(requests) = self.requests.try_lock() {
             let mut outgoing: Vec<_> = requests
                 .values()
                 .filter(|r| r.direction == RequestDirection::Outgoing)
@@ -579,7 +579,7 @@ impl DiagnosticState {
         }
 
         // ── Open channels ────────────────────────────────────────
-        if let Ok(channels) = self.channels.try_read() {
+        if let Ok(channels) = self.channels.try_lock() {
             if channels.is_empty() {
                 let _ = writeln!(output, "  Channels: 0");
             } else {
@@ -596,7 +596,7 @@ impl DiagnosticState {
         }
 
         // ── Recent completions ───────────────────────────────────
-        if let Ok(completions) = self.recent_completions.try_read() {
+        if let Ok(completions) = self.recent_completions.try_lock() {
             if completions.is_empty() {
                 let _ = writeln!(output, "  Recent: (none)");
             } else {
@@ -618,7 +618,7 @@ impl DiagnosticState {
         }
 
         // ── Custom diagnostics ───────────────────────────────────
-        if let Ok(customs) = self.custom_diagnostics.try_read() {
+        if let Ok(customs) = self.custom_diagnostics.try_lock() {
             for callback in customs.iter() {
                 callback(&mut output);
             }
@@ -646,7 +646,7 @@ impl DiagnosticState {
 /// Collect all live diagnostic states (for snapshot use).
 /// Uses try_read to avoid deadlocking from signal handlers.
 pub fn collect_live_states() -> Vec<Arc<DiagnosticState>> {
-    let Ok(registry) = DIAGNOSTIC_REGISTRY.try_read() else {
+    let Ok(registry) = DIAGNOSTIC_REGISTRY.try_lock() else {
         return Vec::new();
     };
     registry.iter().filter_map(|weak| weak.upgrade()).collect()
@@ -654,7 +654,7 @@ pub fn collect_live_states() -> Vec<Arc<DiagnosticState>> {
 
 /// Snapshot method name registry as a HashMap.
 pub fn snapshot_method_names() -> std::collections::HashMap<u64, String> {
-    let Ok(names) = METHOD_NAMES.try_read() else {
+    let Ok(names) = METHOD_NAMES.try_lock() else {
         return std::collections::HashMap::new();
     };
     names

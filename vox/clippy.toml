@@ -1,0 +1,12 @@
+disallowed-types = [
+  { path = "tokio::sync::Mutex", reason = "async mutexes cause deadlocks — use std::sync::Mutex or parking_lot::Mutex instead" },
+  { path = "tokio::sync::RwLock", reason = "async RwLocks cause deadlocks — use Mutex instead" },
+  { path = "std::sync::RwLock", reason = "RwLocks are banned — use Mutex instead" },
+  { path = "parking_lot::RwLock", reason = "RwLocks are banned — use Mutex instead" },
+  { path = "peeps::locks::DiagnosticAsyncMutex", reason = "async mutexes cause deadlocks — use peeps::locks::DiagnosticMutex instead" },
+  { path = "peeps::locks::DiagnosticAsyncRwLock", reason = "async RwLocks cause deadlocks — use peeps::locks::DiagnosticMutex instead" },
+  { path = "peeps_locks::DiagnosticAsyncMutex", reason = "async mutexes cause deadlocks — use peeps::locks::DiagnosticMutex instead" },
+  { path = "peeps_locks::DiagnosticAsyncRwLock", reason = "async RwLocks cause deadlocks — use peeps::locks::DiagnosticMutex instead" },
+  { path = "peeps::locks::DiagnosticRwLock", reason = "RwLocks are banned — use peeps::locks::DiagnosticMutex instead" },
+  { path = "peeps_locks::DiagnosticRwLock", reason = "RwLocks are banned — use peeps::locks::DiagnosticMutex instead" },
+]

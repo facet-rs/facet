@@ -4,12 +4,12 @@
 //! allowing applications to dump the state of all queues for diagnostics.
 
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock, Weak};
+use std::sync::{Arc, Mutex, Weak};
 use tokio::sync::mpsc;
 
 /// Global registry of all auditable channels.
-static CHANNEL_REGISTRY: RwLock<Vec<Weak<dyn ChannelDiagnostic + Send + Sync>>> =
-    RwLock::new(Vec::new());
+static CHANNEL_REGISTRY: Mutex<Vec<Weak<dyn ChannelDiagnostic + Send + Sync>>> =
+    Mutex::new(Vec::new());
 
 /// Trait for getting diagnostic info from a channel.
 pub trait ChannelDiagnostic {
@@ -27,7 +27,7 @@ pub trait ChannelDiagnostic {
 
 /// Register a channel for diagnostics.
 fn register_channel(channel: Arc<dyn ChannelDiagnostic + Send + Sync>) {
-    if let Ok(mut registry) = CHANNEL_REGISTRY.write() {
+    if let Ok(mut registry) = CHANNEL_REGISTRY.lock() {
         // Clean up dead weak refs while we're here
         registry.retain(|weak| weak.strong_count() > 0);
         registry.push(Arc::downgrade(&channel));
@@ -37,7 +37,7 @@ fn register_channel(channel: Arc<dyn ChannelDiagnostic + Send + Sync>) {
 /// Dump all registered channels to a string for diagnostics.
 pub fn dump_all_channels() -> String {
     let channels: Vec<Arc<dyn ChannelDiagnostic + Send + Sync>> = {
-        let Ok(registry) = CHANNEL_REGISTRY.read() else {
+        let Ok(registry) = CHANNEL_REGISTRY.lock() else {
             return String::from("[channel registry locked]\n");
         };
         registry.iter().filter_map(|weak| weak.upgrade()).collect()
@@ -59,7 +59,7 @@ pub fn dump_all_channels() -> String {
 
 /// Collect all live channel diagnostic references.
 pub fn collect_live_channels() -> Vec<Arc<dyn ChannelDiagnostic + Send + Sync>> {
-    let Ok(registry) = CHANNEL_REGISTRY.read() else {
+    let Ok(registry) = CHANNEL_REGISTRY.lock() else {
         return Vec::new();
     };
     registry.iter().filter_map(|weak| weak.upgrade()).collect()

@@ -4,7 +4,7 @@
 //! buffers them, and forwards to the host via RPC calls.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use roam::session::ConnectionHandle;
@@ -55,7 +55,7 @@ pub struct CellTracingLayer {
     /// Span ID allocator (cell-local).
     next_span_id: AtomicU64,
     /// Parsed filter state (derived from TracingConfig).
-    pub(crate) filter: Arc<RwLock<FilterState>>,
+    pub(crate) filter: Arc<Mutex<FilterState>>,
     /// Start time for monotonic timestamps.
     start: Instant,
 }
@@ -75,7 +75,7 @@ impl CellTracingLayer {
         Self {
             buffer: Arc::new(LossyBuffer::new(buffer_size)),
             next_span_id: AtomicU64::new(1),
-            filter: Arc::new(RwLock::new(initial_filter)),
+            filter: Arc::new(Mutex::new(initial_filter)),
             start: Instant::now(),
         }
     }
@@ -100,7 +100,7 @@ impl CellTracingLayer {
         if target.starts_with("roam") {
             return false;
         }
-        let filter = self.filter.read().unwrap();
+        let filter = self.filter.lock().unwrap();
         filter.targets.would_enable(target, &level.to_tracing())
     }
 
@@ -112,7 +112,7 @@ impl CellTracingLayer {
     ///
     /// This is primarily for testing; in production, config is pushed via RPC.
     pub fn set_config(&self, config: &TracingConfig) {
-        *self.filter.write().unwrap() = FilterState::from_config(config);
+        *self.filter.lock().unwrap() = FilterState::from_config(config);
     }
 }
 
@@ -135,7 +135,7 @@ where
         }
 
         // Only emit SpanEnter record if include_span_events is enabled
-        let filter = self.filter.read().unwrap();
+        let filter = self.filter.lock().unwrap();
         if !filter.include_span_events {
             return;
         }
@@ -202,7 +202,7 @@ where
     }
 
     fn on_close(&self, id: Id, ctx: Context<'_, S>) {
-        let filter = self.filter.read().unwrap();
+        let filter = self.filter.lock().unwrap();
         if !filter.include_span_events {
             return;
         }
@@ -221,7 +221,7 @@ where
     fn on_enter(&self, id: &Id, ctx: Context<'_, S>) {
         // SpanEnter is already recorded on_new_span, but we could emit
         // separate enter events for re-entry if needed
-        let filter = self.filter.read().unwrap();
+        let filter = self.filter.lock().unwrap();
         if !filter.include_span_events {
             return;
         }
@@ -236,7 +236,7 @@ where
     }
 
     fn on_exit(&self, id: &Id, ctx: Context<'_, S>) {
-        let filter = self.filter.read().unwrap();
+        let filter = self.filter.lock().unwrap();
         if !filter.include_span_events {
             return;
         }
@@ -260,7 +260,7 @@ where
 #[derive(Clone)]
 pub struct CellTracingService {
     buffer: Arc<LossyBuffer<TracingRecord>>,
-    filter: Arc<RwLock<FilterState>>,
+    filter: Arc<Mutex<FilterState>>,
 }
 
 /// Guard returned by [`init_cell_tracing`](crate::init_cell_tracing).
@@ -381,7 +381,7 @@ impl CellTracingService {
         let client = HostTracingClient::new(handle.clone());
         match client.get_tracing_config().await {
             Ok(host_config) => {
-                *self.filter.write().unwrap() = FilterState::from_config(&host_config);
+                *self.filter.lock().unwrap() = FilterState::from_config(&host_config);
             }
             Err(_) => {
                 // Use default config if query fails (keeps "trace" level)
@@ -429,7 +429,7 @@ impl CellTracingService {
 
             // Query config (but we're already racing with events)
             if let Ok(host_config) = client.get_tracing_config().await {
-                *filter.write().unwrap() = FilterState::from_config(&host_config);
+                *filter.lock().unwrap() = FilterState::from_config(&host_config);
             }
 
             loop {
@@ -454,7 +454,7 @@ impl CellTracingService {
 
 impl CellTracing for CellTracingService {
     async fn configure(&self, _cx: &roam::session::Context, config: TracingConfig) -> ConfigResult {
-        *self.filter.write().unwrap() = FilterState::from_config(&config);
+        *self.filter.lock().unwrap() = FilterState::from_config(&config);
         ConfigResult::Ok
     }
 }
