@@ -70,11 +70,59 @@ private actor RequestIdAllocator {
     }
 }
 
+/// Async semaphore for limiting concurrent outgoing requests.
+///
+/// r[impl flow.call.concurrency-limit] - Enforces negotiated maxConcurrentRequests.
+/// FIFO fairness: waiters are resumed in order. `close()` fails all waiters
+/// when the connection dies, preventing callers from hanging forever.
+private actor AsyncSemaphore {
+    private var permits: Int
+    private var waiters: [CheckedContinuation<Void, Error>] = []
+    private var closed = false
+
+    init(permits: Int) {
+        self.permits = permits
+    }
+
+    func acquire() async throws {
+        if closed { throw ConnectionError.connectionClosed }
+        if permits > 0 {
+            permits -= 1
+            return
+        }
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+            if closed {
+                cont.resume(throwing: ConnectionError.connectionClosed)
+            } else {
+                waiters.append(cont)
+            }
+        }
+    }
+
+    func release() {
+        if !waiters.isEmpty {
+            waiters.removeFirst().resume()
+        } else {
+            permits += 1
+        }
+    }
+
+    func close() {
+        closed = true
+        let pending = waiters
+        waiters.removeAll()
+        for w in pending {
+            w.resume(throwing: ConnectionError.connectionClosed)
+        }
+    }
+}
+
 /// Handle for making outgoing RPC calls.
 public final class ConnectionHandle: @unchecked Sendable {
     private let commandTx: @Sendable (HandleCommand) -> Bool
     private let taskTx: @Sendable (TaskMessage) -> Bool
     private let requestIdAllocator = RequestIdAllocator()
+    fileprivate let requestSemaphore: AsyncSemaphore?
 
     public let channelAllocator: ChannelIdAllocator
     public let channelRegistry: ChannelRegistry
@@ -82,15 +130,23 @@ public final class ConnectionHandle: @unchecked Sendable {
     init(
         commandTx: @escaping @Sendable (HandleCommand) -> Bool,
         taskTx: @escaping @Sendable (TaskMessage) -> Bool,
-        role: Role
+        role: Role,
+        maxConcurrentRequests: UInt32 = UInt32.max
     ) {
         self.commandTx = commandTx
         self.taskTx = taskTx
         self.channelAllocator = ChannelIdAllocator(role: role)
         self.channelRegistry = ChannelRegistry()
+        if maxConcurrentRequests < UInt32.max {
+            self.requestSemaphore = AsyncSemaphore(permits: Int(maxConcurrentRequests))
+        } else {
+            self.requestSemaphore = nil
+        }
     }
 
     /// Make a raw RPC call.
+    ///
+    /// r[impl flow.call.concurrency-limit] - Blocks if maxConcurrentRequests are in-flight.
     public func callRaw(
         methodId: UInt64,
         payload: [UInt8],
@@ -99,10 +155,20 @@ public final class ConnectionHandle: @unchecked Sendable {
     ) async throws
         -> [UInt8]
     {
+        // Acquire a request slot before entering the driver queue.
+        // This prevents flooding the event stream under high concurrency.
+        if let sem = requestSemaphore {
+            try await sem.acquire()
+        }
+
         let requestId = await requestIdAllocator.allocate()
 
         return try await withCheckedThrowingContinuation { cont in
+            let sem = requestSemaphore
             let responseTx: @Sendable (Result<[UInt8], ConnectionError>) -> Void = { result in
+                if let sem {
+                    Task { await sem.release() }
+                }
                 cont.resume(with: result)
             }
             let accepted = commandTx(
@@ -115,10 +181,18 @@ public final class ConnectionHandle: @unchecked Sendable {
                     responseTx: responseTx
                 ))
             guard accepted else {
+                if let sem {
+                    Task { await sem.release() }
+                }
                 cont.resume(throwing: ConnectionError.connectionClosed)
                 return
             }
         }
+    }
+
+    /// Close the request semaphore, failing all blocked callers.
+    fileprivate func closeRequestSemaphore() async {
+        await requestSemaphore?.close()
     }
 
     public func sendTaskMessage(_ msg: TaskMessage) {
@@ -133,7 +207,6 @@ private enum DriverEvent: Sendable {
     case incomingMessage(Message)
     case taskMessage(TaskMessage)
     case command(HandleCommand)
-    case callTimeout(requestId: UInt64)
     case transportClosed
 }
 
@@ -355,9 +428,6 @@ public final class Driver: @unchecked Sendable {
                 case .command(let cmd):
                     await handleCommand(cmd)
 
-                case .callTimeout(let requestId):
-                    await handleCallTimeout(requestId: requestId)
-
                 case .transportClosed:
                     await failAllPending()
                     eventContinuation.finish()
@@ -409,7 +479,8 @@ public final class Driver: @unchecked Sendable {
     /// Handle a command from ConnectionHandle.
     private func handleCommand(_ cmd: HandleCommand) async {
         switch cmd {
-        case .call(let requestId, let methodId, let payload, let channels, let timeout, let responseTx):
+        case .call(
+            let requestId, let methodId, let payload, let channels, let timeout, let responseTx):
             let isClosed = await state.isConnectionClosed()
             guard !isClosed else {
                 responseTx(.failure(.connectionClosed))
@@ -439,7 +510,9 @@ public final class Driver: @unchecked Sendable {
             } catch {
                 let pending = await state.removePendingResponse(requestId)
                 pending?.timeoutTask?.cancel()
-                warnLog("transport send failed for request_id \(requestId): \(String(describing: error))")
+                warnLog(
+                    "transport send failed for request_id \(requestId): \(String(describing: error))"
+                )
                 responseTx(.failure(.transportError(String(describing: error))))
                 await failAllPending()
                 eventContinuation.finish()
@@ -450,30 +523,30 @@ public final class Driver: @unchecked Sendable {
                 return
             }
 
+            // Direct timeout delivery: the timeout task fires the response callback
+            // directly instead of routing through the event stream. This prevents
+            // timeout delivery from being delayed by event loop starvation.
             let timeoutNs = Self.timeoutToNanoseconds(timeout)
-            let continuation = eventContinuation
+            let capturedState = state
+            let capturedTransport = transport
             let timeoutTask = Task {
                 do {
                     try await Task.sleep(nanoseconds: timeoutNs)
                 } catch {
                     return
                 }
-                continuation.yield(.callTimeout(requestId: requestId))
+                guard let pending = await capturedState.removePendingResponse(requestId) else {
+                    return
+                }
+                pending.timeoutTask?.cancel()
+                pending.responseTx(.failure(.timeout))
+                try? await capturedTransport.send(.cancel(connId: 0, requestId: requestId))
             }
             let installed = await state.setPendingTimeoutTask(requestId, timeoutTask: timeoutTask)
             if !installed {
                 timeoutTask.cancel()
             }
         }
-    }
-
-    private func handleCallTimeout(requestId: UInt64) async {
-        guard let pending = await state.removePendingResponse(requestId) else {
-            return
-        }
-        pending.timeoutTask?.cancel()
-        pending.responseTx(.failure(.timeout))
-        try? await transport.send(.cancel(connId: 0, requestId: requestId))
     }
 
     /// Handle an incoming message.
@@ -674,6 +747,10 @@ public final class Driver: @unchecked Sendable {
     }
 
     private func failAllPending() async {
+        // Close the semaphore first so blocked callRaw callers get connectionClosed
+        // instead of hanging forever.
+        await handle.closeRequestSemaphore()
+
         let responses = await state.failAllPending()
 
         for (_, pending) in responses {
@@ -907,7 +984,8 @@ func makeDriverAndHandle(
     let handle = ConnectionHandle(
         commandTx: commandSender,
         taskTx: taskSender,
-        role: role
+        role: role,
+        maxConcurrentRequests: negotiated.maxConcurrentRequests
     )
 
     // Create driver with the handle and shared event stream
