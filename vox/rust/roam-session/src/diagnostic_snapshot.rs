@@ -56,11 +56,11 @@ pub fn snapshot_all_diagnostics() -> SessionSnapshot {
             let max_concurrent_requests = state.max_concurrent_requests.load(Ordering::Relaxed);
             let initial_credit = state.initial_credit.load(Ordering::Relaxed);
 
-            let peer_name = state.peer_name.try_read().ok().and_then(|g| g.clone());
+            let peer_name = state.peer_name.try_lock().ok().and_then(|g| g.clone());
 
             let in_flight = state
                 .requests
-                .try_read()
+                .try_lock()
                 .map(|reqs| {
                     let mut v: Vec<RequestSnapshot> = reqs
                         .values()
@@ -85,7 +85,7 @@ pub fn snapshot_all_diagnostics() -> SessionSnapshot {
 
             let recent_completions = state
                 .recent_completions
-                .try_read()
+                .try_lock()
                 .map(|comps| {
                     comps
                         .iter()
@@ -103,7 +103,7 @@ pub fn snapshot_all_diagnostics() -> SessionSnapshot {
 
             let channels = state
                 .channels
-                .try_read()
+                .try_lock()
                 .map(|chs| {
                     chs.values()
                         .map(|ch| ChannelSnapshot {
@@ -127,7 +127,7 @@ pub fn snapshot_all_diagnostics() -> SessionSnapshot {
 
             let channel_credits = state
                 .channel_credits
-                .try_read()
+                .try_lock()
                 .map(|cc| {
                     cc.iter()
                         .map(|c| ChannelCreditSnapshot {
