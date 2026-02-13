@@ -119,9 +119,43 @@ impl ConnectionHandle {
         metadata.push((key.to_string(), value, flags));
     }
 
+    fn metadata_string(metadata: &roam_wire::Metadata, key: &str) -> Option<String> {
+        metadata
+            .iter()
+            .find(|(entry_key, _, _)| entry_key == key)
+            .map(|(_, value, _)| match value {
+                roam_wire::MetadataValue::String(s) => s.clone(),
+                roam_wire::MetadataValue::U64(n) => n.to_string(),
+                roam_wire::MetadataValue::Bytes(bytes) => {
+                    let mut out = String::with_capacity(bytes.len() * 2);
+                    for byte in bytes {
+                        use std::fmt::Write as _;
+                        let _ = write!(&mut out, "{byte:02x}");
+                    }
+                    out
+                }
+            })
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn span_id_for_request(&self, request_id: u64) -> String {
+        format!(
+            "{}:{}:{}",
+            std::process::id(),
+            self.shared.conn_id.raw(),
+            request_id
+        )
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn span_id_for_request(&self, request_id: u64) -> String {
+        format!("{}:{}", self.shared.conn_id.raw(), request_id)
+    }
+
     fn merged_outgoing_metadata(
         &self,
         mut metadata: roam_wire::Metadata,
+        request_id: u64,
     ) -> (roam_wire::Metadata, Option<u64>, Option<String>) {
         if let Some(current_call_metadata) = crate::dispatch::get_current_call_metadata() {
             for (key, value, flags) in current_call_metadata {
@@ -136,6 +170,36 @@ impl ConnectionHandle {
                 }
                 metadata.push((key, value, flags));
             }
+        }
+
+        let parent_span =
+            Self::metadata_string(&metadata, crate::PEEPS_SPAN_ID_METADATA_KEY);
+        let span_id = self.span_id_for_request(request_id);
+        let chain_id = Self::metadata_string(&metadata, crate::PEEPS_CHAIN_ID_METADATA_KEY)
+            .unwrap_or_else(|| span_id.clone());
+        Self::upsert_metadata_entry(
+            &mut metadata,
+            crate::PEEPS_CHAIN_ID_METADATA_KEY,
+            roam_wire::MetadataValue::String(chain_id),
+            roam_wire::metadata_flags::NONE,
+        );
+        Self::upsert_metadata_entry(
+            &mut metadata,
+            crate::PEEPS_SPAN_ID_METADATA_KEY,
+            roam_wire::MetadataValue::String(span_id),
+            roam_wire::metadata_flags::NONE,
+        );
+        if !metadata
+            .iter()
+            .any(|(entry_key, _, _)| entry_key == crate::PEEPS_PARENT_SPAN_ID_METADATA_KEY)
+            && let Some(parent_span) = parent_span
+        {
+            Self::upsert_metadata_entry(
+                &mut metadata,
+                crate::PEEPS_PARENT_SPAN_ID_METADATA_KEY,
+                roam_wire::MetadataValue::String(parent_span),
+                roam_wire::metadata_flags::NONE,
+            );
         }
 
         let (task_id, task_name) = Self::current_task_context();
@@ -385,7 +449,8 @@ impl ConnectionHandle {
             // before spawning drains, not just create the future.
             let request_id = self.shared.request_ids.next();
             let (response_tx, response_rx) = oneshot("call_with_rx_streams");
-            let (metadata, task_id, task_name) = self.merged_outgoing_metadata(metadata);
+            let (metadata, task_id, task_name) =
+                self.merged_outgoing_metadata(metadata, request_id);
 
             // Track outgoing request for diagnostics
             if let Some(diag) = &self.shared.diagnostic_state {
@@ -602,7 +667,8 @@ impl ConnectionHandle {
                 // IMPORTANT: We must send Request BEFORE spawning drain tasks to ensure ordering.
                 let request_id = self.shared.request_ids.next();
                 let (response_tx, response_rx) = oneshot("call_raw_with_rx_streams");
-                let (metadata, task_id, task_name) = self.merged_outgoing_metadata(metadata);
+                let (metadata, task_id, task_name) =
+                    self.merged_outgoing_metadata(metadata, request_id);
 
                 // Track outgoing request for diagnostics
                 if let Some(diag) = &self.shared.diagnostic_state {
@@ -865,8 +931,8 @@ impl ConnectionHandle {
         #[cfg(target_arch = "wasm32")]
         self.acquire_request_slot().await?;
 
-        let (metadata, task_id, task_name) = self.merged_outgoing_metadata(metadata);
         let request_id = self.shared.request_ids.next();
+        let (metadata, task_id, task_name) = self.merged_outgoing_metadata(metadata, request_id);
         let (response_tx, response_rx) = oneshot("call_raw_with_channels");
 
         // Track outgoing request for diagnostics
