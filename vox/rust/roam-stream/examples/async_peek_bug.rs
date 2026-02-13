@@ -13,15 +13,12 @@ async fn serialize_and_send(data: facet::Peek<'_, 'static>) -> Vec<u8> {
 }
 
 async fn process_result(result: Result<Vec<u8>, ()>) {
-    match result {
-        Ok(ref ok_result) => {
-            // This mimics dispatch_call's pattern
-            let peek = facet::Peek::new(ok_result);
+    if let Ok(ref ok_result) = result {
+        // This mimics dispatch_call's pattern
+        let peek = facet::Peek::new(ok_result);
 
-            // Call async function that uses the peek
-            let _bytes = serialize_and_send(peek).await;
-        }
-        Err(_) => {}
+        // Call async function that uses the peek
+        let _bytes = serialize_and_send(peek).await;
     }
 }
 

@@ -14,7 +14,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
-use facet::Facet;
 use once_cell::sync::Lazy;
 use roam_session::{
     Caller, ChannelRegistry, Context, RpcPlan, Rx, ServiceDispatcher, dispatch_call,
@@ -30,7 +29,7 @@ use tokio::net::TcpStream;
 // RPC Plans
 // ============================================================================
 
-static STRING_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(|| RpcPlan::for_type::<String>());
+static STRING_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(RpcPlan::for_type::<String>);
 static STRING_RESPONSE_PLAN: Lazy<Arc<RpcPlan>> =
     Lazy::new(|| Arc::new(RpcPlan::for_type::<String>()));
 
@@ -322,15 +321,16 @@ impl Connector for FailingConnector {
 
     async fn connect(&self) -> io::Result<Self::Transport> {
         self.attempt_count.fetch_add(1, Ordering::SeqCst);
-        let mut failures = self.failures_remaining.lock().unwrap();
-        if *failures > 0 {
-            *failures -= 1;
-            return Err(io::Error::new(
-                io::ErrorKind::ConnectionRefused,
-                "simulated failure",
-            ));
+        {
+            let mut failures = self.failures_remaining.lock().unwrap();
+            if *failures > 0 {
+                *failures -= 1;
+                return Err(io::Error::new(
+                    io::ErrorKind::ConnectionRefused,
+                    "simulated failure",
+                ));
+            }
         }
-        drop(failures);
         self.inner.connect().await
     }
 }

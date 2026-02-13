@@ -12,7 +12,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
-use facet::Facet;
 use once_cell::sync::Lazy;
 use roam_session::{
     ChannelRegistry, Context, ForwardingDispatcher, RoamError, RpcPlan, Rx, ServiceDispatcher, Tx,
@@ -25,18 +24,18 @@ use tokio::net::TcpStream;
 // RPC Plans
 // ============================================================================
 
-static STRING_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(|| RpcPlan::for_type::<String>());
+static STRING_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(RpcPlan::for_type::<String>);
 static STRING_RESPONSE_PLAN: Lazy<Arc<RpcPlan>> =
     Lazy::new(|| Arc::new(RpcPlan::for_type::<String>()));
 
-static RX_I32_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(|| RpcPlan::for_type::<Rx<i32>>());
+static RX_I32_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(RpcPlan::for_type::<Rx<i32>>);
 static I64_RESPONSE_PLAN: Lazy<Arc<RpcPlan>> = Lazy::new(|| Arc::new(RpcPlan::for_type::<i64>()));
 
-static U32_TX_I32_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(|| RpcPlan::for_type::<(u32, Tx<i32>)>());
+static U32_TX_I32_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(RpcPlan::for_type::<(u32, Tx<i32>)>);
 static UNIT_RESPONSE_PLAN: Lazy<Arc<RpcPlan>> = Lazy::new(|| Arc::new(RpcPlan::for_type::<()>()));
 
 static RX_STRING_TX_STRING_ARGS_PLAN: Lazy<RpcPlan> =
-    Lazy::new(|| RpcPlan::for_type::<(Rx<String>, Tx<String>)>());
+    Lazy::new(RpcPlan::for_type::<(Rx<String>, Tx<String>)>);
 
 // ============================================================================
 // Test Service (Backend)

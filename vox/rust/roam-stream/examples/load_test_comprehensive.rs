@@ -73,13 +73,13 @@ pub struct ComplexData {
 // RPC Plans
 // ============================================================================
 
-static U64_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(|| RpcPlan::for_type::<u64>());
+static U64_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(RpcPlan::for_type::<u64>);
 static U64_RESPONSE_PLAN: Lazy<Arc<RpcPlan>> = Lazy::new(|| Arc::new(RpcPlan::for_type::<u64>()));
 
-static COMMAND_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(|| RpcPlan::for_type::<Command>());
+static COMMAND_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(RpcPlan::for_type::<Command>);
 static RESPONSE_PLAN: Lazy<Arc<RpcPlan>> = Lazy::new(|| Arc::new(RpcPlan::for_type::<Response>()));
 
-static COMPLEX_DATA_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(|| RpcPlan::for_type::<ComplexData>());
+static COMPLEX_DATA_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(RpcPlan::for_type::<ComplexData>);
 static TUPLE_RESPONSE_PLAN: Lazy<Arc<RpcPlan>> =
     Lazy::new(|| Arc::new(RpcPlan::for_type::<(u64, String, HashMap<String, u64>)>()));
 
@@ -92,7 +92,7 @@ pub struct StreamRequest {
     rx: StreamRx, // Client sends TO server, so passes Rx
 }
 
-static STREAM_REQUEST_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(|| RpcPlan::for_type::<StreamRequest>());
+static STREAM_REQUEST_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(RpcPlan::for_type::<StreamRequest>);
 
 #[derive(Facet)]
 pub struct StreamResponse {
@@ -218,7 +218,7 @@ impl ServiceDispatcher for ComprehensiveService {
                     |data: ComplexData| async move {
                         tokio::time::sleep(Duration::from_millis(10)).await;
 
-                        let tag_count = data.tags.len() as u64;
+                        let _tag_count = data.tags.len() as u64;
                         let summary = format!(
                             "{} tags, {} metadata, {} measurements",
                             data.tags.len(),
@@ -319,21 +319,16 @@ async fn start_server(
     let listener = UnixListener::bind(&socket_path)?;
 
     let handle = tokio::spawn(async move {
-        loop {
-            match listener.accept().await {
-                Ok((stream, _)) => {
-                    let service = service.clone();
-                    tokio::spawn(async move {
-                        if let Ok((handle, _incoming, driver)) =
-                            accept(stream, HandshakeConfig::default(), service).await
-                        {
-                            let _ = driver.run().await;
-                            drop(handle);
-                        }
-                    });
+        while let Ok((stream, _)) = listener.accept().await {
+            let service = service.clone();
+            tokio::spawn(async move {
+                if let Ok((handle, _incoming, driver)) =
+                    accept(stream, HandshakeConfig::default(), service).await
+                {
+                    let _ = driver.run().await;
+                    drop(handle);
                 }
-                Err(_) => break,
-            }
+            });
         }
     });
 

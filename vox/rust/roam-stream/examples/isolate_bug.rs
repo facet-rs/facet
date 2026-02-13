@@ -8,11 +8,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
-use facet::Facet;
 use once_cell::sync::Lazy;
-use roam_session::{
-    ChannelRegistry, Context, RpcPlan, ServiceDispatcher, dispatch_call, dispatch_unknown_method,
-};
+use roam_session::{ChannelRegistry, Context, RpcPlan, ServiceDispatcher, dispatch_call};
 use roam_stream::{Connector, HandshakeConfig, accept, connect};
 use tokio::net::{UnixListener, UnixStream};
 
@@ -20,7 +17,7 @@ use tokio::net::{UnixListener, UnixStream};
 // RPC Plans
 // ============================================================================
 
-static VEC_U8_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(|| RpcPlan::for_type::<Vec<u8>>());
+static VEC_U8_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(RpcPlan::for_type::<Vec<u8>>);
 static VEC_U8_RESPONSE_PLAN: Lazy<Arc<RpcPlan>> =
     Lazy::new(|| Arc::new(RpcPlan::for_type::<Vec<u8>>()));
 
@@ -97,21 +94,16 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     tokio::spawn({
         let service = service.clone();
         async move {
-            loop {
-                match listener.accept().await {
-                    Ok((stream, _)) => {
-                        let service = service.clone();
-                        tokio::spawn(async move {
-                            if let Ok((handle, _incoming, driver)) =
-                                accept(stream, HandshakeConfig::default(), service).await
-                            {
-                                let _ = driver.run().await;
-                                drop(handle);
-                            }
-                        });
+            while let Ok((stream, _)) = listener.accept().await {
+                let service = service.clone();
+                tokio::spawn(async move {
+                    if let Ok((handle, _incoming, driver)) =
+                        accept(stream, HandshakeConfig::default(), service).await
+                    {
+                        let _ = driver.run().await;
+                        drop(handle);
                     }
-                    Err(_) => break,
-                }
+                });
             }
         }
     });

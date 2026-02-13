@@ -15,7 +15,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use facet::Facet;
 use once_cell::sync::Lazy;
 use roam_session::{
     ChannelRegistry, Context, RoamError, RpcPlan, ServiceDispatcher, dispatch_call,
@@ -29,15 +28,14 @@ use tokio::time::timeout;
 // RPC Plans
 // ============================================================================
 
-static U64_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(|| RpcPlan::for_type::<u64>());
+static U64_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(RpcPlan::for_type::<u64>);
 static U64_RESPONSE_PLAN: Lazy<Arc<RpcPlan>> = Lazy::new(|| Arc::new(RpcPlan::for_type::<u64>()));
 
-static VEC_U8_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(|| RpcPlan::for_type::<Vec<u8>>());
+static VEC_U8_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(RpcPlan::for_type::<Vec<u8>>);
 static VEC_U8_RESPONSE_PLAN: Lazy<Arc<RpcPlan>> =
     Lazy::new(|| Arc::new(RpcPlan::for_type::<Vec<u8>>()));
 
-static COMPLEX_REQUEST_ARGS_PLAN: Lazy<RpcPlan> =
-    Lazy::new(|| RpcPlan::for_type::<ComplexRequest>());
+static COMPLEX_REQUEST_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(RpcPlan::for_type::<ComplexRequest>);
 static COMPLEX_RESPONSE_PLAN: Lazy<Arc<RpcPlan>> =
     Lazy::new(|| Arc::new(RpcPlan::for_type::<ComplexResponse>()));
 
@@ -252,21 +250,16 @@ async fn start_server(
     let listener = UnixListener::bind(&socket_path)?;
 
     let handle = tokio::spawn(async move {
-        loop {
-            match listener.accept().await {
-                Ok((stream, _)) => {
-                    let service = service.clone();
-                    tokio::spawn(async move {
-                        if let Ok((handle, _incoming, driver)) =
-                            accept(stream, HandshakeConfig::default(), service).await
-                        {
-                            let _ = driver.run().await;
-                            drop(handle);
-                        }
-                    });
+        while let Ok((stream, _)) = listener.accept().await {
+            let service = service.clone();
+            tokio::spawn(async move {
+                if let Ok((handle, _incoming, driver)) =
+                    accept(stream, HandshakeConfig::default(), service).await
+                {
+                    let _ = driver.run().await;
+                    drop(handle);
                 }
-                Err(_) => break,
-            }
+            });
         }
     });
 
@@ -359,11 +352,11 @@ async fn chaos_connection_churn(
         let client = connect(connector, HandshakeConfig::default(), ChaosService::new());
 
         // Maybe make a call, maybe don't
-        if i % 3 == 0 {
-            if let Ok(handle) = client.handle().await {
-                let mut args = i as u64;
-                let _ = handle.call(METHOD_INSTANT, &mut args, &U64_ARGS_PLAN).await;
-            }
+        if i % 3 == 0
+            && let Ok(handle) = client.handle().await
+        {
+            let mut args = i as u64;
+            let _ = handle.call(METHOD_INSTANT, &mut args, &U64_ARGS_PLAN).await;
         }
 
         // Disconnect immediately
@@ -403,20 +396,17 @@ async fn chaos_overwhelm(
                         *byte = (idx % 256) as u8;
                     }
 
-                    match timeout(
+                    if let Ok(Ok(response)) = timeout(
                         Duration::from_secs(2),
                         handle.call(METHOD_BIG_DATA, &mut data, &VEC_U8_ARGS_PLAN),
                     )
                     .await
                     {
-                        Ok(Ok(response)) => {
-                            let result: Vec<u8> = decode_result(response.payload);
-                            // Verify it was reversed
-                            if result.len() == data.len() {
-                                stats.fetch_add(1, Ordering::Relaxed);
-                            }
+                        let result: Vec<u8> = decode_result(response.payload);
+                        // Verify it was reversed
+                        if result.len() == data.len() {
+                            stats.fetch_add(1, Ordering::Relaxed);
                         }
-                        _ => {}
                     }
                 }
                 2 | 3 => {
@@ -443,35 +433,29 @@ async fn chaos_overwhelm(
                         .collect(),
                     };
 
-                    match timeout(
+                    if let Ok(Ok(response)) = timeout(
                         Duration::from_secs(2),
                         handle.call(METHOD_COMPLEX_STRUCT, &mut req, &COMPLEX_REQUEST_ARGS_PLAN),
                     )
                     .await
                     {
-                        Ok(Ok(response)) => {
-                            let result: ComplexResponse = decode_result(response.payload);
-                            if result.request_id == i as u64 {
-                                stats.fetch_add(1, Ordering::Relaxed);
-                            }
+                        let result: ComplexResponse = decode_result(response.payload);
+                        if result.request_id == i as u64 {
+                            stats.fetch_add(1, Ordering::Relaxed);
                         }
-                        _ => {}
                     }
                 }
                 _ => {
                     // Simple call
                     let mut args = i as u64;
-                    match timeout(
+                    if let Ok(Ok(response)) = timeout(
                         Duration::from_secs(2),
                         handle.call(METHOD_SLOW, &mut args, &U64_ARGS_PLAN),
                     )
                     .await
                     {
-                        Ok(Ok(response)) => {
-                            let _: u64 = decode_result(response.payload);
-                            stats.fetch_add(1, Ordering::Relaxed);
-                        }
-                        _ => {}
+                        let _: u64 = decode_result(response.payload);
+                        stats.fetch_add(1, Ordering::Relaxed);
                     }
                 }
             }

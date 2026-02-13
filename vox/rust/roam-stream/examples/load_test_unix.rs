@@ -11,7 +11,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use facet::Facet;
 use once_cell::sync::Lazy;
 use roam_session::{
     ChannelRegistry, Context, RoamError, RpcPlan, ServiceDispatcher, dispatch_call,
@@ -24,7 +23,7 @@ use tokio::net::{UnixListener, UnixStream};
 // RPC Plans
 // ============================================================================
 
-static U64_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(|| RpcPlan::for_type::<u64>());
+static U64_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(RpcPlan::for_type::<u64>);
 static U64_RESPONSE_PLAN: Lazy<Arc<RpcPlan>> = Lazy::new(|| Arc::new(RpcPlan::for_type::<u64>()));
 
 // ============================================================================
@@ -51,7 +50,7 @@ impl LoadTestService {
         }
     }
 
-    fn total_calls(&self) -> u32 {
+    fn _total_calls(&self) -> u32 {
         self.calls_total.load(Ordering::Relaxed)
     }
 
@@ -179,21 +178,16 @@ async fn start_server(
     println!("Server listening on {}", socket_path.display());
 
     let handle = tokio::spawn(async move {
-        loop {
-            match listener.accept().await {
-                Ok((stream, _)) => {
-                    let service = service.clone();
-                    tokio::spawn(async move {
-                        if let Ok((handle, _incoming, driver)) =
-                            accept(stream, HandshakeConfig::default(), service).await
-                        {
-                            let _ = driver.run().await;
-                            drop(handle);
-                        }
-                    });
+        while let Ok((stream, _)) = listener.accept().await {
+            let service = service.clone();
+            tokio::spawn(async move {
+                if let Ok((handle, _incoming, driver)) =
+                    accept(stream, HandshakeConfig::default(), service).await
+                {
+                    let _ = driver.run().await;
+                    drop(handle);
                 }
-                Err(_) => break,
-            }
+            });
         }
     });
 

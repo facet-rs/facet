@@ -13,25 +13,24 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
-use facet::Facet;
 use once_cell::sync::Lazy;
 use roam_session::{
     ChannelRegistry, Context, RoamError, RpcPlan, ServiceDispatcher, dispatch_call,
     dispatch_unknown_method,
 };
-use roam_stream::{ConnectionError, Connector, HandshakeConfig, accept, connect};
+use roam_stream::{Connector, HandshakeConfig, accept, connect};
 use tokio::net::{UnixListener, UnixStream};
 
 // ============================================================================
 // RPC Plans
 // ============================================================================
 
-static UNIT_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(|| RpcPlan::for_type::<()>());
+static UNIT_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(RpcPlan::for_type::<()>);
 static U32_RESPONSE_PLAN: Lazy<Arc<RpcPlan>> = Lazy::new(|| Arc::new(RpcPlan::for_type::<u32>()));
 
-static U32_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(|| RpcPlan::for_type::<u32>());
+static U32_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(RpcPlan::for_type::<u32>);
 
-static STRING_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(|| RpcPlan::for_type::<String>());
+static STRING_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(RpcPlan::for_type::<String>);
 static STRING_RESPONSE_PLAN: Lazy<Arc<RpcPlan>> =
     Lazy::new(|| Arc::new(RpcPlan::for_type::<String>()));
 
@@ -52,7 +51,7 @@ impl TestService {
         }
     }
 
-    fn calls(&self) -> u32 {
+    fn _calls(&self) -> u32 {
         self.call_count.load(Ordering::SeqCst)
     }
 }
@@ -192,21 +191,16 @@ async fn start_server(
     let path = socket_path.clone();
 
     let handle = tokio::spawn(async move {
-        loop {
-            match listener.accept().await {
-                Ok((stream, _)) => {
-                    let service = service.clone();
-                    tokio::spawn(async move {
-                        if let Ok((handle, _incoming, driver)) =
-                            accept(stream, HandshakeConfig::default(), service).await
-                        {
-                            let _ = driver.run().await;
-                            drop(handle);
-                        }
-                    });
+        while let Ok((stream, _)) = listener.accept().await {
+            let service = service.clone();
+            tokio::spawn(async move {
+                if let Ok((handle, _incoming, driver)) =
+                    accept(stream, HandshakeConfig::default(), service).await
+                {
+                    let _ = driver.run().await;
+                    drop(handle);
                 }
-                Err(_) => break,
-            }
+            });
         }
     });
 
