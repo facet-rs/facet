@@ -2354,12 +2354,9 @@ name = "roam-miri-test"
 version = "3.0.0"
 dependencies = [
  "facet",
- "facet-postcard",
- "facet-testhelpers",
  "once_cell",
  "roam",
  "roam-session",
- "roam-stream",
  "roam-wire",
  "tokio",
 ]

@@ -8,6 +8,8 @@ repository.workspace = true
 description = "HTTP/JSON bridge for roam RPC services"
 
 [package.metadata]
+[package.metadata.cargo-shear]
+ignored = ["tracing"]
 
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
@@ -29,7 +31,6 @@ facet-postcard.workspace = true
 facet-value.workspace = true
 
 axum = { version = "0.8", features = ["ws"] }
-tokio.workspace = true
 peeps-sync.workspace = true
 peeps-tasks.workspace = true
 # Zero-cost tracing: compiles to nothing when feature is disabled

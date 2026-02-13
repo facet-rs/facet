@@ -7,6 +7,8 @@ repository.workspace = true
 description = "Session/state machine (handshake, request_id/channel_id routing, flow control)"
 
 [package.metadata]
+[package.metadata.cargo-shear]
+ignored = ["tracing"]
 
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
