@@ -136,6 +136,9 @@ pub struct InFlightRequest {
     pub method_id: u64,
     pub started: Instant,
     pub direction: RequestDirection,
+    pub task_id: Option<u64>,
+    pub task_name: Option<String>,
+    pub metadata: Option<HashMap<String, String>>,
     /// Structured arguments (captured when diagnostics feature is enabled).
     pub args: Option<HashMap<String, String>>,
     /// Backtrace at call site (captured when diagnostics feature is enabled).
@@ -237,6 +240,29 @@ pub struct ChannelCreditInfo {
 }
 
 impl DiagnosticState {
+    fn metadata_to_debug_map(
+        metadata: Option<&roam_wire::Metadata>,
+    ) -> Option<HashMap<String, String>> {
+        let metadata = metadata?;
+        if metadata.is_empty() {
+            return None;
+        }
+        let mut out = HashMap::new();
+        for (k, v, flags) in metadata {
+            let val = match v {
+                roam_wire::MetadataValue::String(s) => s.clone(),
+                roam_wire::MetadataValue::U64(n) => n.to_string(),
+                roam_wire::MetadataValue::Bytes(b) => format!("<{} bytes>", b.len()),
+            };
+            if *flags == 0 {
+                out.insert(k.clone(), val);
+            } else {
+                out.insert(k.clone(), format!("{val} [flags={flags}]"));
+            }
+        }
+        Some(out)
+    }
+
     /// Create a new diagnostic state.
     pub fn new(name: impl Into<String>) -> Self {
         Self {
@@ -279,9 +305,13 @@ impl DiagnosticState {
         &self,
         request_id: u64,
         method_id: u64,
+        metadata: Option<&roam_wire::Metadata>,
+        task_id: Option<u64>,
+        task_name: Option<String>,
         args: Option<HashMap<String, String>>,
     ) {
         let backtrace = Some(format_short_backtrace());
+        let metadata = Self::metadata_to_debug_map(metadata);
         if let Ok(mut requests) = self.requests.lock() {
             requests.insert(
                 request_id,
@@ -290,6 +320,9 @@ impl DiagnosticState {
                     method_id,
                     started: Instant::now(),
                     direction: RequestDirection::Outgoing,
+                    task_id,
+                    task_name,
+                    metadata,
                     args,
                     backtrace,
                 },
@@ -302,8 +335,12 @@ impl DiagnosticState {
         &self,
         request_id: u64,
         method_id: u64,
+        metadata: Option<&roam_wire::Metadata>,
+        task_id: Option<u64>,
+        task_name: Option<String>,
         args: Option<HashMap<String, String>>,
     ) {
+        let metadata = Self::metadata_to_debug_map(metadata);
         if let Ok(mut requests) = self.requests.lock() {
             requests.insert(
                 request_id,
@@ -312,6 +349,9 @@ impl DiagnosticState {
                     method_id,
                     started: Instant::now(),
                     direction: RequestDirection::Incoming,
+                    task_id,
+                    task_name,
+                    metadata,
                     args,
                     backtrace: None, // no backtrace for incoming — the remote captured it
                 },

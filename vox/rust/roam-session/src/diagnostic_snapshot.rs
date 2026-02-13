@@ -70,6 +70,9 @@ pub fn snapshot_all_diagnostics() -> SessionSnapshot {
                             method_id: r.method_id,
                             direction: r.direction.into(),
                             elapsed_secs: now.duration_since(r.started).as_secs_f64(),
+                            task_id: r.task_id,
+                            task_name: r.task_name.clone(),
+                            metadata: r.metadata.clone(),
                             args: r.args.clone(),
                             backtrace: r.backtrace.clone(),
                         })

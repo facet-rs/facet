@@ -54,11 +54,21 @@ roam_task_local::task_local! {
     ///
     /// Generated dispatchers scope this around the handler call.
     pub static CURRENT_EXTENSIONS: Extensions;
+
+    /// Task-local metadata for the current inbound RPC call.
+    ///
+    /// Outgoing calls can use this as propagation source.
+    pub static CURRENT_CALL_METADATA: roam_wire::Metadata;
 }
 
 /// Get the current dispatch context, if any.
 pub(crate) fn get_dispatch_context() -> Option<DispatchContext> {
     DISPATCH_CONTEXT.try_with(|ctx| ctx.clone()).ok()
+}
+
+/// Get metadata from the current inbound RPC context, if any.
+pub(crate) fn get_current_call_metadata() -> Option<roam_wire::Metadata> {
+    CURRENT_CALL_METADATA.try_with(|m| m.clone()).ok()
 }
 
 // ============================================================================
@@ -300,29 +310,35 @@ where
     // Use task_local scope so roam::channel() creates bound channels.
     // This is critical: unlike thread_local, task_local won't leak to other
     // tasks that happen to run on the same worker thread.
+    let propagated_metadata = cx.metadata.clone();
     Box::pin(DISPATCH_CONTEXT.scope(dispatch_ctx, async move {
-        trace!("dispatch_call: handler starting");
-        let result = handler(args).await;
-        trace!("dispatch_call: handler finished");
+        CURRENT_CALL_METADATA
+            .scope(propagated_metadata, async move {
+                trace!("dispatch_call: handler starting");
+                let result = handler(args).await;
+                trace!("dispatch_call: handler finished");
 
-        match result {
-            Ok(ref ok_result) => {
-                // Use non-generic send_ok_response via SendPeek
-                // SAFETY: R is Send (from where clause), ok_result outlives this scope,
-                // and we don't mutate it while the Peek exists
-                let peek = facet::Peek::new(ok_result);
-                let send_peek = unsafe { SendPeek::new(peek) };
-                send_ok_response(send_peek, &response_plan, &task_tx, conn_id, request_id).await;
-            }
-            Err(ref user_error) => {
-                // Use non-generic send_error_response via SendPeek
-                // SAFETY: E is Send (from where clause), user_error outlives this scope,
-                // and we don't mutate it while the Peek exists
-                let peek = facet::Peek::new(user_error);
-                let send_peek = unsafe { SendPeek::new(peek) };
-                send_error_response(send_peek, &task_tx, conn_id, request_id).await;
-            }
-        }
+                match result {
+                    Ok(ref ok_result) => {
+                        // Use non-generic send_ok_response via SendPeek
+                        // SAFETY: R is Send (from where clause), ok_result outlives this scope,
+                        // and we don't mutate it while the Peek exists
+                        let peek = facet::Peek::new(ok_result);
+                        let send_peek = unsafe { SendPeek::new(peek) };
+                        send_ok_response(send_peek, &response_plan, &task_tx, conn_id, request_id)
+                            .await;
+                    }
+                    Err(ref user_error) => {
+                        // Use non-generic send_error_response via SendPeek
+                        // SAFETY: E is Send (from where clause), user_error outlives this scope,
+                        // and we don't mutate it while the Peek exists
+                        let peek = facet::Peek::new(user_error);
+                        let send_peek = unsafe { SendPeek::new(peek) };
+                        send_error_response(send_peek, &task_tx, conn_id, request_id).await;
+                    }
+                }
+            })
+            .await
     }))
 }
 
@@ -386,15 +402,20 @@ where
     let dispatch_ctx = registry.dispatch_context();
 
     // Use task_local scope so roam::channel() creates bound channels.
+    let propagated_metadata = cx.metadata.clone();
     Box::pin(DISPATCH_CONTEXT.scope(dispatch_ctx, async move {
-        let result = handler(args).await;
+        CURRENT_CALL_METADATA
+            .scope(propagated_metadata, async move {
+                let result = handler(args).await;
 
-        // Use non-generic send_ok_response via SendPeek
-        // SAFETY: R is Send (from where clause), result outlives this scope,
-        // and we don't mutate it while the Peek exists
-        let peek = facet::Peek::new(&result);
-        let send_peek = unsafe { SendPeek::new(peek) };
-        send_ok_response(send_peek, &response_plan, &task_tx, conn_id, request_id).await;
+                // Use non-generic send_ok_response via SendPeek
+                // SAFETY: R is Send (from where clause), result outlives this scope,
+                // and we don't mutate it while the Peek exists
+                let peek = facet::Peek::new(&result);
+                let send_peek = unsafe { SendPeek::new(peek) };
+                send_ok_response(send_peek, &response_plan, &task_tx, conn_id, request_id).await;
+            })
+            .await
     }))
 }
 
