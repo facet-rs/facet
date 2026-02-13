@@ -3,8 +3,9 @@
 //! Provides a `tracing_subscriber::Layer` that captures events and spans,
 //! buffers them, and forwards to the host via RPC calls.
 
+use peeps_locks::DiagnosticMutex as Mutex;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use roam::session::ConnectionHandle;
@@ -75,7 +76,7 @@ impl CellTracingLayer {
         Self {
             buffer: Arc::new(LossyBuffer::new(buffer_size)),
             next_span_id: AtomicU64::new(1),
-            filter: Arc::new(Mutex::new(initial_filter)),
+            filter: Arc::new(Mutex::new("CellTracingLayer.filter", initial_filter)),
             start: Instant::now(),
         }
     }
@@ -100,7 +101,7 @@ impl CellTracingLayer {
         if target.starts_with("roam") {
             return false;
         }
-        let filter = self.filter.lock().unwrap();
+        let filter = self.filter.lock();
         filter.targets.would_enable(target, &level.to_tracing())
     }
 
@@ -112,7 +113,7 @@ impl CellTracingLayer {
     ///
     /// This is primarily for testing; in production, config is pushed via RPC.
     pub fn set_config(&self, config: &TracingConfig) {
-        *self.filter.lock().unwrap() = FilterState::from_config(config);
+        *self.filter.lock() = FilterState::from_config(config);
     }
 }
 
@@ -135,7 +136,7 @@ where
         }
 
         // Only emit SpanEnter record if include_span_events is enabled
-        let filter = self.filter.lock().unwrap();
+        let filter = self.filter.lock();
         if !filter.include_span_events {
             return;
         }
@@ -202,7 +203,7 @@ where
     }
 
     fn on_close(&self, id: Id, ctx: Context<'_, S>) {
-        let filter = self.filter.lock().unwrap();
+        let filter = self.filter.lock();
         if !filter.include_span_events {
             return;
         }
@@ -221,7 +222,7 @@ where
     fn on_enter(&self, id: &Id, ctx: Context<'_, S>) {
         // SpanEnter is already recorded on_new_span, but we could emit
         // separate enter events for re-entry if needed
-        let filter = self.filter.lock().unwrap();
+        let filter = self.filter.lock();
         if !filter.include_span_events {
             return;
         }
@@ -236,7 +237,7 @@ where
     }
 
     fn on_exit(&self, id: &Id, ctx: Context<'_, S>) {
-        let filter = self.filter.lock().unwrap();
+        let filter = self.filter.lock();
         if !filter.include_span_events {
             return;
         }
@@ -381,7 +382,7 @@ impl CellTracingService {
         let client = HostTracingClient::new(handle.clone());
         match client.get_tracing_config().await {
             Ok(host_config) => {
-                *self.filter.lock().unwrap() = FilterState::from_config(&host_config);
+                *self.filter.lock() = FilterState::from_config(&host_config);
             }
             Err(_) => {
                 // Use default config if query fails (keeps "trace" level)
@@ -429,7 +430,7 @@ impl CellTracingService {
 
             // Query config (but we're already racing with events)
             if let Ok(host_config) = client.get_tracing_config().await {
-                *filter.lock().unwrap() = FilterState::from_config(&host_config);
+                *filter.lock() = FilterState::from_config(&host_config);
             }
 
             loop {
@@ -454,7 +455,7 @@ impl CellTracingService {
 
 impl CellTracing for CellTracingService {
     async fn configure(&self, _cx: &roam::session::Context, config: TracingConfig) -> ConfigResult {
-        *self.filter.lock().unwrap() = FilterState::from_config(&config);
+        *self.filter.lock() = FilterState::from_config(&config);
         ConfigResult::Ok
     }
 }

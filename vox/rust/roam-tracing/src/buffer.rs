@@ -3,8 +3,8 @@
 //! Provides a thread-safe, bounded buffer that drops oldest entries
 //! when full. This ensures tracing never blocks the application.
 
+use peeps_locks::DiagnosticMutex as Mutex;
 use std::collections::VecDeque;
-use std::sync::Mutex;
 use tokio::sync::Notify;
 
 /// A lossy bounded buffer that drops oldest entries when full.
@@ -26,7 +26,7 @@ impl<T> LossyBuffer<T> {
     /// Create a new lossy buffer with the given capacity.
     pub fn new(capacity: usize) -> Self {
         Self {
-            inner: Mutex::new(VecDeque::with_capacity(capacity)),
+            inner: Mutex::new("LossyBuffer.inner", VecDeque::with_capacity(capacity)),
             capacity,
             notify: Notify::new(),
         }
@@ -37,7 +37,7 @@ impl<T> LossyBuffer<T> {
     /// This never blocks - critical for tracing to not affect app behavior.
     /// If the buffer is full, the oldest record is dropped (lossy).
     pub fn push(&self, item: T) {
-        let mut queue = self.inner.lock().unwrap();
+        let mut queue = self.inner.lock();
         if queue.len() >= self.capacity {
             queue.pop_front(); // Drop oldest (lossy)
         }
@@ -54,7 +54,7 @@ impl<T> LossyBuffer<T> {
     pub async fn pop(&self) -> Option<T> {
         loop {
             {
-                let mut queue = self.inner.lock().unwrap();
+                let mut queue = self.inner.lock();
                 if let Some(item) = queue.pop_front() {
                     return Some(item);
                 }
@@ -67,19 +67,19 @@ impl<T> LossyBuffer<T> {
     ///
     /// Returns `None` if the buffer is empty.
     pub fn try_pop(&self) -> Option<T> {
-        self.inner.lock().unwrap().pop_front()
+        self.inner.lock().pop_front()
     }
 
     /// Returns the current number of items in the buffer.
     #[allow(dead_code)]
     pub fn len(&self) -> usize {
-        self.inner.lock().unwrap().len()
+        self.inner.lock().len()
     }
 
     /// Returns true if the buffer is empty.
     #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
-        self.inner.lock().unwrap().is_empty()
+        self.inner.lock().is_empty()
     }
 }
 

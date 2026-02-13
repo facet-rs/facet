@@ -2,7 +2,8 @@
 //!
 //! Implements `HostTracing` service to receive tracing records from cells.
 
-use std::sync::{Arc, Mutex};
+use peeps_locks::DiagnosticMutex as Mutex;
+use std::sync::Arc;
 
 use crate::record::TracingRecord;
 use crate::service::{HostTracing, TracingConfig};
@@ -29,7 +30,7 @@ pub struct HostTracingState {
     /// Channel for sending tagged records to consumers.
     record_tx: peeps_sync::Sender<TaggedRecord>,
     /// Receiver end (taken by consumer).
-    record_rx: std::sync::Mutex<Option<peeps_sync::Receiver<TaggedRecord>>>,
+    record_rx: Mutex<Option<peeps_sync::Receiver<TaggedRecord>>>,
     /// Current tracing configuration (shared across all cells).
     config: Mutex<TracingConfig>,
 }
@@ -43,8 +44,8 @@ impl HostTracingState {
         let (record_tx, record_rx) = peeps_sync::channel("trace_host_records", buffer_size);
         Arc::new(Self {
             record_tx,
-            record_rx: std::sync::Mutex::new(Some(record_rx)),
-            config: Mutex::new(TracingConfig::default()),
+            record_rx: Mutex::new("HostTracingState.record_rx", Some(record_rx)),
+            config: Mutex::new("HostTracingState.config", TracingConfig::default()),
         })
     }
 
@@ -53,7 +54,7 @@ impl HostTracingState {
     /// Call this once to get the stream of tagged records from all cells.
     /// Returns `None` if already taken.
     pub fn take_receiver(&self) -> Option<peeps_sync::Receiver<TaggedRecord>> {
-        self.record_rx.lock().unwrap().take()
+        self.record_rx.lock().take()
     }
 
     /// Set the tracing configuration.
@@ -62,12 +63,12 @@ impl HostTracingState {
     /// Existing cells won't see this until you call `CellTracingClient::configure()`
     /// on their handles.
     pub fn set_config(&self, config: TracingConfig) {
-        *self.config.lock().unwrap() = config;
+        *self.config.lock() = config;
     }
 
     /// Get the current tracing configuration.
     pub fn config(&self) -> TracingConfig {
-        self.config.lock().unwrap().clone()
+        self.config.lock().clone()
     }
 
     /// Create a service instance for a specific peer.

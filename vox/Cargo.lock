@@ -2494,6 +2494,7 @@ name = "roam-tracing"
 version = "3.0.0"
 dependencies = [
  "facet",
+ "peeps-locks",
  "peeps-sync",
  "peeps-tasks",
  "roam",
