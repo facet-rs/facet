@@ -1501,6 +1501,17 @@ where
         }
 
         let (request_task_id, request_task_name) = task_context_from_metadata(&metadata);
+        if let Some(ref diag) = self.diagnostic_state {
+            diag.record_incoming_request(
+                request_id,
+                method_id,
+                Some(&metadata),
+                request_task_id,
+                request_task_name.clone(),
+                None,
+            );
+        }
+
         let cx = Context::new(
             conn_id,
             roam_wire::RequestId::new(request_id),
@@ -1530,18 +1541,6 @@ where
         });
         conn.in_flight_server_requests
             .insert(request_id, abort_handle);
-
-        // Track incoming request for diagnostics
-        if let Some(ref diag) = self.diagnostic_state {
-            diag.record_incoming_request(
-                request_id,
-                method_id,
-                Some(cx.metadata()),
-                request_task_id,
-                request_task_name,
-                None,
-            );
-        }
 
         Ok(())
     }
