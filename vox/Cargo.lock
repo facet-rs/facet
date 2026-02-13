@@ -2453,6 +2453,7 @@ dependencies = [
  "facet-postcard",
  "facet-reflect",
  "once_cell",
+ "peeps-locks",
  "peeps-tasks",
  "roam",
  "roam-session",

@@ -5,10 +5,10 @@
 //!
 //! For message-based transports (WebSocket), use `roam_session` directly.
 
+use peeps_locks::DiagnosticMutex as Mutex;
 use std::future::Future;
 use std::io;
 use std::sync::Arc;
-use std::sync::Mutex;
 
 use facet::Facet;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -86,8 +86,8 @@ where
         config,
         dispatcher,
         retry_policy: RetryPolicy::default(),
-        state: Arc::new(Mutex::new(None)),
-        current_handle: Arc::new(Mutex::new(None)),
+        state: Arc::new(Mutex::new("Client.state", None)),
+        current_handle: Arc::new(Mutex::new("Client.current_handle", None)),
     }
 }
 
@@ -107,8 +107,8 @@ where
         config,
         dispatcher,
         retry_policy,
-        state: Arc::new(Mutex::new(None)),
-        current_handle: Arc::new(Mutex::new(None)),
+        state: Arc::new(Mutex::new("Client.state", None)),
+        current_handle: Arc::new(Mutex::new("Client.current_handle", None)),
     }
 }
 
@@ -170,23 +170,23 @@ where
     async fn ensure_connected(&self) -> Result<ConnectionHandle, ConnectError> {
         // Check under lock (don't hold across await)
         {
-            let mut state = self.state.lock().unwrap();
+            let mut state = self.state.lock();
             if let Some(ref conn) = *state {
                 if conn.is_alive() {
                     let handle = conn.handle.clone();
-                    *self.current_handle.lock().unwrap() = Some(handle.clone());
+                    *self.current_handle.lock() = Some(handle.clone());
                     return Ok(handle);
                 }
                 *state = None;
-                *self.current_handle.lock().unwrap() = None;
+                *self.current_handle.lock() = None;
             }
         }
 
         // Not connected — connect without holding lock
         let conn = self.connect_internal().await?;
         let handle = conn.handle.clone();
-        *self.state.lock().unwrap() = Some(conn);
-        *self.current_handle.lock().unwrap() = Some(handle.clone());
+        *self.state.lock() = Some(conn);
+        *self.current_handle.lock() = Some(handle.clone());
         Ok(handle)
     }
 
@@ -252,13 +252,10 @@ where
                 }
                 Err(TransportError::ConnectionClosed) | Err(TransportError::DriverGone) => {
                     {
-                        let mut state = self.state.lock().unwrap();
+                        let mut state = self.state.lock();
                         *state = None;
                     }
-                    *self
-                        .current_handle
-                        .lock()
-                        .expect("reconnecting client handle cache lock poisoned") = None;
+                    *self.current_handle.lock() = None;
 
                     attempt += 1;
                     if attempt >= self.retry_policy.max_attempts {
@@ -329,13 +326,10 @@ where
                 }
                 Err(TransportError::ConnectionClosed) | Err(TransportError::DriverGone) => {
                     {
-                        let mut state = self.state.lock().unwrap();
+                        let mut state = self.state.lock();
                         *state = None;
                     }
-                    *self
-                        .current_handle
-                        .lock()
-                        .expect("reconnecting client handle cache lock poisoned") = None;
+                    *self.current_handle.lock() = None;
 
                     attempt += 1;
                     if attempt >= self.retry_policy.max_attempts {
@@ -355,12 +349,7 @@ where
         plan: &roam_session::RpcPlan,
         channels: &[u64],
     ) {
-        let handle = self
-            .current_handle
-            .lock()
-            .expect("reconnecting client handle cache lock poisoned")
-            .as_ref()
-            .cloned();
+        let handle = self.current_handle.lock().as_ref().cloned();
         if let Some(handle) = handle {
             handle.bind_response_channels(response, plan, channels);
         } else {
@@ -422,13 +411,10 @@ where
                     }
                     Err(TransportError::ConnectionClosed) | Err(TransportError::DriverGone) => {
                         {
-                            let mut state = this.state.lock().unwrap();
+                            let mut state = this.state.lock();
                             *state = None;
                         }
-                        *this
-                            .current_handle
-                            .lock()
-                            .expect("reconnecting client handle cache lock poisoned") = None;
+                        *this.current_handle.lock() = None;
 
                         attempt += 1;
                         if attempt >= this.retry_policy.max_attempts {
@@ -450,12 +436,7 @@ where
         response_plan: &roam_session::RpcPlan,
         channels: &[u64],
     ) {
-        let handle = self
-            .current_handle
-            .lock()
-            .expect("reconnecting client handle cache lock poisoned")
-            .as_ref()
-            .cloned();
+        let handle = self.current_handle.lock().as_ref().cloned();
         if let Some(handle) = handle {
             // SAFETY: The Caller trait contract guarantees these pointers/plans are valid.
             unsafe {
