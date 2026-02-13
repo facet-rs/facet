@@ -696,37 +696,44 @@ async fn handle_close(
 ) -> Result<(), BridgeError> {
     use roam_session::DriverMessage;
 
-    let mut session_guard = session.lock().unwrap();
+    // Extract what we need under the lock, then drop before any await
+    let close_info = {
+        let mut session_guard = session.lock().unwrap();
 
-    let channel = session_guard.get_channel(channel_id);
+        let channel = session_guard.get_channel(channel_id);
 
-    if let Some(channel) = channel {
-        // Only client->server channels can be closed by the client
-        if channel.direction != ChannelDirection::ClientToServer {
-            return Err(BridgeError::bad_request(format!(
-                "Channel {} cannot be closed by client",
-                channel_id
-            )));
-        }
+        if let Some(channel) = channel {
+            // Only client->server channels can be closed by the client
+            if channel.direction != ChannelDirection::ClientToServer {
+                return Err(BridgeError::bad_request(format!(
+                    "Channel {} cannot be closed by client",
+                    channel_id
+                )));
+            }
 
-        // Get the roam channel ID and driver_tx
-        if let (Some(roam_channel_id), Some(driver_tx)) =
-            (channel.roam_channel_id, session_guard.driver_tx().cloned())
-        {
-            // Remove the channel from tracking
-            session_guard.remove_channel(channel_id);
-            drop(session_guard);
-
-            // Send Close to roam
-            let _ = driver_tx
-                .send(DriverMessage::Close {
-                    conn_id: roam_wire::ConnectionId::ROOT,
-                    channel_id: roam_channel_id,
-                })
-                .await;
+            // Get the roam channel ID and driver_tx
+            if let (Some(roam_channel_id), Some(driver_tx)) =
+                (channel.roam_channel_id, session_guard.driver_tx().cloned())
+            {
+                session_guard.remove_channel(channel_id);
+                Some((roam_channel_id, driver_tx))
+            } else {
+                session_guard.remove_channel(channel_id);
+                None
+            }
         } else {
-            session_guard.remove_channel(channel_id);
+            None
         }
+    };
+
+    // Send Close to roam outside the lock
+    if let Some((roam_channel_id, driver_tx)) = close_info {
+        let _ = driver_tx
+            .send(DriverMessage::Close {
+                conn_id: roam_wire::ConnectionId::ROOT,
+                channel_id: roam_channel_id,
+            })
+            .await;
     }
 
     Ok(())
