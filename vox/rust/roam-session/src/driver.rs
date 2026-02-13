@@ -920,6 +920,27 @@ struct PendingConnect {
     dispatcher: Option<Box<dyn ServiceDispatcher>>,
 }
 
+fn task_context_from_metadata(metadata: &roam_wire::Metadata) -> (Option<u64>, Option<String>) {
+    let mut task_id = None;
+    let mut task_name = None;
+    for (key, value, _flags) in metadata {
+        if key == crate::PEEPS_TASK_ID_METADATA_KEY {
+            task_id = match value {
+                roam_wire::MetadataValue::U64(id) => Some(*id),
+                roam_wire::MetadataValue::String(s) => s.parse::<u64>().ok(),
+                roam_wire::MetadataValue::Bytes(_) => None,
+            };
+        } else if key == crate::PEEPS_TASK_NAME_METADATA_KEY {
+            task_name = match value {
+                roam_wire::MetadataValue::String(name) => Some(name.clone()),
+                roam_wire::MetadataValue::U64(id) => Some(id.to_string()),
+                roam_wire::MetadataValue::Bytes(_) => None,
+            };
+        }
+    }
+    (task_id, task_name)
+}
+
 // ============================================================================
 // Driver - The core connection loop
 // ============================================================================
@@ -1479,6 +1500,7 @@ where
             return Err(self.goodbye("flow.call.payload-limit").await);
         }
 
+        let (request_task_id, request_task_name) = task_context_from_metadata(&metadata);
         let cx = Context::new(
             conn_id,
             roam_wire::RequestId::new(request_id),
@@ -1511,7 +1533,14 @@ where
 
         // Track incoming request for diagnostics
         if let Some(ref diag) = self.diagnostic_state {
-            diag.record_incoming_request(request_id, method_id, None);
+            diag.record_incoming_request(
+                request_id,
+                method_id,
+                Some(cx.metadata()),
+                request_task_id,
+                request_task_name,
+                None,
+            );
         }
 
         Ok(())

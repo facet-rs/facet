@@ -63,6 +63,8 @@ pub use rpc_plan::*;
 
 pub(crate) const CHANNEL_SIZE: usize = 1024;
 pub(crate) const RX_STREAM_BUFFER_SIZE: usize = 1024;
+pub(crate) const PEEPS_TASK_ID_METADATA_KEY: &str = "peeps.task_id";
+pub(crate) const PEEPS_TASK_NAME_METADATA_KEY: &str = "peeps.task_name";
 
 /// Re-export `Infallible` for use as the error type in infallible methods.
 pub use std::convert::Infallible;
