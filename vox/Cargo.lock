@@ -1924,32 +1924,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "peeps-locks"
+name = "peeps"
 version = "0.1.0"
 dependencies = [
  "facet",
+ "facet-json",
  "parking_lot",
- "peeps-tasks",
  "peeps-types",
  "tokio",
-]
-
-[[package]]
-name = "peeps-sync"
-version = "0.1.0"
-dependencies = [
- "peeps-tasks",
- "peeps-types",
- "tokio",
-]
-
-[[package]]
-name = "peeps-tasks"
-version = "0.1.0"
-dependencies = [
- "facet",
- "peeps-types",
- "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -2314,8 +2297,7 @@ dependencies = [
  "facet-value",
  "futures-util",
  "http",
- "peeps-sync",
- "peeps-tasks",
+ "peeps",
  "reqwest",
  "roam-hash",
  "roam-schema",
@@ -2334,7 +2316,7 @@ dependencies = [
 name = "roam-local"
 version = "3.0.0"
 dependencies = [
- "peeps-tasks",
+ "peeps",
  "tokio",
 ]
 
@@ -2396,10 +2378,7 @@ dependencies = [
  "futures-channel",
  "futures-util",
  "gloo-timers",
- "inventory",
- "peeps-locks",
- "peeps-sync",
- "peeps-tasks",
+ "peeps",
  "peeps-types",
  "roam",
  "roam-frame",
@@ -2424,8 +2403,7 @@ dependencies = [
  "libc",
  "libproc",
  "once_cell",
- "peeps-sync",
- "peeps-tasks",
+ "peeps",
  "peeps-types",
  "roam",
  "roam-fdpass",
@@ -2450,8 +2428,7 @@ dependencies = [
  "facet-postcard",
  "facet-reflect",
  "once_cell",
- "peeps-locks",
- "peeps-tasks",
+ "peeps",
  "roam",
  "roam-session",
  "roam-wire",
@@ -2473,8 +2450,7 @@ dependencies = [
  "facet",
  "facet-json",
  "facet-pretty",
- "peeps-sync",
- "peeps-tasks",
+ "peeps",
  "rand",
  "reqwest",
  "roam",
@@ -2491,9 +2467,7 @@ name = "roam-tracing"
 version = "3.0.0"
 dependencies = [
  "facet",
- "peeps-locks",
- "peeps-sync",
- "peeps-tasks",
+ "peeps",
  "roam",
  "tokio",
  "tracing",
@@ -2509,7 +2483,7 @@ dependencies = [
  "futures-channel",
  "futures-util",
  "js-sys",
- "peeps-tasks",
+ "peeps",
  "roam-session",
  "roam-stream",
  "roam-wire",
@@ -2852,7 +2826,7 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 name = "subject-rust"
 version = "3.0.0"
 dependencies = [
- "peeps-tasks",
+ "peeps",
  "roam",
  "roam-stream",
  "spec-proto",
@@ -3843,11 +3817,3 @@ name = "zmij"
 version = "1.0.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ff05f8caa9038894637571ae6b9e29466c1f4f829d26c9b28f869a29cbe3445"
-
-[[patch.unused]]
-name = "peeps"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "peeps-threads"
-version = "0.1.0"

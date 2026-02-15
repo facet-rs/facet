@@ -75,7 +75,6 @@ pub mod auditable;
 pub mod bootstrap;
 pub mod cleanup;
 pub mod diagnostic;
-pub mod diagnostic_snapshot;
 pub mod driver;
 pub mod guest;
 pub mod host;
