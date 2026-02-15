@@ -2,6 +2,7 @@
 
 use std::io;
 
+use peeps_tasks::PeepableFutureExt;
 use tokio::net::windows::named_pipe::{
     ClientOptions, NamedPipeClient, NamedPipeServer, ServerOptions,
 };
@@ -54,7 +55,10 @@ impl LocalListener {
     /// after accepting.
     pub async fn accept(&mut self) -> io::Result<LocalServerStream> {
         // Wait for a client to connect to the current server
-        self.next_server.connect().await?;
+        self.next_server
+            .connect()
+            .peepable("socket.accept")
+            .await?;
 
         // Take the connected server
         let connected = std::mem::replace(

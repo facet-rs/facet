@@ -21,6 +21,7 @@ use roam_wire::Message;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use roam_session::MessageTransport;
+use peeps_tasks::PeepableFutureExt;
 
 /// Enable wire-level message logging for debugging.
 /// Set ROAM_WIRE_SPY=1 to enable.
@@ -252,9 +253,15 @@ where
 
         wire_spy_bytes("--> len", &header);
         wire_spy_bytes("-->", &self.encode_buf);
-        self.stream.write_all(&header).await?;
-        self.stream.write_all(&self.encode_buf).await?;
-        self.stream.flush().await?;
+        self.stream
+            .write_all(&header)
+            .peepable("socket.write_all.header")
+            .await?;
+        self.stream
+            .write_all(&self.encode_buf)
+            .peepable("socket.write_all.payload")
+            .await?;
+        self.stream.flush().peepable("socket.flush").await?;
         Ok(())
     }
 
@@ -288,7 +295,7 @@ where
 
             // Read more data
             let mut tmp = [0u8; 4096];
-            let n = self.stream.read(&mut tmp).await?;
+            let n = self.stream.read(&mut tmp).peepable("socket.read").await?;
             if n == 0 {
                 let trailing = self.buf.len().saturating_sub(self.unread_start);
                 if wire_spy_enabled() {

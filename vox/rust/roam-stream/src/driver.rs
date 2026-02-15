@@ -11,6 +11,7 @@ use std::io;
 use std::sync::Arc;
 
 use facet::Facet;
+use peeps_tasks::PeepableFutureExt;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::task::JoinHandle;
 
@@ -194,6 +195,7 @@ where
         let stream = self
             .connector
             .connect()
+            .peepable("socket.connect")
             .await
             .map_err(ConnectError::ConnectFailed)?;
 

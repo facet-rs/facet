@@ -2334,6 +2334,7 @@ dependencies = [
 name = "roam-local"
 version = "3.0.0"
 dependencies = [
+ "peeps-tasks",
  "tokio",
 ]
 
