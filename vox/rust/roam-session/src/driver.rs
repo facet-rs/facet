@@ -1585,12 +1585,27 @@ where
 
         // r[impl call.cancel.best-effort] - Store abort handle for cancellation support
         let abort_handle = spawn_with_abort("roam_request_handler", async move {
-            handler_fut.await;
-            // Clean up response node when handler completes
+            // Scope the handler under the response node so the response gains descendants
+            // (response --needs--> nested futures/resources), and ensure a stack scope exists
+            // even if this task wasn't spawned via peeps::spawn_tracked.
             #[cfg(feature = "diagnostics")]
             if let Some(response_node_id) = response_node_id {
-                peeps::registry::remove_node(&response_node_id);
+                let node_id = response_node_id.clone();
+                let fut = async move {
+                    handler_fut.await;
+                    peeps::registry::remove_node(&node_id);
+                };
+                let fut = peeps::stack::scope(&response_node_id, fut);
+                if peeps::stack::is_active() {
+                    fut.await;
+                } else {
+                    peeps::stack::with_stack(fut).await;
+                }
+                return;
             }
+
+            // No peeps metadata available; just run the handler.
+            handler_fut.await;
         });
         conn.in_flight_server_requests
             .insert(request_id, abort_handle);
@@ -2027,6 +2042,14 @@ where
 
     // Wrap transport with diagnostic recording
     let io = DiagnosticTransport::new(io, diagnostic_state.clone());
+
+    // Ensure method IDs are computed at least once on the server side so
+    // `diagnostic::get_method_name()` can resolve incoming method_ids before we
+    // register peeps request/response nodes.
+    #[cfg(feature = "diagnostics")]
+    {
+        let _ = dispatcher.method_ids();
+    }
 
     // Create root connection (connection 0)
     // r[impl core.link.connection-zero]

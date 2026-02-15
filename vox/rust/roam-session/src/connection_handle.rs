@@ -1086,6 +1086,10 @@ impl ConnectionHandle {
                 label: Some(method_name),
                 attrs_json,
             });
+            // If we're called from within a peepable poll stack, link the caller future
+            // to this request (caller --needs--> request). This is the "parent" edge
+            // users expect for outgoing RPC requests.
+            peeps::stack::with_top(|src| peeps::registry::edge(src, &request_node_id));
             // Structural gateway edge: request --needs--> response
             peeps::registry::edge(&request_node_id, &response_node_id);
             request_node_id
