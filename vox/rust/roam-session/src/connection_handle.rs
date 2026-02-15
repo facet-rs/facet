@@ -1086,8 +1086,6 @@ impl ConnectionHandle {
                 label: Some(method_name),
                 attrs_json,
             });
-            // Emit edge: current future --needs--> this request
-            peeps::stack::with_top(|src| peeps::registry::edge(src, &request_node_id));
             // Structural gateway edge: request --needs--> response
             peeps::registry::edge(&request_node_id, &response_node_id);
             request_node_id
@@ -1103,19 +1101,37 @@ impl ConnectionHandle {
             response_tx,
         };
 
-        self.shared
-            .driver_tx
-            .send(msg)
-            .peepable("call_raw.send_call")
-            .await
-            .map_err(|_| TransportError::DriverGone)?;
+        let call_fut = async {
+            self.shared
+                .driver_tx
+                .send(msg)
+                .peepable("call_raw.send_call")
+                .await
+                .map_err(|_| TransportError::DriverGone)?;
 
-        let result = response_rx
-            .recv()
-            .peepable("call_raw.recv_response")
-            .await
-            .map_err(|_| TransportError::DriverGone)?
-            .map_err(|_| TransportError::ConnectionClosed);
+            response_rx
+                .recv()
+                .peepable("call_raw.recv_response")
+                .await
+                .map_err(|_| TransportError::DriverGone)?
+                .map_err(|_| TransportError::ConnectionClosed)
+        };
+
+        // Ensure this request is a stable stack frame while awaiting.
+        // This makes `stack::with_top` non-empty for nested peepable futures and
+        // lets wrappers emit edges against the request node when appropriate.
+        #[cfg(feature = "diagnostics")]
+        let result = {
+            let call_fut = peeps::stack::scope(&request_node_id, call_fut);
+            if peeps::stack::is_active() {
+                call_fut.await
+            } else {
+                peeps::stack::with_stack(call_fut).await
+            }
+        };
+
+        #[cfg(not(feature = "diagnostics"))]
+        let result = call_fut.await;
 
         // Mark request as complete
         if let Some(diag) = &self.shared.diagnostic_state {
