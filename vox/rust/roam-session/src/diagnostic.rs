@@ -143,6 +143,10 @@ pub struct InFlightRequest {
     pub args: Option<HashMap<String, String>>,
     /// Backtrace at call site (captured when diagnostics feature is enabled).
     pub backtrace: Option<String>,
+    /// The local task handling this incoming request (server side).
+    pub server_task_id: Option<u64>,
+    /// Name of the local task handling this incoming request.
+    pub server_task_name: Option<String>,
 }
 
 /// A recently completed RPC request.
@@ -331,6 +335,8 @@ impl DiagnosticState {
                     metadata,
                     args,
                     backtrace,
+                    server_task_id: None,
+                    server_task_name: None,
                 },
             );
         }
@@ -347,6 +353,9 @@ impl DiagnosticState {
         args: Option<HashMap<String, String>>,
     ) {
         let metadata = Self::metadata_to_debug_map(metadata);
+        // Capture the local task handling this request (server side)
+        let server_task_id = peeps_tasks::current_task_id();
+        let server_task_name = server_task_id.and_then(peeps_tasks::task_name);
         if let Ok(mut requests) = self.requests.lock() {
             requests.insert(
                 request_id,
@@ -360,6 +369,8 @@ impl DiagnosticState {
                     metadata,
                     args,
                     backtrace: None, // no backtrace for incoming — the remote captured it
+                    server_task_id,
+                    server_task_name,
                 },
             );
         }

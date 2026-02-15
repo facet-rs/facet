@@ -220,6 +220,32 @@ impl ConnectionHandle {
             );
         }
 
+        // Propagate explicit caller identity for cross-process request tree reconstruction.
+        // These are always overwritten via upsert so they identify *this* call site,
+        // even if inherited values were copied from CURRENT_CALL_METADATA above.
+        if let Some(process) = peeps_types::process_name() {
+            Self::upsert_metadata_entry(
+                &mut metadata,
+                peeps_types::PEEPS_CALLER_PROCESS_KEY,
+                roam_wire::MetadataValue::String(process.to_owned()),
+                roam_wire::metadata_flags::NONE,
+            );
+        }
+        if let Some(ref diag) = self.shared.diagnostic_state {
+            Self::upsert_metadata_entry(
+                &mut metadata,
+                peeps_types::PEEPS_CALLER_CONNECTION_KEY,
+                roam_wire::MetadataValue::String(diag.name.clone()),
+                roam_wire::metadata_flags::NONE,
+            );
+        }
+        Self::upsert_metadata_entry(
+            &mut metadata,
+            peeps_types::PEEPS_CALLER_REQUEST_ID_KEY,
+            roam_wire::MetadataValue::U64(request_id),
+            roam_wire::metadata_flags::NONE,
+        );
+
         (metadata, task_id, task_name)
     }
 

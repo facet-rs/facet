@@ -75,6 +75,8 @@ pub fn snapshot_all_diagnostics() -> SessionSnapshot {
                             metadata: r.metadata.clone(),
                             args: r.args.clone(),
                             backtrace: r.backtrace.clone(),
+                            server_task_id: r.server_task_id,
+                            server_task_name: r.server_task_name.clone(),
                         })
                         .collect();
                     v.sort_by(|a, b| {
