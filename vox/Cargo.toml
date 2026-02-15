@@ -64,15 +64,6 @@ peeps-types = { version = "0.1.0", git = "https://github.com/bearcove/peeps", br
 peeps-sync = { version = "0.1.0", git = "https://github.com/bearcove/peeps", branch = "main" }
 peeps-locks = { version = "0.1.0", git = "https://github.com/bearcove/peeps", branch = "main" }
 
-# # Uncomment to develop peeps
-# peeps = { path = "../peeps/crates/peeps" }
-# peeps-tasks = { path = "../peeps/crates/peeps-tasks" }
-# peeps-threads = { path = "../peeps/crates/peeps-threads" }
-# peeps-locks = { path = "../peeps/crates/peeps-locks" }
-# peeps-roam = { path = "../peeps/crates/peeps-roam" }
-# peeps-types = { path = "../peeps/crates/peeps-types" }
-# peeps-sync = { path = "../peeps/crates/peeps-sync" }
-
 inventory = "0.3"
 
 bytes = "1"
@@ -124,6 +115,15 @@ static_assertions = "1.1.0"
 # facet-json = { path = "../facet/facet-json" }
 # facet-value = { path = "../facet/facet-value" }
 # facet-testhelpers = { path = "../facet/facet-testhelpers" }
+
+# Uncomment to develop peeps
+[patch."https://github.com/bearcove/peeps"]
+peeps = { path = "../peeps/crates/peeps" }
+peeps-tasks = { path = "../peeps/crates/peeps-tasks" }
+peeps-threads = { path = "../peeps/crates/peeps-threads" }
+peeps-locks = { path = "../peeps/crates/peeps-locks" }
+peeps-types = { path = "../peeps/crates/peeps-types" }
+peeps-sync = { path = "../peeps/crates/peeps-sync" }
 
 [profile.release]
 debug = 1
