@@ -162,7 +162,7 @@ impl Default for ExporterConfig {
 /// - POSTs to the OTLP endpoint
 #[derive(Clone)]
 pub struct OtlpExporter {
-    tx: peeps_sync::Sender<Span>,
+    tx: peeps::Sender<Span>,
     config: Arc<ExporterConfig>,
 }
 
@@ -181,12 +181,12 @@ impl OtlpExporter {
 
     /// Create a new exporter with full configuration.
     pub fn with_config(config: ExporterConfig) -> Self {
-        let (tx, rx) = peeps_sync::channel("telemetry_export", 4096);
+        let (tx, rx) = peeps::channel("telemetry_export", 4096);
         let config = Arc::new(config);
 
         // Spawn the background export task
         let config_clone = config.clone();
-        peeps_tasks::spawn_tracked("roam_telemetry_export_loop", async move {
+        peeps::spawn_tracked("roam_telemetry_export_loop", async move {
             export_loop(rx, config_clone).await;
         });
 
@@ -217,7 +217,7 @@ impl SpanExporter for OtlpExporter {
     }
 }
 
-async fn export_loop(mut rx: peeps_sync::Receiver<Span>, config: Arc<ExporterConfig>) {
+async fn export_loop(mut rx: peeps::Receiver<Span>, config: Arc<ExporterConfig>) {
     let client = reqwest::Client::builder()
         .timeout(config.timeout)
         .build()

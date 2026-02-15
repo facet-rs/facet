@@ -20,7 +20,6 @@ diagnostics = []
 [dependencies]
 facet.workspace = true
 facet-core.workspace = true
-inventory.workspace = true
 peeps-types.workspace = true
 facet-format.workspace = true
 facet-path.workspace = true
@@ -31,13 +30,12 @@ roam-frame.workspace = true
 roam-wire.workspace = true
 roam-task-local.workspace = true
 tracing = { workspace = true, optional = true }
+ulid.workspace = true
 
 # Native runtime
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio.workspace = true
-peeps-tasks.workspace = true
-peeps-sync.workspace = true
-peeps-locks.workspace = true
+peeps.workspace = true
 futures-util = { version = "0.3", default-features = false, features = [
   "std",
   "async-await-macro",

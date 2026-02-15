@@ -2,7 +2,7 @@
 //!
 //! Implements `HostTracing` service to receive tracing records from cells.
 
-use peeps_locks::DiagnosticMutex as Mutex;
+use peeps::Mutex;
 use std::sync::Arc;
 
 use crate::record::TracingRecord;
@@ -28,9 +28,9 @@ pub struct TaggedRecord {
 /// instances (one per cell connection).
 pub struct HostTracingState {
     /// Channel for sending tagged records to consumers.
-    record_tx: peeps_sync::Sender<TaggedRecord>,
+    record_tx: peeps::Sender<TaggedRecord>,
     /// Receiver end (taken by consumer).
-    record_rx: Mutex<Option<peeps_sync::Receiver<TaggedRecord>>>,
+    record_rx: Mutex<Option<peeps::Receiver<TaggedRecord>>>,
     /// Current tracing configuration (shared across all cells).
     config: Mutex<TracingConfig>,
 }
@@ -41,7 +41,7 @@ impl HostTracingState {
     /// `buffer_size` is the capacity of the record channel.
     /// If the consumer is slow, newest records are dropped.
     pub fn new(buffer_size: usize) -> Arc<Self> {
-        let (record_tx, record_rx) = peeps_sync::channel("trace_host_records", buffer_size);
+        let (record_tx, record_rx) = peeps::channel("trace_host_records", buffer_size);
         Arc::new(Self {
             record_tx,
             record_rx: Mutex::new("HostTracingState.record_rx", Some(record_rx)),
@@ -53,7 +53,7 @@ impl HostTracingState {
     ///
     /// Call this once to get the stream of tagged records from all cells.
     /// Returns `None` if already taken.
-    pub fn take_receiver(&self) -> Option<peeps_sync::Receiver<TaggedRecord>> {
+    pub fn take_receiver(&self) -> Option<peeps::Receiver<TaggedRecord>> {
         self.record_rx.lock().take()
     }
 

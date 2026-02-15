@@ -1,5 +1,5 @@
 use facet::Facet;
-use peeps_tasks::PeepableFutureExt;
+use peeps::PeepableFutureExt;
 
 use crate::{
     ChannelError, ConnectionHandle, DispatchContext, DriverTxSlot, RX_STREAM_BUFFER_SIZE,

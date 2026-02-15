@@ -3,7 +3,7 @@
 use std::io;
 use std::path::Path;
 
-use peeps_tasks::PeepableFutureExt;
+use peeps::PeepableFutureExt;
 use tokio::net::{UnixListener, UnixStream};
 
 /// A local IPC stream (Unix socket on Unix platforms).

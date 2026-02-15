@@ -6,7 +6,7 @@ use std::convert::Infallible;
 use std::marker::PhantomData;
 
 use facet::Facet;
-use peeps_tasks::PeepableFutureExt;
+use peeps::PeepableFutureExt;
 
 use crate::runtime::{Receiver, Sender};
 use crate::{CHANNEL_SIZE, ChannelId, DriverMessage, IncomingChannelMessage, get_dispatch_context};
@@ -40,6 +40,53 @@ pub fn channel<T: 'static>() -> (Tx<T>, Rx<T>) {
     if let Some(ctx) = get_dispatch_context() {
         let channel_id = ctx.channel_ids.next();
         debug!(channel_id, "roam::channel() creating bound channel pair");
+
+        // Register channel endpoint nodes in peeps registry
+        #[cfg(feature = "diagnostics")]
+        if let Some(metadata) = crate::dispatch::get_current_call_metadata() {
+            let chain_id = metadata
+                .iter()
+                .find(|(k, _, _)| k == crate::PEEPS_CHAIN_ID_METADATA_KEY)
+                .and_then(|(_, v, _)| match v {
+                    roam_wire::MetadataValue::String(s) => Some(s.clone()),
+                    _ => None,
+                });
+            let span_id = metadata
+                .iter()
+                .find(|(k, _, _)| k == crate::PEEPS_SPAN_ID_METADATA_KEY)
+                .and_then(|(_, v, _)| match v {
+                    roam_wire::MetadataValue::String(s) => Some(s.clone()),
+                    _ => None,
+                });
+            if let Some(chain_id) = chain_id {
+                let tx_node_id =
+                    peeps_types::canonical_id::roam_channel(&chain_id, channel_id, "tx");
+                let rx_node_id =
+                    peeps_types::canonical_id::roam_channel(&chain_id, channel_id, "rx");
+                let attrs_json = format!("{{\"channel.id\":\"{channel_id}\"}}");
+                peeps::registry::register_node(peeps_types::Node {
+                    id: tx_node_id.clone(),
+                    kind: peeps_types::NodeKind::RemoteTx,
+                    label: Some(format!("ch#{channel_id} tx")),
+                    attrs_json: attrs_json.clone(),
+                });
+                peeps::registry::register_node(peeps_types::Node {
+                    id: rx_node_id.clone(),
+                    kind: peeps_types::NodeKind::RemoteRx,
+                    label: Some(format!("ch#{channel_id} rx")),
+                    attrs_json,
+                });
+                // Gateway edge: tx --needs--> rx
+                peeps::registry::edge(&tx_node_id, &rx_node_id);
+                // Request→channel edge
+                if let Some(span_id) = span_id {
+                    let request_node_id = peeps_types::canonical_id::request_from_span_id(&span_id);
+                    peeps::registry::edge(&request_node_id, &tx_node_id);
+                    peeps::registry::edge(&request_node_id, &rx_node_id);
+                }
+            }
+        }
+
         (
             Tx::bound(ctx.conn_id, channel_id, sender, ctx.driver_tx.clone()),
             Rx::bound(channel_id, receiver),

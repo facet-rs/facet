@@ -3,16 +3,16 @@
 use std::future::Future;
 use std::time::Duration;
 
-// Re-export DiagnosticMutex as Mutex (tokio::sync::Mutex is banned — causes deadlocks)
-pub use peeps_locks::DiagnosticMutex as Mutex;
+// Re-export peeps Mutex (tokio::sync::Mutex is banned — causes deadlocks)
+pub use peeps::Mutex;
 
-// Re-export peeps-sync channel types
-pub use peeps_sync::{
+// Re-export peeps channel types
+pub use peeps::{
     OneshotReceiver, OneshotSender, Receiver, Sender, UnboundedReceiver, UnboundedSender, channel,
     oneshot_channel, unbounded_channel,
 };
 
-// Re-export tokio error types (peeps-sync uses the same ones)
+// Re-export tokio error types (peeps uses the same ones)
 pub use tokio::sync::mpsc::error::SendError;
 
 /// Create a bounded mpsc channel.
@@ -59,7 +59,7 @@ where
     F: Future + Send + 'static,
     F::Output: Send + 'static,
 {
-    peeps_tasks::spawn_tracked(name, future)
+    peeps::spawn_tracked(name, future)
 }
 
 /// Spawn a task and return an abort handle that can be used to cancel it.
@@ -71,7 +71,7 @@ pub fn spawn_with_abort<F>(name: &'static str, future: F) -> AbortHandle
 where
     F: Future<Output = ()> + Send + 'static,
 {
-    let handle = peeps_tasks::spawn_tracked(name, future);
+    let handle = peeps::spawn_tracked(name, future);
     AbortHandle(handle.abort_handle())
 }
 

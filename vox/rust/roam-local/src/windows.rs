@@ -2,7 +2,7 @@
 
 use std::io;
 
-use peeps_tasks::PeepableFutureExt;
+use peeps::PeepableFutureExt;
 use tokio::net::windows::named_pipe::{
     ClientOptions, NamedPipeClient, NamedPipeServer, ServerOptions,
 };

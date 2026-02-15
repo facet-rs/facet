@@ -17,8 +17,7 @@ tracing = ["dep:tracing", "roam-session/tracing"]
 diagnostics = ["roam-session/diagnostics"]
 
 [dependencies]
-peeps-tasks.workspace = true
-peeps-sync.workspace = true
+peeps.workspace = true
 shm-primitives.workspace = true
 roam-frame.workspace = true
 ur-taking-me-with-you.workspace = true

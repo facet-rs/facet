@@ -20,8 +20,8 @@ use std::time::Duration;
 use roam_wire::Message;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
+use peeps::PeepableFutureExt;
 use roam_session::MessageTransport;
-use peeps_tasks::PeepableFutureExt;
 
 /// Enable wire-level message logging for debugging.
 /// Set ROAM_WIRE_SPY=1 to enable.

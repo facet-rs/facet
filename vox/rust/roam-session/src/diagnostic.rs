@@ -353,9 +353,9 @@ impl DiagnosticState {
         args: Option<HashMap<String, String>>,
     ) {
         let metadata = Self::metadata_to_debug_map(metadata);
-        // Capture the local task handling this request (server side)
-        let server_task_id = peeps_tasks::current_task_id();
-        let server_task_name = server_task_id.and_then(peeps_tasks::task_name);
+        // Task tracking APIs removed — set to None
+        let server_task_id = None;
+        let server_task_name = None;
         if let Ok(mut requests) = self.requests.lock() {
             requests.insert(
                 request_id,
@@ -408,8 +408,8 @@ impl DiagnosticState {
         direction: ChannelDirection,
         request_id: Option<u64>,
     ) {
-        let task_id = peeps_tasks::current_task_id();
-        let task_name = task_id.and_then(peeps_tasks::task_name);
+        let task_id = None;
+        let task_name = None;
         if let Ok(mut channels) = self.channels.lock() {
             channels.insert(
                 channel_id,

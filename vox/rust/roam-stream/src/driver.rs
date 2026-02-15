@@ -5,13 +5,13 @@
 //!
 //! For message-based transports (WebSocket), use `roam_session` directly.
 
-use peeps_locks::DiagnosticMutex as Mutex;
+use peeps::Mutex;
 use std::future::Future;
 use std::io;
 use std::sync::Arc;
 
 use facet::Facet;
-use peeps_tasks::PeepableFutureExt;
+use peeps::PeepableFutureExt;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::task::JoinHandle;
 
@@ -210,7 +210,7 @@ where
         // Any Connect requests from the server will be automatically rejected.
 
         let driver_handle =
-            peeps_tasks::spawn_tracked("roam_stream_driver", async move { driver.run().await });
+            peeps::spawn_tracked("roam_stream_driver", async move { driver.run().await });
 
         Ok(ClientState {
             handle,

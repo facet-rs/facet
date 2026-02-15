@@ -194,7 +194,7 @@ mod tests {
 
         // Server task
         let server_config = config.clone();
-        let server_handle = peeps_tasks::spawn_tracked("roam_ws_test_server", async move {
+        let server_handle = peeps::spawn_tracked("roam_ws_test_server", async move {
             let (stream, _) = listener.accept().await.unwrap();
             let ws_stream = accept_async(stream).await.unwrap();
             let transport = WsTransport::new(ws_stream);
@@ -210,12 +210,12 @@ mod tests {
                 .unwrap();
 
         // Spawn client driver
-        peeps_tasks::spawn_tracked("roam_ws_test_client_driver", client_driver.run());
+        peeps::spawn_tracked("roam_ws_test_client_driver", client_driver.run());
 
         // Server should also succeed
         let (server_handle_result, _server_incoming, server_driver) =
             server_handle.await.unwrap().unwrap();
-        peeps_tasks::spawn_tracked("roam_ws_test_server_driver", server_driver.run());
+        peeps::spawn_tracked("roam_ws_test_server_driver", server_driver.run());
 
         // Both handles exist - just verify they were created
         let _ = client_handle;

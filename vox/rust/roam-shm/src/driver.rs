@@ -147,8 +147,7 @@ struct VirtualConnectionState {
     /// If None, inherits from the parent link's dispatcher.
     dispatcher: Option<Box<dyn ServiceDispatcher>>,
     /// Pending responses (request_id -> response sender).
-    pending_responses:
-        HashMap<u64, peeps_sync::OneshotSender<Result<ResponseData, TransportError>>>,
+    pending_responses: HashMap<u64, peeps::OneshotSender<Result<ResponseData, TransportError>>>,
     /// In-flight server requests with their abort handles.
     in_flight_server_requests: HashMap<u64, tokio::task::AbortHandle>,
 }
@@ -157,7 +156,7 @@ impl VirtualConnectionState {
     /// Create a new virtual connection state.
     fn new(
         conn_id: ConnectionId,
-        driver_tx: peeps_sync::Sender<DriverMessage>,
+        driver_tx: peeps::Sender<DriverMessage>,
         role: Role,
         initial_credit: u32,
         diagnostic_state: Option<Arc<DiagnosticState>>,
@@ -200,7 +199,7 @@ impl VirtualConnectionState {
 
 /// Pending outgoing Connect request.
 struct PendingConnect {
-    response_tx: peeps_sync::OneshotSender<Result<ConnectionHandle, ConnectError>>,
+    response_tx: peeps::OneshotSender<Result<ConnectionHandle, ConnectError>>,
     dispatcher: Option<Box<dyn ServiceDispatcher>>,
 }
 
@@ -215,7 +214,7 @@ pub struct IncomingConnection {
     /// Metadata from the Connect message.
     pub metadata: roam_wire::Metadata,
     /// Channel to send the Accept/Reject response.
-    response_tx: peeps_sync::OneshotSender<IncomingConnectionResponse>,
+    response_tx: peeps::OneshotSender<IncomingConnectionResponse>,
 }
 
 impl IncomingConnection {
@@ -231,7 +230,7 @@ impl IncomingConnection {
         metadata: roam_wire::Metadata,
         dispatcher: Option<Box<dyn ServiceDispatcher>>,
     ) -> Result<ConnectionHandle, TransportError> {
-        let (handle_tx, handle_rx) = peeps_sync::oneshot_channel("shm_incoming_conn_accept");
+        let (handle_tx, handle_rx) = peeps::oneshot_channel("shm_incoming_conn_accept");
         let _ = self.response_tx.send(IncomingConnectionResponse::Accept {
             request_id: self.request_id,
             metadata,
@@ -260,7 +259,7 @@ pub enum IncomingConnectionResponse {
         request_id: u64,
         metadata: roam_wire::Metadata,
         dispatcher: Option<Box<dyn ServiceDispatcher>>,
-        handle_tx: peeps_sync::OneshotSender<Result<ConnectionHandle, TransportError>>,
+        handle_tx: peeps::OneshotSender<Result<ConnectionHandle, TransportError>>,
     },
     Reject {
         request_id: u64,
@@ -270,7 +269,7 @@ pub enum IncomingConnectionResponse {
 }
 
 /// Receiver for incoming virtual connection requests.
-pub type IncomingConnections = peeps_sync::Receiver<IncomingConnection>;
+pub type IncomingConnections = peeps::Receiver<IncomingConnection>;
 
 // ============================================================================
 // ShmDriver - Single-peer driver (guest side)
@@ -289,11 +288,11 @@ pub struct ShmDriver<T, D> {
     negotiated: ShmNegotiated,
 
     /// Sender for driver messages (cloned to ConnectionHandles).
-    driver_tx: peeps_sync::Sender<DriverMessage>,
+    driver_tx: peeps::Sender<DriverMessage>,
 
     /// Unified channel for all messages (Call/Data/Close/Response).
     /// Single channel ensures FIFO ordering.
-    driver_rx: peeps_sync::Receiver<DriverMessage>,
+    driver_rx: peeps::Receiver<DriverMessage>,
 
     /// All virtual connections (including ROOT).
     connections: HashMap<ConnectionId, VirtualConnectionState>,
@@ -305,11 +304,11 @@ pub struct ShmDriver<T, D> {
     pending_connects: HashMap<u64, PendingConnect>,
 
     /// Channel for incoming connection requests.
-    incoming_connections_tx: Option<peeps_sync::Sender<IncomingConnection>>,
+    incoming_connections_tx: Option<peeps::Sender<IncomingConnection>>,
 
     /// Channel for incoming connection responses (Accept/Reject from app code).
-    incoming_response_rx: peeps_sync::Receiver<IncomingConnectionResponse>,
-    incoming_response_tx: peeps_sync::Sender<IncomingConnectionResponse>,
+    incoming_response_rx: peeps::Receiver<IncomingConnectionResponse>,
+    incoming_response_tx: peeps::Sender<IncomingConnectionResponse>,
 
     /// Diagnostic state for tracking in-flight requests (for diagnostics dumps).
     diagnostic_state: Option<Arc<DiagnosticState>>,
@@ -615,8 +614,7 @@ where
                 // Handle incoming virtual connection request
                 if let Some(tx) = &self.incoming_connections_tx {
                     // Create a oneshot that routes through incoming_response_tx
-                    let (response_tx, response_rx) =
-                        peeps_sync::oneshot_channel("shm_conn_response");
+                    let (response_tx, response_rx) = peeps::oneshot_channel("shm_conn_response");
                     let incoming = IncomingConnection {
                         request_id,
                         metadata,
@@ -625,7 +623,7 @@ where
                     if tx.try_send(incoming).is_ok() {
                         // Spawn a task to forward the response
                         let incoming_response_tx = self.incoming_response_tx.clone();
-                        peeps_tasks::spawn_tracked("roam_shm_forward_response", async move {
+                        peeps::spawn_tracked("roam_shm_forward_response", async move {
                             if let Ok(response) = response_rx.recv().await {
                                 let _ = incoming_response_tx.send(response).await;
                             }
@@ -888,7 +886,7 @@ where
         conn.server_channel_registry.set_current_request_id(None);
 
         // r[impl call.cancel.best-effort] - Store abort handle for cancellation support
-        let join_handle = peeps_tasks::spawn_tracked("roam_shm_handle_request", handler_fut);
+        let join_handle = peeps::spawn_tracked("roam_shm_handle_request", handler_fut);
         conn.in_flight_server_requests
             .insert(request_id, join_handle.abort_handle());
         Ok(())
@@ -1217,7 +1215,7 @@ where
 
     // Create single unified channel for all messages (Call/Data/Close/Response).
     // Single channel ensures FIFO ordering.
-    let (driver_tx, driver_rx) = peeps_sync::channel("shm_driver", 256);
+    let (driver_tx, driver_rx) = peeps::channel("shm_driver", 256);
 
     // Guest is initiator (uses odd stream IDs)
     let role = Role::Initiator;
@@ -1240,11 +1238,10 @@ where
 
     // Create channel for incoming connection requests
     let (incoming_connections_tx, incoming_connections_rx) =
-        peeps_sync::channel("shm_incoming_connections", 64);
+        peeps::channel("shm_incoming_connections", 64);
 
     // Create channel for incoming connection responses (Accept/Reject from app code)
-    let (incoming_response_tx, incoming_response_rx) =
-        peeps_sync::channel("shm_incoming_responses", 64);
+    let (incoming_response_tx, incoming_response_rx) = peeps::channel("shm_incoming_responses", 64);
 
     let driver = ShmDriver {
         io: transport,
@@ -1291,10 +1288,10 @@ struct PeerConnectionState {
     pending_connects: HashMap<u64, PendingConnect>,
 
     /// Channel for incoming connection requests from this peer.
-    incoming_connections_tx: Option<peeps_sync::Sender<IncomingConnection>>,
+    incoming_connections_tx: Option<peeps::Sender<IncomingConnection>>,
 
     /// Channel for incoming connection responses (Accept/Reject from app code).
-    incoming_response_tx: peeps_sync::Sender<IncomingConnectionResponse>,
+    incoming_response_tx: peeps::Sender<IncomingConnectionResponse>,
 
     /// Diagnostic state for tracking in-flight requests (for diagnostics dumps).
     diagnostic_state: Option<Arc<DiagnosticState>>,
@@ -1305,19 +1302,19 @@ enum ControlCommand {
     /// Create a new peer slot and return a spawn ticket (calls host.add_peer()).
     Create {
         options: crate::spawn::AddPeerOptions,
-        response: peeps_sync::OneshotSender<Result<crate::spawn::SpawnTicket, std::io::Error>>,
+        response: peeps::OneshotSender<Result<crate::spawn::SpawnTicket, std::io::Error>>,
     },
     /// Register a peer dynamically with a dispatcher.
     Add {
         peer_id: PeerId,
         dispatcher: Box<dyn ServiceDispatcher>,
         diagnostic_state: Option<Arc<DiagnosticState>>,
-        response: peeps_sync::OneshotSender<(ConnectionHandle, IncomingConnections)>,
+        response: peeps::OneshotSender<(ConnectionHandle, IncomingConnections)>,
     },
     /// Release a previously reserved peer slot.
     Release {
         peer_id: PeerId,
-        response: peeps_sync::OneshotSender<()>,
+        response: peeps::OneshotSender<()>,
     },
 }
 
@@ -1504,7 +1501,7 @@ impl MultiPeerHostDriverBuilder {
         for (peer_id, dispatcher, _peer_name) in self.peers {
             // Create single unified channel for all messages (Call/Data/Close/Response).
             // Single channel ensures FIFO ordering.
-            let (driver_tx, mut driver_rx) = peeps_sync::channel("shm_host_driver", 256);
+            let (driver_tx, mut driver_rx) = peeps::channel("shm_host_driver", 256);
 
             // Host is acceptor (uses even stream IDs)
             let role = Role::Acceptor;
@@ -1526,7 +1523,7 @@ impl MultiPeerHostDriverBuilder {
 
             // Create channel for incoming connection requests from this peer
             let (incoming_connections_tx, incoming_connections_rx) =
-                peeps_sync::channel("shm_host_incoming_connections", 64);
+                peeps::channel("shm_host_incoming_connections", 64);
 
             #[cfg(feature = "diagnostics")]
             let peer_diagnostic_state = {
@@ -1545,8 +1542,8 @@ impl MultiPeerHostDriverBuilder {
             // Create per-peer incoming response forwarder
             let peer_incoming_response_tx = incoming_response_tx.clone();
             let (peer_response_tx, mut peer_response_rx) =
-                peeps_sync::channel::<IncomingConnectionResponse>("shm_peer_response", 64);
-            peeps_tasks::spawn_tracked("roam_shm_peer_response_router", async move {
+                peeps::channel::<IncomingConnectionResponse>("shm_peer_response", 64);
+            peeps::spawn_tracked("roam_shm_peer_response_router", async move {
                 while let Some(response) = peer_response_rx.recv().await {
                     if peer_incoming_response_tx
                         .send((peer_id, response))
@@ -1576,7 +1573,7 @@ impl MultiPeerHostDriverBuilder {
 
             // Spawn forwarder task for this peer's driver messages
             let driver_msg_tx_clone = driver_msg_tx.clone();
-            peeps_tasks::spawn_tracked("roam_shm_peer_driver_fwd", async move {
+            peeps::spawn_tracked("roam_shm_peer_driver_fwd", async move {
                 while let Some(msg) = driver_rx.recv().await {
                     if driver_msg_tx_clone.send((peer_id, msg)).await.is_err() {
                         // Driver shut down
@@ -1592,7 +1589,7 @@ impl MultiPeerHostDriverBuilder {
 
                 // Spawn doorbell waiter task with cloned Arc
                 let ring_tx_clone = ring_tx.clone();
-                peeps_tasks::spawn_tracked("roam_shm_doorbell_waiter", async move {
+                peeps::spawn_tracked("roam_shm_doorbell_waiter", async move {
                     trace!("Doorbell waiter task started for peer {:?}", peer_id);
                     // On Windows, accept the named pipe connection from the guest
                     if let Err(e) = doorbell.accept().await {
@@ -1876,8 +1873,7 @@ impl MultiPeerHostDriver {
                     Some(state)
                 });
                 // Create single unified channel for all messages (Call/Data/Close/Response).
-                let (driver_tx, mut driver_rx) =
-                    peeps_sync::channel("shm_dynamic_peer_driver", 256);
+                let (driver_tx, mut driver_rx) = peeps::channel("shm_dynamic_peer_driver", 256);
 
                 // Host is acceptor (uses even stream IDs)
                 let role = Role::Acceptor;
@@ -1901,16 +1897,13 @@ impl MultiPeerHostDriver {
 
                 // Create channel for incoming connection requests from this peer
                 let (incoming_connections_tx, incoming_connections_rx) =
-                    peeps_sync::channel("shm_dynamic_incoming_connections", 64);
+                    peeps::channel("shm_dynamic_incoming_connections", 64);
 
                 // Create per-peer incoming response forwarder
                 let peer_incoming_response_tx = self.incoming_response_tx.clone();
-                let (peer_response_tx, mut peer_response_rx) = peeps_sync::channel::<
-                    IncomingConnectionResponse,
-                >(
-                    "shm_dynamic_peer_response", 64
-                );
-                peeps_tasks::spawn_tracked("roam_shm_peer_response_fwd", async move {
+                let (peer_response_tx, mut peer_response_rx) =
+                    peeps::channel::<IncomingConnectionResponse>("shm_dynamic_peer_response", 64);
+                peeps::spawn_tracked("roam_shm_peer_response_fwd", async move {
                     while let Some(resp) = peer_response_rx.recv().await {
                         if peer_incoming_response_tx
                             .send((peer_id, resp))
@@ -1938,7 +1931,7 @@ impl MultiPeerHostDriver {
 
                 // Spawn forwarder task for this peer's driver messages
                 let driver_msg_tx = self.driver_msg_tx.clone();
-                peeps_tasks::spawn_tracked("roam_shm_peer_driver_fwd", async move {
+                peeps::spawn_tracked("roam_shm_peer_driver_fwd", async move {
                     while let Some(msg) = driver_rx.recv().await {
                         if driver_msg_tx.send((peer_id, msg)).await.is_err() {
                             // Driver shut down
@@ -1959,7 +1952,7 @@ impl MultiPeerHostDriver {
 
                     // Spawn doorbell waiter task with cloned Arc
                     let ring_tx = self.ring_tx.clone();
-                    peeps_tasks::spawn_tracked("roam_shm_doorbell_waiter", async move {
+                    peeps::spawn_tracked("roam_shm_doorbell_waiter", async move {
                         trace!("Doorbell waiter task started for peer {:?}", peer_id);
                         // On Windows, accept the named pipe connection from the guest
                         trace!("Doorbell waiter: calling accept() for {:?}", peer_id);
@@ -2197,8 +2190,7 @@ impl MultiPeerHostDriver {
                 };
                 if let Some(tx) = &state.incoming_connections_tx {
                     // Create a oneshot that routes through incoming_response_tx
-                    let (response_tx, response_rx) =
-                        peeps_sync::oneshot_channel("shm_conn_response");
+                    let (response_tx, response_rx) = peeps::oneshot_channel("shm_conn_response");
                     let incoming = IncomingConnection {
                         request_id,
                         metadata,
@@ -2207,7 +2199,7 @@ impl MultiPeerHostDriver {
                     if tx.try_send(incoming).is_ok() {
                         // Spawn a task to forward the response
                         let incoming_response_tx = state.incoming_response_tx.clone();
-                        peeps_tasks::spawn_tracked("roam_shm_connect_response_relay", async move {
+                        peeps::spawn_tracked("roam_shm_connect_response_relay", async move {
                             if let Ok(response) = response_rx.recv().await {
                                 let _ = incoming_response_tx.send(response).await;
                             }
@@ -2518,7 +2510,7 @@ impl MultiPeerHostDriver {
         conn.server_channel_registry.set_current_request_id(None);
 
         // r[impl call.cancel.best-effort] - Store abort handle for cancellation support
-        let join_handle = peeps_tasks::spawn_tracked("roam_shm_handle_request", handler_fut);
+        let join_handle = peeps::spawn_tracked("roam_shm_handle_request", handler_fut);
         conn.in_flight_server_requests
             .insert(request_id, join_handle.abort_handle());
         Ok(())
@@ -3007,7 +2999,7 @@ impl MultiPeerHostDriverHandle {
         &self,
         options: crate::spawn::AddPeerOptions,
     ) -> Result<crate::spawn::SpawnTicket, ShmConnectionError> {
-        let (response_tx, response_rx) = peeps_sync::oneshot_channel("shm_conn_response");
+        let (response_tx, response_rx) = peeps::oneshot_channel("shm_conn_response");
 
         let cmd = ControlCommand::Create {
             options,
@@ -3077,7 +3069,7 @@ impl MultiPeerHostDriverHandle {
     where
         D: ServiceDispatcher + 'static,
     {
-        let (response_tx, response_rx) = peeps_sync::oneshot_channel("shm_conn_response");
+        let (response_tx, response_rx) = peeps::oneshot_channel("shm_conn_response");
 
         let cmd = ControlCommand::Add {
             peer_id,
@@ -3101,7 +3093,7 @@ impl MultiPeerHostDriverHandle {
     ///
     /// Call this when a bootstrap/spawn attempt fails after `create_peer`.
     pub async fn release_peer(&self, peer_id: PeerId) -> Result<(), ShmConnectionError> {
-        let (response_tx, response_rx) = peeps_sync::oneshot_channel("shm_conn_response");
+        let (response_tx, response_rx) = peeps::oneshot_channel("shm_conn_response");
         let cmd = ControlCommand::Release {
             peer_id,
             response: response_tx,

@@ -32,8 +32,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json"] }
 
 # Async runtime
 tokio = { workspace = true, features = ["sync", "time", "rt"] }
-peeps-sync.workspace = true
-peeps-tasks.workspace = true
+peeps.workspace = true
 
 # Utilities
 rand = "0.9"

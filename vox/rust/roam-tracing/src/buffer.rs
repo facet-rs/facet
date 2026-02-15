@@ -3,7 +3,7 @@
 //! Provides a thread-safe, bounded buffer that drops oldest entries
 //! when full. This ensures tracing never blocks the application.
 
-use peeps_locks::DiagnosticMutex as Mutex;
+use peeps::Mutex;
 use std::collections::VecDeque;
 use tokio::sync::Notify;
 

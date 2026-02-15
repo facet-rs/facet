@@ -3,7 +3,7 @@
 //! Provides a `tracing_subscriber::Layer` that captures events and spans,
 //! buffers them, and forwards to the host via RPC calls.
 
-use peeps_locks::DiagnosticMutex as Mutex;
+use peeps::Mutex;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -391,7 +391,7 @@ impl CellTracingService {
 
         // Now spawn the drain task
         let buffer = self.buffer.clone();
-        peeps_tasks::spawn_tracked("roam_tracing_drain_start", async move {
+        peeps::spawn_tracked("roam_tracing_drain_start", async move {
             loop {
                 // Collect batch from buffer
                 let mut batch = Vec::with_capacity(batch_size);
@@ -425,7 +425,7 @@ impl CellTracingService {
         let buffer = self.buffer.clone();
         let filter = self.filter.clone();
 
-        peeps_tasks::spawn_tracked("roam_tracing_drain_spawn", async move {
+        peeps::spawn_tracked("roam_tracing_drain_spawn", async move {
             let client = HostTracingClient::new(handle);
 
             // Query config (but we're already racing with events)

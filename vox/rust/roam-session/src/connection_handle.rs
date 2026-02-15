@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use facet::Facet;
 
 use facet_core::PtrMut;
-use peeps_tasks::PeepableFutureExt;
+use peeps::PeepableFutureExt;
 
 use crate::{
     ChannelError, ChannelId, ChannelIdAllocator, ChannelRegistry, DriverMessage,
@@ -91,14 +91,6 @@ pub struct ConnectionHandle {
 }
 
 impl ConnectionHandle {
-    #[cfg(not(target_arch = "wasm32"))]
-    fn current_task_context() -> (Option<u64>, Option<String>) {
-        let task_id = peeps_tasks::current_task_id();
-        let task_name = task_id.and_then(peeps_tasks::task_name);
-        (task_id, task_name)
-    }
-
-    #[cfg(target_arch = "wasm32")]
     fn current_task_context() -> (Option<u64>, Option<String>) {
         (None, None)
     }
@@ -138,19 +130,8 @@ impl ConnectionHandle {
             })
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    fn span_id_for_request(&self, request_id: u64) -> String {
-        format!(
-            "{}:{}:{}",
-            std::process::id(),
-            self.shared.conn_id.raw(),
-            request_id
-        )
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    fn span_id_for_request(&self, request_id: u64) -> String {
-        format!("{}:{}", self.shared.conn_id.raw(), request_id)
+    fn span_id_for_request(&self, _request_id: u64) -> String {
+        ulid::Ulid::new().to_string()
     }
 
     fn merged_outgoing_metadata(
@@ -186,7 +167,7 @@ impl ConnectionHandle {
         Self::upsert_metadata_entry(
             &mut metadata,
             crate::PEEPS_SPAN_ID_METADATA_KEY,
-            roam_wire::MetadataValue::String(span_id),
+            roam_wire::MetadataValue::String(span_id.clone()),
             roam_wire::metadata_flags::NONE,
         );
         if !metadata
@@ -194,6 +175,13 @@ impl ConnectionHandle {
             .any(|(entry_key, _, _)| entry_key == crate::PEEPS_PARENT_SPAN_ID_METADATA_KEY)
             && let Some(parent_span) = parent_span
         {
+            // Emit parent→child request edge for request tree reconstruction
+            #[cfg(feature = "diagnostics")]
+            {
+                let parent_node_id = peeps_types::canonical_id::request_from_span_id(&parent_span);
+                let child_node_id = peeps_types::canonical_id::request_from_span_id(&span_id);
+                peeps::registry::edge(&parent_node_id, &child_node_id);
+            }
             Self::upsert_metadata_entry(
                 &mut metadata,
                 crate::PEEPS_PARENT_SPAN_ID_METADATA_KEY,
@@ -497,6 +485,38 @@ impl ConnectionHandle {
                 diag.associate_channels_with_request(&channels, request_id);
             }
 
+            // Register request node in peeps registry
+            #[cfg(feature = "diagnostics")]
+            let request_node_id = {
+                let span_id =
+                    Self::metadata_string(&metadata, crate::PEEPS_SPAN_ID_METADATA_KEY).unwrap();
+                let request_node_id = peeps_types::canonical_id::request_from_span_id(&span_id);
+                let response_node_id = format!("response:{span_id}");
+                let method_name = crate::diagnostic::get_method_name(method_id)
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| format!("0x{method_id:x}"));
+                let connection_name = self
+                    .shared
+                    .diagnostic_state
+                    .as_ref()
+                    .map(|d| d.name.clone())
+                    .unwrap_or_default();
+                let correlation_key =
+                    peeps_types::canonical_id::correlation_key(&connection_name, request_id);
+                let attrs_json = format!(
+                    "{{\"request.id\":\"{request_id}\",\"request.method\":\"{method_name}\",\"request.correlation_key\":\"{correlation_key}\",\"rpc.connection\":\"{connection_name}\"}}"
+                );
+                peeps::registry::register_node(peeps_types::Node {
+                    id: request_node_id.clone(),
+                    kind: peeps_types::NodeKind::Request,
+                    label: Some(method_name),
+                    attrs_json,
+                });
+                peeps::stack::with_top(|src| peeps::registry::edge(src, &request_node_id));
+                peeps::registry::edge(&request_node_id, &response_node_id);
+                request_node_id
+            };
+
             let msg = DriverMessage::Call {
                 conn_id: self.shared.conn_id,
                 request_id,
@@ -526,7 +546,7 @@ impl ConnectionHandle {
             for (channel_id, mut rx) in drains {
                 let task_tx = task_tx.clone();
                 crate::runtime::spawn("roam_tx_drain", async move {
-                    use peeps_tasks::PeepableFutureExt;
+                    use peeps::PeepableFutureExt;
                     loop {
                         match rx.recv().peepable("drain.recv").await {
                             Some(IncomingChannelMessage::Data(payload)) => {
@@ -598,6 +618,8 @@ impl ConnectionHandle {
             if let Some(diag) = &self.shared.diagnostic_state {
                 diag.complete_request(request_id);
             }
+            #[cfg(feature = "diagnostics")]
+            peeps::registry::remove_node(&request_node_id);
 
             result
         }
@@ -725,6 +747,39 @@ impl ConnectionHandle {
                     diag.associate_channels_with_request(&channels, request_id);
                 }
 
+                // Register request node in peeps registry
+                #[cfg(feature = "diagnostics")]
+                let request_node_id = {
+                    let span_id =
+                        Self::metadata_string(&metadata, crate::PEEPS_SPAN_ID_METADATA_KEY)
+                            .unwrap();
+                    let request_node_id = peeps_types::canonical_id::request_from_span_id(&span_id);
+                    let response_node_id = format!("response:{span_id}");
+                    let method_name = crate::diagnostic::get_method_name(method_id)
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| format!("0x{method_id:x}"));
+                    let connection_name = self
+                        .shared
+                        .diagnostic_state
+                        .as_ref()
+                        .map(|d| d.name.clone())
+                        .unwrap_or_default();
+                    let correlation_key =
+                        peeps_types::canonical_id::correlation_key(&connection_name, request_id);
+                    let attrs_json = format!(
+                        "{{\"request.id\":\"{request_id}\",\"request.method\":\"{method_name}\",\"request.correlation_key\":\"{correlation_key}\",\"rpc.connection\":\"{connection_name}\"}}"
+                    );
+                    peeps::registry::register_node(peeps_types::Node {
+                        id: request_node_id.clone(),
+                        kind: peeps_types::NodeKind::Request,
+                        label: Some(method_name),
+                        attrs_json,
+                    });
+                    peeps::stack::with_top(|src| peeps::registry::edge(src, &request_node_id));
+                    peeps::registry::edge(&request_node_id, &response_node_id);
+                    request_node_id
+                };
+
                 let msg = DriverMessage::Call {
                     conn_id: self.shared.conn_id,
                     request_id,
@@ -754,7 +809,7 @@ impl ConnectionHandle {
                 for (channel_id, mut rx) in drains {
                     let task_tx = task_tx.clone();
                     crate::runtime::spawn("roam_tx_drain", async move {
-                        use peeps_tasks::PeepableFutureExt;
+                        use peeps::PeepableFutureExt;
                         loop {
                             match rx.recv().peepable("drain.recv").await {
                                 Some(IncomingChannelMessage::Data(payload)) => {
@@ -825,6 +880,8 @@ impl ConnectionHandle {
                 if let Some(diag) = &self.shared.diagnostic_state {
                     diag.complete_request(request_id);
                 }
+                #[cfg(feature = "diagnostics")]
+                peeps::registry::remove_node(&request_node_id);
 
                 result
             }
@@ -1002,6 +1059,40 @@ impl ConnectionHandle {
             diag.associate_channels_with_request(&channels, request_id);
         }
 
+        // Register request node in peeps registry
+        #[cfg(feature = "diagnostics")]
+        let request_node_id = {
+            let span_id =
+                Self::metadata_string(&metadata, crate::PEEPS_SPAN_ID_METADATA_KEY).unwrap();
+            let request_node_id = peeps_types::canonical_id::request_from_span_id(&span_id);
+            let response_node_id = format!("response:{span_id}");
+            let method_name = crate::diagnostic::get_method_name(method_id)
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| format!("0x{method_id:x}"));
+            let connection_name = self
+                .shared
+                .diagnostic_state
+                .as_ref()
+                .map(|d| d.name.clone())
+                .unwrap_or_default();
+            let correlation_key =
+                peeps_types::canonical_id::correlation_key(&connection_name, request_id);
+            let attrs_json = format!(
+                "{{\"request.id\":\"{request_id}\",\"request.method\":\"{method_name}\",\"request.correlation_key\":\"{correlation_key}\",\"rpc.connection\":\"{connection_name}\"}}"
+            );
+            peeps::registry::register_node(peeps_types::Node {
+                id: request_node_id.clone(),
+                kind: peeps_types::NodeKind::Request,
+                label: Some(method_name),
+                attrs_json,
+            });
+            // Emit edge: current future --needs--> this request
+            peeps::stack::with_top(|src| peeps::registry::edge(src, &request_node_id));
+            // Structural gateway edge: request --needs--> response
+            peeps::registry::edge(&request_node_id, &response_node_id);
+            request_node_id
+        };
+
         let msg = DriverMessage::Call {
             conn_id: self.shared.conn_id,
             request_id,
@@ -1030,6 +1121,8 @@ impl ConnectionHandle {
         if let Some(diag) = &self.shared.diagnostic_state {
             diag.complete_request(request_id);
         }
+        #[cfg(feature = "diagnostics")]
+        peeps::registry::remove_node(&request_node_id);
 
         result
     }

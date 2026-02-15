@@ -35,7 +35,7 @@ use std::time::Duration;
 use std::time::Instant;
 
 use facet::Facet;
-use peeps_tasks::PeepableFutureExt;
+use peeps::PeepableFutureExt;
 
 use crate::runtime::{Mutex, Receiver, channel, sleep, spawn, spawn_with_abort};
 use crate::{
@@ -1292,7 +1292,7 @@ where
                         // Spawn a task to forward the response
                         let incoming_response_tx = self.incoming_response_tx.clone();
                         spawn("roam_connect_response_relay", async move {
-                            use peeps_tasks::PeepableFutureExt;
+                            use peeps::PeepableFutureExt;
                             if let Ok(response) = response_rx
                                 .recv()
                                 .peepable("connect_relay.recv_response")
@@ -1522,6 +1522,41 @@ where
             );
         }
 
+        // Register response node in peeps registry
+        #[cfg(feature = "diagnostics")]
+        let response_node_id = {
+            let span_id = metadata
+                .iter()
+                .find(|(k, _, _)| k == crate::PEEPS_SPAN_ID_METADATA_KEY)
+                .and_then(|(_, v, _)| match v {
+                    roam_wire::MetadataValue::String(s) => Some(s.clone()),
+                    _ => None,
+                });
+            if let Some(span_id) = span_id {
+                let response_node_id = format!("response:{span_id}");
+                let method_name = crate::diagnostic::get_method_name(method_id)
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| format!("0x{method_id:x}"));
+                let connection_name = self
+                    .diagnostic_state
+                    .as_ref()
+                    .map(|d| d.name.clone())
+                    .unwrap_or_default();
+                let attrs_json = format!(
+                    "{{\"request.id\":\"{request_id}\",\"request.method\":\"{method_name}\",\"rpc.connection\":\"{connection_name}\"}}"
+                );
+                peeps::registry::register_node(peeps_types::Node {
+                    id: response_node_id.clone(),
+                    kind: peeps_types::NodeKind::Response,
+                    label: Some(method_name),
+                    attrs_json,
+                });
+                Some(response_node_id)
+            } else {
+                None
+            }
+        };
+
         let cx = Context::new(
             conn_id,
             roam_wire::RequestId::new(request_id),
@@ -1551,6 +1586,11 @@ where
         // r[impl call.cancel.best-effort] - Store abort handle for cancellation support
         let abort_handle = spawn_with_abort("roam_request_handler", async move {
             handler_fut.await;
+            // Clean up response node when handler completes
+            #[cfg(feature = "diagnostics")]
+            if let Some(response_node_id) = response_node_id {
+                peeps::registry::remove_node(&response_node_id);
+            }
         });
         conn.in_flight_server_requests
             .insert(request_id, abort_handle);
@@ -1581,6 +1621,21 @@ where
         if let Some(abort_handle) = conn.in_flight_server_requests.remove(&request_id) {
             // Abort the handler task (best-effort)
             abort_handle.abort();
+
+            // Clean up response node from peeps registry on cancellation
+            #[cfg(feature = "diagnostics")]
+            if let Some(ref diag) = self.diagnostic_state {
+                if let Ok(requests) = diag.requests.lock() {
+                    if let Some(req) = requests.get(&request_id) {
+                        if let Some(ref meta) = req.metadata {
+                            if let Some(span_id) = meta.get(crate::PEEPS_SPAN_ID_METADATA_KEY) {
+                                let response_node_id = format!("response:{span_id}");
+                                peeps::registry::remove_node(&response_node_id);
+                            }
+                        }
+                    }
+                }
+            }
 
             // Track cancellation for diagnostics
             if let Some(ref diag) = self.diagnostic_state {
