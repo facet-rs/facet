@@ -171,6 +171,12 @@ pub struct OpenChannel {
     pub direction: ChannelDirection,
     /// The request that opened this channel (if known).
     pub request_id: Option<u64>,
+    /// The peeps task that created/opened this channel.
+    pub task_id: Option<u64>,
+    /// Name of the task that created/opened this channel.
+    pub task_name: Option<String>,
+    /// Whether this channel has been closed.
+    pub closed: bool,
 }
 
 /// Diagnostic state for a single connection.
@@ -391,6 +397,8 @@ impl DiagnosticState {
         direction: ChannelDirection,
         request_id: Option<u64>,
     ) {
+        let task_id = peeps_tasks::current_task_id();
+        let task_name = task_id.and_then(peeps_tasks::task_name);
         if let Ok(mut channels) = self.channels.lock() {
             channels.insert(
                 channel_id,
@@ -399,15 +407,23 @@ impl DiagnosticState {
                     started: Instant::now(),
                     direction,
                     request_id,
+                    task_id,
+                    task_name,
+                    closed: false,
                 },
             );
         }
     }
 
     /// Record a channel being closed.
+    ///
+    /// Marks the channel as closed rather than removing it, so it still
+    /// appears in diagnostic snapshots until the connection is dropped.
     pub fn record_channel_close(&self, channel_id: u64) {
         if let Ok(mut channels) = self.channels.lock() {
-            channels.remove(&channel_id);
+            if let Some(ch) = channels.get_mut(&channel_id) {
+                ch.closed = true;
+            }
         }
     }
 

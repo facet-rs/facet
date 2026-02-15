@@ -57,7 +57,7 @@ impl LocalListener {
         // Wait for a client to connect to the current server
         self.next_server
             .connect()
-            .peepable("socket.accept")
+            .peepable("windows_local.accept")
             .await?;
 
         // Take the connected server

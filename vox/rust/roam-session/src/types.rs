@@ -1,4 +1,5 @@
 use facet::Facet;
+use peeps_tasks::PeepableFutureExt;
 
 use crate::{
     ChannelError, ConnectionHandle, DispatchContext, DriverTxSlot, RX_STREAM_BUFFER_SIZE,
@@ -344,7 +345,10 @@ impl ChannelRegistry {
     ) -> Result<(), ChannelError> {
         let (tx, payload) = self.prepare_route_data(channel_id, payload)?;
         // If send fails, the Rx<T> was dropped - that's okay, just drop the data
-        let _ = tx.send(IncomingChannelMessage::Data(payload)).await;
+        let _ = tx
+            .send(IncomingChannelMessage::Data(payload))
+            .peepable("registry.route_data")
+            .await;
         Ok(())
     }
 

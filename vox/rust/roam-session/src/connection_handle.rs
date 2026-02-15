@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use facet::Facet;
 
 use facet_core::PtrMut;
+use peeps_tasks::PeepableFutureExt;
 
 use crate::{
     ChannelError, ChannelId, ChannelIdAllocator, ChannelRegistry, DriverMessage,
@@ -172,8 +173,7 @@ impl ConnectionHandle {
             }
         }
 
-        let parent_span =
-            Self::metadata_string(&metadata, crate::PEEPS_SPAN_ID_METADATA_KEY);
+        let parent_span = Self::metadata_string(&metadata, crate::PEEPS_SPAN_ID_METADATA_KEY);
         let span_id = self.span_id_for_request(request_id);
         let chain_id = Self::metadata_string(&metadata, crate::PEEPS_CHAIN_ID_METADATA_KEY)
             .unwrap_or_else(|| span_id.clone());
@@ -482,7 +482,14 @@ impl ConnectionHandle {
             };
 
             // Send the Call message NOW, before spawning drain tasks
-            if self.shared.driver_tx.send(msg).await.is_err() {
+            if self
+                .shared
+                .driver_tx
+                .send(msg)
+                .peepable("call_with_metadata.send_call")
+                .await
+                .is_err()
+            {
                 return Err(TransportError::DriverGone);
             }
 
@@ -493,8 +500,9 @@ impl ConnectionHandle {
             for (channel_id, mut rx) in drains {
                 let task_tx = task_tx.clone();
                 crate::runtime::spawn("roam_tx_drain", async move {
+                    use peeps_tasks::PeepableFutureExt;
                     loop {
-                        match rx.recv().await {
+                        match rx.recv().peepable("drain.recv").await {
                             Some(IncomingChannelMessage::Data(payload)) => {
                                 debug!(
                                     "drain task: received {} bytes on channel {}",
@@ -508,6 +516,7 @@ impl ConnectionHandle {
                                         channel_id,
                                         payload,
                                     })
+                                    .peepable("drain.forward_data")
                                     .await
                                     .is_err()
                                 {
@@ -530,6 +539,7 @@ impl ConnectionHandle {
                                         conn_id,
                                         channel_id,
                                     })
+                                    .peepable("drain.forward_close")
                                     .await
                                     .is_err()
                                 {
@@ -553,6 +563,7 @@ impl ConnectionHandle {
             // Just await the response - drain tasks run independently
             let result = response_rx
                 .recv()
+                .peepable("call_with_metadata.recv_response")
                 .await
                 .map_err(|_| TransportError::DriverGone)?
                 .map_err(|_| TransportError::ConnectionClosed);
@@ -699,7 +710,14 @@ impl ConnectionHandle {
                 };
 
                 // Send the Call message NOW, before spawning drain tasks
-                if self.shared.driver_tx.send(msg).await.is_err() {
+                if self
+                    .shared
+                    .driver_tx
+                    .send(msg)
+                    .peepable("call.send_call")
+                    .await
+                    .is_err()
+                {
                     return Err(TransportError::DriverGone);
                 }
 
@@ -710,8 +728,9 @@ impl ConnectionHandle {
                 for (channel_id, mut rx) in drains {
                     let task_tx = task_tx.clone();
                     crate::runtime::spawn("roam_tx_drain", async move {
+                        use peeps_tasks::PeepableFutureExt;
                         loop {
-                            match rx.recv().await {
+                            match rx.recv().peepable("drain.recv").await {
                                 Some(IncomingChannelMessage::Data(payload)) => {
                                     debug!(
                                         "drain task: received {} bytes on channel {}",
@@ -724,6 +743,7 @@ impl ConnectionHandle {
                                             channel_id,
                                             payload,
                                         })
+                                        .peepable("drain.forward_data")
                                         .await
                                         .is_err()
                                     {
@@ -746,6 +766,7 @@ impl ConnectionHandle {
                                             conn_id,
                                             channel_id,
                                         })
+                                        .peepable("drain.forward_close")
                                         .await
                                         .is_err()
                                     {
@@ -769,6 +790,7 @@ impl ConnectionHandle {
                 // Just await the response - drain tasks run independently
                 let result = response_rx
                     .recv()
+                    .peepable("call.recv_response")
                     .await
                     .map_err(|_| TransportError::DriverGone)?
                     .map_err(|_| TransportError::ConnectionClosed);
@@ -967,11 +989,13 @@ impl ConnectionHandle {
         self.shared
             .driver_tx
             .send(msg)
+            .peepable("call_raw.send_call")
             .await
             .map_err(|_| TransportError::DriverGone)?;
 
         let result = response_rx
             .recv()
+            .peepable("call_raw.recv_response")
             .await
             .map_err(|_| TransportError::DriverGone)?
             .map_err(|_| TransportError::ConnectionClosed);
@@ -1024,12 +1048,18 @@ impl ConnectionHandle {
             dispatcher,
         };
 
-        self.shared.driver_tx.send(msg).await.map_err(|_| {
-            crate::ConnectError::ConnectFailed(std::io::Error::other("driver gone"))
-        })?;
+        self.shared
+            .driver_tx
+            .send(msg)
+            .peepable("connect.send_connect")
+            .await
+            .map_err(|_| {
+                crate::ConnectError::ConnectFailed(std::io::Error::other("driver gone"))
+            })?;
 
         response_rx
             .recv()
+            .peepable("connect.recv_response")
             .await
             .map_err(|_| crate::ConnectError::ConnectFailed(std::io::Error::other("driver gone")))?
     }
@@ -1089,7 +1119,10 @@ impl ConnectionHandle {
             .lock()
             .prepare_route_data(channel_id, payload)?;
         // Send without holding the lock
-        let _ = tx.send(IncomingChannelMessage::Data(payload)).await;
+        let _ = tx
+            .send(IncomingChannelMessage::Data(payload))
+            .peepable("handle.route_data")
+            .await;
         Ok(())
     }
 

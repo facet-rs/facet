@@ -35,6 +35,7 @@ use std::time::Duration;
 use std::time::Instant;
 
 use facet::Facet;
+use peeps_tasks::PeepableFutureExt;
 
 use crate::runtime::{Mutex, Receiver, channel, sleep, spawn, spawn_with_abort};
 use crate::{
@@ -1290,8 +1291,16 @@ where
                         // Spawn a task to forward the response
                         let incoming_response_tx = self.incoming_response_tx.clone();
                         spawn("roam_connect_response_relay", async move {
-                            if let Ok(response) = response_rx.recv().await {
-                                let _ = incoming_response_tx.send(response).await;
+                            use peeps_tasks::PeepableFutureExt;
+                            if let Ok(response) = response_rx
+                                .recv()
+                                .peepable("connect_relay.recv_response")
+                                .await
+                            {
+                                let _ = incoming_response_tx
+                                    .send(response)
+                                    .peepable("connect_relay.forward_response")
+                                    .await;
                             }
                         });
                     } else {
@@ -1841,10 +1850,16 @@ where
     D: ServiceDispatcher,
 {
     // Send Hello
-    io.send(&Message::Hello(our_hello.clone())).await?;
+    io.send(&Message::Hello(our_hello.clone()))
+        .peepable("handshake.send_hello")
+        .await?;
 
     // Wait for peer Hello with timeout
-    let peer_hello = match io.recv_timeout(Duration::from_secs(5)).await {
+    let peer_hello = match io
+        .recv_timeout(Duration::from_secs(5))
+        .peepable("handshake.recv_hello")
+        .await
+    {
         Ok(Some(Message::Hello(hello))) => hello,
         Ok(Some(_)) => {
             let _ = io

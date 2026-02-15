@@ -7,7 +7,7 @@ use std::sync::atomic::Ordering;
 
 use peeps_types::{
     ChannelCreditSnapshot, ChannelDir, ChannelSnapshot, CompletionSnapshot, ConnectionSnapshot,
-    Direction, RequestSnapshot, SessionSnapshot, TransportStats,
+    Direction, RequestSnapshot, RoamChannelSnapshot, SessionSnapshot, TransportStats,
 };
 #[cfg(feature = "diagnostics")]
 use peeps_types::{Diagnostics, DiagnosticsSource};
@@ -160,8 +160,36 @@ pub fn snapshot_all_diagnostics() -> SessionSnapshot {
 
     let method_names = diagnostic::snapshot_method_names();
 
+    // Collect enriched channel details across all connections.
+    let channel_details: Vec<RoamChannelSnapshot> = states
+        .iter()
+        .flat_map(|state| {
+            let conn_name = state.name.clone();
+            state
+                .channels
+                .try_lock()
+                .map(|chs| {
+                    chs.values()
+                        .map(|ch| RoamChannelSnapshot {
+                            channel_id: ch.channel_id,
+                            name: conn_name.clone(),
+                            direction: ch.direction.into(),
+                            age_secs: now.duration_since(ch.started).as_secs_f64(),
+                            request_id: ch.request_id,
+                            task_id: ch.task_id,
+                            task_name: ch.task_name.clone(),
+                            queue_depth: None,
+                            closed: ch.closed,
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        })
+        .collect();
+
     SessionSnapshot {
         connections,
         method_names,
+        channel_details,
     }
 }
