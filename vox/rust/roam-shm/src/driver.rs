@@ -168,10 +168,11 @@ impl VirtualConnectionState {
             driver_tx.clone(),
             role,
             initial_credit,
-            diagnostic_state,
+            diagnostic_state.clone(),
         );
-        let server_channel_registry =
+        let mut server_channel_registry =
             ChannelRegistry::new_with_credit_and_role(conn_id, initial_credit, driver_tx, role);
+        server_channel_registry.set_diagnostic_state(diagnostic_state.clone());
         Self {
             conn_id,
             handle,
@@ -881,7 +882,10 @@ where
             request_id, method_id, "dispatching incoming request"
         );
 
+        conn.server_channel_registry
+            .set_current_request_id(Some(request_id));
         let handler_fut = dispatcher.dispatch(cx, payload, &mut conn.server_channel_registry);
+        conn.server_channel_registry.set_current_request_id(None);
 
         // r[impl call.cancel.best-effort] - Store abort handle for cancellation support
         let join_handle = peeps_tasks::spawn_tracked("roam_shm_handle_request", handler_fut);
@@ -2508,7 +2512,10 @@ impl MultiPeerHostDriver {
             conn_id = conn_id.raw(),
             request_id, method_id, "dispatching incoming request"
         );
+        conn.server_channel_registry
+            .set_current_request_id(Some(request_id));
         let handler_fut = dispatcher.dispatch(cx, payload, &mut conn.server_channel_registry);
+        conn.server_channel_registry.set_current_request_id(None);
 
         // r[impl call.cancel.best-effort] - Store abort handle for cancellation support
         let join_handle = peeps_tasks::spawn_tracked("roam_shm_handle_request", handler_fut);
