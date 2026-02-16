@@ -1657,7 +1657,7 @@ where
             // Abort the handler task (best-effort)
             abort_handle.abort();
 
-            // Clean up response node from peeps registry on cancellation
+            // Mark response node as cancelled in peeps registry (keep it visible)
             #[cfg(feature = "diagnostics")]
             if let Some(ref diag) = self.diagnostic_state {
                 if let Ok(requests) = diag.requests.lock() {
@@ -1665,7 +1665,30 @@ where
                         if let Some(ref meta) = req.metadata {
                             if let Some(span_id) = meta.get(crate::PEEPS_SPAN_ID_METADATA_KEY) {
                                 let response_node_id = format!("response:{span_id}");
-                                peeps::registry::remove_node(&response_node_id);
+                                let method_name = crate::diagnostic::get_method_name(req.method_id)
+                                    .map(|s| s.to_string())
+                                    .or_else(|| {
+                                        meta.get(crate::PEEPS_METHOD_NAME_METADATA_KEY).cloned()
+                                    })
+                                    .unwrap_or_else(|| format!("0x{:x}", req.method_id));
+                                let connection_name = diag.name.clone();
+                                let mut attrs = std::collections::BTreeMap::new();
+                                attrs.insert("request.id".to_string(), request_id.to_string());
+                                attrs.insert("request.method".to_string(), method_name.clone());
+                                attrs.insert("rpc.connection".to_string(), connection_name);
+                                attrs.insert("cancelled".to_string(), "true".to_string());
+                                attrs.insert(
+                                    "close_cause".to_string(),
+                                    "peer_cancelled".to_string(),
+                                );
+                                let attrs_json = facet_json::to_string(&attrs)
+                                    .unwrap_or_else(|_| "{}".to_string());
+                                peeps::registry::register_node(peeps_types::Node {
+                                    id: response_node_id,
+                                    kind: peeps_types::NodeKind::Response,
+                                    label: Some(format!("{method_name} (cancelled)")),
+                                    attrs_json,
+                                });
                             }
                         }
                     }
