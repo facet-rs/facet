@@ -177,12 +177,10 @@ impl ConnectionHandle {
             roam_wire::MetadataValue::String(method_name.to_owned()),
             roam_wire::metadata_flags::NONE,
         );
-        if !metadata
-            .iter()
-            .any(|(entry_key, _, _)| entry_key == crate::PEEPS_PARENT_SPAN_ID_METADATA_KEY)
-            && let Some(parent_span) = parent_span
-        {
-            // Emit parent→child request edge for request tree reconstruction
+        if let Some(parent_span) = parent_span {
+            // Emit immediate parent→child request edge for request tree reconstruction.
+            // Important: do this even when parent_span_id is already present in inherited
+            // metadata, because inherited parent_span_id may point to an older ancestor.
             #[cfg(feature = "diagnostics")]
             {
                 let parent_node_id = peeps_types::canonical_id::request_from_span_id(&parent_span);
@@ -878,11 +876,7 @@ impl ConnectionHandle {
         #[cfg(feature = "diagnostics")]
         let result = {
             let call_fut = peeps::stack::scope(&request_node_id, call_fut);
-            if peeps::stack::is_active() {
-                call_fut.await
-            } else {
-                peeps::stack::ensure(call_fut).await
-            }
+            peeps::stack::ensure(call_fut).await
         };
 
         #[cfg(not(feature = "diagnostics"))]

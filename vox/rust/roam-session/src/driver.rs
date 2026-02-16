@@ -1619,11 +1619,7 @@ where
                     peeps::registry::remove_node(&node_id);
                 };
                 let fut = peeps::stack::scope(&response_node_id, fut);
-                if peeps::stack::is_active() {
-                    fut.await;
-                } else {
-                    peeps::stack::ensure(fut).await;
-                }
+                peeps::stack::ensure(fut).await;
                 return;
             }
 
