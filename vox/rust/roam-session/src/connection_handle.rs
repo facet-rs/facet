@@ -881,7 +881,7 @@ impl ConnectionHandle {
             if peeps::stack::is_active() {
                 call_fut.await
             } else {
-                peeps::stack::with_stack(call_fut).await
+                peeps::stack::ensure(call_fut).await
             }
         };
 

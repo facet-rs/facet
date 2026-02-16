@@ -1622,7 +1622,7 @@ where
                 if peeps::stack::is_active() {
                     fut.await;
                 } else {
-                    peeps::stack::with_stack(fut).await;
+                    peeps::stack::ensure(fut).await;
                 }
                 return;
             }
