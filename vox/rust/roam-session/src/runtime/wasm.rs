@@ -182,7 +182,7 @@ where
 }
 
 /// Sleep for the given duration.
-pub async fn sleep(duration: Duration) {
+pub async fn sleep(duration: Duration, _label: impl Into<String>) {
     gloo_timers::future::sleep(duration).await;
 }
 
@@ -190,7 +190,7 @@ pub async fn sleep(duration: Duration) {
 ///
 /// Returns `Some(result)` if the future completes within the timeout,
 /// or `None` if the timeout expires.
-pub async fn timeout<F, T>(duration: Duration, future: F) -> Option<T>
+pub async fn timeout<F, T>(duration: Duration, future: F, _label: impl Into<String>) -> Option<T>
 where
     F: Future<Output = T>,
 {

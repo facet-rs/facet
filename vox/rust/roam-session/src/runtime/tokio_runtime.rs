@@ -76,17 +76,17 @@ where
 }
 
 /// Sleep for the given duration.
-pub async fn sleep(duration: Duration) {
-    tokio::time::sleep(duration).await;
+pub async fn sleep(duration: Duration, label: impl Into<String>) {
+    peeps::sleep(duration, label).await;
 }
 
 /// Run a future with a timeout.
 ///
 /// Returns `Some(result)` if the future completes within the timeout,
 /// or `None` if the timeout expires.
-pub async fn timeout<F, T>(duration: Duration, future: F) -> Option<T>
+pub async fn timeout<F, T>(duration: Duration, future: F, label: impl Into<String>) -> Option<T>
 where
     F: Future<Output = T>,
 {
-    (tokio::time::timeout(duration, future).await).ok()
+    (peeps::timeout(duration, future, label).await).ok()
 }

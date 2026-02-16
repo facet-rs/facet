@@ -474,7 +474,7 @@ where
                     }
                     last_error = Some(e);
                     let backoff = self.retry_policy.backoff_for_attempt(attempt);
-                    sleep(backoff).await;
+                    sleep(backoff, "reconnect.backoff").await;
                     continue;
                 }
                 Err(e) => return Err(e),
@@ -510,7 +510,7 @@ where
                         "connection closed",
                     ));
                     let backoff = self.retry_policy.backoff_for_attempt(attempt);
-                    sleep(backoff).await;
+                    sleep(backoff, "reconnect.backoff").await;
                 }
             }
         }
@@ -541,7 +541,7 @@ where
                         return Err(TransportError::ConnectionClosed);
                     }
                     let backoff = self.retry_policy.backoff_for_attempt(attempt);
-                    sleep(backoff).await;
+                    sleep(backoff, "reconnect.backoff").await;
                     continue;
                 }
                 Err(ConnectError::RetriesExhausted { .. }) => {
@@ -574,7 +574,7 @@ where
                     }
 
                     let backoff = self.retry_policy.backoff_for_attempt(attempt);
-                    sleep(backoff).await;
+                    sleep(backoff, "reconnect.backoff").await;
                 }
             }
         }
@@ -621,7 +621,7 @@ where
                             return Err(TransportError::ConnectionClosed);
                         }
                         let backoff = this.retry_policy.backoff_for_attempt(attempt);
-                        sleep(backoff).await;
+                        sleep(backoff, "reconnect.backoff").await;
                         continue;
                     }
                     Err(ConnectError::RetriesExhausted { .. }) => {
@@ -661,7 +661,7 @@ where
                         }
 
                         let backoff = this.retry_policy.backoff_for_attempt(attempt);
-                        sleep(backoff).await;
+                        sleep(backoff, "reconnect.backoff").await;
                     }
                 }
             }
@@ -694,7 +694,7 @@ where
                             return Err(TransportError::ConnectionClosed);
                         }
                         let backoff = this.retry_policy.backoff_for_attempt(attempt);
-                        sleep(backoff).await;
+                        sleep(backoff, "reconnect.backoff").await;
                         continue;
                     }
                     Err(ConnectError::RetriesExhausted { .. }) => {
@@ -734,7 +734,7 @@ where
                         }
 
                         let backoff = this.retry_policy.backoff_for_attempt(attempt);
-                        sleep(backoff).await;
+                        sleep(backoff, "reconnect.backoff").await;
                     }
                 }
             }
@@ -2139,7 +2139,7 @@ where
         let watchdog_tx = driver.driver_tx.clone();
         spawn("roam_response_sweep_watchdog", async move {
             loop {
-                sleep(PENDING_RESPONSE_SWEEP_INTERVAL).await;
+                sleep(PENDING_RESPONSE_SWEEP_INTERVAL, "response.sweep").await;
                 if watchdog_tx
                     .try_send(DriverMessage::SweepPendingResponses)
                     .is_err()

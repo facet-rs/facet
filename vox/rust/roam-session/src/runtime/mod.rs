@@ -27,8 +27,8 @@
 //! let (otx, orx) = runtime::oneshot("my_oneshot");
 //!
 //! // Timeouts and sleeping
-//! runtime::sleep(Duration::from_secs(1)).await;
-//! let result = runtime::timeout(Duration::from_secs(5), some_future).await;
+//! runtime::sleep(Duration::from_secs(1), "my.sleep").await;
+//! let result = runtime::timeout(Duration::from_secs(5), some_future, "my.timeout").await;
 //! ```
 
 #[cfg(not(target_arch = "wasm32"))]

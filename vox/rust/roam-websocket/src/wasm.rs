@@ -212,7 +212,7 @@ impl MessageTransport for WsTransport {
 
     /// Receive a message with timeout.
     async fn recv_timeout(&mut self, timeout: Duration) -> io::Result<Option<Message>> {
-        roam_session::runtime::timeout(timeout, self.recv())
+        roam_session::runtime::timeout(timeout, self.recv(), "ws.recv.timeout")
             .await
             .unwrap_or(Ok(None))
     }
