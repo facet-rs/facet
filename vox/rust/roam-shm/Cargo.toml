@@ -27,7 +27,6 @@ roam-stream.workspace = true
 facet.workspace = true
 facet-json.workspace = true
 facet-postcard = { workspace = true }
-inventory.workspace = true
 peeps-types.workspace = true
 tokio = { workspace = true, features = ["time", "sync", "net", "io-util"] }
 tracing = { workspace = true, optional = true }

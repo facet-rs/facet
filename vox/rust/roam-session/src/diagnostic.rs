@@ -275,6 +275,16 @@ pub struct ConnectionIdentity {
     pub opened_at_ns: u64,
 }
 
+pub struct RequestRecord<'a> {
+    pub conn_id: u64,
+    pub request_id: u64,
+    pub method_id: u64,
+    pub metadata: Option<&'a roam_wire::Metadata>,
+    pub task_id: Option<u64>,
+    pub task_name: Option<String>,
+    pub args: Option<HashMap<String, String>>,
+}
+
 impl DiagnosticState {
     fn metadata_to_debug_map(
         metadata: Option<&roam_wire::Metadata>,
@@ -406,16 +416,16 @@ impl DiagnosticState {
     }
 
     /// Record an outgoing request (we're calling remote).
-    pub fn record_outgoing_request(
-        &self,
-        conn_id: u64,
-        request_id: u64,
-        method_id: u64,
-        metadata: Option<&roam_wire::Metadata>,
-        task_id: Option<u64>,
-        task_name: Option<String>,
-        args: Option<HashMap<String, String>>,
-    ) {
+    pub fn record_outgoing_request(&self, record: RequestRecord<'_>) {
+        let RequestRecord {
+            conn_id,
+            request_id,
+            method_id,
+            metadata,
+            task_id,
+            task_name,
+            args,
+        } = record;
         let backtrace = Some(format_short_backtrace());
         let metadata = Self::metadata_to_debug_map(metadata);
         let now = Instant::now();
@@ -444,16 +454,16 @@ impl DiagnosticState {
     }
 
     /// Record an incoming request (remote is calling us).
-    pub fn record_incoming_request(
-        &self,
-        conn_id: u64,
-        request_id: u64,
-        method_id: u64,
-        metadata: Option<&roam_wire::Metadata>,
-        task_id: Option<u64>,
-        task_name: Option<String>,
-        args: Option<HashMap<String, String>>,
-    ) {
+    pub fn record_incoming_request(&self, record: RequestRecord<'_>) {
+        let RequestRecord {
+            conn_id,
+            request_id,
+            method_id,
+            metadata,
+            task_id,
+            task_name,
+            args,
+        } = record;
         let metadata = Self::metadata_to_debug_map(metadata);
         // Task tracking APIs removed — set to None
         let server_task_id = None;
@@ -589,10 +599,10 @@ impl DiagnosticState {
     /// Marks the channel as closed rather than removing it, so it still
     /// appears in diagnostic snapshots until the connection is dropped.
     pub fn record_channel_close(&self, channel_id: u64) {
-        if let Ok(mut channels) = self.channels.lock() {
-            if let Some(ch) = channels.get_mut(&channel_id) {
-                ch.closed = true;
-            }
+        if let Ok(mut channels) = self.channels.lock()
+            && let Some(ch) = channels.get_mut(&channel_id)
+        {
+            ch.closed = true;
         }
     }
 
@@ -673,6 +683,60 @@ impl DiagnosticState {
         }
         let received_at = self.created_at + std::time::Duration::from_millis(ms);
         Some(Instant::now().duration_since(received_at))
+    }
+
+    /// Number of in-flight requests currently tracked.
+    pub fn pending_requests_outgoing(&self) -> usize {
+        self.requests
+            .lock()
+            .map(|reqs| {
+                reqs.values()
+                    .filter(|req| req.direction == RequestDirection::Outgoing)
+                    .count()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Number of incoming in-flight requests currently tracked by this side.
+    pub fn pending_responses(&self) -> usize {
+        self.requests
+            .lock()
+            .map(|reqs| {
+                reqs.values()
+                    .filter(|req| req.direction == RequestDirection::Incoming)
+                    .count()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Number of in-flight requests currently tracked.
+    pub fn pending_requests(&self) -> usize {
+        self.requests
+            .lock()
+            .map(|reqs| reqs.len())
+            .unwrap_or_default()
+    }
+
+    /// Unix timestamp for last sent frame, in nanoseconds.
+    pub fn last_frame_sent_at_ns(&self) -> Option<u64> {
+        let ms = self.last_frame_sent_ms.load(Ordering::Relaxed);
+        if ms == 0 {
+            return None;
+        }
+        let opened_at_ns = self.connection_identity().opened_at_ns;
+        let delta_ns = ms.saturating_mul(1_000_000);
+        Some(opened_at_ns.saturating_add(delta_ns))
+    }
+
+    /// Unix timestamp for last received frame, in nanoseconds.
+    pub fn last_frame_received_at_ns(&self) -> Option<u64> {
+        let ms = self.last_frame_received_ms.load(Ordering::Relaxed);
+        if ms == 0 {
+            return None;
+        }
+        let opened_at_ns = self.connection_identity().opened_at_ns;
+        let delta_ns = ms.saturating_mul(1_000_000);
+        Some(opened_at_ns.saturating_add(delta_ns))
     }
 
     /// Dump this connection's full diagnostic state.

@@ -319,10 +319,20 @@ where
                 }
             };
 
-            match handle
-                .call_with_metadata(method_id, method_name, args, args_plan, metadata.clone())
+            let args_ptr = args as *mut T as *mut ();
+            #[allow(unsafe_code)]
+            let call_result = unsafe {
+                roam_session::ConnectionHandle::call_with_metadata_by_plan(
+                    &handle,
+                    method_id,
+                    method_name,
+                    args_ptr,
+                    args_plan,
+                    metadata.clone(),
+                )
                 .await
-            {
+            };
+            match call_result {
                 Ok(response) => return Ok(response),
                 Err(TransportError::Encode(e)) => {
                     return Err(TransportError::Encode(e));

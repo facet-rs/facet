@@ -1070,15 +1070,15 @@ where
         // Track incoming request for diagnostics
         if let Some(diag) = &self.diagnostic_state {
             trace!(request_id, method_id, name = %diag.name, "recording incoming request");
-            diag.record_incoming_request(
-                conn_id.raw(),
+            diag.record_incoming_request(roam_session::diagnostic::RequestRecord {
+                conn_id: conn_id.raw(),
                 request_id,
                 method_id,
-                Some(&metadata),
-                request_task_id,
-                request_task_name,
-                None,
-            );
+                metadata: Some(&metadata),
+                task_id: request_task_id,
+                task_name: request_task_name,
+                args: None,
+            });
         }
 
         // Register response node in peeps registry.
@@ -2977,15 +2977,15 @@ impl MultiPeerHostDriver {
         // Track incoming request for diagnostics
         if let Some(diag) = &state.diagnostic_state {
             trace!(request_id, method_id, name = %diag.name, "recording incoming request");
-            diag.record_incoming_request(
-                conn_id.raw(),
+            diag.record_incoming_request(roam_session::diagnostic::RequestRecord {
+                conn_id: conn_id.raw(),
                 request_id,
                 method_id,
-                Some(&metadata),
-                request_task_id,
-                request_task_name,
-                None,
-            );
+                metadata: Some(&metadata),
+                task_id: request_task_id,
+                task_name: request_task_name,
+                args: None,
+            });
         } else {
             trace!(
                 request_id,

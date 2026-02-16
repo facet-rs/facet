@@ -225,15 +225,19 @@ impl Caller for ConnectionHandle {
         args_plan: &RpcPlan,
         metadata: roam_wire::Metadata,
     ) -> Result<ResponseData, TransportError> {
-        ConnectionHandle::call_with_metadata(
-            self,
-            method_id,
-            method_name,
-            args,
-            args_plan,
-            metadata,
-        )
-        .await
+        let args_ptr = args as *mut T as *mut ();
+        #[allow(unsafe_code)]
+        unsafe {
+            ConnectionHandle::call_with_metadata_by_plan(
+                self,
+                method_id,
+                method_name,
+                args_ptr,
+                args_plan,
+                metadata,
+            )
+            .await
+        }
     }
 
     fn bind_response_channels<T: Facet<'static>>(

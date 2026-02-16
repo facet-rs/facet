@@ -10,7 +10,7 @@ use facet_core::PtrMut;
 use crate::{
     ChannelError, ChannelId, ChannelIdAllocator, ChannelRegistry, DriverMessage,
     IncomingChannelMessage, RX_STREAM_BUFFER_SIZE, ReceiverSlot, ResponseData, SenderSlot,
-    ServiceDispatcher, TransportError, collect_channel_ids, patch_channel_ids, runtime::oneshot,
+    ServiceDispatcher, TransportError, patch_channel_ids, runtime::oneshot,
 };
 use crate::{
     Role,
@@ -172,6 +172,30 @@ impl ConnectionHandle {
                 closed_at_ns.to_string(),
             );
         }
+        if let Some(last_sent_at_ns) = diag.last_frame_sent_at_ns() {
+            attrs.insert(
+                "connection.last_frame_sent_at_ns".to_string(),
+                last_sent_at_ns.to_string(),
+            );
+        }
+        if let Some(last_recv_at_ns) = diag.last_frame_received_at_ns() {
+            attrs.insert(
+                "connection.last_frame_recv_at_ns".to_string(),
+                last_recv_at_ns.to_string(),
+            );
+        }
+        attrs.insert(
+            "connection.pending_requests".to_string(),
+            diag.pending_requests().to_string(),
+        );
+        attrs.insert(
+            "connection.pending_requests_outgoing".to_string(),
+            diag.pending_requests_outgoing().to_string(),
+        );
+        attrs.insert(
+            "connection.pending_responses".to_string(),
+            diag.pending_responses().to_string(),
+        );
         let attrs_json = facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
         peeps::registry::register_node(peeps_types::Node {
             id: connection_node_id.clone(),
@@ -410,14 +434,18 @@ impl ConnectionHandle {
         args: &mut T,
         args_plan: &crate::RpcPlan,
     ) -> Result<ResponseData, TransportError> {
-        self.call_with_metadata(
-            method_id,
-            method_name,
-            args,
-            args_plan,
-            roam_wire::Metadata::default(),
-        )
-        .await
+        let args_ptr = args as *mut T as *mut ();
+        #[allow(unsafe_code)]
+        unsafe {
+            self.call_with_metadata_by_plan(
+                method_id,
+                method_name,
+                args_ptr,
+                args_plan,
+                roam_wire::Metadata::default(),
+            )
+            .await
+        }
     }
 
     /// Make an RPC call with custom metadata.
@@ -668,26 +696,6 @@ impl ConnectionHandle {
         .await
     }
 
-    pub(crate) async fn call_raw_with_channels_and_metadata(
-        &self,
-        method_id: u64,
-        method_name: &str,
-        channels: Vec<u64>,
-        payload: Vec<u8>,
-        args_debug: Option<String>,
-        metadata: roam_wire::Metadata,
-    ) -> Result<ResponseData, TransportError> {
-        self.call_raw_full(
-            method_id,
-            method_name,
-            metadata,
-            channels,
-            payload,
-            args_debug,
-        )
-        .await
-    }
-
     /// Make a raw RPC call with pre-serialized payload and metadata.
     ///
     /// Returns the raw response payload bytes.
@@ -758,15 +766,15 @@ impl ConnectionHandle {
                 map.insert("args".to_string(), s.clone());
                 map
             });
-            diag.record_outgoing_request(
-                self.shared.conn_id.raw(),
+            diag.record_outgoing_request(crate::diagnostic::RequestRecord {
+                conn_id: self.shared.conn_id.raw(),
                 request_id,
                 method_id,
-                Some(&metadata),
+                metadata: Some(&metadata),
                 task_id,
                 task_name,
                 args,
-            );
+            });
             // Associate channels with this request
             diag.associate_channels_with_request(&channels, request_id);
         }
@@ -780,15 +788,15 @@ impl ConnectionHandle {
             let response_node_id = format!("response:{span_id}");
             let method_name = method_name.to_string();
             let mut attrs = std::collections::BTreeMap::new();
-            attrs.insert("request.id".to_string(), request_id.to_string());
-            attrs.insert("request.method".to_string(), method_name.clone());
+            attrs.insert("correlation".to_string(), request_id.to_string());
+            attrs.insert("method".to_string(), method_name.clone());
             if let Some(diag) = self.shared.diagnostic_state.as_deref() {
                 Self::apply_connection_attrs(&mut attrs, diag);
             }
-            attrs.insert("request.args".to_string(), args_debug_str.clone());
-            attrs.insert("request.status".to_string(), "queued".to_string());
+            attrs.insert("args_preview".to_string(), args_debug_str.clone());
+            attrs.insert("status".to_string(), "queued".to_string());
             attrs.insert(
-                "request.queued_at_ns".to_string(),
+                "queued_at_ns".to_string(),
                 SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .map(|d| d.as_nanos().min(u64::MAX as u128) as u64)

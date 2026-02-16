@@ -69,7 +69,6 @@ pub(crate) const PEEPS_CHAIN_ID_METADATA_KEY: &str = "peeps.chain_id";
 pub(crate) const PEEPS_SPAN_ID_METADATA_KEY: &str = "peeps.span_id";
 pub(crate) const PEEPS_PARENT_SPAN_ID_METADATA_KEY: &str = "peeps.parent_span_id";
 pub(crate) const PEEPS_METHOD_NAME_METADATA_KEY: &str = "peeps.method_name";
-pub(crate) const PEEPS_REQUEST_NODE_ID_METADATA_KEY: &str = "peeps.request_node_id";
 
 /// Re-export `Infallible` for use as the error type in infallible methods.
 pub use std::convert::Infallible;

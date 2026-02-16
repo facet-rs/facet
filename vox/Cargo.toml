@@ -62,8 +62,6 @@ roam-task-local = { path = "rust/roam-task-local", version = "3.0.0" }
 peeps = { version = "0.1.0", git = "https://github.com/bearcove/peeps", branch = "main", features = ["diagnostics"] }
 peeps-types = { version = "0.1.0", git = "https://github.com/bearcove/peeps", branch = "main" }
 
-inventory = "0.3"
-
 bytes = "1"
 blake3 = "1.8"
 tokio = { version = "1", features = ["sync", "rt", "time", "macros", "io-util"] }
