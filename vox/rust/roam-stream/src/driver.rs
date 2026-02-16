@@ -11,7 +11,6 @@ use std::io;
 use std::sync::Arc;
 
 use facet::Facet;
-use peeps::PeepableFutureExt;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::task::JoinHandle;
 
@@ -192,10 +191,7 @@ where
     }
 
     async fn connect_internal(&self) -> Result<ClientState<C::Transport>, ConnectError> {
-        let stream = self
-            .connector
-            .connect()
-            .peepable("socket.connect")
+        let stream = peeps::net::connect(self.connector.connect(), "roam-stream", "tcp")
             .await
             .map_err(ConnectError::ConnectFailed)?;
 
