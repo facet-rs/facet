@@ -1104,10 +1104,7 @@ where
                 apply_connection_attrs(&mut attrs, diag);
             }
             attrs.insert("status".to_string(), "handling".to_string());
-            attrs.insert(
-                "response.created_at_ns".to_string(),
-                unix_now_ns().to_string(),
-            );
+            attrs.insert("phase_started_ns".to_string(), unix_now_ns().to_string());
             let attrs_json = facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
             peeps::registry::register_node(peeps_types::Node {
                 id: response_node_id.clone(),
@@ -3023,10 +3020,7 @@ impl MultiPeerHostDriver {
                 apply_connection_attrs(&mut attrs, diag);
             }
             attrs.insert("status".to_string(), "handling".to_string());
-            attrs.insert(
-                "response.created_at_ns".to_string(),
-                unix_now_ns().to_string(),
-            );
+            attrs.insert("phase_started_ns".to_string(), unix_now_ns().to_string());
             let attrs_json = facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
             peeps::registry::register_node(peeps_types::Node {
                 id: response_node_id.clone(),
