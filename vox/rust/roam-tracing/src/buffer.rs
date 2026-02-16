@@ -4,8 +4,8 @@
 //! when full. This ensures tracing never blocks the application.
 
 use peeps::Mutex;
+use peeps::Notify;
 use std::collections::VecDeque;
-use tokio::sync::Notify;
 
 /// A lossy bounded buffer that drops oldest entries when full.
 ///
@@ -28,7 +28,7 @@ impl<T> LossyBuffer<T> {
         Self {
             inner: Mutex::new("LossyBuffer.inner", VecDeque::with_capacity(capacity)),
             capacity,
-            notify: Notify::new(),
+            notify: Notify::new("LossyBuffer.notify"),
         }
     }
 

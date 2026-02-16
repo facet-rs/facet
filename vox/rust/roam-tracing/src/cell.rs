@@ -408,7 +408,7 @@ impl CellTracingService {
                     let _ = client.emit_tracing(batch).await;
                 }
 
-                tokio::time::sleep(flush_interval).await;
+                peeps::sleep(flush_interval, "tracing.flush").await;
             }
         });
     }
@@ -447,7 +447,7 @@ impl CellTracingService {
                     let _ = client.emit_tracing(batch).await;
                 }
 
-                tokio::time::sleep(Duration::from_millis(50)).await;
+                peeps::sleep(Duration::from_millis(50), "tracing.drain.backoff").await;
             }
         });
     }
