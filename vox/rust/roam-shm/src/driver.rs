@@ -676,14 +676,11 @@ where
                 })
                 .unwrap_or_else(|| format!("0x{method_id:x}"));
             let mut attrs = std::collections::BTreeMap::new();
-            attrs.insert("request.id".to_string(), request_id.to_string());
-            attrs.insert("request.method".to_string(), method_name.clone());
+            attrs.insert("correlation".to_string(), request_id.to_string());
+            attrs.insert("method".to_string(), method_name.clone());
             apply_connection_attrs(&mut attrs, diag);
-            attrs.insert("request.status".to_string(), "in_flight".to_string());
-            attrs.insert(
-                "request.delivered_at_ns".to_string(),
-                unix_now_ns().to_string(),
-            );
+            attrs.insert("status".to_string(), "in_flight".to_string());
+            attrs.insert("delivered_at_ns".to_string(), unix_now_ns().to_string());
             if let Some(elapsed_ns) = diag.inflight_request_elapsed_ns(conn_id, request_id) {
                 attrs.insert("elapsed_ns".to_string(), elapsed_ns.to_string());
             }
@@ -723,10 +720,10 @@ where
                 })
                 .unwrap_or_else(|| "unknown".to_string());
             let mut attrs = std::collections::BTreeMap::new();
-            attrs.insert("request.id".to_string(), request_id.to_string());
-            attrs.insert("request.method".to_string(), method_name.clone());
+            attrs.insert("correlation".to_string(), request_id.to_string());
+            attrs.insert("method".to_string(), method_name.clone());
             apply_connection_attrs(&mut attrs, diag);
-            attrs.insert("response.state".to_string(), "delivered".to_string());
+            attrs.insert("status".to_string(), "delivered".to_string());
             attrs.insert(
                 "response.delivered_at_ns".to_string(),
                 unix_now_ns().to_string(),
@@ -965,10 +962,10 @@ where
                                 })
                                 .unwrap_or_else(|| "unknown".to_string());
                             let mut attrs = std::collections::BTreeMap::new();
-                            attrs.insert("request.id".to_string(), request_id.to_string());
-                            attrs.insert("request.method".to_string(), method_name.clone());
+                            attrs.insert("correlation".to_string(), request_id.to_string());
+                            attrs.insert("method".to_string(), method_name.clone());
                             apply_connection_attrs(&mut attrs, diag);
-                            attrs.insert("request.status".to_string(), "completed".to_string());
+                            attrs.insert("status".to_string(), "completed".to_string());
                             attrs.insert(
                                 "request.completed_at_ns".to_string(),
                                 unix_now_ns().to_string(),
@@ -1101,12 +1098,12 @@ where
                 })
                 .unwrap_or_else(|| format!("0x{method_id:x}"));
             let mut attrs = std::collections::BTreeMap::new();
-            attrs.insert("request.id".to_string(), request_id.to_string());
-            attrs.insert("request.method".to_string(), method_name.clone());
+            attrs.insert("correlation".to_string(), request_id.to_string());
+            attrs.insert("method".to_string(), method_name.clone());
             if let Some(diag) = self.diagnostic_state.as_deref() {
                 apply_connection_attrs(&mut attrs, diag);
             }
-            attrs.insert("response.state".to_string(), "handling".to_string());
+            attrs.insert("status".to_string(), "handling".to_string());
             attrs.insert(
                 "response.created_at_ns".to_string(),
                 unix_now_ns().to_string(),
@@ -1254,11 +1251,11 @@ where
                     )
                     .unwrap_or_else(|| "unknown".to_string());
                 let mut attrs = std::collections::BTreeMap::new();
-                attrs.insert("request.id".to_string(), request_id.to_string());
-                attrs.insert("request.method".to_string(), method_name.clone());
+                attrs.insert("correlation".to_string(), request_id.to_string());
+                attrs.insert("method".to_string(), method_name.clone());
                 apply_connection_attrs(&mut attrs, diag);
                 attrs.insert("cancelled".to_string(), "true".to_string());
-                attrs.insert("close_cause".to_string(), "peer_cancelled".to_string());
+                attrs.insert("close.cause".to_string(), "peer_cancelled".to_string());
                 let attrs_json = facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
                 peeps::registry::register_node(peeps_types::Node {
                     id: response_node_id.clone(),
@@ -2586,14 +2583,11 @@ impl MultiPeerHostDriver {
                 })
                 .unwrap_or_else(|| format!("0x{method_id:x}"));
             let mut attrs = std::collections::BTreeMap::new();
-            attrs.insert("request.id".to_string(), request_id.to_string());
-            attrs.insert("request.method".to_string(), method_name.clone());
+            attrs.insert("correlation".to_string(), request_id.to_string());
+            attrs.insert("method".to_string(), method_name.clone());
             apply_connection_attrs(&mut attrs, diag);
-            attrs.insert("request.status".to_string(), "in_flight".to_string());
-            attrs.insert(
-                "request.delivered_at_ns".to_string(),
-                unix_now_ns().to_string(),
-            );
+            attrs.insert("status".to_string(), "in_flight".to_string());
+            attrs.insert("delivered_at_ns".to_string(), unix_now_ns().to_string());
             if let Some(elapsed_ns) = diag.inflight_request_elapsed_ns(conn_id, request_id) {
                 attrs.insert("elapsed_ns".to_string(), elapsed_ns.to_string());
             }
@@ -2636,10 +2630,10 @@ impl MultiPeerHostDriver {
                 })
                 .unwrap_or_else(|| "unknown".to_string());
             let mut attrs = std::collections::BTreeMap::new();
-            attrs.insert("request.id".to_string(), request_id.to_string());
-            attrs.insert("request.method".to_string(), method_name.clone());
+            attrs.insert("correlation".to_string(), request_id.to_string());
+            attrs.insert("method".to_string(), method_name.clone());
             apply_connection_attrs(&mut attrs, diag);
-            attrs.insert("response.state".to_string(), "delivered".to_string());
+            attrs.insert("status".to_string(), "delivered".to_string());
             attrs.insert(
                 "response.delivered_at_ns".to_string(),
                 unix_now_ns().to_string(),
@@ -2867,10 +2861,10 @@ impl MultiPeerHostDriver {
                                 })
                                 .unwrap_or_else(|| "unknown".to_string());
                             let mut attrs = std::collections::BTreeMap::new();
-                            attrs.insert("request.id".to_string(), request_id.to_string());
-                            attrs.insert("request.method".to_string(), method_name.clone());
+                            attrs.insert("correlation".to_string(), request_id.to_string());
+                            attrs.insert("method".to_string(), method_name.clone());
                             apply_connection_attrs(&mut attrs, diag);
-                            attrs.insert("request.status".to_string(), "completed".to_string());
+                            attrs.insert("status".to_string(), "completed".to_string());
                             attrs.insert(
                                 "request.completed_at_ns".to_string(),
                                 unix_now_ns().to_string(),
@@ -3023,12 +3017,12 @@ impl MultiPeerHostDriver {
                 })
                 .unwrap_or_else(|| format!("0x{method_id:x}"));
             let mut attrs = std::collections::BTreeMap::new();
-            attrs.insert("request.id".to_string(), request_id.to_string());
-            attrs.insert("request.method".to_string(), method_name.clone());
+            attrs.insert("correlation".to_string(), request_id.to_string());
+            attrs.insert("method".to_string(), method_name.clone());
             if let Some(diag) = state.diagnostic_state.as_deref() {
                 apply_connection_attrs(&mut attrs, diag);
             }
-            attrs.insert("response.state".to_string(), "handling".to_string());
+            attrs.insert("status".to_string(), "handling".to_string());
             attrs.insert(
                 "response.created_at_ns".to_string(),
                 unix_now_ns().to_string(),
@@ -3191,11 +3185,11 @@ impl MultiPeerHostDriver {
                     )
                     .unwrap_or_else(|| "unknown".to_string());
                 let mut attrs = std::collections::BTreeMap::new();
-                attrs.insert("request.id".to_string(), request_id.to_string());
-                attrs.insert("request.method".to_string(), method_name.clone());
+                attrs.insert("correlation".to_string(), request_id.to_string());
+                attrs.insert("method".to_string(), method_name.clone());
                 apply_connection_attrs(&mut attrs, diag);
                 attrs.insert("cancelled".to_string(), "true".to_string());
-                attrs.insert("close_cause".to_string(), "peer_cancelled".to_string());
+                attrs.insert("close.cause".to_string(), "peer_cancelled".to_string());
                 let attrs_json = facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
                 peeps::registry::register_node(peeps_types::Node {
                     id: response_node_id.clone(),
