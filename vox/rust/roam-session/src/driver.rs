@@ -1677,6 +1677,8 @@ where
             .set_current_request_id(Some(request_id));
         let handler_fut = dispatcher.dispatch(cx, payload, &mut conn.server_channel_registry);
         conn.server_channel_registry.set_current_request_id(None);
+        // even if this task wasn't spawned via peeps::spawn_tracked.
+        #[cfg(feature = "diagnostics")]
         let diag_for_handler = self.diagnostic_state.clone();
 
         // r[impl call.cancel.best-effort] - Store abort handle for cancellation support

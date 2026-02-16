@@ -570,6 +570,8 @@ where
         };
         trace!("handle_driver_message: sending wire message");
         MessageTransport::send(&mut self.io, &wire_msg).await?;
+
+        #[cfg(feature = "diagnostics")]
         if let Some((conn_id, request_id)) = completed_response
             && let Some(diag) = &self.diagnostic_state
         {
@@ -2330,6 +2332,8 @@ impl MultiPeerHostDriver {
         };
 
         self.send_to_peer(peer_id, &wire_msg).await?;
+
+        #[cfg(feature = "diagnostics")]
         if let Some((conn_id, request_id)) = completed_response
             && let Some(state) = self.peers.get(&peer_id)
             && let Some(diag) = &state.diagnostic_state
