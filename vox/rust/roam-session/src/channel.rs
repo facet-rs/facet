@@ -6,7 +6,6 @@ use std::convert::Infallible;
 use std::marker::PhantomData;
 
 use facet::Facet;
-use peeps::PeepableFutureExt;
 
 use crate::runtime::{Receiver, Sender};
 use crate::{CHANNEL_SIZE, ChannelId, DriverMessage, IncomingChannelMessage, get_dispatch_context};
@@ -350,7 +349,6 @@ impl<T: 'static> Tx<T> {
         // Prefer sender - data flows through drain task which has correct channel_id
         if let Some(tx) = self.sender.inner.as_ref() {
             tx.send(IncomingChannelMessage::Data(bytes))
-                .peepable("tx.send.drain")
                 .await
                 .map_err(|_| TxError::Closed)
         }
@@ -364,7 +362,6 @@ impl<T: 'static> Tx<T> {
                     channel_id: self.channel_id,
                     payload: bytes,
                 })
-                .peepable("tx.send.direct")
                 .await
                 .map_err(|_| TxError::Closed)
         } else {
@@ -622,7 +619,7 @@ impl<T: 'static> Rx<T> {
         T: Facet<'static>,
     {
         let rx = self.receiver.inner.as_mut().ok_or(RxError::Taken)?;
-        match rx.recv().peepable("rx.recv").await {
+        match rx.recv().await {
             Some(IncomingChannelMessage::Data(bytes)) => {
                 let value = facet_postcard::from_slice(&bytes).map_err(RxError::Deserialize)?;
                 Ok(Some(value))

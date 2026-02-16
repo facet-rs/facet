@@ -2,8 +2,6 @@
 
 use std::io;
 use std::path::Path;
-
-use peeps::PeepableFutureExt;
 use tokio::net::{UnixListener, UnixStream};
 
 /// A local IPC stream (Unix socket on Unix platforms).
@@ -28,11 +26,7 @@ impl LocalListener {
     ///
     /// Returns the stream for the new connection.
     pub async fn accept(&self) -> io::Result<LocalStream> {
-        let (stream, _addr) = self
-            .inner
-            .accept()
-            .peepable("local_listener.accept")
-            .await?;
+        let (stream, _addr) = self.inner.accept().await?;
         Ok(stream)
     }
 }
@@ -41,9 +35,7 @@ impl LocalListener {
 ///
 /// On Unix, this connects to a Unix socket at the given path.
 pub async fn connect(path: impl AsRef<Path>) -> io::Result<LocalStream> {
-    UnixStream::connect(path)
-        .peepable("unix_stream.connect")
-        .await
+    UnixStream::connect(path).await
 }
 
 /// Check if a local IPC endpoint exists.

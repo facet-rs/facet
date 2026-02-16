@@ -4,7 +4,6 @@
 
 use facet::Facet;
 #[cfg(not(target_arch = "wasm32"))]
-use peeps::PeepableFutureExt;
 #[cfg(not(target_arch = "wasm32"))]
 use std::io;
 #[cfg(not(target_arch = "wasm32"))]
@@ -107,7 +106,7 @@ pub async fn pump_read_to_tx<R: AsyncRead + Unpin>(
 ) -> io::Result<()> {
     let mut buf = vec![0u8; chunk_size];
     loop {
-        let n = reader.read(&mut buf).peepable("tunnel.read").await?;
+        let n = reader.read(&mut buf).await?;
         if n == 0 {
             // EOF - drop tx to close the channel
             break;
@@ -150,11 +149,11 @@ pub async fn pump_rx_to_write<W: AsyncWrite + Unpin>(
     loop {
         match rx.recv().await {
             Ok(Some(data)) => {
-                writer.write_all(&data).peepable("tunnel.write").await?;
+                writer.write_all(&data).await?;
             }
             Ok(None) => {
                 // Channel closed - flush and exit
-                writer.flush().peepable("tunnel.flush").await?;
+                writer.flush().await?;
                 break;
             }
             Err(e) => {

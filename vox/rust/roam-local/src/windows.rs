@@ -1,8 +1,6 @@
 //! Windows named pipe implementation for local IPC.
 
 use std::io;
-
-use peeps::PeepableFutureExt;
 use tokio::net::windows::named_pipe::{
     ClientOptions, NamedPipeClient, NamedPipeServer, ServerOptions,
 };
@@ -55,10 +53,7 @@ impl LocalListener {
     /// after accepting.
     pub async fn accept(&mut self) -> io::Result<LocalServerStream> {
         // Wait for a client to connect to the current server
-        self.next_server
-            .connect()
-            .peepable("windows_local.accept")
-            .await?;
+        self.next_server.connect().await?;
 
         // Take the connected server
         let connected = std::mem::replace(
