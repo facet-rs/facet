@@ -140,7 +140,7 @@ impl<T> AuditableSender<T> {
         loop {
             let len = self.state.count.load(std::sync::atomic::Ordering::Relaxed);
 
-            match tokio::time::timeout(warn_interval, self.inner.reserve()).await {
+            match peeps::timeout(warn_interval, self.inner.reserve(), "channel.reserve").await {
                 Ok(Ok(permit)) => {
                     if warned {
                         eprintln!(
