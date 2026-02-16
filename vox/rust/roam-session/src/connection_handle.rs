@@ -732,6 +732,7 @@ impl ConnectionHandle {
                 map
             });
             diag.record_outgoing_request(
+                self.shared.conn_id.raw(),
                 request_id,
                 method_id,
                 Some(&metadata),
@@ -884,7 +885,7 @@ impl ConnectionHandle {
 
         // Mark request as complete
         if let Some(diag) = &self.shared.diagnostic_state {
-            diag.complete_request(request_id);
+            diag.complete_request(self.shared.conn_id.raw(), request_id);
         }
         #[cfg(feature = "diagnostics")]
         peeps::registry::remove_node(&request_node_id);

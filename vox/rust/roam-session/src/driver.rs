@@ -1189,7 +1189,7 @@ where
 
                 // Track completion for diagnostics
                 if let Some(ref diag) = self.diagnostic_state {
-                    diag.complete_request(request_id);
+                    diag.complete_request(conn_id.raw(), request_id);
                 }
                 // r[impl flow.call.payload-limit] - Outgoing responses are also bounded
                 // by max_payload_size. If a handler produces a too-large response, send
@@ -1524,6 +1524,7 @@ where
         let (request_task_id, request_task_name) = task_context_from_metadata(&metadata);
         if let Some(ref diag) = self.diagnostic_state {
             diag.record_incoming_request(
+                conn_id.raw(),
                 request_id,
                 method_id,
                 Some(&metadata),
@@ -1660,7 +1661,7 @@ where
             #[cfg(feature = "diagnostics")]
             if let Some(ref diag) = self.diagnostic_state {
                 if let Ok(requests) = diag.requests.lock() {
-                    if let Some(req) = requests.get(&request_id) {
+                    if let Some(req) = requests.get(&(conn_id.raw(), request_id)) {
                         if let Some(ref meta) = req.metadata {
                             if let Some(span_id) = meta.get(crate::PEEPS_SPAN_ID_METADATA_KEY) {
                                 let response_node_id = format!("response:{span_id}");
@@ -1673,7 +1674,7 @@ where
 
             // Track cancellation for diagnostics
             if let Some(ref diag) = self.diagnostic_state {
-                diag.complete_request(request_id);
+                diag.complete_request(conn_id.raw(), request_id);
             }
 
             // Send a Cancelled response

@@ -501,7 +501,7 @@ where
                 // Mark request completed for diagnostics
                 if let Some(diag) = &self.diagnostic_state {
                     trace!(request_id, name = %diag.name, "completing incoming request");
-                    diag.complete_request(request_id);
+                    diag.complete_request(conn_id.raw(), request_id);
                 }
                 Message::Response {
                     conn_id,
@@ -815,6 +815,7 @@ where
         if let Some(diag) = &self.diagnostic_state {
             trace!(request_id, method_id, name = %diag.name, "recording incoming request");
             diag.record_incoming_request(
+                conn_id.raw(),
                 request_id,
                 method_id,
                 Some(&metadata),
@@ -827,7 +828,7 @@ where
         // Validate metadata
         if let Err(rule_id) = roam_wire::validate_metadata(&metadata) {
             if let Some(diag) = &self.diagnostic_state {
-                diag.complete_request(request_id);
+                diag.complete_request(conn_id.raw(), request_id);
             }
             return Err(self
                 .goodbye(
@@ -840,7 +841,7 @@ where
         // Validate payload size
         if payload.len() as u32 > self.negotiated.max_payload_size {
             if let Some(diag) = &self.diagnostic_state {
-                diag.complete_request(request_id);
+                diag.complete_request(conn_id.raw(), request_id);
             }
             return Err(self
                 .goodbye(
@@ -918,7 +919,7 @@ where
 
             // Mark request completed for diagnostics
             if let Some(diag) = &self.diagnostic_state {
-                diag.complete_request(request_id);
+                diag.complete_request(conn_id.raw(), request_id);
             }
 
             // Send a Cancelled response
@@ -2111,7 +2112,7 @@ impl MultiPeerHostDriver {
                     && let Some(diag) = &state.diagnostic_state
                 {
                     trace!(request_id, name = %diag.name, "completing incoming request");
-                    diag.complete_request(request_id);
+                    diag.complete_request(conn_id.raw(), request_id);
                 }
                 Message::Response {
                     conn_id,
@@ -2429,6 +2430,7 @@ impl MultiPeerHostDriver {
         if let Some(diag) = &state.diagnostic_state {
             trace!(request_id, method_id, name = %diag.name, "recording incoming request");
             diag.record_incoming_request(
+                conn_id.raw(),
                 request_id,
                 method_id,
                 Some(&metadata),
@@ -2446,7 +2448,7 @@ impl MultiPeerHostDriver {
         // Validate metadata
         if let Err(rule_id) = roam_wire::validate_metadata(&metadata) {
             if let Some(diag) = &state.diagnostic_state {
-                diag.complete_request(request_id);
+                diag.complete_request(conn_id.raw(), request_id);
             }
             return Err(self
                 .goodbye(
@@ -2462,7 +2464,7 @@ impl MultiPeerHostDriver {
             if let Some(state) = self.peers.get_mut(&peer_id)
                 && let Some(diag) = &state.diagnostic_state
             {
-                diag.complete_request(request_id);
+                diag.complete_request(conn_id.raw(), request_id);
             }
             return Err(self
                 .goodbye(
@@ -2552,7 +2554,7 @@ impl MultiPeerHostDriver {
 
             // Mark request completed for diagnostics
             if let Some(diag) = &state.diagnostic_state {
-                diag.complete_request(request_id);
+                diag.complete_request(conn_id.raw(), request_id);
             }
 
             // Send a Cancelled response

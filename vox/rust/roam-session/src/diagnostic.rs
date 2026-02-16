@@ -204,7 +204,7 @@ pub struct DiagnosticState {
     pub(crate) total_completed: AtomicU64,
 
     /// In-flight requests
-    pub(crate) requests: Mutex<HashMap<u64, InFlightRequest>>,
+    pub(crate) requests: Mutex<HashMap<(u64, u64), InFlightRequest>>,
 
     /// Recently completed requests (ring buffer, newest last)
     pub(crate) recent_completions: Mutex<VecDeque<CompletedRequest>>,
@@ -313,6 +313,7 @@ impl DiagnosticState {
     /// Record an outgoing request (we're calling remote).
     pub fn record_outgoing_request(
         &self,
+        conn_id: u64,
         request_id: u64,
         method_id: u64,
         metadata: Option<&roam_wire::Metadata>,
@@ -324,7 +325,7 @@ impl DiagnosticState {
         let metadata = Self::metadata_to_debug_map(metadata);
         if let Ok(mut requests) = self.requests.lock() {
             requests.insert(
-                request_id,
+                (conn_id, request_id),
                 InFlightRequest {
                     request_id,
                     method_id,
@@ -345,6 +346,7 @@ impl DiagnosticState {
     /// Record an incoming request (remote is calling us).
     pub fn record_incoming_request(
         &self,
+        conn_id: u64,
         request_id: u64,
         method_id: u64,
         metadata: Option<&roam_wire::Metadata>,
@@ -358,7 +360,7 @@ impl DiagnosticState {
         let server_task_name = None;
         if let Ok(mut requests) = self.requests.lock() {
             requests.insert(
-                request_id,
+                (conn_id, request_id),
                 InFlightRequest {
                     request_id,
                     method_id,
@@ -377,9 +379,9 @@ impl DiagnosticState {
     }
 
     /// Mark a request as completed and record it in the recent completions ring buffer.
-    pub fn complete_request(&self, request_id: u64) {
+    pub fn complete_request(&self, conn_id: u64, request_id: u64) {
         let completed = if let Ok(mut requests) = self.requests.lock() {
-            requests.remove(&request_id)
+            requests.remove(&(conn_id, request_id))
         } else {
             None
         };
