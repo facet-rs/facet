@@ -256,7 +256,7 @@ async fn load_test_single_connection_varied_calls() {
                     let msg = format!("message-{}", i);
                     let mut args = msg.clone();
                     let response = handle
-                        .call(METHOD_ECHO, &mut args, &STRING_ARGS_PLAN)
+                        .call(METHOD_ECHO, "test", &mut args, &STRING_ARGS_PLAN)
                         .await
                         .unwrap();
                     let result: Result<String, RoamError<()>> = decode_result(response.payload);
@@ -268,7 +268,7 @@ async fn load_test_single_connection_varied_calls() {
 
             let mut args = arg;
             let response = handle
-                .call(method, &mut args, &U32_ARGS_PLAN)
+                .call(method, "test", &mut args, &U32_ARGS_PLAN)
                 .await
                 .unwrap();
             let result: Result<u32, RoamError<()>> = decode_result(response.payload);
@@ -332,7 +332,7 @@ async fn load_test_multiple_connections() {
                     let arg = i as u32;
                     let mut args = arg;
                     let response = handle
-                        .call(method, &mut args, &U32_ARGS_PLAN)
+                        .call(method, "test", &mut args, &U32_ARGS_PLAN)
                         .await
                         .unwrap();
                     let result: Result<u32, RoamError<()>> = decode_result(response.payload);
@@ -408,7 +408,7 @@ async fn load_test_mixed_burst() {
                     let arg = i as u32;
                     let mut args = arg;
                     let response = client
-                        .call(method, &mut args, &U32_ARGS_PLAN)
+                        .call(method, "test", &mut args, &U32_ARGS_PLAN)
                         .await
                         .unwrap();
                     let result: Result<u32, RoamError<()>> = decode_result(response.payload);
@@ -486,7 +486,7 @@ async fn load_test_chaos() {
                         let msg = format!("chaos-{}", seed);
                         let mut args = msg.clone();
                         let response = handle
-                            .call(method, &mut args, &STRING_ARGS_PLAN)
+                            .call(method, "test", &mut args, &STRING_ARGS_PLAN)
                             .await
                             .unwrap();
                         let result: Result<String, RoamError<()>> = decode_result(response.payload);
@@ -494,7 +494,7 @@ async fn load_test_chaos() {
                     } else {
                         let mut args = seed;
                         let response = handle
-                            .call(method, &mut args, &U32_ARGS_PLAN)
+                            .call(method, "test", &mut args, &U32_ARGS_PLAN)
                             .await
                             .unwrap();
                         let result: Result<u32, RoamError<()>> = decode_result(response.payload);

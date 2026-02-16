@@ -375,11 +375,18 @@ impl ConnectionHandle {
     pub async fn call<T: Facet<'static>>(
         &self,
         method_id: u64,
+        method_name: &str,
         args: &mut T,
         args_plan: &crate::RpcPlan,
     ) -> Result<ResponseData, TransportError> {
-        self.call_with_metadata(method_id, args, args_plan, roam_wire::Metadata::default())
-            .await
+        self.call_with_metadata(
+            method_id,
+            method_name,
+            args,
+            args_plan,
+            roam_wire::Metadata::default(),
+        )
+        .await
     }
 
     /// Make an RPC call with custom metadata.
@@ -388,6 +395,7 @@ impl ConnectionHandle {
     pub async fn call_with_metadata<T: Facet<'static>>(
         &self,
         method_id: u64,
+        method_name: &str,
         args: &mut T,
         args_plan: &crate::RpcPlan,
         metadata: roam_wire::Metadata,
@@ -448,7 +456,12 @@ impl ConnectionHandle {
         if drains.is_empty() {
             // No Rx streams - simple call
             self.call_raw_with_channels_and_metadata(
-                method_id, channels, payload, args_debug, metadata,
+                method_id,
+                method_name,
+                channels,
+                payload,
+                args_debug,
+                metadata,
             )
             .await
         } else {
@@ -492,19 +505,15 @@ impl ConnectionHandle {
                     Self::metadata_string(&metadata, crate::PEEPS_SPAN_ID_METADATA_KEY).unwrap();
                 let request_node_id = peeps_types::canonical_id::request_from_span_id(&span_id);
                 let response_node_id = format!("response:{span_id}");
-                let method_name = crate::diagnostic::get_method_name(method_id)
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| format!("0x{method_id:x}"));
+                let method_name = method_name.to_string();
                 let connection_name = self
                     .shared
                     .diagnostic_state
                     .as_ref()
                     .map(|d| d.name.clone())
                     .unwrap_or_default();
-                let correlation_key =
-                    peeps_types::canonical_id::correlation_key(&connection_name, request_id);
                 let attrs_json = format!(
-                    "{{\"request.id\":\"{request_id}\",\"request.method\":\"{method_name}\",\"request.correlation_key\":\"{correlation_key}\",\"rpc.connection\":\"{connection_name}\"}}"
+                    "{{\"request.id\":\"{request_id}\",\"request.method\":\"{method_name}\",\"rpc.connection\":\"{connection_name}\"}}"
                 );
                 peeps::registry::register_node(peeps_types::Node {
                     id: request_node_id.clone(),
@@ -639,6 +648,7 @@ impl ConnectionHandle {
     pub unsafe fn call_with_metadata_by_plan(
         &self,
         method_id: u64,
+        method_name: &str,
         args_ptr: *mut (),
         args_plan: &crate::RpcPlan,
         metadata: roam_wire::Metadata,
@@ -712,13 +722,19 @@ impl ConnectionHandle {
         };
 
         // Now return an async block that doesn't capture args_ptr
+        let method_name = method_name.to_owned();
         async move {
             let payload = payload_result.map_err(TransportError::Encode)?;
 
             if drains.is_empty() {
                 // No Rx streams - simple call
                 self.call_raw_with_channels_and_metadata(
-                    method_id, channels, payload, args_debug, metadata,
+                    method_id,
+                    &method_name,
+                    channels,
+                    payload,
+                    args_debug,
+                    metadata,
                 )
                 .await
             } else {
@@ -755,19 +771,15 @@ impl ConnectionHandle {
                             .unwrap();
                     let request_node_id = peeps_types::canonical_id::request_from_span_id(&span_id);
                     let response_node_id = format!("response:{span_id}");
-                    let method_name = crate::diagnostic::get_method_name(method_id)
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| format!("0x{method_id:x}"));
+                    let method_name = method_name.to_string();
                     let connection_name = self
                         .shared
                         .diagnostic_state
                         .as_ref()
                         .map(|d| d.name.clone())
                         .unwrap_or_default();
-                    let correlation_key =
-                        peeps_types::canonical_id::correlation_key(&connection_name, request_id);
                     let attrs_json = format!(
-                        "{{\"request.id\":\"{request_id}\",\"request.method\":\"{method_name}\",\"request.correlation_key\":\"{correlation_key}\",\"rpc.connection\":\"{connection_name}\"}}"
+                        "{{\"request.id\":\"{request_id}\",\"request.method\":\"{method_name}\",\"rpc.connection\":\"{connection_name}\"}}"
                     );
                     peeps::registry::register_node(peeps_types::Node {
                         id: request_node_id.clone(),
@@ -972,11 +984,19 @@ impl ConnectionHandle {
     pub async fn call_raw(
         &self,
         method_id: u64,
+        method_name: &str,
         payload: Vec<u8>,
     ) -> Result<Vec<u8>, TransportError> {
-        self.call_raw_full(method_id, Vec::new(), Vec::new(), payload, None)
-            .await
-            .map(|r| r.payload)
+        self.call_raw_full(
+            method_id,
+            method_name,
+            Vec::new(),
+            Vec::new(),
+            payload,
+            None,
+        )
+        .await
+        .map(|r| r.payload)
     }
 
     /// Make a raw RPC call with pre-serialized payload and channel IDs.
@@ -986,24 +1006,40 @@ impl ConnectionHandle {
     pub(crate) async fn call_raw_with_channels(
         &self,
         method_id: u64,
+        method_name: &str,
         channels: Vec<u64>,
         payload: Vec<u8>,
         args_debug: Option<String>,
     ) -> Result<ResponseData, TransportError> {
-        self.call_raw_full(method_id, Vec::new(), channels, payload, args_debug)
-            .await
+        self.call_raw_full(
+            method_id,
+            method_name,
+            Vec::new(),
+            channels,
+            payload,
+            args_debug,
+        )
+        .await
     }
 
     pub(crate) async fn call_raw_with_channels_and_metadata(
         &self,
         method_id: u64,
+        method_name: &str,
         channels: Vec<u64>,
         payload: Vec<u8>,
         args_debug: Option<String>,
         metadata: roam_wire::Metadata,
     ) -> Result<ResponseData, TransportError> {
-        self.call_raw_full(method_id, metadata, channels, payload, args_debug)
-            .await
+        self.call_raw_full(
+            method_id,
+            method_name,
+            metadata,
+            channels,
+            payload,
+            args_debug,
+        )
+        .await
     }
 
     /// Make a raw RPC call with pre-serialized payload and metadata.
@@ -1012,10 +1048,11 @@ impl ConnectionHandle {
     pub async fn call_raw_with_metadata(
         &self,
         method_id: u64,
+        method_name: &str,
         payload: Vec<u8>,
         metadata: roam_wire::Metadata,
     ) -> Result<Vec<u8>, TransportError> {
-        self.call_raw_full(method_id, metadata, Vec::new(), payload, None)
+        self.call_raw_full(method_id, method_name, metadata, Vec::new(), payload, None)
             .await
             .map(|r| r.payload)
     }
@@ -1026,6 +1063,7 @@ impl ConnectionHandle {
     async fn call_raw_full(
         &self,
         method_id: u64,
+        #[allow(unused_variables)] method_name: &str,
         metadata: roam_wire::Metadata,
         channels: Vec<u64>,
         payload: Vec<u8>,
@@ -1066,19 +1104,15 @@ impl ConnectionHandle {
                 Self::metadata_string(&metadata, crate::PEEPS_SPAN_ID_METADATA_KEY).unwrap();
             let request_node_id = peeps_types::canonical_id::request_from_span_id(&span_id);
             let response_node_id = format!("response:{span_id}");
-            let method_name = crate::diagnostic::get_method_name(method_id)
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| format!("0x{method_id:x}"));
+            let method_name = method_name.to_string();
             let connection_name = self
                 .shared
                 .diagnostic_state
                 .as_ref()
                 .map(|d| d.name.clone())
                 .unwrap_or_default();
-            let correlation_key =
-                peeps_types::canonical_id::correlation_key(&connection_name, request_id);
             let attrs_json = format!(
-                "{{\"request.id\":\"{request_id}\",\"request.method\":\"{method_name}\",\"request.correlation_key\":\"{correlation_key}\",\"rpc.connection\":\"{connection_name}\"}}"
+                "{{\"request.id\":\"{request_id}\",\"request.method\":\"{method_name}\",\"rpc.connection\":\"{connection_name}\"}}"
             );
             peeps::registry::register_node(peeps_types::Node {
                 id: request_node_id.clone(),

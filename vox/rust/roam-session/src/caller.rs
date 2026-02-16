@@ -69,10 +69,17 @@ pub trait Caller: Clone + Send + Sync + 'static {
     fn call<T: Facet<'static> + Send>(
         &self,
         method_id: u64,
+        method_name: &str,
         args: &mut T,
         args_plan: &RpcPlan,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send {
-        self.call_with_metadata(method_id, args, args_plan, roam_wire::Metadata::default())
+        self.call_with_metadata(
+            method_id,
+            method_name,
+            args,
+            args_plan,
+            roam_wire::Metadata::default(),
+        )
     }
 
     /// Make an RPC call with the given method ID and arguments.
@@ -87,10 +94,17 @@ pub trait Caller: Clone + Send + Sync + 'static {
     fn call<T: Facet<'static> + Send>(
         &self,
         method_id: u64,
+        method_name: &str,
         args: &mut T,
         args_plan: &RpcPlan,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> {
-        self.call_with_metadata(method_id, args, args_plan, roam_wire::Metadata::default())
+        self.call_with_metadata(
+            method_id,
+            method_name,
+            args,
+            args_plan,
+            roam_wire::Metadata::default(),
+        )
     }
 
     /// Make an RPC call with the given method ID, arguments, and metadata.
@@ -105,6 +119,7 @@ pub trait Caller: Clone + Send + Sync + 'static {
     fn call_with_metadata<T: Facet<'static> + Send>(
         &self,
         method_id: u64,
+        method_name: &str,
         args: &mut T,
         args_plan: &RpcPlan,
         metadata: roam_wire::Metadata,
@@ -122,6 +137,7 @@ pub trait Caller: Clone + Send + Sync + 'static {
     fn call_with_metadata<T: Facet<'static> + Send>(
         &self,
         method_id: u64,
+        method_name: &str,
         args: &mut T,
         args_plan: &RpcPlan,
         metadata: roam_wire::Metadata,
@@ -160,6 +176,7 @@ pub trait Caller: Clone + Send + Sync + 'static {
     fn call_with_metadata_by_plan(
         &self,
         method_id: u64,
+        method_name: &str,
         args_ptr: SendPtr,
         args_plan: &'static Arc<RpcPlan>,
         metadata: roam_wire::Metadata,
@@ -179,6 +196,7 @@ pub trait Caller: Clone + Send + Sync + 'static {
     fn call_with_metadata_by_plan(
         &self,
         method_id: u64,
+        method_name: &str,
         args_ptr: SendPtr,
         args_plan: &'static Arc<RpcPlan>,
         metadata: roam_wire::Metadata,
@@ -202,11 +220,20 @@ impl Caller for ConnectionHandle {
     async fn call_with_metadata<T: Facet<'static> + Send>(
         &self,
         method_id: u64,
+        method_name: &str,
         args: &mut T,
         args_plan: &RpcPlan,
         metadata: roam_wire::Metadata,
     ) -> Result<ResponseData, TransportError> {
-        ConnectionHandle::call_with_metadata(self, method_id, args, args_plan, metadata).await
+        ConnectionHandle::call_with_metadata(
+            self,
+            method_id,
+            method_name,
+            args,
+            args_plan,
+            metadata,
+        )
+        .await
     }
 
     fn bind_response_channels<T: Facet<'static>>(
@@ -223,6 +250,7 @@ impl Caller for ConnectionHandle {
     fn call_with_metadata_by_plan(
         &self,
         method_id: u64,
+        method_name: &str,
         args_ptr: SendPtr,
         args_plan: &'static Arc<RpcPlan>,
         metadata: roam_wire::Metadata,
@@ -232,6 +260,7 @@ impl Caller for ConnectionHandle {
             ConnectionHandle::call_with_metadata_by_plan(
                 self,
                 method_id,
+                method_name,
                 args_ptr.as_ptr(),
                 args_plan,
                 metadata,
@@ -244,6 +273,7 @@ impl Caller for ConnectionHandle {
     fn call_with_metadata_by_plan(
         &self,
         method_id: u64,
+        method_name: &str,
         args_ptr: SendPtr,
         args_plan: &'static Arc<RpcPlan>,
         metadata: roam_wire::Metadata,
@@ -253,6 +283,7 @@ impl Caller for ConnectionHandle {
             ConnectionHandle::call_with_metadata_by_plan(
                 self,
                 method_id,
+                method_name,
                 args_ptr.as_ptr(),
                 args_plan,
                 metadata,
@@ -309,6 +340,7 @@ where
 {
     caller: C,
     method_id: u64,
+    method_name: &'static str,
     args: Args,
     metadata: roam_wire::Metadata,
     /// Precomputed plan for the Args type.
@@ -332,6 +364,7 @@ where
     pub fn new(
         caller: C,
         method_id: u64,
+        method_name: &'static str,
         args: Args,
         args_plan: &'static Arc<RpcPlan>,
         ok_plan: &'static Arc<RpcPlan>,
@@ -340,6 +373,7 @@ where
         Self {
             caller,
             method_id,
+            method_name,
             args,
             metadata: roam_wire::Metadata::default(),
             args_plan,
@@ -377,6 +411,7 @@ where
         let CallFuture {
             caller,
             method_id,
+            method_name,
             mut args,
             metadata,
             args_plan,
@@ -392,7 +427,7 @@ where
             let args_ptr = unsafe { SendPtr::new((&raw mut args).cast::<()>()) };
 
             let response = caller
-                .call_with_metadata_by_plan(method_id, args_ptr, args_plan, metadata)
+                .call_with_metadata_by_plan(method_id, method_name, args_ptr, args_plan, metadata)
                 .await
                 .map_err(CallError::from)?;
 
@@ -464,6 +499,7 @@ where
         let CallFuture {
             caller,
             method_id,
+            method_name,
             mut args,
             metadata,
             args_plan,
@@ -479,7 +515,7 @@ where
             let args_ptr = unsafe { SendPtr::new((&raw mut args).cast::<()>()) };
 
             let response = caller
-                .call_with_metadata_by_plan(method_id, args_ptr, args_plan, metadata)
+                .call_with_metadata_by_plan(method_id, method_name, args_ptr, args_plan, metadata)
                 .await
                 .map_err(CallError::from)?;
 

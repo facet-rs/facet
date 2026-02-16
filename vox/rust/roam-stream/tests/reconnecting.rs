@@ -167,7 +167,7 @@ async fn test_basic_call() {
 
     // Make a call
     let payload = facet_postcard::to_vec(&"hello".to_string()).unwrap();
-    let response = client.call_raw(1, payload).await.unwrap();
+    let response = client.call_raw(1, "test", payload).await.unwrap();
     let result: Result<String, roam_session::RoamError<()>> =
         facet_postcard::from_slice(&response).unwrap();
 
@@ -186,7 +186,7 @@ async fn test_unknown_method_not_reconnect() {
 
     // Call an unknown method
     let payload = facet_postcard::to_vec(&"test".to_string()).unwrap();
-    let response = client.call_raw(999, payload).await.unwrap();
+    let response = client.call_raw(999, "test", payload).await.unwrap();
     let result: Result<String, roam_session::RoamError<()>> =
         facet_postcard::from_slice(&response).unwrap();
 
@@ -220,7 +220,7 @@ async fn test_retries_exhausted() {
     let client = connect_with_policy(connector, HandshakeConfig::default(), service, policy);
 
     let payload = facet_postcard::to_vec(&"test".to_string()).unwrap();
-    let result = client.call_raw(1, payload).await;
+    let result = client.call_raw(1, "test", payload).await;
 
     // Should get RetriesExhausted error
     assert!(matches!(
@@ -252,7 +252,7 @@ async fn test_backoff_timing() {
 
     let start = Instant::now();
     let payload = facet_postcard::to_vec(&"test".to_string()).unwrap();
-    let _ = client.call_raw(1, payload).await;
+    let _ = client.call_raw(1, "test", payload).await;
     let elapsed = start.elapsed();
 
     // Should have waited at least: 50ms (after attempt 1) + 100ms (after attempt 2)
@@ -282,7 +282,7 @@ async fn test_concurrent_callers() {
         let handle = tokio::spawn(async move {
             let msg = format!("message_{}", i);
             let payload = facet_postcard::to_vec(&msg).unwrap();
-            let response = client.call_raw(1, payload).await.unwrap();
+            let response = client.call_raw(1, "test", payload).await.unwrap();
             let result: Result<String, roam_session::RoamError<()>> =
                 facet_postcard::from_slice(&response).unwrap();
             assert_eq!(result.unwrap(), msg);
@@ -356,7 +356,7 @@ async fn test_reconnect_after_initial_failure() {
 
     // Should eventually succeed after retries
     let payload = facet_postcard::to_vec(&"hello".to_string()).unwrap();
-    let response = client.call_raw(1, payload).await.unwrap();
+    let response = client.call_raw(1, "test", payload).await.unwrap();
     let result: Result<String, roam_session::RoamError<()>> =
         facet_postcard::from_slice(&response).unwrap();
 

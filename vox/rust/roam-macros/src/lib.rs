@@ -642,7 +642,7 @@ fn generate_client(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStream2 {
 
     let client_methods: Vec<TokenStream2> = parsed
         .methods()
-        .map(|m| generate_client_method(m, &method_id_mod, roam))
+        .map(|m| generate_client_method(m, &parsed.name(), &method_id_mod, roam))
         .collect();
 
     quote! {
@@ -665,10 +665,12 @@ fn generate_client(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStream2 {
 
 fn generate_client_method(
     method: &ServiceMethod,
+    service_name: &str,
     method_id_mod: &proc_macro2::Ident,
     roam: &TokenStream2,
 ) -> TokenStream2 {
     let method_name = format_ident!("{}", method.name().to_snake_case());
+    let full_method_name = format!("{}.{}", service_name, method.name());
     let method_doc = method.doc().map(|d| quote! { #[doc = #d] });
 
     // Parameters
@@ -734,6 +736,7 @@ fn generate_client_method(
             #roam::session::CallFuture::new(
                 self.caller.clone(),
                 #method_id_mod::#method_name(),
+                #full_method_name,
                 #args_tuple,
                 args_plan,
                 ok_plan,

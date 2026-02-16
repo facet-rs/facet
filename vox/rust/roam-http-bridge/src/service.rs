@@ -144,7 +144,12 @@ impl BridgeService for GenericBridgeService {
             // Make the roam call
             let response_bytes = self
                 .handle
-                .call_raw_with_metadata(method_info.method_id, postcard_payload, wire_metadata)
+                .call_raw_with_metadata(
+                    method_info.method_id,
+                    method_name,
+                    postcard_payload,
+                    wire_metadata,
+                )
                 .await
                 .map_err(|e| BridgeError::backend_unavailable(format!("Call failed: {e}")))?;
 

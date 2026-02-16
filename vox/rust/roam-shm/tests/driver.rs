@@ -209,7 +209,11 @@ async fn unknown_method_returns_error() {
     let fixture = setup_test();
 
     let payload = facet_postcard::to_vec(&"test").unwrap();
-    let response = fixture.guest_handle.call_raw(999, payload).await.unwrap();
+    let response = fixture
+        .guest_handle
+        .call_raw(999, "test", payload)
+        .await
+        .unwrap();
 
     assert_eq!(response[0], 1, "Expected error marker");
 }
@@ -563,7 +567,7 @@ async fn test_lazy_spawn_real_processes() {
     // Make an RPC call from host to guest 1
     let input1 = "Hello from host to guest 1".to_string();
     let payload1 = facet_postcard::to_vec(&input1).unwrap();
-    let response1 = peer1_handle.call_raw(1, payload1).await.unwrap();
+    let response1 = peer1_handle.call_raw(1, "test", payload1).await.unwrap();
     assert_eq!(response1[0], 0);
     let result1: String = facet_postcard::from_slice(&response1[1..]).unwrap();
     assert_eq!(result1, input1);
@@ -593,20 +597,26 @@ async fn test_lazy_spawn_real_processes() {
     // Make RPC call to guest 2
     let input2 = "Hello from host to guest 2".to_string();
     let payload2 = facet_postcard::to_vec(&input2).unwrap();
-    let response2 = peer2_handle.call_raw(1, payload2).await.unwrap();
+    let response2 = peer2_handle.call_raw(1, "test", payload2).await.unwrap();
     assert_eq!(response2[0], 0);
     let result2: String = facet_postcard::from_slice(&response2[1..]).unwrap();
     assert_eq!(result2, input2);
 
     // Verify both guests are still alive and responding
     let add_payload1 = facet_postcard::to_vec(&(10i32, 20i32)).unwrap();
-    let add_response1 = peer1_handle.call_raw(2, add_payload1).await.unwrap();
+    let add_response1 = peer1_handle
+        .call_raw(2, "test", add_payload1)
+        .await
+        .unwrap();
     assert_eq!(add_response1[0], 0);
     let sum1: i32 = facet_postcard::from_slice(&add_response1[1..]).unwrap();
     assert_eq!(sum1, 30);
 
     let add_payload2 = facet_postcard::to_vec(&(100i32, 200i32)).unwrap();
-    let add_response2 = peer2_handle.call_raw(2, add_payload2).await.unwrap();
+    let add_response2 = peer2_handle
+        .call_raw(2, "test", add_payload2)
+        .await
+        .unwrap();
     assert_eq!(add_response2[0], 0);
     let sum2: i32 = facet_postcard::from_slice(&add_response2[1..]).unwrap();
     assert_eq!(sum2, 300);

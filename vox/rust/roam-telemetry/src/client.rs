@@ -89,6 +89,7 @@ impl<C: Caller> Caller for TracingCaller<C> {
     async fn call_with_metadata<T: Facet<'static> + Send>(
         &self,
         method_id: u64,
+        method_name: &str,
         args: &mut T,
         args_plan: &roam_session::RpcPlan,
         mut metadata: roam_wire::Metadata,
@@ -120,15 +121,10 @@ impl<C: Caller> Caller for TracingCaller<C> {
             .unwrap_or_default()
             .as_nanos() as u64;
 
-        // Get method name for span (best effort)
-        let method_name = roam_session::diagnostic::get_method_name(method_id)
-            .unwrap_or("unknown")
-            .to_string();
-
         // Make the actual call
         let result = self
             .inner
-            .call_with_metadata(method_id, args, args_plan, metadata)
+            .call_with_metadata(method_id, method_name, args, args_plan, metadata)
             .await;
 
         let end_time_ns = SystemTime::now()
@@ -139,7 +135,7 @@ impl<C: Caller> Caller for TracingCaller<C> {
         // Build span attributes
         let mut attributes = vec![
             KeyValue::string("rpc.system", "roam"),
-            KeyValue::string("rpc.method", &method_name),
+            KeyValue::string("rpc.method", method_name),
             KeyValue::string("rpc.service", self.exporter.service_name()),
         ];
 
@@ -160,7 +156,7 @@ impl<C: Caller> Caller for TracingCaller<C> {
             trace_id,
             span_id,
             parent_span_id,
-            name: method_name,
+            name: method_name.to_string(),
             kind: SpanKind::Client.as_u32(),
             start_time_unix_nano: start_time_ns.to_string(),
             end_time_unix_nano: end_time_ns.to_string(),
@@ -176,6 +172,7 @@ impl<C: Caller> Caller for TracingCaller<C> {
     async fn call_with_metadata<T: Facet<'static> + Send>(
         &self,
         method_id: u64,
+        method_name: &str,
         args: &mut T,
         args_plan: &roam_session::RpcPlan,
         mut metadata: roam_wire::Metadata,
@@ -205,13 +202,9 @@ impl<C: Caller> Caller for TracingCaller<C> {
             .unwrap_or_default()
             .as_nanos() as u64;
 
-        let method_name = roam_session::diagnostic::get_method_name(method_id)
-            .unwrap_or("unknown")
-            .to_string();
-
         let result = self
             .inner
-            .call_with_metadata(method_id, args, args_plan, metadata)
+            .call_with_metadata(method_id, method_name, args, args_plan, metadata)
             .await;
 
         let end_time_ns = SystemTime::now()
@@ -221,7 +214,7 @@ impl<C: Caller> Caller for TracingCaller<C> {
 
         let mut attributes = vec![
             KeyValue::string("rpc.system", "roam"),
-            KeyValue::string("rpc.method", &method_name),
+            KeyValue::string("rpc.method", method_name),
             KeyValue::string("rpc.service", self.exporter.service_name()),
         ];
 
@@ -241,7 +234,7 @@ impl<C: Caller> Caller for TracingCaller<C> {
             trace_id,
             span_id,
             parent_span_id,
-            name: method_name,
+            name: method_name.to_string(),
             kind: SpanKind::Client.as_u32(),
             start_time_unix_nano: start_time_ns.to_string(),
             end_time_unix_nano: end_time_ns.to_string(),
@@ -266,13 +259,14 @@ impl<C: Caller> Caller for TracingCaller<C> {
     fn call_with_metadata_by_plan(
         &self,
         method_id: u64,
+        method_name: &str,
         args_ptr: SendPtr,
         args_plan: &'static std::sync::Arc<roam_session::RpcPlan>,
         metadata: roam_wire::Metadata,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send {
         // TracingCaller just delegates to inner - tracing happens at the generic call level
         self.inner
-            .call_with_metadata_by_plan(method_id, args_ptr, args_plan, metadata)
+            .call_with_metadata_by_plan(method_id, method_name, args_ptr, args_plan, metadata)
     }
 
     #[allow(unsafe_code)]

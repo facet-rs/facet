@@ -85,7 +85,7 @@ async fn verify_queuing_order_on_exhaustion() {
     let h1 = handle.clone();
     let p1 = large_payload.clone();
     tokio::spawn(async move {
-        let _ = h1.call_raw(1, p1).await;
+        let _ = h1.call_raw(1, "test", p1).await;
     });
     // This should succeed and consume the slot.
 
@@ -95,7 +95,7 @@ async fn verify_queuing_order_on_exhaustion() {
     let large_payload_2 = large_payload.clone();
     let h2 = handle.clone();
     tokio::spawn(async move {
-        let _ = h2.call_raw(2, large_payload_2).await;
+        let _ = h2.call_raw(2, "test", large_payload_2).await;
     });
 
     // Give driver time to process and queue Msg 2
@@ -106,7 +106,7 @@ async fn verify_queuing_order_on_exhaustion() {
     let small_payload_3 = small_payload.clone();
     let h3 = handle.clone();
     tokio::spawn(async move {
-        let _ = h3.call_raw(3, small_payload_3).await;
+        let _ = h3.call_raw(3, "test", small_payload_3).await;
     });
 
     // Give driver time to process Msg 3

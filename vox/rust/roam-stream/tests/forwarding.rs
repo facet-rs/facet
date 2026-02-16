@@ -243,7 +243,7 @@ async fn test_forwarding_unary() {
 
     // Make unary call through proxy
     let payload = facet_postcard::to_vec(&"hello through proxy".to_string()).unwrap();
-    let response = client.call_raw(METHOD_ECHO, payload).await.unwrap();
+    let response = client.call_raw(METHOD_ECHO, "test", payload).await.unwrap();
     let result: Result<String, RoamError<()>> = decode_result(response);
 
     assert_eq!(result.unwrap(), "hello through proxy");
@@ -285,7 +285,7 @@ async fn test_forwarding_client_to_server_streaming() {
     // Make the streaming call: sum(numbers: Rx<i32>) -> i64
     let mut args = rx;
     let response = handle
-        .call(METHOD_SUM, &mut args, &RX_I32_ARGS_PLAN)
+        .call(METHOD_SUM, "test", &mut args, &RX_I32_ARGS_PLAN)
         .await
         .unwrap();
     let result: Result<i64, RoamError<()>> = decode_result(response.payload);
@@ -314,7 +314,7 @@ async fn test_forwarding_client_to_server_empty_stream() {
 
     let mut args = rx;
     let response = handle
-        .call(METHOD_SUM, &mut args, &RX_I32_ARGS_PLAN)
+        .call(METHOD_SUM, "test", &mut args, &RX_I32_ARGS_PLAN)
         .await
         .unwrap();
     let result: Result<i64, RoamError<()>> = decode_result(response.payload);
@@ -358,7 +358,7 @@ async fn test_forwarding_server_to_client_streaming() {
     let count: u32 = 5;
     let mut args = (count, tx);
     let response = handle
-        .call(METHOD_GENERATE, &mut args, &U32_TX_I32_ARGS_PLAN)
+        .call(METHOD_GENERATE, "test", &mut args, &U32_TX_I32_ARGS_PLAN)
         .await
         .unwrap();
     let result: Result<(), RoamError<()>> = decode_result(response.payload);
@@ -417,7 +417,12 @@ async fn test_forwarding_bidirectional_streaming() {
     // Make the bidirectional streaming call: transform(input: Rx<String>, output: Tx<String>)
     let mut args = (input_rx, output_tx);
     let response = handle
-        .call(METHOD_TRANSFORM, &mut args, &RX_STRING_TX_STRING_ARGS_PLAN)
+        .call(
+            METHOD_TRANSFORM,
+            "test",
+            &mut args,
+            &RX_STRING_TX_STRING_ARGS_PLAN,
+        )
         .await
         .unwrap();
     let result: Result<(), RoamError<()>> = decode_result(response.payload);
@@ -471,7 +476,7 @@ async fn test_forwarding_multiple_streaming_calls() {
             // Call sum
             let mut args = rx;
             let response = conn_handle
-                .call(METHOD_SUM, &mut args, &RX_I32_ARGS_PLAN)
+                .call(METHOD_SUM, "test", &mut args, &RX_I32_ARGS_PLAN)
                 .await
                 .unwrap();
             let result: Result<i64, RoamError<()>> = decode_result(response.payload);
@@ -512,7 +517,7 @@ async fn test_forwarding_client_to_server_empty_stream_multi_hop() {
 
     let mut args = rx;
     let response = handle
-        .call(METHOD_SUM, &mut args, &RX_I32_ARGS_PLAN)
+        .call(METHOD_SUM, "test", &mut args, &RX_I32_ARGS_PLAN)
         .await
         .unwrap();
     let result: Result<i64, RoamError<()>> = decode_result(response.payload);

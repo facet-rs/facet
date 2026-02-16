@@ -71,6 +71,9 @@ impl ServiceDispatcher for ForwardingDispatcher {
         let method_id = cx.method_id.raw();
         let request_id = cx.request_id.raw();
         let channels = cx.channels.clone();
+        let method_name = crate::diagnostic::get_method_name(method_id)
+            .unwrap_or("unknown")
+            .to_string();
 
         if channels.is_empty() {
             // Unary call - but response may contain Rx<T> channels
@@ -82,7 +85,7 @@ impl ServiceDispatcher for ForwardingDispatcher {
 
             Box::pin(async move {
                 let response = upstream
-                    .call_raw_with_channels(method_id, vec![], payload, None)
+                    .call_raw_with_channels(method_id, &method_name, vec![], payload, None)
                     .await;
 
                 let (response_payload, upstream_response_channels) = match response {
@@ -207,8 +210,13 @@ impl ServiceDispatcher for ForwardingDispatcher {
             Box::pin(async move {
                 // Send the upstream Request - this queues the Request command
                 // which will be sent before any Data we forward
-                let response_future =
-                    upstream.call_raw_with_channels(method_id, upstream_channels, payload, None);
+                let response_future = upstream.call_raw_with_channels(
+                    method_id,
+                    &method_name,
+                    upstream_channels,
+                    payload,
+                    None,
+                );
 
                 // Now spawn forwarding tasks - safe because Request is queued first
                 // and command_tx/task_tx are processed in order by the driver

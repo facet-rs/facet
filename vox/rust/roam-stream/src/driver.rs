@@ -223,6 +223,7 @@ where
     pub async fn call_raw(
         &self,
         method_id: u64,
+        method_name: &str,
         payload: Vec<u8>,
     ) -> Result<Vec<u8>, ConnectError> {
         let mut last_error: Option<io::Error> = None;
@@ -247,7 +248,10 @@ where
                 Err(e) => return Err(e),
             };
 
-            match handle.call_raw(method_id, payload.clone()).await {
+            match handle
+                .call_raw(method_id, method_name, payload.clone())
+                .await
+            {
                 Ok(response) => return Ok(response),
                 Err(TransportError::Encode(e)) => {
                     return Err(ConnectError::Rpc(TransportError::Encode(e)));
@@ -290,6 +294,7 @@ where
     async fn call_with_metadata<T: Facet<'static> + Send>(
         &self,
         method_id: u64,
+        method_name: &str,
         args: &mut T,
         args_plan: &roam_session::RpcPlan,
         metadata: roam_wire::Metadata,
@@ -319,7 +324,7 @@ where
             };
 
             match handle
-                .call_with_metadata(method_id, args, args_plan, metadata.clone())
+                .call_with_metadata(method_id, method_name, args, args_plan, metadata.clone())
                 .await
             {
                 Ok(response) => return Ok(response),
@@ -366,11 +371,13 @@ where
     fn call_with_metadata_by_plan(
         &self,
         method_id: u64,
+        method_name: &str,
         args_ptr: SendPtr,
         args_plan: &'static std::sync::Arc<roam_session::RpcPlan>,
         metadata: roam_wire::Metadata,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send {
         let this = self.clone();
+        let method_name = method_name.to_owned();
 
         async move {
             let mut attempt = 0u32;
@@ -400,6 +407,7 @@ where
                 match unsafe {
                     handle.call_with_metadata_by_plan(
                         method_id,
+                        &method_name,
                         args_ptr.as_ptr(),
                         args_plan,
                         metadata.clone(),
