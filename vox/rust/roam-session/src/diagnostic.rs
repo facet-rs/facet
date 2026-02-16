@@ -247,6 +247,12 @@ pub struct DiagnosticState {
     /// Per-channel flow control credit snapshot (updated by the driver).
     /// Vec of (channel_id, incoming_credit, outgoing_credit).
     pub(crate) channel_credits: Mutex<Vec<ChannelCreditInfo>>,
+
+    /// Connection identity used for peeps node/edge attributes.
+    pub(crate) connection_identity: Mutex<ConnectionIdentity>,
+
+    /// Unix timestamp when this connection closed (0 = still open).
+    pub(crate) connection_closed_at_ns: AtomicU64,
 }
 
 /// Per-channel flow control credit info for diagnostics.
@@ -257,6 +263,16 @@ pub struct ChannelCreditInfo {
     pub incoming_credit: u32,
     /// Credit peer granted us (bytes we can still send them).
     pub outgoing_credit: u32,
+}
+
+/// Stable identity for a directional connection.
+#[derive(Debug, Clone)]
+pub struct ConnectionIdentity {
+    pub src: String,
+    pub dst: String,
+    pub link: String,
+    pub transport: String,
+    pub opened_at_ns: u64,
 }
 
 impl DiagnosticState {
@@ -285,8 +301,10 @@ impl DiagnosticState {
 
     /// Create a new diagnostic state.
     pub fn new(name: impl Into<String>) -> Self {
+        let name = name.into();
+        let now_ns = unix_now_ns();
         Self {
-            name: name.into(),
+            name: name.clone(),
             peer_name: Mutex::new(None),
             max_concurrent_requests: AtomicU32::new(0),
             initial_credit: AtomicU32::new(0),
@@ -303,6 +321,14 @@ impl DiagnosticState {
             last_frame_sent_ms: AtomicU64::new(0),
             last_frame_received_ms: AtomicU64::new(0),
             channel_credits: Mutex::new(Vec::new()),
+            connection_identity: Mutex::new(ConnectionIdentity {
+                src: name.clone(),
+                dst: "unknown".to_string(),
+                link: format!("{name}<->unknown"),
+                transport: "unknown".to_string(),
+                opened_at_ns: now_ns,
+            }),
+            connection_closed_at_ns: AtomicU64::new(0),
         }
     }
 
@@ -311,6 +337,65 @@ impl DiagnosticState {
         if let Ok(mut peer_name) = self.peer_name.lock() {
             *peer_name = Some(name);
         }
+    }
+
+    /// Set directional identity and lifecycle origin for this connection.
+    pub fn set_connection_identity(
+        &self,
+        src: impl Into<String>,
+        dst: impl Into<String>,
+        link: impl Into<String>,
+        transport: impl Into<String>,
+        opened_at_ns: u64,
+    ) {
+        if let Ok(mut identity) = self.connection_identity.lock() {
+            identity.src = src.into();
+            identity.dst = dst.into();
+            identity.link = link.into();
+            identity.transport = transport.into();
+            identity.opened_at_ns = opened_at_ns;
+        }
+    }
+
+    /// Mark connection closure time.
+    pub fn mark_connection_closed(&self, closed_at_ns: u64) {
+        self.connection_closed_at_ns
+            .store(closed_at_ns, Ordering::Relaxed);
+    }
+
+    /// Snapshot the current directional connection identity.
+    pub fn connection_identity(&self) -> ConnectionIdentity {
+        self.connection_identity
+            .lock()
+            .map(|id| id.clone())
+            .unwrap_or_else(|_| ConnectionIdentity {
+                src: self.name.clone(),
+                dst: "unknown".to_string(),
+                link: format!("{}<->unknown", self.name),
+                transport: "unknown".to_string(),
+                opened_at_ns: unix_now_ns(),
+            })
+    }
+
+    /// Directional `rpc.connection` token.
+    pub fn rpc_connection_token(&self) -> String {
+        let id = self.connection_identity();
+        format!("{}->{}:{}", id.src, id.dst, id.link)
+    }
+
+    /// Whether this connection is currently open.
+    pub fn connection_state(&self) -> &'static str {
+        if self.connection_closed_at_ns.load(Ordering::Relaxed) == 0 {
+            "open"
+        } else {
+            "closed"
+        }
+    }
+
+    /// Unix nanos when connection was closed, if known.
+    pub fn connection_closed_at_ns(&self) -> Option<u64> {
+        let value = self.connection_closed_at_ns.load(Ordering::Relaxed);
+        if value == 0 { None } else { Some(value) }
     }
 
     /// Set negotiated flow control parameters.

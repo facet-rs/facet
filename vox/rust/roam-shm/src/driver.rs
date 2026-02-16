@@ -81,6 +81,74 @@ fn metadata_string(metadata: &roam_wire::Metadata, key: &str) -> Option<String> 
     })
 }
 
+#[cfg(feature = "diagnostics")]
+#[inline]
+fn apply_connection_attrs(
+    attrs: &mut std::collections::BTreeMap<String, String>,
+    diag: &DiagnosticState,
+) {
+    let connection = diag.connection_identity();
+    attrs.insert("rpc.connection".to_string(), diag.rpc_connection_token());
+    attrs.insert("connection.src".to_string(), connection.src);
+    attrs.insert("connection.dst".to_string(), connection.dst);
+    attrs.insert("connection.link".to_string(), connection.link);
+    attrs.insert("connection.transport".to_string(), connection.transport);
+}
+
+#[cfg(feature = "diagnostics")]
+fn register_connection_node(diag: &DiagnosticState) -> Option<String> {
+    let rpc_connection = diag.rpc_connection_token();
+    if rpc_connection.is_empty() {
+        return None;
+    }
+    let connection = diag.connection_identity();
+    let connection_node_id = format!("connection:{rpc_connection}");
+    let mut attrs = std::collections::BTreeMap::new();
+    attrs.insert("rpc.connection".to_string(), rpc_connection.clone());
+    attrs.insert("connection.src".to_string(), connection.src);
+    attrs.insert("connection.dst".to_string(), connection.dst);
+    attrs.insert("connection.link".to_string(), connection.link);
+    attrs.insert("connection.transport".to_string(), connection.transport);
+    attrs.insert(
+        "connection.state".to_string(),
+        diag.connection_state().to_string(),
+    );
+    attrs.insert(
+        "connection.opened_at_ns".to_string(),
+        diag.connection_identity().opened_at_ns.to_string(),
+    );
+    if let Some(closed_at_ns) = diag.connection_closed_at_ns() {
+        attrs.insert(
+            "connection.closed_at_ns".to_string(),
+            closed_at_ns.to_string(),
+        );
+    }
+    let attrs_json = facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
+    peeps::registry::register_node(peeps_types::Node {
+        id: connection_node_id.clone(),
+        kind: peeps_types::NodeKind::Connection,
+        label: Some(rpc_connection),
+        attrs_json,
+    });
+    Some(connection_node_id)
+}
+
+#[cfg(feature = "diagnostics")]
+fn touch_connection_node(entity_id: &str, diag: &DiagnosticState) {
+    if let Some(connection_node_id) = register_connection_node(diag) {
+        peeps::registry::touch_edge(entity_id, &connection_node_id);
+    }
+}
+
+#[cfg(feature = "diagnostics")]
+fn canonical_link_id(src: &str, dst: &str) -> String {
+    if src <= dst {
+        format!("{src}<->{dst}")
+    } else {
+        format!("{dst}<->{src}")
+    }
+}
+
 /// Get a human-readable name for a message type.
 fn msg_type_name(msg: &Message) -> &'static str {
     match msg {
@@ -344,6 +412,16 @@ pub struct ShmDriver<T, D> {
     diagnostic_state: Option<Arc<DiagnosticState>>,
 }
 
+impl<T, D> Drop for ShmDriver<T, D> {
+    fn drop(&mut self) {
+        #[cfg(feature = "diagnostics")]
+        if let Some(ref diag) = self.diagnostic_state {
+            diag.mark_connection_closed(unix_now_ns());
+            let _ = register_connection_node(diag);
+        }
+    }
+}
+
 impl<T, D> ShmDriver<T, D>
 where
     T: MessageTransport,
@@ -451,7 +529,7 @@ where
         &mut self,
         msg: DriverMessage,
     ) -> Result<(), ShmConnectionError> {
-        #[allow(unreachable_patterns)]
+        #[cfg(feature = "diagnostics")]
         let mut completed_response: Option<(u64, u64)> = None;
         #[cfg(feature = "diagnostics")]
         let mut sent_call: Option<(u64, u64, u64)> = None;
@@ -535,7 +613,10 @@ where
                 if !should_send {
                     return Ok(());
                 }
-                completed_response = Some((conn_id.raw(), request_id));
+                #[cfg(feature = "diagnostics")]
+                {
+                    completed_response = Some((conn_id.raw(), request_id));
+                }
                 Message::Response {
                     conn_id,
                     request_id,
@@ -569,10 +650,6 @@ where
                 // map to any wire message on SHM transports.
                 return Ok(());
             }
-            _ => {
-                trace!("handle_driver_message: ignoring unsupported driver message variant");
-                return Ok(());
-            }
         };
         trace!("handle_driver_message: sending wire message");
         MessageTransport::send(&mut self.io, &wire_msg).await?;
@@ -601,7 +678,7 @@ where
             let mut attrs = std::collections::BTreeMap::new();
             attrs.insert("request.id".to_string(), request_id.to_string());
             attrs.insert("request.method".to_string(), method_name.clone());
-            attrs.insert("rpc.connection".to_string(), diag.name.clone());
+            apply_connection_attrs(&mut attrs, diag);
             attrs.insert("request.status".to_string(), "in_flight".to_string());
             attrs.insert(
                 "request.delivered_at_ns".to_string(),
@@ -612,11 +689,12 @@ where
             }
             let attrs_json = facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
             peeps::registry::register_node(peeps_types::Node {
-                id: request_node_id,
+                id: request_node_id.clone(),
                 kind: peeps_types::NodeKind::Request,
                 label: Some(method_name),
                 attrs_json,
             });
+            touch_connection_node(&request_node_id, diag);
         }
 
         #[cfg(feature = "diagnostics")]
@@ -647,7 +725,7 @@ where
             let mut attrs = std::collections::BTreeMap::new();
             attrs.insert("request.id".to_string(), request_id.to_string());
             attrs.insert("request.method".to_string(), method_name.clone());
-            attrs.insert("rpc.connection".to_string(), diag.name.clone());
+            apply_connection_attrs(&mut attrs, diag);
             attrs.insert("response.state".to_string(), "delivered".to_string());
             attrs.insert(
                 "response.delivered_at_ns".to_string(),
@@ -671,6 +749,7 @@ where
                 label: Some(method_name),
                 attrs_json,
             });
+            touch_connection_node(&response_node_id, diag);
             peeps::registry::remove_node(&response_node_id);
             trace!(request_id, name = %diag.name, "completing incoming request");
             diag.complete_request(conn_id, request_id);
@@ -888,7 +967,7 @@ where
                             let mut attrs = std::collections::BTreeMap::new();
                             attrs.insert("request.id".to_string(), request_id.to_string());
                             attrs.insert("request.method".to_string(), method_name.clone());
-                            attrs.insert("rpc.connection".to_string(), diag.name.clone());
+                            apply_connection_attrs(&mut attrs, diag);
                             attrs.insert("request.status".to_string(), "completed".to_string());
                             attrs.insert(
                                 "request.completed_at_ns".to_string(),
@@ -907,6 +986,7 @@ where
                                 label: Some(method_name),
                                 attrs_json,
                             });
+                            touch_connection_node(&request_node_id, diag);
                             peeps::registry::remove_node(&request_node_id);
                         }
                         diag.complete_request(conn_id.raw(), request_id);
@@ -1020,15 +1100,12 @@ where
                     roam_session::diagnostic::get_method_name(method_id).map(|s| s.to_string())
                 })
                 .unwrap_or_else(|| format!("0x{method_id:x}"));
-            let connection_name = self
-                .diagnostic_state
-                .as_ref()
-                .map(|d| d.name.clone())
-                .unwrap_or_default();
             let mut attrs = std::collections::BTreeMap::new();
             attrs.insert("request.id".to_string(), request_id.to_string());
             attrs.insert("request.method".to_string(), method_name.clone());
-            attrs.insert("rpc.connection".to_string(), connection_name);
+            if let Some(diag) = self.diagnostic_state.as_deref() {
+                apply_connection_attrs(&mut attrs, diag);
+            }
             attrs.insert("response.state".to_string(), "handling".to_string());
             attrs.insert(
                 "response.created_at_ns".to_string(),
@@ -1041,6 +1118,9 @@ where
                 label: Some(method_name),
                 attrs_json,
             });
+            if let Some(diag) = self.diagnostic_state.as_deref() {
+                touch_connection_node(&response_node_id, diag);
+            }
             if let Some(request_node_id) = request_node_id {
                 peeps::registry::edge(&request_node_id, &response_node_id);
             }
@@ -1107,6 +1187,7 @@ where
             .set_current_request_id(Some(request_id));
         let handler_fut = dispatcher.dispatch(cx, payload, &mut conn.server_channel_registry);
         conn.server_channel_registry.set_current_request_id(None);
+        #[cfg(feature = "diagnostics")]
         let diag_for_handler = self.diagnostic_state.clone();
 
         // r[impl call.cancel.best-effort] - Store abort handle for cancellation support
@@ -1172,20 +1253,20 @@ where
                         PEEPS_METHOD_NAME_METADATA_KEY,
                     )
                     .unwrap_or_else(|| "unknown".to_string());
-                let connection_name = diag.name.clone();
                 let mut attrs = std::collections::BTreeMap::new();
                 attrs.insert("request.id".to_string(), request_id.to_string());
                 attrs.insert("request.method".to_string(), method_name.clone());
-                attrs.insert("rpc.connection".to_string(), connection_name);
+                apply_connection_attrs(&mut attrs, diag);
                 attrs.insert("cancelled".to_string(), "true".to_string());
                 attrs.insert("close_cause".to_string(), "peer_cancelled".to_string());
                 let attrs_json = facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
                 peeps::registry::register_node(peeps_types::Node {
-                    id: response_node_id,
+                    id: response_node_id.clone(),
                     kind: peeps_types::NodeKind::Response,
                     label: Some(format!("{method_name} (cancelled)")),
                     attrs_json,
                 });
+                touch_connection_node(&response_node_id, diag);
             }
 
             // Mark request completed for diagnostics
@@ -1471,12 +1552,22 @@ where
     D: ServiceDispatcher,
 {
     #[cfg(feature = "diagnostics")]
+    let guest_peer_id = transport.guest().peer_id().get();
+
+    #[cfg(feature = "diagnostics")]
     let diagnostic_state = diagnostic_state.or_else(|| {
         let state = Arc::new(DiagnosticState::new("shm-guest"));
         // Note: guest name can be set later via state.set_peer_name() if needed
         roam_session::diagnostic::register_diagnostic_state(&state);
         Some(state)
     });
+    #[cfg(feature = "diagnostics")]
+    if let Some(ref state) = diagnostic_state {
+        let src = format!("shm-guest-{guest_peer_id}");
+        let dst = "shm-host".to_string();
+        let link = canonical_link_id(&src, &dst);
+        state.set_connection_identity(src, dst, link, "shm", unix_now_ns());
+    }
 
     // Get config from segment header (already read during attach)
     let config = transport.config();
@@ -1530,6 +1621,11 @@ where
         incoming_response_tx,
         diagnostic_state,
     };
+
+    #[cfg(feature = "diagnostics")]
+    if let Some(ref diag) = driver.diagnostic_state {
+        let _ = register_connection_node(diag);
+    }
 
     (handle, incoming_connections_rx, driver)
 }
@@ -1684,6 +1780,18 @@ pub struct MultiPeerHostDriver {
     _shm_diagnostic_view: Option<Arc<crate::diagnostic::ShmDiagnosticView>>,
 }
 
+impl Drop for MultiPeerHostDriver {
+    fn drop(&mut self) {
+        #[cfg(feature = "diagnostics")]
+        for state in self.peers.values() {
+            if let Some(ref diag) = state.diagnostic_state {
+                diag.mark_connection_closed(unix_now_ns());
+                let _ = register_connection_node(diag);
+            }
+        }
+    }
+}
+
 /// Handle for controlling a running MultiPeerHostDriver.
 ///
 /// This handle allows adding new peers dynamically after the driver has started.
@@ -1810,6 +1918,13 @@ impl MultiPeerHostDriverBuilder {
             };
             #[cfg(not(feature = "diagnostics"))]
             let peer_diagnostic_state: Option<Arc<DiagnosticState>> = None;
+            #[cfg(feature = "diagnostics")]
+            if let Some(ref state) = peer_diagnostic_state {
+                let src = "shm-host".to_string();
+                let dst = format!("shm-guest-{}", peer_id.get());
+                let link = canonical_link_id(&src, &dst);
+                state.set_connection_identity(src, dst, link, "shm", unix_now_ns());
+            }
 
             // Create per-peer incoming response forwarder
             let peer_incoming_response_tx = incoming_response_tx.clone();
@@ -1829,6 +1944,10 @@ impl MultiPeerHostDriverBuilder {
 
             handles.insert(peer_id, handle);
             incoming_connections_map.insert(peer_id, incoming_connections_rx);
+            #[cfg(feature = "diagnostics")]
+            if let Some(ref diag) = peer_diagnostic_state {
+                let _ = register_connection_node(diag);
+            }
 
             peers.insert(
                 peer_id,
@@ -2144,6 +2263,13 @@ impl MultiPeerHostDriver {
                     roam_session::diagnostic::register_diagnostic_state(&state);
                     Some(state)
                 });
+                #[cfg(feature = "diagnostics")]
+                if let Some(ref state) = diagnostic_state {
+                    let src = "shm-host".to_string();
+                    let dst = format!("shm-guest-{}", peer_id.get());
+                    let link = canonical_link_id(&src, &dst);
+                    state.set_connection_identity(src, dst, link, "shm", unix_now_ns());
+                }
                 // Create single unified channel for all messages (Call/Data/Close/Response).
                 let (driver_tx, mut driver_rx) = peeps::channel("shm_dynamic_peer_driver", 256);
 
@@ -2196,9 +2322,13 @@ impl MultiPeerHostDriver {
                         pending_connects: HashMap::new(),
                         incoming_connections_tx: Some(incoming_connections_tx),
                         incoming_response_tx: peer_response_tx,
-                        diagnostic_state,
+                        diagnostic_state: diagnostic_state.clone(),
                     },
                 );
+                #[cfg(feature = "diagnostics")]
+                if let Some(ref diag) = diagnostic_state {
+                    let _ = register_connection_node(diag);
+                }
                 trace!("MultiPeerHostDriver: {} peers now active", self.peers.len());
 
                 // Spawn forwarder task for this peer's driver messages
@@ -2301,6 +2431,7 @@ impl MultiPeerHostDriver {
         msg: DriverMessage,
     ) -> Result<(), ShmConnectionError> {
         #[allow(unreachable_patterns)]
+        #[cfg(feature = "diagnostics")]
         let mut completed_response: Option<(u64, u64)> = None;
         #[cfg(feature = "diagnostics")]
         let mut sent_call: Option<(u64, u64, u64)> = None;
@@ -2385,7 +2516,10 @@ impl MultiPeerHostDriver {
                 if !should_send {
                     return Ok(());
                 }
-                completed_response = Some((conn_id.raw(), request_id));
+                #[cfg(feature = "diagnostics")]
+                {
+                    completed_response = Some((conn_id.raw(), request_id));
+                }
                 Message::Response {
                     conn_id,
                     request_id,
@@ -2424,13 +2558,6 @@ impl MultiPeerHostDriver {
                 // map to any wire message on SHM transports.
                 return Ok(());
             }
-            _ => {
-                trace!(
-                    peer = ?peer_id,
-                    "MultiPeerHostDriver: ignoring unsupported driver message variant"
-                );
-                return Ok(());
-            }
         };
 
         self.send_to_peer(peer_id, &wire_msg).await?;
@@ -2461,7 +2588,7 @@ impl MultiPeerHostDriver {
             let mut attrs = std::collections::BTreeMap::new();
             attrs.insert("request.id".to_string(), request_id.to_string());
             attrs.insert("request.method".to_string(), method_name.clone());
-            attrs.insert("rpc.connection".to_string(), diag.name.clone());
+            apply_connection_attrs(&mut attrs, diag);
             attrs.insert("request.status".to_string(), "in_flight".to_string());
             attrs.insert(
                 "request.delivered_at_ns".to_string(),
@@ -2472,11 +2599,12 @@ impl MultiPeerHostDriver {
             }
             let attrs_json = facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
             peeps::registry::register_node(peeps_types::Node {
-                id: request_node_id,
+                id: request_node_id.clone(),
                 kind: peeps_types::NodeKind::Request,
                 label: Some(method_name),
                 attrs_json,
             });
+            touch_connection_node(&request_node_id, diag);
         }
 
         #[cfg(feature = "diagnostics")]
@@ -2510,7 +2638,7 @@ impl MultiPeerHostDriver {
             let mut attrs = std::collections::BTreeMap::new();
             attrs.insert("request.id".to_string(), request_id.to_string());
             attrs.insert("request.method".to_string(), method_name.clone());
-            attrs.insert("rpc.connection".to_string(), diag.name.clone());
+            apply_connection_attrs(&mut attrs, diag);
             attrs.insert("response.state".to_string(), "delivered".to_string());
             attrs.insert(
                 "response.delivered_at_ns".to_string(),
@@ -2534,6 +2662,7 @@ impl MultiPeerHostDriver {
                 label: Some(method_name),
                 attrs_json,
             });
+            touch_connection_node(&response_node_id, diag);
             peeps::registry::remove_node(&response_node_id);
             trace!(request_id, name = %diag.name, "completing incoming request");
             diag.complete_request(conn_id, request_id);
@@ -2740,7 +2869,7 @@ impl MultiPeerHostDriver {
                             let mut attrs = std::collections::BTreeMap::new();
                             attrs.insert("request.id".to_string(), request_id.to_string());
                             attrs.insert("request.method".to_string(), method_name.clone());
-                            attrs.insert("rpc.connection".to_string(), diag.name.clone());
+                            apply_connection_attrs(&mut attrs, diag);
                             attrs.insert("request.status".to_string(), "completed".to_string());
                             attrs.insert(
                                 "request.completed_at_ns".to_string(),
@@ -2759,6 +2888,7 @@ impl MultiPeerHostDriver {
                                 label: Some(method_name),
                                 attrs_json,
                             });
+                            touch_connection_node(&request_node_id, diag);
                             peeps::registry::remove_node(&request_node_id);
                         }
                         diag.complete_request(conn_id.raw(), request_id);
@@ -2892,15 +3022,12 @@ impl MultiPeerHostDriver {
                     roam_session::diagnostic::get_method_name(method_id).map(|s| s.to_string())
                 })
                 .unwrap_or_else(|| format!("0x{method_id:x}"));
-            let connection_name = state
-                .diagnostic_state
-                .as_ref()
-                .map(|d| d.name.clone())
-                .unwrap_or_default();
             let mut attrs = std::collections::BTreeMap::new();
             attrs.insert("request.id".to_string(), request_id.to_string());
             attrs.insert("request.method".to_string(), method_name.clone());
-            attrs.insert("rpc.connection".to_string(), connection_name);
+            if let Some(diag) = state.diagnostic_state.as_deref() {
+                apply_connection_attrs(&mut attrs, diag);
+            }
             attrs.insert("response.state".to_string(), "handling".to_string());
             attrs.insert(
                 "response.created_at_ns".to_string(),
@@ -2913,6 +3040,9 @@ impl MultiPeerHostDriver {
                 label: Some(method_name),
                 attrs_json,
             });
+            if let Some(diag) = state.diagnostic_state.as_deref() {
+                touch_connection_node(&response_node_id, diag);
+            }
             if let Some(request_node_id) = request_node_id {
                 peeps::registry::edge(&request_node_id, &response_node_id);
             }
@@ -2984,6 +3114,7 @@ impl MultiPeerHostDriver {
             .set_current_request_id(Some(request_id));
         let handler_fut = dispatcher.dispatch(cx, payload, &mut conn.server_channel_registry);
         conn.server_channel_registry.set_current_request_id(None);
+        #[cfg(feature = "diagnostics")]
         let diag_for_handler = state.diagnostic_state.clone();
 
         // r[impl call.cancel.best-effort] - Store abort handle for cancellation support
@@ -3059,20 +3190,20 @@ impl MultiPeerHostDriver {
                         PEEPS_METHOD_NAME_METADATA_KEY,
                     )
                     .unwrap_or_else(|| "unknown".to_string());
-                let connection_name = diag.name.clone();
                 let mut attrs = std::collections::BTreeMap::new();
                 attrs.insert("request.id".to_string(), request_id.to_string());
                 attrs.insert("request.method".to_string(), method_name.clone());
-                attrs.insert("rpc.connection".to_string(), connection_name);
+                apply_connection_attrs(&mut attrs, diag);
                 attrs.insert("cancelled".to_string(), "true".to_string());
                 attrs.insert("close_cause".to_string(), "peer_cancelled".to_string());
                 let attrs_json = facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
                 peeps::registry::register_node(peeps_types::Node {
-                    id: response_node_id,
+                    id: response_node_id.clone(),
                     kind: peeps_types::NodeKind::Response,
                     label: Some(format!("{method_name} (cancelled)")),
                     attrs_json,
                 });
+                touch_connection_node(&response_node_id, diag);
             }
 
             // Mark request completed for diagnostics
