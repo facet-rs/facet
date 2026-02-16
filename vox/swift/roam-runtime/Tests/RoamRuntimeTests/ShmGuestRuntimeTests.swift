@@ -108,6 +108,16 @@ private func makeDoorbellPair() throws -> (host: Int32, guest: Int32) {
     return (fds[0], fds[1])
 }
 
+private func isConnectionClosedTransportError(_ error: Error) -> Bool {
+    guard let transportError = error as? TransportError else {
+        return false
+    }
+    if case .connectionClosed = transportError {
+        return true
+    }
+    return false
+}
+
 struct ShmVarSlotPoolTests {
     @Test func allocFreeAndGenerationTransitions() throws {
         let path = tmpPath("varslot.bin")
@@ -407,6 +417,52 @@ struct ShmDoorbellAndPayloadTests {
 }
 
 struct ShmGuestRemapTests {
+    @Test func closedTransportSendReturnsConnectionClosed() async throws {
+        let path = tmpPath("transport-closed-send.bin")
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let fixture = try makeSegmentFixture(path: path, classes: [ShmVarSlotClass(slotSize: 256, count: 2)])
+        let transport = try ShmGuestTransport.attach(path: path)
+        try await transport.close()
+
+        do {
+            try await transport.send(.cancel(connId: 0, requestId: 1))
+            Issue.record("expected connectionClosed")
+        } catch {
+            #expect(isConnectionClosedTransportError(error))
+        }
+        _ = fixture
+    }
+
+    @Test func peerDeathInRecvReturnsConnectionClosed() async throws {
+        let path = tmpPath("transport-peer-dead.bin")
+        let pair = try makeDoorbellPair()
+        defer {
+            close(pair.host)
+            close(pair.guest)
+            try? FileManager.default.removeItem(atPath: path)
+        }
+
+        let fixture = try makeSegmentFixture(
+            path: path,
+            classes: [ShmVarSlotClass(slotSize: 256, count: 2)],
+            reservedPeer: 1
+        )
+        let transport = try ShmGuestTransport.attach(
+            ticket: ShmBootstrapTicket(peerId: 1, hubPath: path, doorbellFd: pair.guest)
+        )
+
+        close(pair.host)
+
+        do {
+            _ = try await transport.recv()
+            Issue.record("expected connectionClosed")
+        } catch {
+            #expect(isConnectionClosedTransportError(error))
+        }
+        _ = fixture
+    }
+
     @Test func remapOnCurrentSizeGrowth() throws {
         let path = tmpPath("guest-remap.bin")
         defer { try? FileManager.default.removeItem(atPath: path) }

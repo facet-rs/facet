@@ -252,6 +252,8 @@ public final class ShmGuestTransport: MessageTransport, @unchecked Sendable {
                 _ = try runtime.checkRemap()
                 try runtime.send(frame: frame)
             }
+        } catch let err as TransportError {
+            throw err
         } catch let err as ShmGuestSendError {
             switch err {
             case .ringFull, .slotExhausted:
@@ -282,6 +284,8 @@ public final class ShmGuestTransport: MessageTransport, @unchecked Sendable {
                     frameToDecode = try runtime.receive()
                     sawHostGoodbye = runtime.isHostGoodbye()
                 }
+            } catch let err as TransportError {
+                throw err
             } catch {
                 throw TransportError.decodeFailed("shm receive failed: \(error)")
             }
@@ -315,6 +319,8 @@ public final class ShmGuestTransport: MessageTransport, @unchecked Sendable {
                     }
                     continue
                 }
+            } catch let err as TransportError {
+                throw err
             } catch {
                 throw TransportError.decodeFailed("doorbell wait failed: \(error)")
             }
