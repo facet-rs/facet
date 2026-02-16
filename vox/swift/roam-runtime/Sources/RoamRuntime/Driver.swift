@@ -50,6 +50,7 @@ public enum HandleCommand: Sendable {
     case call(
         requestId: UInt64,
         methodId: UInt64,
+        metadata: [MetadataEntry],
         payload: [UInt8],
         channels: [UInt64],
         timeout: TimeInterval?,
@@ -149,6 +150,7 @@ public final class ConnectionHandle: @unchecked Sendable {
     /// r[impl flow.call.concurrency-limit] - Blocks if maxConcurrentRequests are in-flight.
     public func callRaw(
         methodId: UInt64,
+        metadata: [MetadataEntry] = [],
         payload: [UInt8],
         channels: [UInt64] = [],
         timeout: TimeInterval? = nil
@@ -175,6 +177,7 @@ public final class ConnectionHandle: @unchecked Sendable {
                 .call(
                     requestId: requestId,
                     methodId: methodId,
+                    metadata: metadata,
                     payload: payload,
                     channels: channels,
                     timeout: timeout,
@@ -313,6 +316,7 @@ public final class Driver: @unchecked Sendable {
     private struct QueuedCall: Sendable {
         let requestId: UInt64
         let methodId: UInt64
+        let metadata: [MetadataEntry]
         let payload: [UInt8]
         let channels: [UInt64]
         let timeout: TimeInterval?
@@ -512,7 +516,8 @@ public final class Driver: @unchecked Sendable {
     private func handleCommand(_ cmd: HandleCommand) async {
         switch cmd {
         case .call(
-            let requestId, let methodId, let payload, let channels, let timeout, let responseTx):
+            let requestId, let methodId, let metadata, let payload, let channels, let timeout,
+            let responseTx):
             let isClosed = await state.isConnectionClosed()
             guard !isClosed else {
                 responseTx(.failure(.connectionClosed))
@@ -533,7 +538,7 @@ public final class Driver: @unchecked Sendable {
                 connId: 0,
                 requestId: requestId,
                 methodId: methodId,
-                metadata: [],
+                metadata: metadata,
                 channels: channels,
                 payload: payload
             )
@@ -544,6 +549,7 @@ public final class Driver: @unchecked Sendable {
                     QueuedCall(
                         requestId: requestId,
                         methodId: methodId,
+                        metadata: metadata,
                         payload: payload,
                         channels: channels,
                         timeout: timeout
@@ -601,7 +607,7 @@ public final class Driver: @unchecked Sendable {
                 connId: 0,
                 requestId: call.requestId,
                 methodId: call.methodId,
-                metadata: [],
+                metadata: call.metadata,
                 channels: call.channels,
                 payload: call.payload
             )

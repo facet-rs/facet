@@ -11,8 +11,13 @@ public typealias PostcardDecoder<T> = ([UInt8]) throws -> T
 /// Protocol for roam connections (used by generated clients).
 public protocol RoamConnection: Sendable {
     /// Make a raw RPC call.
-    func call(methodId: UInt64, payload: Data, channels: [UInt64], timeout: TimeInterval?) async throws
-        -> Data
+    func call(
+        methodId: UInt64,
+        metadata: [MetadataEntry],
+        payload: Data,
+        channels: [UInt64],
+        timeout: TimeInterval?
+    ) async throws -> Data
 
     /// Get the channel allocator.
     var channelAllocator: ChannelIdAllocator { get }
@@ -26,11 +31,32 @@ public protocol RoamConnection: Sendable {
 
 public extension RoamConnection {
     func call(methodId: UInt64, payload: Data) async throws -> Data {
-        try await call(methodId: methodId, payload: payload, channels: [], timeout: nil)
+        try await call(methodId: methodId, metadata: [], payload: payload, channels: [], timeout: nil)
     }
 
     func call(methodId: UInt64, payload: Data, timeout: TimeInterval?) async throws -> Data {
-        try await call(methodId: methodId, payload: payload, channels: [], timeout: timeout)
+        try await call(
+            methodId: methodId,
+            metadata: [],
+            payload: payload,
+            channels: [],
+            timeout: timeout
+        )
+    }
+
+    func call(
+        methodId: UInt64,
+        metadata: [MetadataEntry],
+        payload: Data,
+        timeout: TimeInterval?
+    ) async throws -> Data {
+        try await call(
+            methodId: methodId,
+            metadata: metadata,
+            payload: payload,
+            channels: [],
+            timeout: timeout
+        )
     }
 }
 
@@ -39,12 +65,14 @@ public extension RoamConnection {
 extension ConnectionHandle: RoamConnection {
     public func call(
         methodId: UInt64,
+        metadata: [MetadataEntry],
         payload: Data,
         channels: [UInt64],
         timeout: TimeInterval?
     ) async throws -> Data {
         let response = try await callRaw(
             methodId: methodId,
+            metadata: metadata,
             payload: Array(payload),
             channels: channels,
             timeout: timeout
