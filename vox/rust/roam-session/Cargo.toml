@@ -19,6 +19,7 @@ diagnostics = []
 
 [dependencies]
 facet.workspace = true
+facet-json.workspace = true
 facet-core.workspace = true
 peeps-types.workspace = true
 facet-format.workspace = true

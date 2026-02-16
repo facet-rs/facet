@@ -276,21 +276,14 @@ where
 
     // SAFETY: args_slot is properly aligned and sized for A.
     // prepare_sync will initialize it on success.
-    //
-    // TEMPORARY: mutex to test if facet has concurrency bug
-    use std::sync::Mutex;
-    static FACET_BUG_LOCK: Mutex<()> = Mutex::new(());
-    let prepare_result = {
-        let _guard = FACET_BUG_LOCK.lock().unwrap();
-        unsafe {
-            prepare_sync(
-                args_slot.as_mut_ptr().cast(),
-                args_plan,
-                &payload,
-                &cx.channels,
-                registry,
-            )
-        }
+    let prepare_result = unsafe {
+        prepare_sync(
+            args_slot.as_mut_ptr().cast(),
+            args_plan,
+            &payload,
+            &cx.channels,
+            registry,
+        )
     };
 
     let task_tx = registry.driver_tx();

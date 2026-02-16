@@ -1546,17 +1546,27 @@ where
             if let Some(span_id) = span_id {
                 let request_node_id = peeps_types::canonical_id::request_from_span_id(&span_id);
                 let response_node_id = format!("response:{span_id}");
-                let method_name = crate::diagnostic::get_method_name(method_id)
-                    .map(|s| s.to_string())
+                let method_name = metadata
+                    .iter()
+                    .find(|(k, _, _)| k == crate::PEEPS_METHOD_NAME_METADATA_KEY)
+                    .and_then(|(_, v, _)| match v {
+                        roam_wire::MetadataValue::String(s) => Some(s.clone()),
+                        _ => None,
+                    })
+                    .or_else(|| {
+                        crate::diagnostic::get_method_name(method_id).map(|s| s.to_string())
+                    })
                     .unwrap_or_else(|| format!("0x{method_id:x}"));
                 let connection_name = self
                     .diagnostic_state
                     .as_ref()
                     .map(|d| d.name.clone())
                     .unwrap_or_default();
-                let attrs_json = format!(
-                    "{{\"request.id\":\"{request_id}\",\"request.method\":\"{method_name}\",\"rpc.connection\":\"{connection_name}\"}}"
-                );
+                let mut attrs = std::collections::BTreeMap::new();
+                attrs.insert("request.id".to_string(), request_id.to_string());
+                attrs.insert("request.method".to_string(), method_name.clone());
+                attrs.insert("rpc.connection".to_string(), connection_name);
+                let attrs_json = facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
                 peeps::registry::register_node(peeps_types::Node {
                     id: response_node_id.clone(),
                     kind: peeps_types::NodeKind::Response,

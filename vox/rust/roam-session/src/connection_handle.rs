@@ -138,6 +138,7 @@ impl ConnectionHandle {
         &self,
         mut metadata: roam_wire::Metadata,
         request_id: u64,
+        method_name: &str,
     ) -> (roam_wire::Metadata, Option<u64>, Option<String>) {
         if let Some(current_call_metadata) = crate::dispatch::get_current_call_metadata() {
             for (key, value, flags) in current_call_metadata {
@@ -168,6 +169,12 @@ impl ConnectionHandle {
             &mut metadata,
             crate::PEEPS_SPAN_ID_METADATA_KEY,
             roam_wire::MetadataValue::String(span_id.clone()),
+            roam_wire::metadata_flags::NONE,
+        );
+        Self::upsert_metadata_entry(
+            &mut metadata,
+            crate::PEEPS_METHOD_NAME_METADATA_KEY,
+            roam_wire::MetadataValue::String(method_name.to_owned()),
             roam_wire::metadata_flags::NONE,
         );
         if !metadata
@@ -520,7 +527,7 @@ impl ConnectionHandle {
                 let request_id = self.shared.request_ids.next();
                 let (response_tx, response_rx) = oneshot("call_raw_with_rx_streams");
                 let (metadata, task_id, task_name) =
-                    self.merged_outgoing_metadata(metadata, request_id);
+                    self.merged_outgoing_metadata(metadata, request_id, &method_name);
 
                 #[cfg(feature = "diagnostics")]
                 let args_debug_str = args_debug.as_deref().unwrap_or("").to_string();
@@ -558,11 +565,13 @@ impl ConnectionHandle {
                         .as_ref()
                         .map(|d| d.name.clone())
                         .unwrap_or_default();
-                    let args_json_escaped =
-                        args_debug_str.replace('\\', "\\\\").replace('"', "\\\"");
-                    let attrs_json = format!(
-                        "{{\"request.id\":\"{request_id}\",\"request.method\":\"{method_name}\",\"rpc.connection\":\"{connection_name}\",\"request.args\":\"{args_json_escaped}\"}}"
-                    );
+                    let mut attrs = std::collections::BTreeMap::new();
+                    attrs.insert("request.id".to_string(), request_id.to_string());
+                    attrs.insert("request.method".to_string(), method_name.clone());
+                    attrs.insert("rpc.connection".to_string(), connection_name);
+                    attrs.insert("request.args".to_string(), args_debug_str.clone());
+                    let attrs_json =
+                        facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
                     peeps::registry::register_node(peeps_types::Node {
                         id: request_node_id.clone(),
                         kind: peeps_types::NodeKind::Request,
@@ -871,7 +880,8 @@ impl ConnectionHandle {
         self.acquire_request_slot().await?;
 
         let request_id = self.shared.request_ids.next();
-        let (metadata, task_id, task_name) = self.merged_outgoing_metadata(metadata, request_id);
+        let (metadata, task_id, task_name) =
+            self.merged_outgoing_metadata(metadata, request_id, method_name);
         let (response_tx, response_rx) = oneshot("call_raw_with_channels");
 
         #[cfg(feature = "diagnostics")]
@@ -910,10 +920,12 @@ impl ConnectionHandle {
                 .as_ref()
                 .map(|d| d.name.clone())
                 .unwrap_or_default();
-            let args_json_escaped = args_debug_str.replace('\\', "\\\\").replace('"', "\\\"");
-            let attrs_json = format!(
-                "{{\"request.id\":\"{request_id}\",\"request.method\":\"{method_name}\",\"rpc.connection\":\"{connection_name}\",\"request.args\":\"{args_json_escaped}\"}}"
-            );
+            let mut attrs = std::collections::BTreeMap::new();
+            attrs.insert("request.id".to_string(), request_id.to_string());
+            attrs.insert("request.method".to_string(), method_name.clone());
+            attrs.insert("rpc.connection".to_string(), connection_name);
+            attrs.insert("request.args".to_string(), args_debug_str.clone());
+            let attrs_json = facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
             peeps::registry::register_node(peeps_types::Node {
                 id: request_node_id.clone(),
                 kind: peeps_types::NodeKind::Request,
