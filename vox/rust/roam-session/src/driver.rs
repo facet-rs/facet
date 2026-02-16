@@ -2716,6 +2716,7 @@ mod tests {
                         - (PENDING_RESPONSE_KILL_AFTER + Duration::from_secs(1)),
                     warned_stale: true,
                     tx: response_tx,
+                    #[cfg(feature = "diagnostics")]
                     tx_node_id: "tx:test_stale_pending".to_string(),
                 },
             );
@@ -2779,6 +2780,7 @@ mod tests {
                     created_at: Instant::now(),
                     warned_stale: false,
                     tx: response_tx,
+                    #[cfg(feature = "diagnostics")]
                     tx_node_id: "tx:test_dropped_receiver".to_string(),
                 },
             );

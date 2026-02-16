@@ -257,7 +257,7 @@ public final class TestbedClient: TestbedCaller {
         let payload = Data(payloadBytes)
         let channels = collectChannelIds(schemas: testbed_schemas["sum"]!.args, args: [numbers])
 
-        let response = try await connection.call(methodId: 0x855b3a25d97bfefd, payload: payload, channels: channels, timeout: timeout)
+        let response = try await connection.call(methodId: 0x855b3a25d97bfefd, metadata: [], payload: payload, channels: channels, timeout: timeout)
         var cursor = 0
         try decodeRpcResult(from: response, offset: &cursor)
         let result = try decodeI64(from: response, offset: &cursor)
@@ -282,7 +282,7 @@ public final class TestbedClient: TestbedCaller {
         let payload = Data(payloadBytes)
         let channels = collectChannelIds(schemas: testbed_schemas["generate"]!.args, args: [count, output])
 
-        let response = try await connection.call(methodId: 0x54d2273d8cdb9c38, payload: payload, channels: channels, timeout: timeout)
+        let response = try await connection.call(methodId: 0x54d2273d8cdb9c38, metadata: [], payload: payload, channels: channels, timeout: timeout)
         var cursor = 0
         try decodeRpcResult(from: response, offset: &cursor)
     }
@@ -305,7 +305,7 @@ public final class TestbedClient: TestbedCaller {
         let payload = Data(payloadBytes)
         let channels = collectChannelIds(schemas: testbed_schemas["transform"]!.args, args: [input, output])
 
-        let response = try await connection.call(methodId: 0x5d9895604eb18b19, payload: payload, channels: channels, timeout: timeout)
+        let response = try await connection.call(methodId: 0x5d9895604eb18b19, metadata: [], payload: payload, channels: channels, timeout: timeout)
         var cursor = 0
         try decodeRpcResult(from: response, offset: &cursor)
     }
@@ -1027,4 +1027,3 @@ public struct TestbedSerializers: BindingSerializers {
         }
     }
 }
-
