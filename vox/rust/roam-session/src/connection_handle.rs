@@ -763,6 +763,8 @@ impl ConnectionHandle {
             peeps::registry::edge(&request_node_id, &response_node_id);
             request_node_id
         };
+        #[cfg(feature = "diagnostics")]
+        let driver_queue_node_id = self.shared.driver_tx.endpoint_id().to_string();
 
         let msg = DriverMessage::Call {
             conn_id: self.shared.conn_id,
@@ -780,6 +782,8 @@ impl ConnectionHandle {
                 .send(msg)
                 .await
                 .map_err(|_| TransportError::DriverGone)?;
+            #[cfg(feature = "diagnostics")]
+            peeps::registry::edge(&request_node_id, &driver_queue_node_id);
 
             let conn_id = self.shared.conn_id;
             if !drains.is_empty() {

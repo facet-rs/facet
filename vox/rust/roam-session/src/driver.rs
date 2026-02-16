@@ -1130,6 +1130,21 @@ where
                 payload,
                 response_tx,
             } => {
+                #[cfg(feature = "diagnostics")]
+                let queued_request_node_id = metadata
+                    .iter()
+                    .find(|(k, _, _)| k == crate::PEEPS_SPAN_ID_METADATA_KEY)
+                    .and_then(|(_, v, _)| match v {
+                        roam_wire::MetadataValue::String(s) => {
+                            Some(peeps_types::canonical_id::request_from_span_id(s))
+                        }
+                        _ => None,
+                    });
+                #[cfg(feature = "diagnostics")]
+                if let Some(ref request_node_id) = queued_request_node_id {
+                    peeps::registry::remove_edge(request_node_id, self.driver_tx.endpoint_id());
+                }
+
                 // Store pending response in the connection's state
                 if let Some(conn) = self.connections.get_mut(&conn_id) {
                     conn.pending_responses.insert(
@@ -1155,6 +1170,14 @@ where
                     channels,
                     payload,
                 };
+                #[cfg(feature = "diagnostics")]
+                if let Some(ref request_node_id) = queued_request_node_id {
+                    let send_fut = peeps::stack::scope(request_node_id, self.io.send(&req));
+                    peeps::stack::ensure(send_fut).await?;
+                } else {
+                    self.io.send(&req).await?;
+                }
+                #[cfg(not(feature = "diagnostics"))]
                 self.io.send(&req).await?;
                 #[cfg(feature = "diagnostics")]
                 if let Some(ref diag) = self.diagnostic_state
