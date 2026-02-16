@@ -207,6 +207,7 @@ private enum DriverEvent: Sendable {
     case incomingMessage(Message)
     case taskMessage(TaskMessage)
     case command(HandleCommand)
+    case retryTick
     case transportClosed
 }
 
@@ -305,6 +306,18 @@ private actor VirtualConnectionState {
 /// - Task messages from handlers (Data/Close/Response)
 /// - Commands from ConnectionHandle
 public final class Driver: @unchecked Sendable {
+    private struct QueuedTaskMessage: Sendable {
+        let message: Message
+    }
+
+    private struct QueuedCall: Sendable {
+        let requestId: UInt64
+        let methodId: UInt64
+        let payload: [UInt8]
+        let channels: [UInt64]
+        let timeout: TimeInterval?
+    }
+
     private let transport: any MessageTransport
     private let dispatcher: any ServiceDispatcher
     private let role: Role
@@ -319,6 +332,8 @@ public final class Driver: @unchecked Sendable {
     // Event stream for multiplexing
     private let eventContinuation: AsyncStream<DriverEvent>.Continuation
     private let eventStream: AsyncStream<DriverEvent>
+    private var pendingTaskMessages: [QueuedTaskMessage] = []
+    private var pendingCalls: [QueuedCall] = []
 
     public init(
         transport: any MessageTransport,
@@ -411,13 +426,23 @@ public final class Driver: @unchecked Sendable {
             }
         }
 
+        let retryTask = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 10_000_000)  // 10ms
+                cont.yield(.retryTick)
+            }
+        }
+
         defer {
             readerTask.cancel()
+            retryTask.cancel()
             eventContinuation.finish()
         }
         do {
             // Process events
             for await event in eventStream {
+                try await flushPendingTaskMessages()
+                try await flushPendingCalls()
                 switch event {
                 case .incomingMessage(let msg):
                     try await handleMessage(msg)
@@ -427,6 +452,9 @@ public final class Driver: @unchecked Sendable {
 
                 case .command(let cmd):
                     await handleCommand(cmd)
+
+                case .retryTick:
+                    break
 
                 case .transportClosed:
                     await failAllPending()
@@ -473,7 +501,11 @@ public final class Driver: @unchecked Sendable {
                 connId: 0, requestId: requestId, metadata: [], channels: [],
                 payload: checkedPayload)
         }
-        try await transport.send(wireMsg)
+        do {
+            try await transport.send(wireMsg)
+        } catch TransportError.wouldBlock {
+            pendingTaskMessages.append(QueuedTaskMessage(message: wireMsg))
+        }
     }
 
     /// Handle a command from ConnectionHandle.
@@ -507,6 +539,16 @@ public final class Driver: @unchecked Sendable {
             )
             do {
                 try await transport.send(msg)
+            } catch TransportError.wouldBlock {
+                pendingCalls.append(
+                    QueuedCall(
+                        requestId: requestId,
+                        methodId: methodId,
+                        payload: payload,
+                        channels: channels,
+                        timeout: timeout
+                    ))
+                return
             } catch {
                 let pending = await state.removePendingResponse(requestId)
                 pending?.timeoutTask?.cancel()
@@ -546,6 +588,85 @@ public final class Driver: @unchecked Sendable {
             if !installed {
                 timeoutTask.cancel()
             }
+        }
+    }
+
+    private func flushPendingCalls() async throws {
+        if pendingCalls.isEmpty {
+            return
+        }
+
+        while let call = pendingCalls.first {
+            let msg = Message.request(
+                connId: 0,
+                requestId: call.requestId,
+                methodId: call.methodId,
+                metadata: [],
+                channels: call.channels,
+                payload: call.payload
+            )
+
+            do {
+                try await transport.send(msg)
+            } catch TransportError.wouldBlock {
+                return
+            } catch {
+                let pending = await state.removePendingResponse(call.requestId)
+                pending?.timeoutTask?.cancel()
+                pending?.responseTx(.failure(.transportError(String(describing: error))))
+                pendingCalls.removeFirst()
+                await failAllPending()
+                eventContinuation.finish()
+                return
+            }
+
+            pendingCalls.removeFirst()
+
+            guard let timeout = call.timeout else {
+                continue
+            }
+
+            let timeoutNs = Self.timeoutToNanoseconds(timeout)
+            let capturedState = state
+            let capturedTransport = transport
+            let requestId = call.requestId
+            let timeoutTask = Task {
+                do {
+                    try await Task.sleep(nanoseconds: timeoutNs)
+                } catch {
+                    return
+                }
+                guard let pending = await capturedState.removePendingResponse(requestId) else {
+                    return
+                }
+                pending.timeoutTask?.cancel()
+                pending.responseTx(.failure(.timeout))
+                try? await capturedTransport.send(.cancel(connId: 0, requestId: requestId))
+            }
+            let installed = await state.setPendingTimeoutTask(requestId, timeoutTask: timeoutTask)
+            if !installed {
+                timeoutTask.cancel()
+            }
+        }
+    }
+
+    private func flushPendingTaskMessages() async throws {
+        if pendingTaskMessages.isEmpty {
+            return
+        }
+
+        while let pending = pendingTaskMessages.first {
+            do {
+                try await transport.send(pending.message)
+            } catch TransportError.wouldBlock {
+                return
+            } catch {
+                await failAllPending()
+                eventContinuation.finish()
+                return
+            }
+
+            pendingTaskMessages.removeFirst()
         }
     }
 

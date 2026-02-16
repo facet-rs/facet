@@ -737,79 +737,68 @@ public final class ShmGuestRuntime: @unchecked Sendable {
 
         let threshold = header.inlineThreshold == 0 ? shmDefaultInlineThreshold : header.inlineThreshold
 
-        while true {
-            if shmShouldInline(payloadLen: payloadLen, threshold: threshold) {
-                let bytes = encodeShmInlineFrame(
-                    msgType: frame.msgType,
-                    id: frame.id,
-                    methodId: frame.methodId,
-                    payload: frame.payload
-                )
-
-                if let grant = try guestToHost.tryGrant(UInt32(bytes.count)) {
-                    grant.copyBytes(from: bytes)
-                    try guestToHost.commit(UInt32(bytes.count))
-                    try doorbell?.signal()
-                    return
-                }
-
-                if try waitForRetry() {
-                    continue
-                }
-                throw ShmGuestSendError.ringFull
-            }
-
-            guard let handle = try slotPool.alloc(size: payloadLen, owner: peerId) else {
-                if try waitForRetry() {
-                    continue
-                }
-                throw ShmGuestSendError.slotExhausted
-            }
-
-            guard let payloadPtr = try slotPool.payloadPointer(handle) else {
-                try? slotPool.freeAllocated(handle)
-                throw ShmGuestSendError.slotError
-            }
-
-            frame.payload.withUnsafeBytes { raw in
-                if let base = raw.baseAddress {
-                    memcpy(payloadPtr, base, raw.count)
-                }
-            }
-
-            do {
-                try slotPool.markInFlight(handle)
-            } catch {
-                try? slotPool.freeAllocated(handle)
-                throw ShmGuestSendError.slotError
-            }
-
-            let slotFrame = encodeShmSlotRefFrame(
+        if shmShouldInline(payloadLen: payloadLen, threshold: threshold) {
+            let bytes = encodeShmInlineFrame(
                 msgType: frame.msgType,
                 id: frame.id,
                 methodId: frame.methodId,
-                payloadLen: payloadLen,
-                slotRef: ShmSlotRef(
-                    classIdx: handle.classIdx,
-                    extentIdx: handle.extentIdx,
-                    slotIdx: handle.slotIdx,
-                    slotGeneration: handle.generation
-                )
+                payload: frame.payload
             )
 
-            if let grant = try guestToHost.tryGrant(UInt32(slotFrame.count)) {
-                grant.copyBytes(from: slotFrame)
-                try guestToHost.commit(UInt32(slotFrame.count))
+            if let grant = try guestToHost.tryGrant(UInt32(bytes.count)) {
+                grant.copyBytes(from: bytes)
+                try guestToHost.commit(UInt32(bytes.count))
                 try doorbell?.signal()
                 return
             }
 
-            try? slotPool.free(handle)
-            if try waitForRetry() {
-                continue
-            }
             throw ShmGuestSendError.ringFull
         }
+
+        guard let handle = try slotPool.alloc(size: payloadLen, owner: peerId) else {
+            throw ShmGuestSendError.slotExhausted
+        }
+
+        guard let payloadPtr = try slotPool.payloadPointer(handle) else {
+            try? slotPool.freeAllocated(handle)
+            throw ShmGuestSendError.slotError
+        }
+
+        frame.payload.withUnsafeBytes { raw in
+            if let base = raw.baseAddress {
+                memcpy(payloadPtr, base, raw.count)
+            }
+        }
+
+        do {
+            try slotPool.markInFlight(handle)
+        } catch {
+            try? slotPool.freeAllocated(handle)
+            throw ShmGuestSendError.slotError
+        }
+
+        let slotFrame = encodeShmSlotRefFrame(
+            msgType: frame.msgType,
+            id: frame.id,
+            methodId: frame.methodId,
+            payloadLen: payloadLen,
+            slotRef: ShmSlotRef(
+                classIdx: handle.classIdx,
+                extentIdx: handle.extentIdx,
+                slotIdx: handle.slotIdx,
+                slotGeneration: handle.generation
+            )
+        )
+
+        if let grant = try guestToHost.tryGrant(UInt32(slotFrame.count)) {
+            grant.copyBytes(from: slotFrame)
+            try guestToHost.commit(UInt32(slotFrame.count))
+            try doorbell?.signal()
+            return
+        }
+
+        try? slotPool.free(handle)
+        throw ShmGuestSendError.ringFull
     }
 
     public func receive() throws -> ShmGuestFrame? {
@@ -936,20 +925,6 @@ public final class ShmGuestRuntime: @unchecked Sendable {
         return try region.pointer(at: offset)
     }
 
-    private func waitForRetry() throws -> Bool {
-        guard let doorbell else {
-            return false
-        }
-        let waitResult = try doorbell.wait(timeoutMs: 100)
-        switch waitResult {
-        case .signaled:
-            return true
-        case .timeout:
-            return false
-        case .peerDead:
-            throw ShmGuestSendError.doorbellPeerDead
-        }
-    }
 }
 
 private extension Array {

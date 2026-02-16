@@ -252,6 +252,15 @@ public final class ShmGuestTransport: MessageTransport, @unchecked Sendable {
                 _ = try runtime.checkRemap()
                 try runtime.send(frame: frame)
             }
+        } catch let err as ShmGuestSendError {
+            switch err {
+            case .ringFull, .slotExhausted:
+                throw TransportError.wouldBlock
+            case .hostGoodbye, .doorbellPeerDead:
+                throw TransportError.connectionClosed
+            case .payloadTooLarge, .slotError:
+                throw TransportError.decodeFailed("shm send failed: \(err)")
+            }
         } catch {
             throw TransportError.decodeFailed("shm send failed: \(error)")
         }

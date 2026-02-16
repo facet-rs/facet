@@ -257,5 +257,6 @@ public func connect(host: String, port: Int) async throws -> NIOTransport {
 
 public enum TransportError: Error {
     case connectionClosed
+    case wouldBlock
     case decodeFailed(String)
 }
