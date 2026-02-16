@@ -168,7 +168,7 @@ fn test_concurrent_vec_calls() {
                 }
 
                 let _ = handle
-                    .call(METHOD_BIG_DATA, &mut data, &VEC_U8_ARGS_PLAN)
+                    .call(METHOD_BIG_DATA, "test", &mut data, &VEC_U8_ARGS_PLAN)
                     .await;
             });
             tasks.push(task);

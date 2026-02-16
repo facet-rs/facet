@@ -83,7 +83,7 @@ pub(crate) struct HandleShared {
 /// tokio::spawn(driver);
 ///
 /// // Use handle to make calls
-/// let response = handle.call_raw(method_id, payload).await?;
+/// let response = handle.call_raw(method_id, "MyService.my_method", payload).await?;
 /// ```
 #[derive(Clone)]
 pub struct ConnectionHandle {
@@ -615,13 +615,27 @@ impl ConnectionHandle {
                 });
             }
 
-            // Just await the response - drain tasks run independently
-            let result = response_rx
-                .recv()
-                .peepable("call_with_metadata.recv_response")
-                .await
-                .map_err(|_| TransportError::DriverGone)?
-                .map_err(|_| TransportError::ConnectionClosed);
+            let call_fut = async {
+                response_rx
+                    .recv()
+                    .peepable("call_with_metadata.recv_response")
+                    .await
+                    .map_err(|_| TransportError::DriverGone)?
+                    .map_err(|_| TransportError::ConnectionClosed)
+            };
+
+            #[cfg(feature = "diagnostics")]
+            let result = {
+                let call_fut = peeps::stack::scope(&request_node_id, call_fut);
+                if peeps::stack::is_active() {
+                    call_fut.await
+                } else {
+                    peeps::stack::with_stack(call_fut).await
+                }
+            };
+
+            #[cfg(not(feature = "diagnostics"))]
+            let result = call_fut.await;
 
             // Mark request as complete
             if let Some(diag) = &self.shared.diagnostic_state {
@@ -880,13 +894,27 @@ impl ConnectionHandle {
                     });
                 }
 
-                // Just await the response - drain tasks run independently
-                let result = response_rx
-                    .recv()
-                    .peepable("call.recv_response")
-                    .await
-                    .map_err(|_| TransportError::DriverGone)?
-                    .map_err(|_| TransportError::ConnectionClosed);
+                let call_fut = async {
+                    response_rx
+                        .recv()
+                        .peepable("call.recv_response")
+                        .await
+                        .map_err(|_| TransportError::DriverGone)?
+                        .map_err(|_| TransportError::ConnectionClosed)
+                };
+
+                #[cfg(feature = "diagnostics")]
+                let result = {
+                    let call_fut = peeps::stack::scope(&request_node_id, call_fut);
+                    if peeps::stack::is_active() {
+                        call_fut.await
+                    } else {
+                        peeps::stack::with_stack(call_fut).await
+                    }
+                };
+
+                #[cfg(not(feature = "diagnostics"))]
+                let result = call_fut.await;
 
                 // Mark request as complete
                 if let Some(diag) = &self.shared.diagnostic_state {
@@ -1204,7 +1232,7 @@ impl ConnectionHandle {
     /// let virtual_conn = handle.connect(vec![], Some(dispatcher)).await?;
     ///
     /// // Use the new connection for calls
-    /// let response = virtual_conn.call_raw(method_id, payload).await?;
+    /// let response = virtual_conn.call_raw(method_id, "MyService.my_method", payload).await?;
     /// ```
     pub async fn connect(
         &self,
@@ -1475,7 +1503,8 @@ mod tests {
         let (stream_tx, stream_rx) = crate::channel::<Vec<u8>>();
         let mut args = (stream_rx,);
         let args_plan = RpcPlan::for_type::<(crate::Rx<Vec<u8>>,)>();
-        let call_task = tokio::spawn(async move { handle.call(42, &mut args, &args_plan).await });
+        let call_task =
+            tokio::spawn(async move { handle.call(42, "test", &mut args, &args_plan).await });
 
         let call_msg = driver_rx
             .recv()
@@ -1515,7 +1544,7 @@ mod tests {
 
         let first = tokio::spawn({
             let handle = handle.clone();
-            async move { handle.call_raw(1, vec![1]).await }
+            async move { handle.call_raw(1, "test", vec![1]).await }
         });
 
         let first_msg = driver_rx.recv().await.expect("first call should be sent");
@@ -1526,7 +1555,7 @@ mod tests {
 
         let second = tokio::spawn({
             let handle = handle.clone();
-            async move { handle.call_raw(2, vec![2]).await }
+            async move { handle.call_raw(2, "test", vec![2]).await }
         });
 
         let blocked = tokio::time::timeout(Duration::from_millis(100), driver_rx.recv()).await;
