@@ -36,6 +36,7 @@
 //! 1. Is the trait in `#[facet(traits(...))]`? → Use direct impl
 //! 2. Otherwise → Use `impls!` specialization-based detection
 
+use proc_macro2::{Group, TokenTree};
 use quote::{format_ident, quote, quote_spanned};
 
 use super::*;
@@ -84,6 +85,40 @@ impl<'a> TraitSources<'a> {
     const fn should_auto(&self) -> bool {
         self.declared_traits.is_none()
     }
+}
+
+/// Rewrites all explicit lifetimes in a type token stream to `'static`.
+///
+/// This is used when generating helper function items inside const contexts,
+/// where referencing outer lifetime parameters directly is not allowed.
+fn lifetimes_to_static(tokens: &TokenStream) -> TokenStream {
+    fn rewrite(stream: TokenStream) -> TokenStream {
+        let mut out = TokenStream::new();
+        let mut iter = stream.into_iter().peekable();
+
+        while let Some(tt) = iter.next() {
+            match tt {
+                TokenTree::Group(group) => {
+                    let mut rewritten = Group::new(group.delimiter(), rewrite(group.stream()));
+                    rewritten.set_span(group.span());
+                    out.extend([TokenTree::Group(rewritten)]);
+                }
+                TokenTree::Punct(punct) if punct.as_char() == '\'' => {
+                    if matches!(iter.peek(), Some(TokenTree::Ident(_))) {
+                        iter.next();
+                        out.extend(quote! { 'static });
+                    } else {
+                        out.extend([TokenTree::Punct(punct)]);
+                    }
+                }
+                other => out.extend([other]),
+            }
+        }
+
+        out
+    }
+
+    rewrite(tokens.clone())
 }
 
 /// Generate a phantom use statement that links the attribute span to its Attr variant.
@@ -681,6 +716,7 @@ pub(crate) fn gen_field_from_pfield(
     let field_name = &field.name.original;
     let field_name_raw = &field.name.raw;
     let field_type = &field.ty;
+    let field_type_static = lifetimes_to_static(field_type);
 
     let bgp_without_bounds = bgp.display_without_bounds();
 
@@ -1013,14 +1049,16 @@ pub(crate) fn gen_field_from_pfield(
                     None
                 }
 
-                unsafe fn __skip_unless_truthy(ptr: #facet_crate::PtrConst) -> bool {
-                    let shape = <#field_type as #facet_crate::Facet>::SHAPE;
+                unsafe fn __skip_unless_truthy<T: #facet_crate::Facet<'static>>(
+                    ptr: #facet_crate::PtrConst,
+                ) -> bool {
+                    let shape = <T as #facet_crate::Facet>::SHAPE;
                     match __truthiness_with_fallback(shape, ptr) {
                         Some(result) => !result,
                         None => false,
                     }
                 }
-                __skip_unless_truthy
+                __skip_unless_truthy::<#field_type_static>
             }
         });
     }

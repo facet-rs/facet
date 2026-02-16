@@ -1667,3 +1667,20 @@ fn macro_rules_visibility_fragment_enum() {
         panic!("Expected enum type");
     }
 }
+
+#[test]
+fn skip_unless_truthy_on_option_ref_with_lifetime_compiles() {
+    #[derive(Facet)]
+    struct CommandAttrs<'a> {
+        pub program: &'a str,
+        #[facet(skip_unless_truthy)]
+        pub cwd: Option<&'a str>,
+    }
+
+    if let Type::User(UserType::Struct(StructType { fields, .. })) = CommandAttrs::SHAPE.ty {
+        assert_eq!(fields.len(), 2);
+        assert!(fields[1].skip_serializing_if.is_some());
+    } else {
+        panic!("Expected struct type");
+    }
+}
