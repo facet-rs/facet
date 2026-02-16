@@ -224,7 +224,7 @@ async fn export_loop(mut rx: peeps::Receiver<Span>, config: Arc<ExporterConfig>)
         .expect("failed to create HTTP client");
 
     let mut batch = Vec::with_capacity(config.max_batch_size);
-    let mut interval = tokio::time::interval(config.max_batch_delay);
+    let mut interval = peeps::interval(config.max_batch_delay);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     loop {
