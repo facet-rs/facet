@@ -7,14 +7,14 @@
     "CSS": {
       "format_on_save": "off",
     },
-    "Jinja": {
-      "tab_size": 2,
-    },
   },
   "file_types": {
     "Jinja": ["**/*.html", "**/*.jinja", "**/*.jinja2", "**/*.j2"],
   },
   "lsp": {
+    "rust-analyzer": {
+      "initialization_options": { "cargo": { "features": ["diagnostics"] } },
+    },
     "vscode-css-language-server": {
       "settings": {
         "css": {
@@ -23,14 +23,6 @@
           },
         },
       },
-    },
-  },
-  "diagnostics": {
-    "include_warnings": true,
-  },
-  "language_overrides": {
-    "HTML": {
-      "show_inline_completions": false,
     },
   },
 }
