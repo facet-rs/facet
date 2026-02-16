@@ -487,13 +487,18 @@ public final class ShmDoorbell: @unchecked Sendable {
         var byte: UInt8 = 1
         while true {
             let written = withUnsafePointer(to: &byte) { ptr in
-                write(fd, ptr, 1)
+                send(fd, ptr, 1, MSG_DONTWAIT)
             }
             if written == 1 {
                 return
             }
             if written < 0 && errno == EINTR {
                 continue
+            }
+            // Doorbell is level-trigger-ish for us: if the buffer is full, peer already has
+            // pending wakeups to drain, so additional signals can be coalesced.
+            if written < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) {
+                return
             }
             if written < 0 && (errno == EPIPE || errno == ECONNRESET || errno == ENOTCONN) {
                 return
