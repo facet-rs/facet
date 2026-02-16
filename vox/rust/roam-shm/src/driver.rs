@@ -453,6 +453,8 @@ where
     ) -> Result<(), ShmConnectionError> {
         #[allow(unreachable_patterns)]
         let mut completed_response: Option<(u64, u64)> = None;
+        #[cfg(feature = "diagnostics")]
+        let mut sent_call: Option<(u64, u64, u64)> = None;
         let wire_msg = match msg {
             DriverMessage::Call {
                 conn_id,
@@ -477,6 +479,10 @@ where
                 }
 
                 // Send the request
+                #[cfg(feature = "diagnostics")]
+                {
+                    sent_call = Some((conn_id.raw(), request_id, method_id));
+                }
                 Message::Request {
                     conn_id,
                     request_id,
@@ -570,6 +576,48 @@ where
         };
         trace!("handle_driver_message: sending wire message");
         MessageTransport::send(&mut self.io, &wire_msg).await?;
+        #[cfg(feature = "diagnostics")]
+        if let Some((conn_id, request_id, method_id)) = sent_call
+            && let Some(diag) = &self.diagnostic_state
+            && let Some(span_id) = diag.inflight_request_metadata_string(
+                conn_id,
+                request_id,
+                PEEPS_SPAN_ID_METADATA_KEY,
+            )
+        {
+            let request_node_id = peeps_types::canonical_id::request_from_span_id(&span_id);
+            let method_name = diag
+                .inflight_request_metadata_string(
+                    conn_id,
+                    request_id,
+                    PEEPS_METHOD_NAME_METADATA_KEY,
+                )
+                .or_else(|| {
+                    diag.inflight_request_method_id(conn_id, request_id)
+                        .and_then(roam_session::diagnostic::get_method_name)
+                        .map(|s| s.to_string())
+                })
+                .unwrap_or_else(|| format!("0x{method_id:x}"));
+            let mut attrs = std::collections::BTreeMap::new();
+            attrs.insert("request.id".to_string(), request_id.to_string());
+            attrs.insert("request.method".to_string(), method_name.clone());
+            attrs.insert("rpc.connection".to_string(), diag.name.clone());
+            attrs.insert("request.status".to_string(), "in_flight".to_string());
+            attrs.insert(
+                "request.delivered_at_ns".to_string(),
+                unix_now_ns().to_string(),
+            );
+            if let Some(elapsed_ns) = diag.inflight_request_elapsed_ns(conn_id, request_id) {
+                attrs.insert("elapsed_ns".to_string(), elapsed_ns.to_string());
+            }
+            let attrs_json = facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
+            peeps::registry::register_node(peeps_types::Node {
+                id: request_node_id,
+                kind: peeps_types::NodeKind::Request,
+                label: Some(method_name),
+                attrs_json,
+            });
+        }
 
         #[cfg(feature = "diagnostics")]
         if let Some((conn_id, request_id)) = completed_response
@@ -600,9 +648,9 @@ where
             attrs.insert("request.id".to_string(), request_id.to_string());
             attrs.insert("request.method".to_string(), method_name.clone());
             attrs.insert("rpc.connection".to_string(), diag.name.clone());
-            attrs.insert("response.state".to_string(), "queued".to_string());
+            attrs.insert("response.state".to_string(), "delivered".to_string());
             attrs.insert(
-                "response.queued_at_ns".to_string(),
+                "response.delivered_at_ns".to_string(),
                 unix_now_ns().to_string(),
             );
             if let Some(elapsed_ns) = diag.inflight_request_elapsed_ns(conn_id, request_id) {
@@ -618,11 +666,12 @@ where
             }
             let attrs_json = facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
             peeps::registry::register_node(peeps_types::Node {
-                id: response_node_id,
+                id: response_node_id.clone(),
                 kind: peeps_types::NodeKind::Response,
                 label: Some(method_name),
                 attrs_json,
             });
+            peeps::registry::remove_node(&response_node_id);
             trace!(request_id, name = %diag.name, "completing incoming request");
             diag.complete_request(conn_id, request_id);
         }
@@ -815,6 +864,53 @@ where
                     && let Some(tx) = conn.pending_responses.remove(&request_id)
                 {
                     let _ = tx.send(Ok(ResponseData { payload, channels }));
+                    #[cfg(feature = "diagnostics")]
+                    if let Some(diag) = &self.diagnostic_state {
+                        if let Some(span_id) = diag.inflight_request_metadata_string(
+                            conn_id.raw(),
+                            request_id,
+                            PEEPS_SPAN_ID_METADATA_KEY,
+                        ) {
+                            let request_node_id =
+                                peeps_types::canonical_id::request_from_span_id(&span_id);
+                            let method_name = diag
+                                .inflight_request_metadata_string(
+                                    conn_id.raw(),
+                                    request_id,
+                                    PEEPS_METHOD_NAME_METADATA_KEY,
+                                )
+                                .or_else(|| {
+                                    diag.inflight_request_method_id(conn_id.raw(), request_id)
+                                        .and_then(roam_session::diagnostic::get_method_name)
+                                        .map(|s| s.to_string())
+                                })
+                                .unwrap_or_else(|| "unknown".to_string());
+                            let mut attrs = std::collections::BTreeMap::new();
+                            attrs.insert("request.id".to_string(), request_id.to_string());
+                            attrs.insert("request.method".to_string(), method_name.clone());
+                            attrs.insert("rpc.connection".to_string(), diag.name.clone());
+                            attrs.insert("request.status".to_string(), "completed".to_string());
+                            attrs.insert(
+                                "request.completed_at_ns".to_string(),
+                                unix_now_ns().to_string(),
+                            );
+                            if let Some(elapsed_ns) =
+                                diag.inflight_request_elapsed_ns(conn_id.raw(), request_id)
+                            {
+                                attrs.insert("elapsed_ns".to_string(), elapsed_ns.to_string());
+                            }
+                            let attrs_json =
+                                facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
+                            peeps::registry::register_node(peeps_types::Node {
+                                id: request_node_id.clone(),
+                                kind: peeps_types::NodeKind::Request,
+                                label: Some(method_name),
+                                attrs_json,
+                            });
+                            peeps::registry::remove_node(&request_node_id);
+                        }
+                        diag.complete_request(conn_id.raw(), request_id);
+                    }
                 }
                 // Unknown response IDs are ignored per spec
             }
@@ -2206,6 +2302,8 @@ impl MultiPeerHostDriver {
     ) -> Result<(), ShmConnectionError> {
         #[allow(unreachable_patterns)]
         let mut completed_response: Option<(u64, u64)> = None;
+        #[cfg(feature = "diagnostics")]
+        let mut sent_call: Option<(u64, u64, u64)> = None;
         let wire_msg = match msg {
             DriverMessage::Call {
                 conn_id,
@@ -2237,6 +2335,10 @@ impl MultiPeerHostDriver {
                 }
 
                 // Send the request
+                #[cfg(feature = "diagnostics")]
+                {
+                    sent_call = Some((conn_id.raw(), request_id, method_id));
+                }
                 Message::Request {
                     conn_id,
                     request_id,
@@ -2334,6 +2436,50 @@ impl MultiPeerHostDriver {
         self.send_to_peer(peer_id, &wire_msg).await?;
 
         #[cfg(feature = "diagnostics")]
+        if let Some((conn_id, request_id, method_id)) = sent_call
+            && let Some(state) = self.peers.get(&peer_id)
+            && let Some(diag) = &state.diagnostic_state
+            && let Some(span_id) = diag.inflight_request_metadata_string(
+                conn_id,
+                request_id,
+                PEEPS_SPAN_ID_METADATA_KEY,
+            )
+        {
+            let request_node_id = peeps_types::canonical_id::request_from_span_id(&span_id);
+            let method_name = diag
+                .inflight_request_metadata_string(
+                    conn_id,
+                    request_id,
+                    PEEPS_METHOD_NAME_METADATA_KEY,
+                )
+                .or_else(|| {
+                    diag.inflight_request_method_id(conn_id, request_id)
+                        .and_then(roam_session::diagnostic::get_method_name)
+                        .map(|s| s.to_string())
+                })
+                .unwrap_or_else(|| format!("0x{method_id:x}"));
+            let mut attrs = std::collections::BTreeMap::new();
+            attrs.insert("request.id".to_string(), request_id.to_string());
+            attrs.insert("request.method".to_string(), method_name.clone());
+            attrs.insert("rpc.connection".to_string(), diag.name.clone());
+            attrs.insert("request.status".to_string(), "in_flight".to_string());
+            attrs.insert(
+                "request.delivered_at_ns".to_string(),
+                unix_now_ns().to_string(),
+            );
+            if let Some(elapsed_ns) = diag.inflight_request_elapsed_ns(conn_id, request_id) {
+                attrs.insert("elapsed_ns".to_string(), elapsed_ns.to_string());
+            }
+            let attrs_json = facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
+            peeps::registry::register_node(peeps_types::Node {
+                id: request_node_id,
+                kind: peeps_types::NodeKind::Request,
+                label: Some(method_name),
+                attrs_json,
+            });
+        }
+
+        #[cfg(feature = "diagnostics")]
         if let Some((conn_id, request_id)) = completed_response
             && let Some(state) = self.peers.get(&peer_id)
             && let Some(diag) = &state.diagnostic_state
@@ -2365,9 +2511,9 @@ impl MultiPeerHostDriver {
             attrs.insert("request.id".to_string(), request_id.to_string());
             attrs.insert("request.method".to_string(), method_name.clone());
             attrs.insert("rpc.connection".to_string(), diag.name.clone());
-            attrs.insert("response.state".to_string(), "queued".to_string());
+            attrs.insert("response.state".to_string(), "delivered".to_string());
             attrs.insert(
-                "response.queued_at_ns".to_string(),
+                "response.delivered_at_ns".to_string(),
                 unix_now_ns().to_string(),
             );
             if let Some(elapsed_ns) = diag.inflight_request_elapsed_ns(conn_id, request_id) {
@@ -2383,11 +2529,12 @@ impl MultiPeerHostDriver {
             }
             let attrs_json = facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
             peeps::registry::register_node(peeps_types::Node {
-                id: response_node_id,
+                id: response_node_id.clone(),
                 kind: peeps_types::NodeKind::Response,
                 label: Some(method_name),
                 attrs_json,
             });
+            peeps::registry::remove_node(&response_node_id);
             trace!(request_id, name = %diag.name, "completing incoming request");
             diag.complete_request(conn_id, request_id);
         }
@@ -2569,6 +2716,53 @@ impl MultiPeerHostDriver {
                     && let Some(tx) = conn.pending_responses.remove(&request_id)
                 {
                     let _ = tx.send(Ok(ResponseData { payload, channels }));
+                    #[cfg(feature = "diagnostics")]
+                    if let Some(diag) = &state.diagnostic_state {
+                        if let Some(span_id) = diag.inflight_request_metadata_string(
+                            conn_id.raw(),
+                            request_id,
+                            PEEPS_SPAN_ID_METADATA_KEY,
+                        ) {
+                            let request_node_id =
+                                peeps_types::canonical_id::request_from_span_id(&span_id);
+                            let method_name = diag
+                                .inflight_request_metadata_string(
+                                    conn_id.raw(),
+                                    request_id,
+                                    PEEPS_METHOD_NAME_METADATA_KEY,
+                                )
+                                .or_else(|| {
+                                    diag.inflight_request_method_id(conn_id.raw(), request_id)
+                                        .and_then(roam_session::diagnostic::get_method_name)
+                                        .map(|s| s.to_string())
+                                })
+                                .unwrap_or_else(|| "unknown".to_string());
+                            let mut attrs = std::collections::BTreeMap::new();
+                            attrs.insert("request.id".to_string(), request_id.to_string());
+                            attrs.insert("request.method".to_string(), method_name.clone());
+                            attrs.insert("rpc.connection".to_string(), diag.name.clone());
+                            attrs.insert("request.status".to_string(), "completed".to_string());
+                            attrs.insert(
+                                "request.completed_at_ns".to_string(),
+                                unix_now_ns().to_string(),
+                            );
+                            if let Some(elapsed_ns) =
+                                diag.inflight_request_elapsed_ns(conn_id.raw(), request_id)
+                            {
+                                attrs.insert("elapsed_ns".to_string(), elapsed_ns.to_string());
+                            }
+                            let attrs_json =
+                                facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
+                            peeps::registry::register_node(peeps_types::Node {
+                                id: request_node_id.clone(),
+                                kind: peeps_types::NodeKind::Request,
+                                label: Some(method_name),
+                                attrs_json,
+                            });
+                            peeps::registry::remove_node(&request_node_id);
+                        }
+                        diag.complete_request(conn_id.raw(), request_id);
+                    }
                 }
                 // Unknown response IDs are ignored per spec
             }

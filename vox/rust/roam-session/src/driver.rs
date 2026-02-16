@@ -1157,6 +1157,50 @@ where
                     payload,
                 };
                 self.io.send(&req).await?;
+                #[cfg(feature = "diagnostics")]
+                if let Some(ref diag) = self.diagnostic_state
+                    && let Some(span_id) = diag.inflight_request_metadata_string(
+                        conn_id.raw(),
+                        request_id,
+                        crate::PEEPS_SPAN_ID_METADATA_KEY,
+                    )
+                {
+                    let request_node_id = peeps_types::canonical_id::request_from_span_id(&span_id);
+                    let method_name = diag
+                        .inflight_request_metadata_string(
+                            conn_id.raw(),
+                            request_id,
+                            crate::PEEPS_METHOD_NAME_METADATA_KEY,
+                        )
+                        .or_else(|| {
+                            diag.inflight_request_method_id(conn_id.raw(), request_id)
+                                .and_then(crate::diagnostic::get_method_name)
+                                .map(|s| s.to_string())
+                        })
+                        .unwrap_or_else(|| format!("0x{method_id:x}"));
+                    let mut attrs = std::collections::BTreeMap::new();
+                    attrs.insert("request.id".to_string(), request_id.to_string());
+                    attrs.insert("request.method".to_string(), method_name.clone());
+                    attrs.insert("rpc.connection".to_string(), diag.name.clone());
+                    attrs.insert("request.status".to_string(), "in_flight".to_string());
+                    attrs.insert(
+                        "request.delivered_at_ns".to_string(),
+                        unix_now_ns().to_string(),
+                    );
+                    if let Some(elapsed_ns) =
+                        diag.inflight_request_elapsed_ns(conn_id.raw(), request_id)
+                    {
+                        attrs.insert("elapsed_ns".to_string(), elapsed_ns.to_string());
+                    }
+                    let attrs_json =
+                        facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
+                    peeps::registry::register_node(peeps_types::Node {
+                        id: request_node_id,
+                        kind: peeps_types::NodeKind::Request,
+                        label: Some(method_name),
+                        attrs_json,
+                    });
+                }
             }
             DriverMessage::Data {
                 conn_id,
@@ -1249,9 +1293,9 @@ where
                         attrs.insert("request.id".to_string(), request_id.to_string());
                         attrs.insert("request.method".to_string(), method_name.clone());
                         attrs.insert("rpc.connection".to_string(), diag.name.clone());
-                        attrs.insert("response.state".to_string(), "queued".to_string());
+                        attrs.insert("response.state".to_string(), "delivered".to_string());
                         attrs.insert(
-                            "response.queued_at_ns".to_string(),
+                            "response.delivered_at_ns".to_string(),
                             unix_now_ns().to_string(),
                         );
                         if let Some(elapsed_ns) =
@@ -1270,11 +1314,12 @@ where
                         let attrs_json =
                             facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
                         peeps::registry::register_node(peeps_types::Node {
-                            id: response_node_id,
+                            id: response_node_id.clone(),
                             kind: peeps_types::NodeKind::Response,
                             label: Some(method_name),
                             attrs_json,
                         });
+                        peeps::registry::remove_node(&response_node_id);
                     }
                 }
 
@@ -1495,6 +1540,53 @@ where
                             conn_id = conn_id.raw(),
                             request_id, "response receiver dropped before delivery"
                         );
+                    }
+                    #[cfg(feature = "diagnostics")]
+                    if let Some(ref diag) = self.diagnostic_state {
+                        if let Some(span_id) = diag.inflight_request_metadata_string(
+                            conn_id.raw(),
+                            request_id,
+                            crate::PEEPS_SPAN_ID_METADATA_KEY,
+                        ) {
+                            let request_node_id =
+                                peeps_types::canonical_id::request_from_span_id(&span_id);
+                            let method_name = diag
+                                .inflight_request_metadata_string(
+                                    conn_id.raw(),
+                                    request_id,
+                                    crate::PEEPS_METHOD_NAME_METADATA_KEY,
+                                )
+                                .or_else(|| {
+                                    diag.inflight_request_method_id(conn_id.raw(), request_id)
+                                        .and_then(crate::diagnostic::get_method_name)
+                                        .map(|s| s.to_string())
+                                })
+                                .unwrap_or_else(|| "unknown".to_string());
+                            let mut attrs = std::collections::BTreeMap::new();
+                            attrs.insert("request.id".to_string(), request_id.to_string());
+                            attrs.insert("request.method".to_string(), method_name.clone());
+                            attrs.insert("rpc.connection".to_string(), diag.name.clone());
+                            attrs.insert("request.status".to_string(), "completed".to_string());
+                            attrs.insert(
+                                "request.completed_at_ns".to_string(),
+                                unix_now_ns().to_string(),
+                            );
+                            if let Some(elapsed_ns) =
+                                diag.inflight_request_elapsed_ns(conn_id.raw(), request_id)
+                            {
+                                attrs.insert("elapsed_ns".to_string(), elapsed_ns.to_string());
+                            }
+                            let attrs_json =
+                                facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
+                            peeps::registry::register_node(peeps_types::Node {
+                                id: request_node_id.clone(),
+                                kind: peeps_types::NodeKind::Request,
+                                label: Some(method_name),
+                                attrs_json,
+                            });
+                            peeps::registry::remove_node(&request_node_id);
+                        }
+                        diag.complete_request(conn_id.raw(), request_id);
                     }
                 } else if !self.connections.contains_key(&conn_id) {
                     warn!(

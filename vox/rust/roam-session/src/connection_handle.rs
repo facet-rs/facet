@@ -764,6 +764,7 @@ impl ConnectionHandle {
             attrs.insert("request.method".to_string(), method_name.clone());
             attrs.insert("rpc.connection".to_string(), connection_name);
             attrs.insert("request.args".to_string(), args_debug_str.clone());
+            attrs.insert("request.status".to_string(), "queued".to_string());
             let attrs_json = facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
             peeps::registry::register_node(peeps_types::Node {
                 id: request_node_id.clone(),
@@ -883,15 +884,6 @@ impl ConnectionHandle {
 
         #[cfg(not(feature = "diagnostics"))]
         let result = call_fut.await;
-
-        // Mark request as complete
-        if let Some(diag) = &self.shared.diagnostic_state {
-            diag.complete_request(self.shared.conn_id.raw(), request_id);
-        }
-        #[cfg(feature = "diagnostics")]
-        if std::env::var_os("PEEPS_KEEP_COMPLETED_RPC").is_none() {
-            peeps::registry::remove_node(&request_node_id);
-        }
 
         result
     }
