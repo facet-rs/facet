@@ -479,6 +479,9 @@ impl ConnectionHandle {
             let (metadata, task_id, task_name) =
                 self.merged_outgoing_metadata(metadata, request_id);
 
+            #[cfg(feature = "diagnostics")]
+            let args_debug_str = args_debug.as_deref().unwrap_or("");
+
             // Track outgoing request for diagnostics
             if let Some(diag) = &self.shared.diagnostic_state {
                 let args = args_debug.map(|s| {
@@ -512,8 +515,9 @@ impl ConnectionHandle {
                     .as_ref()
                     .map(|d| d.name.clone())
                     .unwrap_or_default();
+                let args_json_escaped = args_debug_str.replace('\\', "\\\\").replace('"', "\\\"");
                 let attrs_json = format!(
-                    "{{\"request.id\":\"{request_id}\",\"request.method\":\"{method_name}\",\"rpc.connection\":\"{connection_name}\"}}"
+                    "{{\"request.id\":\"{request_id}\",\"request.method\":\"{method_name}\",\"rpc.connection\":\"{connection_name}\",\"request.args\":\"{args_json_escaped}\"}}"
                 );
                 peeps::registry::register_node(peeps_types::Node {
                     id: request_node_id.clone(),
@@ -759,6 +763,9 @@ impl ConnectionHandle {
                 let (metadata, task_id, task_name) =
                     self.merged_outgoing_metadata(metadata, request_id);
 
+                #[cfg(feature = "diagnostics")]
+                let args_debug_str = args_debug.as_deref().unwrap_or("");
+
                 // Track outgoing request for diagnostics
                 if let Some(diag) = &self.shared.diagnostic_state {
                     let args = args_debug.map(|s| {
@@ -792,8 +799,10 @@ impl ConnectionHandle {
                         .as_ref()
                         .map(|d| d.name.clone())
                         .unwrap_or_default();
+                    let args_json_escaped =
+                        args_debug_str.replace('\\', "\\\\").replace('"', "\\\"");
                     let attrs_json = format!(
-                        "{{\"request.id\":\"{request_id}\",\"request.method\":\"{method_name}\",\"rpc.connection\":\"{connection_name}\"}}"
+                        "{{\"request.id\":\"{request_id}\",\"request.method\":\"{method_name}\",\"rpc.connection\":\"{connection_name}\",\"request.args\":\"{args_json_escaped}\"}}"
                     );
                     peeps::registry::register_node(peeps_types::Node {
                         id: request_node_id.clone(),
@@ -1106,6 +1115,9 @@ impl ConnectionHandle {
         let (metadata, task_id, task_name) = self.merged_outgoing_metadata(metadata, request_id);
         let (response_tx, response_rx) = oneshot("call_raw_with_channels");
 
+        #[cfg(feature = "diagnostics")]
+        let args_debug_str = args_debug.as_deref().unwrap_or("");
+
         // Track outgoing request for diagnostics
         if let Some(diag) = &self.shared.diagnostic_state {
             let args = args_debug.map(|s| {
@@ -1139,8 +1151,9 @@ impl ConnectionHandle {
                 .as_ref()
                 .map(|d| d.name.clone())
                 .unwrap_or_default();
+            let args_json_escaped = args_debug_str.replace('\\', "\\\\").replace('"', "\\\"");
             let attrs_json = format!(
-                "{{\"request.id\":\"{request_id}\",\"request.method\":\"{method_name}\",\"rpc.connection\":\"{connection_name}\"}}"
+                "{{\"request.id\":\"{request_id}\",\"request.method\":\"{method_name}\",\"rpc.connection\":\"{connection_name}\",\"request.args\":\"{args_json_escaped}\"}}"
             );
             peeps::registry::register_node(peeps_types::Node {
                 id: request_node_id.clone(),
