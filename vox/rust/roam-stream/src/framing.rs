@@ -272,7 +272,7 @@ where
         &mut self,
         timeout: std::time::Duration,
     ) -> io::Result<Option<Message>> {
-        tokio::time::timeout(timeout, self.recv_inner())
+        peeps::timeout(timeout, self.recv_inner(), "framed.recv")
             .await
             .unwrap_or(Ok(None))
     }
