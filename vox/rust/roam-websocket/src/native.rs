@@ -71,7 +71,7 @@ where
 
     /// Receive a message with timeout.
     async fn recv_timeout(&mut self, timeout: Duration) -> io::Result<Option<Message>> {
-        tokio::time::timeout(timeout, self.recv())
+        peeps::timeout(timeout, self.recv(), "ws.recv")
             .await
             .unwrap_or(Ok(None))
     }
