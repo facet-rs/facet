@@ -701,6 +701,7 @@ impl ConnectionHandle {
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn call_raw_full_with_drains(
         &self,
         method_id: u64,
@@ -888,7 +889,9 @@ impl ConnectionHandle {
             diag.complete_request(self.shared.conn_id.raw(), request_id);
         }
         #[cfg(feature = "diagnostics")]
-        peeps::registry::remove_node(&request_node_id);
+        if std::env::var_os("PEEPS_KEEP_COMPLETED_RPC").is_none() {
+            peeps::registry::remove_node(&request_node_id);
+        }
 
         result
     }

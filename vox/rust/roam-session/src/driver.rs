@@ -33,6 +33,8 @@ use std::sync::Arc;
 use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
+#[cfg(feature = "diagnostics")]
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use facet::Facet;
 use peeps::PeepableFutureExt;
@@ -43,6 +45,15 @@ use crate::{
     MessageTransport, ResponseData, RoamError, Role, RpcPlan, ServiceDispatcher, TransportError,
 };
 use roam_wire::{ConnectionId, Hello, Message};
+
+#[cfg(feature = "diagnostics")]
+#[inline]
+fn unix_now_ns() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0)
+}
 
 /// Negotiated connection parameters after Hello exchange.
 #[derive(Debug, Clone)]
@@ -1187,10 +1198,6 @@ where
                     return Ok(());
                 }
 
-                // Track completion for diagnostics
-                if let Some(ref diag) = self.diagnostic_state {
-                    diag.complete_request(conn_id.raw(), request_id);
-                }
                 // r[impl flow.call.payload-limit] - Outgoing responses are also bounded
                 // by max_payload_size. If a handler produces a too-large response, send
                 // a Cancelled error instead so the call doesn't hang.
@@ -1216,6 +1223,65 @@ where
                     payload,
                 };
                 self.io.send(&wire_msg).await?;
+
+                // Update response node lifecycle after the response frame has been sent.
+                #[cfg(feature = "diagnostics")]
+                if let Some(ref diag) = self.diagnostic_state {
+                    if let Some(span_id) = diag.inflight_request_metadata_string(
+                        conn_id.raw(),
+                        request_id,
+                        crate::PEEPS_SPAN_ID_METADATA_KEY,
+                    ) {
+                        let response_node_id = format!("response:{span_id}");
+                        let method_name = diag
+                            .inflight_request_metadata_string(
+                                conn_id.raw(),
+                                request_id,
+                                crate::PEEPS_METHOD_NAME_METADATA_KEY,
+                            )
+                            .or_else(|| {
+                                diag.inflight_request_method_id(conn_id.raw(), request_id)
+                                    .and_then(crate::diagnostic::get_method_name)
+                                    .map(|s| s.to_string())
+                            })
+                            .unwrap_or_else(|| "unknown".to_string());
+                        let mut attrs = std::collections::BTreeMap::new();
+                        attrs.insert("request.id".to_string(), request_id.to_string());
+                        attrs.insert("request.method".to_string(), method_name.clone());
+                        attrs.insert("rpc.connection".to_string(), diag.name.clone());
+                        attrs.insert("response.state".to_string(), "queued".to_string());
+                        attrs.insert(
+                            "response.queued_at_ns".to_string(),
+                            unix_now_ns().to_string(),
+                        );
+                        if let Some(elapsed_ns) =
+                            diag.inflight_request_elapsed_ns(conn_id.raw(), request_id)
+                        {
+                            attrs.insert("elapsed_ns".to_string(), elapsed_ns.to_string());
+                        }
+                        if let Some(handled_elapsed_ns) =
+                            diag.inflight_request_handled_elapsed_ns(conn_id.raw(), request_id)
+                        {
+                            attrs.insert(
+                                "response.handled_elapsed_ns".to_string(),
+                                handled_elapsed_ns.to_string(),
+                            );
+                        }
+                        let attrs_json =
+                            facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
+                        peeps::registry::register_node(peeps_types::Node {
+                            id: response_node_id,
+                            kind: peeps_types::NodeKind::Response,
+                            label: Some(method_name),
+                            attrs_json,
+                        });
+                    }
+                }
+
+                // Track completion for diagnostics only after the response frame was sent.
+                if let Some(ref diag) = self.diagnostic_state {
+                    diag.complete_request(conn_id.raw(), request_id);
+                }
             }
             DriverMessage::Connect {
                 request_id,
@@ -1567,6 +1633,11 @@ where
                 attrs.insert("request.id".to_string(), request_id.to_string());
                 attrs.insert("request.method".to_string(), method_name.clone());
                 attrs.insert("rpc.connection".to_string(), connection_name);
+                attrs.insert("response.state".to_string(), "handling".to_string());
+                attrs.insert(
+                    "response.created_at_ns".to_string(),
+                    unix_now_ns().to_string(),
+                );
                 let attrs_json = facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
                 peeps::registry::register_node(peeps_types::Node {
                     id: response_node_id.clone(),
@@ -1614,10 +1685,11 @@ where
             // even if this task wasn't spawned via peeps::spawn_tracked.
             #[cfg(feature = "diagnostics")]
             if let Some(response_node_id) = response_node_id {
-                let node_id = response_node_id.clone();
                 let fut = async move {
                     handler_fut.await;
-                    peeps::registry::remove_node(&node_id);
+                    if let Some(ref diag) = self.diagnostic_state {
+                        diag.mark_request_handled(conn_id.raw(), request_id);
+                    }
                 };
                 let fut = peeps::stack::scope(&response_node_id, fut);
                 peeps::stack::ensure(fut).await;

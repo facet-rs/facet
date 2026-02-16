@@ -135,6 +135,7 @@ pub struct InFlightRequest {
     pub request_id: u64,
     pub method_id: u64,
     pub started: Instant,
+    pub handled_at: Option<Instant>,
     pub direction: RequestDirection,
     pub task_id: Option<u64>,
     pub task_name: Option<String>,
@@ -330,6 +331,7 @@ impl DiagnosticState {
                     request_id,
                     method_id,
                     started: Instant::now(),
+                    handled_at: None,
                     direction: RequestDirection::Outgoing,
                     task_id,
                     task_name,
@@ -365,6 +367,7 @@ impl DiagnosticState {
                     request_id,
                     method_id,
                     started: Instant::now(),
+                    handled_at: None,
                     direction: RequestDirection::Incoming,
                     task_id,
                     task_name,
@@ -401,6 +404,42 @@ impl DiagnosticState {
                 });
             }
         }
+    }
+
+    /// Mark an in-flight request as handled by the server-side handler.
+    pub fn mark_request_handled(&self, conn_id: u64, request_id: u64) {
+        if let Ok(mut requests) = self.requests.lock()
+            && let Some(req) = requests.get_mut(&(conn_id, request_id))
+            && req.handled_at.is_none()
+        {
+            req.handled_at = Some(Instant::now());
+        }
+    }
+
+    /// Elapsed nanoseconds since request started, if still in-flight.
+    pub fn inflight_request_elapsed_ns(&self, conn_id: u64, request_id: u64) -> Option<u64> {
+        let requests = self.requests.lock().ok()?;
+        let req = requests.get(&(conn_id, request_id))?;
+        Some(req.started.elapsed().as_nanos() as u64)
+    }
+
+    /// Elapsed nanoseconds from request start to handler-complete moment, if known.
+    pub fn inflight_request_handled_elapsed_ns(
+        &self,
+        conn_id: u64,
+        request_id: u64,
+    ) -> Option<u64> {
+        let requests = self.requests.lock().ok()?;
+        let req = requests.get(&(conn_id, request_id))?;
+        let handled_at = req.handled_at?;
+        Some(handled_at.duration_since(req.started).as_nanos() as u64)
+    }
+
+    /// Method id for an in-flight request.
+    pub fn inflight_request_method_id(&self, conn_id: u64, request_id: u64) -> Option<u64> {
+        let requests = self.requests.lock().ok()?;
+        let req = requests.get(&(conn_id, request_id))?;
+        Some(req.method_id)
     }
 
     /// Record a channel being opened.

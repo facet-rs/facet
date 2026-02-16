@@ -16,6 +16,8 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+#[cfg(feature = "diagnostics")]
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use roam_session::diagnostic::DiagnosticState;
 use roam_session::{
@@ -34,6 +36,15 @@ use crate::transport::{ShmGuestTransport, message_to_shm_msg, shm_msg_to_message
 const PEEPS_SPAN_ID_METADATA_KEY: &str = "peeps.span_id";
 #[cfg(feature = "diagnostics")]
 const PEEPS_METHOD_NAME_METADATA_KEY: &str = "peeps.method_name";
+
+#[cfg(feature = "diagnostics")]
+#[inline]
+fn unix_now_ns() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0)
+}
 
 fn task_context_from_metadata(metadata: &roam_wire::Metadata) -> (Option<u64>, Option<String>) {
     let mut task_id = None;
@@ -846,34 +857,46 @@ where
 
         // Register response node in peeps registry.
         #[cfg(feature = "diagnostics")]
-        let response_node_id =
-            metadata_string(&metadata, PEEPS_SPAN_ID_METADATA_KEY).map(|span_id| {
-                let request_node_id = peeps_types::canonical_id::request_from_span_id(&span_id);
-                let response_node_id = format!("response:{span_id}");
-                let method_name = metadata_string(&metadata, PEEPS_METHOD_NAME_METADATA_KEY)
-                    .or_else(|| {
-                        roam_session::diagnostic::get_method_name(method_id).map(|s| s.to_string())
-                    })
-                    .unwrap_or_else(|| format!("0x{method_id:x}"));
-                let connection_name = self
-                    .diagnostic_state
-                    .as_ref()
-                    .map(|d| d.name.clone())
-                    .unwrap_or_default();
-                let mut attrs = std::collections::BTreeMap::new();
-                attrs.insert("request.id".to_string(), request_id.to_string());
-                attrs.insert("request.method".to_string(), method_name.clone());
-                attrs.insert("rpc.connection".to_string(), connection_name);
-                let attrs_json = facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
-                peeps::registry::register_node(peeps_types::Node {
-                    id: response_node_id.clone(),
-                    kind: peeps_types::NodeKind::Response,
-                    label: Some(method_name),
-                    attrs_json,
-                });
-                peeps::registry::edge(&request_node_id, &response_node_id);
-                response_node_id
+        let response_node_id = {
+            let span_id = metadata_string(&metadata, PEEPS_SPAN_ID_METADATA_KEY);
+            let request_node_id = span_id
+                .as_deref()
+                .map(peeps_types::canonical_id::request_from_span_id);
+            let response_node_id = span_id
+                .as_deref()
+                .map(|sid| format!("response:{sid}"))
+                .unwrap_or_else(|| format!("response:shm:{}:{}", conn_id.raw(), request_id));
+            let method_name = metadata_string(&metadata, PEEPS_METHOD_NAME_METADATA_KEY)
+                .or_else(|| {
+                    roam_session::diagnostic::get_method_name(method_id).map(|s| s.to_string())
+                })
+                .unwrap_or_else(|| format!("0x{method_id:x}"));
+            let connection_name = self
+                .diagnostic_state
+                .as_ref()
+                .map(|d| d.name.clone())
+                .unwrap_or_default();
+            let mut attrs = std::collections::BTreeMap::new();
+            attrs.insert("request.id".to_string(), request_id.to_string());
+            attrs.insert("request.method".to_string(), method_name.clone());
+            attrs.insert("rpc.connection".to_string(), connection_name);
+            attrs.insert("response.state".to_string(), "handling".to_string());
+            attrs.insert(
+                "response.created_at_ns".to_string(),
+                unix_now_ns().to_string(),
+            );
+            let attrs_json = facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
+            peeps::registry::register_node(peeps_types::Node {
+                id: response_node_id.clone(),
+                kind: peeps_types::NodeKind::Response,
+                label: Some(method_name),
+                attrs_json,
             });
+            if let Some(request_node_id) = request_node_id {
+                peeps::registry::edge(&request_node_id, &response_node_id);
+            }
+            Some(response_node_id)
+        };
 
         // Validate metadata
         if let Err(rule_id) = roam_wire::validate_metadata(&metadata) {
@@ -940,10 +963,11 @@ where
         let join_handle = peeps::spawn_tracked("roam_shm_handle_request", async move {
             #[cfg(feature = "diagnostics")]
             if let Some(response_node_id) = response_node_id {
-                let node_id = response_node_id.clone();
                 let fut = async move {
                     handler_fut.await;
-                    peeps::registry::remove_node(&node_id);
+                    if let Some(diag) = &self.diagnostic_state {
+                        diag.mark_request_handled(conn_id.raw(), request_id);
+                    }
                 };
                 let fut = peeps::stack::scope(&response_node_id, fut);
                 peeps::stack::ensure(fut).await;
@@ -2544,34 +2568,53 @@ impl MultiPeerHostDriver {
 
         // Register response node in peeps registry.
         #[cfg(feature = "diagnostics")]
-        let response_node_id =
-            metadata_string(&metadata, PEEPS_SPAN_ID_METADATA_KEY).map(|span_id| {
-                let request_node_id = peeps_types::canonical_id::request_from_span_id(&span_id);
-                let response_node_id = format!("response:{span_id}");
-                let method_name = metadata_string(&metadata, PEEPS_METHOD_NAME_METADATA_KEY)
-                    .or_else(|| {
-                        roam_session::diagnostic::get_method_name(method_id).map(|s| s.to_string())
-                    })
-                    .unwrap_or_else(|| format!("0x{method_id:x}"));
-                let connection_name = state
-                    .diagnostic_state
-                    .as_ref()
-                    .map(|d| d.name.clone())
-                    .unwrap_or_default();
-                let mut attrs = std::collections::BTreeMap::new();
-                attrs.insert("request.id".to_string(), request_id.to_string());
-                attrs.insert("request.method".to_string(), method_name.clone());
-                attrs.insert("rpc.connection".to_string(), connection_name);
-                let attrs_json = facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
-                peeps::registry::register_node(peeps_types::Node {
-                    id: response_node_id.clone(),
-                    kind: peeps_types::NodeKind::Response,
-                    label: Some(method_name),
-                    attrs_json,
+        let response_node_id = {
+            let span_id = metadata_string(&metadata, PEEPS_SPAN_ID_METADATA_KEY);
+            let request_node_id = span_id
+                .as_deref()
+                .map(peeps_types::canonical_id::request_from_span_id);
+            let response_node_id = span_id
+                .as_deref()
+                .map(|sid| format!("response:{sid}"))
+                .unwrap_or_else(|| {
+                    format!(
+                        "response:shm:{}:{}:{}",
+                        peer_id.get(),
+                        conn_id.raw(),
+                        request_id
+                    )
                 });
-                peeps::registry::edge(&request_node_id, &response_node_id);
-                response_node_id
+            let method_name = metadata_string(&metadata, PEEPS_METHOD_NAME_METADATA_KEY)
+                .or_else(|| {
+                    roam_session::diagnostic::get_method_name(method_id).map(|s| s.to_string())
+                })
+                .unwrap_or_else(|| format!("0x{method_id:x}"));
+            let connection_name = state
+                .diagnostic_state
+                .as_ref()
+                .map(|d| d.name.clone())
+                .unwrap_or_default();
+            let mut attrs = std::collections::BTreeMap::new();
+            attrs.insert("request.id".to_string(), request_id.to_string());
+            attrs.insert("request.method".to_string(), method_name.clone());
+            attrs.insert("rpc.connection".to_string(), connection_name);
+            attrs.insert("response.state".to_string(), "handling".to_string());
+            attrs.insert(
+                "response.created_at_ns".to_string(),
+                unix_now_ns().to_string(),
+            );
+            let attrs_json = facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
+            peeps::registry::register_node(peeps_types::Node {
+                id: response_node_id.clone(),
+                kind: peeps_types::NodeKind::Response,
+                label: Some(method_name),
+                attrs_json,
             });
+            if let Some(request_node_id) = request_node_id {
+                peeps::registry::edge(&request_node_id, &response_node_id);
+            }
+            Some(response_node_id)
+        };
 
         // Validate metadata
         if let Err(rule_id) = roam_wire::validate_metadata(&metadata) {
@@ -2643,10 +2686,13 @@ impl MultiPeerHostDriver {
         let join_handle = peeps::spawn_tracked("roam_shm_handle_request", async move {
             #[cfg(feature = "diagnostics")]
             if let Some(response_node_id) = response_node_id {
-                let node_id = response_node_id.clone();
                 let fut = async move {
                     handler_fut.await;
-                    peeps::registry::remove_node(&node_id);
+                    if let Some(state) = self.peers.get(&peer_id)
+                        && let Some(diag) = &state.diagnostic_state
+                    {
+                        diag.mark_request_handled(conn_id.raw(), request_id);
+                    }
                 };
                 let fut = peeps::stack::scope(&response_node_id, fut);
                 peeps::stack::ensure(fut).await;
