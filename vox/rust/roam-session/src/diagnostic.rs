@@ -451,6 +451,19 @@ impl DiagnosticState {
         }
     }
 
+    /// Read a metadata string value from an in-flight request, if present.
+    pub fn inflight_request_metadata_string(
+        &self,
+        conn_id: u64,
+        request_id: u64,
+        key: &str,
+    ) -> Option<String> {
+        let requests = self.requests.lock().ok()?;
+        let req = requests.get(&(conn_id, request_id))?;
+        let meta = req.metadata.as_ref()?;
+        meta.get(key).cloned()
+    }
+
     /// Add a custom diagnostic callback.
     pub fn add_custom_diagnostic<F>(&self, callback: F)
     where

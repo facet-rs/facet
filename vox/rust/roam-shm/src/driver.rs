@@ -30,6 +30,11 @@ use crate::host::ShmHost;
 use crate::peer::PeerId;
 use crate::transport::{ShmGuestTransport, message_to_shm_msg, shm_msg_to_message};
 
+#[cfg(feature = "diagnostics")]
+const PEEPS_SPAN_ID_METADATA_KEY: &str = "peeps.span_id";
+#[cfg(feature = "diagnostics")]
+const PEEPS_METHOD_NAME_METADATA_KEY: &str = "peeps.method_name";
+
 fn task_context_from_metadata(metadata: &roam_wire::Metadata) -> (Option<u64>, Option<String>) {
     let mut task_id = None;
     let mut task_name = None;
@@ -49,6 +54,20 @@ fn task_context_from_metadata(metadata: &roam_wire::Metadata) -> (Option<u64>, O
         }
     }
     (task_id, task_name)
+}
+
+#[cfg(feature = "diagnostics")]
+fn metadata_string(metadata: &roam_wire::Metadata, key: &str) -> Option<String> {
+    metadata.iter().find_map(|(k, v, _)| {
+        if k == key {
+            match v {
+                roam_wire::MetadataValue::String(s) => Some(s.clone()),
+                _ => None,
+            }
+        } else {
+            None
+        }
+    })
 }
 
 /// Get a human-readable name for a message type.
@@ -825,6 +844,37 @@ where
             );
         }
 
+        // Register response node in peeps registry.
+        #[cfg(feature = "diagnostics")]
+        let response_node_id =
+            metadata_string(&metadata, PEEPS_SPAN_ID_METADATA_KEY).map(|span_id| {
+                let request_node_id = peeps_types::canonical_id::request_from_span_id(&span_id);
+                let response_node_id = format!("response:{span_id}");
+                let method_name = metadata_string(&metadata, PEEPS_METHOD_NAME_METADATA_KEY)
+                    .or_else(|| {
+                        roam_session::diagnostic::get_method_name(method_id).map(|s| s.to_string())
+                    })
+                    .unwrap_or_else(|| format!("0x{method_id:x}"));
+                let connection_name = self
+                    .diagnostic_state
+                    .as_ref()
+                    .map(|d| d.name.clone())
+                    .unwrap_or_default();
+                let mut attrs = std::collections::BTreeMap::new();
+                attrs.insert("request.id".to_string(), request_id.to_string());
+                attrs.insert("request.method".to_string(), method_name.clone());
+                attrs.insert("rpc.connection".to_string(), connection_name);
+                let attrs_json = facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
+                peeps::registry::register_node(peeps_types::Node {
+                    id: response_node_id.clone(),
+                    kind: peeps_types::NodeKind::Response,
+                    label: Some(method_name),
+                    attrs_json,
+                });
+                peeps::registry::edge(&request_node_id, &response_node_id);
+                response_node_id
+            });
+
         // Validate metadata
         if let Err(rule_id) = roam_wire::validate_metadata(&metadata) {
             if let Some(diag) = &self.diagnostic_state {
@@ -887,7 +937,21 @@ where
         conn.server_channel_registry.set_current_request_id(None);
 
         // r[impl call.cancel.best-effort] - Store abort handle for cancellation support
-        let join_handle = peeps::spawn_tracked("roam_shm_handle_request", handler_fut);
+        let join_handle = peeps::spawn_tracked("roam_shm_handle_request", async move {
+            #[cfg(feature = "diagnostics")]
+            if let Some(response_node_id) = response_node_id {
+                let node_id = response_node_id.clone();
+                let fut = async move {
+                    handler_fut.await;
+                    peeps::registry::remove_node(&node_id);
+                };
+                let fut = peeps::stack::scope(&response_node_id, fut);
+                peeps::stack::ensure(fut).await;
+                return;
+            }
+
+            handler_fut.await;
+        });
         conn.in_flight_server_requests
             .insert(request_id, join_handle.abort_handle());
         Ok(())
@@ -916,6 +980,18 @@ where
         if let Some(abort_handle) = conn.in_flight_server_requests.remove(&request_id) {
             // Abort the handler task (best-effort)
             abort_handle.abort();
+
+            #[cfg(feature = "diagnostics")]
+            if let Some(diag) = &self.diagnostic_state
+                && let Some(span_id) = diag.inflight_request_metadata_string(
+                    conn_id.raw(),
+                    request_id,
+                    PEEPS_SPAN_ID_METADATA_KEY,
+                )
+            {
+                let response_node_id = format!("response:{span_id}");
+                peeps::registry::remove_node(&response_node_id);
+            }
 
             // Mark request completed for diagnostics
             if let Some(diag) = &self.diagnostic_state {
@@ -2445,6 +2521,37 @@ impl MultiPeerHostDriver {
             );
         }
 
+        // Register response node in peeps registry.
+        #[cfg(feature = "diagnostics")]
+        let response_node_id =
+            metadata_string(&metadata, PEEPS_SPAN_ID_METADATA_KEY).map(|span_id| {
+                let request_node_id = peeps_types::canonical_id::request_from_span_id(&span_id);
+                let response_node_id = format!("response:{span_id}");
+                let method_name = metadata_string(&metadata, PEEPS_METHOD_NAME_METADATA_KEY)
+                    .or_else(|| {
+                        roam_session::diagnostic::get_method_name(method_id).map(|s| s.to_string())
+                    })
+                    .unwrap_or_else(|| format!("0x{method_id:x}"));
+                let connection_name = state
+                    .diagnostic_state
+                    .as_ref()
+                    .map(|d| d.name.clone())
+                    .unwrap_or_default();
+                let mut attrs = std::collections::BTreeMap::new();
+                attrs.insert("request.id".to_string(), request_id.to_string());
+                attrs.insert("request.method".to_string(), method_name.clone());
+                attrs.insert("rpc.connection".to_string(), connection_name);
+                let attrs_json = facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
+                peeps::registry::register_node(peeps_types::Node {
+                    id: response_node_id.clone(),
+                    kind: peeps_types::NodeKind::Response,
+                    label: Some(method_name),
+                    attrs_json,
+                });
+                peeps::registry::edge(&request_node_id, &response_node_id);
+                response_node_id
+            });
+
         // Validate metadata
         if let Err(rule_id) = roam_wire::validate_metadata(&metadata) {
             if let Some(diag) = &state.diagnostic_state {
@@ -2512,7 +2619,21 @@ impl MultiPeerHostDriver {
         conn.server_channel_registry.set_current_request_id(None);
 
         // r[impl call.cancel.best-effort] - Store abort handle for cancellation support
-        let join_handle = peeps::spawn_tracked("roam_shm_handle_request", handler_fut);
+        let join_handle = peeps::spawn_tracked("roam_shm_handle_request", async move {
+            #[cfg(feature = "diagnostics")]
+            if let Some(response_node_id) = response_node_id {
+                let node_id = response_node_id.clone();
+                let fut = async move {
+                    handler_fut.await;
+                    peeps::registry::remove_node(&node_id);
+                };
+                let fut = peeps::stack::scope(&response_node_id, fut);
+                peeps::stack::ensure(fut).await;
+                return;
+            }
+
+            handler_fut.await;
+        });
         conn.in_flight_server_requests
             .insert(request_id, join_handle.abort_handle());
         Ok(())
@@ -2551,6 +2672,18 @@ impl MultiPeerHostDriver {
         if let Some(abort_handle) = conn.in_flight_server_requests.remove(&request_id) {
             // Abort the handler task (best-effort)
             abort_handle.abort();
+
+            #[cfg(feature = "diagnostics")]
+            if let Some(diag) = &state.diagnostic_state
+                && let Some(span_id) = diag.inflight_request_metadata_string(
+                    conn_id.raw(),
+                    request_id,
+                    PEEPS_SPAN_ID_METADATA_KEY,
+                )
+            {
+                let response_node_id = format!("response:{span_id}");
+                peeps::registry::remove_node(&response_node_id);
+            }
 
             // Mark request completed for diagnostics
             if let Some(diag) = &state.diagnostic_state {
