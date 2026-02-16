@@ -76,17 +76,24 @@ where
 }
 
 /// Sleep for the given duration.
-pub async fn sleep(duration: Duration, label: impl Into<String>) {
-    peeps::sleep(duration, label).await;
+#[track_caller]
+pub fn sleep(duration: Duration, label: impl Into<String>) -> impl Future<Output = ()> {
+    peeps::sleep(duration, label)
 }
 
 /// Run a future with a timeout.
 ///
 /// Returns `Some(result)` if the future completes within the timeout,
 /// or `None` if the timeout expires.
-pub async fn timeout<F, T>(duration: Duration, future: F, label: impl Into<String>) -> Option<T>
+#[track_caller]
+#[allow(clippy::manual_async_fn)] // for track_caller, duh
+pub fn timeout<F, T>(
+    duration: Duration,
+    future: F,
+    label: impl Into<String>,
+) -> impl Future<Output = Option<T>>
 where
     F: Future<Output = T>,
 {
-    (peeps::timeout(duration, future, label).await).ok()
+    async move { (peeps::timeout(duration, future, label).await).ok() }
 }
