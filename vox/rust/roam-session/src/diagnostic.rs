@@ -7,7 +7,7 @@ use std::collections::{HashMap, VecDeque};
 use std::fmt::Write as _;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, Weak};
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 /// A callback that appends diagnostic info to a string.
 pub type DiagnosticCallback = Box<dyn Fn(&mut String) + Send + Sync>;
@@ -27,6 +27,13 @@ static DEBUG_ENABLED: LazyLock<bool> = LazyLock::new(|| std::env::var("ROAM_DEBU
 
 /// Maximum number of recent completions to keep per connection.
 const MAX_RECENT_COMPLETIONS: usize = 16;
+
+fn unix_now_ns() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos().min(u64::MAX as u128) as u64)
+        .unwrap_or(0)
+}
 
 /// Check if debug recording is enabled.
 pub fn debug_enabled() -> bool {
@@ -135,7 +142,9 @@ pub struct InFlightRequest {
     pub request_id: u64,
     pub method_id: u64,
     pub started: Instant,
+    pub started_at_ns: u64,
     pub handled_at: Option<Instant>,
+    pub handled_at_ns: Option<u64>,
     pub direction: RequestDirection,
     pub task_id: Option<u64>,
     pub task_name: Option<String>,
@@ -324,14 +333,18 @@ impl DiagnosticState {
     ) {
         let backtrace = Some(format_short_backtrace());
         let metadata = Self::metadata_to_debug_map(metadata);
+        let now = Instant::now();
+        let now_unix_ns = unix_now_ns();
         if let Ok(mut requests) = self.requests.lock() {
             requests.insert(
                 (conn_id, request_id),
                 InFlightRequest {
                     request_id,
                     method_id,
-                    started: Instant::now(),
+                    started: now,
+                    started_at_ns: now_unix_ns,
                     handled_at: None,
+                    handled_at_ns: None,
                     direction: RequestDirection::Outgoing,
                     task_id,
                     task_name,
@@ -360,14 +373,18 @@ impl DiagnosticState {
         // Task tracking APIs removed — set to None
         let server_task_id = None;
         let server_task_name = None;
+        let now = Instant::now();
+        let now_unix_ns = unix_now_ns();
         if let Ok(mut requests) = self.requests.lock() {
             requests.insert(
                 (conn_id, request_id),
                 InFlightRequest {
                     request_id,
                     method_id,
-                    started: Instant::now(),
+                    started: now,
+                    started_at_ns: now_unix_ns,
                     handled_at: None,
+                    handled_at_ns: None,
                     direction: RequestDirection::Incoming,
                     task_id,
                     task_name,
@@ -413,7 +430,22 @@ impl DiagnosticState {
             && req.handled_at.is_none()
         {
             req.handled_at = Some(Instant::now());
+            req.handled_at_ns = Some(unix_now_ns());
         }
+    }
+
+    /// Unix timestamp in nanoseconds for when a request was first recorded.
+    pub fn inflight_request_started_at_ns(&self, conn_id: u64, request_id: u64) -> Option<u64> {
+        let requests = self.requests.lock().ok()?;
+        let req = requests.get(&(conn_id, request_id))?;
+        Some(req.started_at_ns)
+    }
+
+    /// Unix timestamp in nanoseconds for when handler logic completed (if known).
+    pub fn inflight_request_handled_at_ns(&self, conn_id: u64, request_id: u64) -> Option<u64> {
+        let requests = self.requests.lock().ok()?;
+        let req = requests.get(&(conn_id, request_id))?;
+        req.handled_at_ns
     }
 
     /// Elapsed nanoseconds since request started, if still in-flight.

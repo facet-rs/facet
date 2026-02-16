@@ -1178,19 +1178,13 @@ where
                         })
                         .unwrap_or_else(|| format!("0x{method_id:x}"));
                     let mut attrs = std::collections::BTreeMap::new();
+                    let now_ns = unix_now_ns();
                     attrs.insert("request.id".to_string(), request_id.to_string());
                     attrs.insert("request.method".to_string(), method_name.clone());
                     attrs.insert("rpc.connection".to_string(), diag.name.clone());
                     attrs.insert("request.status".to_string(), "in_flight".to_string());
-                    attrs.insert(
-                        "request.delivered_at_ns".to_string(),
-                        unix_now_ns().to_string(),
-                    );
-                    if let Some(elapsed_ns) =
-                        diag.inflight_request_elapsed_ns(conn_id.raw(), request_id)
-                    {
-                        attrs.insert("elapsed_ns".to_string(), elapsed_ns.to_string());
-                    }
+                    attrs.insert("request.started_at_ns".to_string(), now_ns.to_string());
+                    attrs.insert("request.delivered_at_ns".to_string(), now_ns.to_string());
                     let attrs_json =
                         facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
                     peeps::registry::register_node(peeps_types::Node {
@@ -1293,23 +1287,26 @@ where
                         attrs.insert("request.method".to_string(), method_name.clone());
                         attrs.insert("rpc.connection".to_string(), diag.name.clone());
                         attrs.insert("response.state".to_string(), "delivered".to_string());
+                        if let Some(started_at_ns) =
+                            diag.inflight_request_started_at_ns(conn_id.raw(), request_id)
+                        {
+                            attrs.insert(
+                                "response.started_at_ns".to_string(),
+                                started_at_ns.to_string(),
+                            );
+                        }
+                        if let Some(handled_at_ns) =
+                            diag.inflight_request_handled_at_ns(conn_id.raw(), request_id)
+                        {
+                            attrs.insert(
+                                "response.handled_at_ns".to_string(),
+                                handled_at_ns.to_string(),
+                            );
+                        }
                         attrs.insert(
                             "response.delivered_at_ns".to_string(),
                             unix_now_ns().to_string(),
                         );
-                        if let Some(elapsed_ns) =
-                            diag.inflight_request_elapsed_ns(conn_id.raw(), request_id)
-                        {
-                            attrs.insert("elapsed_ns".to_string(), elapsed_ns.to_string());
-                        }
-                        if let Some(handled_elapsed_ns) =
-                            diag.inflight_request_handled_elapsed_ns(conn_id.raw(), request_id)
-                        {
-                            attrs.insert(
-                                "response.handled_elapsed_ns".to_string(),
-                                handled_elapsed_ns.to_string(),
-                            );
-                        }
                         let attrs_json =
                             facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
                         peeps::registry::register_node(peeps_types::Node {
@@ -1562,11 +1559,6 @@ where
                                 "request.completed_at_ns".to_string(),
                                 unix_now_ns().to_string(),
                             );
-                            if let Some(elapsed_ns) =
-                                diag.inflight_request_elapsed_ns(conn_id.raw(), request_id)
-                            {
-                                attrs.insert("elapsed_ns".to_string(), elapsed_ns.to_string());
-                            }
                             let attrs_json =
                                 facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
                             peeps::registry::register_node(peeps_types::Node {
@@ -1718,7 +1710,7 @@ where
                 attrs.insert("rpc.connection".to_string(), connection_name);
                 attrs.insert("response.state".to_string(), "handling".to_string());
                 attrs.insert(
-                    "response.created_at_ns".to_string(),
+                    "response.started_at_ns".to_string(),
                     unix_now_ns().to_string(),
                 );
                 let attrs_json = facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
@@ -1838,6 +1830,11 @@ where
                                 attrs.insert(
                                     "close_cause".to_string(),
                                     "peer_cancelled".to_string(),
+                                );
+                                attrs.insert("response.state".to_string(), "cancelled".to_string());
+                                attrs.insert(
+                                    "response.cancelled_at_ns".to_string(),
+                                    unix_now_ns().to_string(),
                                 );
                                 let attrs_json = facet_json::to_string(&attrs)
                                     .unwrap_or_else(|_| "{}".to_string());

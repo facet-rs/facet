@@ -1,5 +1,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(feature = "diagnostics")]
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use facet::Facet;
 
@@ -738,6 +740,14 @@ impl ConnectionHandle {
             attrs.insert("rpc.connection".to_string(), connection_name);
             attrs.insert("request.args".to_string(), args_debug_str.clone());
             attrs.insert("request.status".to_string(), "queued".to_string());
+            attrs.insert(
+                "request.queued_at_ns".to_string(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_nanos().min(u64::MAX as u128) as u64)
+                    .unwrap_or(0)
+                    .to_string(),
+            );
             let attrs_json = facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
             peeps::registry::register_node(peeps_types::Node {
                 id: request_node_id.clone(),

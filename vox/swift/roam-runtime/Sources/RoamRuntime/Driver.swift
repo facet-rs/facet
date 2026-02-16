@@ -221,6 +221,15 @@ private enum DriverEvent: Sendable {
 
 /// Actor that holds mutable driver state to avoid NSLock in async contexts.
 private actor DriverState {
+    // Temporary kill-switch: keep the implementation in-tree but disabled
+    // while we debug the primary state-machine bug.
+    private let retainFinalizedRequests = false
+
+    private struct FinalizedRequest: Sendable {
+        let reason: String
+        let atUptimeNs: UInt64
+    }
+
     struct PendingCall: Sendable {
         let responseTx: @Sendable (Result<[UInt8], ConnectionError>) -> Void
         var timeoutTask: Task<Void, Never>?
@@ -228,6 +237,7 @@ private actor DriverState {
 
     var pendingResponses: [UInt64: PendingCall] = [:]
     var inFlightRequests: Set<UInt64> = []
+    private var finalizedRequests: [UInt64: FinalizedRequest] = [:]
     var isClosed = false
 
     func addPendingResponse(
@@ -244,6 +254,45 @@ private actor DriverState {
 
     func removePendingResponse(_ requestId: UInt64) -> PendingCall? {
         pendingResponses.removeValue(forKey: requestId)
+    }
+
+    func markFinalizedRequest(_ requestId: UInt64, reason: String) {
+        guard retainFinalizedRequests else {
+            return
+        }
+        let now = DispatchTime.now().uptimeNanoseconds
+        finalizedRequests[requestId] = FinalizedRequest(reason: reason, atUptimeNs: now)
+        pruneFinalizedRequests(now: now)
+    }
+
+    func takeFinalizedRequest(_ requestId: UInt64) -> (reason: String, ageMs: UInt64)? {
+        guard retainFinalizedRequests else {
+            return nil
+        }
+        let now = DispatchTime.now().uptimeNanoseconds
+        pruneFinalizedRequests(now: now)
+        guard let finalized = finalizedRequests.removeValue(forKey: requestId) else {
+            return nil
+        }
+        let ageNs = now >= finalized.atUptimeNs ? now - finalized.atUptimeNs : 0
+        return (reason: finalized.reason, ageMs: ageNs / 1_000_000)
+    }
+
+    func contextSummary(requestId: UInt64?) -> String {
+        let pendingCount = pendingResponses.count
+        let inFlightCount = inFlightRequests.count
+        let pendingHasRequest = requestId.map { pendingResponses[$0] != nil } ?? false
+        let inFlightHasRequest = requestId.map { inFlightRequests.contains($0) } ?? false
+        return
+            "pending_count=\(pendingCount) in_flight_count=\(inFlightCount) "
+            + "pending_has_request=\(pendingHasRequest) in_flight_has_request=\(inFlightHasRequest)"
+    }
+
+    private func pruneFinalizedRequests(now: UInt64) {
+        let keepNs: UInt64 = 120 * 1_000_000_000
+        finalizedRequests = finalizedRequests.filter { _, finalized in
+            now >= finalized.atUptimeNs && (now - finalized.atUptimeNs) <= keepNs
+        }
     }
 
     func setPendingTimeoutTask(_ requestId: UInt64, timeoutTask: Task<Void, Never>) -> Bool {
@@ -592,6 +641,7 @@ public final class Driver: @unchecked Sendable {
                 guard let pending = await capturedState.removePendingResponse(requestId) else {
                     return
                 }
+                await capturedState.markFinalizedRequest(requestId, reason: "timeout")
                 pending.timeoutTask?.cancel()
                 warnLog("request timed out request_id=\(requestId) timeout_s=\(timeout)")
                 pending.responseTx(.failure(.timeout))
@@ -652,6 +702,7 @@ public final class Driver: @unchecked Sendable {
                 guard let pending = await capturedState.removePendingResponse(requestId) else {
                     return
                 }
+                await capturedState.markFinalizedRequest(requestId, reason: "timeout")
                 pending.timeoutTask?.cancel()
                 warnLog("request timed out request_id=\(requestId) timeout_s=\(timeout)")
                 pending.responseTx(.failure(.timeout))
@@ -738,9 +789,20 @@ public final class Driver: @unchecked Sendable {
             // r[impl call.complete] - Response completes the call.
             // r[impl call.response.encoding] - Response payload is Postcard-encoded.
             guard let pending = await state.removePendingResponse(requestId) else {
+                if let finalized = await state.takeFinalizedRequest(requestId) {
+                    warnLog(
+                        "dropping late response for finalized request_id \(requestId) "
+                            + "(reason=\(finalized.reason) age_ms=\(finalized.ageMs) "
+                            + "payload_size=\(payload.count)); continuing"
+                    )
+                    return
+                }
+                let stateContext = await state.contextSummary(requestId: requestId)
                 warnLog(
                     "received response for unknown request_id \(requestId) "
-                        + "(payload_size=\(payload.count)); closing connection"
+                        + "(payload_size=\(payload.count)); state{\(stateContext)} "
+                        + "queues{pending_calls=\(pendingCalls.count) "
+                        + "pending_task_messages=\(pendingTaskMessages.count)}; closing connection"
                 )
                 try await sendGoodbye("call.lifecycle.unknown-request-id")
                 throw ConnectionError.protocolViolation(rule: "call.lifecycle.unknown-request-id")
