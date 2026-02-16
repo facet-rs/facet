@@ -981,6 +981,7 @@ where
             // Abort the handler task (best-effort)
             abort_handle.abort();
 
+            // Mark response node as cancelled (keep it visible in graph)
             #[cfg(feature = "diagnostics")]
             if let Some(diag) = &self.diagnostic_state
                 && let Some(span_id) = diag.inflight_request_metadata_string(
@@ -990,7 +991,27 @@ where
                 )
             {
                 let response_node_id = format!("response:{span_id}");
-                peeps::registry::remove_node(&response_node_id);
+                let method_name = diag
+                    .inflight_request_metadata_string(
+                        conn_id.raw(),
+                        request_id,
+                        PEEPS_METHOD_NAME_METADATA_KEY,
+                    )
+                    .unwrap_or_else(|| "unknown".to_string());
+                let connection_name = diag.name.clone();
+                let mut attrs = std::collections::BTreeMap::new();
+                attrs.insert("request.id".to_string(), request_id.to_string());
+                attrs.insert("request.method".to_string(), method_name.clone());
+                attrs.insert("rpc.connection".to_string(), connection_name);
+                attrs.insert("cancelled".to_string(), "true".to_string());
+                attrs.insert("close_cause".to_string(), "peer_cancelled".to_string());
+                let attrs_json = facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
+                peeps::registry::register_node(peeps_types::Node {
+                    id: response_node_id,
+                    kind: peeps_types::NodeKind::Response,
+                    label: Some(format!("{method_name} (cancelled)")),
+                    attrs_json,
+                });
             }
 
             // Mark request completed for diagnostics
@@ -2673,6 +2694,7 @@ impl MultiPeerHostDriver {
             // Abort the handler task (best-effort)
             abort_handle.abort();
 
+            // Mark response node as cancelled (keep it visible in graph)
             #[cfg(feature = "diagnostics")]
             if let Some(diag) = &state.diagnostic_state
                 && let Some(span_id) = diag.inflight_request_metadata_string(
@@ -2682,7 +2704,27 @@ impl MultiPeerHostDriver {
                 )
             {
                 let response_node_id = format!("response:{span_id}");
-                peeps::registry::remove_node(&response_node_id);
+                let method_name = diag
+                    .inflight_request_metadata_string(
+                        conn_id.raw(),
+                        request_id,
+                        PEEPS_METHOD_NAME_METADATA_KEY,
+                    )
+                    .unwrap_or_else(|| "unknown".to_string());
+                let connection_name = diag.name.clone();
+                let mut attrs = std::collections::BTreeMap::new();
+                attrs.insert("request.id".to_string(), request_id.to_string());
+                attrs.insert("request.method".to_string(), method_name.clone());
+                attrs.insert("rpc.connection".to_string(), connection_name);
+                attrs.insert("cancelled".to_string(), "true".to_string());
+                attrs.insert("close_cause".to_string(), "peer_cancelled".to_string());
+                let attrs_json = facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
+                peeps::registry::register_node(peeps_types::Node {
+                    id: response_node_id,
+                    kind: peeps_types::NodeKind::Response,
+                    label: Some(format!("{method_name} (cancelled)")),
+                    attrs_json,
+                });
             }
 
             // Mark request completed for diagnostics
