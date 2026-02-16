@@ -243,10 +243,11 @@ public final class ShmGuestTransport: MessageTransport, @unchecked Sendable {
                     throw TransportError.connectionClosed
                 }
                 if frame.payload.count > Int(negotiated.maxPayloadSize) {
-                    throw TransportError.decodeFailed("payload exceeds negotiated maxPayloadSize")
+                    throw TransportError.protocolViolation(
+                        "payload exceeds negotiated maxPayloadSize")
                 }
                 if frame.payload.count + 64 > maxFrameSize {
-                    throw TransportError.decodeFailed("frame exceeds max frame size")
+                    throw TransportError.frameEncoding("frame exceeds max frame size")
                 }
 
                 _ = try runtime.checkRemap()
@@ -261,10 +262,10 @@ public final class ShmGuestTransport: MessageTransport, @unchecked Sendable {
             case .hostGoodbye, .doorbellPeerDead:
                 throw TransportError.connectionClosed
             case .payloadTooLarge, .slotError:
-                throw TransportError.decodeFailed("shm send failed: \(err)")
+                throw TransportError.transportIO("shm send failed: \(err)")
             }
         } catch {
-            throw TransportError.decodeFailed("shm send failed: \(error)")
+            throw TransportError.transportIO("shm send failed: \(error)")
         }
     }
 
@@ -287,7 +288,7 @@ public final class ShmGuestTransport: MessageTransport, @unchecked Sendable {
             } catch let err as TransportError {
                 throw err
             } catch {
-                throw TransportError.decodeFailed("shm receive failed: \(error)")
+                throw TransportError.transportIO("shm receive failed: \(error)")
             }
 
             if isClosed {
@@ -300,7 +301,7 @@ public final class ShmGuestTransport: MessageTransport, @unchecked Sendable {
                         try runtime.signalDoorbell()
                     }
                 } catch {
-                    throw TransportError.decodeFailed("doorbell signal failed: \(error)")
+                    throw TransportError.transportIO("doorbell signal failed: \(error)")
                 }
                 return try shmFrameToMessage(frame)
             }
@@ -322,7 +323,7 @@ public final class ShmGuestTransport: MessageTransport, @unchecked Sendable {
             } catch let err as TransportError {
                 throw err
             } catch {
-                throw TransportError.decodeFailed("doorbell wait failed: \(error)")
+                throw TransportError.transportIO("doorbell wait failed: \(error)")
             }
 
             try await Task.sleep(nanoseconds: 1_000_000)

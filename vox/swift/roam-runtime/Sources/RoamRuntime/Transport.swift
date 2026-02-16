@@ -80,7 +80,7 @@ public final class NIOTransport: MessageTransport, @unchecked Sendable {
     public func send(_ message: Message) async throws {
         let encoded = message.encode()
         guard let len = UInt32(exactly: encoded.count) else {
-            throw TransportError.decodeFailed("frame too large for u32 length prefix")
+            throw TransportError.frameEncoding("frame too large for u32 length prefix")
         }
 
         var buffer = channel.allocator.buffer(capacity: 4 + encoded.count)
@@ -141,7 +141,7 @@ final class LengthPrefixDecoder: ByteToMessageDecoder, @unchecked Sendable {
         let frameLength = Int(frameLen)
         let maxFrameBytes = frameLimit.maxFrameBytes
         if frameLength > maxFrameBytes {
-            throw TransportError.decodeFailed(
+            throw TransportError.frameDecoding(
                 "Frame exceeds \(maxFrameBytes) bytes")
         }
 
@@ -169,7 +169,7 @@ final class LengthPrefixDecoder: ByteToMessageDecoder, @unchecked Sendable {
     ) throws -> DecodingState {
         let state = try decode(context: context, buffer: &buffer)
         if state == .needMoreData && seenEOF && buffer.readableBytes > 0 {
-            throw TransportError.decodeFailed(
+            throw TransportError.frameDecoding(
                 "EOF with \(buffer.readableBytes) trailing bytes and no complete frame")
         }
         return state
@@ -258,5 +258,8 @@ public func connect(host: String, port: Int) async throws -> NIOTransport {
 public enum TransportError: Error {
     case connectionClosed
     case wouldBlock
-    case decodeFailed(String)
+    case frameEncoding(String)
+    case frameDecoding(String)
+    case transportIO(String)
+    case protocolViolation(String)
 }

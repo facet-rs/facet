@@ -212,6 +212,7 @@ private enum DriverEvent: Sendable {
     case command(HandleCommand)
     case retryTick
     case transportClosed
+    case transportFailed(String)
 }
 
 // MARK: - Driver
@@ -426,7 +427,7 @@ public final class Driver: @unchecked Sendable {
                     }
                 }
             } catch {
-                cont.yield(.transportClosed)
+                cont.yield(.transportFailed(String(describing: error)))
             }
         }
 
@@ -461,6 +462,11 @@ public final class Driver: @unchecked Sendable {
                     break
 
                 case .transportClosed:
+                    await failAllPending()
+                    eventContinuation.finish()
+
+                case .transportFailed(let reason):
+                    warnLog("transport reader failed: \(reason)")
                     await failAllPending()
                     eventContinuation.finish()
                 }
@@ -587,6 +593,7 @@ public final class Driver: @unchecked Sendable {
                     return
                 }
                 pending.timeoutTask?.cancel()
+                warnLog("request timed out request_id=\(requestId) timeout_s=\(timeout)")
                 pending.responseTx(.failure(.timeout))
                 try? await capturedTransport.send(.cancel(connId: 0, requestId: requestId))
             }
@@ -646,6 +653,7 @@ public final class Driver: @unchecked Sendable {
                     return
                 }
                 pending.timeoutTask?.cancel()
+                warnLog("request timed out request_id=\(requestId) timeout_s=\(timeout)")
                 pending.responseTx(.failure(.timeout))
                 try? await capturedTransport.send(.cancel(connId: 0, requestId: requestId))
             }
