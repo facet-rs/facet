@@ -131,6 +131,22 @@ impl ConnectionHandle {
             })
     }
 
+    #[cfg(feature = "diagnostics")]
+    fn touch_connection_node(entity_id: &str, connection_name: &str) {
+        if connection_name.is_empty() {
+            return;
+        }
+        let connection_node_id = format!("connection:{connection_name}");
+        let attrs_json = format!(r#"{{"rpc.connection":"{connection_name}"}}"#);
+        peeps::registry::register_node(peeps_types::Node {
+            id: connection_node_id.clone(),
+            kind: peeps_types::NodeKind::Connection,
+            label: Some(connection_name.to_string()),
+            attrs_json,
+        });
+        peeps::registry::touch_edge(entity_id, &connection_node_id);
+    }
+
     fn span_id_for_request(&self, _request_id: u64) -> String {
         ulid::Ulid::new().to_string()
     }
@@ -737,7 +753,7 @@ impl ConnectionHandle {
             let mut attrs = std::collections::BTreeMap::new();
             attrs.insert("request.id".to_string(), request_id.to_string());
             attrs.insert("request.method".to_string(), method_name.clone());
-            attrs.insert("rpc.connection".to_string(), connection_name);
+            attrs.insert("rpc.connection".to_string(), connection_name.clone());
             attrs.insert("request.args".to_string(), args_debug_str.clone());
             attrs.insert("request.status".to_string(), "queued".to_string());
             attrs.insert(
@@ -755,6 +771,7 @@ impl ConnectionHandle {
                 label: Some(method_name),
                 attrs_json,
             });
+            Self::touch_connection_node(&request_node_id, &connection_name);
             // If we're called from within a peepable poll stack, link the caller future
             // to this request (caller --needs--> request). This is the "parent" edge
             // users expect for outgoing RPC requests.

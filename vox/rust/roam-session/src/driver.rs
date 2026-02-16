@@ -54,6 +54,23 @@ fn unix_now_ns() -> u64 {
         .unwrap_or(0)
 }
 
+#[cfg(feature = "diagnostics")]
+#[inline]
+fn touch_connection_node(entity_id: &str, connection_name: &str) {
+    if connection_name.is_empty() {
+        return;
+    }
+    let connection_node_id = format!("connection:{connection_name}");
+    let attrs_json = format!(r#"{{"rpc.connection":"{connection_name}"}}"#);
+    peeps::registry::register_node(peeps_types::Node {
+        id: connection_node_id.clone(),
+        kind: peeps_types::NodeKind::Connection,
+        label: Some(connection_name.to_string()),
+        attrs_json,
+    });
+    peeps::registry::touch_edge(entity_id, &connection_node_id);
+}
+
 /// Negotiated connection parameters after Hello exchange.
 #[derive(Debug, Clone)]
 pub struct Negotiated {
@@ -1211,11 +1228,12 @@ where
                     let attrs_json =
                         facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
                     peeps::registry::register_node(peeps_types::Node {
-                        id: request_node_id,
+                        id: request_node_id.clone(),
                         kind: peeps_types::NodeKind::Request,
                         label: Some(method_name),
                         attrs_json,
                     });
+                    touch_connection_node(&request_node_id, &diag.name);
                 }
             }
             DriverMessage::Data {
@@ -1338,6 +1356,7 @@ where
                             label: Some(method_name),
                             attrs_json,
                         });
+                        touch_connection_node(&response_node_id, &diag.name);
                         peeps::registry::remove_node(&response_node_id);
                     }
                 }
@@ -1590,6 +1609,7 @@ where
                                 label: Some(method_name),
                                 attrs_json,
                             });
+                            touch_connection_node(&request_node_id, &diag.name);
                             peeps::registry::remove_node(&request_node_id);
                         }
                         diag.complete_request(conn_id.raw(), request_id);
@@ -1730,7 +1750,7 @@ where
                 let mut attrs = std::collections::BTreeMap::new();
                 attrs.insert("request.id".to_string(), request_id.to_string());
                 attrs.insert("request.method".to_string(), method_name.clone());
-                attrs.insert("rpc.connection".to_string(), connection_name);
+                attrs.insert("rpc.connection".to_string(), connection_name.clone());
                 attrs.insert("response.state".to_string(), "handling".to_string());
                 attrs.insert(
                     "response.started_at_ns".to_string(),
@@ -1743,6 +1763,7 @@ where
                     label: Some(method_name),
                     attrs_json,
                 });
+                touch_connection_node(&response_node_id, &connection_name);
                 peeps::registry::edge(&request_node_id, &response_node_id);
                 Some(response_node_id)
             } else {
@@ -1862,11 +1883,12 @@ where
                                 let attrs_json = facet_json::to_string(&attrs)
                                     .unwrap_or_else(|_| "{}".to_string());
                                 peeps::registry::register_node(peeps_types::Node {
-                                    id: response_node_id,
+                                    id: response_node_id.clone(),
                                     kind: peeps_types::NodeKind::Response,
                                     label: Some(format!("{method_name} (cancelled)")),
                                     attrs_json,
                                 });
+                                touch_connection_node(&response_node_id, &diag.name);
                             }
                         }
                     }
