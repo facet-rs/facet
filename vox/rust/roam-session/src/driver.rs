@@ -1677,6 +1677,7 @@ where
             .set_current_request_id(Some(request_id));
         let handler_fut = dispatcher.dispatch(cx, payload, &mut conn.server_channel_registry);
         conn.server_channel_registry.set_current_request_id(None);
+        let diag_for_handler = self.diagnostic_state.clone();
 
         // r[impl call.cancel.best-effort] - Store abort handle for cancellation support
         let abort_handle = spawn_with_abort("roam_request_handler", async move {
@@ -1687,7 +1688,7 @@ where
             if let Some(response_node_id) = response_node_id {
                 let fut = async move {
                     handler_fut.await;
-                    if let Some(ref diag) = self.diagnostic_state {
+                    if let Some(ref diag) = diag_for_handler {
                         diag.mark_request_handled(conn_id.raw(), request_id);
                     }
                 };
