@@ -245,8 +245,8 @@ impl Caller for ConnectionHandle {
         ConnectionHandle::bind_response_channels(self, response, plan, channels)
     }
 
-    #[allow(unsafe_code)]
     #[cfg(not(target_arch = "wasm32"))]
+    #[allow(unsafe_code)]
     fn call_with_metadata_by_plan(
         &self,
         method_id: u64,
@@ -255,7 +255,6 @@ impl Caller for ConnectionHandle {
         args_plan: &'static Arc<RpcPlan>,
         metadata: roam_wire::Metadata,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send {
-        // SAFETY: Caller guarantees args_ptr is valid, initialized, and Send
         unsafe {
             ConnectionHandle::call_with_metadata_by_plan(
                 self,
@@ -268,8 +267,8 @@ impl Caller for ConnectionHandle {
         }
     }
 
-    #[allow(unsafe_code)]
     #[cfg(target_arch = "wasm32")]
+    #[allow(unsafe_code)]
     fn call_with_metadata_by_plan(
         &self,
         method_id: u64,
@@ -278,7 +277,6 @@ impl Caller for ConnectionHandle {
         args_plan: &'static Arc<RpcPlan>,
         metadata: roam_wire::Metadata,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> {
-        // SAFETY: Caller guarantees args_ptr is valid, initialized, and Send
         unsafe {
             ConnectionHandle::call_with_metadata_by_plan(
                 self,

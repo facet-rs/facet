@@ -392,6 +392,9 @@ impl ConnectionHandle {
     /// Make an RPC call with custom metadata.
     ///
     /// The `args_plan` should be created once per type as a static in non-generic code.
+    #[deprecated(
+        note = "Use call_with_metadata_by_plan; all call sites should pass an explicit plan."
+    )]
     pub async fn call_with_metadata<T: Facet<'static>>(
         &self,
         method_id: u64,
@@ -400,255 +403,11 @@ impl ConnectionHandle {
         args_plan: &crate::RpcPlan,
         metadata: roam_wire::Metadata,
     ) -> Result<ResponseData, TransportError> {
-        // Walk args and bind any channels (allocates channel IDs)
-        // This collects receivers that need to be drained but does NOT spawn
-        let mut drains = Vec::new();
-        trace!("ConnectionHandle::call: binding channels");
-        {
-            let args_ptr = args as *mut T as *mut ();
-            for loc in &args_plan.channel_locations {
-                #[allow(unsafe_code)]
-                let poke = unsafe {
-                    facet::Poke::from_raw_parts(
-                        PtrMut::new(args_ptr.cast::<u8>()),
-                        args_plan.type_plan.root().shape,
-                    )
-                };
-                match poke.at_path_mut(&loc.path) {
-                    Ok(channel_poke) => match loc.kind {
-                        crate::ChannelKind::Rx => {
-                            self.bind_rx_channel(channel_poke, &mut drains);
-                        }
-                        crate::ChannelKind::Tx => {
-                            self.bind_tx_channel(channel_poke);
-                        }
-                    },
-                    Err(facet_path::PathAccessError::OptionIsNone { .. }) => {}
-                    Err(_e) => {
-                        warn!("call_with_metadata: unexpected path error: {_e}");
-                    }
-                }
-            }
-        }
-
-        // Collect channel IDs for the Request message
-        let channels = collect_channel_ids(args, args_plan);
-        trace!(
-            channels = ?channels,
-            drain_count = drains.len(),
-            "ConnectionHandle::call: collected channels after bind_channels"
-        );
-
-        let payload = facet_postcard::to_vec(args).map_err(TransportError::Encode)?;
-
-        // Generate args debug info for diagnostics when enabled
-        let args_debug = if cfg!(feature = "diagnostics") {
-            Some(
-                facet_pretty::PrettyPrinter::new()
-                    .with_colors(facet_pretty::ColorMode::Never)
-                    .with_max_content_len(64)
-                    .format(args),
-            )
-        } else {
-            None
-        };
-
-        if drains.is_empty() {
-            // No Rx streams - simple call
-            self.call_raw_with_channels_and_metadata(
-                method_id,
-                method_name,
-                channels,
-                payload,
-                args_debug,
-                metadata,
-            )
-            .await
-        } else {
-            #[cfg(not(target_arch = "wasm32"))]
-            let _request_permit = self.acquire_request_slot().await?;
-            #[cfg(target_arch = "wasm32")]
-            self.acquire_request_slot().await?;
-
-            // Has Rx streams - spawn tasks to drain them
-            // IMPORTANT: We must send Request BEFORE spawning drain tasks to ensure ordering.
-            // We need to actually send the DriverMessage::Call to the driver's queue
-            // before spawning drains, not just create the future.
-            let request_id = self.shared.request_ids.next();
-            let (response_tx, response_rx) = oneshot("call_with_rx_streams");
-            let (metadata, task_id, task_name) =
-                self.merged_outgoing_metadata(metadata, request_id);
-
-            #[cfg(feature = "diagnostics")]
-            let args_debug_str = args_debug.as_deref().unwrap_or("");
-
-            // Track outgoing request for diagnostics
-            if let Some(diag) = &self.shared.diagnostic_state {
-                let args = args_debug.map(|s| {
-                    let mut map = std::collections::HashMap::new();
-                    map.insert("args".to_string(), s);
-                    map
-                });
-                diag.record_outgoing_request(
-                    request_id,
-                    method_id,
-                    Some(&metadata),
-                    task_id,
-                    task_name,
-                    args,
-                );
-                // Associate channels with this request
-                diag.associate_channels_with_request(&channels, request_id);
-            }
-
-            // Register request node in peeps registry
-            #[cfg(feature = "diagnostics")]
-            let request_node_id = {
-                let span_id =
-                    Self::metadata_string(&metadata, crate::PEEPS_SPAN_ID_METADATA_KEY).unwrap();
-                let request_node_id = peeps_types::canonical_id::request_from_span_id(&span_id);
-                let response_node_id = format!("response:{span_id}");
-                let method_name = method_name.to_string();
-                let connection_name = self
-                    .shared
-                    .diagnostic_state
-                    .as_ref()
-                    .map(|d| d.name.clone())
-                    .unwrap_or_default();
-                let args_json_escaped = args_debug_str.replace('\\', "\\\\").replace('"', "\\\"");
-                let attrs_json = format!(
-                    "{{\"request.id\":\"{request_id}\",\"request.method\":\"{method_name}\",\"rpc.connection\":\"{connection_name}\",\"request.args\":\"{args_json_escaped}\"}}"
-                );
-                peeps::registry::register_node(peeps_types::Node {
-                    id: request_node_id.clone(),
-                    kind: peeps_types::NodeKind::Request,
-                    label: Some(method_name),
-                    attrs_json,
-                });
-                peeps::stack::with_top(|src| peeps::registry::edge(src, &request_node_id));
-                peeps::registry::edge(&request_node_id, &response_node_id);
-                request_node_id
-            };
-
-            let msg = DriverMessage::Call {
-                conn_id: self.shared.conn_id,
-                request_id,
-                method_id,
-                metadata,
-                channels,
-                payload,
-                response_tx,
-            };
-
-            // Send the Call message NOW, before spawning drain tasks
-            if self
-                .shared
-                .driver_tx
-                .send(msg)
-                .peepable("call_with_metadata.send_call")
+        let args_ptr = args as *mut T as *mut ();
+        #[allow(unsafe_code)]
+        unsafe {
+            self.call_with_metadata_by_plan(method_id, method_name, args_ptr, args_plan, metadata)
                 .await
-                .is_err()
-            {
-                return Err(TransportError::DriverGone);
-            }
-
-            let task_tx = self.shared.channel_registry.lock().driver_tx();
-            let conn_id = self.shared.conn_id;
-
-            // Spawn a task for each drain to forward data to driver
-            for (channel_id, mut rx) in drains {
-                let task_tx = task_tx.clone();
-                crate::runtime::spawn("roam_tx_drain", async move {
-                    use peeps::PeepableFutureExt;
-                    loop {
-                        match rx.recv().peepable("drain.recv").await {
-                            Some(IncomingChannelMessage::Data(payload)) => {
-                                debug!(
-                                    "drain task: received {} bytes on channel {}",
-                                    payload.len(),
-                                    channel_id
-                                );
-                                // Send data to driver
-                                if task_tx
-                                    .send(DriverMessage::Data {
-                                        conn_id,
-                                        channel_id,
-                                        payload,
-                                    })
-                                    .peepable("drain.forward_data")
-                                    .await
-                                    .is_err()
-                                {
-                                    warn!(
-                                        conn_id = conn_id.raw(),
-                                        channel_id, "drain task failed to send DriverMessage::Data"
-                                    );
-                                    break;
-                                }
-                                debug!(
-                                    "drain task: sent DriverMessage::Data for channel {}",
-                                    channel_id
-                                );
-                            }
-                            Some(IncomingChannelMessage::Close) | None => {
-                                debug!("drain task: channel {} closed", channel_id);
-                                // Channel closed, send Close and exit
-                                if task_tx
-                                    .send(DriverMessage::Close {
-                                        conn_id,
-                                        channel_id,
-                                    })
-                                    .peepable("drain.forward_close")
-                                    .await
-                                    .is_err()
-                                {
-                                    warn!(
-                                        conn_id = conn_id.raw(),
-                                        channel_id,
-                                        "drain task failed to send DriverMessage::Close"
-                                    );
-                                }
-                                debug!(
-                                    "drain task: sent DriverMessage::Close for channel {}",
-                                    channel_id
-                                );
-                                break;
-                            }
-                        }
-                    }
-                });
-            }
-
-            let call_fut = async {
-                response_rx
-                    .recv()
-                    .peepable("call_with_metadata.recv_response")
-                    .await
-                    .map_err(|_| TransportError::DriverGone)?
-                    .map_err(|_| TransportError::ConnectionClosed)
-            };
-
-            #[cfg(feature = "diagnostics")]
-            let result = {
-                let call_fut = peeps::stack::scope(&request_node_id, call_fut);
-                if peeps::stack::is_active() {
-                    call_fut.await
-                } else {
-                    peeps::stack::with_stack(call_fut).await
-                }
-            };
-
-            #[cfg(not(feature = "diagnostics"))]
-            let result = call_fut.await;
-
-            // Mark request as complete
-            if let Some(diag) = &self.shared.diagnostic_state {
-                diag.complete_request(request_id);
-            }
-            #[cfg(feature = "diagnostics")]
-            peeps::registry::remove_node(&request_node_id);
-
-            result
         }
     }
 
@@ -764,13 +523,13 @@ impl ConnectionHandle {
                     self.merged_outgoing_metadata(metadata, request_id);
 
                 #[cfg(feature = "diagnostics")]
-                let args_debug_str = args_debug.as_deref().unwrap_or("");
+                let args_debug_str = args_debug.as_deref().unwrap_or("").to_string();
 
                 // Track outgoing request for diagnostics
                 if let Some(diag) = &self.shared.diagnostic_state {
-                    let args = args_debug.map(|s| {
+                    let args = args_debug.as_ref().map(|s| {
                         let mut map = std::collections::HashMap::new();
-                        map.insert("args".to_string(), s);
+                        map.insert("args".to_string(), s.clone());
                         map
                     });
                     diag.record_outgoing_request(
@@ -1116,13 +875,13 @@ impl ConnectionHandle {
         let (response_tx, response_rx) = oneshot("call_raw_with_channels");
 
         #[cfg(feature = "diagnostics")]
-        let args_debug_str = args_debug.as_deref().unwrap_or("");
+        let args_debug_str = args_debug.as_deref().unwrap_or("").to_string();
 
         // Track outgoing request for diagnostics
         if let Some(diag) = &self.shared.diagnostic_state {
-            let args = args_debug.map(|s| {
+            let args = args_debug.as_ref().map(|s| {
                 let mut map = std::collections::HashMap::new();
-                map.insert("args".to_string(), s);
+                map.insert("args".to_string(), s.clone());
                 map
             });
             diag.record_outgoing_request(
