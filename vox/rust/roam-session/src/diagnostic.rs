@@ -3,10 +3,10 @@
 //! Tracks in-flight RPC requests, open channels, and recent completed operations
 //! to help debug hung connections.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fmt::Write as _;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, LazyLock, Mutex, Weak};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock, Weak};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 /// A callback that appends diagnostic info to a string.
@@ -250,6 +250,14 @@ pub struct DiagnosticState {
 
     /// Connection identity used for peeps node/edge attributes.
     pub(crate) connection_identity: Mutex<ConnectionIdentity>,
+    /// Stable per-connection context id used for request/response context edges.
+    pub(crate) connection_context_id: OnceLock<String>,
+    /// Monotonic revision for mutable connection-context metadata.
+    pub(crate) connection_context_revision: AtomicU64,
+    /// Last revision published to diagnostics metadata sinks.
+    pub(crate) connection_context_published_revision: AtomicU64,
+    /// Latest mutable connection-context metadata snapshot.
+    pub(crate) connection_context_metadata: Mutex<BTreeMap<String, String>>,
 
     /// Unix timestamp when this connection closed (0 = still open).
     pub(crate) connection_closed_at_ns: AtomicU64,
@@ -291,7 +299,6 @@ pub struct ChannelCreditInfo {
 pub struct ConnectionIdentity {
     pub src: String,
     pub dst: String,
-    pub link: String,
     pub transport: String,
     pub opened_at_ns: u64,
 }
@@ -355,10 +362,13 @@ impl DiagnosticState {
             connection_identity: Mutex::new(ConnectionIdentity {
                 src: name.clone(),
                 dst: "unknown".to_string(),
-                link: format!("{name}<->unknown"),
                 transport: "unknown".to_string(),
                 opened_at_ns: now_ns,
             }),
+            connection_context_id: OnceLock::new(),
+            connection_context_revision: AtomicU64::new(1),
+            connection_context_published_revision: AtomicU64::new(0),
+            connection_context_metadata: Mutex::new(BTreeMap::new()),
             connection_closed_at_ns: AtomicU64::new(0),
             last_driver_arm: Mutex::new("startup".to_string()),
             last_driver_arm_at_ns: AtomicU64::new(now_ns),
@@ -390,23 +400,23 @@ impl DiagnosticState {
         &self,
         src: impl Into<String>,
         dst: impl Into<String>,
-        link: impl Into<String>,
         transport: impl Into<String>,
         opened_at_ns: u64,
     ) {
         if let Ok(mut identity) = self.connection_identity.lock() {
             identity.src = src.into();
             identity.dst = dst.into();
-            identity.link = link.into();
             identity.transport = transport.into();
             identity.opened_at_ns = opened_at_ns;
         }
+        self.mark_connection_context_dirty();
     }
 
     /// Mark connection closure time.
     pub fn mark_connection_closed(&self, closed_at_ns: u64) {
         self.connection_closed_at_ns
             .store(closed_at_ns, Ordering::Relaxed);
+        self.mark_connection_context_dirty();
     }
 
     /// Snapshot the current directional connection identity.
@@ -417,7 +427,6 @@ impl DiagnosticState {
             .unwrap_or_else(|_| ConnectionIdentity {
                 src: self.name.clone(),
                 dst: "unknown".to_string(),
-                link: format!("{}<->unknown", self.name),
                 transport: "unknown".to_string(),
                 opened_at_ns: unix_now_ns(),
             })
@@ -426,7 +435,159 @@ impl DiagnosticState {
     /// Directional `rpc.connection` token.
     pub fn rpc_connection_token(&self) -> String {
         let id = self.connection_identity();
-        format!("{}->{}:{}", id.src, id.dst, id.link)
+        format!(
+            "{}->{}:{}:{}",
+            id.src, id.dst, id.transport, id.opened_at_ns
+        )
+    }
+
+    /// Stable per-connection context id for context-edge wiring.
+    pub fn ensure_connection_context_id(&self) -> String {
+        self.connection_context_id
+            .get_or_init(|| format!("connection-context:{}", self.rpc_connection_token()))
+            .clone()
+    }
+
+    /// Monotonic revision increment for mutable connection metadata.
+    pub fn mark_connection_context_dirty(&self) {
+        self.connection_context_revision
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Apply stable connection context attrs (scope identity, not mutable counters).
+    pub fn apply_connection_context_attrs(&self, attrs: &mut BTreeMap<String, String>) {
+        let identity = self.connection_identity();
+        attrs.insert("rpc.connection".to_string(), self.rpc_connection_token());
+        attrs.insert(
+            "connection.context_id".to_string(),
+            self.ensure_connection_context_id(),
+        );
+        attrs.insert("connection.src".to_string(), identity.src);
+        attrs.insert("connection.dst".to_string(), identity.dst);
+        attrs.insert("connection.transport".to_string(), identity.transport);
+    }
+
+    fn build_connection_context_mutable_attrs(&self) -> BTreeMap<String, String> {
+        let mut attrs = BTreeMap::new();
+        attrs.insert(
+            "connection.state".to_string(),
+            self.connection_state().to_string(),
+        );
+        attrs.insert(
+            "connection.opened_at_ns".to_string(),
+            self.connection_identity().opened_at_ns.to_string(),
+        );
+        if let Some(closed_at_ns) = self.connection_closed_at_ns() {
+            attrs.insert(
+                "connection.closed_at_ns".to_string(),
+                closed_at_ns.to_string(),
+            );
+        }
+        if let Some(last_sent_at_ns) = self.last_frame_sent_at_ns() {
+            attrs.insert(
+                "connection.last_frame_sent_at_ns".to_string(),
+                last_sent_at_ns.to_string(),
+            );
+        }
+        if let Some(last_recv_at_ns) = self.last_frame_received_at_ns() {
+            attrs.insert(
+                "connection.last_frame_recv_at_ns".to_string(),
+                last_recv_at_ns.to_string(),
+            );
+        }
+        attrs.insert(
+            "connection.pending_requests".to_string(),
+            self.pending_requests().to_string(),
+        );
+        attrs.insert(
+            "connection.pending_requests_outgoing".to_string(),
+            self.pending_requests_outgoing().to_string(),
+        );
+        attrs.insert(
+            "connection.pending_responses".to_string(),
+            self.pending_responses().to_string(),
+        );
+        attrs.insert(
+            "connection.driver.last_arm".to_string(),
+            self.last_driver_arm(),
+        );
+        attrs.insert(
+            "connection.driver.last_arm_at_ns".to_string(),
+            self.last_driver_arm_at_ns().to_string(),
+        );
+        attrs.insert(
+            "connection.driver.driver_rx_hits".to_string(),
+            self.driver_arm_driver_rx_hits().to_string(),
+        );
+        attrs.insert(
+            "connection.driver.io_recv_hits".to_string(),
+            self.driver_arm_io_recv_hits().to_string(),
+        );
+        attrs.insert(
+            "connection.driver.incoming_response_hits".to_string(),
+            self.driver_arm_incoming_response_hits().to_string(),
+        );
+        attrs.insert(
+            "connection.driver.sweep_hits".to_string(),
+            self.driver_arm_sweep_hits().to_string(),
+        );
+        attrs.insert(
+            "connection.pending_map.inserts".to_string(),
+            self.pending_map_inserts().to_string(),
+        );
+        attrs.insert(
+            "connection.pending_map.removes".to_string(),
+            self.pending_map_removes().to_string(),
+        );
+        attrs.insert(
+            "connection.pending_map.failures".to_string(),
+            self.pending_map_failures().to_string(),
+        );
+        attrs.insert(
+            "connection.pending_map.last_event".to_string(),
+            self.pending_map_last_event(),
+        );
+        attrs.insert(
+            "connection.pending_map.last_conn_id".to_string(),
+            self.pending_map_last_conn_id().to_string(),
+        );
+        attrs.insert(
+            "connection.pending_map.last_request_id".to_string(),
+            self.pending_map_last_request_id().to_string(),
+        );
+        attrs.insert(
+            "connection.pending_map.last_len_before".to_string(),
+            self.pending_map_last_len_before().to_string(),
+        );
+        attrs.insert(
+            "connection.pending_map.last_len_after".to_string(),
+            self.pending_map_last_len_after().to_string(),
+        );
+        attrs.insert(
+            "connection.pending_map.last_at_ns".to_string(),
+            self.pending_map_last_at_ns().to_string(),
+        );
+        attrs
+    }
+
+    /// Returns refreshed connection-context metadata only when dirty.
+    pub fn take_connection_context_refresh_if_dirty(&self) -> Option<String> {
+        let revision = self.connection_context_revision.load(Ordering::Relaxed);
+        let published = self
+            .connection_context_published_revision
+            .load(Ordering::Relaxed);
+        if revision == published {
+            return None;
+        }
+
+        let context_id = self.ensure_connection_context_id();
+        let attrs = self.build_connection_context_mutable_attrs();
+        if let Ok(mut metadata) = self.connection_context_metadata.lock() {
+            *metadata = attrs;
+        }
+        self.connection_context_published_revision
+            .store(revision, Ordering::Relaxed);
+        Some(context_id)
     }
 
     /// Whether this connection is currently open.
@@ -449,6 +610,7 @@ impl DiagnosticState {
         self.max_concurrent_requests
             .store(max_concurrent_requests, Ordering::Relaxed);
         self.initial_credit.store(initial_credit, Ordering::Relaxed);
+        self.mark_connection_context_dirty();
     }
 
     /// Record an outgoing request (we're calling remote).
@@ -487,6 +649,7 @@ impl DiagnosticState {
                 },
             );
         }
+        self.mark_connection_context_dirty();
     }
 
     /// Record an incoming request (remote is calling us).
@@ -527,6 +690,7 @@ impl DiagnosticState {
                 },
             );
         }
+        self.mark_connection_context_dirty();
     }
 
     /// Mark a request as completed and record it in the recent completions ring buffer.
@@ -552,6 +716,7 @@ impl DiagnosticState {
                 });
             }
         }
+        self.mark_connection_context_dirty();
     }
 
     /// Mark an in-flight request as handled by the server-side handler.
@@ -683,6 +848,7 @@ impl DiagnosticState {
             .fetch_add(payload_bytes as u64, Ordering::Relaxed);
         let ms = self.created_at.elapsed().as_millis() as u64;
         self.last_frame_sent_ms.store(ms, Ordering::Relaxed);
+        self.mark_connection_context_dirty();
     }
 
     /// Record a frame being received (call after successful transport recv).
@@ -692,6 +858,7 @@ impl DiagnosticState {
             .fetch_add(payload_bytes as u64, Ordering::Relaxed);
         let ms = self.created_at.elapsed().as_millis() as u64;
         self.last_frame_received_ms.store(ms, Ordering::Relaxed);
+        self.mark_connection_context_dirty();
     }
 
     /// Update the per-channel credit snapshot.
@@ -725,6 +892,7 @@ impl DiagnosticState {
             }
             _ => {}
         }
+        self.mark_connection_context_dirty();
     }
 
     pub fn last_driver_arm(&self) -> String {
@@ -789,6 +957,7 @@ impl DiagnosticState {
             .store(len_after as u64, Ordering::Relaxed);
         self.pending_map_last_at_ns
             .store(unix_now_ns(), Ordering::Relaxed);
+        self.mark_connection_context_dirty();
     }
 
     pub fn pending_map_inserts(&self) -> u64 {
