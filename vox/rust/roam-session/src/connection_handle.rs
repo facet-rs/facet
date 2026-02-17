@@ -181,15 +181,6 @@ impl ConnectionHandle {
             roam_wire::metadata_flags::NONE,
         );
         if let Some(parent_span) = parent_span {
-            // Emit immediate parent→child request edge for request tree reconstruction.
-            // Important: do this even when parent_span_id is already present in inherited
-            // metadata, because inherited parent_span_id may point to an older ancestor.
-            #[cfg(feature = "diagnostics")]
-            {
-                let parent_node_id = peeps_types::canonical_id::request_from_span_id(&parent_span);
-                let child_node_id = peeps_types::canonical_id::request_from_span_id(&span_id);
-                peeps::registry::edge(&parent_node_id, &child_node_id);
-            }
             Self::upsert_metadata_entry(
                 &mut metadata,
                 crate::PEEPS_PARENT_SPAN_ID_METADATA_KEY,
@@ -679,12 +670,38 @@ impl ConnectionHandle {
         self.acquire_request_slot().await?;
 
         let request_id = self.shared.request_ids.next();
+        #[cfg(feature = "diagnostics")]
+        let (mut metadata, task_id, task_name) =
+            self.merged_outgoing_metadata(metadata, request_id, method_name);
+        #[cfg(not(feature = "diagnostics"))]
         let (metadata, task_id, task_name) =
             self.merged_outgoing_metadata(metadata, request_id, method_name);
         let (response_tx, response_rx) = oneshot("call_raw_with_channels");
+        #[cfg(feature = "diagnostics")]
+        let parent_request_entity_id =
+            Self::metadata_string(&metadata, crate::PEEPS_REQUEST_ENTITY_ID_METADATA_KEY);
 
         #[cfg(feature = "diagnostics")]
         let args_debug_str = args_debug.as_deref().unwrap_or("").to_string();
+
+        #[cfg(feature = "diagnostics")]
+        let request_handle =
+            self.shared.diagnostic_state.as_deref().map(|diag| {
+                diag.emit_request_node(method_name.to_string(), args_debug_str.clone())
+            });
+
+        #[cfg(feature = "diagnostics")]
+        if let Some(request_wire_id) = request_handle.as_ref().and_then(|h| h.id_for_wire()) {
+            if let Some(parent_request_entity_id) = parent_request_entity_id.as_deref() {
+                peeps::registry::edge(parent_request_entity_id, &request_wire_id);
+            }
+            Self::upsert_metadata_entry(
+                &mut metadata,
+                crate::PEEPS_REQUEST_ENTITY_ID_METADATA_KEY,
+                roam_wire::MetadataValue::String(request_wire_id),
+                roam_wire::metadata_flags::NONE,
+            );
+        }
 
         // Track outgoing request for diagnostics
         if let Some(diag) = &self.shared.diagnostic_state {
@@ -706,37 +723,16 @@ impl ConnectionHandle {
             diag.associate_channels_with_request(&channels, request_id);
         }
 
-        // Register request node in peeps registry
         #[cfg(feature = "diagnostics")]
-        let request_node_id = {
-            let span_id =
-                Self::metadata_string(&metadata, crate::PEEPS_SPAN_ID_METADATA_KEY).unwrap();
-            let request_node_id = peeps_types::canonical_id::request_from_span_id(&span_id);
-            let response_node_id = format!("response:{span_id}");
-            let method_name = method_name.to_string();
-            let mut attrs = std::collections::BTreeMap::new();
-            attrs.insert("correlation".to_string(), request_id.to_string());
-            attrs.insert("method".to_string(), method_name.clone());
-            attrs.insert("args_preview".to_string(), args_debug_str.clone());
-            attrs.insert("status".to_string(), "queued".to_string());
-            attrs.insert(
-                "queued_at_ns".to_string(),
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map(|d| d.as_nanos().min(u64::MAX as u128) as u64)
-                    .unwrap_or(0)
-                    .to_string(),
-            );
-            if let Some(diag) = self.shared.diagnostic_state.as_deref() {
-                diag.emit_request_node(request_node_id.clone(), method_name, attrs);
-            }
+        let request_entity_id = {
+            let request_entity_id = request_handle.as_ref().and_then(|h| h.id_for_wire());
             // If we're called from within a peepable poll stack, link the caller future
             // to this request (caller --needs--> request). This is the "parent" edge
             // users expect for outgoing RPC requests.
-            peeps::stack::with_top(|src| peeps::registry::edge(src, &request_node_id));
-            // Structural gateway edge: request --needs--> response
-            peeps::registry::edge(&request_node_id, &response_node_id);
-            request_node_id
+            if let Some(request_entity_id) = request_entity_id.as_deref() {
+                peeps::stack::with_top(|src| peeps::registry::edge(src, request_entity_id));
+            }
+            request_entity_id
         };
         #[cfg(feature = "diagnostics")]
         let driver_queue_node_id = self.shared.driver_tx.endpoint_id().to_string();
@@ -758,7 +754,9 @@ impl ConnectionHandle {
                 .await
                 .map_err(|_| TransportError::DriverGone)?;
             #[cfg(feature = "diagnostics")]
-            peeps::registry::edge(&request_node_id, &driver_queue_node_id);
+            if let Some(request_entity_id) = request_entity_id.as_deref() {
+                peeps::registry::edge(request_entity_id, &driver_queue_node_id);
+            }
 
             let conn_id = self.shared.conn_id;
             if !drains.is_empty() {
@@ -834,9 +832,11 @@ impl ConnectionHandle {
         // This makes `stack::with_top` non-empty for nested peepable futures and
         // lets wrappers emit edges against the request node when appropriate.
         #[cfg(feature = "diagnostics")]
-        let result = {
-            let call_fut = peeps::stack::scope(&request_node_id, call_fut);
+        let result = if let Some(request_entity_id) = request_entity_id.as_deref() {
+            let call_fut = peeps::stack::scope(request_entity_id, call_fut);
             peeps::stack::ensure(call_fut).await
+        } else {
+            call_fut.await
         };
 
         #[cfg(not(feature = "diagnostics"))]

@@ -2,45 +2,85 @@ use std::collections::BTreeMap;
 
 use crate::diagnostic::DiagnosticState;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResponseOutcome {
+    Ok,
+    Error,
+    Cancelled,
+}
+
+#[derive(Clone, Default)]
+pub struct TypedRequestHandle {
+    #[cfg(feature = "diagnostics")]
+    inner: Option<peeps::RpcRequestHandle>,
+}
+
+impl TypedRequestHandle {
+    #[cfg(feature = "diagnostics")]
+    fn from_inner(inner: peeps::RpcRequestHandle) -> Self {
+        Self { inner: Some(inner) }
+    }
+
+    pub fn id_for_wire(&self) -> Option<String> {
+        #[cfg(feature = "diagnostics")]
+        {
+            return self.inner.as_ref().map(|h| h.id_for_wire().to_string());
+        }
+        #[cfg(not(feature = "diagnostics"))]
+        {
+            None
+        }
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct TypedResponseHandle {
+    #[cfg(feature = "diagnostics")]
+    inner: Option<peeps::RpcResponseHandle>,
+}
+
+impl TypedResponseHandle {
+    #[cfg(feature = "diagnostics")]
+    fn from_inner(inner: peeps::RpcResponseHandle) -> Self {
+        Self { inner: Some(inner) }
+    }
+
+    pub fn entity_id_for_wire(&self) -> Option<String> {
+        #[cfg(feature = "diagnostics")]
+        {
+            return self.inner.as_ref().map(|h| h.id().as_str().to_string());
+        }
+        #[cfg(not(feature = "diagnostics"))]
+        {
+            None
+        }
+    }
+
+    pub fn mark(&self, outcome: ResponseOutcome) {
+        #[cfg(not(feature = "diagnostics"))]
+        let _ = outcome;
+        #[cfg(feature = "diagnostics")]
+        if let Some(handle) = &self.inner {
+            match outcome {
+                ResponseOutcome::Ok => handle.mark_ok(),
+                ResponseOutcome::Error => handle.mark_error(),
+                ResponseOutcome::Cancelled => handle.mark_cancelled(),
+            }
+        }
+    }
+}
+
 pub trait RequestResponseSpy {
     fn apply_context_attrs(&self, attrs: &mut BTreeMap<String, String>);
     fn ensure_connection_context(&self) -> Option<String>;
     fn refresh_connection_context_if_dirty(&self);
     fn touch_connection_context(&self, entity_id: &str);
-    fn emit_request_node(
-        &self,
-        request_node_id: String,
-        method_name: String,
-        attrs: BTreeMap<String, String>,
-    );
+    fn emit_request_node(&self, method_name: String, args_preview: String) -> TypedRequestHandle;
     fn emit_response_node(
         &self,
-        response_node_id: String,
         method_name: String,
-        attrs: BTreeMap<String, String>,
-    );
-}
-
-#[cfg(feature = "diagnostics")]
-#[inline]
-fn register_request_or_response_node(
-    diag: &DiagnosticState,
-    node_id: String,
-    node_kind: peeps_types::NodeKind,
-    method_name: String,
-    mut attrs: BTreeMap<String, String>,
-) {
-    let _ = diag.ensure_connection_context();
-    diag.refresh_connection_context_if_dirty();
-    diag.apply_context_attrs(&mut attrs);
-    let attrs_json = facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
-    peeps::registry::register_node(peeps_types::Node {
-        id: node_id.clone(),
-        kind: node_kind,
-        label: Some(method_name),
-        attrs_json,
-    });
-    diag.touch_connection_context(&node_id);
+        request_wire_id: Option<&str>,
+    ) -> TypedResponseHandle;
 }
 
 #[cfg(feature = "diagnostics")]
@@ -72,35 +112,30 @@ impl RequestResponseSpy for DiagnosticState {
     }
 
     #[inline]
-    fn emit_request_node(
-        &self,
-        request_node_id: String,
-        method_name: String,
-        attrs: BTreeMap<String, String>,
-    ) {
-        register_request_or_response_node(
-            self,
-            request_node_id,
-            peeps_types::NodeKind::Request,
-            method_name,
-            attrs,
-        );
+    fn emit_request_node(&self, method_name: String, args_preview: String) -> TypedRequestHandle {
+        let _ = self.ensure_connection_context();
+        self.refresh_connection_context_if_dirty();
+        let request = peeps::rpc_request(method_name, args_preview);
+        self.touch_connection_context(request.id().as_str());
+        TypedRequestHandle::from_inner(request)
     }
 
     #[inline]
     fn emit_response_node(
         &self,
-        response_node_id: String,
         method_name: String,
-        attrs: BTreeMap<String, String>,
-    ) {
-        register_request_or_response_node(
-            self,
-            response_node_id,
-            peeps_types::NodeKind::Response,
-            method_name,
-            attrs,
-        );
+        request_wire_id: Option<&str>,
+    ) -> TypedResponseHandle {
+        let _ = self.ensure_connection_context();
+        self.refresh_connection_context_if_dirty();
+        let response = if let Some(request_wire_id) = request_wire_id {
+            let request_ref = peeps::entity_ref_from_wire(request_wire_id.to_owned());
+            peeps::rpc_response_for(method_name, &request_ref)
+        } else {
+            peeps::rpc_response(method_name)
+        };
+        self.touch_connection_context(response.id().as_str());
+        TypedResponseHandle::from_inner(response)
     }
 }
 
@@ -121,20 +156,16 @@ impl RequestResponseSpy for DiagnosticState {
     fn touch_connection_context(&self, _entity_id: &str) {}
 
     #[inline]
-    fn emit_request_node(
-        &self,
-        _request_node_id: String,
-        _method_name: String,
-        _attrs: BTreeMap<String, String>,
-    ) {
+    fn emit_request_node(&self, _method_name: String, _args_preview: String) -> TypedRequestHandle {
+        TypedRequestHandle::default()
     }
 
     #[inline]
     fn emit_response_node(
         &self,
-        _response_node_id: String,
         _method_name: String,
-        _attrs: BTreeMap<String, String>,
-    ) {
+        _request_wire_id: Option<&str>,
+    ) -> TypedResponseHandle {
+        TypedResponseHandle::default()
     }
 }

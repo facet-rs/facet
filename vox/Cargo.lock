@@ -2027,6 +2027,7 @@ dependencies = [
  "compact_str",
  "facet-json",
  "facet-value",
+ "parking_lot",
  "peeps-sqlite-facet",
  "peeps-types",
  "peeps-wire",

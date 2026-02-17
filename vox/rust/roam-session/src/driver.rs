@@ -39,7 +39,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use facet::Facet;
 
 #[cfg(feature = "diagnostics")]
-use crate::request_response_spy::RequestResponseSpy;
+use crate::request_response_spy::{RequestResponseSpy, ResponseOutcome, TypedResponseHandle};
 use crate::runtime::{Mutex, Receiver, channel, sleep, spawn, spawn_with_abort};
 use crate::{
     ChannelError, ChannelRegistry, ConnectionHandle, Context, DiagnosticTransport, DriverMessage,
@@ -54,6 +54,17 @@ fn unix_now_ns() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
         .unwrap_or(0)
+}
+
+#[cfg(feature = "diagnostics")]
+#[inline]
+fn response_outcome_from_payload(payload: &[u8]) -> ResponseOutcome {
+    match payload {
+        [0, ..] => ResponseOutcome::Ok,
+        [1, 3, ..] => ResponseOutcome::Cancelled,
+        [1, ..] => ResponseOutcome::Error,
+        _ => ResponseOutcome::Error,
+    }
 }
 
 #[cfg(feature = "diagnostics")]
@@ -830,6 +841,8 @@ struct ConnectionState {
     /// In-flight server requests with their abort handles.
     /// r[impl call.cancel.best-effort] - We track abort handles to allow best-effort cancellation.
     in_flight_server_requests: HashMap<u64, crate::runtime::AbortHandle>,
+    #[cfg(feature = "diagnostics")]
+    in_flight_response_handles: HashMap<u64, TypedResponseHandle>,
 }
 
 struct PendingResponse {
@@ -871,6 +884,8 @@ impl ConnectionState {
             dispatcher,
             pending_responses: HashMap::new(),
             in_flight_server_requests: HashMap::new(),
+            #[cfg(feature = "diagnostics")]
+            in_flight_response_handles: HashMap::new(),
         }
     }
 
@@ -886,6 +901,8 @@ impl ConnectionState {
         for (_, abort_handle) in self.in_flight_server_requests.drain() {
             abort_handle.abort();
         }
+        #[cfg(feature = "diagnostics")]
+        self.in_flight_response_handles.clear();
     }
 }
 
@@ -985,6 +1002,20 @@ fn task_context_from_metadata(metadata: &roam_wire::Metadata) -> (Option<u64>, O
         }
     }
     (task_id, task_name)
+}
+
+#[cfg(feature = "diagnostics")]
+fn metadata_string(metadata: &roam_wire::Metadata, key: &str) -> Option<String> {
+    metadata.iter().find_map(|(entry_key, value, _)| {
+        if entry_key != key {
+            return None;
+        }
+        match value {
+            roam_wire::MetadataValue::String(s) => Some(s.clone()),
+            roam_wire::MetadataValue::U64(n) => Some(n.to_string()),
+            roam_wire::MetadataValue::Bytes(_) => None,
+        }
+    })
 }
 
 // ============================================================================
@@ -1170,11 +1201,9 @@ where
         let dequeued_target_node_id: Option<String> = match &msg {
             DriverMessage::Call { metadata, .. } => metadata
                 .iter()
-                .find(|(k, _, _)| k == crate::PEEPS_SPAN_ID_METADATA_KEY)
+                .find(|(k, _, _)| k == crate::PEEPS_REQUEST_ENTITY_ID_METADATA_KEY)
                 .and_then(|(_, v, _)| match v {
-                    roam_wire::MetadataValue::String(s) => {
-                        Some(peeps_types::canonical_id::request_from_span_id(s))
-                    }
+                    roam_wire::MetadataValue::String(s) => Some(s.clone()),
                     _ => None,
                 }),
             DriverMessage::Response {
@@ -1185,9 +1214,8 @@ where
                 diag.inflight_request_metadata_string(
                     conn_id.raw(),
                     *request_id,
-                    crate::PEEPS_SPAN_ID_METADATA_KEY,
+                    crate::PEEPS_REQUEST_ENTITY_ID_METADATA_KEY,
                 )
-                .map(|span_id| peeps_types::canonical_id::request_from_span_id(&span_id))
             }),
             _ => None,
         };
@@ -1207,18 +1235,16 @@ where
                 response_tx,
             } => {
                 #[cfg(feature = "diagnostics")]
-                let queued_request_node_id = metadata
+                let queued_request_entity_id = metadata
                     .iter()
-                    .find(|(k, _, _)| k == crate::PEEPS_SPAN_ID_METADATA_KEY)
+                    .find(|(k, _, _)| k == crate::PEEPS_REQUEST_ENTITY_ID_METADATA_KEY)
                     .and_then(|(_, v, _)| match v {
-                        roam_wire::MetadataValue::String(s) => {
-                            Some(peeps_types::canonical_id::request_from_span_id(s))
-                        }
+                        roam_wire::MetadataValue::String(s) => Some(s.clone()),
                         _ => None,
                     });
                 #[cfg(feature = "diagnostics")]
-                if let Some(ref request_node_id) = queued_request_node_id {
-                    peeps::registry::remove_edge(request_node_id, self.driver_tx.endpoint_id());
+                if let Some(ref request_entity_id) = queued_request_entity_id {
+                    peeps::registry::remove_edge(request_entity_id, self.driver_tx.endpoint_id());
                 }
 
                 // Store pending response in the connection's state
@@ -1268,45 +1294,14 @@ where
                     payload,
                 };
                 #[cfg(feature = "diagnostics")]
-                if let Some(ref request_node_id) = queued_request_node_id {
-                    let send_fut = peeps::stack::scope(request_node_id, self.io.send(&req));
+                if let Some(ref request_entity_id) = queued_request_entity_id {
+                    let send_fut = peeps::stack::scope(request_entity_id, self.io.send(&req));
                     peeps::stack::ensure(send_fut).await?;
                 } else {
                     self.io.send(&req).await?;
                 }
                 #[cfg(not(feature = "diagnostics"))]
                 self.io.send(&req).await?;
-                #[cfg(feature = "diagnostics")]
-                if let Some(ref diag) = self.diagnostic_state
-                    && let Some(span_id) = diag.inflight_request_metadata_string(
-                        conn_id.raw(),
-                        request_id,
-                        crate::PEEPS_SPAN_ID_METADATA_KEY,
-                    )
-                {
-                    let request_node_id = peeps_types::canonical_id::request_from_span_id(&span_id);
-                    let method_name = diag
-                        .inflight_request_metadata_string(
-                            conn_id.raw(),
-                            request_id,
-                            crate::PEEPS_METHOD_NAME_METADATA_KEY,
-                        )
-                        .or_else(|| {
-                            diag.inflight_request_method_id(conn_id.raw(), request_id)
-                                .and_then(crate::diagnostic::get_method_name)
-                                .map(|s| s.to_string())
-                        })
-                        .unwrap_or_else(|| format!("0x{method_id:x}"));
-                    let mut attrs = std::collections::BTreeMap::new();
-                    let now_ns = unix_now_ns();
-                    attrs.insert("correlation".to_string(), request_id.to_string());
-                    attrs.insert("method".to_string(), method_name.clone());
-                    attrs.insert("status".to_string(), "in_flight".to_string());
-                    attrs.insert("phase_started_ns".to_string(), now_ns.to_string());
-                    attrs.insert("delivered_at_ns".to_string(), now_ns.to_string());
-                    attrs.insert("sent_at_ns".to_string(), now_ns.to_string());
-                    diag.emit_request_node(request_node_id, method_name, attrs);
-                }
             }
             DriverMessage::Data {
                 conn_id,
@@ -1336,10 +1331,16 @@ where
                 channels,
                 payload,
             } => {
+                #[cfg(feature = "diagnostics")]
+                let mut response_handle: Option<TypedResponseHandle> = None;
                 // Check that the request is in-flight for this connection
                 // r[impl call.cancel.best-effort] - If cancelled, abort handle was removed,
                 // so this will return None and we won't send a duplicate response.
                 let should_send = if let Some(conn) = self.connections.get_mut(&conn_id) {
+                    #[cfg(feature = "diagnostics")]
+                    {
+                        response_handle = conn.in_flight_response_handles.remove(&request_id);
+                    }
                     conn.in_flight_server_requests.remove(&request_id).is_some()
                 } else {
                     false
@@ -1365,6 +1366,8 @@ where
                 } else {
                     (payload, channels)
                 };
+                #[cfg(feature = "diagnostics")]
+                let response_outcome = response_outcome_from_payload(&payload);
                 let wire_msg = Message::Response {
                     conn_id,
                     request_id,
@@ -1376,14 +1379,7 @@ where
 
                 // Update response node lifecycle after the response frame has been sent.
                 #[cfg(feature = "diagnostics")]
-                if let Some(ref diag) = self.diagnostic_state
-                    && let Some(span_id) = diag.inflight_request_metadata_string(
-                        conn_id.raw(),
-                        request_id,
-                        crate::PEEPS_SPAN_ID_METADATA_KEY,
-                    )
-                {
-                    let response_node_id = format!("response:{span_id}");
+                if let Some(ref diag) = self.diagnostic_state {
                     let method_name = diag
                         .inflight_request_metadata_string(
                             conn_id.raw(),
@@ -1396,23 +1392,15 @@ where
                                 .map(|s| s.to_string())
                         })
                         .unwrap_or_else(|| "unknown".to_string());
-                    let mut attrs = std::collections::BTreeMap::new();
-                    attrs.insert("correlation".to_string(), request_id.to_string());
-                    attrs.insert("method".to_string(), method_name.clone());
-                    attrs.insert("status".to_string(), "delivered".to_string());
-                    if let Some(started_at_ns) =
-                        diag.inflight_request_started_at_ns(conn_id.raw(), request_id)
-                    {
-                        attrs.insert("phase_started_ns".to_string(), started_at_ns.to_string());
-                    }
-                    if let Some(handled_at_ns) =
-                        diag.inflight_request_handled_at_ns(conn_id.raw(), request_id)
-                    {
-                        attrs.insert("handled_at_ns".to_string(), handled_at_ns.to_string());
-                    }
-                    attrs.insert("delivered_at_ns".to_string(), unix_now_ns().to_string());
-                    diag.emit_response_node(response_node_id.clone(), method_name, attrs);
-                    peeps::registry::remove_node(&response_node_id);
+                    let request_wire_id = diag.inflight_request_metadata_string(
+                        conn_id.raw(),
+                        request_id,
+                        crate::PEEPS_REQUEST_ENTITY_ID_METADATA_KEY,
+                    );
+                    let handle = response_handle.unwrap_or_else(|| {
+                        diag.emit_response_node(method_name.clone(), request_wire_id.as_deref())
+                    });
+                    handle.mark(response_outcome);
                 }
 
                 // Track completion for diagnostics only after the response frame was sent.
@@ -1637,12 +1625,10 @@ where
                             peeps::registry::touch_edge(src, &pending_response.tx_node_id);
                         });
                         #[cfg(feature = "diagnostics")]
-                        let response_matched_at_ns = unix_now_ns();
+                        let response_outcome = response_outcome_from_payload(&payload);
                         let send_result = pending_response
                             .tx
                             .send(Ok(ResponseData { payload, channels }));
-                        #[cfg(feature = "diagnostics")]
-                        let oneshot_sent_at_ns = unix_now_ns();
                         if send_result.is_err() {
                             warn!(
                                 conn_id = conn_id.raw(),
@@ -1651,48 +1637,26 @@ where
                         }
                         #[cfg(feature = "diagnostics")]
                         if let Some(ref diag) = self.diagnostic_state {
-                            if let Some(span_id) = diag.inflight_request_metadata_string(
+                            let method_name = diag
+                                .inflight_request_metadata_string(
+                                    conn_id.raw(),
+                                    request_id,
+                                    crate::PEEPS_METHOD_NAME_METADATA_KEY,
+                                )
+                                .or_else(|| {
+                                    diag.inflight_request_method_id(conn_id.raw(), request_id)
+                                        .and_then(crate::diagnostic::get_method_name)
+                                        .map(|s| s.to_string())
+                                })
+                                .unwrap_or_else(|| "unknown".to_string());
+                            let request_wire_id = diag.inflight_request_metadata_string(
                                 conn_id.raw(),
                                 request_id,
-                                crate::PEEPS_SPAN_ID_METADATA_KEY,
-                            ) {
-                                let request_node_id =
-                                    peeps_types::canonical_id::request_from_span_id(&span_id);
-                                let method_name = diag
-                                    .inflight_request_metadata_string(
-                                        conn_id.raw(),
-                                        request_id,
-                                        crate::PEEPS_METHOD_NAME_METADATA_KEY,
-                                    )
-                                    .or_else(|| {
-                                        diag.inflight_request_method_id(conn_id.raw(), request_id)
-                                            .and_then(crate::diagnostic::get_method_name)
-                                            .map(|s| s.to_string())
-                                    })
-                                    .unwrap_or_else(|| "unknown".to_string());
-                                let mut attrs = std::collections::BTreeMap::new();
-                                attrs.insert("correlation".to_string(), request_id.to_string());
-                                attrs.insert("method".to_string(), method_name.clone());
-                                attrs.insert("status".to_string(), "completed".to_string());
-                                attrs.insert(
-                                    "completed_at_ns".to_string(),
-                                    unix_now_ns().to_string(),
-                                );
-                                attrs.insert(
-                                    "response_matched_at_ns".to_string(),
-                                    response_matched_at_ns.to_string(),
-                                );
-                                attrs.insert(
-                                    "oneshot_sent_at_ns".to_string(),
-                                    oneshot_sent_at_ns.to_string(),
-                                );
-                                attrs.insert(
-                                    "oneshot_send_ok".to_string(),
-                                    send_result.is_ok().to_string(),
-                                );
-                                diag.emit_request_node(request_node_id.clone(), method_name, attrs);
-                                peeps::registry::remove_node(&request_node_id);
-                            }
+                                crate::PEEPS_REQUEST_ENTITY_ID_METADATA_KEY,
+                            );
+                            let response_handle =
+                                diag.emit_response_node(method_name, request_wire_id.as_deref());
+                            response_handle.mark(response_outcome);
                             diag.complete_request(conn_id.raw(), request_id);
                         }
                     } else {
@@ -1816,43 +1780,21 @@ where
             });
         }
 
-        // Register response node in peeps registry
+        // Create typed response handle linked to propagated request identity.
         #[cfg(feature = "diagnostics")]
-        let response_node_id = {
-            let span_id = metadata
-                .iter()
-                .find(|(k, _, _)| k == crate::PEEPS_SPAN_ID_METADATA_KEY)
-                .and_then(|(_, v, _)| match v {
-                    roam_wire::MetadataValue::String(s) => Some(s.clone()),
-                    _ => None,
-                });
-            if let Some(span_id) = span_id {
-                let request_node_id = peeps_types::canonical_id::request_from_span_id(&span_id);
-                let response_node_id = format!("response:{span_id}");
-                let method_name = metadata
-                    .iter()
-                    .find(|(k, _, _)| k == crate::PEEPS_METHOD_NAME_METADATA_KEY)
-                    .and_then(|(_, v, _)| match v {
-                        roam_wire::MetadataValue::String(s) => Some(s.clone()),
-                        _ => None,
-                    })
-                    .or_else(|| {
-                        crate::diagnostic::get_method_name(method_id).map(|s| s.to_string())
-                    })
-                    .unwrap_or_else(|| format!("0x{method_id:x}"));
-                let mut attrs = std::collections::BTreeMap::new();
-                attrs.insert("correlation".to_string(), request_id.to_string());
-                attrs.insert("method".to_string(), method_name.clone());
-                attrs.insert("status".to_string(), "handling".to_string());
-                attrs.insert("phase_started_ns".to_string(), unix_now_ns().to_string());
-                if let Some(ref diag) = self.diagnostic_state {
-                    diag.emit_response_node(response_node_id.clone(), method_name, attrs);
-                }
-                peeps::registry::edge(&request_node_id, &response_node_id);
-                Some(response_node_id)
-            } else {
-                None
-            }
+        let response_entity_id = if let Some(diag) = self.diagnostic_state.as_deref() {
+            let method_name = metadata_string(&metadata, crate::PEEPS_METHOD_NAME_METADATA_KEY)
+                .or_else(|| crate::diagnostic::get_method_name(method_id).map(|s| s.to_string()))
+                .unwrap_or_else(|| format!("0x{method_id:x}"));
+            let request_wire_id =
+                metadata_string(&metadata, crate::PEEPS_REQUEST_ENTITY_ID_METADATA_KEY);
+            let response_handle = diag.emit_response_node(method_name, request_wire_id.as_deref());
+            let response_entity_id = response_handle.entity_id_for_wire();
+            conn.in_flight_response_handles
+                .insert(request_id, response_handle);
+            response_entity_id
+        } else {
+            None
         };
 
         let cx = Context::new(
@@ -1890,14 +1832,14 @@ where
             // (response --needs--> nested futures/resources), and ensure a stack scope exists
             // even if this task wasn't spawned via peeps::spawn_tracked.
             #[cfg(feature = "diagnostics")]
-            if let Some(response_node_id) = response_node_id {
+            if let Some(response_entity_id) = response_entity_id {
                 let fut = async move {
                     handler_fut.await;
                     if let Some(ref diag) = diag_for_handler {
                         diag.mark_request_handled(conn_id.raw(), request_id);
                     }
                 };
-                let fut = peeps::stack::scope(&response_node_id, fut);
+                let fut = peeps::stack::scope(&response_entity_id, fut);
                 peeps::stack::ensure(fut).await;
                 return;
             }
@@ -1932,34 +1874,28 @@ where
 
         // Remove and abort the in-flight request if it exists
         if let Some(abort_handle) = conn.in_flight_server_requests.remove(&request_id) {
+            #[cfg(feature = "diagnostics")]
+            let response_handle = conn.in_flight_response_handles.remove(&request_id);
             // Abort the handler task (best-effort)
             abort_handle.abort();
 
-            // Mark response node as cancelled in peeps registry (keep it visible)
+            // Mark response as cancelled.
             #[cfg(feature = "diagnostics")]
-            if let Some(ref diag) = self.diagnostic_state
-                && let Ok(requests) = diag.requests.lock()
-                && let Some(req) = requests.get(&(conn_id.raw(), request_id))
-                && let Some(ref meta) = req.metadata
-                && let Some(span_id) = meta.get(crate::PEEPS_SPAN_ID_METADATA_KEY)
-            {
-                let response_node_id = format!("response:{span_id}");
-                let method_name = crate::diagnostic::get_method_name(req.method_id)
+            if let Some(ref diag) = self.diagnostic_state {
+                let method_name = diag
+                    .inflight_request_method_id(conn_id.raw(), request_id)
+                    .and_then(crate::diagnostic::get_method_name)
                     .map(|s| s.to_string())
-                    .or_else(|| meta.get(crate::PEEPS_METHOD_NAME_METADATA_KEY).cloned())
-                    .unwrap_or_else(|| format!("0x{:x}", req.method_id));
-                let mut attrs = std::collections::BTreeMap::new();
-                attrs.insert("correlation".to_string(), request_id.to_string());
-                attrs.insert("method".to_string(), method_name.clone());
-                attrs.insert("cancelled".to_string(), "true".to_string());
-                attrs.insert("close.cause".to_string(), "peer_cancelled".to_string());
-                attrs.insert("status".to_string(), "cancelled".to_string());
-                attrs.insert("cancelled_at_ns".to_string(), unix_now_ns().to_string());
-                diag.emit_response_node(
-                    response_node_id,
-                    format!("{method_name} (cancelled)"),
-                    attrs,
+                    .unwrap_or_else(|| "unknown".to_string());
+                let request_wire_id = diag.inflight_request_metadata_string(
+                    conn_id.raw(),
+                    request_id,
+                    crate::PEEPS_REQUEST_ENTITY_ID_METADATA_KEY,
                 );
+                let handle = response_handle.unwrap_or_else(|| {
+                    diag.emit_response_node(method_name, request_wire_id.as_deref())
+                });
+                handle.mark(ResponseOutcome::Cancelled);
             }
 
             // Track cancellation for diagnostics
