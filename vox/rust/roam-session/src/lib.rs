@@ -71,6 +71,7 @@ pub const PEEPS_SPAN_ID_METADATA_KEY: &str = "peeps.span_id";
 pub const PEEPS_PARENT_SPAN_ID_METADATA_KEY: &str = "peeps.parent_span_id";
 pub const PEEPS_METHOD_NAME_METADATA_KEY: &str = "peeps.method_name";
 pub const PEEPS_REQUEST_ENTITY_ID_METADATA_KEY: &str = "peeps.request_entity_id";
+pub const PEEPS_CONNECTION_CORRELATION_ID_METADATA_KEY: &str = "peeps.connection_correlation_id";
 
 /// Re-export `Infallible` for use as the error type in infallible methods.
 pub use std::convert::Infallible;

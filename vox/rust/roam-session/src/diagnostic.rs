@@ -250,8 +250,13 @@ pub struct DiagnosticState {
 
     /// Connection identity used for peeps node/edge attributes.
     pub(crate) connection_identity: Mutex<ConnectionIdentity>,
+    /// Stable correlation key shared by both peers for this link.
+    pub(crate) connection_correlation_id: Mutex<Option<String>>,
     /// Stable per-connection context id used for request/response context edges.
     pub(crate) connection_context_id: OnceLock<String>,
+    /// Connection scope handle used to attach request/response/channel entities.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) connection_scope: OnceLock<peeps::ScopeHandle>,
     /// Monotonic revision for mutable connection-context metadata.
     pub(crate) connection_context_revision: AtomicU64,
     /// Last revision published to diagnostics metadata sinks.
@@ -365,7 +370,10 @@ impl DiagnosticState {
                 transport: "unknown".to_string(),
                 opened_at_ns: now_ns,
             }),
+            connection_correlation_id: Mutex::new(None),
             connection_context_id: OnceLock::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            connection_scope: OnceLock::new(),
             connection_context_revision: AtomicU64::new(1),
             connection_context_published_revision: AtomicU64::new(0),
             connection_context_metadata: Mutex::new(BTreeMap::new()),
@@ -412,6 +420,22 @@ impl DiagnosticState {
         self.mark_connection_context_dirty();
     }
 
+    /// Set the cross-process correlation key shared by both connection legs.
+    pub fn set_connection_correlation_id(&self, correlation_id: impl Into<String>) {
+        if let Ok(mut slot) = self.connection_correlation_id.lock() {
+            *slot = Some(correlation_id.into());
+        }
+        self.mark_connection_context_dirty();
+    }
+
+    /// Read the cross-process correlation key, if available.
+    pub fn connection_correlation_id(&self) -> Option<String> {
+        self.connection_correlation_id
+            .lock()
+            .ok()
+            .and_then(|slot| slot.clone())
+    }
+
     /// Mark connection closure time.
     pub fn mark_connection_closed(&self, closed_at_ns: u64) {
         self.connection_closed_at_ns
@@ -444,8 +468,42 @@ impl DiagnosticState {
     /// Stable per-connection context id for context-edge wiring.
     pub fn ensure_connection_context_id(&self) -> String {
         self.connection_context_id
-            .get_or_init(|| format!("connection-context:{}", self.rpc_connection_token()))
+            .get_or_init(|| {
+                let identity = self.connection_identity();
+                let correlation = self
+                    .connection_correlation_id()
+                    .unwrap_or_else(|| self.rpc_connection_token());
+                format!(
+                    "connection-context:{correlation}:{}->{}",
+                    identity.src, identity.dst
+                )
+            })
             .clone()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn ensure_connection_scope(&self) -> peeps::ScopeHandle {
+        self.connection_scope
+            .get_or_init(|| {
+                let identity = self.connection_identity();
+                let correlation = self
+                    .connection_correlation_id()
+                    .unwrap_or_else(|| self.rpc_connection_token());
+                peeps::ScopeHandle::new(
+                    format!(
+                        "roam.connection.{correlation}:{}->{}",
+                        identity.src, identity.dst
+                    ),
+                    peeps_types::ScopeBody::Connection,
+                )
+            })
+            .clone()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn link_entity_to_connection_scope(&self, entity: &peeps::EntityHandle) {
+        let scope = self.ensure_connection_scope();
+        entity.link_to_scope_handle(&scope);
     }
 
     /// Monotonic revision increment for mutable connection metadata.
@@ -462,6 +520,9 @@ impl DiagnosticState {
             "connection.context_id".to_string(),
             self.ensure_connection_context_id(),
         );
+        if let Some(correlation_id) = self.connection_correlation_id() {
+            attrs.insert("connection.correlation_id".to_string(), correlation_id);
+        }
         attrs.insert("connection.src".to_string(), identity.src);
         attrs.insert("connection.dst".to_string(), identity.dst);
         attrs.insert("connection.transport".to_string(), identity.transport);

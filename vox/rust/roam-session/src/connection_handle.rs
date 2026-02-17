@@ -675,6 +675,10 @@ impl ConnectionHandle {
         let (metadata, task_id, task_name) =
             self.merged_outgoing_metadata(metadata, request_id, method_name);
         let (response_tx, response_rx) = oneshot("call_raw_with_channels");
+        #[cfg(feature = "diagnostics")]
+        if let Some(diag) = self.shared.diagnostic_state.as_deref() {
+            diag.link_entity_to_connection_scope(response_tx.handle());
+        }
 
         #[cfg(feature = "diagnostics")]
         let args_debug_str = args_debug.as_deref().unwrap_or("").to_string();

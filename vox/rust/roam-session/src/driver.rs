@@ -76,6 +76,10 @@ fn short_transport_name<T>() -> String {
         .to_string()
 }
 
+fn next_connection_correlation_id() -> String {
+    ulid::Ulid::new().to_string()
+}
+
 /// Negotiated connection parameters after Hello exchange.
 #[derive(Debug, Clone)]
 pub struct Negotiated {
@@ -151,6 +155,10 @@ pub struct HandshakeConfig {
     pub max_concurrent_requests: u32,
     /// Optional peer name for identification in diagnostics.
     pub name: Option<String>,
+    /// Optional cross-process connection correlation key.
+    ///
+    /// If unset for an initiator connection, roam-session will generate one.
+    pub connection_correlation_id: Option<String>,
 }
 
 impl Default for HandshakeConfig {
@@ -160,6 +168,7 @@ impl Default for HandshakeConfig {
             initial_channel_credit: 64 * 1024, // 64 KiB
             max_concurrent_requests: 64,
             name: None,
+            connection_correlation_id: None,
         }
     }
 }
@@ -167,14 +176,21 @@ impl Default for HandshakeConfig {
 impl HandshakeConfig {
     /// Convert to Hello message (always v6 format).
     pub fn to_hello(&self) -> Hello {
-        let metadata = match self.name {
-            Some(ref name) => vec![(
+        let mut metadata = vec![];
+        if let Some(ref name) = self.name {
+            metadata.push((
                 "name".to_string(),
                 roam_wire::MetadataValue::String(name.clone()),
                 0,
-            )],
-            None => vec![],
-        };
+            ));
+        }
+        if let Some(ref correlation_id) = self.connection_correlation_id {
+            metadata.push((
+                crate::PEEPS_CONNECTION_CORRELATION_ID_METADATA_KEY.to_string(),
+                roam_wire::MetadataValue::String(correlation_id.clone()),
+                0,
+            ));
+        }
         Hello::V6 {
             max_payload_size: self.max_payload_size,
             initial_channel_credit: self.initial_channel_credit,
@@ -463,9 +479,14 @@ where
             .await
             .map_err(ConnectError::ConnectFailed)?;
 
+        let mut config = self.config.clone();
+        if config.connection_correlation_id.is_none() {
+            config.connection_correlation_id = Some(next_connection_correlation_id());
+        }
+
         let (handle, _incoming, driver) = establish(
             transport,
-            self.config.to_hello(),
+            config.to_hello(),
             self.dispatcher.clone(),
             Role::Initiator,
         )
@@ -1211,6 +1232,10 @@ where
                 if let Some(conn) = self.connections.get_mut(&conn_id) {
                     #[cfg(feature = "diagnostics")]
                     let tx_handle = response_tx.handle().clone();
+                    #[cfg(feature = "diagnostics")]
+                    if let Some(diag) = self.diagnostic_state.as_deref() {
+                        diag.link_entity_to_connection_scope(&tx_handle);
+                    }
                     #[cfg(feature = "diagnostics")]
                     let len_before = conn.pending_responses.len();
                     conn.pending_responses.insert(
@@ -2104,7 +2129,7 @@ where
 /// the server will be automatically rejected.
 pub async fn initiate_framed<T, D>(
     transport: T,
-    config: HandshakeConfig,
+    mut config: HandshakeConfig,
     dispatcher: D,
 ) -> Result<
     (
@@ -2118,6 +2143,9 @@ where
     T: MessageTransport,
     D: ServiceDispatcher,
 {
+    if config.connection_correlation_id.is_none() {
+        config.connection_correlation_id = Some(next_connection_correlation_id());
+    }
     establish(transport, config.to_hello(), dispatcher, Role::Initiator).await
 }
 
@@ -2192,8 +2220,10 @@ where
         }
     };
 
-    // Extract (max_payload, credit, max_concurrent, peer_name) from a Hello.
-    fn hello_params(hello: &Hello) -> Result<(u32, u32, u32, Option<String>), ConnectionError> {
+    // Extract (max_payload, credit, max_concurrent, peer_name, correlation_id) from a Hello.
+    fn hello_params(
+        hello: &Hello,
+    ) -> Result<(u32, u32, u32, Option<String>, Option<String>), ConnectionError> {
         match hello {
             Hello::V6 {
                 max_payload_size,
@@ -2208,22 +2238,49 @@ where
                         roam_wire::MetadataValue::String(s) => Some(s.clone()),
                         _ => None,
                     });
+                let correlation_id = metadata
+                    .iter()
+                    .find(|(k, _, _)| k == crate::PEEPS_CONNECTION_CORRELATION_ID_METADATA_KEY)
+                    .and_then(|(_, v, _)| match v {
+                        roam_wire::MetadataValue::String(s) => Some(s.clone()),
+                        _ => None,
+                    });
                 Ok((
                     *max_payload_size,
                     *initial_channel_credit,
                     *max_concurrent_requests,
                     name,
+                    correlation_id,
                 ))
             }
             _ => Err(ConnectionError::UnsupportedProtocolVersion),
         }
     }
 
-    let (our_max, our_credit, our_max_concurrent_requests, our_name) = hello_params(&our_hello)?;
-    let (peer_max, peer_credit, peer_max_concurrent_requests, peer_name) =
+    let (our_max, our_credit, our_max_concurrent_requests, our_name, our_correlation_id) =
+        hello_params(&our_hello)?;
+    let (peer_max, peer_credit, peer_max_concurrent_requests, peer_name, peer_correlation_id) =
         hello_params(&peer_hello)?;
     #[cfg(not(feature = "diagnostics"))]
     let _ = &our_name;
+
+    #[cfg(feature = "diagnostics")]
+    let canonical_correlation_id = match role {
+        Role::Initiator => our_correlation_id.clone().or(peer_correlation_id.clone()),
+        Role::Acceptor => peer_correlation_id.clone().or(our_correlation_id.clone()),
+    };
+    #[cfg(not(feature = "diagnostics"))]
+    let _ = (&our_correlation_id, &peer_correlation_id);
+    if let (Some(our), Some(peer)) = (&our_correlation_id, &peer_correlation_id)
+        && our != peer
+    {
+        warn!(
+            ours = %our,
+            peer = %peer,
+            ?role,
+            "hello correlation IDs differ across peers; using role-preferred canonical value"
+        );
+    }
 
     #[cfg(feature = "diagnostics")]
     let local_name = our_name.unwrap_or_else(|| match role {
@@ -2263,6 +2320,9 @@ where
         let state = crate::diagnostic::DiagnosticState::new(local_name.clone());
         state.set_peer_name(remote_name.clone());
         state.set_connection_identity(local_name, remote_name, transport_name, opened_at_ns);
+        if let Some(correlation_id) = canonical_correlation_id.clone() {
+            state.set_connection_correlation_id(correlation_id);
+        }
         state.set_negotiated_params(
             negotiated.max_concurrent_requests,
             negotiated.initial_credit,

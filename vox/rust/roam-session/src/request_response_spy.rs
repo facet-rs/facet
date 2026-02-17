@@ -137,6 +137,7 @@ impl RequestResponseSpy for DiagnosticState {
         let _ = self.ensure_connection_context();
         self.refresh_connection_context_if_dirty();
         let request = peeps::rpc_request(method_name, args_preview);
+        self.link_entity_to_connection_scope(request.handle());
         TypedRequestHandle::from_inner(request)
     }
 
@@ -154,6 +155,7 @@ impl RequestResponseSpy for DiagnosticState {
         } else {
             peeps::rpc_response(method_name)
         };
+        self.link_entity_to_connection_scope(response.handle());
         TypedResponseHandle::from_inner(response)
     }
 }
