@@ -8,26 +8,46 @@ pub use peeps::Mutex;
 
 // Re-export peeps channel types
 pub use peeps::{
-    OneshotReceiver, OneshotSender, Receiver, Sender, UnboundedReceiver, UnboundedSender, channel,
-    oneshot_channel, unbounded_channel,
+    OneshotReceiver, OneshotSender, Receiver, Sender, UnboundedReceiver, UnboundedSender,
 };
 
 // Re-export tokio error types (peeps uses the same ones)
 pub use tokio::sync::mpsc::error::SendError;
 
 /// Create a bounded mpsc channel.
+pub fn channel<T>(name: impl Into<String>, buffer: usize) -> (Sender<T>, Receiver<T>) {
+    #[allow(deprecated)]
+    peeps::channel(name, buffer)
+}
+
+/// Create a bounded mpsc channel.
 pub fn bounded<T>(name: impl Into<String>, buffer: usize) -> (Sender<T>, Receiver<T>) {
-    channel(name, buffer)
+    #[allow(deprecated)]
+    peeps::channel(name, buffer)
 }
 
 /// Create an unbounded mpsc channel.
 pub fn unbounded<T>(name: impl Into<String>) -> (UnboundedSender<T>, UnboundedReceiver<T>) {
-    unbounded_channel(name)
+    #[allow(deprecated)]
+    peeps::unbounded_channel(name)
+}
+
+/// Create an unbounded mpsc channel.
+pub fn unbounded_channel<T>(name: impl Into<String>) -> (UnboundedSender<T>, UnboundedReceiver<T>) {
+    #[allow(deprecated)]
+    peeps::unbounded_channel(name)
 }
 
 /// Create a oneshot channel.
 pub fn oneshot<T>(name: impl Into<String>) -> (OneshotSender<T>, OneshotReceiver<T>) {
-    oneshot_channel(name)
+    #[allow(deprecated)]
+    peeps::oneshot_channel(name)
+}
+
+/// Create a oneshot channel.
+pub fn oneshot_channel<T>(name: impl Into<String>) -> (OneshotSender<T>, OneshotReceiver<T>) {
+    #[allow(deprecated)]
+    peeps::oneshot_channel(name)
 }
 
 /// Handle that can be used to abort a spawned task.
@@ -59,7 +79,7 @@ where
     F: Future + Send + 'static,
     F::Output: Send + 'static,
 {
-    peeps::spawn_tracked(name, future)
+    peeps::spawn_tracked!(name, future)
 }
 
 /// Spawn a task and return an abort handle that can be used to cancel it.
@@ -71,13 +91,14 @@ pub fn spawn_with_abort<F>(name: &'static str, future: F) -> AbortHandle
 where
     F: Future<Output = ()> + Send + 'static,
 {
-    let handle = peeps::spawn_tracked(name, future);
+    let handle = peeps::spawn_tracked!(name, future);
     AbortHandle(handle.abort_handle())
 }
 
 /// Sleep for the given duration.
 #[track_caller]
 pub fn sleep(duration: Duration, label: impl Into<String>) -> impl Future<Output = ()> {
+    #[allow(deprecated)]
     peeps::sleep(duration, label)
 }
 
@@ -95,5 +116,8 @@ pub fn timeout<F, T>(
 where
     F: Future<Output = T>,
 {
-    async move { (peeps::timeout(duration, future, label).await).ok() }
+    #[allow(deprecated)]
+    async move {
+        (peeps::timeout(duration, future, label).await).ok()
+    }
 }

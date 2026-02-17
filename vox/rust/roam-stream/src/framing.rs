@@ -264,7 +264,7 @@ where
         &mut self,
         timeout: std::time::Duration,
     ) -> io::Result<Option<Message>> {
-        peeps::timeout(timeout, self.recv_inner(), "framed.recv")
+        peeps::timeout!(timeout, self.recv_inner(), "framed.recv")
             .await
             .unwrap_or(Ok(None))
     }

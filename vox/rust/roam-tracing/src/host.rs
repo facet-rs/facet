@@ -41,7 +41,7 @@ impl HostTracingState {
     /// `buffer_size` is the capacity of the record channel.
     /// If the consumer is slow, newest records are dropped.
     pub fn new(buffer_size: usize) -> Arc<Self> {
-        let (record_tx, record_rx) = peeps::channel("trace_host_records", buffer_size);
+        let (record_tx, record_rx) = peeps::channel!("trace_host_records", buffer_size);
         Arc::new(Self {
             record_tx,
             record_rx: Mutex::new("HostTracingState.record_rx", Some(record_rx)),

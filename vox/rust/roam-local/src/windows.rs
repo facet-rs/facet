@@ -80,7 +80,7 @@ pub async fn connect(pipe_name: impl AsRef<str>) -> io::Result<LocalStream> {
             Err(e) if e.raw_os_error() == Some(231) => {
                 // ERROR_PIPE_BUSY (231) - all pipe instances are busy
                 // Wait briefly and retry
-                peeps::sleep(std::time::Duration::from_millis(50), "pipe.busy.retry").await;
+                peeps::sleep!(std::time::Duration::from_millis(50), "pipe.busy.retry").await;
             }
             Err(e) => return Err(e),
         }

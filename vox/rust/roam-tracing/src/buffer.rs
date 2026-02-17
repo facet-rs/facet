@@ -28,7 +28,7 @@ impl<T> LossyBuffer<T> {
         Self {
             inner: Mutex::new("LossyBuffer.inner", VecDeque::with_capacity(capacity)),
             capacity,
-            notify: Notify::new("LossyBuffer.notify"),
+            notify: peeps::notify!("LossyBuffer.notify"),
         }
     }
 

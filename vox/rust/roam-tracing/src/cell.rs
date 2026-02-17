@@ -391,7 +391,7 @@ impl CellTracingService {
 
         // Now spawn the drain task
         let buffer = self.buffer.clone();
-        peeps::spawn_tracked("roam_tracing_drain_start", async move {
+        peeps::spawn_tracked!("roam_tracing_drain_start", async move {
             loop {
                 // Collect batch from buffer
                 let mut batch = Vec::with_capacity(batch_size);
@@ -408,7 +408,7 @@ impl CellTracingService {
                     let _ = client.emit_tracing(batch).await;
                 }
 
-                peeps::sleep(flush_interval, "tracing.flush").await;
+                peeps::sleep!(flush_interval, "tracing.flush").await;
             }
         });
     }
@@ -425,7 +425,7 @@ impl CellTracingService {
         let buffer = self.buffer.clone();
         let filter = self.filter.clone();
 
-        peeps::spawn_tracked("roam_tracing_drain_spawn", async move {
+        peeps::spawn_tracked!("roam_tracing_drain_spawn", async move {
             let client = HostTracingClient::new(handle);
 
             // Query config (but we're already racing with events)
@@ -447,7 +447,7 @@ impl CellTracingService {
                     let _ = client.emit_tracing(batch).await;
                 }
 
-                peeps::sleep(Duration::from_millis(50), "tracing.drain.backoff").await;
+                peeps::sleep!(Duration::from_millis(50), "tracing.drain.backoff").await;
             }
         });
     }

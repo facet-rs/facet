@@ -206,7 +206,7 @@ where
         // Any Connect requests from the server will be automatically rejected.
 
         let driver_handle =
-            peeps::spawn_tracked("roam_stream_driver", async move { driver.run().await });
+            peeps::spawn_tracked!("roam_stream_driver", async move { driver.run().await });
 
         Ok(ClientState {
             handle,
@@ -238,7 +238,7 @@ where
                     }
                     last_error = Some(e);
                     let backoff = self.retry_policy.backoff_for_attempt(attempt);
-                    peeps::sleep(backoff, "reconnect.backoff").await;
+                    peeps::sleep!(backoff, "reconnect.backoff").await;
                     continue;
                 }
                 Err(e) => return Err(e),
@@ -275,7 +275,7 @@ where
                         "connection closed",
                     ));
                     let backoff = self.retry_policy.backoff_for_attempt(attempt);
-                    peeps::sleep(backoff, "reconnect.backoff").await;
+                    peeps::sleep!(backoff, "reconnect.backoff").await;
                 }
             }
         }
@@ -306,7 +306,7 @@ where
                         return Err(TransportError::ConnectionClosed);
                     }
                     let backoff = self.retry_policy.backoff_for_attempt(attempt);
-                    peeps::sleep(backoff, "reconnect.backoff").await;
+                    peeps::sleep!(backoff, "reconnect.backoff").await;
                     continue;
                 }
                 Err(ConnectError::RetriesExhausted { .. }) => {
@@ -350,7 +350,7 @@ where
                     }
 
                     let backoff = self.retry_policy.backoff_for_attempt(attempt);
-                    peeps::sleep(backoff, "reconnect.backoff").await;
+                    peeps::sleep!(backoff, "reconnect.backoff").await;
                 }
             }
         }
@@ -397,7 +397,7 @@ where
                             return Err(TransportError::ConnectionClosed);
                         }
                         let backoff = this.retry_policy.backoff_for_attempt(attempt);
-                        peeps::sleep(backoff, "reconnect.backoff").await;
+                        peeps::sleep!(backoff, "reconnect.backoff").await;
                         continue;
                     }
                     Err(ConnectError::RetriesExhausted { .. }) => {
@@ -438,7 +438,7 @@ where
                         }
 
                         let backoff = this.retry_policy.backoff_for_attempt(attempt);
-                        peeps::sleep(backoff, "reconnect.backoff").await;
+                        peeps::sleep!(backoff, "reconnect.backoff").await;
                     }
                 }
             }

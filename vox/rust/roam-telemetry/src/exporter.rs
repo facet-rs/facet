@@ -181,12 +181,12 @@ impl OtlpExporter {
 
     /// Create a new exporter with full configuration.
     pub fn with_config(config: ExporterConfig) -> Self {
-        let (tx, rx) = peeps::channel("telemetry_export", 4096);
+        let (tx, rx) = peeps::channel!("telemetry_export", 4096);
         let config = Arc::new(config);
 
         // Spawn the background export task
         let config_clone = config.clone();
-        peeps::spawn_tracked("roam_telemetry_export_loop", async move {
+        peeps::spawn_tracked!("roam_telemetry_export_loop", async move {
             export_loop(rx, config_clone).await;
         });
 

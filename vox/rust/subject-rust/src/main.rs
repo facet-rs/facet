@@ -296,7 +296,7 @@ async fn run_server_with_incoming_connections(addr: &str) -> Result<(), String> 
     let _ = handle;
 
     // Spawn task to handle incoming virtual connections
-    peeps::spawn_tracked("subject_incoming_connections", async move {
+    peeps::spawn_tracked!("subject_incoming_connections", async move {
         while let Some(incoming_conn) = incoming.recv().await {
             info!("received incoming connection request");
             // Accept all incoming connections with empty metadata
@@ -347,7 +347,7 @@ async fn run_client() -> Result<(), String> {
             let (tx, rx) = roam::channel::<i32>();
 
             // Spawn task to send numbers
-            peeps::spawn_tracked("subject_sum_sender", async move {
+            peeps::spawn_tracked!("subject_sum_sender", async move {
                 for i in 1..=5 {
                     debug!("sending {i}");
                     if let Err(e) = tx.send(&i).await {
@@ -366,7 +366,7 @@ async fn run_client() -> Result<(), String> {
             let (tx, mut rx) = roam::channel::<i32>();
 
             // Spawn task to receive numbers
-            let recv_task = peeps::spawn_tracked("subject_generate_receiver", async move {
+            let recv_task = peeps::spawn_tracked!("subject_generate_receiver", async move {
                 let mut received = Vec::new();
                 while let Ok(Some(n)) = rx.recv().await {
                     debug!("received {n}");

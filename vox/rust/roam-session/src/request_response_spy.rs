@@ -136,7 +136,7 @@ impl RequestResponseSpy for DiagnosticState {
     fn emit_request_node(&self, method_name: String, args_preview: String) -> TypedRequestHandle {
         let _ = self.ensure_connection_context();
         self.refresh_connection_context_if_dirty();
-        let request = peeps::rpc_request(method_name, args_preview);
+        let request = peeps::rpc_request!(method_name, args_preview);
         self.link_entity_to_connection_scope(request.handle());
         TypedRequestHandle::from_inner(request)
     }
@@ -151,9 +151,9 @@ impl RequestResponseSpy for DiagnosticState {
         self.refresh_connection_context_if_dirty();
         let response = if let Some(request_wire_id) = request_wire_id {
             let request_ref = peeps::entity_ref_from_wire(request_wire_id.to_owned());
-            peeps::rpc_response_for(method_name, &request_ref)
+            peeps::rpc_response_for!(method_name, &request_ref)
         } else {
-            peeps::rpc_response(method_name)
+            peeps::rpc_response!(method_name)
         };
         self.link_entity_to_connection_scope(response.handle());
         TypedResponseHandle::from_inner(response)
