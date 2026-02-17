@@ -79,15 +79,6 @@ fn metadata_string(metadata: &roam_wire::Metadata, key: &str) -> Option<String> 
     })
 }
 
-#[cfg(feature = "diagnostics")]
-fn canonical_link_id(src: &str, dst: &str) -> String {
-    if src <= dst {
-        format!("{src}<->{dst}")
-    } else {
-        format!("{dst}<->{src}")
-    }
-}
-
 /// Get a human-readable name for a message type.
 fn msg_type_name(msg: &Message) -> &'static str {
     match msg {
@@ -356,7 +347,8 @@ impl<T, D> Drop for ShmDriver<T, D> {
         #[cfg(feature = "diagnostics")]
         if let Some(ref diag) = self.diagnostic_state {
             diag.mark_connection_closed(unix_now_ns());
-            let _ = diag.register_connection_context();
+            let _ = diag.ensure_connection_context();
+            diag.refresh_connection_context_if_dirty();
         }
     }
 }
@@ -1459,8 +1451,7 @@ where
     if let Some(ref state) = diagnostic_state {
         let src = format!("shm-guest-{guest_peer_id}");
         let dst = "shm-host".to_string();
-        let link = canonical_link_id(&src, &dst);
-        state.set_connection_identity(src, dst, link, "shm", unix_now_ns());
+        state.set_connection_identity(src, dst, "shm", unix_now_ns());
     }
 
     // Get config from segment header (already read during attach)
@@ -1518,7 +1509,8 @@ where
 
     #[cfg(feature = "diagnostics")]
     if let Some(ref diag) = driver.diagnostic_state {
-        let _ = diag.register_connection_context();
+        let _ = diag.ensure_connection_context();
+        diag.refresh_connection_context_if_dirty();
     }
 
     (handle, incoming_connections_rx, driver)
@@ -1680,7 +1672,8 @@ impl Drop for MultiPeerHostDriver {
         for state in self.peers.values() {
             if let Some(ref diag) = state.diagnostic_state {
                 diag.mark_connection_closed(unix_now_ns());
-                let _ = diag.register_connection_context();
+                let _ = diag.ensure_connection_context();
+                diag.refresh_connection_context_if_dirty();
             }
         }
     }
@@ -1816,8 +1809,7 @@ impl MultiPeerHostDriverBuilder {
             if let Some(ref state) = peer_diagnostic_state {
                 let src = "shm-host".to_string();
                 let dst = format!("shm-guest-{}", peer_id.get());
-                let link = canonical_link_id(&src, &dst);
-                state.set_connection_identity(src, dst, link, "shm", unix_now_ns());
+                state.set_connection_identity(src, dst, "shm", unix_now_ns());
             }
 
             // Create per-peer incoming response forwarder
@@ -1840,7 +1832,8 @@ impl MultiPeerHostDriverBuilder {
             incoming_connections_map.insert(peer_id, incoming_connections_rx);
             #[cfg(feature = "diagnostics")]
             if let Some(ref diag) = peer_diagnostic_state {
-                let _ = diag.register_connection_context();
+                let _ = diag.ensure_connection_context();
+                diag.refresh_connection_context_if_dirty();
             }
 
             peers.insert(
@@ -2161,8 +2154,7 @@ impl MultiPeerHostDriver {
                 if let Some(ref state) = diagnostic_state {
                     let src = "shm-host".to_string();
                     let dst = format!("shm-guest-{}", peer_id.get());
-                    let link = canonical_link_id(&src, &dst);
-                    state.set_connection_identity(src, dst, link, "shm", unix_now_ns());
+                    state.set_connection_identity(src, dst, "shm", unix_now_ns());
                 }
                 // Create single unified channel for all messages (Call/Data/Close/Response).
                 let (driver_tx, mut driver_rx) = peeps::channel("shm_dynamic_peer_driver", 256);
@@ -2221,7 +2213,8 @@ impl MultiPeerHostDriver {
                 );
                 #[cfg(feature = "diagnostics")]
                 if let Some(ref diag) = diagnostic_state {
-                    let _ = diag.register_connection_context();
+                    let _ = diag.ensure_connection_context();
+                    diag.refresh_connection_context_if_dirty();
                 }
                 trace!("MultiPeerHostDriver: {} peers now active", self.peers.len());
 

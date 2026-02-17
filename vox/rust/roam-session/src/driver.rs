@@ -57,15 +57,6 @@ fn unix_now_ns() -> u64 {
 }
 
 #[cfg(feature = "diagnostics")]
-fn canonical_link_id(src: &str, dst: &str) -> String {
-    if src <= dst {
-        format!("{src}<->{dst}")
-    } else {
-        format!("{dst}<->{src}")
-    }
-}
-
-#[cfg(feature = "diagnostics")]
 fn short_transport_name<T>() -> String {
     std::any::type_name::<T>()
         .rsplit("::")
@@ -1039,7 +1030,8 @@ impl<T, D> Drop for Driver<T, D> {
         #[cfg(feature = "diagnostics")]
         if let Some(ref diag) = self.diagnostic_state {
             diag.mark_connection_closed(unix_now_ns());
-            let _ = diag.register_connection_context();
+            let _ = diag.ensure_connection_context();
+            diag.refresh_connection_context_if_dirty();
         }
     }
 }
@@ -2340,8 +2332,6 @@ where
         Role::Acceptor => "initiator".to_string(),
     });
     #[cfg(feature = "diagnostics")]
-    let link_name = canonical_link_id(&local_name, &remote_name);
-    #[cfg(feature = "diagnostics")]
     let transport_name = short_transport_name::<T>();
     #[cfg(feature = "diagnostics")]
     let opened_at_ns = unix_now_ns();
@@ -2368,13 +2358,7 @@ where
     let diagnostic_state = {
         let state = crate::diagnostic::DiagnosticState::new(local_name.clone());
         state.set_peer_name(remote_name.clone());
-        state.set_connection_identity(
-            local_name,
-            remote_name,
-            link_name,
-            transport_name,
-            opened_at_ns,
-        );
+        state.set_connection_identity(local_name, remote_name, transport_name, opened_at_ns);
         state.set_negotiated_params(
             negotiated.max_concurrent_requests,
             negotiated.initial_credit,
@@ -2391,7 +2375,8 @@ where
 
     #[cfg(feature = "diagnostics")]
     if let Some(ref diag) = diagnostic_state {
-        let _ = diag.register_connection_context();
+        let _ = diag.ensure_connection_context();
+        diag.refresh_connection_context_if_dirty();
     }
 
     // Ensure method IDs are computed at least once on the server side so
