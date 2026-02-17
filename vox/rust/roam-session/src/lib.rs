@@ -11,6 +11,7 @@ mod macros;
 pub mod diagnostic;
 pub mod diagnostic_snapshot;
 pub mod driver;
+pub mod request_response_spy;
 pub mod runtime;
 pub mod transport;
 
@@ -63,12 +64,12 @@ pub use rpc_plan::*;
 
 pub(crate) const CHANNEL_SIZE: usize = 1024;
 pub(crate) const RX_STREAM_BUFFER_SIZE: usize = 1024;
-pub(crate) const PEEPS_TASK_ID_METADATA_KEY: &str = "peeps.task_id";
-pub(crate) const PEEPS_TASK_NAME_METADATA_KEY: &str = "peeps.task_name";
-pub(crate) const PEEPS_CHAIN_ID_METADATA_KEY: &str = "peeps.chain_id";
-pub(crate) const PEEPS_SPAN_ID_METADATA_KEY: &str = "peeps.span_id";
-pub(crate) const PEEPS_PARENT_SPAN_ID_METADATA_KEY: &str = "peeps.parent_span_id";
-pub(crate) const PEEPS_METHOD_NAME_METADATA_KEY: &str = "peeps.method_name";
+pub const PEEPS_TASK_ID_METADATA_KEY: &str = "peeps.task_id";
+pub const PEEPS_TASK_NAME_METADATA_KEY: &str = "peeps.task_name";
+pub const PEEPS_CHAIN_ID_METADATA_KEY: &str = "peeps.chain_id";
+pub const PEEPS_SPAN_ID_METADATA_KEY: &str = "peeps.span_id";
+pub const PEEPS_PARENT_SPAN_ID_METADATA_KEY: &str = "peeps.parent_span_id";
+pub const PEEPS_METHOD_NAME_METADATA_KEY: &str = "peeps.method_name";
 
 /// Re-export `Infallible` for use as the error type in infallible methods.
 pub use std::convert::Infallible;
