@@ -38,6 +38,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use facet::Facet;
 
+#[cfg(feature = "diagnostics")]
+use crate::request_response_spy::RequestResponseSpy;
 use crate::runtime::{Mutex, Receiver, channel, sleep, spawn, spawn_with_abort};
 use crate::{
     ChannelError, ChannelRegistry, ConnectionHandle, Context, DiagnosticTransport, DriverMessage,
@@ -52,151 +54,6 @@ fn unix_now_ns() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
         .unwrap_or(0)
-}
-
-#[cfg(feature = "diagnostics")]
-#[inline]
-fn apply_connection_attrs(
-    attrs: &mut std::collections::BTreeMap<String, String>,
-    diag: &crate::diagnostic::DiagnosticState,
-) {
-    let connection = diag.connection_identity();
-    attrs.insert("rpc.connection".to_string(), diag.rpc_connection_token());
-    attrs.insert("connection.src".to_string(), connection.src);
-    attrs.insert("connection.dst".to_string(), connection.dst);
-    attrs.insert("connection.link".to_string(), connection.link);
-    attrs.insert("connection.transport".to_string(), connection.transport);
-}
-
-#[cfg(feature = "diagnostics")]
-#[inline]
-fn register_connection_node(diag: &crate::diagnostic::DiagnosticState) -> Option<String> {
-    let rpc_connection = diag.rpc_connection_token();
-    if rpc_connection.is_empty() {
-        return None;
-    }
-    let connection = diag.connection_identity();
-    let connection_node_id = format!("connection:{rpc_connection}");
-    let mut attrs = std::collections::BTreeMap::new();
-    attrs.insert("rpc.connection".to_string(), rpc_connection.clone());
-    attrs.insert("connection.src".to_string(), connection.src);
-    attrs.insert("connection.dst".to_string(), connection.dst);
-    attrs.insert("connection.link".to_string(), connection.link);
-    attrs.insert("connection.transport".to_string(), connection.transport);
-    attrs.insert(
-        "connection.state".to_string(),
-        diag.connection_state().to_string(),
-    );
-    attrs.insert(
-        "connection.opened_at_ns".to_string(),
-        diag.connection_identity().opened_at_ns.to_string(),
-    );
-    if let Some(closed_at_ns) = diag.connection_closed_at_ns() {
-        attrs.insert(
-            "connection.closed_at_ns".to_string(),
-            closed_at_ns.to_string(),
-        );
-    }
-    if let Some(last_sent_at_ns) = diag.last_frame_sent_at_ns() {
-        attrs.insert(
-            "connection.last_frame_sent_at_ns".to_string(),
-            last_sent_at_ns.to_string(),
-        );
-    }
-    if let Some(last_recv_at_ns) = diag.last_frame_received_at_ns() {
-        attrs.insert(
-            "connection.last_frame_recv_at_ns".to_string(),
-            last_recv_at_ns.to_string(),
-        );
-    }
-    attrs.insert(
-        "connection.pending_requests".to_string(),
-        diag.pending_requests().to_string(),
-    );
-    attrs.insert(
-        "connection.pending_requests_outgoing".to_string(),
-        diag.pending_requests_outgoing().to_string(),
-    );
-    attrs.insert(
-        "connection.pending_responses".to_string(),
-        diag.pending_responses().to_string(),
-    );
-    attrs.insert(
-        "connection.driver.last_arm".to_string(),
-        diag.last_driver_arm(),
-    );
-    attrs.insert(
-        "connection.driver.last_arm_at_ns".to_string(),
-        diag.last_driver_arm_at_ns().to_string(),
-    );
-    attrs.insert(
-        "connection.driver.driver_rx_hits".to_string(),
-        diag.driver_arm_driver_rx_hits().to_string(),
-    );
-    attrs.insert(
-        "connection.driver.io_recv_hits".to_string(),
-        diag.driver_arm_io_recv_hits().to_string(),
-    );
-    attrs.insert(
-        "connection.driver.incoming_response_hits".to_string(),
-        diag.driver_arm_incoming_response_hits().to_string(),
-    );
-    attrs.insert(
-        "connection.driver.sweep_hits".to_string(),
-        diag.driver_arm_sweep_hits().to_string(),
-    );
-    attrs.insert(
-        "connection.pending_map.inserts".to_string(),
-        diag.pending_map_inserts().to_string(),
-    );
-    attrs.insert(
-        "connection.pending_map.removes".to_string(),
-        diag.pending_map_removes().to_string(),
-    );
-    attrs.insert(
-        "connection.pending_map.failures".to_string(),
-        diag.pending_map_failures().to_string(),
-    );
-    attrs.insert(
-        "connection.pending_map.last_event".to_string(),
-        diag.pending_map_last_event(),
-    );
-    attrs.insert(
-        "connection.pending_map.last_conn_id".to_string(),
-        diag.pending_map_last_conn_id().to_string(),
-    );
-    attrs.insert(
-        "connection.pending_map.last_request_id".to_string(),
-        diag.pending_map_last_request_id().to_string(),
-    );
-    attrs.insert(
-        "connection.pending_map.last_len_before".to_string(),
-        diag.pending_map_last_len_before().to_string(),
-    );
-    attrs.insert(
-        "connection.pending_map.last_len_after".to_string(),
-        diag.pending_map_last_len_after().to_string(),
-    );
-    attrs.insert(
-        "connection.pending_map.last_at_ns".to_string(),
-        diag.pending_map_last_at_ns().to_string(),
-    );
-    let attrs_json = facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
-    peeps::registry::register_node(peeps_types::Node {
-        id: connection_node_id.clone(),
-        kind: peeps_types::NodeKind::Connection,
-        label: Some(rpc_connection),
-        attrs_json,
-    });
-    Some(connection_node_id)
-}
-
-#[cfg(feature = "diagnostics")]
-#[inline]
-fn touch_connection_node(entity_id: &str, diag: &crate::diagnostic::DiagnosticState) {
-    if let Some(connection_node_id) = register_connection_node(diag) {
-        peeps::registry::touch_edge(entity_id, &connection_node_id);
-    }
 }
 
 #[cfg(feature = "diagnostics")]
@@ -1182,7 +1039,7 @@ impl<T, D> Drop for Driver<T, D> {
         #[cfg(feature = "diagnostics")]
         if let Some(ref diag) = self.diagnostic_state {
             diag.mark_connection_closed(unix_now_ns());
-            let _ = register_connection_node(diag);
+            let _ = diag.register_connection_context();
         }
     }
 }
@@ -1452,20 +1309,11 @@ where
                     let now_ns = unix_now_ns();
                     attrs.insert("correlation".to_string(), request_id.to_string());
                     attrs.insert("method".to_string(), method_name.clone());
-                    apply_connection_attrs(&mut attrs, diag);
                     attrs.insert("status".to_string(), "in_flight".to_string());
                     attrs.insert("phase_started_ns".to_string(), now_ns.to_string());
                     attrs.insert("delivered_at_ns".to_string(), now_ns.to_string());
                     attrs.insert("sent_at_ns".to_string(), now_ns.to_string());
-                    let attrs_json =
-                        facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
-                    peeps::registry::register_node(peeps_types::Node {
-                        id: request_node_id.clone(),
-                        kind: peeps_types::NodeKind::Request,
-                        label: Some(method_name),
-                        attrs_json,
-                    });
-                    touch_connection_node(&request_node_id, diag);
+                    diag.emit_request_node(request_node_id, method_name, attrs);
                 }
             }
             DriverMessage::Data {
@@ -1559,7 +1407,6 @@ where
                     let mut attrs = std::collections::BTreeMap::new();
                     attrs.insert("correlation".to_string(), request_id.to_string());
                     attrs.insert("method".to_string(), method_name.clone());
-                    apply_connection_attrs(&mut attrs, diag);
                     attrs.insert("status".to_string(), "delivered".to_string());
                     if let Some(started_at_ns) =
                         diag.inflight_request_started_at_ns(conn_id.raw(), request_id)
@@ -1572,15 +1419,7 @@ where
                         attrs.insert("handled_at_ns".to_string(), handled_at_ns.to_string());
                     }
                     attrs.insert("delivered_at_ns".to_string(), unix_now_ns().to_string());
-                    let attrs_json =
-                        facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
-                    peeps::registry::register_node(peeps_types::Node {
-                        id: response_node_id.clone(),
-                        kind: peeps_types::NodeKind::Response,
-                        label: Some(method_name),
-                        attrs_json,
-                    });
-                    touch_connection_node(&response_node_id, diag);
+                    diag.emit_response_node(response_node_id.clone(), method_name, attrs);
                     peeps::registry::remove_node(&response_node_id);
                 }
 
@@ -1842,7 +1681,6 @@ where
                                 let mut attrs = std::collections::BTreeMap::new();
                                 attrs.insert("correlation".to_string(), request_id.to_string());
                                 attrs.insert("method".to_string(), method_name.clone());
-                                apply_connection_attrs(&mut attrs, diag);
                                 attrs.insert("status".to_string(), "completed".to_string());
                                 attrs.insert(
                                     "completed_at_ns".to_string(),
@@ -1860,15 +1698,7 @@ where
                                     "oneshot_send_ok".to_string(),
                                     send_result.is_ok().to_string(),
                                 );
-                                let attrs_json = facet_json::to_string(&attrs)
-                                    .unwrap_or_else(|_| "{}".to_string());
-                                peeps::registry::register_node(peeps_types::Node {
-                                    id: request_node_id.clone(),
-                                    kind: peeps_types::NodeKind::Request,
-                                    label: Some(method_name),
-                                    attrs_json,
-                                });
-                                touch_connection_node(&request_node_id, diag);
+                                diag.emit_request_node(request_node_id.clone(), method_name, attrs);
                                 peeps::registry::remove_node(&request_node_id);
                             }
                             diag.complete_request(conn_id.raw(), request_id);
@@ -2021,20 +1851,10 @@ where
                 let mut attrs = std::collections::BTreeMap::new();
                 attrs.insert("correlation".to_string(), request_id.to_string());
                 attrs.insert("method".to_string(), method_name.clone());
-                if let Some(ref diag) = self.diagnostic_state {
-                    apply_connection_attrs(&mut attrs, diag);
-                }
                 attrs.insert("status".to_string(), "handling".to_string());
                 attrs.insert("phase_started_ns".to_string(), unix_now_ns().to_string());
-                let attrs_json = facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
-                peeps::registry::register_node(peeps_types::Node {
-                    id: response_node_id.clone(),
-                    kind: peeps_types::NodeKind::Response,
-                    label: Some(method_name),
-                    attrs_json,
-                });
                 if let Some(ref diag) = self.diagnostic_state {
-                    touch_connection_node(&response_node_id, diag);
+                    diag.emit_response_node(response_node_id.clone(), method_name, attrs);
                 }
                 peeps::registry::edge(&request_node_id, &response_node_id);
                 Some(response_node_id)
@@ -2139,19 +1959,15 @@ where
                 let mut attrs = std::collections::BTreeMap::new();
                 attrs.insert("correlation".to_string(), request_id.to_string());
                 attrs.insert("method".to_string(), method_name.clone());
-                apply_connection_attrs(&mut attrs, diag);
                 attrs.insert("cancelled".to_string(), "true".to_string());
                 attrs.insert("close.cause".to_string(), "peer_cancelled".to_string());
                 attrs.insert("status".to_string(), "cancelled".to_string());
                 attrs.insert("cancelled_at_ns".to_string(), unix_now_ns().to_string());
-                let attrs_json = facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
-                peeps::registry::register_node(peeps_types::Node {
-                    id: response_node_id.clone(),
-                    kind: peeps_types::NodeKind::Response,
-                    label: Some(format!("{method_name} (cancelled)")),
-                    attrs_json,
-                });
-                touch_connection_node(&response_node_id, diag);
+                diag.emit_response_node(
+                    response_node_id,
+                    format!("{method_name} (cancelled)"),
+                    attrs,
+                );
             }
 
             // Track cancellation for diagnostics
@@ -2575,7 +2391,7 @@ where
 
     #[cfg(feature = "diagnostics")]
     if let Some(ref diag) = diagnostic_state {
-        let _ = register_connection_node(diag);
+        let _ = diag.register_connection_context();
     }
 
     // Ensure method IDs are computed at least once on the server side so

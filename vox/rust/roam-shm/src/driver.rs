@@ -20,9 +20,12 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use roam_session::diagnostic::DiagnosticState;
+#[cfg(feature = "diagnostics")]
+use roam_session::request_response_spy::RequestResponseSpy;
 use roam_session::{
     ChannelError, ChannelRegistry, ConnectError, ConnectionHandle, Context, DriverMessage,
-    ResponseData, Role, ServiceDispatcher, TransportError,
+    PEEPS_METHOD_NAME_METADATA_KEY, PEEPS_SPAN_ID_METADATA_KEY, PEEPS_TASK_ID_METADATA_KEY,
+    PEEPS_TASK_NAME_METADATA_KEY, ResponseData, Role, ServiceDispatcher, TransportError,
 };
 use roam_stream::MessageTransport;
 use roam_wire::{ConnectionId, Message};
@@ -31,11 +34,6 @@ use crate::auditable::{self, AuditableDequeMap, AuditableReceiver, AuditableSend
 use crate::host::ShmHost;
 use crate::peer::PeerId;
 use crate::transport::{ShmGuestTransport, message_to_shm_msg, shm_msg_to_message};
-
-#[cfg(feature = "diagnostics")]
-const PEEPS_SPAN_ID_METADATA_KEY: &str = "peeps.span_id";
-#[cfg(feature = "diagnostics")]
-const PEEPS_METHOD_NAME_METADATA_KEY: &str = "peeps.method_name";
 
 #[cfg(feature = "diagnostics")]
 #[inline]
@@ -50,13 +48,13 @@ fn task_context_from_metadata(metadata: &roam_wire::Metadata) -> (Option<u64>, O
     let mut task_id = None;
     let mut task_name = None;
     for (key, value, _flags) in metadata {
-        if key == "peeps.task_id" {
+        if key == PEEPS_TASK_ID_METADATA_KEY {
             task_id = match value {
                 roam_wire::MetadataValue::U64(id) => Some(*id),
                 roam_wire::MetadataValue::String(s) => s.parse::<u64>().ok(),
                 roam_wire::MetadataValue::Bytes(_) => None,
             };
-        } else if key == "peeps.task_name" {
+        } else if key == PEEPS_TASK_NAME_METADATA_KEY {
             task_name = match value {
                 roam_wire::MetadataValue::String(name) => Some(name.clone()),
                 roam_wire::MetadataValue::U64(id) => Some(id.to_string()),
@@ -79,65 +77,6 @@ fn metadata_string(metadata: &roam_wire::Metadata, key: &str) -> Option<String> 
             None
         }
     })
-}
-
-#[cfg(feature = "diagnostics")]
-#[inline]
-fn apply_connection_attrs(
-    attrs: &mut std::collections::BTreeMap<String, String>,
-    diag: &DiagnosticState,
-) {
-    let connection = diag.connection_identity();
-    attrs.insert("rpc.connection".to_string(), diag.rpc_connection_token());
-    attrs.insert("connection.src".to_string(), connection.src);
-    attrs.insert("connection.dst".to_string(), connection.dst);
-    attrs.insert("connection.link".to_string(), connection.link);
-    attrs.insert("connection.transport".to_string(), connection.transport);
-}
-
-#[cfg(feature = "diagnostics")]
-fn register_connection_node(diag: &DiagnosticState) -> Option<String> {
-    let rpc_connection = diag.rpc_connection_token();
-    if rpc_connection.is_empty() {
-        return None;
-    }
-    let connection = diag.connection_identity();
-    let connection_node_id = format!("connection:{rpc_connection}");
-    let mut attrs = std::collections::BTreeMap::new();
-    attrs.insert("rpc.connection".to_string(), rpc_connection.clone());
-    attrs.insert("connection.src".to_string(), connection.src);
-    attrs.insert("connection.dst".to_string(), connection.dst);
-    attrs.insert("connection.link".to_string(), connection.link);
-    attrs.insert("connection.transport".to_string(), connection.transport);
-    attrs.insert(
-        "connection.state".to_string(),
-        diag.connection_state().to_string(),
-    );
-    attrs.insert(
-        "connection.opened_at_ns".to_string(),
-        diag.connection_identity().opened_at_ns.to_string(),
-    );
-    if let Some(closed_at_ns) = diag.connection_closed_at_ns() {
-        attrs.insert(
-            "connection.closed_at_ns".to_string(),
-            closed_at_ns.to_string(),
-        );
-    }
-    let attrs_json = facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
-    peeps::registry::register_node(peeps_types::Node {
-        id: connection_node_id.clone(),
-        kind: peeps_types::NodeKind::Connection,
-        label: Some(rpc_connection),
-        attrs_json,
-    });
-    Some(connection_node_id)
-}
-
-#[cfg(feature = "diagnostics")]
-fn touch_connection_node(entity_id: &str, diag: &DiagnosticState) {
-    if let Some(connection_node_id) = register_connection_node(diag) {
-        peeps::registry::touch_edge(entity_id, &connection_node_id);
-    }
 }
 
 #[cfg(feature = "diagnostics")]
@@ -417,7 +356,7 @@ impl<T, D> Drop for ShmDriver<T, D> {
         #[cfg(feature = "diagnostics")]
         if let Some(ref diag) = self.diagnostic_state {
             diag.mark_connection_closed(unix_now_ns());
-            let _ = register_connection_node(diag);
+            let _ = diag.register_connection_context();
         }
     }
 }
@@ -678,20 +617,12 @@ where
             let mut attrs = std::collections::BTreeMap::new();
             attrs.insert("correlation".to_string(), request_id.to_string());
             attrs.insert("method".to_string(), method_name.clone());
-            apply_connection_attrs(&mut attrs, diag);
             attrs.insert("status".to_string(), "in_flight".to_string());
             attrs.insert("delivered_at_ns".to_string(), unix_now_ns().to_string());
             if let Some(elapsed_ns) = diag.inflight_request_elapsed_ns(conn_id, request_id) {
                 attrs.insert("elapsed_ns".to_string(), elapsed_ns.to_string());
             }
-            let attrs_json = facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
-            peeps::registry::register_node(peeps_types::Node {
-                id: request_node_id.clone(),
-                kind: peeps_types::NodeKind::Request,
-                label: Some(method_name),
-                attrs_json,
-            });
-            touch_connection_node(&request_node_id, diag);
+            diag.emit_request_node(request_node_id, method_name, attrs);
         }
 
         #[cfg(feature = "diagnostics")]
@@ -722,7 +653,6 @@ where
             let mut attrs = std::collections::BTreeMap::new();
             attrs.insert("correlation".to_string(), request_id.to_string());
             attrs.insert("method".to_string(), method_name.clone());
-            apply_connection_attrs(&mut attrs, diag);
             attrs.insert("status".to_string(), "delivered".to_string());
             attrs.insert(
                 "response.delivered_at_ns".to_string(),
@@ -739,14 +669,7 @@ where
                     handled_elapsed_ns.to_string(),
                 );
             }
-            let attrs_json = facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
-            peeps::registry::register_node(peeps_types::Node {
-                id: response_node_id.clone(),
-                kind: peeps_types::NodeKind::Response,
-                label: Some(method_name),
-                attrs_json,
-            });
-            touch_connection_node(&response_node_id, diag);
+            diag.emit_response_node(response_node_id.clone(), method_name, attrs);
             peeps::registry::remove_node(&response_node_id);
             trace!(request_id, name = %diag.name, "completing incoming request");
             diag.complete_request(conn_id, request_id);
@@ -964,7 +887,6 @@ where
                             let mut attrs = std::collections::BTreeMap::new();
                             attrs.insert("correlation".to_string(), request_id.to_string());
                             attrs.insert("method".to_string(), method_name.clone());
-                            apply_connection_attrs(&mut attrs, diag);
                             attrs.insert("status".to_string(), "completed".to_string());
                             attrs.insert(
                                 "request.completed_at_ns".to_string(),
@@ -975,15 +897,7 @@ where
                             {
                                 attrs.insert("elapsed_ns".to_string(), elapsed_ns.to_string());
                             }
-                            let attrs_json =
-                                facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
-                            peeps::registry::register_node(peeps_types::Node {
-                                id: request_node_id.clone(),
-                                kind: peeps_types::NodeKind::Request,
-                                label: Some(method_name),
-                                attrs_json,
-                            });
-                            touch_connection_node(&request_node_id, diag);
+                            diag.emit_request_node(request_node_id.clone(), method_name, attrs);
                             peeps::registry::remove_node(&request_node_id);
                         }
                         diag.complete_request(conn_id.raw(), request_id);
@@ -1100,20 +1014,10 @@ where
             let mut attrs = std::collections::BTreeMap::new();
             attrs.insert("correlation".to_string(), request_id.to_string());
             attrs.insert("method".to_string(), method_name.clone());
-            if let Some(diag) = self.diagnostic_state.as_deref() {
-                apply_connection_attrs(&mut attrs, diag);
-            }
             attrs.insert("status".to_string(), "handling".to_string());
             attrs.insert("phase_started_ns".to_string(), unix_now_ns().to_string());
-            let attrs_json = facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
-            peeps::registry::register_node(peeps_types::Node {
-                id: response_node_id.clone(),
-                kind: peeps_types::NodeKind::Response,
-                label: Some(method_name),
-                attrs_json,
-            });
             if let Some(diag) = self.diagnostic_state.as_deref() {
-                touch_connection_node(&response_node_id, diag);
+                diag.emit_response_node(response_node_id.clone(), method_name, attrs);
             }
             if let Some(request_node_id) = request_node_id {
                 peeps::registry::edge(&request_node_id, &response_node_id);
@@ -1250,17 +1154,13 @@ where
                 let mut attrs = std::collections::BTreeMap::new();
                 attrs.insert("correlation".to_string(), request_id.to_string());
                 attrs.insert("method".to_string(), method_name.clone());
-                apply_connection_attrs(&mut attrs, diag);
                 attrs.insert("cancelled".to_string(), "true".to_string());
                 attrs.insert("close.cause".to_string(), "peer_cancelled".to_string());
-                let attrs_json = facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
-                peeps::registry::register_node(peeps_types::Node {
-                    id: response_node_id.clone(),
-                    kind: peeps_types::NodeKind::Response,
-                    label: Some(format!("{method_name} (cancelled)")),
-                    attrs_json,
-                });
-                touch_connection_node(&response_node_id, diag);
+                diag.emit_response_node(
+                    response_node_id,
+                    format!("{method_name} (cancelled)"),
+                    attrs,
+                );
             }
 
             // Mark request completed for diagnostics
@@ -1618,7 +1518,7 @@ where
 
     #[cfg(feature = "diagnostics")]
     if let Some(ref diag) = driver.diagnostic_state {
-        let _ = register_connection_node(diag);
+        let _ = diag.register_connection_context();
     }
 
     (handle, incoming_connections_rx, driver)
@@ -1780,7 +1680,7 @@ impl Drop for MultiPeerHostDriver {
         for state in self.peers.values() {
             if let Some(ref diag) = state.diagnostic_state {
                 diag.mark_connection_closed(unix_now_ns());
-                let _ = register_connection_node(diag);
+                let _ = diag.register_connection_context();
             }
         }
     }
@@ -1940,7 +1840,7 @@ impl MultiPeerHostDriverBuilder {
             incoming_connections_map.insert(peer_id, incoming_connections_rx);
             #[cfg(feature = "diagnostics")]
             if let Some(ref diag) = peer_diagnostic_state {
-                let _ = register_connection_node(diag);
+                let _ = diag.register_connection_context();
             }
 
             peers.insert(
@@ -2321,7 +2221,7 @@ impl MultiPeerHostDriver {
                 );
                 #[cfg(feature = "diagnostics")]
                 if let Some(ref diag) = diagnostic_state {
-                    let _ = register_connection_node(diag);
+                    let _ = diag.register_connection_context();
                 }
                 trace!("MultiPeerHostDriver: {} peers now active", self.peers.len());
 
@@ -2582,20 +2482,12 @@ impl MultiPeerHostDriver {
             let mut attrs = std::collections::BTreeMap::new();
             attrs.insert("correlation".to_string(), request_id.to_string());
             attrs.insert("method".to_string(), method_name.clone());
-            apply_connection_attrs(&mut attrs, diag);
             attrs.insert("status".to_string(), "in_flight".to_string());
             attrs.insert("delivered_at_ns".to_string(), unix_now_ns().to_string());
             if let Some(elapsed_ns) = diag.inflight_request_elapsed_ns(conn_id, request_id) {
                 attrs.insert("elapsed_ns".to_string(), elapsed_ns.to_string());
             }
-            let attrs_json = facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
-            peeps::registry::register_node(peeps_types::Node {
-                id: request_node_id.clone(),
-                kind: peeps_types::NodeKind::Request,
-                label: Some(method_name),
-                attrs_json,
-            });
-            touch_connection_node(&request_node_id, diag);
+            diag.emit_request_node(request_node_id, method_name, attrs);
         }
 
         #[cfg(feature = "diagnostics")]
@@ -2629,7 +2521,6 @@ impl MultiPeerHostDriver {
             let mut attrs = std::collections::BTreeMap::new();
             attrs.insert("correlation".to_string(), request_id.to_string());
             attrs.insert("method".to_string(), method_name.clone());
-            apply_connection_attrs(&mut attrs, diag);
             attrs.insert("status".to_string(), "delivered".to_string());
             attrs.insert(
                 "response.delivered_at_ns".to_string(),
@@ -2646,14 +2537,7 @@ impl MultiPeerHostDriver {
                     handled_elapsed_ns.to_string(),
                 );
             }
-            let attrs_json = facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
-            peeps::registry::register_node(peeps_types::Node {
-                id: response_node_id.clone(),
-                kind: peeps_types::NodeKind::Response,
-                label: Some(method_name),
-                attrs_json,
-            });
-            touch_connection_node(&response_node_id, diag);
+            diag.emit_response_node(response_node_id.clone(), method_name, attrs);
             peeps::registry::remove_node(&response_node_id);
             trace!(request_id, name = %diag.name, "completing incoming request");
             diag.complete_request(conn_id, request_id);
@@ -2860,7 +2744,6 @@ impl MultiPeerHostDriver {
                             let mut attrs = std::collections::BTreeMap::new();
                             attrs.insert("correlation".to_string(), request_id.to_string());
                             attrs.insert("method".to_string(), method_name.clone());
-                            apply_connection_attrs(&mut attrs, diag);
                             attrs.insert("status".to_string(), "completed".to_string());
                             attrs.insert(
                                 "request.completed_at_ns".to_string(),
@@ -2871,15 +2754,7 @@ impl MultiPeerHostDriver {
                             {
                                 attrs.insert("elapsed_ns".to_string(), elapsed_ns.to_string());
                             }
-                            let attrs_json =
-                                facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
-                            peeps::registry::register_node(peeps_types::Node {
-                                id: request_node_id.clone(),
-                                kind: peeps_types::NodeKind::Request,
-                                label: Some(method_name),
-                                attrs_json,
-                            });
-                            touch_connection_node(&request_node_id, diag);
+                            diag.emit_request_node(request_node_id.clone(), method_name, attrs);
                             peeps::registry::remove_node(&request_node_id);
                         }
                         diag.complete_request(conn_id.raw(), request_id);
@@ -3016,20 +2891,10 @@ impl MultiPeerHostDriver {
             let mut attrs = std::collections::BTreeMap::new();
             attrs.insert("correlation".to_string(), request_id.to_string());
             attrs.insert("method".to_string(), method_name.clone());
-            if let Some(diag) = state.diagnostic_state.as_deref() {
-                apply_connection_attrs(&mut attrs, diag);
-            }
             attrs.insert("status".to_string(), "handling".to_string());
             attrs.insert("phase_started_ns".to_string(), unix_now_ns().to_string());
-            let attrs_json = facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
-            peeps::registry::register_node(peeps_types::Node {
-                id: response_node_id.clone(),
-                kind: peeps_types::NodeKind::Response,
-                label: Some(method_name),
-                attrs_json,
-            });
             if let Some(diag) = state.diagnostic_state.as_deref() {
-                touch_connection_node(&response_node_id, diag);
+                diag.emit_response_node(response_node_id.clone(), method_name, attrs);
             }
             if let Some(request_node_id) = request_node_id {
                 peeps::registry::edge(&request_node_id, &response_node_id);
@@ -3181,17 +3046,13 @@ impl MultiPeerHostDriver {
                 let mut attrs = std::collections::BTreeMap::new();
                 attrs.insert("correlation".to_string(), request_id.to_string());
                 attrs.insert("method".to_string(), method_name.clone());
-                apply_connection_attrs(&mut attrs, diag);
                 attrs.insert("cancelled".to_string(), "true".to_string());
                 attrs.insert("close.cause".to_string(), "peer_cancelled".to_string());
-                let attrs_json = facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
-                peeps::registry::register_node(peeps_types::Node {
-                    id: response_node_id.clone(),
-                    kind: peeps_types::NodeKind::Response,
-                    label: Some(format!("{method_name} (cancelled)")),
-                    attrs_json,
-                });
-                touch_connection_node(&response_node_id, diag);
+                diag.emit_response_node(
+                    response_node_id,
+                    format!("{method_name} (cancelled)"),
+                    attrs,
+                );
             }
 
             // Mark request completed for diagnostics
