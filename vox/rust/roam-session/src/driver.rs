@@ -851,7 +851,7 @@ struct PendingResponse {
     #[cfg(not(target_arch = "wasm32"))]
     warned_stale: bool,
     #[cfg(feature = "diagnostics")]
-    tx_node_id: String,
+    tx_handle: peeps::EntityHandle,
     tx: crate::runtime::OneshotSender<Result<ResponseData, TransportError>>,
 }
 
@@ -1197,33 +1197,6 @@ where
     }
 
     async fn handle_driver_message(&mut self, msg: DriverMessage) -> Result<(), ConnectionError> {
-        #[cfg(feature = "diagnostics")]
-        let dequeued_target_node_id: Option<String> = match &msg {
-            DriverMessage::Call { metadata, .. } => metadata
-                .iter()
-                .find(|(k, _, _)| k == crate::PEEPS_REQUEST_ENTITY_ID_METADATA_KEY)
-                .and_then(|(_, v, _)| match v {
-                    roam_wire::MetadataValue::String(s) => Some(s.clone()),
-                    _ => None,
-                }),
-            DriverMessage::Response {
-                conn_id,
-                request_id,
-                ..
-            } => self.diagnostic_state.as_ref().and_then(|diag| {
-                diag.inflight_request_metadata_string(
-                    conn_id.raw(),
-                    *request_id,
-                    crate::PEEPS_REQUEST_ENTITY_ID_METADATA_KEY,
-                )
-            }),
-            _ => None,
-        };
-        #[cfg(feature = "diagnostics")]
-        if let Some(ref target) = dequeued_target_node_id {
-            peeps::registry::touch_edge(self.driver_rx.node_id(), target);
-        }
-
         match msg {
             DriverMessage::Call {
                 conn_id,
@@ -1234,23 +1207,10 @@ where
                 payload,
                 response_tx,
             } => {
-                #[cfg(feature = "diagnostics")]
-                let queued_request_entity_id = metadata
-                    .iter()
-                    .find(|(k, _, _)| k == crate::PEEPS_REQUEST_ENTITY_ID_METADATA_KEY)
-                    .and_then(|(_, v, _)| match v {
-                        roam_wire::MetadataValue::String(s) => Some(s.clone()),
-                        _ => None,
-                    });
-                #[cfg(feature = "diagnostics")]
-                if let Some(ref request_entity_id) = queued_request_entity_id {
-                    peeps::registry::remove_edge(request_entity_id, self.driver_tx.endpoint_id());
-                }
-
                 // Store pending response in the connection's state
                 if let Some(conn) = self.connections.get_mut(&conn_id) {
                     #[cfg(feature = "diagnostics")]
-                    let tx_node_id = response_tx.node_id().to_string();
+                    let tx_handle = response_tx.handle().clone();
                     #[cfg(feature = "diagnostics")]
                     let len_before = conn.pending_responses.len();
                     conn.pending_responses.insert(
@@ -1261,7 +1221,7 @@ where
                             #[cfg(not(target_arch = "wasm32"))]
                             warned_stale: false,
                             #[cfg(feature = "diagnostics")]
-                            tx_node_id,
+                            tx_handle,
                             tx: response_tx,
                         },
                     );
@@ -1294,12 +1254,12 @@ where
                     payload,
                 };
                 #[cfg(feature = "diagnostics")]
-                if let Some(ref request_entity_id) = queued_request_entity_id {
-                    let send_fut = peeps::stack::scope(request_entity_id, self.io.send(&req));
-                    peeps::stack::ensure(send_fut).await?;
-                } else {
-                    self.io.send(&req).await?;
-                }
+                peeps::instrument_future_on(
+                    "roam.driver.send_request",
+                    self.driver_rx.handle(),
+                    self.io.send(&req),
+                )
+                .await?;
                 #[cfg(not(feature = "diagnostics"))]
                 self.io.send(&req).await?;
             }
@@ -1620,12 +1580,19 @@ where
                             );
                         }
                         #[cfg(feature = "diagnostics")]
-                        peeps::stack::with_top(|src| {
-                            peeps::registry::edge(src, &pending_response.tx_node_id);
-                            peeps::registry::touch_edge(src, &pending_response.tx_node_id);
-                        });
-                        #[cfg(feature = "diagnostics")]
                         let response_outcome = response_outcome_from_payload(&payload);
+                        #[cfg(feature = "diagnostics")]
+                        let send_result = peeps::instrument_future_on(
+                            "roam.driver.deliver_response",
+                            &pending_response.tx_handle,
+                            async {
+                                pending_response
+                                    .tx
+                                    .send(Ok(ResponseData { payload, channels }))
+                            },
+                        )
+                        .await;
+                        #[cfg(not(feature = "diagnostics"))]
                         let send_result = pending_response
                             .tx
                             .send(Ok(ResponseData { payload, channels }));
@@ -1782,17 +1749,17 @@ where
 
         // Create typed response handle linked to propagated request identity.
         #[cfg(feature = "diagnostics")]
-        let response_entity_id = if let Some(diag) = self.diagnostic_state.as_deref() {
+        let response_entity_handle = if let Some(diag) = self.diagnostic_state.as_deref() {
             let method_name = metadata_string(&metadata, crate::PEEPS_METHOD_NAME_METADATA_KEY)
                 .or_else(|| crate::diagnostic::get_method_name(method_id).map(|s| s.to_string()))
                 .unwrap_or_else(|| format!("0x{method_id:x}"));
             let request_wire_id =
                 metadata_string(&metadata, crate::PEEPS_REQUEST_ENTITY_ID_METADATA_KEY);
             let response_handle = diag.emit_response_node(method_name, request_wire_id.as_deref());
-            let response_entity_id = response_handle.entity_id_for_wire();
+            let response_entity_handle = response_handle.entity_handle();
             conn.in_flight_response_handles
                 .insert(request_id, response_handle);
-            response_entity_id
+            response_entity_handle
         } else {
             None
         };
@@ -1820,32 +1787,33 @@ where
 
         conn.server_channel_registry
             .set_current_request_id(Some(request_id));
-        let handler_fut = dispatcher.dispatch(cx, payload, &mut conn.server_channel_registry);
+        let dispatch_fut = dispatcher.dispatch(cx, payload, &mut conn.server_channel_registry);
         conn.server_channel_registry.set_current_request_id(None);
-        // even if this task wasn't spawned via peeps::spawn_tracked.
         #[cfg(feature = "diagnostics")]
         let diag_for_handler = self.diagnostic_state.clone();
 
         // r[impl call.cancel.best-effort] - Store abort handle for cancellation support
         let abort_handle = spawn_with_abort("roam_request_handler", async move {
-            // Scope the handler under the response node so the response gains descendants
-            // (response --needs--> nested futures/resources), and ensure a stack scope exists
-            // even if this task wasn't spawned via peeps::spawn_tracked.
+            let run_handler = async move {
+                dispatch_fut.await;
+                #[cfg(feature = "diagnostics")]
+                if let Some(ref diag) = diag_for_handler {
+                    diag.mark_request_handled(conn_id.raw(), request_id);
+                }
+            };
+
             #[cfg(feature = "diagnostics")]
-            if let Some(response_entity_id) = response_entity_id {
-                let fut = async move {
-                    handler_fut.await;
-                    if let Some(ref diag) = diag_for_handler {
-                        diag.mark_request_handled(conn_id.raw(), request_id);
-                    }
-                };
-                let fut = peeps::stack::scope(&response_entity_id, fut);
-                peeps::stack::ensure(fut).await;
+            if let Some(response_entity_handle) = response_entity_handle.as_ref() {
+                peeps::instrument_future_on(
+                    "roam.driver.run_handler",
+                    response_entity_handle,
+                    run_handler,
+                )
+                .await;
                 return;
             }
 
-            // No peeps metadata available; just run the handler.
-            handler_fut.await;
+            run_handler.await;
         });
         conn.in_flight_server_requests
             .insert(request_id, abort_handle);
@@ -2639,7 +2607,7 @@ mod tests {
                     warned_stale: true,
                     tx: response_tx,
                     #[cfg(feature = "diagnostics")]
-                    tx_node_id: "tx:test_stale_pending".to_string(),
+                    tx_handle: response_tx.handle().clone(),
                 },
             );
 
@@ -2703,7 +2671,7 @@ mod tests {
                     warned_stale: false,
                     tx: response_tx,
                     #[cfg(feature = "diagnostics")]
-                    tx_node_id: "tx:test_dropped_receiver".to_string(),
+                    tx_handle: response_tx.handle().clone(),
                 },
             );
 

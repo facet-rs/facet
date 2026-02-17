@@ -1,7 +1,5 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-#[cfg(feature = "diagnostics")]
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use facet::Facet;
 
@@ -677,9 +675,6 @@ impl ConnectionHandle {
         let (metadata, task_id, task_name) =
             self.merged_outgoing_metadata(metadata, request_id, method_name);
         let (response_tx, response_rx) = oneshot("call_raw_with_channels");
-        #[cfg(feature = "diagnostics")]
-        let parent_request_entity_id =
-            Self::metadata_string(&metadata, crate::PEEPS_REQUEST_ENTITY_ID_METADATA_KEY);
 
         #[cfg(feature = "diagnostics")]
         let args_debug_str = args_debug.as_deref().unwrap_or("").to_string();
@@ -692,9 +687,6 @@ impl ConnectionHandle {
 
         #[cfg(feature = "diagnostics")]
         if let Some(request_wire_id) = request_handle.as_ref().and_then(|h| h.id_for_wire()) {
-            if let Some(parent_request_entity_id) = parent_request_entity_id.as_deref() {
-                peeps::registry::edge(parent_request_entity_id, &request_wire_id);
-            }
             Self::upsert_metadata_entry(
                 &mut metadata,
                 crate::PEEPS_REQUEST_ENTITY_ID_METADATA_KEY,
@@ -724,18 +716,7 @@ impl ConnectionHandle {
         }
 
         #[cfg(feature = "diagnostics")]
-        let request_entity_id = {
-            let request_entity_id = request_handle.as_ref().and_then(|h| h.id_for_wire());
-            // If we're called from within a peepable poll stack, link the caller future
-            // to this request (caller --needs--> request). This is the "parent" edge
-            // users expect for outgoing RPC requests.
-            if let Some(request_entity_id) = request_entity_id.as_deref() {
-                peeps::stack::with_top(|src| peeps::registry::edge(src, request_entity_id));
-            }
-            request_entity_id
-        };
-        #[cfg(feature = "diagnostics")]
-        let driver_queue_node_id = self.shared.driver_tx.endpoint_id().to_string();
+        let request_entity_handle = request_handle.as_ref().and_then(|h| h.entity_handle());
 
         let msg = DriverMessage::Call {
             conn_id: self.shared.conn_id,
@@ -748,15 +729,21 @@ impl ConnectionHandle {
         };
 
         let call_fut = async {
-            self.shared
-                .driver_tx
-                .send(msg)
-                .await
-                .map_err(|_| TransportError::DriverGone)?;
             #[cfg(feature = "diagnostics")]
-            if let Some(request_entity_id) = request_entity_id.as_deref() {
-                peeps::registry::edge(request_entity_id, &driver_queue_node_id);
-            }
+            let send_driver_result =
+                if let Some(request_entity_handle) = request_entity_handle.as_ref() {
+                    peeps::instrument_future_on(
+                        "roam.call.enqueue_driver",
+                        request_entity_handle,
+                        self.shared.driver_tx.send(msg),
+                    )
+                    .await
+                } else {
+                    self.shared.driver_tx.send(msg).await
+                };
+            #[cfg(not(feature = "diagnostics"))]
+            let send_driver_result = self.shared.driver_tx.send(msg).await;
+            send_driver_result.map_err(|_| TransportError::DriverGone)?;
 
             let conn_id = self.shared.conn_id;
             if !drains.is_empty() {
@@ -821,25 +808,25 @@ impl ConnectionHandle {
                 }
             }
 
-            response_rx
-                .recv()
-                .await
+            #[cfg(feature = "diagnostics")]
+            let response_result =
+                if let Some(request_entity_handle) = request_entity_handle.as_ref() {
+                    peeps::instrument_future_on(
+                        "roam.call.await_response",
+                        request_entity_handle,
+                        response_rx.recv(),
+                    )
+                    .await
+                } else {
+                    response_rx.recv().await
+                };
+            #[cfg(not(feature = "diagnostics"))]
+            let response_result = response_rx.recv().await;
+            response_result
                 .map_err(|_| TransportError::DriverGone)?
                 .map_err(|_| TransportError::ConnectionClosed)
         };
 
-        // Ensure this request is a stable stack frame while awaiting.
-        // This makes `stack::with_top` non-empty for nested peepable futures and
-        // lets wrappers emit edges against the request node when appropriate.
-        #[cfg(feature = "diagnostics")]
-        let result = if let Some(request_entity_id) = request_entity_id.as_deref() {
-            let call_fut = peeps::stack::scope(request_entity_id, call_fut);
-            peeps::stack::ensure(call_fut).await
-        } else {
-            call_fut.await
-        };
-
-        #[cfg(not(feature = "diagnostics"))]
         let result = call_fut.await;
 
         result

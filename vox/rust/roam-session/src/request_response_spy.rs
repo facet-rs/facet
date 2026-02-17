@@ -31,6 +31,17 @@ impl TypedRequestHandle {
             None
         }
     }
+
+    pub fn entity_handle(&self) -> Option<peeps::EntityHandle> {
+        #[cfg(feature = "diagnostics")]
+        {
+            return self.inner.as_ref().map(|h| h.handle().clone());
+        }
+        #[cfg(not(feature = "diagnostics"))]
+        {
+            None
+        }
+    }
 }
 
 #[derive(Clone, Default)]
@@ -66,6 +77,17 @@ impl TypedResponseHandle {
                 ResponseOutcome::Error => handle.mark_error(),
                 ResponseOutcome::Cancelled => handle.mark_cancelled(),
             }
+        }
+    }
+
+    pub fn entity_handle(&self) -> Option<peeps::EntityHandle> {
+        #[cfg(feature = "diagnostics")]
+        {
+            return self.inner.as_ref().map(|h| h.handle().clone());
+        }
+        #[cfg(not(feature = "diagnostics"))]
+        {
+            None
         }
     }
 }
@@ -105,10 +127,9 @@ impl RequestResponseSpy for DiagnosticState {
     }
 
     #[inline]
-    fn touch_connection_context(&self, entity_id: &str) {
-        if let Some(connection_context_id) = self.ensure_connection_context() {
-            peeps::registry::touch_edge(entity_id, &connection_context_id);
-        }
+    fn touch_connection_context(&self, _entity_id: &str) {
+        let _ = self.ensure_connection_context();
+        self.refresh_connection_context_if_dirty();
     }
 
     #[inline]
@@ -116,7 +137,6 @@ impl RequestResponseSpy for DiagnosticState {
         let _ = self.ensure_connection_context();
         self.refresh_connection_context_if_dirty();
         let request = peeps::rpc_request(method_name, args_preview);
-        self.touch_connection_context(request.id().as_str());
         TypedRequestHandle::from_inner(request)
     }
 
@@ -134,7 +154,6 @@ impl RequestResponseSpy for DiagnosticState {
         } else {
             peeps::rpc_response(method_name)
         };
-        self.touch_connection_context(response.id().as_str());
         TypedResponseHandle::from_inner(response)
     }
 }
