@@ -121,6 +121,66 @@ fn register_connection_node(diag: &crate::diagnostic::DiagnosticState) -> Option
         "connection.pending_responses".to_string(),
         diag.pending_responses().to_string(),
     );
+    attrs.insert(
+        "connection.driver.last_arm".to_string(),
+        diag.last_driver_arm(),
+    );
+    attrs.insert(
+        "connection.driver.last_arm_at_ns".to_string(),
+        diag.last_driver_arm_at_ns().to_string(),
+    );
+    attrs.insert(
+        "connection.driver.driver_rx_hits".to_string(),
+        diag.driver_arm_driver_rx_hits().to_string(),
+    );
+    attrs.insert(
+        "connection.driver.io_recv_hits".to_string(),
+        diag.driver_arm_io_recv_hits().to_string(),
+    );
+    attrs.insert(
+        "connection.driver.incoming_response_hits".to_string(),
+        diag.driver_arm_incoming_response_hits().to_string(),
+    );
+    attrs.insert(
+        "connection.driver.sweep_hits".to_string(),
+        diag.driver_arm_sweep_hits().to_string(),
+    );
+    attrs.insert(
+        "connection.pending_map.inserts".to_string(),
+        diag.pending_map_inserts().to_string(),
+    );
+    attrs.insert(
+        "connection.pending_map.removes".to_string(),
+        diag.pending_map_removes().to_string(),
+    );
+    attrs.insert(
+        "connection.pending_map.failures".to_string(),
+        diag.pending_map_failures().to_string(),
+    );
+    attrs.insert(
+        "connection.pending_map.last_event".to_string(),
+        diag.pending_map_last_event(),
+    );
+    attrs.insert(
+        "connection.pending_map.last_conn_id".to_string(),
+        diag.pending_map_last_conn_id().to_string(),
+    );
+    attrs.insert(
+        "connection.pending_map.last_request_id".to_string(),
+        diag.pending_map_last_request_id().to_string(),
+    );
+    attrs.insert(
+        "connection.pending_map.last_len_before".to_string(),
+        diag.pending_map_last_len_before().to_string(),
+    );
+    attrs.insert(
+        "connection.pending_map.last_len_after".to_string(),
+        diag.pending_map_last_len_after().to_string(),
+    );
+    attrs.insert(
+        "connection.pending_map.last_at_ns".to_string(),
+        diag.pending_map_last_at_ns().to_string(),
+    );
     let attrs_json = facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
     peeps::registry::register_node(peeps_types::Node {
         id: connection_node_id.clone(),
@@ -1159,6 +1219,10 @@ where
             futures_util::select! {
                 msg = self.driver_rx.recv().fuse() => {
                     if let Some(msg) = msg {
+                        #[cfg(feature = "diagnostics")]
+                        if let Some(ref diag) = self.diagnostic_state {
+                            diag.record_driver_arm("driver_rx");
+                        }
                         self.handle_driver_message(msg).await?;
                     }
                 }
@@ -1172,11 +1236,19 @@ where
                     }
                 }.fuse() => {
                     if let Some(response) = response {
+                        #[cfg(feature = "diagnostics")]
+                        if let Some(ref diag) = self.diagnostic_state {
+                            diag.record_driver_arm("incoming_response_rx");
+                        }
                         self.handle_incoming_response(response).await?;
                     }
                 }
 
                 result = self.io.recv().fuse() => {
+                    #[cfg(feature = "diagnostics")]
+                    if let Some(ref diag) = self.diagnostic_state {
+                        diag.record_driver_arm("io.recv");
+                    }
                     match self.handle_recv(result).await {
                         Ok(true) => continue,
                         Ok(false) => return Ok(()),
@@ -1245,6 +1317,36 @@ where
     }
 
     async fn handle_driver_message(&mut self, msg: DriverMessage) -> Result<(), ConnectionError> {
+        #[cfg(feature = "diagnostics")]
+        let dequeued_target_node_id: Option<String> = match &msg {
+            DriverMessage::Call { metadata, .. } => metadata
+                .iter()
+                .find(|(k, _, _)| k == crate::PEEPS_SPAN_ID_METADATA_KEY)
+                .and_then(|(_, v, _)| match v {
+                    roam_wire::MetadataValue::String(s) => {
+                        Some(peeps_types::canonical_id::request_from_span_id(s))
+                    }
+                    _ => None,
+                }),
+            DriverMessage::Response {
+                conn_id,
+                request_id,
+                ..
+            } => self.diagnostic_state.as_ref().and_then(|diag| {
+                diag.inflight_request_metadata_string(
+                    conn_id.raw(),
+                    *request_id,
+                    crate::PEEPS_SPAN_ID_METADATA_KEY,
+                )
+                .map(|span_id| peeps_types::canonical_id::request_from_span_id(&span_id))
+            }),
+            _ => None,
+        };
+        #[cfg(feature = "diagnostics")]
+        if let Some(ref target) = dequeued_target_node_id {
+            peeps::registry::touch_edge(self.driver_rx.node_id(), target);
+        }
+
         match msg {
             DriverMessage::Call {
                 conn_id,
@@ -1274,6 +1376,8 @@ where
                 if let Some(conn) = self.connections.get_mut(&conn_id) {
                     #[cfg(feature = "diagnostics")]
                     let tx_node_id = response_tx.node_id().to_string();
+                    #[cfg(feature = "diagnostics")]
+                    let len_before = conn.pending_responses.len();
                     conn.pending_responses.insert(
                         request_id,
                         PendingResponse {
@@ -1286,8 +1390,23 @@ where
                             tx: response_tx,
                         },
                     );
+                    #[cfg(feature = "diagnostics")]
+                    if let Some(ref diag) = self.diagnostic_state {
+                        let len_after = conn.pending_responses.len();
+                        diag.record_pending_map_event(
+                            "insert",
+                            conn_id.raw(),
+                            request_id,
+                            len_before,
+                            len_after,
+                        );
+                    }
                 } else {
                     // Unknown connection - fail the call
+                    #[cfg(feature = "diagnostics")]
+                    if let Some(ref diag) = self.diagnostic_state {
+                        diag.record_pending_map_event("fail", conn_id.raw(), request_id, 0, 0);
+                    }
                     let _ = response_tx.send(Err(TransportError::ConnectionClosed));
                     return Ok(());
                 }
@@ -1337,6 +1456,7 @@ where
                     attrs.insert("status".to_string(), "in_flight".to_string());
                     attrs.insert("phase_started_ns".to_string(), now_ns.to_string());
                     attrs.insert("delivered_at_ns".to_string(), now_ns.to_string());
+                    attrs.insert("sent_at_ns".to_string(), now_ns.to_string());
                     let attrs_json =
                         facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
                     peeps::registry::register_node(peeps_types::Node {
@@ -1494,6 +1614,10 @@ where
                 self.io.send(&wire_msg).await?;
             }
             DriverMessage::SweepPendingResponses => {
+                #[cfg(feature = "diagnostics")]
+                if let Some(ref diag) = self.diagnostic_state {
+                    diag.record_driver_arm("sweep_pending_responses");
+                }
                 if self.sweep_pending_response_staleness() {
                     return Err(self.goodbye("call.response.stale-timeout").await);
                 }
@@ -1661,76 +1785,123 @@ where
                 ..
             } => {
                 // Route to the correct connection
-                if let Some(conn) = self.connections.get_mut(&conn_id)
-                    && let Some(pending_response) = conn.pending_responses.remove(&request_id)
-                {
+                if let Some(conn) = self.connections.get_mut(&conn_id) {
                     #[cfg(feature = "diagnostics")]
-                    peeps::stack::with_top(|src| {
-                        peeps::registry::edge(src, &pending_response.tx_node_id);
-                        peeps::registry::touch_edge(src, &pending_response.tx_node_id);
-                    });
-                    if pending_response
-                        .tx
-                        .send(Ok(ResponseData { payload, channels }))
-                        .is_err()
-                    {
+                    let len_before = conn.pending_responses.len();
+                    if let Some(pending_response) = conn.pending_responses.remove(&request_id) {
+                        #[cfg(feature = "diagnostics")]
+                        if let Some(ref diag) = self.diagnostic_state {
+                            let len_after = conn.pending_responses.len();
+                            diag.record_pending_map_event(
+                                "remove",
+                                conn_id.raw(),
+                                request_id,
+                                len_before,
+                                len_after,
+                            );
+                        }
+                        #[cfg(feature = "diagnostics")]
+                        peeps::stack::with_top(|src| {
+                            peeps::registry::edge(src, &pending_response.tx_node_id);
+                            peeps::registry::touch_edge(src, &pending_response.tx_node_id);
+                        });
+                        #[cfg(feature = "diagnostics")]
+                        let response_matched_at_ns = unix_now_ns();
+                        let send_result = pending_response
+                            .tx
+                            .send(Ok(ResponseData { payload, channels }));
+                        #[cfg(feature = "diagnostics")]
+                        let oneshot_sent_at_ns = unix_now_ns();
+                        if send_result.is_err() {
+                            warn!(
+                                conn_id = conn_id.raw(),
+                                request_id, "response receiver dropped before delivery"
+                            );
+                        }
+                        #[cfg(feature = "diagnostics")]
+                        if let Some(ref diag) = self.diagnostic_state {
+                            if let Some(span_id) = diag.inflight_request_metadata_string(
+                                conn_id.raw(),
+                                request_id,
+                                crate::PEEPS_SPAN_ID_METADATA_KEY,
+                            ) {
+                                let request_node_id =
+                                    peeps_types::canonical_id::request_from_span_id(&span_id);
+                                let method_name = diag
+                                    .inflight_request_metadata_string(
+                                        conn_id.raw(),
+                                        request_id,
+                                        crate::PEEPS_METHOD_NAME_METADATA_KEY,
+                                    )
+                                    .or_else(|| {
+                                        diag.inflight_request_method_id(conn_id.raw(), request_id)
+                                            .and_then(crate::diagnostic::get_method_name)
+                                            .map(|s| s.to_string())
+                                    })
+                                    .unwrap_or_else(|| "unknown".to_string());
+                                let mut attrs = std::collections::BTreeMap::new();
+                                attrs.insert("correlation".to_string(), request_id.to_string());
+                                attrs.insert("method".to_string(), method_name.clone());
+                                apply_connection_attrs(&mut attrs, diag);
+                                attrs.insert("status".to_string(), "completed".to_string());
+                                attrs.insert(
+                                    "completed_at_ns".to_string(),
+                                    unix_now_ns().to_string(),
+                                );
+                                attrs.insert(
+                                    "response_matched_at_ns".to_string(),
+                                    response_matched_at_ns.to_string(),
+                                );
+                                attrs.insert(
+                                    "oneshot_sent_at_ns".to_string(),
+                                    oneshot_sent_at_ns.to_string(),
+                                );
+                                attrs.insert(
+                                    "oneshot_send_ok".to_string(),
+                                    send_result.is_ok().to_string(),
+                                );
+                                let attrs_json = facet_json::to_string(&attrs)
+                                    .unwrap_or_else(|_| "{}".to_string());
+                                peeps::registry::register_node(peeps_types::Node {
+                                    id: request_node_id.clone(),
+                                    kind: peeps_types::NodeKind::Request,
+                                    label: Some(method_name),
+                                    attrs_json,
+                                });
+                                touch_connection_node(&request_node_id, diag);
+                                peeps::registry::remove_node(&request_node_id);
+                            }
+                            diag.complete_request(conn_id.raw(), request_id);
+                        }
+                    } else {
+                        #[cfg(feature = "diagnostics")]
+                        if let Some(ref diag) = self.diagnostic_state {
+                            let len_after = conn.pending_responses.len();
+                            diag.record_pending_map_event(
+                                "fail",
+                                conn_id.raw(),
+                                request_id,
+                                len_before,
+                                len_after,
+                            );
+                        }
                         warn!(
                             conn_id = conn_id.raw(),
-                            request_id, "response receiver dropped before delivery"
+                            request_id,
+                            "received response for unknown request_id - protocol violation"
                         );
+                        return Err(self.goodbye("call.response.unknown-request-id").await);
                     }
+                } else {
                     #[cfg(feature = "diagnostics")]
                     if let Some(ref diag) = self.diagnostic_state {
-                        if let Some(span_id) = diag.inflight_request_metadata_string(
-                            conn_id.raw(),
-                            request_id,
-                            crate::PEEPS_SPAN_ID_METADATA_KEY,
-                        ) {
-                            let request_node_id =
-                                peeps_types::canonical_id::request_from_span_id(&span_id);
-                            let method_name = diag
-                                .inflight_request_metadata_string(
-                                    conn_id.raw(),
-                                    request_id,
-                                    crate::PEEPS_METHOD_NAME_METADATA_KEY,
-                                )
-                                .or_else(|| {
-                                    diag.inflight_request_method_id(conn_id.raw(), request_id)
-                                        .and_then(crate::diagnostic::get_method_name)
-                                        .map(|s| s.to_string())
-                                })
-                                .unwrap_or_else(|| "unknown".to_string());
-                            let mut attrs = std::collections::BTreeMap::new();
-                            attrs.insert("correlation".to_string(), request_id.to_string());
-                            attrs.insert("method".to_string(), method_name.clone());
-                            apply_connection_attrs(&mut attrs, diag);
-                            attrs.insert("status".to_string(), "completed".to_string());
-                            attrs.insert("completed_at_ns".to_string(), unix_now_ns().to_string());
-                            let attrs_json =
-                                facet_json::to_string(&attrs).unwrap_or_else(|_| "{}".to_string());
-                            peeps::registry::register_node(peeps_types::Node {
-                                id: request_node_id.clone(),
-                                kind: peeps_types::NodeKind::Request,
-                                label: Some(method_name),
-                                attrs_json,
-                            });
-                            touch_connection_node(&request_node_id, diag);
-                            peeps::registry::remove_node(&request_node_id);
-                        }
-                        diag.complete_request(conn_id.raw(), request_id);
+                        diag.record_pending_map_event("fail", conn_id.raw(), request_id, 0, 0);
                     }
-                } else if !self.connections.contains_key(&conn_id) {
                     warn!(
                         conn_id = conn_id.raw(),
                         request_id, "received response for unknown conn_id"
                     );
                     return Err(self.goodbye("message.conn-id").await);
-                } else {
-                    warn!(
-                        conn_id = conn_id.raw(),
-                        request_id, "received response for unknown request_id - protocol violation"
-                    );
-                    return Err(self.goodbye("call.response.unknown-request-id").await);
                 }
             }
             Message::Cancel {
@@ -2170,12 +2341,26 @@ where
         let should_teardown_link = !timed_out_connections.is_empty();
         for conn_id in timed_out_connections {
             if let Some(conn) = self.connections.get_mut(&conn_id) {
+                #[cfg(feature = "diagnostics")]
+                let mut len_before = conn.pending_responses.len();
                 for (request_id, pending) in conn.pending_responses.drain() {
                     warn!(
                         conn_id = conn_id.raw(),
                         request_id,
                         "failing pending response due to stale-timeout connection teardown"
                     );
+                    #[cfg(feature = "diagnostics")]
+                    if let Some(ref diag) = self.diagnostic_state {
+                        let len_after = len_before.saturating_sub(1);
+                        diag.record_pending_map_event(
+                            "fail",
+                            conn_id.raw(),
+                            request_id,
+                            len_before,
+                            len_after,
+                        );
+                        len_before = len_after;
+                    }
                     let _ = pending.tx.send(Err(TransportError::ConnectionClosed));
                 }
                 conn.abort_in_flight_requests();

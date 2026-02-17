@@ -253,6 +253,27 @@ pub struct DiagnosticState {
 
     /// Unix timestamp when this connection closed (0 = still open).
     pub(crate) connection_closed_at_ns: AtomicU64,
+
+    /// Last select-arm that made progress in Driver::run.
+    pub(crate) last_driver_arm: Mutex<String>,
+    /// Unix timestamp of last recorded driver arm activity.
+    pub(crate) last_driver_arm_at_ns: AtomicU64,
+    /// Driver loop arm hit counters.
+    pub(crate) driver_arm_driver_rx_hits: AtomicU64,
+    pub(crate) driver_arm_io_recv_hits: AtomicU64,
+    pub(crate) driver_arm_incoming_response_hits: AtomicU64,
+    pub(crate) driver_arm_sweep_hits: AtomicU64,
+
+    /// Pending-response map transition counters/state.
+    pub(crate) pending_map_inserts: AtomicU64,
+    pub(crate) pending_map_removes: AtomicU64,
+    pub(crate) pending_map_failures: AtomicU64,
+    pub(crate) pending_map_last_event: Mutex<String>,
+    pub(crate) pending_map_last_conn_id: AtomicU64,
+    pub(crate) pending_map_last_request_id: AtomicU64,
+    pub(crate) pending_map_last_len_before: AtomicU64,
+    pub(crate) pending_map_last_len_after: AtomicU64,
+    pub(crate) pending_map_last_at_ns: AtomicU64,
 }
 
 /// Per-channel flow control credit info for diagnostics.
@@ -339,6 +360,21 @@ impl DiagnosticState {
                 opened_at_ns: now_ns,
             }),
             connection_closed_at_ns: AtomicU64::new(0),
+            last_driver_arm: Mutex::new("startup".to_string()),
+            last_driver_arm_at_ns: AtomicU64::new(now_ns),
+            driver_arm_driver_rx_hits: AtomicU64::new(0),
+            driver_arm_io_recv_hits: AtomicU64::new(0),
+            driver_arm_incoming_response_hits: AtomicU64::new(0),
+            driver_arm_sweep_hits: AtomicU64::new(0),
+            pending_map_inserts: AtomicU64::new(0),
+            pending_map_removes: AtomicU64::new(0),
+            pending_map_failures: AtomicU64::new(0),
+            pending_map_last_event: Mutex::new("none".to_string()),
+            pending_map_last_conn_id: AtomicU64::new(0),
+            pending_map_last_request_id: AtomicU64::new(0),
+            pending_map_last_len_before: AtomicU64::new(0),
+            pending_map_last_len_after: AtomicU64::new(0),
+            pending_map_last_at_ns: AtomicU64::new(now_ns),
         }
     }
 
@@ -663,6 +699,135 @@ impl DiagnosticState {
         if let Ok(mut cc) = self.channel_credits.lock() {
             *cc = credits;
         }
+    }
+
+    /// Record which Driver::run select arm made progress most recently.
+    pub fn record_driver_arm(&self, arm: &'static str) {
+        if let Ok(mut last) = self.last_driver_arm.lock() {
+            *last = arm.to_string();
+        }
+        self.last_driver_arm_at_ns
+            .store(unix_now_ns(), Ordering::Relaxed);
+        match arm {
+            "driver_rx" => {
+                self.driver_arm_driver_rx_hits
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            "io.recv" => {
+                self.driver_arm_io_recv_hits.fetch_add(1, Ordering::Relaxed);
+            }
+            "incoming_response_rx" => {
+                self.driver_arm_incoming_response_hits
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            "sweep_pending_responses" => {
+                self.driver_arm_sweep_hits.fetch_add(1, Ordering::Relaxed);
+            }
+            _ => {}
+        }
+    }
+
+    pub fn last_driver_arm(&self) -> String {
+        self.last_driver_arm
+            .lock()
+            .map(|v| v.clone())
+            .unwrap_or_else(|_| "unknown".to_string())
+    }
+
+    pub fn last_driver_arm_at_ns(&self) -> u64 {
+        self.last_driver_arm_at_ns.load(Ordering::Relaxed)
+    }
+
+    pub fn driver_arm_driver_rx_hits(&self) -> u64 {
+        self.driver_arm_driver_rx_hits.load(Ordering::Relaxed)
+    }
+
+    pub fn driver_arm_io_recv_hits(&self) -> u64 {
+        self.driver_arm_io_recv_hits.load(Ordering::Relaxed)
+    }
+
+    pub fn driver_arm_incoming_response_hits(&self) -> u64 {
+        self.driver_arm_incoming_response_hits
+            .load(Ordering::Relaxed)
+    }
+
+    pub fn driver_arm_sweep_hits(&self) -> u64 {
+        self.driver_arm_sweep_hits.load(Ordering::Relaxed)
+    }
+
+    /// Record a pending-response map transition (insert/remove/fail).
+    pub fn record_pending_map_event(
+        &self,
+        event: &'static str,
+        conn_id: u64,
+        request_id: u64,
+        len_before: usize,
+        len_after: usize,
+    ) {
+        match event {
+            "insert" => {
+                self.pending_map_inserts.fetch_add(1, Ordering::Relaxed);
+            }
+            "remove" => {
+                self.pending_map_removes.fetch_add(1, Ordering::Relaxed);
+            }
+            "fail" => {
+                self.pending_map_failures.fetch_add(1, Ordering::Relaxed);
+            }
+            _ => {}
+        }
+        if let Ok(mut last) = self.pending_map_last_event.lock() {
+            *last = event.to_string();
+        }
+        self.pending_map_last_conn_id
+            .store(conn_id, Ordering::Relaxed);
+        self.pending_map_last_request_id
+            .store(request_id, Ordering::Relaxed);
+        self.pending_map_last_len_before
+            .store(len_before as u64, Ordering::Relaxed);
+        self.pending_map_last_len_after
+            .store(len_after as u64, Ordering::Relaxed);
+        self.pending_map_last_at_ns
+            .store(unix_now_ns(), Ordering::Relaxed);
+    }
+
+    pub fn pending_map_inserts(&self) -> u64 {
+        self.pending_map_inserts.load(Ordering::Relaxed)
+    }
+
+    pub fn pending_map_removes(&self) -> u64 {
+        self.pending_map_removes.load(Ordering::Relaxed)
+    }
+
+    pub fn pending_map_failures(&self) -> u64 {
+        self.pending_map_failures.load(Ordering::Relaxed)
+    }
+
+    pub fn pending_map_last_event(&self) -> String {
+        self.pending_map_last_event
+            .lock()
+            .map(|v| v.clone())
+            .unwrap_or_else(|_| "unknown".to_string())
+    }
+
+    pub fn pending_map_last_conn_id(&self) -> u64 {
+        self.pending_map_last_conn_id.load(Ordering::Relaxed)
+    }
+
+    pub fn pending_map_last_request_id(&self) -> u64 {
+        self.pending_map_last_request_id.load(Ordering::Relaxed)
+    }
+
+    pub fn pending_map_last_len_before(&self) -> u64 {
+        self.pending_map_last_len_before.load(Ordering::Relaxed)
+    }
+
+    pub fn pending_map_last_len_after(&self) -> u64 {
+        self.pending_map_last_len_after.load(Ordering::Relaxed)
+    }
+
+    pub fn pending_map_last_at_ns(&self) -> u64 {
+        self.pending_map_last_at_ns.load(Ordering::Relaxed)
     }
 
     /// Get the time since last frame sent (None if never sent).
