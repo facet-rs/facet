@@ -1038,14 +1038,16 @@ where
         let join_handle = peeps::spawn_tracked!("roam_shm_handle_request", async move {
             #[cfg(feature = "diagnostics")]
             if let Some(response_entity_id) = response_entity_id {
-                let fut = async move {
-                    handler_fut.await;
-                    if let Some(diag) = &diag_for_handler {
-                        diag.mark_request_handled(conn_id.raw(), request_id);
-                    }
-                };
-                let fut = peeps::stack::scope(&response_entity_id, fut);
-                peeps::stack::ensure(fut).await;
+                let response_ref = peeps::entity_ref_from_wire(response_entity_id);
+                peeps::instrument_future_on(
+                    "roam_shm.handle_request.dispatch",
+                    &response_ref,
+                    handler_fut,
+                )
+                .await;
+                if let Some(diag) = &diag_for_handler {
+                    diag.mark_request_handled(conn_id.raw(), request_id);
+                }
                 return;
             }
 
@@ -2839,14 +2841,16 @@ impl MultiPeerHostDriver {
         let join_handle = peeps::spawn_tracked!("roam_shm_handle_request", async move {
             #[cfg(feature = "diagnostics")]
             if let Some(response_entity_id) = response_entity_id {
-                let fut = async move {
-                    handler_fut.await;
-                    if let Some(diag) = &diag_for_handler {
-                        diag.mark_request_handled(conn_id.raw(), request_id);
-                    }
-                };
-                let fut = peeps::stack::scope(&response_entity_id, fut);
-                peeps::stack::ensure(fut).await;
+                let response_ref = peeps::entity_ref_from_wire(response_entity_id);
+                peeps::instrument_future_on(
+                    "roam_shm.handle_request.dispatch",
+                    &response_ref,
+                    handler_fut,
+                )
+                .await;
+                if let Some(diag) = &diag_for_handler {
+                    diag.mark_request_handled(conn_id.raw(), request_id);
+                }
                 return;
             }
 
