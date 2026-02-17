@@ -21,12 +21,16 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use roam_session::diagnostic::DiagnosticState;
 #[cfg(feature = "diagnostics")]
-use roam_session::request_response_spy::RequestResponseSpy;
+use roam_session::request_response_spy::{
+    RequestResponseSpy, ResponseOutcome, TypedResponseHandle,
+};
 use roam_session::{
     ChannelError, ChannelRegistry, ConnectError, ConnectionHandle, Context, DriverMessage,
-    PEEPS_METHOD_NAME_METADATA_KEY, PEEPS_SPAN_ID_METADATA_KEY, PEEPS_TASK_ID_METADATA_KEY,
-    PEEPS_TASK_NAME_METADATA_KEY, ResponseData, Role, ServiceDispatcher, TransportError,
+    PEEPS_TASK_ID_METADATA_KEY, PEEPS_TASK_NAME_METADATA_KEY, ResponseData, Role,
+    ServiceDispatcher, TransportError,
 };
+#[cfg(feature = "diagnostics")]
+use roam_session::{PEEPS_METHOD_NAME_METADATA_KEY, PEEPS_REQUEST_ENTITY_ID_METADATA_KEY};
 use roam_stream::MessageTransport;
 use roam_wire::{ConnectionId, Message};
 
@@ -42,6 +46,17 @@ fn unix_now_ns() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
         .unwrap_or(0)
+}
+
+#[cfg(feature = "diagnostics")]
+#[inline]
+fn response_outcome_from_payload(payload: &[u8]) -> ResponseOutcome {
+    match payload {
+        [0, ..] => ResponseOutcome::Ok,
+        [1, 3, ..] => ResponseOutcome::Cancelled,
+        [1, ..] => ResponseOutcome::Error,
+        _ => ResponseOutcome::Error,
+    }
 }
 
 fn task_context_from_metadata(metadata: &roam_wire::Metadata) -> (Option<u64>, Option<String>) {
@@ -178,6 +193,8 @@ struct VirtualConnectionState {
     pending_responses: HashMap<u64, peeps::OneshotSender<Result<ResponseData, TransportError>>>,
     /// In-flight server requests with their abort handles.
     in_flight_server_requests: HashMap<u64, tokio::task::AbortHandle>,
+    #[cfg(feature = "diagnostics")]
+    in_flight_response_handles: HashMap<u64, TypedResponseHandle>,
 }
 
 impl VirtualConnectionState {
@@ -207,6 +224,8 @@ impl VirtualConnectionState {
             dispatcher,
             pending_responses: HashMap::new(),
             in_flight_server_requests: HashMap::new(),
+            #[cfg(feature = "diagnostics")]
+            in_flight_response_handles: HashMap::new(),
         }
     }
 
@@ -222,6 +241,8 @@ impl VirtualConnectionState {
         for (_, abort_handle) in self.in_flight_server_requests.drain() {
             abort_handle.abort();
         }
+        #[cfg(feature = "diagnostics")]
+        self.in_flight_response_handles.clear();
     }
 }
 
@@ -461,9 +482,12 @@ where
         msg: DriverMessage,
     ) -> Result<(), ShmConnectionError> {
         #[cfg(feature = "diagnostics")]
-        let mut completed_response: Option<(u64, u64)> = None;
-        #[cfg(feature = "diagnostics")]
-        let mut sent_call: Option<(u64, u64, u64)> = None;
+        let mut completed_response: Option<(
+            u64,
+            u64,
+            Option<TypedResponseHandle>,
+            ResponseOutcome,
+        )> = None;
         let wire_msg = match msg {
             DriverMessage::Call {
                 conn_id,
@@ -485,12 +509,6 @@ where
                     // Unknown connection - fail the call
                     let _ = response_tx.send(Err(TransportError::ConnectionClosed));
                     return Ok(());
-                }
-
-                // Send the request
-                #[cfg(feature = "diagnostics")]
-                {
-                    sent_call = Some((conn_id.raw(), request_id, method_id));
                 }
                 Message::Request {
                     conn_id,
@@ -533,10 +551,16 @@ where
                 channels,
                 payload,
             } => {
+                #[cfg(feature = "diagnostics")]
+                let mut response_handle: Option<TypedResponseHandle> = None;
                 // Check that the request is in-flight for this connection
                 // r[impl call.cancel.best-effort] - If cancelled, abort handle was removed,
                 // so this will return None and we won't send a duplicate response.
                 let should_send = if let Some(conn) = self.connections.get_mut(&conn_id) {
+                    #[cfg(feature = "diagnostics")]
+                    {
+                        response_handle = conn.in_flight_response_handles.remove(&request_id);
+                    }
                     conn.in_flight_server_requests.remove(&request_id).is_some()
                 } else {
                     false
@@ -546,7 +570,12 @@ where
                 }
                 #[cfg(feature = "diagnostics")]
                 {
-                    completed_response = Some((conn_id.raw(), request_id));
+                    completed_response = Some((
+                        conn_id.raw(),
+                        request_id,
+                        response_handle,
+                        response_outcome_from_payload(&payload),
+                    ));
                 }
                 Message::Response {
                     conn_id,
@@ -585,51 +614,9 @@ where
         trace!("handle_driver_message: sending wire message");
         MessageTransport::send(&mut self.io, &wire_msg).await?;
         #[cfg(feature = "diagnostics")]
-        if let Some((conn_id, request_id, method_id)) = sent_call
-            && let Some(diag) = &self.diagnostic_state
-            && let Some(span_id) = diag.inflight_request_metadata_string(
-                conn_id,
-                request_id,
-                PEEPS_SPAN_ID_METADATA_KEY,
-            )
-        {
-            let request_node_id = peeps_types::canonical_id::request_from_span_id(&span_id);
-            let method_name = diag
-                .inflight_request_metadata_string(
-                    conn_id,
-                    request_id,
-                    PEEPS_METHOD_NAME_METADATA_KEY,
-                )
-                .or_else(|| {
-                    diag.inflight_request_method_id(conn_id, request_id)
-                        .and_then(roam_session::diagnostic::get_method_name)
-                        .map(|s| s.to_string())
-                })
-                .unwrap_or_else(|| format!("0x{method_id:x}"));
-            let mut attrs = std::collections::BTreeMap::new();
-            attrs.insert("correlation".to_string(), request_id.to_string());
-            attrs.insert("method".to_string(), method_name.clone());
-            attrs.insert("status".to_string(), "in_flight".to_string());
-            attrs.insert("delivered_at_ns".to_string(), unix_now_ns().to_string());
-            if let Some(elapsed_ns) = diag.inflight_request_elapsed_ns(conn_id, request_id) {
-                attrs.insert("elapsed_ns".to_string(), elapsed_ns.to_string());
-            }
-            diag.emit_request_node(request_node_id, method_name, attrs);
-        }
-
-        #[cfg(feature = "diagnostics")]
-        if let Some((conn_id, request_id)) = completed_response
+        if let Some((conn_id, request_id, response_handle, outcome)) = completed_response
             && let Some(diag) = &self.diagnostic_state
         {
-            let span_id = diag.inflight_request_metadata_string(
-                conn_id,
-                request_id,
-                PEEPS_SPAN_ID_METADATA_KEY,
-            );
-            let response_node_id = span_id
-                .as_deref()
-                .map(|sid| format!("response:{sid}"))
-                .unwrap_or_else(|| format!("response:shm:{conn_id}:{request_id}"));
             let method_name = diag
                 .inflight_request_metadata_string(
                     conn_id,
@@ -642,27 +629,15 @@ where
                         .map(|s| s.to_string())
                 })
                 .unwrap_or_else(|| "unknown".to_string());
-            let mut attrs = std::collections::BTreeMap::new();
-            attrs.insert("correlation".to_string(), request_id.to_string());
-            attrs.insert("method".to_string(), method_name.clone());
-            attrs.insert("status".to_string(), "delivered".to_string());
-            attrs.insert(
-                "response.delivered_at_ns".to_string(),
-                unix_now_ns().to_string(),
+            let request_wire_id = diag.inflight_request_metadata_string(
+                conn_id,
+                request_id,
+                PEEPS_REQUEST_ENTITY_ID_METADATA_KEY,
             );
-            if let Some(elapsed_ns) = diag.inflight_request_elapsed_ns(conn_id, request_id) {
-                attrs.insert("elapsed_ns".to_string(), elapsed_ns.to_string());
-            }
-            if let Some(handled_elapsed_ns) =
-                diag.inflight_request_handled_elapsed_ns(conn_id, request_id)
-            {
-                attrs.insert(
-                    "response.handled_elapsed_ns".to_string(),
-                    handled_elapsed_ns.to_string(),
-                );
-            }
-            diag.emit_response_node(response_node_id.clone(), method_name, attrs);
-            peeps::registry::remove_node(&response_node_id);
+            let handle = response_handle.unwrap_or_else(|| {
+                diag.emit_response_node(method_name.clone(), request_wire_id.as_deref())
+            });
+            handle.mark(outcome);
             trace!(request_id, name = %diag.name, "completing incoming request");
             diag.complete_request(conn_id, request_id);
         }
@@ -854,44 +829,31 @@ where
                 if let Some(conn) = self.connections.get_mut(&conn_id)
                     && let Some(tx) = conn.pending_responses.remove(&request_id)
                 {
+                    #[cfg(feature = "diagnostics")]
+                    let response_outcome = response_outcome_from_payload(&payload);
                     let _ = tx.send(Ok(ResponseData { payload, channels }));
                     #[cfg(feature = "diagnostics")]
                     if let Some(diag) = &self.diagnostic_state {
-                        if let Some(span_id) = diag.inflight_request_metadata_string(
+                        let method_name = diag
+                            .inflight_request_metadata_string(
+                                conn_id.raw(),
+                                request_id,
+                                PEEPS_METHOD_NAME_METADATA_KEY,
+                            )
+                            .or_else(|| {
+                                diag.inflight_request_method_id(conn_id.raw(), request_id)
+                                    .and_then(roam_session::diagnostic::get_method_name)
+                                    .map(|s| s.to_string())
+                            })
+                            .unwrap_or_else(|| "unknown".to_string());
+                        let request_wire_id = diag.inflight_request_metadata_string(
                             conn_id.raw(),
                             request_id,
-                            PEEPS_SPAN_ID_METADATA_KEY,
-                        ) {
-                            let request_node_id =
-                                peeps_types::canonical_id::request_from_span_id(&span_id);
-                            let method_name = diag
-                                .inflight_request_metadata_string(
-                                    conn_id.raw(),
-                                    request_id,
-                                    PEEPS_METHOD_NAME_METADATA_KEY,
-                                )
-                                .or_else(|| {
-                                    diag.inflight_request_method_id(conn_id.raw(), request_id)
-                                        .and_then(roam_session::diagnostic::get_method_name)
-                                        .map(|s| s.to_string())
-                                })
-                                .unwrap_or_else(|| "unknown".to_string());
-                            let mut attrs = std::collections::BTreeMap::new();
-                            attrs.insert("correlation".to_string(), request_id.to_string());
-                            attrs.insert("method".to_string(), method_name.clone());
-                            attrs.insert("status".to_string(), "completed".to_string());
-                            attrs.insert(
-                                "request.completed_at_ns".to_string(),
-                                unix_now_ns().to_string(),
-                            );
-                            if let Some(elapsed_ns) =
-                                diag.inflight_request_elapsed_ns(conn_id.raw(), request_id)
-                            {
-                                attrs.insert("elapsed_ns".to_string(), elapsed_ns.to_string());
-                            }
-                            diag.emit_request_node(request_node_id.clone(), method_name, attrs);
-                            peeps::registry::remove_node(&request_node_id);
-                        }
+                            PEEPS_REQUEST_ENTITY_ID_METADATA_KEY,
+                        );
+                        let response_handle =
+                            diag.emit_response_node(method_name, request_wire_id.as_deref());
+                        response_handle.mark(response_outcome);
                         diag.complete_request(conn_id.raw(), request_id);
                     }
                 }
@@ -987,34 +949,26 @@ where
             });
         }
 
-        // Register response node in peeps registry.
+        // Create typed response handle linked to propagated request identity.
         #[cfg(feature = "diagnostics")]
-        let response_node_id = {
-            let span_id = metadata_string(&metadata, PEEPS_SPAN_ID_METADATA_KEY);
-            let request_node_id = span_id
-                .as_deref()
-                .map(peeps_types::canonical_id::request_from_span_id);
-            let response_node_id = span_id
-                .as_deref()
-                .map(|sid| format!("response:{sid}"))
-                .unwrap_or_else(|| format!("response:shm:{}:{}", conn_id.raw(), request_id));
+        let response_entity_id = {
             let method_name = metadata_string(&metadata, PEEPS_METHOD_NAME_METADATA_KEY)
                 .or_else(|| {
                     roam_session::diagnostic::get_method_name(method_id).map(|s| s.to_string())
                 })
                 .unwrap_or_else(|| format!("0x{method_id:x}"));
-            let mut attrs = std::collections::BTreeMap::new();
-            attrs.insert("correlation".to_string(), request_id.to_string());
-            attrs.insert("method".to_string(), method_name.clone());
-            attrs.insert("status".to_string(), "handling".to_string());
-            attrs.insert("phase_started_ns".to_string(), unix_now_ns().to_string());
-            if let Some(diag) = self.diagnostic_state.as_deref() {
-                diag.emit_response_node(response_node_id.clone(), method_name, attrs);
-            }
-            if let Some(request_node_id) = request_node_id {
-                peeps::registry::edge(&request_node_id, &response_node_id);
-            }
-            Some(response_node_id)
+            let request_wire_id = metadata_string(&metadata, PEEPS_REQUEST_ENTITY_ID_METADATA_KEY);
+            self.diagnostic_state
+                .as_deref()
+                .map(|diag| {
+                    let response_handle =
+                        diag.emit_response_node(method_name, request_wire_id.as_deref());
+                    let response_entity_id = response_handle.entity_id_for_wire();
+                    conn.in_flight_response_handles
+                        .insert(request_id, response_handle);
+                    response_entity_id
+                })
+                .flatten()
         };
 
         // Validate metadata
@@ -1083,14 +1037,14 @@ where
         // r[impl call.cancel.best-effort] - Store abort handle for cancellation support
         let join_handle = peeps::spawn_tracked("roam_shm_handle_request", async move {
             #[cfg(feature = "diagnostics")]
-            if let Some(response_node_id) = response_node_id {
+            if let Some(response_entity_id) = response_entity_id {
                 let fut = async move {
                     handler_fut.await;
                     if let Some(diag) = &diag_for_handler {
                         diag.mark_request_handled(conn_id.raw(), request_id);
                     }
                 };
-                let fut = peeps::stack::scope(&response_node_id, fut);
+                let fut = peeps::stack::scope(&response_entity_id, fut);
                 peeps::stack::ensure(fut).await;
                 return;
             }
@@ -1123,19 +1077,14 @@ where
 
         // Remove and abort the in-flight request if it exists
         if let Some(abort_handle) = conn.in_flight_server_requests.remove(&request_id) {
+            #[cfg(feature = "diagnostics")]
+            let response_handle = conn.in_flight_response_handles.remove(&request_id);
             // Abort the handler task (best-effort)
             abort_handle.abort();
 
-            // Mark response node as cancelled (keep it visible in graph)
+            // Mark response as cancelled.
             #[cfg(feature = "diagnostics")]
-            if let Some(diag) = &self.diagnostic_state
-                && let Some(span_id) = diag.inflight_request_metadata_string(
-                    conn_id.raw(),
-                    request_id,
-                    PEEPS_SPAN_ID_METADATA_KEY,
-                )
-            {
-                let response_node_id = format!("response:{span_id}");
+            if let Some(diag) = &self.diagnostic_state {
                 let method_name = diag
                     .inflight_request_metadata_string(
                         conn_id.raw(),
@@ -1143,16 +1092,15 @@ where
                         PEEPS_METHOD_NAME_METADATA_KEY,
                     )
                     .unwrap_or_else(|| "unknown".to_string());
-                let mut attrs = std::collections::BTreeMap::new();
-                attrs.insert("correlation".to_string(), request_id.to_string());
-                attrs.insert("method".to_string(), method_name.clone());
-                attrs.insert("cancelled".to_string(), "true".to_string());
-                attrs.insert("close.cause".to_string(), "peer_cancelled".to_string());
-                diag.emit_response_node(
-                    response_node_id,
-                    format!("{method_name} (cancelled)"),
-                    attrs,
+                let request_wire_id = diag.inflight_request_metadata_string(
+                    conn_id.raw(),
+                    request_id,
+                    PEEPS_REQUEST_ENTITY_ID_METADATA_KEY,
                 );
+                let handle = response_handle.unwrap_or_else(|| {
+                    diag.emit_response_node(method_name, request_wire_id.as_deref())
+                });
+                handle.mark(ResponseOutcome::Cancelled);
             }
 
             // Mark request completed for diagnostics
@@ -2319,9 +2267,12 @@ impl MultiPeerHostDriver {
     ) -> Result<(), ShmConnectionError> {
         #[allow(unreachable_patterns)]
         #[cfg(feature = "diagnostics")]
-        let mut completed_response: Option<(u64, u64)> = None;
-        #[cfg(feature = "diagnostics")]
-        let mut sent_call: Option<(u64, u64, u64)> = None;
+        let mut completed_response: Option<(
+            u64,
+            u64,
+            Option<TypedResponseHandle>,
+            ResponseOutcome,
+        )> = None;
         let wire_msg = match msg {
             DriverMessage::Call {
                 conn_id,
@@ -2350,12 +2301,6 @@ impl MultiPeerHostDriver {
                 } else {
                     let _ = response_tx.send(Err(TransportError::ConnectionClosed));
                     return Ok(());
-                }
-
-                // Send the request
-                #[cfg(feature = "diagnostics")]
-                {
-                    sent_call = Some((conn_id.raw(), request_id, method_id));
                 }
                 Message::Request {
                     conn_id,
@@ -2388,11 +2333,17 @@ impl MultiPeerHostDriver {
                 channels,
                 payload,
             } => {
+                #[cfg(feature = "diagnostics")]
+                let mut response_handle: Option<TypedResponseHandle> = None;
                 // Check that the request is in-flight for this connection
                 // r[impl call.cancel.best-effort] - If cancelled, abort handle was removed,
                 // so this will return None and we won't send a duplicate response.
                 let should_send = if let Some(state) = self.peers.get_mut(&peer_id) {
                     if let Some(conn) = state.connections.get_mut(&conn_id) {
+                        #[cfg(feature = "diagnostics")]
+                        {
+                            response_handle = conn.in_flight_response_handles.remove(&request_id);
+                        }
                         conn.in_flight_server_requests.remove(&request_id).is_some()
                     } else {
                         false
@@ -2405,7 +2356,12 @@ impl MultiPeerHostDriver {
                 }
                 #[cfg(feature = "diagnostics")]
                 {
-                    completed_response = Some((conn_id.raw(), request_id));
+                    completed_response = Some((
+                        conn_id.raw(),
+                        request_id,
+                        response_handle,
+                        response_outcome_from_payload(&payload),
+                    ));
                 }
                 Message::Response {
                     conn_id,
@@ -2450,55 +2406,10 @@ impl MultiPeerHostDriver {
         self.send_to_peer(peer_id, &wire_msg).await?;
 
         #[cfg(feature = "diagnostics")]
-        if let Some((conn_id, request_id, method_id)) = sent_call
-            && let Some(state) = self.peers.get(&peer_id)
-            && let Some(diag) = &state.diagnostic_state
-            && let Some(span_id) = diag.inflight_request_metadata_string(
-                conn_id,
-                request_id,
-                PEEPS_SPAN_ID_METADATA_KEY,
-            )
-        {
-            let request_node_id = peeps_types::canonical_id::request_from_span_id(&span_id);
-            let method_name = diag
-                .inflight_request_metadata_string(
-                    conn_id,
-                    request_id,
-                    PEEPS_METHOD_NAME_METADATA_KEY,
-                )
-                .or_else(|| {
-                    diag.inflight_request_method_id(conn_id, request_id)
-                        .and_then(roam_session::diagnostic::get_method_name)
-                        .map(|s| s.to_string())
-                })
-                .unwrap_or_else(|| format!("0x{method_id:x}"));
-            let mut attrs = std::collections::BTreeMap::new();
-            attrs.insert("correlation".to_string(), request_id.to_string());
-            attrs.insert("method".to_string(), method_name.clone());
-            attrs.insert("status".to_string(), "in_flight".to_string());
-            attrs.insert("delivered_at_ns".to_string(), unix_now_ns().to_string());
-            if let Some(elapsed_ns) = diag.inflight_request_elapsed_ns(conn_id, request_id) {
-                attrs.insert("elapsed_ns".to_string(), elapsed_ns.to_string());
-            }
-            diag.emit_request_node(request_node_id, method_name, attrs);
-        }
-
-        #[cfg(feature = "diagnostics")]
-        if let Some((conn_id, request_id)) = completed_response
+        if let Some((conn_id, request_id, response_handle, outcome)) = completed_response
             && let Some(state) = self.peers.get(&peer_id)
             && let Some(diag) = &state.diagnostic_state
         {
-            let span_id = diag.inflight_request_metadata_string(
-                conn_id,
-                request_id,
-                PEEPS_SPAN_ID_METADATA_KEY,
-            );
-            let response_node_id = span_id
-                .as_deref()
-                .map(|sid| format!("response:{sid}"))
-                .unwrap_or_else(|| {
-                    format!("response:shm:{}:{conn_id}:{request_id}", peer_id.get())
-                });
             let method_name = diag
                 .inflight_request_metadata_string(
                     conn_id,
@@ -2511,27 +2422,15 @@ impl MultiPeerHostDriver {
                         .map(|s| s.to_string())
                 })
                 .unwrap_or_else(|| "unknown".to_string());
-            let mut attrs = std::collections::BTreeMap::new();
-            attrs.insert("correlation".to_string(), request_id.to_string());
-            attrs.insert("method".to_string(), method_name.clone());
-            attrs.insert("status".to_string(), "delivered".to_string());
-            attrs.insert(
-                "response.delivered_at_ns".to_string(),
-                unix_now_ns().to_string(),
+            let request_wire_id = diag.inflight_request_metadata_string(
+                conn_id,
+                request_id,
+                PEEPS_REQUEST_ENTITY_ID_METADATA_KEY,
             );
-            if let Some(elapsed_ns) = diag.inflight_request_elapsed_ns(conn_id, request_id) {
-                attrs.insert("elapsed_ns".to_string(), elapsed_ns.to_string());
-            }
-            if let Some(handled_elapsed_ns) =
-                diag.inflight_request_handled_elapsed_ns(conn_id, request_id)
-            {
-                attrs.insert(
-                    "response.handled_elapsed_ns".to_string(),
-                    handled_elapsed_ns.to_string(),
-                );
-            }
-            diag.emit_response_node(response_node_id.clone(), method_name, attrs);
-            peeps::registry::remove_node(&response_node_id);
+            let handle = response_handle.unwrap_or_else(|| {
+                diag.emit_response_node(method_name.clone(), request_wire_id.as_deref())
+            });
+            handle.mark(outcome);
             trace!(request_id, name = %diag.name, "completing incoming request");
             diag.complete_request(conn_id, request_id);
         }
@@ -2712,44 +2611,31 @@ impl MultiPeerHostDriver {
                     && let Some(conn) = state.connections.get_mut(&conn_id)
                     && let Some(tx) = conn.pending_responses.remove(&request_id)
                 {
+                    #[cfg(feature = "diagnostics")]
+                    let response_outcome = response_outcome_from_payload(&payload);
                     let _ = tx.send(Ok(ResponseData { payload, channels }));
                     #[cfg(feature = "diagnostics")]
                     if let Some(diag) = &state.diagnostic_state {
-                        if let Some(span_id) = diag.inflight_request_metadata_string(
+                        let method_name = diag
+                            .inflight_request_metadata_string(
+                                conn_id.raw(),
+                                request_id,
+                                PEEPS_METHOD_NAME_METADATA_KEY,
+                            )
+                            .or_else(|| {
+                                diag.inflight_request_method_id(conn_id.raw(), request_id)
+                                    .and_then(roam_session::diagnostic::get_method_name)
+                                    .map(|s| s.to_string())
+                            })
+                            .unwrap_or_else(|| "unknown".to_string());
+                        let request_wire_id = diag.inflight_request_metadata_string(
                             conn_id.raw(),
                             request_id,
-                            PEEPS_SPAN_ID_METADATA_KEY,
-                        ) {
-                            let request_node_id =
-                                peeps_types::canonical_id::request_from_span_id(&span_id);
-                            let method_name = diag
-                                .inflight_request_metadata_string(
-                                    conn_id.raw(),
-                                    request_id,
-                                    PEEPS_METHOD_NAME_METADATA_KEY,
-                                )
-                                .or_else(|| {
-                                    diag.inflight_request_method_id(conn_id.raw(), request_id)
-                                        .and_then(roam_session::diagnostic::get_method_name)
-                                        .map(|s| s.to_string())
-                                })
-                                .unwrap_or_else(|| "unknown".to_string());
-                            let mut attrs = std::collections::BTreeMap::new();
-                            attrs.insert("correlation".to_string(), request_id.to_string());
-                            attrs.insert("method".to_string(), method_name.clone());
-                            attrs.insert("status".to_string(), "completed".to_string());
-                            attrs.insert(
-                                "request.completed_at_ns".to_string(),
-                                unix_now_ns().to_string(),
-                            );
-                            if let Some(elapsed_ns) =
-                                diag.inflight_request_elapsed_ns(conn_id.raw(), request_id)
-                            {
-                                attrs.insert("elapsed_ns".to_string(), elapsed_ns.to_string());
-                            }
-                            diag.emit_request_node(request_node_id.clone(), method_name, attrs);
-                            peeps::registry::remove_node(&request_node_id);
-                        }
+                            PEEPS_REQUEST_ENTITY_ID_METADATA_KEY,
+                        );
+                        let response_handle =
+                            diag.emit_response_node(method_name, request_wire_id.as_deref());
+                        response_handle.mark(response_outcome);
                         diag.complete_request(conn_id.raw(), request_id);
                     }
                 }
@@ -2858,41 +2744,27 @@ impl MultiPeerHostDriver {
             );
         }
 
-        // Register response node in peeps registry.
+        // Create typed response handle linked to propagated request identity.
         #[cfg(feature = "diagnostics")]
-        let response_node_id = {
-            let span_id = metadata_string(&metadata, PEEPS_SPAN_ID_METADATA_KEY);
-            let request_node_id = span_id
-                .as_deref()
-                .map(peeps_types::canonical_id::request_from_span_id);
-            let response_node_id = span_id
-                .as_deref()
-                .map(|sid| format!("response:{sid}"))
-                .unwrap_or_else(|| {
-                    format!(
-                        "response:shm:{}:{}:{}",
-                        peer_id.get(),
-                        conn_id.raw(),
-                        request_id
-                    )
-                });
+        let response_entity_id = {
             let method_name = metadata_string(&metadata, PEEPS_METHOD_NAME_METADATA_KEY)
                 .or_else(|| {
                     roam_session::diagnostic::get_method_name(method_id).map(|s| s.to_string())
                 })
                 .unwrap_or_else(|| format!("0x{method_id:x}"));
-            let mut attrs = std::collections::BTreeMap::new();
-            attrs.insert("correlation".to_string(), request_id.to_string());
-            attrs.insert("method".to_string(), method_name.clone());
-            attrs.insert("status".to_string(), "handling".to_string());
-            attrs.insert("phase_started_ns".to_string(), unix_now_ns().to_string());
-            if let Some(diag) = state.diagnostic_state.as_deref() {
-                diag.emit_response_node(response_node_id.clone(), method_name, attrs);
-            }
-            if let Some(request_node_id) = request_node_id {
-                peeps::registry::edge(&request_node_id, &response_node_id);
-            }
-            Some(response_node_id)
+            let request_wire_id = metadata_string(&metadata, PEEPS_REQUEST_ENTITY_ID_METADATA_KEY);
+            state
+                .diagnostic_state
+                .as_deref()
+                .map(|diag| {
+                    let response_handle =
+                        diag.emit_response_node(method_name, request_wire_id.as_deref());
+                    let response_entity_id = response_handle.entity_id_for_wire();
+                    conn.in_flight_response_handles
+                        .insert(request_id, response_handle);
+                    response_entity_id
+                })
+                .flatten()
         };
 
         // Validate metadata
@@ -2966,14 +2838,14 @@ impl MultiPeerHostDriver {
         // r[impl call.cancel.best-effort] - Store abort handle for cancellation support
         let join_handle = peeps::spawn_tracked("roam_shm_handle_request", async move {
             #[cfg(feature = "diagnostics")]
-            if let Some(response_node_id) = response_node_id {
+            if let Some(response_entity_id) = response_entity_id {
                 let fut = async move {
                     handler_fut.await;
                     if let Some(diag) = &diag_for_handler {
                         diag.mark_request_handled(conn_id.raw(), request_id);
                     }
                 };
-                let fut = peeps::stack::scope(&response_node_id, fut);
+                let fut = peeps::stack::scope(&response_entity_id, fut);
                 peeps::stack::ensure(fut).await;
                 return;
             }
@@ -3016,19 +2888,14 @@ impl MultiPeerHostDriver {
 
         // Remove and abort the in-flight request if it exists
         if let Some(abort_handle) = conn.in_flight_server_requests.remove(&request_id) {
+            #[cfg(feature = "diagnostics")]
+            let response_handle = conn.in_flight_response_handles.remove(&request_id);
             // Abort the handler task (best-effort)
             abort_handle.abort();
 
-            // Mark response node as cancelled (keep it visible in graph)
+            // Mark response as cancelled.
             #[cfg(feature = "diagnostics")]
-            if let Some(diag) = &state.diagnostic_state
-                && let Some(span_id) = diag.inflight_request_metadata_string(
-                    conn_id.raw(),
-                    request_id,
-                    PEEPS_SPAN_ID_METADATA_KEY,
-                )
-            {
-                let response_node_id = format!("response:{span_id}");
+            if let Some(diag) = &state.diagnostic_state {
                 let method_name = diag
                     .inflight_request_metadata_string(
                         conn_id.raw(),
@@ -3036,16 +2903,15 @@ impl MultiPeerHostDriver {
                         PEEPS_METHOD_NAME_METADATA_KEY,
                     )
                     .unwrap_or_else(|| "unknown".to_string());
-                let mut attrs = std::collections::BTreeMap::new();
-                attrs.insert("correlation".to_string(), request_id.to_string());
-                attrs.insert("method".to_string(), method_name.clone());
-                attrs.insert("cancelled".to_string(), "true".to_string());
-                attrs.insert("close.cause".to_string(), "peer_cancelled".to_string());
-                diag.emit_response_node(
-                    response_node_id,
-                    format!("{method_name} (cancelled)"),
-                    attrs,
+                let request_wire_id = diag.inflight_request_metadata_string(
+                    conn_id.raw(),
+                    request_id,
+                    PEEPS_REQUEST_ENTITY_ID_METADATA_KEY,
                 );
+                let handle = response_handle.unwrap_or_else(|| {
+                    diag.emit_response_node(method_name, request_wire_id.as_deref())
+                });
+                handle.mark(ResponseOutcome::Cancelled);
             }
 
             // Mark request completed for diagnostics
