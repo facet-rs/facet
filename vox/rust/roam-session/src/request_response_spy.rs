@@ -97,10 +97,16 @@ pub trait RequestResponseSpy {
     fn ensure_connection_context(&self) -> Option<String>;
     fn refresh_connection_context_if_dirty(&self);
     fn touch_connection_context(&self, entity_id: &str);
-    fn emit_request_node(&self, method_name: String, args_preview: String) -> TypedRequestHandle;
+    fn emit_request_node(
+        &self,
+        method_name: String,
+        args_preview: String,
+        source: peeps::Source,
+    ) -> TypedRequestHandle;
     fn emit_response_node(
         &self,
         method_name: String,
+        source: peeps::Source,
         request_wire_id: Option<&str>,
     ) -> TypedResponseHandle;
 }
@@ -133,10 +139,15 @@ impl RequestResponseSpy for DiagnosticState {
     }
 
     #[inline]
-    fn emit_request_node(&self, method_name: String, args_preview: String) -> TypedRequestHandle {
+    fn emit_request_node(
+        &self,
+        method_name: String,
+        args_preview: String,
+        source: peeps::Source,
+    ) -> TypedRequestHandle {
         let _ = self.ensure_connection_context();
         self.refresh_connection_context_if_dirty();
-        let request = peeps::rpc_request!(method_name, args_preview);
+        let request = peeps::rpc_request(method_name, args_preview, source);
         self.link_entity_to_connection_scope(request.handle());
         TypedRequestHandle::from_inner(request)
     }
@@ -145,15 +156,16 @@ impl RequestResponseSpy for DiagnosticState {
     fn emit_response_node(
         &self,
         method_name: String,
+        source: peeps::Source,
         request_wire_id: Option<&str>,
     ) -> TypedResponseHandle {
         let _ = self.ensure_connection_context();
         self.refresh_connection_context_if_dirty();
         let response = if let Some(request_wire_id) = request_wire_id {
             let request_ref = peeps::entity_ref_from_wire(request_wire_id.to_owned());
-            peeps::rpc_response_for!(method_name, &request_ref)
+            peeps::rpc_response_for(method_name, &request_ref, source)
         } else {
-            peeps::rpc_response!(method_name)
+            peeps::rpc_response(method_name, source)
         };
         self.link_entity_to_connection_scope(response.handle());
         TypedResponseHandle::from_inner(response)
@@ -177,7 +189,12 @@ impl RequestResponseSpy for DiagnosticState {
     fn touch_connection_context(&self, _entity_id: &str) {}
 
     #[inline]
-    fn emit_request_node(&self, _method_name: String, _args_preview: String) -> TypedRequestHandle {
+    fn emit_request_node(
+        &self,
+        _method_name: String,
+        _args_preview: String,
+        _source: peeps::Source,
+    ) -> TypedRequestHandle {
         TypedRequestHandle::default()
     }
 
@@ -185,6 +202,7 @@ impl RequestResponseSpy for DiagnosticState {
     fn emit_response_node(
         &self,
         _method_name: String,
+        _source: peeps::Source,
         _request_wire_id: Option<&str>,
     ) -> TypedResponseHandle {
         TypedResponseHandle::default()

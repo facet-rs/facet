@@ -38,6 +38,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use facet::Facet;
 
+use crate::peeps::prelude::*;
 #[cfg(feature = "diagnostics")]
 use crate::request_response_spy::{RequestResponseSpy, ResponseOutcome, TypedResponseHandle};
 use crate::runtime::{Mutex, Receiver, channel, sleep, spawn, spawn_with_abort};
@@ -388,7 +389,11 @@ where
         config,
         dispatcher,
         retry_policy: RetryPolicy::default(),
-        state: Arc::new(Mutex::new("FramedClient.state", None)),
+        state: Arc::new(Mutex::new(
+            "FramedClient.state",
+            None,
+            peeps::Source::caller(),
+        )),
     }
 }
 
@@ -408,7 +413,11 @@ where
         config,
         dispatcher,
         retry_policy,
-        state: Arc::new(Mutex::new("FramedClient.state", None)),
+        state: Arc::new(Mutex::new(
+            "FramedClient.state",
+            None,
+            peeps::Source::caller(),
+        )),
     }
 }
 
@@ -610,13 +619,14 @@ where
             let args_ptr = args as *mut T as *mut ();
             #[allow(unsafe_code)]
             let call_result = unsafe {
-                crate::ConnectionHandle::call_with_metadata_by_plan(
+                crate::ConnectionHandle::call_with_metadata_by_plan_with_source(
                     &handle,
                     method_id,
                     method_name,
                     args_ptr,
                     args_plan,
                     metadata.clone(),
+                    peeps::Source::caller(),
                 )
                 .await
             };
@@ -667,6 +677,7 @@ where
         args_ptr: crate::SendPtr,
         args_plan: &'static std::sync::Arc<crate::RpcPlan>,
         metadata: roam_wire::Metadata,
+        source: peeps::Source,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send {
         // Capture self for use in async block
         let this = self.clone();
@@ -698,12 +709,13 @@ where
 
                 // SAFETY: args_ptr was created from valid, initialized, Send data
                 match unsafe {
-                    handle.call_with_metadata_by_plan(
+                    handle.call_with_metadata_by_plan_with_source(
                         method_id,
                         &method_name,
                         args_ptr.as_ptr(),
                         args_plan,
                         metadata.clone(),
+                        source,
                     )
                 }
                 .await
@@ -740,6 +752,7 @@ where
         args_ptr: crate::SendPtr,
         args_plan: &'static std::sync::Arc<crate::RpcPlan>,
         metadata: roam_wire::Metadata,
+        source: peeps::Source,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> {
         // Capture self for use in async block
         let this = self.clone();
@@ -771,12 +784,13 @@ where
 
                 // SAFETY: args_ptr was created from valid, initialized, Send data
                 match unsafe {
-                    handle.call_with_metadata_by_plan(
+                    handle.call_with_metadata_by_plan_with_source(
                         method_id,
                         &method_name,
                         args_ptr.as_ptr(),
                         args_plan,
                         metadata.clone(),
+                        source,
                     )
                 }
                 .await
@@ -1283,6 +1297,7 @@ where
                     "roam.driver.send_request",
                     self.driver_rx.handle(),
                     self.io.send(&req),
+                    peeps::Source::caller(),
                 )
                 .await?;
                 #[cfg(not(feature = "diagnostics"))]
@@ -1383,7 +1398,11 @@ where
                         crate::PEEPS_REQUEST_ENTITY_ID_METADATA_KEY,
                     );
                     let handle = response_handle.unwrap_or_else(|| {
-                        diag.emit_response_node(method_name.clone(), request_wire_id.as_deref())
+                        diag.emit_response_node(
+                            method_name.clone(),
+                            peeps::Source::caller(),
+                            request_wire_id.as_deref(),
+                        )
                     });
                     handle.mark(response_outcome);
                 }
@@ -1615,6 +1634,7 @@ where
                                     .tx
                                     .send(Ok(ResponseData { payload, channels }))
                             },
+                            peeps::Source::caller(),
                         )
                         .await;
                         #[cfg(not(feature = "diagnostics"))]
@@ -1646,8 +1666,11 @@ where
                                 request_id,
                                 crate::PEEPS_REQUEST_ENTITY_ID_METADATA_KEY,
                             );
-                            let response_handle =
-                                diag.emit_response_node(method_name, request_wire_id.as_deref());
+                            let response_handle = diag.emit_response_node(
+                                method_name,
+                                peeps::Source::caller(),
+                                request_wire_id.as_deref(),
+                            );
                             response_handle.mark(response_outcome);
                             diag.complete_request(conn_id.raw(), request_id);
                         }
@@ -1780,7 +1803,11 @@ where
                 .unwrap_or_else(|| format!("0x{method_id:x}"));
             let request_wire_id =
                 metadata_string(&metadata, crate::PEEPS_REQUEST_ENTITY_ID_METADATA_KEY);
-            let response_handle = diag.emit_response_node(method_name, request_wire_id.as_deref());
+            let response_handle = diag.emit_response_node(
+                method_name,
+                peeps::Source::caller(),
+                request_wire_id.as_deref(),
+            );
             let response_entity_handle = response_handle.entity_handle();
             conn.in_flight_response_handles
                 .insert(request_id, response_handle);
@@ -1833,6 +1860,7 @@ where
                     "roam.driver.run_handler",
                     response_entity_handle,
                     run_handler,
+                    peeps::Source::caller(),
                 )
                 .await;
                 return;
@@ -1886,7 +1914,11 @@ where
                     crate::PEEPS_REQUEST_ENTITY_ID_METADATA_KEY,
                 );
                 let handle = response_handle.unwrap_or_else(|| {
-                    diag.emit_response_node(method_name, request_wire_id.as_deref())
+                    diag.emit_response_node(
+                        method_name,
+                        peeps::Source::caller(),
+                        request_wire_id.as_deref(),
+                    )
                 });
                 handle.mark(ResponseOutcome::Cancelled);
             }

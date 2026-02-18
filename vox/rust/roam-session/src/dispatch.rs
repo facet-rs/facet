@@ -15,6 +15,7 @@ use facet_path::PathAccessError;
 use facet_postcard::PostcardParser;
 use facet_reflect::Partial;
 
+use crate::peeps::prelude::*;
 use crate::{
     ChannelId, ChannelIdAllocator, ChannelRegistry, DriverMessage, Extensions, Middleware,
     Rejection, RpcPlan, SendPeek, runtime::Sender,

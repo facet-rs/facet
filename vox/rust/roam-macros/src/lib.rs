@@ -723,6 +723,7 @@ fn generate_client_method(
 
     quote! {
         #method_doc
+        #[track_caller]
         pub fn #method_name(&self, #(#params),*) -> #call_future_return {
             use std::sync::{Arc, OnceLock};
 

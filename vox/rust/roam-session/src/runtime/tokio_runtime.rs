@@ -17,37 +17,37 @@ pub use tokio::sync::mpsc::error::SendError;
 /// Create a bounded mpsc channel.
 pub fn channel<T>(name: impl Into<String>, buffer: usize) -> (Sender<T>, Receiver<T>) {
     #[allow(deprecated)]
-    peeps::channel(name, buffer)
+    peeps::channel(name, buffer, peeps::Source::caller())
 }
 
 /// Create a bounded mpsc channel.
 pub fn bounded<T>(name: impl Into<String>, buffer: usize) -> (Sender<T>, Receiver<T>) {
     #[allow(deprecated)]
-    peeps::channel(name, buffer)
+    peeps::channel(name, buffer, peeps::Source::caller())
 }
 
 /// Create an unbounded mpsc channel.
 pub fn unbounded<T>(name: impl Into<String>) -> (UnboundedSender<T>, UnboundedReceiver<T>) {
     #[allow(deprecated)]
-    peeps::unbounded_channel(name)
+    peeps::unbounded_channel(name, peeps::Source::caller())
 }
 
 /// Create an unbounded mpsc channel.
 pub fn unbounded_channel<T>(name: impl Into<String>) -> (UnboundedSender<T>, UnboundedReceiver<T>) {
     #[allow(deprecated)]
-    peeps::unbounded_channel(name)
+    peeps::unbounded_channel(name, peeps::Source::caller())
 }
 
 /// Create a oneshot channel.
 pub fn oneshot<T>(name: impl Into<String>) -> (OneshotSender<T>, OneshotReceiver<T>) {
     #[allow(deprecated)]
-    peeps::oneshot_channel(name)
+    peeps::oneshot_channel(name, peeps::Source::caller())
 }
 
 /// Create a oneshot channel.
 pub fn oneshot_channel<T>(name: impl Into<String>) -> (OneshotSender<T>, OneshotReceiver<T>) {
     #[allow(deprecated)]
-    peeps::oneshot_channel(name)
+    peeps::oneshot_channel(name, peeps::Source::caller())
 }
 
 /// Handle that can be used to abort a spawned task.

@@ -32,6 +32,7 @@ use roam_session::{
 #[cfg(feature = "diagnostics")]
 use roam_session::{PEEPS_METHOD_NAME_METADATA_KEY, PEEPS_REQUEST_ENTITY_ID_METADATA_KEY};
 use roam_stream::MessageTransport;
+use roam_stream::peeps::prelude::*;
 use roam_wire::{ConnectionId, Message};
 
 use crate::auditable::{self, AuditableDequeMap, AuditableReceiver, AuditableSender};

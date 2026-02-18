@@ -8,6 +8,8 @@
 #[macro_use]
 mod macros;
 
+::peeps::facade!();
+
 pub mod diagnostic;
 pub mod diagnostic_snapshot;
 pub mod driver;

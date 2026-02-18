@@ -7,6 +7,7 @@ use std::marker::PhantomData;
 
 use facet::Facet;
 
+use crate::peeps::prelude::*;
 use crate::runtime::{Receiver, Sender};
 use crate::{CHANNEL_SIZE, ChannelId, DriverMessage, IncomingChannelMessage, get_dispatch_context};
 

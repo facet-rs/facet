@@ -10,6 +10,7 @@ use std::future::Future;
 use std::io;
 use std::sync::Arc;
 
+use crate::peeps::prelude::*;
 use facet::Facet;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::task::JoinHandle;
@@ -86,8 +87,12 @@ where
         config,
         dispatcher,
         retry_policy: RetryPolicy::default(),
-        state: Arc::new(Mutex::new("Client.state", None)),
-        current_handle: Arc::new(Mutex::new("Client.current_handle", None)),
+        state: Arc::new(Mutex::new("Client.state", None, peeps::Source::caller())),
+        current_handle: Arc::new(Mutex::new(
+            "Client.current_handle",
+            None,
+            peeps::Source::caller(),
+        )),
     }
 }
 
@@ -107,8 +112,12 @@ where
         config,
         dispatcher,
         retry_policy,
-        state: Arc::new(Mutex::new("Client.state", None)),
-        current_handle: Arc::new(Mutex::new("Client.current_handle", None)),
+        state: Arc::new(Mutex::new("Client.state", None, peeps::Source::caller())),
+        current_handle: Arc::new(Mutex::new(
+            "Client.current_handle",
+            None,
+            peeps::Source::caller(),
+        )),
     }
 }
 
@@ -322,13 +331,14 @@ where
             let args_ptr = args as *mut T as *mut ();
             #[allow(unsafe_code)]
             let call_result = unsafe {
-                roam_session::ConnectionHandle::call_with_metadata_by_plan(
+                roam_session::ConnectionHandle::call_with_metadata_by_plan_with_source(
                     &handle,
                     method_id,
                     method_name,
                     args_ptr,
                     args_plan,
                     metadata.clone(),
+                    peeps::Source::caller(),
                 )
                 .await
             };
@@ -381,6 +391,7 @@ where
         args_ptr: SendPtr,
         args_plan: &'static std::sync::Arc<roam_session::RpcPlan>,
         metadata: roam_wire::Metadata,
+        source: peeps::Source,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send {
         let this = self.clone();
         let method_name = method_name.to_owned();
@@ -411,12 +422,13 @@ where
 
                 // SAFETY: args_ptr was created from valid, initialized, Send data
                 match unsafe {
-                    handle.call_with_metadata_by_plan(
+                    handle.call_with_metadata_by_plan_with_source(
                         method_id,
                         &method_name,
                         args_ptr.as_ptr(),
                         args_plan,
                         metadata.clone(),
+                        source,
                     )
                 }
                 .await

@@ -7,6 +7,7 @@ use facet::Facet;
 use crate::request_response_spy::RequestResponseSpy;
 use facet_core::PtrMut;
 
+use crate::peeps::prelude::*;
 use crate::{
     ChannelError, ChannelId, ChannelIdAllocator, ChannelRegistry, DriverMessage,
     IncomingChannelMessage, RX_STREAM_BUFFER_SIZE, ReceiverSlot, ResponseData, SenderSlot,
@@ -270,6 +271,7 @@ impl ConnectionHandle {
                 channel_registry: crate::runtime::Mutex::new(
                     "ConnectionHandle.channel_registry",
                     channel_registry,
+                    peeps::Source::caller(),
                 ),
                 diagnostic_state,
                 #[cfg(not(target_arch = "wasm32"))]
@@ -350,15 +352,17 @@ impl ConnectionHandle {
         args: &mut T,
         args_plan: &crate::RpcPlan,
     ) -> Result<ResponseData, TransportError> {
+        let source = peeps::Source::caller();
         let args_ptr = args as *mut T as *mut ();
         #[allow(unsafe_code)]
         unsafe {
-            self.call_with_metadata_by_plan(
+            self.call_with_metadata_by_plan_with_source(
                 method_id,
                 method_name,
                 args_ptr,
                 args_plan,
                 roam_wire::Metadata::default(),
+                source,
             )
             .await
         }
@@ -378,11 +382,19 @@ impl ConnectionHandle {
         args_plan: &crate::RpcPlan,
         metadata: roam_wire::Metadata,
     ) -> Result<ResponseData, TransportError> {
+        let source = peeps::Source::caller();
         let args_ptr = args as *mut T as *mut ();
         #[allow(unsafe_code)]
         unsafe {
-            self.call_with_metadata_by_plan(method_id, method_name, args_ptr, args_plan, metadata)
-                .await
+            self.call_with_metadata_by_plan_with_source(
+                method_id,
+                method_name,
+                args_ptr,
+                args_plan,
+                metadata,
+                source,
+            )
+            .await
         }
     }
 
@@ -397,6 +409,7 @@ impl ConnectionHandle {
     /// - The args type must be `Send`
     #[doc(hidden)]
     #[allow(unsafe_code)]
+    #[track_caller]
     pub unsafe fn call_with_metadata_by_plan(
         &self,
         method_id: u64,
@@ -404,6 +417,37 @@ impl ConnectionHandle {
         args_ptr: *mut (),
         args_plan: &crate::RpcPlan,
         metadata: roam_wire::Metadata,
+    ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send + '_ {
+        let source = peeps::Source::caller();
+        // SAFETY: Forwarded unchanged; this wrapper only attaches source context.
+        unsafe {
+            self.call_with_metadata_by_plan_with_source(
+                method_id,
+                method_name,
+                args_ptr,
+                args_plan,
+                metadata,
+                source,
+            )
+        }
+    }
+
+    /// Make an RPC call using reflection (non-generic) with explicit source context.
+    ///
+    /// # Safety
+    ///
+    /// - `args_ptr` must point to valid, initialized memory matching the plan's shape
+    /// - The args type must be `Send`
+    #[doc(hidden)]
+    #[allow(unsafe_code)]
+    pub unsafe fn call_with_metadata_by_plan_with_source(
+        &self,
+        method_id: u64,
+        method_name: &str,
+        args_ptr: *mut (),
+        args_plan: &crate::RpcPlan,
+        metadata: roam_wire::Metadata,
+        source: peeps::Source,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send + '_ {
         let args_shape = args_plan.type_plan.root().shape;
 
@@ -485,6 +529,7 @@ impl ConnectionHandle {
                 payload,
                 args_debug,
                 drains,
+                source,
             )
             .await
         }
@@ -577,6 +622,7 @@ impl ConnectionHandle {
         method_name: &str,
         payload: Vec<u8>,
     ) -> Result<Vec<u8>, TransportError> {
+        let source = peeps::Source::caller();
         self.call_raw_full(
             method_id,
             method_name,
@@ -584,6 +630,7 @@ impl ConnectionHandle {
             Vec::new(),
             payload,
             None,
+            source,
         )
         .await
         .map(|r| r.payload)
@@ -601,6 +648,7 @@ impl ConnectionHandle {
         payload: Vec<u8>,
         args_debug: Option<String>,
     ) -> Result<ResponseData, TransportError> {
+        let source = peeps::Source::caller();
         self.call_raw_full(
             method_id,
             method_name,
@@ -608,6 +656,7 @@ impl ConnectionHandle {
             channels,
             payload,
             args_debug,
+            source,
         )
         .await
     }
@@ -622,9 +671,18 @@ impl ConnectionHandle {
         payload: Vec<u8>,
         metadata: roam_wire::Metadata,
     ) -> Result<Vec<u8>, TransportError> {
-        self.call_raw_full(method_id, method_name, metadata, Vec::new(), payload, None)
-            .await
-            .map(|r| r.payload)
+        let source = peeps::Source::caller();
+        self.call_raw_full(
+            method_id,
+            method_name,
+            metadata,
+            Vec::new(),
+            payload,
+            None,
+            source,
+        )
+        .await
+        .map(|r| r.payload)
     }
 
     /// Make a raw RPC call with all options.
@@ -638,6 +696,7 @@ impl ConnectionHandle {
         channels: Vec<u64>,
         payload: Vec<u8>,
         args_debug: Option<String>,
+        source: peeps::Source,
     ) -> Result<ResponseData, TransportError> {
         self.call_raw_full_with_drains(
             method_id,
@@ -647,6 +706,7 @@ impl ConnectionHandle {
             payload,
             args_debug,
             Vec::new(),
+            source,
         )
         .await
     }
@@ -661,6 +721,7 @@ impl ConnectionHandle {
         payload: Vec<u8>,
         args_debug: Option<String>,
         drains: Vec<(ChannelId, Receiver<IncomingChannelMessage>)>,
+        source: peeps::Source,
     ) -> Result<ResponseData, TransportError> {
         #[cfg(not(target_arch = "wasm32"))]
         let _request_permit = self.acquire_request_slot().await?;
@@ -684,10 +745,12 @@ impl ConnectionHandle {
         let args_debug_str = args_debug.as_deref().unwrap_or("").to_string();
 
         #[cfg(feature = "diagnostics")]
-        let request_handle =
-            self.shared.diagnostic_state.as_deref().map(|diag| {
-                diag.emit_request_node(method_name.to_string(), args_debug_str.clone())
-            });
+        #[expect(clippy::manual_map, reason = "for track_caller compat")]
+        let request_handle = if let Some(diag) = self.shared.diagnostic_state.as_deref() {
+            Some(diag.emit_request_node(method_name.to_string(), args_debug_str.clone(), source))
+        } else {
+            None
+        };
 
         #[cfg(feature = "diagnostics")]
         if let Some(request_wire_id) = request_handle.as_ref().and_then(|h| h.id_for_wire()) {
@@ -740,6 +803,7 @@ impl ConnectionHandle {
                         "roam.call.enqueue_driver",
                         request_entity_handle,
                         self.shared.driver_tx.send(msg),
+                        source,
                     )
                     .await
                 } else {
@@ -819,6 +883,7 @@ impl ConnectionHandle {
                         "roam.call.await_response",
                         request_entity_handle,
                         response_rx.recv(),
+                        source,
                     )
                     .await
                 } else {

@@ -46,6 +46,8 @@
 //! let response = service.echo("hello").await?;
 //! ```
 
+::peeps::facade!();
+
 mod driver;
 mod framing;
 
