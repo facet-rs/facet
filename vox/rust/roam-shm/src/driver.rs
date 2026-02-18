@@ -636,7 +636,11 @@ where
                 PEEPS_REQUEST_ENTITY_ID_METADATA_KEY,
             );
             let handle = response_handle.unwrap_or_else(|| {
-                diag.emit_response_node(method_name.clone(), request_wire_id.as_deref())
+                diag.emit_response_node(
+                    method_name.clone(),
+                    peeps::Source::caller(),
+                    request_wire_id.as_deref(),
+                )
             });
             handle.mark(outcome);
             trace!(request_id, name = %diag.name, "completing incoming request");
@@ -852,8 +856,11 @@ where
                             request_id,
                             PEEPS_REQUEST_ENTITY_ID_METADATA_KEY,
                         );
-                        let response_handle =
-                            diag.emit_response_node(method_name, request_wire_id.as_deref());
+                        let response_handle = diag.emit_response_node(
+                            method_name,
+                            peeps::Source::caller(),
+                            request_wire_id.as_deref(),
+                        );
                         response_handle.mark(response_outcome);
                         diag.complete_request(conn_id.raw(), request_id);
                     }
@@ -962,8 +969,11 @@ where
             self.diagnostic_state
                 .as_deref()
                 .map(|diag| {
-                    let response_handle =
-                        diag.emit_response_node(method_name, request_wire_id.as_deref());
+                    let response_handle = diag.emit_response_node(
+                        method_name,
+                        peeps::Source::caller(),
+                        request_wire_id.as_deref(),
+                    );
                     let response_entity_id = response_handle.entity_id_for_wire();
                     conn.in_flight_response_handles
                         .insert(request_id, response_handle);
@@ -1044,6 +1054,7 @@ where
                     "roam_shm.handle_request.dispatch",
                     &response_ref,
                     handler_fut,
+                    peeps::Source::caller(),
                 )
                 .await;
                 if let Some(diag) = &diag_for_handler {
@@ -1101,7 +1112,11 @@ where
                     PEEPS_REQUEST_ENTITY_ID_METADATA_KEY,
                 );
                 let handle = response_handle.unwrap_or_else(|| {
-                    diag.emit_response_node(method_name, request_wire_id.as_deref())
+                    diag.emit_response_node(
+                        method_name,
+                        peeps::Source::caller(),
+                        request_wire_id.as_deref(),
+                    )
                 });
                 handle.mark(ResponseOutcome::Cancelled);
             }
@@ -2431,7 +2446,11 @@ impl MultiPeerHostDriver {
                 PEEPS_REQUEST_ENTITY_ID_METADATA_KEY,
             );
             let handle = response_handle.unwrap_or_else(|| {
-                diag.emit_response_node(method_name.clone(), request_wire_id.as_deref())
+                diag.emit_response_node(
+                    method_name.clone(),
+                    peeps::Source::caller(),
+                    request_wire_id.as_deref(),
+                )
             });
             handle.mark(outcome);
             trace!(request_id, name = %diag.name, "completing incoming request");
@@ -2636,8 +2655,11 @@ impl MultiPeerHostDriver {
                             request_id,
                             PEEPS_REQUEST_ENTITY_ID_METADATA_KEY,
                         );
-                        let response_handle =
-                            diag.emit_response_node(method_name, request_wire_id.as_deref());
+                        let response_handle = diag.emit_response_node(
+                            method_name,
+                            peeps::Source::caller(),
+                            request_wire_id.as_deref(),
+                        );
                         response_handle.mark(response_outcome);
                         diag.complete_request(conn_id.raw(), request_id);
                     }
@@ -2760,8 +2782,11 @@ impl MultiPeerHostDriver {
                 .diagnostic_state
                 .as_deref()
                 .map(|diag| {
-                    let response_handle =
-                        diag.emit_response_node(method_name, request_wire_id.as_deref());
+                    let response_handle = diag.emit_response_node(
+                        method_name,
+                        peeps::Source::caller(),
+                        request_wire_id.as_deref(),
+                    );
                     let response_entity_id = response_handle.entity_id_for_wire();
                     conn.in_flight_response_handles
                         .insert(request_id, response_handle);
@@ -2847,6 +2872,7 @@ impl MultiPeerHostDriver {
                     "roam_shm.handle_request.dispatch",
                     &response_ref,
                     handler_fut,
+                    peeps::Source::caller(),
                 )
                 .await;
                 if let Some(diag) = &diag_for_handler {
@@ -2914,7 +2940,11 @@ impl MultiPeerHostDriver {
                     PEEPS_REQUEST_ENTITY_ID_METADATA_KEY,
                 );
                 let handle = response_handle.unwrap_or_else(|| {
-                    diag.emit_response_node(method_name, request_wire_id.as_deref())
+                    diag.emit_response_node(
+                        method_name,
+                        peeps::Source::caller(),
+                        request_wire_id.as_deref(),
+                    )
                 });
                 handle.mark(ResponseOutcome::Cancelled);
             }
