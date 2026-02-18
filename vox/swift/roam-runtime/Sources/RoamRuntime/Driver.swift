@@ -1,5 +1,51 @@
 import Foundation
 
+private let peepsMethodNameMetadataKey = "peeps.method_name"
+private let peepsRequestEntityIdMetadataKey = "peeps.request_entity_id"
+private let peepsConnectionCorrelationIdMetadataKey = "peeps.connection_correlation_id"
+
+private func metadataString(_ metadata: [MetadataEntry], key: String) -> String? {
+    for entry in metadata where entry.key == key {
+        if case .string(let value) = entry.value {
+            return value
+        }
+    }
+    return nil
+}
+
+private func upsertStringMetadata(
+    _ metadata: inout [MetadataEntry],
+    key: String,
+    value: String
+) {
+    for idx in metadata.indices where metadata[idx].key == key {
+        metadata[idx] = (key: key, value: .string(value), flags: MetadataFlags.none.rawValue)
+        return
+    }
+    metadata.append((key: key, value: .string(value), flags: MetadataFlags.none.rawValue))
+}
+
+private func responseMetadataFromRequest(_ requestMetadata: [MetadataEntry]) -> [MetadataEntry] {
+    var responseMetadata: [MetadataEntry] = []
+    for entry in requestMetadata {
+        if entry.key == peepsMethodNameMetadataKey || entry.key == peepsRequestEntityIdMetadataKey {
+            responseMetadata.append(entry)
+        }
+    }
+    return responseMetadata
+}
+
+private func helloCorrelationId(_ hello: Hello) -> String? {
+    guard case .v6(_, _, _, let metadata) = hello else {
+        return nil
+    }
+    return metadataString(metadata, key: peepsConnectionCorrelationIdMetadataKey)
+}
+
+private func nextConnectionCorrelationId() -> String {
+    "swift.\(UUID().uuidString.lowercased())"
+}
+
 // MARK: - Negotiated Parameters
 
 /// Parameters negotiated during handshake.
@@ -237,6 +283,7 @@ private actor DriverState {
 
     var pendingResponses: [UInt64: PendingCall] = [:]
     var inFlightRequests: Set<UInt64> = []
+    var inFlightResponseMetadata: [UInt64: [MetadataEntry]] = [:]
     private var finalizedRequests: [UInt64: FinalizedRequest] = [:]
     var isClosed = false
 
@@ -304,18 +351,26 @@ private actor DriverState {
         return true
     }
 
-    func addInFlight(_ requestId: UInt64) -> Bool {
-        inFlightRequests.insert(requestId).inserted
+    func addInFlight(_ requestId: UInt64, responseMetadata: [MetadataEntry]) -> Bool {
+        let inserted = inFlightRequests.insert(requestId).inserted
+        if inserted {
+            inFlightResponseMetadata[requestId] = responseMetadata
+        }
+        return inserted
     }
 
-    func removeInFlight(_ requestId: UInt64) -> Bool {
-        inFlightRequests.remove(requestId) != nil
+    func removeInFlight(_ requestId: UInt64) -> (removed: Bool, responseMetadata: [MetadataEntry]) {
+        let removed = inFlightRequests.remove(requestId) != nil
+        let responseMetadata = inFlightResponseMetadata.removeValue(forKey: requestId) ?? []
+        return (removed, responseMetadata)
     }
 
     func failAllPending() -> [UInt64: PendingCall] {
         isClosed = true
         let responses = pendingResponses
         pendingResponses.removeAll()
+        inFlightRequests.removeAll()
+        inFlightResponseMetadata.removeAll()
         return responses
     }
 
@@ -539,8 +594,8 @@ public final class Driver: @unchecked Sendable {
         case .close(let channelId):
             wireMsg = .close(connId: 0, channelId: channelId)
         case .response(let requestId, let payload):
-            let wasInFlight = await state.removeInFlight(requestId)
-            guard wasInFlight else {
+            let responseContext = await state.removeInFlight(requestId)
+            guard responseContext.removed else {
                 return  // Already cancelled
             }
             // r[impl flow.call.payload-limit] - Outgoing responses are also bounded
@@ -557,7 +612,8 @@ public final class Driver: @unchecked Sendable {
                 checkedPayload = payload
             }
             wireMsg = .response(
-                connId: 0, requestId: requestId, metadata: [], channels: [],
+                connId: 0, requestId: requestId, metadata: responseContext.responseMetadata,
+                channels: [],
                 payload: checkedPayload)
         }
         do {
@@ -776,10 +832,11 @@ public final class Driver: @unchecked Sendable {
             // r[impl core.conn.independence] - Ignore Goodbye on unknown connection.
             await removeVirtualConnection(connId)
 
-        case .request(_, let requestId, let methodId, _, let channels, let payload):
+        case .request(_, let requestId, let methodId, let metadata, let channels, let payload):
             try await handleRequest(
                 requestId: requestId,
                 methodId: methodId,
+                metadata: metadata,
                 channels: channels,
                 payload: payload
             )
@@ -849,11 +906,15 @@ public final class Driver: @unchecked Sendable {
     private func handleRequest(
         requestId: UInt64,
         methodId: UInt64,
+        metadata: [MetadataEntry],
         channels: [UInt64],
         payload: [UInt8]
     ) async throws {
         // r[impl call.request-id.duplicate-detection]
-        let inserted = await state.addInFlight(requestId)
+        let inserted = await state.addInFlight(
+            requestId,
+            responseMetadata: responseMetadataFromRequest(metadata)
+        )
 
         guard inserted else {
             try await sendGoodbye("call.request-id.duplicate-detection")
@@ -1012,16 +1073,19 @@ public func establishInitiator(
     acceptConnections: Bool = false,
     maxPayloadSize: UInt32? = nil
 ) async throws -> (ConnectionHandle, Driver) {
-    let ourHello: Hello =
-        if let maxPayloadSize {
-            .v5(
-                maxPayloadSize: maxPayloadSize,
-                initialChannelCredit: 64 * 1024,
-                maxConcurrentRequests: 64
+    let ourCorrelationId = nextConnectionCorrelationId()
+    let ourHello: Hello = .v6(
+        maxPayloadSize: maxPayloadSize ?? defaultHello().maxPayloadSize,
+        initialChannelCredit: 64 * 1024,
+        maxConcurrentRequests: 64,
+        metadata: [
+            (
+                key: peepsConnectionCorrelationIdMetadataKey,
+                value: .string(ourCorrelationId),
+                flags: MetadataFlags.none.rawValue
             )
-        } else {
-            defaultHello()
-        }
+        ]
+    )
     // Send our hello
     try await transport.send(.hello(ourHello))
 
@@ -1051,6 +1115,10 @@ public func establishInitiator(
         try? await transport.send(.goodbye(connId: 0, reason: "message.hello.unknown-version"))
         throw ConnectionError.handshakeFailed("message.hello.unknown-version")
     }
+
+    let peerCorrelationId = helloCorrelationId(peerHello)
+    let canonicalCorrelationId = ourCorrelationId.isEmpty ? peerCorrelationId : ourCorrelationId
+    _ = canonicalCorrelationId
 
     let negotiated = Negotiated(
         maxPayloadSize: min(ourHello.maxPayloadSize, peerHello.maxPayloadSize),
@@ -1084,16 +1152,19 @@ public func establishAcceptor(
     acceptConnections: Bool = false,
     maxPayloadSize: UInt32? = nil
 ) async throws -> (ConnectionHandle, Driver) {
-    let ourHello: Hello =
-        if let maxPayloadSize {
-            .v5(
-                maxPayloadSize: maxPayloadSize,
-                initialChannelCredit: 64 * 1024,
-                maxConcurrentRequests: 64
+    let ourCorrelationId = nextConnectionCorrelationId()
+    let ourHello: Hello = .v6(
+        maxPayloadSize: maxPayloadSize ?? defaultHello().maxPayloadSize,
+        initialChannelCredit: 64 * 1024,
+        maxConcurrentRequests: 64,
+        metadata: [
+            (
+                key: peepsConnectionCorrelationIdMetadataKey,
+                value: .string(ourCorrelationId),
+                flags: MetadataFlags.none.rawValue
             )
-        } else {
-            defaultHello()
-        }
+        ]
+    )
     // Send our hello immediately
     try await transport.send(.hello(ourHello))
 
@@ -1122,6 +1193,10 @@ public func establishAcceptor(
         try? await transport.send(.goodbye(connId: 0, reason: "message.hello.unknown-version"))
         throw ConnectionError.handshakeFailed("message.hello.unknown-version")
     }
+
+    let peerCorrelationId = helloCorrelationId(peerHello)
+    let canonicalCorrelationId = peerCorrelationId ?? ourCorrelationId
+    _ = canonicalCorrelationId
 
     let negotiated = Negotiated(
         maxPayloadSize: min(ourHello.maxPayloadSize, peerHello.maxPayloadSize),

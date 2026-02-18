@@ -7,6 +7,10 @@ private enum TestTransportError: Error {
     case sendFailed
 }
 
+private let peepsMethodNameMetadataKey = "peeps.method_name"
+private let peepsRequestEntityIdMetadataKey = "peeps.request_entity_id"
+private let peepsConnectionCorrelationIdMetadataKey = "peeps.connection_correlation_id"
+
 private enum InboundEvent: Sendable {
     case message(Message)
     case closed
@@ -135,6 +139,35 @@ private struct NoopDispatcher: ServiceDispatcher {
     ) async {}
 }
 
+private struct ImmediateResponseDispatcher: ServiceDispatcher {
+    func preregister(
+        methodId _: UInt64,
+        payload _: [UInt8],
+        channels _: [UInt64],
+        registry _: ChannelRegistry
+    ) async {}
+
+    func dispatch(
+        methodId _: UInt64,
+        payload _: [UInt8],
+        channels _: [UInt64],
+        requestId: UInt64,
+        registry _: ChannelRegistry,
+        taskTx: @escaping @Sendable (TaskMessage) -> Void
+    ) async {
+        taskTx(.response(requestId: requestId, payload: [0x01]))
+    }
+}
+
+private func metadataString(_ metadata: [MetadataEntry], key: String) -> String? {
+    for entry in metadata where entry.key == key {
+        if case .string(let value) = entry.value {
+            return value
+        }
+    }
+    return nil
+}
+
 private func awaitHasCancel(
     _ transport: ScriptedTransport,
     timeoutMs: UInt64 = 500
@@ -227,6 +260,93 @@ private func isProtocolViolation(_ error: Error, rule: String) -> Bool {
 }
 
 struct ConnectionFailureTests {
+    @Test func initiatorHelloCarriesConnectionCorrelationMetadata() async throws {
+        let transport = ScriptedTransport()
+        _ = try await establishInitiator(
+            transport: transport,
+            dispatcher: NoopDispatcher()
+        )
+
+        let sent = await transport.sent()
+        guard let first = sent.first else {
+            Issue.record("expected hello to be sent")
+            return
+        }
+        guard case .hello(let hello) = first else {
+            Issue.record("expected first sent message to be hello")
+            return
+        }
+        guard case .v6(_, _, _, let metadata) = hello else {
+            Issue.record("expected v6 hello")
+            return
+        }
+
+        let correlationId = metadataString(metadata, key: peepsConnectionCorrelationIdMetadataKey)
+        #expect(correlationId != nil)
+        #expect(correlationId?.isEmpty == false)
+    }
+
+    @Test func serverResponsePreservesPeepsRequestMetadata() async throws {
+        let transport = ScriptedTransport()
+        let (_, driver) = try await establishAcceptor(
+            transport: transport,
+            dispatcher: ImmediateResponseDispatcher()
+        )
+        let driverTask = Task {
+            try await driver.run()
+        }
+        defer {
+            Task {
+                try? await transport.close()
+            }
+            driverTask.cancel()
+        }
+
+        await transport.enqueueMessage(
+            .request(
+                connId: 0,
+                requestId: 77,
+                methodId: 42,
+                metadata: [
+                    (key: peepsMethodNameMetadataKey, value: .string("DemoRpc.test"), flags: 0),
+                    (key: peepsRequestEntityIdMetadataKey, value: .string("request:abc"), flags: 0),
+                    (key: "unrelated", value: .string("keep_out"), flags: 0),
+                ],
+                channels: [],
+                payload: []
+            )
+        )
+
+        let start = ContinuousClock.now
+        let timeout = Duration.milliseconds(1_000)
+        var responseMetadata: [MetadataEntry]? = nil
+        while ContinuousClock.now - start < timeout {
+            let sent = await transport.sent()
+            for message in sent {
+                if case .response(_, let requestId, let metadata, _, _) = message,
+                    requestId == 77
+                {
+                    responseMetadata = metadata
+                    break
+                }
+            }
+            if responseMetadata != nil {
+                break
+            }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+
+        guard let responseMetadata else {
+            Issue.record("expected response to be sent")
+            return
+        }
+
+        #expect(metadataString(responseMetadata, key: peepsMethodNameMetadataKey) == "DemoRpc.test")
+        #expect(
+            metadataString(responseMetadata, key: peepsRequestEntityIdMetadataKey) == "request:abc")
+        #expect(metadataString(responseMetadata, key: "unrelated") == nil)
+    }
+
     @Test func immediateResponseAfterSendStillCompletesCall() async throws {
         let transport = ScriptedTransport(autoRespondRequestCount: 1)
         let (handle, driver) = try await establishInitiator(
