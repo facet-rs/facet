@@ -2000,19 +2000,8 @@ dependencies = [
 name = "peeps"
 version = "0.1.0"
 dependencies = [
- "async-channel",
- "facet-json",
- "facet-value",
- "futures-channel",
- "futures-util",
- "gloo-timers",
- "parking_lot",
- "peeps-runtime",
- "peeps-source",
- "peeps-types",
- "peeps-wire",
- "tokio",
- "wasm-bindgen-futures",
+ "peeps-tokio",
+ "peeps-wasm",
 ]
 
 [[package]]
@@ -2050,6 +2039,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "peeps-tokio"
+version = "0.1.0"
+dependencies = [
+ "facet-json",
+ "facet-value",
+ "parking_lot",
+ "peeps-runtime",
+ "peeps-source",
+ "peeps-types",
+ "peeps-wire",
+ "tokio",
+]
+
+[[package]]
 name = "peeps-types"
 version = "0.1.0"
 dependencies = [
@@ -2059,6 +2062,18 @@ dependencies = [
  "facet-value",
  "peeps-source",
  "rusqlite",
+]
+
+[[package]]
+name = "peeps-wasm"
+version = "0.1.0"
+dependencies = [
+ "async-channel",
+ "futures-channel",
+ "futures-util",
+ "gloo-timers",
+ "tokio",
+ "wasm-bindgen-futures",
 ]
 
 [[package]]
