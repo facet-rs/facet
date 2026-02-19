@@ -14,6 +14,9 @@ pub struct SerializeOptions {
 
     /// Indentation string for pretty-printing (default: "  ")
     pub indent: &'static str,
+
+    /// How byte sequences (`Vec<u8>`, `[u8; N]`, `bytes::Bytes`, etc.) are serialized.
+    pub bytes_format: BytesFormat,
 }
 
 impl Default for SerializeOptions {
@@ -21,7 +24,61 @@ impl Default for SerializeOptions {
         Self {
             pretty: false,
             indent: "  ",
+            bytes_format: BytesFormat::default(),
         }
+    }
+}
+
+/// Byte serialization format for JSON.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BytesFormat {
+    /// Serialize as a JSON array of numbers (e.g., `[0, 255, 42]`).
+    #[default]
+    Array,
+    /// Serialize as a JSON string containing hex bytes (e.g., `"0x00ff2a"`).
+    Hex(HexBytesOptions),
+}
+
+/// Options for hex byte serialization.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HexBytesOptions {
+    /// Truncate when the byte length exceeds this threshold.
+    ///
+    /// `None` means never truncate.
+    pub truncate_above: Option<usize>,
+    /// Number of bytes to keep from the start when truncating.
+    pub head: usize,
+    /// Number of bytes to keep from the end when truncating.
+    pub tail: usize,
+}
+
+impl Default for HexBytesOptions {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl HexBytesOptions {
+    /// Create default hex byte options (no truncation).
+    pub const fn new() -> Self {
+        Self {
+            truncate_above: None,
+            head: 32,
+            tail: 32,
+        }
+    }
+
+    /// Truncate when byte length exceeds `truncate_above`.
+    pub const fn truncate(mut self, truncate_above: usize) -> Self {
+        self.truncate_above = Some(truncate_above);
+        self
+    }
+
+    /// Set the number of head/tail bytes to keep when truncating.
+    pub const fn head_tail(mut self, head: usize, tail: usize) -> Self {
+        self.head = head;
+        self.tail = tail;
+        self
     }
 }
 
@@ -41,6 +98,30 @@ impl SerializeOptions {
     pub const fn indent(mut self, indent: &'static str) -> Self {
         self.indent = indent;
         self.pretty = true;
+        self
+    }
+
+    /// Configure how byte sequences are serialized.
+    pub const fn bytes_format(mut self, bytes_format: BytesFormat) -> Self {
+        self.bytes_format = bytes_format;
+        self
+    }
+
+    /// Serialize byte sequences as JSON arrays of numbers.
+    pub const fn bytes_as_array(mut self) -> Self {
+        self.bytes_format = BytesFormat::Array;
+        self
+    }
+
+    /// Serialize byte sequences as hex strings without truncation.
+    pub const fn bytes_as_hex(mut self) -> Self {
+        self.bytes_format = BytesFormat::Hex(HexBytesOptions::new());
+        self
+    }
+
+    /// Serialize byte sequences as hex strings with custom options.
+    pub const fn bytes_as_hex_with_options(mut self, options: HexBytesOptions) -> Self {
+        self.bytes_format = BytesFormat::Hex(options);
         self
     }
 }
@@ -212,6 +293,84 @@ impl JsonSerializer {
             }
         }
     }
+
+    #[inline]
+    fn write_hex_byte(&mut self, byte: u8) {
+        let hi = byte >> 4;
+        let lo = byte & 0x0f;
+        self.out
+            .push(if hi < 10 { b'0' + hi } else { b'a' + (hi - 10) });
+        self.out
+            .push(if lo < 10 { b'0' + lo } else { b'a' + (lo - 10) });
+    }
+
+    #[inline]
+    fn write_u8_decimal(&mut self, value: u8) {
+        #[cfg(feature = "fast")]
+        self.out
+            .extend_from_slice(itoa::Buffer::new().format(value).as_bytes());
+        #[cfg(not(feature = "fast"))]
+        self.out.extend_from_slice(value.to_string().as_bytes());
+    }
+
+    fn write_bytes_array(&mut self, bytes: &[u8]) {
+        self.out.push(b'[');
+        for (index, byte) in bytes.iter().copied().enumerate() {
+            if index != 0 {
+                self.out.push(b',');
+            }
+            self.write_u8_decimal(byte);
+        }
+        self.out.push(b']');
+    }
+
+    fn write_bytes_hex(&mut self, bytes: &[u8], options: HexBytesOptions) {
+        self.out.push(b'"');
+        self.out.extend_from_slice(b"0x");
+
+        let should_truncate = options
+            .truncate_above
+            .is_some_and(|max_len| bytes.len() > max_len);
+        if !should_truncate {
+            for byte in bytes {
+                self.write_hex_byte(*byte);
+            }
+            self.out.push(b'"');
+            return;
+        }
+
+        let head = options.head.min(bytes.len());
+        let max_tail = bytes.len().saturating_sub(head);
+        let tail = options.tail.min(max_tail);
+
+        for byte in &bytes[..head] {
+            self.write_hex_byte(*byte);
+        }
+
+        let omitted = bytes.len().saturating_sub(head + tail);
+        self.out.extend_from_slice(b"..<");
+        #[cfg(feature = "fast")]
+        self.out
+            .extend_from_slice(itoa::Buffer::new().format(omitted).as_bytes());
+        #[cfg(not(feature = "fast"))]
+        self.out.extend_from_slice(omitted.to_string().as_bytes());
+        self.out.extend_from_slice(b" bytes>..");
+
+        if tail != 0 {
+            for byte in &bytes[bytes.len() - tail..] {
+                self.write_hex_byte(*byte);
+            }
+        }
+
+        self.out.push(b'"');
+    }
+
+    fn write_bytes_with_options(&mut self, bytes: &[u8]) {
+        match self.options.bytes_format {
+            BytesFormat::Array => self.write_bytes_array(bytes),
+            BytesFormat::Hex(options) => self.write_bytes_hex(bytes, options),
+        }
+    }
 }
 
 /// Check if any byte in the u128 equals the target byte.
@@ -369,13 +528,19 @@ impl FormatSerializer for JsonSerializer {
                 }
             }
             ScalarValue::Str(s) => self.write_json_string(&s),
-            ScalarValue::Bytes(_) => {
-                return Err(JsonSerializeError {
-                    msg: "bytes serialization unsupported for json",
-                });
-            }
+            ScalarValue::Bytes(bytes) => self.write_bytes_with_options(bytes.as_ref()),
         }
         Ok(())
+    }
+
+    fn serialize_byte_sequence(&mut self, bytes: &[u8]) -> Result<bool, Self::Error> {
+        self.before_value()?;
+        self.write_bytes_with_options(bytes);
+        Ok(true)
+    }
+
+    fn serialize_byte_array(&mut self, bytes: &[u8]) -> Result<bool, Self::Error> {
+        self.serialize_byte_sequence(bytes)
     }
 
     fn raw_serialize_shape(&self) -> Option<&'static facet_core::Shape> {
@@ -761,4 +926,66 @@ where
     serialize_root(&mut serializer, peek)
         .map_err(|e| std::io::Error::other(alloc::format!("{:?}", e)))?;
     writer.write_all(&serializer.finish())
+}
+
+#[cfg(test)]
+mod tests {
+    use facet::Facet;
+
+    use super::{BytesFormat, HexBytesOptions, SerializeOptions, to_string_with_options};
+
+    #[derive(Facet)]
+    struct BytesVec {
+        data: Vec<u8>,
+    }
+
+    #[derive(Facet)]
+    struct BytesArray {
+        data: [u8; 4],
+    }
+
+    #[test]
+    fn bytes_default_to_json_array() {
+        let value = BytesVec {
+            data: vec![0, 127, 255],
+        };
+
+        let json = to_string_with_options(&value, &SerializeOptions::default()).unwrap();
+        assert_eq!(json, r#"{"data":[0,127,255]}"#);
+    }
+
+    #[test]
+    fn bytes_can_serialize_as_hex_string() {
+        let value = BytesVec {
+            data: vec![0x00, 0x7f, 0xff],
+        };
+
+        let json =
+            to_string_with_options(&value, &SerializeOptions::default().bytes_as_hex()).unwrap();
+        assert_eq!(json, r#"{"data":"0x007fff"}"#);
+    }
+
+    #[test]
+    fn bytes_can_serialize_as_truncated_hex_string() {
+        let value = BytesVec {
+            data: (0u8..10).collect(),
+        };
+
+        let options = SerializeOptions::default()
+            .bytes_as_hex_with_options(HexBytesOptions::new().truncate(6).head_tail(2, 2));
+        let json = to_string_with_options(&value, &options).unwrap();
+        assert_eq!(json, r#"{"data":"0x0001..<6 bytes>..0809"}"#);
+    }
+
+    #[test]
+    fn byte_arrays_use_same_hex_mode() {
+        let value = BytesArray {
+            data: [0xaa, 0xbb, 0xcc, 0xdd],
+        };
+
+        let options =
+            SerializeOptions::default().bytes_format(BytesFormat::Hex(HexBytesOptions::new()));
+        let json = to_string_with_options(&value, &options).unwrap();
+        assert_eq!(json, r#"{"data":"0xaabbccdd"}"#);
+    }
 }
