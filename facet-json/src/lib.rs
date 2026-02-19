@@ -67,11 +67,11 @@ pub use error::JsonError;
 pub use parser::JsonParser;
 pub use raw_json::RawJson;
 pub use serializer::{
-    JsonSerializeError, JsonSerializer, SerializeOptions, peek_to_string, peek_to_string_pretty,
-    peek_to_string_with_options, peek_to_writer_std, peek_to_writer_std_pretty,
-    peek_to_writer_std_with_options, to_string, to_string_pretty, to_string_with_options, to_vec,
-    to_vec_pretty, to_vec_with_options, to_writer_std, to_writer_std_pretty,
-    to_writer_std_with_options,
+    BytesFormat, HexBytesOptions, JsonSerializeError, JsonSerializer, SerializeOptions,
+    peek_to_string, peek_to_string_pretty, peek_to_string_with_options, peek_to_writer_std,
+    peek_to_writer_std_pretty, peek_to_writer_std_with_options, to_string, to_string_pretty,
+    to_string_with_options, to_vec, to_vec_pretty, to_vec_with_options, to_writer_std,
+    to_writer_std_pretty, to_writer_std_with_options,
 };
 
 // Re-export DeserializeError for convenience
