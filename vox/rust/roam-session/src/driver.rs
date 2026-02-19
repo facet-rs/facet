@@ -864,18 +864,24 @@ struct ConnectionState {
     /// The connection ID (for debugging/logging).
     #[allow(dead_code)]
     conn_id: ConnectionId,
+
     /// Client-side handle for making calls on this connection.
     handle: ConnectionHandle,
+
     /// Server-side channel registry for incoming Rx/Tx streams.
     server_channel_registry: ChannelRegistry,
+
     /// Dispatcher for handling incoming requests on this connection.
     /// If None, inherits from the parent link's dispatcher.
     dispatcher: Option<Box<dyn ServiceDispatcher>>,
+
     /// Pending responses (request_id -> response sender).
     pending_responses: HashMap<u64, PendingResponse>,
+
     /// In-flight server requests with their abort handles.
     /// r[impl call.cancel.best-effort] - We track abort handles to allow best-effort cancellation.
     in_flight_server_requests: HashMap<u64, crate::runtime::AbortHandle>,
+
     #[cfg(feature = "diagnostics")]
     in_flight_response_handles: HashMap<u64, TypedResponseHandle>,
 }

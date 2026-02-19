@@ -2415,6 +2415,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "roam-runtime"
+version = "3.0.0"
+dependencies = [
+ "peeps",
+ "tokio",
+]
+
+[[package]]
 name = "roam-schema"
 version = "3.0.0"
 dependencies = [

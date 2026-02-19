@@ -1,0 +1,16 @@
+[package]
+name = "roam-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Runtime types (tokio vs non-tokio)"
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[dependencies]
+peeps.workspace = true
+tokio.workspace = true

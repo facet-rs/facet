@@ -4,6 +4,7 @@ members = [
   "rust/roam",
   "rust/roam-wire",
   "rust/roam-frame",
+  "rust/roam-runtime",
   "rust/roam-session",
   "rust/roam-hash",
   "rust/roam-schema",
@@ -59,7 +60,9 @@ roam-websocket = { path = "rust/roam-websocket", version = "3.0.0" }
 shm-primitives = { path = "rust/shm-primitives", version = "3.0.0", default-features = false }
 ur-taking-me-with-you = { path = "rust/ur-taking-me-with-you", version = "3.0.0" }
 roam-task-local = { path = "rust/roam-task-local", version = "3.0.0" }
-peeps = { version = "0.1.0", git = "https://github.com/bearcove/peeps", branch = "main", features = ["diagnostics"] }
+peeps = { version = "0.1.0", git = "https://github.com/bearcove/peeps", branch = "main", features = [
+  "diagnostics",
+] }
 peeps-types = { version = "0.1.0", git = "https://github.com/bearcove/peeps", branch = "main" }
 
 bytes = "1"
