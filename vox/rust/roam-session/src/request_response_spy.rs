@@ -101,12 +101,12 @@ pub trait RequestResponseSpy {
         &self,
         method_name: String,
         args_preview: String,
-        source: peeps::Source,
+        source: peeps::SourceRight,
     ) -> TypedRequestHandle;
     fn emit_response_node(
         &self,
         method_name: String,
-        source: peeps::Source,
+        source: peeps::SourceRight,
         request_wire_id: Option<&str>,
     ) -> TypedResponseHandle;
 }
@@ -143,7 +143,7 @@ impl RequestResponseSpy for DiagnosticState {
         &self,
         method_name: String,
         args_preview: String,
-        source: peeps::Source,
+        source: peeps::SourceRight,
     ) -> TypedRequestHandle {
         let _ = self.ensure_connection_context();
         self.refresh_connection_context_if_dirty();
@@ -156,7 +156,7 @@ impl RequestResponseSpy for DiagnosticState {
     fn emit_response_node(
         &self,
         method_name: String,
-        source: peeps::Source,
+        source: peeps::SourceRight,
         request_wire_id: Option<&str>,
     ) -> TypedResponseHandle {
         let _ = self.ensure_connection_context();
@@ -193,7 +193,7 @@ impl RequestResponseSpy for DiagnosticState {
         &self,
         _method_name: String,
         _args_preview: String,
-        _source: peeps::Source,
+        _source: peeps::SourceRight,
     ) -> TypedRequestHandle {
         TypedRequestHandle::default()
     }
@@ -202,7 +202,7 @@ impl RequestResponseSpy for DiagnosticState {
     fn emit_response_node(
         &self,
         _method_name: String,
-        _source: peeps::Source,
+        _source: peeps::SourceRight,
         _request_wire_id: Option<&str>,
     ) -> TypedResponseHandle {
         TypedResponseHandle::default()

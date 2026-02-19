@@ -87,11 +87,15 @@ where
         config,
         dispatcher,
         retry_policy: RetryPolicy::default(),
-        state: Arc::new(Mutex::new("Client.state", None, peeps::Source::caller())),
+        state: Arc::new(Mutex::new(
+            "Client.state",
+            None,
+            peeps::SourceRight::caller(),
+        )),
         current_handle: Arc::new(Mutex::new(
             "Client.current_handle",
             None,
-            peeps::Source::caller(),
+            peeps::SourceRight::caller(),
         )),
     }
 }
@@ -112,11 +116,15 @@ where
         config,
         dispatcher,
         retry_policy,
-        state: Arc::new(Mutex::new("Client.state", None, peeps::Source::caller())),
+        state: Arc::new(Mutex::new(
+            "Client.state",
+            None,
+            peeps::SourceRight::caller(),
+        )),
         current_handle: Arc::new(Mutex::new(
             "Client.current_handle",
             None,
-            peeps::Source::caller(),
+            peeps::SourceRight::caller(),
         )),
     }
 }
@@ -338,7 +346,7 @@ where
                     args_ptr,
                     args_plan,
                     metadata.clone(),
-                    peeps::Source::caller(),
+                    peeps::SourceRight::caller(),
                 )
                 .await
             };
@@ -391,7 +399,7 @@ where
         args_ptr: SendPtr,
         args_plan: &'static std::sync::Arc<roam_session::RpcPlan>,
         metadata: roam_wire::Metadata,
-        source: peeps::Source,
+        source: peeps::SourceRight,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send {
         let this = self.clone();
         let method_name = method_name.to_owned();

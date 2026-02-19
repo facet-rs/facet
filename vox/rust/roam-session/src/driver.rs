@@ -392,7 +392,7 @@ where
         state: Arc::new(Mutex::new(
             "FramedClient.state",
             None,
-            peeps::Source::caller(),
+            peeps::SourceRight::caller(),
         )),
     }
 }
@@ -416,7 +416,7 @@ where
         state: Arc::new(Mutex::new(
             "FramedClient.state",
             None,
-            peeps::Source::caller(),
+            peeps::SourceRight::caller(),
         )),
     }
 }
@@ -626,7 +626,7 @@ where
                     args_ptr,
                     args_plan,
                     metadata.clone(),
-                    peeps::Source::caller(),
+                    peeps::SourceRight::caller(),
                 )
                 .await
             };
@@ -677,7 +677,7 @@ where
         args_ptr: crate::SendPtr,
         args_plan: &'static std::sync::Arc<crate::RpcPlan>,
         metadata: roam_wire::Metadata,
-        source: peeps::Source,
+        source: peeps::SourceRight,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send {
         // Capture self for use in async block
         let this = self.clone();
@@ -752,7 +752,7 @@ where
         args_ptr: crate::SendPtr,
         args_plan: &'static std::sync::Arc<crate::RpcPlan>,
         metadata: roam_wire::Metadata,
-        source: peeps::Source,
+        source: peeps::SourceRight,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> {
         // Capture self for use in async block
         let this = self.clone();
@@ -1303,7 +1303,7 @@ where
                     "roam.driver.send_request",
                     self.driver_rx.handle(),
                     self.io.send(&req),
-                    peeps::Source::caller(),
+                    peeps::SourceRight::caller(),
                 )
                 .await?;
                 #[cfg(not(feature = "diagnostics"))]
@@ -1625,7 +1625,7 @@ where
                                     .tx
                                     .send(Ok(ResponseData { payload, channels }))
                             },
-                            peeps::Source::caller(),
+                            peeps::SourceRight::caller(),
                         )
                         .await;
                         #[cfg(not(feature = "diagnostics"))]
@@ -1829,7 +1829,7 @@ where
                     "roam.driver.run_handler",
                     response_entity_handle,
                     run_handler,
-                    peeps::Source::caller(),
+                    peeps::SourceRight::caller(),
                 )
                 .await;
                 return;
@@ -2102,7 +2102,7 @@ where
     ) -> TypedResponseHandle {
         diag.emit_response_node(
             method_name,
-            peeps::Source::caller(),
+            peeps::SourceRight::caller(),
             Some(request_entity_id),
         )
     }

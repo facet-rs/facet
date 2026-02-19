@@ -180,7 +180,7 @@ pub trait Caller: Clone + Send + Sync + 'static {
         args_ptr: SendPtr,
         args_plan: &'static Arc<RpcPlan>,
         metadata: roam_wire::Metadata,
-        source: peeps::Source,
+        source: peeps::SourceRight,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send;
 
     /// Make an RPC call using reflection (non-generic).
@@ -201,7 +201,7 @@ pub trait Caller: Clone + Send + Sync + 'static {
         args_ptr: SendPtr,
         args_plan: &'static Arc<RpcPlan>,
         metadata: roam_wire::Metadata,
-        source: peeps::Source,
+        source: peeps::SourceRight,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>>;
 
     /// Bind receivers for `Rx<T>` channels in the response using reflection (non-generic).
@@ -227,7 +227,7 @@ impl Caller for ConnectionHandle {
         args_plan: &RpcPlan,
         metadata: roam_wire::Metadata,
     ) -> Result<ResponseData, TransportError> {
-        let source = peeps::Source::caller();
+        let source = peeps::SourceRight::caller();
         let args_ptr = args as *mut T as *mut ();
         #[allow(unsafe_code)]
         unsafe {
@@ -262,7 +262,7 @@ impl Caller for ConnectionHandle {
         args_ptr: SendPtr,
         args_plan: &'static Arc<RpcPlan>,
         metadata: roam_wire::Metadata,
-        source: peeps::Source,
+        source: peeps::SourceRight,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send {
         unsafe {
             ConnectionHandle::call_with_metadata_by_plan_with_source(
@@ -286,7 +286,7 @@ impl Caller for ConnectionHandle {
         args_ptr: SendPtr,
         args_plan: &'static Arc<RpcPlan>,
         metadata: roam_wire::Metadata,
-        source: peeps::Source,
+        source: peeps::SourceRight,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> {
         unsafe {
             ConnectionHandle::call_with_metadata_by_plan_with_source(
@@ -359,7 +359,7 @@ where
     ok_plan: &'static Arc<RpcPlan>,
     /// Precomputed plan for the Err type.
     err_plan: &'static Arc<RpcPlan>,
-    source: peeps::Source,
+    source: peeps::SourceRight,
     _phantom: PhantomData<fn() -> (Ok, Err)>,
 }
 
@@ -391,7 +391,7 @@ where
             args_plan,
             ok_plan,
             err_plan,
-            source: peeps::Source::caller(),
+            source: peeps::SourceRight::caller(),
             _phantom: PhantomData,
         }
     }

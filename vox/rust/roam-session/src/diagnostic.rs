@@ -495,7 +495,7 @@ impl DiagnosticState {
                         identity.src, identity.dst
                     ),
                     peeps_types::ScopeBody::Connection,
-                    peeps::Source::caller(),
+                    peeps::SourceRight::caller(),
                 )
             })
             .clone()
