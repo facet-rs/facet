@@ -1379,32 +1379,17 @@ where
 
                 // Update response node lifecycle after the response frame has been sent.
                 #[cfg(feature = "diagnostics")]
-                if let Some(ref diag) = self.diagnostic_state {
-                    let method_name = diag
-                        .inflight_request_metadata_string(
-                            conn_id.raw(),
-                            request_id,
-                            crate::PEEPS_METHOD_NAME_METADATA_KEY,
-                        )
-                        .or_else(|| {
-                            diag.inflight_request_method_id(conn_id.raw(), request_id)
-                                .and_then(crate::diagnostic::get_method_name)
-                                .map(|s| s.to_string())
-                        })
-                        .unwrap_or_else(|| "unknown".to_string());
-                    let request_wire_id = diag.inflight_request_metadata_string(
-                        conn_id.raw(),
-                        request_id,
-                        crate::PEEPS_REQUEST_ENTITY_ID_METADATA_KEY,
+                if let Some((diag, method_name, request_entity_id)) = self
+                    .strict_diag_response_identity_from_inflight(conn_id, request_id)
+                    .await?
+                {
+                    Self::mark_or_emit_response_outcome(
+                        &diag,
+                        response_handle,
+                        method_name,
+                        request_entity_id,
+                        response_outcome,
                     );
-                    let handle = response_handle.unwrap_or_else(|| {
-                        diag.emit_response_node(
-                            method_name.clone(),
-                            peeps::Source::caller(),
-                            request_wire_id.as_deref(),
-                        )
-                    });
-                    handle.mark(response_outcome);
                 }
 
                 // Track completion for diagnostics only after the response frame was sent.
@@ -1648,29 +1633,12 @@ where
                             );
                         }
                         #[cfg(feature = "diagnostics")]
-                        if let Some(ref diag) = self.diagnostic_state {
-                            let method_name = diag
-                                .inflight_request_metadata_string(
-                                    conn_id.raw(),
-                                    request_id,
-                                    crate::PEEPS_METHOD_NAME_METADATA_KEY,
-                                )
-                                .or_else(|| {
-                                    diag.inflight_request_method_id(conn_id.raw(), request_id)
-                                        .and_then(crate::diagnostic::get_method_name)
-                                        .map(|s| s.to_string())
-                                })
-                                .unwrap_or_else(|| "unknown".to_string());
-                            let request_wire_id = diag.inflight_request_metadata_string(
-                                conn_id.raw(),
-                                request_id,
-                                crate::PEEPS_REQUEST_ENTITY_ID_METADATA_KEY,
-                            );
-                            let response_handle = diag.emit_response_node(
-                                method_name,
-                                peeps::Source::caller(),
-                                request_wire_id.as_deref(),
-                            );
+                        if let Some((diag, method_name, request_entity_id)) = self
+                            .strict_diag_response_identity_from_inflight(conn_id, request_id)
+                            .await?
+                        {
+                            let response_handle =
+                                Self::emit_response_handle(&diag, method_name, &request_entity_id);
                             response_handle.mark(response_outcome);
                             diag.complete_request(conn_id.raw(), request_id);
                         }
@@ -1797,17 +1765,12 @@ where
 
         // Create typed response handle linked to propagated request identity.
         #[cfg(feature = "diagnostics")]
-        let response_entity_handle = if let Some(diag) = self.diagnostic_state.as_deref() {
-            let method_name = metadata_string(&metadata, crate::PEEPS_METHOD_NAME_METADATA_KEY)
-                .or_else(|| crate::diagnostic::get_method_name(method_id).map(|s| s.to_string()))
-                .unwrap_or_else(|| format!("0x{method_id:x}"));
-            let request_wire_id =
-                metadata_string(&metadata, crate::PEEPS_REQUEST_ENTITY_ID_METADATA_KEY);
-            let response_handle = diag.emit_response_node(
-                method_name,
-                peeps::Source::caller(),
-                request_wire_id.as_deref(),
-            );
+        let response_entity_handle = if let Some((diag, method_name, request_entity_id)) = self
+            .strict_diag_response_identity_from_metadata(method_id, &metadata)
+            .await?
+        {
+            let response_handle =
+                Self::emit_response_handle(&diag, method_name, &request_entity_id);
             let response_entity_handle = response_handle.entity_handle();
             conn.in_flight_response_handles
                 .insert(request_id, response_handle);
@@ -1902,25 +1865,17 @@ where
 
             // Mark response as cancelled.
             #[cfg(feature = "diagnostics")]
-            if let Some(ref diag) = self.diagnostic_state {
-                let method_name = diag
-                    .inflight_request_method_id(conn_id.raw(), request_id)
-                    .and_then(crate::diagnostic::get_method_name)
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| "unknown".to_string());
-                let request_wire_id = diag.inflight_request_metadata_string(
-                    conn_id.raw(),
-                    request_id,
-                    crate::PEEPS_REQUEST_ENTITY_ID_METADATA_KEY,
+            if let Some((diag, method_name, request_entity_id)) = self
+                .strict_diag_response_identity_from_inflight(conn_id, request_id)
+                .await?
+            {
+                Self::mark_or_emit_response_outcome(
+                    &diag,
+                    response_handle,
+                    method_name,
+                    request_entity_id,
+                    ResponseOutcome::Cancelled,
                 );
-                let handle = response_handle.unwrap_or_else(|| {
-                    diag.emit_response_node(
-                        method_name,
-                        peeps::Source::caller(),
-                        request_wire_id.as_deref(),
-                    )
-                });
-                handle.mark(ResponseOutcome::Cancelled);
             }
 
             // Track cancellation for diagnostics
@@ -2052,6 +2007,111 @@ where
             }
             diag.update_channel_credits(all_credits);
         }
+    }
+
+    #[cfg(feature = "diagnostics")]
+    async fn strict_diag_response_identity_from_inflight(
+        &mut self,
+        conn_id: ConnectionId,
+        request_id: u64,
+    ) -> Result<Option<(Arc<crate::diagnostic::DiagnosticState>, String, String)>, ConnectionError>
+    {
+        let Some(diag) = self.diagnostic_state.as_ref().cloned() else {
+            return Ok(None);
+        };
+
+        let Some(method_name) = diag.inflight_request_metadata_string(
+            conn_id.raw(),
+            request_id,
+            crate::PEEPS_METHOD_NAME_METADATA_KEY,
+        ) else {
+            error!(
+                conn_id = conn_id.raw(),
+                request_id, "missing required metadata peeps.method_name"
+            );
+            return Err(self
+                .goodbye("diagnostics.response.missing-method-name")
+                .await);
+        };
+
+        let Some(request_entity_id) = diag.inflight_request_metadata_string(
+            conn_id.raw(),
+            request_id,
+            crate::PEEPS_REQUEST_ENTITY_ID_METADATA_KEY,
+        ) else {
+            error!(
+                conn_id = conn_id.raw(),
+                request_id, "missing required metadata peeps.request_entity_id"
+            );
+            return Err(self
+                .goodbye("diagnostics.response.missing-request-entity-id")
+                .await);
+        };
+
+        Ok(Some((diag, method_name, request_entity_id)))
+    }
+
+    #[cfg(feature = "diagnostics")]
+    async fn strict_diag_response_identity_from_metadata(
+        &mut self,
+        method_id: u64,
+        metadata: &roam_wire::Metadata,
+    ) -> Result<Option<(Arc<crate::diagnostic::DiagnosticState>, String, String)>, ConnectionError>
+    {
+        let Some(diag) = self.diagnostic_state.as_ref().cloned() else {
+            return Ok(None);
+        };
+
+        let Some(method_name) = metadata_string(metadata, crate::PEEPS_METHOD_NAME_METADATA_KEY)
+        else {
+            error!(
+                method_id,
+                "missing required metadata peeps.method_name on incoming request"
+            );
+            return Err(self
+                .goodbye("diagnostics.response.missing-method-name")
+                .await);
+        };
+
+        let Some(request_entity_id) =
+            metadata_string(metadata, crate::PEEPS_REQUEST_ENTITY_ID_METADATA_KEY)
+        else {
+            error!(
+                method_id,
+                "missing required metadata peeps.request_entity_id on incoming request"
+            );
+            return Err(self
+                .goodbye("diagnostics.response.missing-request-entity-id")
+                .await);
+        };
+
+        Ok(Some((diag, method_name, request_entity_id)))
+    }
+
+    #[cfg(feature = "diagnostics")]
+    fn emit_response_handle(
+        diag: &crate::diagnostic::DiagnosticState,
+        method_name: String,
+        request_entity_id: &str,
+    ) -> TypedResponseHandle {
+        diag.emit_response_node(
+            method_name,
+            peeps::Source::caller(),
+            Some(request_entity_id),
+        )
+    }
+
+    #[cfg(feature = "diagnostics")]
+    fn mark_or_emit_response_outcome(
+        diag: &crate::diagnostic::DiagnosticState,
+        response_handle: Option<TypedResponseHandle>,
+        method_name: String,
+        request_entity_id: String,
+        outcome: ResponseOutcome,
+    ) {
+        let handle = response_handle
+            .unwrap_or_else(|| Self::emit_response_handle(diag, method_name, &request_entity_id));
+        handle.mark(outcome);
     }
 
     async fn goodbye(&mut self, rule_id: &'static str) -> ConnectionError {
