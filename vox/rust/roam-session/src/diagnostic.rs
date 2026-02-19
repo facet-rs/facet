@@ -17,10 +17,6 @@ pub type DiagnosticCallback = Box<dyn Fn(&mut String) + Send + Sync>;
 static DIAGNOSTIC_REGISTRY: LazyLock<Mutex<Vec<Weak<DiagnosticState>>>> =
     LazyLock::new(|| Mutex::new(Vec::new()));
 
-/// Method name registry - maps method_id to human-readable names.
-static METHOD_NAMES: LazyLock<Mutex<HashMap<u64, &'static str>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-
 /// Whether to record extra debug info (checked once at startup).
 /// Set ROAM_DEBUG=1 to enable.
 static DEBUG_ENABLED: LazyLock<bool> = LazyLock::new(|| std::env::var("ROAM_DEBUG").is_ok());
@@ -41,15 +37,11 @@ pub fn debug_enabled() -> bool {
 }
 
 /// Register a method name for diagnostic display.
-pub fn register_method_name(method_id: u64, name: &'static str) {
-    if let Ok(mut names) = METHOD_NAMES.lock() {
-        names.insert(method_id, name);
-    }
-}
+pub fn register_method_name(_method_id: u64, _name: &'static str) {}
 
 /// Look up a method name by ID.
-pub fn get_method_name(method_id: u64) -> Option<&'static str> {
-    METHOD_NAMES.lock().ok()?.get(&method_id).copied()
+pub fn get_method_name(_method_id: u64) -> Option<&'static str> {
+    None
 }
 
 /// Register a diagnostic state for SIGUSR1 dumps.
@@ -100,18 +92,6 @@ pub fn dump_all_diagnostics() -> String {
             let _ = write!(output, "{}", dump);
         } else {
             let _ = write!(output, "{}", state.dump());
-        }
-    }
-
-    // Dump registered method names for reference
-    if let Ok(names) = METHOD_NAMES.try_lock()
-        && !names.is_empty()
-    {
-        let _ = writeln!(output, "Registered methods:");
-        let mut sorted: Vec<_> = names.iter().collect();
-        sorted.sort_by_key(|(id, _)| *id);
-        for (id, name) in sorted {
-            let _ = writeln!(output, "  0x{id:x} = {name}");
         }
     }
 
@@ -494,7 +474,10 @@ impl DiagnosticState {
                         "roam.connection.{correlation}:{}->{}",
                         identity.src, identity.dst
                     ),
-                    peeps_types::ScopeBody::Connection,
+                    peeps_types::ScopeBody::Connection(peeps_types::ConnectionScopeBody {
+                        local_addr: None,
+                        peer_addr: None,
+                    }),
                     peeps::SourceRight::caller(),
                 )
             })
@@ -1230,7 +1213,12 @@ impl DiagnosticState {
 
             for req in &outgoing {
                 let elapsed = now.duration_since(req.started);
-                let method_name = get_method_name(req.method_id).unwrap_or("?");
+                let method_name = req
+                    .metadata
+                    .as_ref()
+                    .and_then(|meta| meta.get(crate::PEEPS_METHOD_NAME_METADATA_KEY))
+                    .cloned()
+                    .unwrap_or_else(|| format!("method#0x{:x}", req.method_id));
                 let _ = write!(
                     output,
                     "    ⬆#{} {} {:.3}s",
@@ -1256,7 +1244,12 @@ impl DiagnosticState {
 
             for req in &incoming {
                 let elapsed = now.duration_since(req.started);
-                let method_name = get_method_name(req.method_id).unwrap_or("?");
+                let method_name = req
+                    .metadata
+                    .as_ref()
+                    .and_then(|meta| meta.get(crate::PEEPS_METHOD_NAME_METADATA_KEY))
+                    .cloned()
+                    .unwrap_or_else(|| format!("method#0x{:x}", req.method_id));
                 let _ = write!(
                     output,
                     "    ⬇#{} {} {:.3}s",
@@ -1301,7 +1294,7 @@ impl DiagnosticState {
                 let _ = writeln!(output, "  Recent ({}):", completions.len());
                 // Show newest first
                 for req in completions.iter().rev() {
-                    let method_name = get_method_name(req.method_id).unwrap_or("?");
+                    let method_name = format!("method#0x{:x}", req.method_id);
                     let ago = now.duration_since(req.completed_at);
                     let _ = writeln!(
                         output,
@@ -1352,13 +1345,7 @@ pub fn collect_live_states() -> Vec<Arc<DiagnosticState>> {
 
 /// Snapshot method name registry as a HashMap.
 pub fn snapshot_method_names() -> std::collections::HashMap<u64, String> {
-    let Ok(names) = METHOD_NAMES.try_lock() else {
-        return std::collections::HashMap::new();
-    };
-    names
-        .iter()
-        .map(|(&id, &name)| (id, name.to_string()))
-        .collect()
+    std::collections::HashMap::new()
 }
 fn format_short_backtrace() -> String {
     let bt = std::backtrace::Backtrace::force_capture();

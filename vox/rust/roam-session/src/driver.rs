@@ -1769,6 +1769,17 @@ where
             });
         }
 
+        // r[impl core.conn.dispatcher] - Use connection-specific dispatcher if available
+        let dispatcher: &dyn ServiceDispatcher = if let Some(ref conn_dispatcher) = conn.dispatcher
+        {
+            conn_dispatcher.as_ref()
+        } else {
+            &self.dispatcher
+        };
+        let method_name = dispatcher
+            .method_descriptor(method_id)
+            .map(|descriptor| descriptor.full_name);
+
         // Create typed response handle linked to propagated request identity.
         #[cfg(feature = "diagnostics")]
         let response_entity_handle = if let Some((diag, method_name, request_entity_id)) = self
@@ -1791,15 +1802,8 @@ where
             roam_wire::MethodId::new(method_id),
             metadata,
             channels,
-        );
-
-        // r[impl core.conn.dispatcher] - Use connection-specific dispatcher if available
-        let dispatcher: &dyn ServiceDispatcher = if let Some(ref conn_dispatcher) = conn.dispatcher
-        {
-            conn_dispatcher.as_ref()
-        } else {
-            &self.dispatcher
-        };
+        )
+        .with_method_name(method_name);
 
         debug!(
             conn_id = conn_id.raw(),
@@ -2441,14 +2445,6 @@ where
         diag.refresh_connection_context_if_dirty();
     }
 
-    // Ensure method IDs are computed at least once on the server side so
-    // `diagnostic::get_method_name()` can resolve incoming method_ids before we
-    // register peeps request/response nodes.
-    #[cfg(feature = "diagnostics")]
-    {
-        let _ = dispatcher.method_ids();
-    }
-
     // Create root connection (connection 0)
     // r[impl core.link.connection-zero]
     // Root uses None for dispatcher - it uses the link's dispatcher
@@ -2519,6 +2515,10 @@ where
 pub struct NoDispatcher;
 
 impl ServiceDispatcher for NoDispatcher {
+    fn method_descriptor(&self, _method_id: u64) -> Option<crate::MethodDescriptor> {
+        None
+    }
+
     fn method_ids(&self) -> Vec<u64> {
         vec![]
     }

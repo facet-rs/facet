@@ -155,20 +155,15 @@ fn generate_method_id_fn(
     let return_ty_tokens = return_type.to_token_stream();
     let return_shape = quote! { <#return_ty_tokens as #roam::facet::Facet>::SHAPE };
 
-    let full_method_name = format!("{}.{}", service_name, method_name);
     quote! {
         pub fn #fn_name() -> u64 {
             static ID: LazyLock<u64> = LazyLock::new(|| {
-                let id = #roam::hash::method_id_from_shapes(
+                #roam::hash::method_id_from_shapes(
                     #service_name,
                     #method_name,
                     #args_array,
                     #return_shape,
-                );
-                // Register method name for diagnostics (string literal from macro)
-                static METHOD_NAME: &str = #full_method_name;
-                #roam::session::diagnostic::register_method_name(id, METHOD_NAME);
-                id
+                )
             });
             *ID
         }
@@ -273,6 +268,34 @@ fn generate_dispatcher(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStrea
         })
         .collect();
 
+    let method_descriptor_calls: Vec<TokenStream2> = parsed
+        .methods()
+        .map(|m| {
+            let method_name_ident = format_ident!("{}", m.name().to_snake_case());
+            let full_method_name = format!("{}.{}", parsed.name(), m.name());
+            quote! {
+                #roam::session::MethodDescriptor {
+                    id: #method_id_mod::#method_name_ident(),
+                    full_name: #full_method_name,
+                }
+            }
+        })
+        .collect();
+
+    let method_descriptor_arms: Vec<TokenStream2> = parsed
+        .methods()
+        .map(|m| {
+            let method_name_ident = format_ident!("{}", m.name().to_snake_case());
+            let full_method_name = format!("{}.{}", parsed.name(), m.name());
+            quote! {
+                id if id == #method_id_mod::#method_name_ident() => Some(#roam::session::MethodDescriptor {
+                    id,
+                    full_name: #full_method_name,
+                })
+            }
+        })
+        .collect();
+
     quote! {
         /// Dispatcher for this service.
         ///
@@ -288,6 +311,11 @@ fn generate_dispatcher(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStrea
             /// Returns all method IDs handled by this dispatcher.
             pub fn method_ids() -> Vec<u64> {
                 vec![#(#method_id_calls),*]
+            }
+
+            /// Returns static method descriptors handled by this dispatcher.
+            pub fn method_descriptors() -> Vec<#roam::session::MethodDescriptor> {
+                vec![#(#method_descriptor_calls),*]
             }
         }
 
@@ -326,6 +354,13 @@ fn generate_dispatcher(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStrea
         where
             H: #trait_name + Clone + 'static,
         {
+            fn method_descriptor(&self, method_id: u64) -> Option<#roam::session::MethodDescriptor> {
+                match method_id {
+                    #(#method_descriptor_arms,)*
+                    _ => None,
+                }
+            }
+
             fn method_ids(&self) -> Vec<u64> {
                 Self::method_ids()
             }

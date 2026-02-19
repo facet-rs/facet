@@ -39,6 +39,10 @@ static UNIT_RESPONSE_PLAN: Lazy<Arc<RpcPlan>> = Lazy::new(|| Arc::new(RpcPlan::f
 struct TestService;
 
 impl ServiceDispatcher for TestService {
+    fn method_descriptor(&self, _method_id: u64) -> Option<roam_session::MethodDescriptor> {
+        None
+    }
+
     fn method_ids(&self) -> Vec<u64> {
         vec![1, 2, 3, 4]
     }

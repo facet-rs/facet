@@ -9,6 +9,10 @@ use std::pin::Pin;
 #[derive(Clone)]
 struct MockDispatcher;
 impl roam_session::ServiceDispatcher for MockDispatcher {
+    fn method_descriptor(&self, _method_id: u64) -> Option<roam_session::MethodDescriptor> {
+        None
+    }
+
     fn dispatch(
         &self,
         _ctx: roam_session::Context,

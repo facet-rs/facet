@@ -64,6 +64,10 @@ const METHOD_VERY_SLOW: u64 = 5;
 const METHOD_ECHO: u64 = 6;
 
 impl ServiceDispatcher for TestService {
+    fn method_descriptor(&self, _method_id: u64) -> Option<roam_session::MethodDescriptor> {
+        None
+    }
+
     fn method_ids(&self) -> Vec<u64> {
         vec![
             METHOD_INSTANT,

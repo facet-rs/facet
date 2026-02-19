@@ -40,6 +40,10 @@ impl TestService {
 }
 
 impl ServiceDispatcher for TestService {
+    fn method_descriptor(&self, _method_id: u64) -> Option<roam_session::MethodDescriptor> {
+        None
+    }
+
     fn method_ids(&self) -> Vec<u64> {
         vec![METHOD_BIG_DATA]
     }

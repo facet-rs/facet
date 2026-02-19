@@ -100,6 +100,12 @@ pub struct Context {
     /// The method ID being called.
     pub method_id: roam_wire::MethodId,
 
+    /// Fully-qualified method name from the active service definition.
+    ///
+    /// Populated by the connection driver when the selected dispatcher can
+    /// resolve `method_id` against its static method descriptors.
+    pub method_name: Option<&'static str>,
+
     /// Metadata sent with the request.
     ///
     /// This is the `metadata` field from the wire `Request` message.
@@ -136,11 +142,18 @@ impl Context {
             conn_id,
             request_id,
             method_id,
+            method_name: None,
             metadata,
             channels,
             extensions: Extensions::new(),
             arg_names: &[],
         }
+    }
+
+    /// Set the fully-qualified method name from dispatcher descriptors.
+    pub fn with_method_name(mut self, method_name: Option<&'static str>) -> Self {
+        self.method_name = method_name;
+        self
     }
 
     /// Set the argument names for this context.
@@ -181,14 +194,9 @@ impl Context {
         &self.channels
     }
 
-    /// Get the method name for this request, if registered.
-    ///
-    /// Service methods registered via `#[roam::service]` automatically register
-    /// their names. Returns `None` if the method hasn't been registered yet
-    /// (e.g., first call before LazyLock initialization) or if called with a
-    /// forwarding dispatcher that doesn't know the method names.
+    /// Get the fully-qualified method name for this request, if known.
     pub fn method_name(&self) -> Option<&'static str> {
-        crate::diagnostic::get_method_name(self.method_id.raw())
+        self.method_name
     }
 }
 
@@ -198,6 +206,7 @@ impl Clone for Context {
             conn_id: self.conn_id,
             request_id: self.request_id,
             method_id: self.method_id,
+            method_name: self.method_name,
             metadata: self.metadata.clone(),
             channels: self.channels.clone(),
             // Extensions are NOT cloned - each clone gets fresh extensions.
@@ -898,6 +907,9 @@ pub fn patch_channel_ids<T: Facet<'static>>(args: &mut T, plan: &RpcPlan, channe
 /// The dispatcher handles both simple and channeling methods uniformly.
 /// Channel binding is done via reflection (Poke) on the deserialized args.
 pub trait ServiceDispatcher: Send + Sync {
+    /// Static descriptor for a single RPC method.
+    fn method_descriptor(&self, method_id: u64) -> Option<MethodDescriptor>;
+
     /// Returns the method IDs this dispatcher handles.
     ///
     /// Used by [`RoutedDispatcher`] to determine which methods to route
@@ -932,6 +944,12 @@ pub trait ServiceDispatcher: Send + Sync {
         payload: Vec<u8>,
         registry: &mut ChannelRegistry,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>>;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MethodDescriptor {
+    pub id: u64,
+    pub full_name: &'static str,
 }
 
 // ============================================================================
@@ -972,6 +990,14 @@ where
     A: ServiceDispatcher,
     B: ServiceDispatcher,
 {
+    fn method_descriptor(&self, method_id: u64) -> Option<MethodDescriptor> {
+        if self.primary_methods.contains(&method_id) {
+            self.primary.method_descriptor(method_id)
+        } else {
+            self.fallback.method_descriptor(method_id)
+        }
+    }
+
     fn method_ids(&self) -> Vec<u64> {
         let mut ids = self.primary_methods.clone();
         ids.extend(self.fallback.method_ids());

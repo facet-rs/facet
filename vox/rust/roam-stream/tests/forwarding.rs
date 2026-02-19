@@ -61,6 +61,10 @@ const METHOD_GENERATE: u64 = 3;
 const METHOD_TRANSFORM: u64 = 4;
 
 impl ServiceDispatcher for StreamingService {
+    fn method_descriptor(&self, _method_id: u64) -> Option<roam_session::MethodDescriptor> {
+        None
+    }
+
     fn method_ids(&self) -> Vec<u64> {
         vec![METHOD_ECHO, METHOD_SUM, METHOD_GENERATE, METHOD_TRANSFORM]
     }
