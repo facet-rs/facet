@@ -52,10 +52,7 @@ async fn slot_freed_by_guest_read_is_reusable() {
 
     // Now read ONE message from the guest side, freeing one slot.
     let frame = guest.recv().expect("should have a message");
-    assert_eq!(
-        frame.payload_bytes().len(),
-        5000 + /* overhead framing in ShmMsg payload? */ 0
-    );
+    assert_eq!(frame.payload_bytes().len(), 5000);
     drop(frame);
 
     // The host should now be able to send one more large message.
@@ -144,7 +141,9 @@ async fn guest_can_send_after_host_exhausts_then_guest_reads() {
 
     // Guest reads ALL host messages (freeing all slots).
     for i in 0..sent {
-        let frame = guest.recv().expect(&format!("should have message {i}"));
+        let frame = guest
+            .recv()
+            .unwrap_or_else(|| panic!("should have message {i}"));
         drop(frame);
     }
     eprintln!("guest read all {sent} messages from host");

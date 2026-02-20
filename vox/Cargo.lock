@@ -2469,7 +2469,6 @@ dependencies = [
  "facet-value",
  "futures-util",
  "http",
- "moire",
  "reqwest",
  "roam-hash",
  "roam-schema",
@@ -2553,7 +2552,6 @@ dependencies = [
  "facet",
  "facet-core",
  "facet-format",
- "facet-json",
  "facet-path",
  "facet-postcard",
  "facet-pretty",
@@ -2568,7 +2566,6 @@ dependencies = [
  "tokio",
  "tracing",
  "ulid",
- "wasm-bindgen-futures",
 ]
 
 [[package]]
@@ -2576,14 +2573,12 @@ name = "roam-shm"
 version = "3.0.0"
 dependencies = [
  "facet",
- "facet-json",
  "facet-postcard",
  "facet-testhelpers",
  "futures",
  "futures-util",
  "libc",
  "libproc",
- "moire",
  "moire-types",
  "once_cell",
  "roam",

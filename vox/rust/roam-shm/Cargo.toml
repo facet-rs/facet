@@ -17,7 +17,6 @@ tracing = ["dep:tracing", "roam-session/tracing"]
 diagnostics = ["roam-session/diagnostics"]
 
 [dependencies]
-moire.workspace = true
 shm-primitives.workspace = true
 roam-frame.workspace = true
 ur-taking-me-with-you.workspace = true
@@ -25,7 +24,6 @@ roam-wire.workspace = true
 roam-session.workspace = true
 roam-stream.workspace = true
 facet.workspace = true
-facet-json.workspace = true
 facet-postcard = { workspace = true }
 moire-types.workspace = true
 tokio = { workspace = true, features = ["time", "sync", "net", "io-util"] }
