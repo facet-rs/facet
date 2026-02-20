@@ -70,10 +70,10 @@ pub struct JsonSchema {
     pub enum_: Option<Vec<String>>,
 
     /// For numbers: minimum value
-    pub minimum: Option<i128>,
+    pub minimum: Option<i64>,
 
     /// For numbers: maximum value
-    pub maximum: Option<u128>,
+    pub maximum: Option<i64>,
 
     /// For oneOf/anyOf/allOf
     #[facet(rename = "oneOf")]
@@ -321,44 +321,17 @@ impl SchemaContext {
             "bool" => (Some(SchemaType::Boolean), None, None),
 
             // Unsigned integers
-            "u8" => (Some(SchemaType::Integer), Some(0), Some(u8::MAX as u128)),
-            "u16" => (Some(SchemaType::Integer), Some(0), Some(u16::MAX as u128)),
-            "u32" => (Some(SchemaType::Integer), Some(0), Some(u32::MAX as u128)),
-            "u64" => (Some(SchemaType::Integer), Some(0), Some(u64::MAX as u128)),
-            "u128" => (Some(SchemaType::Integer), Some(0), Some(u128::MAX)),
-            "usize" => (Some(SchemaType::Integer), Some(0), Some(u64::MAX as u128)),
+            "u8" | "u16" | "u32" | "u64" | "u128" | "usize" => {
+                (Some(SchemaType::Integer), Some(0), None)
+            }
 
             // Signed integers
-            "i8" => (
-                Some(SchemaType::Integer),
-                Some(i8::MIN as i128),
-                Some(i8::MAX as u128),
-            ),
-            "i16" => (
-                Some(SchemaType::Integer),
-                Some(i16::MIN as i128),
-                Some(i16::MAX as u128),
-            ),
-            "i32" => (
-                Some(SchemaType::Integer),
-                Some(i32::MIN as i128),
-                Some(i32::MAX as u128),
-            ),
-            "i64" => (
-                Some(SchemaType::Integer),
-                Some(i64::MIN as i128),
-                Some(i64::MAX as u128),
-            ),
-            "i128" => (
-                Some(SchemaType::Integer),
-                Some(i128::MIN),
-                Some(i128::MAX as u128),
-            ),
-            "isize" => (
-                Some(SchemaType::Integer),
-                Some(i64::MIN as i128),
-                Some(i64::MAX as u128),
-            ),
+            "i8" => (Some(SchemaType::Integer), Some(i8::MIN as i64), None),
+            "i16" => (Some(SchemaType::Integer), Some(i16::MIN as i64), None),
+            "i32" => (Some(SchemaType::Integer), Some(i32::MIN as i64), None),
+            "i64" => (Some(SchemaType::Integer), Some(i64::MIN), None),
+            "i128" => (Some(SchemaType::Integer), Some(i64::MIN), None),
+            "isize" => (Some(SchemaType::Integer), Some(i64::MIN), None),
 
             // Floats
             "f32" | "f64" => (Some(SchemaType::Number), None, None),
