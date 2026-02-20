@@ -81,6 +81,14 @@ fn next_connection_correlation_id() -> String {
     ulid::Ulid::new().to_string()
 }
 
+fn split_method_parts(full_method: &str) -> (&str, &str) {
+    if let Some((service, method)) = full_method.rsplit_once('.') {
+        (service, method)
+    } else {
+        ("", full_method)
+    }
+}
+
 /// Negotiated connection parameters after Hello exchange.
 #[derive(Debug, Clone)]
 pub struct Negotiated {
@@ -2101,11 +2109,18 @@ where
     #[cfg(feature = "diagnostics")]
     fn emit_response_handle(
         diag: &crate::diagnostic::DiagnosticState,
-        method_name: String,
+        full_method_name: String,
         request_entity_id: &str,
     ) -> TypedResponseHandle {
+        let (service_name, method_name) = split_method_parts(full_method_name.as_str());
+        let response_body = peeps_types::ResponseEntity {
+            service_name: String::from(service_name),
+            method_name: String::from(method_name),
+            status: peeps_types::ResponseStatus::Pending,
+        };
         diag.emit_response_node(
-            method_name,
+            full_method_name,
+            response_body,
             peeps::SourceRight::caller(),
             Some(request_entity_id),
         )

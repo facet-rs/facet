@@ -132,6 +132,14 @@ impl ConnectionHandle {
             })
     }
 
+    fn split_method_parts(full_method: &str) -> (&str, &str) {
+        if let Some((service, method)) = full_method.rsplit_once('.') {
+            (service, method)
+        } else {
+            ("", full_method)
+        }
+    }
+
     fn span_id_for_request(&self, _request_id: u64) -> String {
         ulid::Ulid::new().to_string()
     }
@@ -747,7 +755,18 @@ impl ConnectionHandle {
         #[cfg(feature = "diagnostics")]
         #[expect(clippy::manual_map, reason = "for track_caller compat")]
         let request_handle = if let Some(diag) = self.shared.diagnostic_state.as_deref() {
-            Some(diag.emit_request_node(method_name.to_string(), args_debug_str.clone(), source))
+            let (service_name, method_name_only) = Self::split_method_parts(method_name);
+            let args_json = if args_debug_str.is_empty() {
+                String::from("[]")
+            } else {
+                args_debug_str.clone()
+            };
+            let request_body = peeps_types::RequestEntity {
+                service_name: String::from(service_name),
+                method_name: String::from(method_name_only),
+                args_json: peeps_types::Json::new(args_json),
+            };
+            Some(diag.emit_request_node(method_name.to_string(), request_body, source))
         } else {
             None
         };

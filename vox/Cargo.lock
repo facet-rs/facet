@@ -2008,6 +2008,7 @@ dependencies = [
 name = "peeps-runtime"
 version = "0.1.0"
 dependencies = [
+ "facet",
  "facet-json",
  "facet-value",
  "parking_lot",
