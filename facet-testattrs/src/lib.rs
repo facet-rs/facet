@@ -22,5 +22,7 @@ facet::define_attr_grammar! {
         Short(Option<char>),
         /// Optional string payload used for generic extension-attr tests.
         GenericName(Option<&'static str>),
+        /// Arbitrary payload used for generic extension-attr tests.
+        GenericSize(Option<usize>),
     }
 }
