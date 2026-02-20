@@ -3,7 +3,7 @@
 //! Provides a `tracing_subscriber::Layer` that captures events and spans,
 //! buffers them, and forwards to the host via RPC calls.
 
-use moire::Mutex;
+use moire::sync::Mutex;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -391,7 +391,7 @@ impl CellTracingService {
 
         // Now spawn the drain task
         let buffer = self.buffer.clone();
-        moire::spawn_tracked!("roam_tracing_drain_start", async move {
+        moire::task::spawn(async move {
             loop {
                 // Collect batch from buffer
                 let mut batch = Vec::with_capacity(batch_size);
@@ -408,7 +408,7 @@ impl CellTracingService {
                     let _ = client.emit_tracing(batch).await;
                 }
 
-                moire::sleep!(flush_interval, "tracing.flush").await;
+                moire::time::sleep(flush_interval).await;
             }
         });
     }
@@ -425,7 +425,7 @@ impl CellTracingService {
         let buffer = self.buffer.clone();
         let filter = self.filter.clone();
 
-        moire::spawn_tracked!("roam_tracing_drain_spawn", async move {
+        moire::task::spawn(async move {
             let client = HostTracingClient::new(handle);
 
             // Query config (but we're already racing with events)
@@ -447,7 +447,7 @@ impl CellTracingService {
                     let _ = client.emit_tracing(batch).await;
                 }
 
-                moire::sleep!(Duration::from_millis(50), "tracing.drain.backoff").await;
+                moire::time::sleep(Duration::from_millis(50)).await;
             }
         });
     }

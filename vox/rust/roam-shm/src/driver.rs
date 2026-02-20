@@ -32,7 +32,6 @@ use roam_session::{
 #[cfg(feature = "diagnostics")]
 use roam_session::{MOIRE_METHOD_NAME_METADATA_KEY, MOIRE_REQUEST_ENTITY_ID_METADATA_KEY};
 use roam_stream::MessageTransport;
-use roam_stream::moire::prelude::*;
 use roam_wire::{ConnectionId, Message};
 
 use crate::auditable::{self, AuditableDequeMap, AuditableReceiver, AuditableSender};
@@ -93,6 +92,25 @@ fn metadata_string(metadata: &roam_wire::Metadata, key: &str) -> Option<String> 
             None
         }
     })
+}
+
+#[cfg(feature = "diagnostics")]
+fn split_method_parts(full_method: &str) -> (&str, &str) {
+    if let Some((service, method)) = full_method.rsplit_once('.') {
+        (service, method)
+    } else {
+        ("", full_method)
+    }
+}
+
+#[cfg(feature = "diagnostics")]
+fn pending_response_body(full_method_name: &str) -> moire_types::ResponseEntity {
+    let (service_name, method_name) = split_method_parts(full_method_name);
+    moire_types::ResponseEntity {
+        service_name: String::from(service_name),
+        method_name: String::from(method_name),
+        status: moire_types::ResponseStatus::Pending,
+    }
 }
 
 /// Get a human-readable name for a message type.
@@ -191,9 +209,10 @@ struct VirtualConnectionState {
     /// If None, inherits from the parent link's dispatcher.
     dispatcher: Option<Box<dyn ServiceDispatcher>>,
     /// Pending responses (request_id -> response sender).
-    pending_responses: HashMap<u64, moire::OneshotSender<Result<ResponseData, TransportError>>>,
+    pending_responses:
+        HashMap<u64, roam_session::runtime::OneshotSender<Result<ResponseData, TransportError>>>,
     /// In-flight server requests with their abort handles.
-    in_flight_server_requests: HashMap<u64, tokio::task::AbortHandle>,
+    in_flight_server_requests: HashMap<u64, roam_session::runtime::AbortHandle>,
     #[cfg(feature = "diagnostics")]
     in_flight_response_handles: HashMap<u64, TypedResponseHandle>,
 }
@@ -202,7 +221,7 @@ impl VirtualConnectionState {
     /// Create a new virtual connection state.
     fn new(
         conn_id: ConnectionId,
-        driver_tx: moire::Sender<DriverMessage>,
+        driver_tx: roam_session::runtime::Sender<DriverMessage>,
         role: Role,
         initial_credit: u32,
         diagnostic_state: Option<Arc<DiagnosticState>>,
@@ -249,7 +268,7 @@ impl VirtualConnectionState {
 
 /// Pending outgoing Connect request.
 struct PendingConnect {
-    response_tx: moire::OneshotSender<Result<ConnectionHandle, ConnectError>>,
+    response_tx: roam_session::runtime::OneshotSender<Result<ConnectionHandle, ConnectError>>,
     dispatcher: Option<Box<dyn ServiceDispatcher>>,
 }
 
@@ -264,7 +283,7 @@ pub struct IncomingConnection {
     /// Metadata from the Connect message.
     pub metadata: roam_wire::Metadata,
     /// Channel to send the Accept/Reject response.
-    response_tx: moire::OneshotSender<IncomingConnectionResponse>,
+    response_tx: roam_session::runtime::OneshotSender<IncomingConnectionResponse>,
 }
 
 impl IncomingConnection {
@@ -280,7 +299,7 @@ impl IncomingConnection {
         metadata: roam_wire::Metadata,
         dispatcher: Option<Box<dyn ServiceDispatcher>>,
     ) -> Result<ConnectionHandle, TransportError> {
-        let (handle_tx, handle_rx) = moire::oneshot!("shm_incoming_conn_accept");
+        let (handle_tx, handle_rx) = roam_session::runtime::oneshot("shm_incoming_conn_accept");
         let _ = self.response_tx.send(IncomingConnectionResponse::Accept {
             request_id: self.request_id,
             metadata,
@@ -309,7 +328,7 @@ pub enum IncomingConnectionResponse {
         request_id: u64,
         metadata: roam_wire::Metadata,
         dispatcher: Option<Box<dyn ServiceDispatcher>>,
-        handle_tx: moire::OneshotSender<Result<ConnectionHandle, TransportError>>,
+        handle_tx: roam_session::runtime::OneshotSender<Result<ConnectionHandle, TransportError>>,
     },
     Reject {
         request_id: u64,
@@ -319,7 +338,7 @@ pub enum IncomingConnectionResponse {
 }
 
 /// Receiver for incoming virtual connection requests.
-pub type IncomingConnections = moire::Receiver<IncomingConnection>;
+pub type IncomingConnections = roam_session::runtime::Receiver<IncomingConnection>;
 
 // ============================================================================
 // ShmDriver - Single-peer driver (guest side)
@@ -338,11 +357,11 @@ pub struct ShmDriver<T, D> {
     negotiated: ShmNegotiated,
 
     /// Sender for driver messages (cloned to ConnectionHandles).
-    driver_tx: moire::Sender<DriverMessage>,
+    driver_tx: roam_session::runtime::Sender<DriverMessage>,
 
     /// Unified channel for all messages (Call/Data/Close/Response).
     /// Single channel ensures FIFO ordering.
-    driver_rx: moire::Receiver<DriverMessage>,
+    driver_rx: roam_session::runtime::Receiver<DriverMessage>,
 
     /// All virtual connections (including ROOT).
     connections: HashMap<ConnectionId, VirtualConnectionState>,
@@ -354,11 +373,11 @@ pub struct ShmDriver<T, D> {
     pending_connects: HashMap<u64, PendingConnect>,
 
     /// Channel for incoming connection requests.
-    incoming_connections_tx: Option<moire::Sender<IncomingConnection>>,
+    incoming_connections_tx: Option<roam_session::runtime::Sender<IncomingConnection>>,
 
     /// Channel for incoming connection responses (Accept/Reject from app code).
-    incoming_response_rx: moire::Receiver<IncomingConnectionResponse>,
-    incoming_response_tx: moire::Sender<IncomingConnectionResponse>,
+    incoming_response_rx: roam_session::runtime::Receiver<IncomingConnectionResponse>,
+    incoming_response_tx: roam_session::runtime::Sender<IncomingConnectionResponse>,
 
     /// Diagnostic state for tracking in-flight requests (for diagnostics dumps).
     diagnostic_state: Option<Arc<DiagnosticState>>,
@@ -638,7 +657,7 @@ where
             let handle = response_handle.unwrap_or_else(|| {
                 diag.emit_response_node(
                     method_name.clone(),
-                    moire::Source::caller(),
+                    pending_response_body(&method_name),
                     request_wire_id.as_deref(),
                 )
             });
@@ -717,7 +736,8 @@ where
                 // Handle incoming virtual connection request
                 if let Some(tx) = &self.incoming_connections_tx {
                     // Create a oneshot that routes through incoming_response_tx
-                    let (response_tx, response_rx) = moire::oneshot!("shm_conn_response");
+                    let (response_tx, response_rx) =
+                        roam_session::runtime::oneshot("shm_conn_response");
                     let incoming = IncomingConnection {
                         request_id,
                         metadata,
@@ -726,7 +746,7 @@ where
                     if tx.try_send(incoming).is_ok() {
                         // Spawn a task to forward the response
                         let incoming_response_tx = self.incoming_response_tx.clone();
-                        moire::spawn_tracked!("roam_shm_forward_response", async move {
+                        roam_session::runtime::spawn("roam_shm_forward_response", async move {
                             if let Ok(response) = response_rx.recv().await {
                                 let _ = incoming_response_tx.send(response).await;
                             }
@@ -857,8 +877,8 @@ where
                             MOIRE_REQUEST_ENTITY_ID_METADATA_KEY,
                         );
                         let response_handle = diag.emit_response_node(
-                            method_name,
-                            moire::Source::caller(),
+                            method_name.clone(),
+                            pending_response_body(&method_name),
                             request_wire_id.as_deref(),
                         );
                         response_handle.mark(response_outcome);
@@ -959,27 +979,22 @@ where
 
         // Create typed response handle linked to propagated request identity.
         #[cfg(feature = "diagnostics")]
-        let response_entity_id = {
+        {
             let method_name = metadata_string(&metadata, MOIRE_METHOD_NAME_METADATA_KEY)
                 .or_else(|| {
                     roam_session::diagnostic::get_method_name(method_id).map(|s| s.to_string())
                 })
                 .unwrap_or_else(|| format!("0x{method_id:x}"));
             let request_wire_id = metadata_string(&metadata, MOIRE_REQUEST_ENTITY_ID_METADATA_KEY);
-            self.diagnostic_state
-                .as_deref()
-                .map(|diag| {
-                    let response_handle = diag.emit_response_node(
-                        method_name,
-                        moire::Source::caller(),
-                        request_wire_id.as_deref(),
-                    );
-                    let response_entity_id = response_handle.entity_id_for_wire();
-                    conn.in_flight_response_handles
-                        .insert(request_id, response_handle);
-                    response_entity_id
-                })
-                .flatten()
+            if let Some(diag) = self.diagnostic_state.as_deref() {
+                let response_handle = diag.emit_response_node(
+                    method_name.clone(),
+                    pending_response_body(&method_name),
+                    request_wire_id.as_deref(),
+                );
+                conn.in_flight_response_handles
+                    .insert(request_id, response_handle);
+            }
         };
 
         // Validate metadata
@@ -1046,27 +1061,16 @@ where
         let diag_for_handler = self.diagnostic_state.clone();
 
         // r[impl call.cancel.best-effort] - Store abort handle for cancellation support
-        let join_handle = moire::spawn_tracked!("roam_shm_handle_request", async move {
-            #[cfg(feature = "diagnostics")]
-            if let Some(response_entity_id) = response_entity_id {
-                let response_ref = moire::entity_ref_from_wire(response_entity_id);
-                moire::instrument_future_on(
-                    "roam_shm.handle_request.dispatch",
-                    &response_ref,
-                    handler_fut,
-                    moire::Source::caller(),
-                )
-                .await;
+        let abort_handle =
+            roam_session::runtime::spawn_with_abort("roam_shm_handle_request", async move {
+                handler_fut.await;
+                #[cfg(feature = "diagnostics")]
                 if let Some(diag) = &diag_for_handler {
                     diag.mark_request_handled(conn_id.raw(), request_id);
                 }
-                return;
-            }
-
-            handler_fut.await;
-        });
+            });
         conn.in_flight_server_requests
-            .insert(request_id, join_handle.abort_handle());
+            .insert(request_id, abort_handle);
         Ok(())
     }
 
@@ -1113,8 +1117,8 @@ where
                 );
                 let handle = response_handle.unwrap_or_else(|| {
                     diag.emit_response_node(
-                        method_name,
-                        moire::Source::caller(),
+                        method_name.clone(),
+                        pending_response_body(&method_name),
                         request_wire_id.as_deref(),
                     )
                 });
@@ -1429,7 +1433,7 @@ where
 
     // Create single unified channel for all messages (Call/Data/Close/Response).
     // Single channel ensures FIFO ordering.
-    let (driver_tx, driver_rx) = moire::channel!("shm_driver", 256);
+    let (driver_tx, driver_rx) = roam_session::runtime::channel("shm_driver", 256);
 
     // Guest is initiator (uses odd stream IDs)
     let role = Role::Initiator;
@@ -1452,11 +1456,11 @@ where
 
     // Create channel for incoming connection requests
     let (incoming_connections_tx, incoming_connections_rx) =
-        moire::channel!("shm_incoming_connections", 64);
+        roam_session::runtime::channel("shm_incoming_connections", 64);
 
     // Create channel for incoming connection responses (Accept/Reject from app code)
     let (incoming_response_tx, incoming_response_rx) =
-        moire::channel!("shm_incoming_responses", 64);
+        roam_session::runtime::channel("shm_incoming_responses", 64);
 
     let driver = ShmDriver {
         io: transport,
@@ -1509,10 +1513,10 @@ struct PeerConnectionState {
     pending_connects: HashMap<u64, PendingConnect>,
 
     /// Channel for incoming connection requests from this peer.
-    incoming_connections_tx: Option<moire::Sender<IncomingConnection>>,
+    incoming_connections_tx: Option<roam_session::runtime::Sender<IncomingConnection>>,
 
     /// Channel for incoming connection responses (Accept/Reject from app code).
-    incoming_response_tx: moire::Sender<IncomingConnectionResponse>,
+    incoming_response_tx: roam_session::runtime::Sender<IncomingConnectionResponse>,
 
     /// Diagnostic state for tracking in-flight requests (for diagnostics dumps).
     diagnostic_state: Option<Arc<DiagnosticState>>,
@@ -1523,19 +1527,20 @@ enum ControlCommand {
     /// Create a new peer slot and return a spawn ticket (calls host.add_peer()).
     Create {
         options: crate::spawn::AddPeerOptions,
-        response: moire::OneshotSender<Result<crate::spawn::SpawnTicket, std::io::Error>>,
+        response:
+            roam_session::runtime::OneshotSender<Result<crate::spawn::SpawnTicket, std::io::Error>>,
     },
     /// Register a peer dynamically with a dispatcher.
     Add {
         peer_id: PeerId,
         dispatcher: Box<dyn ServiceDispatcher>,
         diagnostic_state: Option<Arc<DiagnosticState>>,
-        response: moire::OneshotSender<(ConnectionHandle, IncomingConnections)>,
+        response: roam_session::runtime::OneshotSender<(ConnectionHandle, IncomingConnections)>,
     },
     /// Release a previously reserved peer slot.
     Release {
         peer_id: PeerId,
-        response: moire::OneshotSender<()>,
+        response: roam_session::runtime::OneshotSender<()>,
     },
 }
 
@@ -1735,7 +1740,7 @@ impl MultiPeerHostDriverBuilder {
         for (peer_id, dispatcher, _peer_name) in self.peers {
             // Create single unified channel for all messages (Call/Data/Close/Response).
             // Single channel ensures FIFO ordering.
-            let (driver_tx, mut driver_rx) = moire::channel!("shm_host_driver", 256);
+            let (driver_tx, mut driver_rx) = roam_session::runtime::channel("shm_host_driver", 256);
 
             // Host is acceptor (uses even stream IDs)
             let role = Role::Acceptor;
@@ -1757,7 +1762,7 @@ impl MultiPeerHostDriverBuilder {
 
             // Create channel for incoming connection requests from this peer
             let (incoming_connections_tx, incoming_connections_rx) =
-                moire::channel!("shm_host_incoming_connections", 64);
+                roam_session::runtime::channel("shm_host_incoming_connections", 64);
 
             #[cfg(feature = "diagnostics")]
             let peer_diagnostic_state = {
@@ -1781,8 +1786,9 @@ impl MultiPeerHostDriverBuilder {
 
             // Create per-peer incoming response forwarder
             let peer_incoming_response_tx = incoming_response_tx.clone();
-            let (peer_response_tx, mut peer_response_rx) = moire::channel!("shm_peer_response", 64);
-            moire::spawn_tracked!("roam_shm_peer_response_router", async move {
+            let (peer_response_tx, mut peer_response_rx) =
+                roam_session::runtime::channel("shm_peer_response", 64);
+            roam_session::runtime::spawn("roam_shm_peer_response_router", async move {
                 while let Some(response) = peer_response_rx.recv().await {
                     if peer_incoming_response_tx
                         .send((peer_id, response))
@@ -1817,7 +1823,7 @@ impl MultiPeerHostDriverBuilder {
 
             // Spawn forwarder task for this peer's driver messages
             let driver_msg_tx_clone = driver_msg_tx.clone();
-            moire::spawn_tracked!("roam_shm_peer_driver_fwd", async move {
+            roam_session::runtime::spawn("roam_shm_peer_driver_fwd", async move {
                 while let Some(msg) = driver_rx.recv().await {
                     if driver_msg_tx_clone.send((peer_id, msg)).await.is_err() {
                         // Driver shut down
@@ -1833,7 +1839,7 @@ impl MultiPeerHostDriverBuilder {
 
                 // Spawn doorbell waiter task with cloned Arc
                 let ring_tx_clone = ring_tx.clone();
-                moire::spawn_tracked!("roam_shm_doorbell_waiter", async move {
+                roam_session::runtime::spawn("roam_shm_doorbell_waiter", async move {
                     trace!("Doorbell waiter task started for peer {:?}", peer_id);
                     // On Windows, accept the named pipe connection from the guest
                     if let Err(e) = doorbell.accept().await {
@@ -2123,7 +2129,8 @@ impl MultiPeerHostDriver {
                     state.set_connection_identity(src, dst, "shm", unix_now_ns());
                 }
                 // Create single unified channel for all messages (Call/Data/Close/Response).
-                let (driver_tx, mut driver_rx) = moire::channel!("shm_dynamic_peer_driver", 256);
+                let (driver_tx, mut driver_rx) =
+                    roam_session::runtime::channel("shm_dynamic_peer_driver", 256);
 
                 // Host is acceptor (uses even stream IDs)
                 let role = Role::Acceptor;
@@ -2147,13 +2154,13 @@ impl MultiPeerHostDriver {
 
                 // Create channel for incoming connection requests from this peer
                 let (incoming_connections_tx, incoming_connections_rx) =
-                    moire::channel!("shm_dynamic_incoming_connections", 64);
+                    roam_session::runtime::channel("shm_dynamic_incoming_connections", 64);
 
                 // Create per-peer incoming response forwarder
                 let peer_incoming_response_tx = self.incoming_response_tx.clone();
                 let (peer_response_tx, mut peer_response_rx) =
-                    moire::channel!("shm_dynamic_peer_response", 64);
-                moire::spawn_tracked!("roam_shm_peer_response_fwd", async move {
+                    roam_session::runtime::channel("shm_dynamic_peer_response", 64);
+                roam_session::runtime::spawn("roam_shm_peer_response_fwd", async move {
                     while let Some(resp) = peer_response_rx.recv().await {
                         if peer_incoming_response_tx
                             .send((peer_id, resp))
@@ -2186,7 +2193,7 @@ impl MultiPeerHostDriver {
 
                 // Spawn forwarder task for this peer's driver messages
                 let driver_msg_tx = self.driver_msg_tx.clone();
-                moire::spawn_tracked!("roam_shm_peer_driver_fwd", async move {
+                roam_session::runtime::spawn("roam_shm_peer_driver_fwd", async move {
                     while let Some(msg) = driver_rx.recv().await {
                         if driver_msg_tx.send((peer_id, msg)).await.is_err() {
                             // Driver shut down
@@ -2207,7 +2214,7 @@ impl MultiPeerHostDriver {
 
                     // Spawn doorbell waiter task with cloned Arc
                     let ring_tx = self.ring_tx.clone();
-                    moire::spawn_tracked!("roam_shm_doorbell_waiter", async move {
+                    roam_session::runtime::spawn("roam_shm_doorbell_waiter", async move {
                         trace!("Doorbell waiter task started for peer {:?}", peer_id);
                         // On Windows, accept the named pipe connection from the guest
                         trace!("Doorbell waiter: calling accept() for {:?}", peer_id);
@@ -2448,7 +2455,7 @@ impl MultiPeerHostDriver {
             let handle = response_handle.unwrap_or_else(|| {
                 diag.emit_response_node(
                     method_name.clone(),
-                    moire::Source::caller(),
+                    pending_response_body(&method_name),
                     request_wire_id.as_deref(),
                 )
             });
@@ -2486,7 +2493,8 @@ impl MultiPeerHostDriver {
                 };
                 if let Some(tx) = &state.incoming_connections_tx {
                     // Create a oneshot that routes through incoming_response_tx
-                    let (response_tx, response_rx) = moire::oneshot!("shm_conn_response");
+                    let (response_tx, response_rx) =
+                        roam_session::runtime::oneshot("shm_conn_response");
                     let incoming = IncomingConnection {
                         request_id,
                         metadata,
@@ -2495,11 +2503,14 @@ impl MultiPeerHostDriver {
                     if tx.try_send(incoming).is_ok() {
                         // Spawn a task to forward the response
                         let incoming_response_tx = state.incoming_response_tx.clone();
-                        moire::spawn_tracked!("roam_shm_connect_response_relay", async move {
-                            if let Ok(response) = response_rx.recv().await {
-                                let _ = incoming_response_tx.send(response).await;
-                            }
-                        });
+                        roam_session::runtime::spawn(
+                            "roam_shm_connect_response_relay",
+                            async move {
+                                if let Ok(response) = response_rx.recv().await {
+                                    let _ = incoming_response_tx.send(response).await;
+                                }
+                            },
+                        );
                     } else {
                         // Channel full or closed - reject
                         let msg = Message::Reject {
@@ -2656,8 +2667,8 @@ impl MultiPeerHostDriver {
                             MOIRE_REQUEST_ENTITY_ID_METADATA_KEY,
                         );
                         let response_handle = diag.emit_response_node(
-                            method_name,
-                            moire::Source::caller(),
+                            method_name.clone(),
+                            pending_response_body(&method_name),
                             request_wire_id.as_deref(),
                         );
                         response_handle.mark(response_outcome);
@@ -2771,28 +2782,22 @@ impl MultiPeerHostDriver {
 
         // Create typed response handle linked to propagated request identity.
         #[cfg(feature = "diagnostics")]
-        let response_entity_id = {
+        {
             let method_name = metadata_string(&metadata, MOIRE_METHOD_NAME_METADATA_KEY)
                 .or_else(|| {
                     roam_session::diagnostic::get_method_name(method_id).map(|s| s.to_string())
                 })
                 .unwrap_or_else(|| format!("0x{method_id:x}"));
             let request_wire_id = metadata_string(&metadata, MOIRE_REQUEST_ENTITY_ID_METADATA_KEY);
-            state
-                .diagnostic_state
-                .as_deref()
-                .map(|diag| {
-                    let response_handle = diag.emit_response_node(
-                        method_name,
-                        moire::Source::caller(),
-                        request_wire_id.as_deref(),
-                    );
-                    let response_entity_id = response_handle.entity_id_for_wire();
-                    conn.in_flight_response_handles
-                        .insert(request_id, response_handle);
-                    response_entity_id
-                })
-                .flatten()
+            if let Some(diag) = state.diagnostic_state.as_deref() {
+                let response_handle = diag.emit_response_node(
+                    method_name.clone(),
+                    pending_response_body(&method_name),
+                    request_wire_id.as_deref(),
+                );
+                conn.in_flight_response_handles
+                    .insert(request_id, response_handle);
+            }
         };
 
         // Validate metadata
@@ -2864,27 +2869,16 @@ impl MultiPeerHostDriver {
         let diag_for_handler = state.diagnostic_state.clone();
 
         // r[impl call.cancel.best-effort] - Store abort handle for cancellation support
-        let join_handle = moire::spawn_tracked!("roam_shm_handle_request", async move {
-            #[cfg(feature = "diagnostics")]
-            if let Some(response_entity_id) = response_entity_id {
-                let response_ref = moire::entity_ref_from_wire(response_entity_id);
-                moire::instrument_future_on(
-                    "roam_shm.handle_request.dispatch",
-                    &response_ref,
-                    handler_fut,
-                    moire::Source::caller(),
-                )
-                .await;
+        let abort_handle =
+            roam_session::runtime::spawn_with_abort("roam_shm_handle_request", async move {
+                handler_fut.await;
+                #[cfg(feature = "diagnostics")]
                 if let Some(diag) = &diag_for_handler {
                     diag.mark_request_handled(conn_id.raw(), request_id);
                 }
-                return;
-            }
-
-            handler_fut.await;
-        });
+            });
         conn.in_flight_server_requests
-            .insert(request_id, join_handle.abort_handle());
+            .insert(request_id, abort_handle);
         Ok(())
     }
 
@@ -2941,8 +2935,8 @@ impl MultiPeerHostDriver {
                 );
                 let handle = response_handle.unwrap_or_else(|| {
                     diag.emit_response_node(
-                        method_name,
-                        moire::Source::caller(),
+                        method_name.clone(),
+                        pending_response_body(&method_name),
                         request_wire_id.as_deref(),
                     )
                 });
@@ -3398,7 +3392,7 @@ impl MultiPeerHostDriverHandle {
         &self,
         options: crate::spawn::AddPeerOptions,
     ) -> Result<crate::spawn::SpawnTicket, ShmConnectionError> {
-        let (response_tx, response_rx) = moire::oneshot!("shm_conn_response");
+        let (response_tx, response_rx) = roam_session::runtime::oneshot("shm_conn_response");
 
         let cmd = ControlCommand::Create {
             options,
@@ -3468,7 +3462,7 @@ impl MultiPeerHostDriverHandle {
     where
         D: ServiceDispatcher + 'static,
     {
-        let (response_tx, response_rx) = moire::oneshot!("shm_conn_response");
+        let (response_tx, response_rx) = roam_session::runtime::oneshot("shm_conn_response");
 
         let cmd = ControlCommand::Add {
             peer_id,
@@ -3492,7 +3486,7 @@ impl MultiPeerHostDriverHandle {
     ///
     /// Call this when a bootstrap/spawn attempt fails after `create_peer`.
     pub async fn release_peer(&self, peer_id: PeerId) -> Result<(), ShmConnectionError> {
-        let (response_tx, response_rx) = moire::oneshot!("shm_conn_response");
+        let (response_tx, response_rx) = roam_session::runtime::oneshot("shm_conn_response");
         let cmd = ControlCommand::Release {
             peer_id,
             response: response_tx,

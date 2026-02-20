@@ -264,7 +264,7 @@ where
         &mut self,
         timeout: std::time::Duration,
     ) -> io::Result<Option<Message>> {
-        moire::timeout!(timeout, self.recv_inner(), "framed.recv")
+        moire::time::timeout(timeout, self.recv_inner())
             .await
             .unwrap_or(Ok(None))
     }

@@ -263,17 +263,10 @@ impl<C: Caller> Caller for TracingCaller<C> {
         args_ptr: SendPtr,
         args_plan: &'static std::sync::Arc<roam_session::RpcPlan>,
         metadata: roam_wire::Metadata,
-        source: moire::SourceId,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send {
         // TracingCaller just delegates to inner - tracing happens at the generic call level
-        self.inner.call_with_metadata_by_plan(
-            method_id,
-            method_name,
-            args_ptr,
-            args_plan,
-            metadata,
-            source,
-        )
+        self.inner
+            .call_with_metadata_by_plan(method_id, method_name, args_ptr, args_plan, metadata)
     }
 
     #[allow(unsafe_code)]

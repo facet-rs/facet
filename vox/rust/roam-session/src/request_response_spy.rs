@@ -1,4 +1,6 @@
 use std::collections::BTreeMap;
+#[cfg(feature = "diagnostics")]
+use std::sync::Arc;
 
 use crate::diagnostic::DiagnosticState;
 
@@ -12,30 +14,21 @@ pub enum ResponseOutcome {
 #[derive(Clone, Default)]
 pub struct TypedRequestHandle {
     #[cfg(feature = "diagnostics")]
-    inner: Option<moire::RpcRequestHandle>,
+    wire_id: Option<String>,
 }
 
 impl TypedRequestHandle {
     #[cfg(feature = "diagnostics")]
-    fn from_inner(inner: moire::RpcRequestHandle) -> Self {
-        Self { inner: Some(inner) }
+    fn from_wire_id(wire_id: String) -> Self {
+        Self {
+            wire_id: Some(wire_id),
+        }
     }
 
     pub fn id_for_wire(&self) -> Option<String> {
         #[cfg(feature = "diagnostics")]
         {
-            return self.inner.as_ref().map(|h| h.id_for_wire().to_string());
-        }
-        #[cfg(not(feature = "diagnostics"))]
-        {
-            None
-        }
-    }
-
-    pub fn entity_handle(&self) -> Option<moire::EntityHandle> {
-        #[cfg(feature = "diagnostics")]
-        {
-            return self.inner.as_ref().map(|h| h.handle().clone());
+            return self.wire_id.clone();
         }
         #[cfg(not(feature = "diagnostics"))]
         {
@@ -47,53 +40,21 @@ impl TypedRequestHandle {
 #[derive(Clone, Default)]
 pub struct TypedResponseHandle {
     #[cfg(feature = "diagnostics")]
-    inner: Option<moire::EntityHandle<moire_types::Response>>,
+    mark: Option<Arc<dyn Fn(ResponseOutcome) + Send + Sync + 'static>>,
 }
 
 impl TypedResponseHandle {
     #[cfg(feature = "diagnostics")]
-    fn from_inner(inner: moire::EntityHandle<moire_types::Response>) -> Self {
-        Self { inner: Some(inner) }
-    }
-
-    pub fn entity_id_for_wire(&self) -> Option<String> {
-        #[cfg(feature = "diagnostics")]
-        {
-            return self.inner.as_ref().map(|h| h.id().as_str().to_string());
-        }
-        #[cfg(not(feature = "diagnostics"))]
-        {
-            None
-        }
+    fn from_mark(mark: Arc<dyn Fn(ResponseOutcome) + Send + Sync + 'static>) -> Self {
+        Self { mark: Some(mark) }
     }
 
     pub fn mark(&self, outcome: ResponseOutcome) {
         #[cfg(not(feature = "diagnostics"))]
         let _ = outcome;
         #[cfg(feature = "diagnostics")]
-        if let Some(handle) = &self.inner {
-            let _ = handle.mutate(|body| {
-                body.status = match outcome {
-                    ResponseOutcome::Ok => {
-                        moire_types::ResponseStatus::Ok(moire_types::Json::new("null"))
-                    }
-                    ResponseOutcome::Error => moire_types::ResponseStatus::Error(
-                        moire_types::ResponseError::Internal(String::from("error")),
-                    ),
-                    ResponseOutcome::Cancelled => moire_types::ResponseStatus::Cancelled,
-                };
-            });
-        }
-    }
-
-    pub fn entity_handle(&self) -> Option<moire::EntityHandle<moire_types::Response>> {
-        #[cfg(feature = "diagnostics")]
-        {
-            return self.inner.clone();
-        }
-        #[cfg(not(feature = "diagnostics"))]
-        {
-            None
+        if let Some(mark) = &self.mark {
+            mark(outcome);
         }
     }
 }
@@ -107,13 +68,11 @@ pub trait RequestResponseSpy {
         &self,
         full_method_name: String,
         body: moire_types::RequestEntity,
-        source: moire::SourceId,
     ) -> TypedRequestHandle;
     fn emit_response_node(
         &self,
         full_method_name: String,
         body: moire_types::ResponseEntity,
-        source: moire::SourceId,
         request_wire_id: Option<&str>,
     ) -> TypedResponseHandle;
 }
@@ -150,13 +109,11 @@ impl RequestResponseSpy for DiagnosticState {
         &self,
         full_method_name: String,
         body: moire_types::RequestEntity,
-        source: moire::SourceId,
     ) -> TypedRequestHandle {
         let _ = self.ensure_connection_context();
         self.refresh_connection_context_if_dirty();
-        let request = moire::rpc_request_with_body(full_method_name, body, source);
-        self.link_entity_to_connection_scope(request.handle());
-        TypedRequestHandle::from_inner(request)
+        let request = moire::rpc::rpc_request_with_body(full_method_name, body);
+        TypedRequestHandle::from_wire_id(request.id_for_wire())
     }
 
     #[inline]
@@ -164,19 +121,27 @@ impl RequestResponseSpy for DiagnosticState {
         &self,
         full_method_name: String,
         body: moire_types::ResponseEntity,
-        source: moire::SourceId,
         request_wire_id: Option<&str>,
     ) -> TypedResponseHandle {
+        let _ = request_wire_id;
         let _ = self.ensure_connection_context();
         self.refresh_connection_context_if_dirty();
-        let response = if let Some(request_wire_id) = request_wire_id {
-            let request_ref = moire::entity_ref_from_wire(request_wire_id.to_owned());
-            moire::rpc_response_for_with_body(full_method_name, &request_ref, body, source)
-        } else {
-            moire::rpc_response_with_body(full_method_name, body, source)
-        };
-        self.link_entity_to_connection_scope(&response);
-        TypedResponseHandle::from_inner(response)
+
+        let response = moire::rpc::rpc_response_with_body(full_method_name, body);
+        let mark = Arc::new(move |outcome: ResponseOutcome| {
+            let _ = response.mutate(|body| {
+                body.status = match outcome {
+                    ResponseOutcome::Ok => {
+                        moire_types::ResponseStatus::Ok(moire_types::Json::new("null"))
+                    }
+                    ResponseOutcome::Error => moire_types::ResponseStatus::Error(
+                        moire_types::ResponseError::Internal(String::from("error")),
+                    ),
+                    ResponseOutcome::Cancelled => moire_types::ResponseStatus::Cancelled,
+                };
+            });
+        });
+        TypedResponseHandle::from_mark(mark)
     }
 }
 
@@ -201,7 +166,6 @@ impl RequestResponseSpy for DiagnosticState {
         &self,
         _full_method_name: String,
         _body: moire_types::RequestEntity,
-        _source: moire::SourceId,
     ) -> TypedRequestHandle {
         TypedRequestHandle::default()
     }
@@ -211,7 +175,6 @@ impl RequestResponseSpy for DiagnosticState {
         &self,
         _full_method_name: String,
         _body: moire_types::ResponseEntity,
-        _source: moire::SourceId,
         _request_wire_id: Option<&str>,
     ) -> TypedResponseHandle {
         TypedResponseHandle::default()

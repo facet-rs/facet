@@ -4,12 +4,13 @@
 
 use facet::Facet;
 #[cfg(not(target_arch = "wasm32"))]
+use moire::task::FutureExt as _;
+#[cfg(not(target_arch = "wasm32"))]
+use moire::task::JoinHandle;
 #[cfg(not(target_arch = "wasm32"))]
 use std::io;
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-#[cfg(not(target_arch = "wasm32"))]
-use tokio::task::JoinHandle;
 
 use crate::{Rx, Tx, channel};
 
@@ -210,16 +211,12 @@ where
     let (reader, writer) = tokio::io::split(stream);
     let Tunnel { tx, rx } = tunnel;
 
-    let read_handle = moire::spawn_tracked(
-        "roam_tunnel_read",
-        async move { pump_read_to_tx(reader, tx, chunk_size).await },
-        crate::source_id_for_current_crate(),
+    let read_handle = moire::task::spawn(
+        async move { pump_read_to_tx(reader, tx, chunk_size).await }.named("roam_tunnel_read"),
     );
 
-    let write_handle = moire::spawn_tracked(
-        "roam_tunnel_write",
-        async move { pump_rx_to_write(rx, writer).await },
-        crate::source_id_for_current_crate(),
+    let write_handle = moire::task::spawn(
+        async move { pump_rx_to_write(rx, writer).await }.named("roam_tunnel_write"),
     );
 
     (read_handle, write_handle)

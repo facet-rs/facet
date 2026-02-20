@@ -46,8 +46,6 @@
 //! let response = service.echo("hello").await?;
 //! ```
 
-::moire::facade!();
-
 mod driver;
 mod framing;
 

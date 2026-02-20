@@ -180,7 +180,6 @@ pub trait Caller: Clone + Send + Sync + 'static {
         args_ptr: SendPtr,
         args_plan: &'static Arc<RpcPlan>,
         metadata: roam_wire::Metadata,
-        source: moire::SourceId,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send;
 
     /// Make an RPC call using reflection (non-generic).
@@ -201,7 +200,6 @@ pub trait Caller: Clone + Send + Sync + 'static {
         args_ptr: SendPtr,
         args_plan: &'static Arc<RpcPlan>,
         metadata: roam_wire::Metadata,
-        source: moire::SourceId,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>>;
 
     /// Bind receivers for `Rx<T>` channels in the response using reflection (non-generic).
@@ -227,18 +225,16 @@ impl Caller for ConnectionHandle {
         args_plan: &RpcPlan,
         metadata: roam_wire::Metadata,
     ) -> Result<ResponseData, TransportError> {
-        let source = crate::source_id_for_current_crate();
         let args_ptr = args as *mut T as *mut ();
         #[allow(unsafe_code)]
         unsafe {
-            ConnectionHandle::call_with_metadata_by_plan_with_source(
+            ConnectionHandle::call_with_metadata_by_plan(
                 self,
                 method_id,
                 method_name,
                 args_ptr,
                 args_plan,
                 metadata,
-                source,
             )
             .await
         }
@@ -262,17 +258,15 @@ impl Caller for ConnectionHandle {
         args_ptr: SendPtr,
         args_plan: &'static Arc<RpcPlan>,
         metadata: roam_wire::Metadata,
-        source: moire::SourceId,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send {
         unsafe {
-            ConnectionHandle::call_with_metadata_by_plan_with_source(
+            ConnectionHandle::call_with_metadata_by_plan(
                 self,
                 method_id,
                 method_name,
                 args_ptr.as_ptr(),
                 args_plan,
                 metadata,
-                source,
             )
         }
     }
@@ -286,17 +280,15 @@ impl Caller for ConnectionHandle {
         args_ptr: SendPtr,
         args_plan: &'static Arc<RpcPlan>,
         metadata: roam_wire::Metadata,
-        source: moire::SourceId,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> {
         unsafe {
-            ConnectionHandle::call_with_metadata_by_plan_with_source(
+            ConnectionHandle::call_with_metadata_by_plan(
                 self,
                 method_id,
                 method_name,
                 args_ptr.as_ptr(),
                 args_plan,
                 metadata,
-                source,
             )
         }
     }
@@ -359,7 +351,6 @@ where
     ok_plan: &'static Arc<RpcPlan>,
     /// Precomputed plan for the Err type.
     err_plan: &'static Arc<RpcPlan>,
-    source: moire::SourceId,
     _phantom: PhantomData<fn() -> (Ok, Err)>,
 }
 
@@ -368,11 +359,11 @@ where
     C: Caller,
     Args: Facet<'static>,
 {
-    /// Create a new CallFuture with precomputed plans and explicit source.
+    /// Create a new CallFuture with precomputed plans.
     ///
     /// Plans should be obtained from `OnceLock` statics at the call site
     /// (e.g., in macro-generated client methods) to ensure one plan per type.
-    pub fn new_with_source(
+    pub fn new(
         caller: C,
         method_id: u64,
         method_name: &'static str,
@@ -380,7 +371,6 @@ where
         args_plan: &'static Arc<RpcPlan>,
         ok_plan: &'static Arc<RpcPlan>,
         err_plan: &'static Arc<RpcPlan>,
-        source: moire::SourceId,
     ) -> Self {
         Self {
             caller,
@@ -391,7 +381,6 @@ where
             args_plan,
             ok_plan,
             err_plan,
-            source,
             _phantom: PhantomData,
         }
     }
@@ -430,7 +419,6 @@ where
             args_plan,
             ok_plan,
             err_plan,
-            source,
             _phantom,
         } = self;
 
@@ -441,14 +429,7 @@ where
             let args_ptr = unsafe { SendPtr::new((&raw mut args).cast::<()>()) };
 
             let response = caller
-                .call_with_metadata_by_plan(
-                    method_id,
-                    method_name,
-                    args_ptr,
-                    args_plan,
-                    metadata,
-                    source,
-                )
+                .call_with_metadata_by_plan(method_id, method_name, args_ptr, args_plan, metadata)
                 .await
                 .map_err(CallError::from)?;
 
@@ -526,7 +507,6 @@ where
             args_plan,
             ok_plan,
             err_plan,
-            source,
             _phantom,
         } = self;
 
@@ -537,14 +517,7 @@ where
             let args_ptr = unsafe { SendPtr::new((&raw mut args).cast::<()>()) };
 
             let response = caller
-                .call_with_metadata_by_plan(
-                    method_id,
-                    method_name,
-                    args_ptr,
-                    args_plan,
-                    metadata,
-                    source,
-                )
+                .call_with_metadata_by_plan(method_id, method_name, args_ptr, args_plan, metadata)
                 .await
                 .map_err(CallError::from)?;
 

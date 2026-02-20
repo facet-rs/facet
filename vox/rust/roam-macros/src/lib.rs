@@ -84,13 +84,11 @@ fn generate_service(parsed: &ServiceTrait) -> Result<TokenStream2, parser::Error
     }
 
     let roam = roam_crate();
-    let roam_alias = format_ident!("__roam_{}", parsed.name().to_snake_case());
 
     let method_id_mod = generate_method_id_module(parsed, &roam);
     let service_trait = generate_service_trait(parsed, &roam);
     let dispatcher = generate_dispatcher(parsed, &roam);
     let client = generate_client(parsed, &roam);
-    let facade_macro = generate_client_facade_macro(parsed, &roam_alias);
     let service_detail_fn = generate_service_detail_fn(parsed, &roam);
 
     // Generate items directly in the current module scope - no wrapper module.
@@ -98,14 +96,10 @@ fn generate_service(parsed: &ServiceTrait) -> Result<TokenStream2, parser::Error
     // Note: We use fully qualified paths for RoamError and Never instead of
     // importing them, to allow multiple services in the same module.
     Ok(quote! {
-        #[doc(hidden)]
-        pub use #roam as #roam_alias;
-
         #method_id_mod
         #service_trait
         #dispatcher
         #client
-        #facade_macro
         #service_detail_fn
     })
 }
@@ -682,7 +676,7 @@ fn generate_client(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStream2 {
 
     let client_methods: Vec<TokenStream2> = parsed
         .methods()
-        .map(|m| generate_client_method_with_source(m, &parsed.name(), &method_id_mod, roam))
+        .map(|m| generate_client_method(m, &parsed.name(), &method_id_mod, roam))
         .collect();
 
     quote! {
@@ -703,13 +697,13 @@ fn generate_client(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStream2 {
     }
 }
 
-fn generate_client_method_with_source(
+fn generate_client_method(
     method: &ServiceMethod,
     service_name: &str,
     method_id_mod: &proc_macro2::Ident,
     roam: &TokenStream2,
 ) -> TokenStream2 {
-    let method_name = format_ident!("{}_with_source", method.name().to_snake_case());
+    let method_name = format_ident!("{}", method.name().to_snake_case());
     let method_id_name = format_ident!("{}", method.name().to_snake_case());
     let full_method_name = format!("{}.{}", service_name, method.name());
     let method_doc = method.doc().map(|d| quote! { #[doc = #d] });
@@ -723,12 +717,6 @@ fn generate_client_method_with_source(
             quote! { #name: #ty }
         })
         .collect();
-    let params_with_source = if params.is_empty() {
-        quote! { source: #roam::session::SourceId }
-    } else {
-        quote! { #(#params),*, source: #roam::session::SourceId }
-    };
-
     let arg_names: Vec<proc_macro2::Ident> = method
         .args()
         .map(|arg| format_ident!("{}", arg.name().to_snake_case()))
@@ -771,7 +759,7 @@ fn generate_client_method_with_source(
         #method_doc
         pub fn #method_name(
             &self,
-            #params_with_source
+            #(#params),*
         ) -> #call_future_return {
             use std::sync::{Arc, OnceLock};
 
@@ -782,7 +770,7 @@ fn generate_client_method_with_source(
             static ERR_PLAN: OnceLock<Arc<#roam::session::RpcPlan>> = OnceLock::new();
             let err_plan = ERR_PLAN.get_or_init(|| Arc::new(#roam::session::RpcPlan::for_type::<#err_ty>()));
 
-            #roam::session::CallFuture::new_with_source(
+            #roam::session::CallFuture::new(
                 self.caller.clone(),
                 #method_id_mod::#method_id_name(),
                 #full_method_name,
@@ -790,167 +778,7 @@ fn generate_client_method_with_source(
                 args_plan,
                 ok_plan,
                 err_plan,
-                source,
             )
-        }
-    }
-}
-
-fn generate_client_facade_macro(
-    parsed: &ServiceTrait,
-    roam_alias: &proc_macro2::Ident,
-) -> TokenStream2 {
-    let service_name = parsed.name();
-    let service_snake = service_name.to_snake_case();
-    let macro_name = format_ident!("{}_facade", service_snake);
-    let trait_name = format_ident!("{}ClientFacadeExt", service_name);
-    let client_name = format_ident!("{}Client", service_name);
-    let source_left_const = format_ident!("__ROAM_SOURCE_LEFT_{}", service_snake.to_uppercase());
-    let source_fn = format_ident!("__roam_source_{}", service_snake);
-    let roam_in_macro = quote! { $crate::#roam_alias };
-
-    let trait_methods: Vec<TokenStream2> = parsed
-        .methods()
-        .map(|m| generate_client_facade_trait_method(m, &roam_in_macro))
-        .collect();
-    let impl_methods: Vec<TokenStream2> = parsed
-        .methods()
-        .map(|m| generate_client_facade_impl_method(m, &roam_in_macro, &source_fn))
-        .collect();
-
-    quote! {
-        /// Emit caller-crate wrappers for source-aware client calls.
-        ///
-        /// Invoke in the consuming crate/module:
-        ///
-        /// ```ignore
-        /// my_service_facade!();
-        /// ```
-        ///
-        /// This defines an extension trait that forwards each RPC method to the
-        /// generated `*_with_source` method with caller-crate source identity.
-        #[macro_export]
-        macro_rules! #macro_name {
-            () => {
-                const #source_left_const: #roam_in_macro::session::SourceLeft =
-                    #roam_in_macro::session::SourceLeft::new(
-                        env!("CARGO_MANIFEST_DIR"),
-                        env!("CARGO_PKG_NAME"),
-                    );
-
-                #[track_caller]
-                fn #source_fn() -> #roam_in_macro::session::SourceId {
-                    #roam_in_macro::session::source_id_from_left(#source_left_const)
-                }
-
-                pub trait #trait_name<C: #roam_in_macro::session::Caller = #roam_in_macro::session::ConnectionHandle>
-                {
-                    #(#trait_methods)*
-                }
-
-                impl<C: #roam_in_macro::session::Caller> #trait_name<C> for $crate::#client_name<C> {
-                    #(#impl_methods)*
-                }
-            };
-        }
-    }
-}
-
-fn generate_client_facade_trait_method(
-    method: &ServiceMethod,
-    roam: &TokenStream2,
-) -> TokenStream2 {
-    let method_name = format_ident!("{}", method.name().to_snake_case());
-
-    let params: Vec<TokenStream2> = method
-        .args()
-        .map(|arg| {
-            let name = format_ident!("{}", arg.name().to_snake_case());
-            let ty = arg.ty.to_token_stream();
-            quote! { #name: #ty }
-        })
-        .collect();
-
-    let arg_names: Vec<proc_macro2::Ident> = method
-        .args()
-        .map(|arg| format_ident!("{}", arg.name().to_snake_case()))
-        .collect();
-
-    let args_tuple_type = if arg_names.is_empty() {
-        quote! { () }
-    } else {
-        let arg_types: Vec<TokenStream2> =
-            method.args().map(|arg| arg.ty.to_token_stream()).collect();
-        if arg_types.len() == 1 {
-            let ty = &arg_types[0];
-            quote! { (#ty,) }
-        } else {
-            quote! { (#(#arg_types),*) }
-        }
-    };
-
-    let return_type = method.return_type();
-    let (ok_ty, err_ty, _) = format_client_return_type(&return_type, roam);
-    let call_future_return = quote! {
-        #roam::session::CallFuture<C, #args_tuple_type, #ok_ty, #err_ty>
-    };
-
-    quote! {
-        fn #method_name(&self, #(#params),*) -> #call_future_return;
-    }
-}
-
-fn generate_client_facade_impl_method(
-    method: &ServiceMethod,
-    roam: &TokenStream2,
-    source_fn: &proc_macro2::Ident,
-) -> TokenStream2 {
-    let method_name = format_ident!("{}", method.name().to_snake_case());
-    let method_with_source_name = format_ident!("{}_with_source", method.name().to_snake_case());
-
-    let params: Vec<TokenStream2> = method
-        .args()
-        .map(|arg| {
-            let name = format_ident!("{}", arg.name().to_snake_case());
-            let ty = arg.ty.to_token_stream();
-            quote! { #name: #ty }
-        })
-        .collect();
-
-    let arg_names: Vec<proc_macro2::Ident> = method
-        .args()
-        .map(|arg| format_ident!("{}", arg.name().to_snake_case()))
-        .collect();
-
-    let args_tuple_type = if arg_names.is_empty() {
-        quote! { () }
-    } else {
-        let arg_types: Vec<TokenStream2> =
-            method.args().map(|arg| arg.ty.to_token_stream()).collect();
-        if arg_types.len() == 1 {
-            let ty = &arg_types[0];
-            quote! { (#ty,) }
-        } else {
-            quote! { (#(#arg_types),*) }
-        }
-    };
-
-    let return_type = method.return_type();
-    let (ok_ty, err_ty, _) = format_client_return_type(&return_type, roam);
-    let call_future_return = quote! {
-        #roam::session::CallFuture<C, #args_tuple_type, #ok_ty, #err_ty>
-    };
-
-    let call_args = if arg_names.is_empty() {
-        quote! { #source_fn() }
-    } else {
-        quote! { #(#arg_names),*, #source_fn() }
-    };
-
-    quote! {
-        #[track_caller]
-        fn #method_name(&self, #(#params),*) -> #call_future_return {
-            self.#method_with_source_name(#call_args)
         }
     }
 }

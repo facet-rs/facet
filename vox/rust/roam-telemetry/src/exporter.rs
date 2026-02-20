@@ -7,6 +7,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use moire::task::FutureExt as _;
+
 use crate::otlp::{
     ExportTraceServiceRequest, InstrumentationScope, KeyValue, Resource, ResourceSpans, ScopeSpans,
     Span,
@@ -162,7 +164,7 @@ impl Default for ExporterConfig {
 /// - POSTs to the OTLP endpoint
 #[derive(Clone)]
 pub struct OtlpExporter {
-    tx: moire::Sender<Span>,
+    tx: moire::sync::mpsc::Sender<Span>,
     config: Arc<ExporterConfig>,
 }
 
@@ -181,14 +183,14 @@ impl OtlpExporter {
 
     /// Create a new exporter with full configuration.
     pub fn with_config(config: ExporterConfig) -> Self {
-        let (tx, rx) = moire::channel!("telemetry_export", 4096);
+        let (tx, rx) = moire::sync::mpsc::channel("telemetry_export", 4096);
         let config = Arc::new(config);
 
         // Spawn the background export task
         let config_clone = config.clone();
-        moire::spawn_tracked!("roam_telemetry_export_loop", async move {
-            export_loop(rx, config_clone).await;
-        });
+        moire::task::spawn(
+            async move { export_loop(rx, config_clone).await }.named("roam_telemetry_export_loop"),
+        );
 
         Self { tx, config }
     }
@@ -217,15 +219,14 @@ impl SpanExporter for OtlpExporter {
     }
 }
 
-async fn export_loop(mut rx: moire::Receiver<Span>, config: Arc<ExporterConfig>) {
+async fn export_loop(mut rx: moire::sync::mpsc::Receiver<Span>, config: Arc<ExporterConfig>) {
     let client = reqwest::Client::builder()
         .timeout(config.timeout)
         .build()
         .expect("failed to create HTTP client");
 
     let mut batch = Vec::with_capacity(config.max_batch_size);
-    let mut interval = moire::interval(config.max_batch_delay);
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut interval = moire::time::interval(config.max_batch_delay);
 
     loop {
         tokio::select! {

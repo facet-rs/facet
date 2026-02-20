@@ -38,7 +38,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use facet::Facet;
 
-use crate::moire::prelude::*;
 #[cfg(feature = "diagnostics")]
 use crate::request_response_spy::{RequestResponseSpy, ResponseOutcome, TypedResponseHandle};
 use crate::runtime::{Mutex, Receiver, channel, sleep, spawn, spawn_with_abort};
@@ -81,6 +80,7 @@ fn next_connection_correlation_id() -> String {
     ulid::Ulid::new().to_string()
 }
 
+#[cfg(feature = "diagnostics")]
 fn split_method_parts(full_method: &str) -> (&str, &str) {
     if let Some((service, method)) = full_method.rsplit_once('.') {
         (service, method)
@@ -397,11 +397,7 @@ where
         config,
         dispatcher,
         retry_policy: RetryPolicy::default(),
-        state: Arc::new(Mutex::new(
-            "FramedClient.state",
-            None,
-            crate::source_id_for_current_crate(),
-        )),
+        state: Arc::new(Mutex::new("FramedClient.state", None)),
     }
 }
 
@@ -421,11 +417,7 @@ where
         config,
         dispatcher,
         retry_policy,
-        state: Arc::new(Mutex::new(
-            "FramedClient.state",
-            None,
-            crate::source_id_for_current_crate(),
-        )),
+        state: Arc::new(Mutex::new("FramedClient.state", None)),
     }
 }
 
@@ -627,14 +619,13 @@ where
             let args_ptr = args as *mut T as *mut ();
             #[allow(unsafe_code)]
             let call_result = unsafe {
-                crate::ConnectionHandle::call_with_metadata_by_plan_with_source(
+                crate::ConnectionHandle::call_with_metadata_by_plan(
                     &handle,
                     method_id,
                     method_name,
                     args_ptr,
                     args_plan,
                     metadata.clone(),
-                    crate::source_id_for_current_crate(),
                 )
                 .await
             };
@@ -685,7 +676,6 @@ where
         args_ptr: crate::SendPtr,
         args_plan: &'static std::sync::Arc<crate::RpcPlan>,
         metadata: roam_wire::Metadata,
-        source: moire::SourceId,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send {
         // Capture self for use in async block
         let this = self.clone();
@@ -717,13 +707,12 @@ where
 
                 // SAFETY: args_ptr was created from valid, initialized, Send data
                 match unsafe {
-                    handle.call_with_metadata_by_plan_with_source(
+                    handle.call_with_metadata_by_plan(
                         method_id,
                         &method_name,
                         args_ptr.as_ptr(),
                         args_plan,
                         metadata.clone(),
-                        source,
                     )
                 }
                 .await
@@ -760,7 +749,6 @@ where
         args_ptr: crate::SendPtr,
         args_plan: &'static std::sync::Arc<crate::RpcPlan>,
         metadata: roam_wire::Metadata,
-        source: moire::SourceId,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> {
         // Capture self for use in async block
         let this = self.clone();
@@ -792,13 +780,12 @@ where
 
                 // SAFETY: args_ptr was created from valid, initialized, Send data
                 match unsafe {
-                    handle.call_with_metadata_by_plan_with_source(
+                    handle.call_with_metadata_by_plan(
                         method_id,
                         &method_name,
                         args_ptr.as_ptr(),
                         args_plan,
                         metadata.clone(),
-                        source,
                     )
                 }
                 .await
@@ -899,8 +886,6 @@ struct PendingResponse {
     created_at: Instant,
     #[cfg(not(target_arch = "wasm32"))]
     warned_stale: bool,
-    #[cfg(feature = "diagnostics")]
-    tx_handle: moire::EntityHandle,
     tx: crate::runtime::OneshotSender<Result<ResponseData, TransportError>>,
 }
 
@@ -1259,12 +1244,6 @@ where
                 // Store pending response in the connection's state
                 if let Some(conn) = self.connections.get_mut(&conn_id) {
                     #[cfg(feature = "diagnostics")]
-                    let tx_handle = response_tx.handle().clone();
-                    #[cfg(feature = "diagnostics")]
-                    if let Some(diag) = self.diagnostic_state.as_deref() {
-                        diag.link_entity_to_connection_scope(&tx_handle);
-                    }
-                    #[cfg(feature = "diagnostics")]
                     let len_before = conn.pending_responses.len();
                     conn.pending_responses.insert(
                         request_id,
@@ -1273,8 +1252,6 @@ where
                             created_at: Instant::now(),
                             #[cfg(not(target_arch = "wasm32"))]
                             warned_stale: false,
-                            #[cfg(feature = "diagnostics")]
-                            tx_handle,
                             tx: response_tx,
                         },
                     );
@@ -1306,15 +1283,6 @@ where
                     channels,
                     payload,
                 };
-                #[cfg(feature = "diagnostics")]
-                moire::instrument_future_on(
-                    "roam.driver.send_request",
-                    self.driver_rx.handle(),
-                    self.io.send(&req),
-                    crate::source_id_for_current_crate(),
-                )
-                .await?;
-                #[cfg(not(feature = "diagnostics"))]
                 self.io.send(&req).await?;
             }
             DriverMessage::Data {
@@ -1624,19 +1592,6 @@ where
                         }
                         #[cfg(feature = "diagnostics")]
                         let response_outcome = response_outcome_from_payload(&payload);
-                        #[cfg(feature = "diagnostics")]
-                        let send_result = moire::instrument_future_on(
-                            "roam.driver.deliver_response",
-                            &pending_response.tx_handle,
-                            async {
-                                pending_response
-                                    .tx
-                                    .send(Ok(ResponseData { payload, channels }))
-                            },
-                            crate::source_id_for_current_crate(),
-                        )
-                        .await;
-                        #[cfg(not(feature = "diagnostics"))]
                         let send_result = pending_response
                             .tx
                             .send(Ok(ResponseData { payload, channels }));
@@ -1738,8 +1693,9 @@ where
         channels: Vec<u64>,
         payload: Vec<u8>,
     ) -> Result<(), ConnectionError> {
-        // Get or validate the connection
-        let conn = match self.connections.get_mut(&conn_id) {
+        // Validate connection existence and request limits without holding a mutable
+        // borrow across awaits.
+        let conn = match self.connections.get(&conn_id) {
             Some(c) => c,
             None => {
                 // r[impl message.conn-id] - Unknown conn_id is a protocol error
@@ -1777,6 +1733,16 @@ where
             });
         }
 
+        #[cfg(feature = "diagnostics")]
+        let strict_diag_response_identity = self
+            .strict_diag_response_identity_from_metadata(method_id, &metadata)
+            .await?;
+
+        let conn = self
+            .connections
+            .get_mut(&conn_id)
+            .expect("connection validated above");
+
         // r[impl core.conn.dispatcher] - Use connection-specific dispatcher if available
         let dispatcher: &dyn ServiceDispatcher = if let Some(ref conn_dispatcher) = conn.dispatcher
         {
@@ -1790,19 +1756,12 @@ where
 
         // Create typed response handle linked to propagated request identity.
         #[cfg(feature = "diagnostics")]
-        let response_entity_handle = if let Some((diag, method_name, request_entity_id)) = self
-            .strict_diag_response_identity_from_metadata(method_id, &metadata)
-            .await?
-        {
+        if let Some((diag, method_name, request_entity_id)) = strict_diag_response_identity {
             let response_handle =
                 Self::emit_response_handle(&diag, method_name, &request_entity_id);
-            let response_entity_handle = response_handle.entity_handle();
             conn.in_flight_response_handles
                 .insert(request_id, response_handle);
-            response_entity_handle
-        } else {
-            None
-        };
+        }
 
         let cx = Context::new(
             conn_id,
@@ -1827,27 +1786,11 @@ where
 
         // r[impl call.cancel.best-effort] - Store abort handle for cancellation support
         let abort_handle = spawn_with_abort("roam_request_handler", async move {
-            let run_handler = async move {
-                dispatch_fut.await;
-                #[cfg(feature = "diagnostics")]
-                if let Some(ref diag) = diag_for_handler {
-                    diag.mark_request_handled(conn_id.raw(), request_id);
-                }
-            };
-
+            dispatch_fut.await;
             #[cfg(feature = "diagnostics")]
-            if let Some(response_entity_handle) = response_entity_handle.as_ref() {
-                moire::instrument_future_on(
-                    "roam.driver.run_handler",
-                    response_entity_handle,
-                    run_handler,
-                    crate::source_id_for_current_crate(),
-                )
-                .await;
-                return;
+            if let Some(ref diag) = diag_for_handler {
+                diag.mark_request_handled(conn_id.raw(), request_id);
             }
-
-            run_handler.await;
         });
         conn.in_flight_server_requests
             .insert(request_id, abort_handle);
@@ -2118,12 +2061,7 @@ where
             method_name: String::from(method_name),
             status: moire_types::ResponseStatus::Pending,
         };
-        diag.emit_response_node(
-            full_method_name,
-            response_body,
-            crate::source_id_for_current_crate(),
-            Some(request_entity_id),
-        )
+        diag.emit_response_node(full_method_name, response_body, Some(request_entity_id))
     }
 
     #[cfg(feature = "diagnostics")]
@@ -2779,8 +2717,6 @@ mod tests {
                         - (PENDING_RESPONSE_KILL_AFTER + Duration::from_secs(1)),
                     warned_stale: true,
                     tx: response_tx,
-                    #[cfg(feature = "diagnostics")]
-                    tx_handle: response_tx.handle().clone(),
                 },
             );
 
@@ -2843,8 +2779,6 @@ mod tests {
                     created_at: Instant::now(),
                     warned_stale: false,
                     tx: response_tx,
-                    #[cfg(feature = "diagnostics")]
-                    tx_handle: response_tx.handle().clone(),
                 },
             );
 

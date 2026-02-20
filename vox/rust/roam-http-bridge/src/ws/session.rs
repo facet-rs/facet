@@ -23,9 +23,9 @@ pub struct WsSession {
     /// Active channels for streaming, keyed by channel ID.
     channels: HashMap<u64, ChannelState>,
     /// Sender for outgoing messages to the WebSocket.
-    outgoing_tx: moire::Sender<ServerMessage>,
+    outgoing_tx: roam_session::runtime::Sender<ServerMessage>,
     /// Sender for messages to the roam connection (for streaming).
-    driver_tx: Option<moire::Sender<DriverMessage>>,
+    driver_tx: Option<roam_session::runtime::Sender<DriverMessage>>,
     /// Initial credit for new channels (bytes).
     initial_credit: u64,
 }
@@ -62,7 +62,7 @@ pub struct ChannelState {
     /// Element type shape for transcoding.
     pub element_shape: &'static Shape,
     /// Sender for Data messages to the roam connection (ClientToServer channels).
-    pub roam_tx: Option<moire::Sender<Vec<u8>>>,
+    pub roam_tx: Option<roam_session::runtime::Sender<Vec<u8>>>,
     /// The corresponding roam channel ID (for forwarding).
     pub roam_channel_id: Option<u64>,
     /// Outstanding credit (bytes) for this channel.
@@ -74,7 +74,7 @@ impl WsSession {
     /// Create a new session.
     pub fn new(
         services: Arc<HashMap<String, Arc<dyn BridgeService>>>,
-        outgoing_tx: moire::Sender<ServerMessage>,
+        outgoing_tx: roam_session::runtime::Sender<ServerMessage>,
     ) -> Self {
         Self {
             services,
@@ -87,12 +87,12 @@ impl WsSession {
     }
 
     /// Set the driver_tx for sending messages to the roam connection.
-    pub fn set_driver_tx(&mut self, driver_tx: moire::Sender<DriverMessage>) {
+    pub fn set_driver_tx(&mut self, driver_tx: roam_session::runtime::Sender<DriverMessage>) {
         self.driver_tx = Some(driver_tx);
     }
 
     /// Get the driver_tx for sending messages to the roam connection.
-    pub fn driver_tx(&self) -> Option<&moire::Sender<DriverMessage>> {
+    pub fn driver_tx(&self) -> Option<&roam_session::runtime::Sender<DriverMessage>> {
         self.driver_tx.as_ref()
     }
 
@@ -102,7 +102,7 @@ impl WsSession {
     }
 
     /// Get the outgoing message sender.
-    pub fn outgoing_tx(&self) -> &moire::Sender<ServerMessage> {
+    pub fn outgoing_tx(&self) -> &roam_session::runtime::Sender<ServerMessage> {
         &self.outgoing_tx
     }
 
@@ -145,7 +145,7 @@ impl WsSession {
         request_id: u64,
         direction: ChannelDirection,
         element_shape: &'static Shape,
-        roam_tx: Option<moire::Sender<Vec<u8>>>,
+        roam_tx: Option<roam_session::runtime::Sender<Vec<u8>>>,
     ) {
         self.channels.insert(
             channel_id,

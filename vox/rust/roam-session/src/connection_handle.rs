@@ -7,7 +7,6 @@ use facet::Facet;
 use crate::request_response_spy::RequestResponseSpy;
 use facet_core::PtrMut;
 
-use crate::moire::prelude::*;
 use crate::{
     ChannelError, ChannelId, ChannelIdAllocator, ChannelRegistry, DriverMessage,
     IncomingChannelMessage, RX_STREAM_BUFFER_SIZE, ReceiverSlot, ResponseData, SenderSlot,
@@ -132,6 +131,7 @@ impl ConnectionHandle {
             })
     }
 
+    #[cfg(feature = "diagnostics")]
     fn split_method_parts(full_method: &str) -> (&str, &str) {
         if let Some((service, method)) = full_method.rsplit_once('.') {
             (service, method)
@@ -279,7 +279,6 @@ impl ConnectionHandle {
                 channel_registry: crate::runtime::Mutex::new(
                     "ConnectionHandle.channel_registry",
                     channel_registry,
-                    crate::source_id_for_current_crate(),
                 ),
                 diagnostic_state,
                 #[cfg(not(target_arch = "wasm32"))]
@@ -360,17 +359,15 @@ impl ConnectionHandle {
         args: &mut T,
         args_plan: &crate::RpcPlan,
     ) -> Result<ResponseData, TransportError> {
-        let source = crate::source_id_for_current_crate();
         let args_ptr = args as *mut T as *mut ();
         #[allow(unsafe_code)]
         unsafe {
-            self.call_with_metadata_by_plan_with_source(
+            self.call_with_metadata_by_plan(
                 method_id,
                 method_name,
                 args_ptr,
                 args_plan,
                 roam_wire::Metadata::default(),
-                source,
             )
             .await
         }
@@ -390,19 +387,11 @@ impl ConnectionHandle {
         args_plan: &crate::RpcPlan,
         metadata: roam_wire::Metadata,
     ) -> Result<ResponseData, TransportError> {
-        let source = crate::source_id_for_current_crate();
         let args_ptr = args as *mut T as *mut ();
         #[allow(unsafe_code)]
         unsafe {
-            self.call_with_metadata_by_plan_with_source(
-                method_id,
-                method_name,
-                args_ptr,
-                args_plan,
-                metadata,
-                source,
-            )
-            .await
+            self.call_with_metadata_by_plan(method_id, method_name, args_ptr, args_plan, metadata)
+                .await
         }
     }
 
@@ -425,37 +414,6 @@ impl ConnectionHandle {
         args_ptr: *mut (),
         args_plan: &crate::RpcPlan,
         metadata: roam_wire::Metadata,
-    ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send + '_ {
-        let source = crate::source_id_for_current_crate();
-        // SAFETY: Forwarded unchanged; this wrapper only attaches source context.
-        unsafe {
-            self.call_with_metadata_by_plan_with_source(
-                method_id,
-                method_name,
-                args_ptr,
-                args_plan,
-                metadata,
-                source,
-            )
-        }
-    }
-
-    /// Make an RPC call using reflection (non-generic) with explicit source context.
-    ///
-    /// # Safety
-    ///
-    /// - `args_ptr` must point to valid, initialized memory matching the plan's shape
-    /// - The args type must be `Send`
-    #[doc(hidden)]
-    #[allow(unsafe_code)]
-    pub unsafe fn call_with_metadata_by_plan_with_source(
-        &self,
-        method_id: u64,
-        method_name: &str,
-        args_ptr: *mut (),
-        args_plan: &crate::RpcPlan,
-        metadata: roam_wire::Metadata,
-        source: moire::SourceId,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send + '_ {
         let args_shape = args_plan.type_plan.root().shape;
 
@@ -537,7 +495,6 @@ impl ConnectionHandle {
                 payload,
                 args_debug,
                 drains,
-                source,
             )
             .await
         }
@@ -630,7 +587,6 @@ impl ConnectionHandle {
         method_name: &str,
         payload: Vec<u8>,
     ) -> Result<Vec<u8>, TransportError> {
-        let source = crate::source_id_for_current_crate();
         self.call_raw_full(
             method_id,
             method_name,
@@ -638,7 +594,6 @@ impl ConnectionHandle {
             Vec::new(),
             payload,
             None,
-            source,
         )
         .await
         .map(|r| r.payload)
@@ -656,7 +611,6 @@ impl ConnectionHandle {
         payload: Vec<u8>,
         args_debug: Option<String>,
     ) -> Result<ResponseData, TransportError> {
-        let source = crate::source_id_for_current_crate();
         self.call_raw_full(
             method_id,
             method_name,
@@ -664,7 +618,6 @@ impl ConnectionHandle {
             channels,
             payload,
             args_debug,
-            source,
         )
         .await
     }
@@ -679,18 +632,9 @@ impl ConnectionHandle {
         payload: Vec<u8>,
         metadata: roam_wire::Metadata,
     ) -> Result<Vec<u8>, TransportError> {
-        let source = crate::source_id_for_current_crate();
-        self.call_raw_full(
-            method_id,
-            method_name,
-            metadata,
-            Vec::new(),
-            payload,
-            None,
-            source,
-        )
-        .await
-        .map(|r| r.payload)
+        self.call_raw_full(method_id, method_name, metadata, Vec::new(), payload, None)
+            .await
+            .map(|r| r.payload)
     }
 
     /// Make a raw RPC call with all options.
@@ -704,7 +648,6 @@ impl ConnectionHandle {
         channels: Vec<u64>,
         payload: Vec<u8>,
         args_debug: Option<String>,
-        source: moire::SourceId,
     ) -> Result<ResponseData, TransportError> {
         self.call_raw_full_with_drains(
             method_id,
@@ -714,7 +657,6 @@ impl ConnectionHandle {
             payload,
             args_debug,
             Vec::new(),
-            source,
         )
         .await
     }
@@ -729,7 +671,6 @@ impl ConnectionHandle {
         payload: Vec<u8>,
         args_debug: Option<String>,
         drains: Vec<(ChannelId, Receiver<IncomingChannelMessage>)>,
-        source: moire::SourceId,
     ) -> Result<ResponseData, TransportError> {
         #[cfg(not(target_arch = "wasm32"))]
         let _request_permit = self.acquire_request_slot().await?;
@@ -744,10 +685,6 @@ impl ConnectionHandle {
         let (metadata, task_id, task_name) =
             self.merged_outgoing_metadata(metadata, request_id, method_name);
         let (response_tx, response_rx) = oneshot("call_raw_with_channels");
-        #[cfg(feature = "diagnostics")]
-        if let Some(diag) = self.shared.diagnostic_state.as_deref() {
-            diag.link_entity_to_connection_scope(response_tx.handle());
-        }
 
         #[cfg(feature = "diagnostics")]
         let args_debug_str = args_debug.as_deref().unwrap_or("").to_string();
@@ -766,7 +703,7 @@ impl ConnectionHandle {
                 method_name: String::from(method_name_only),
                 args_json: moire_types::Json::new(args_json),
             };
-            Some(diag.emit_request_node(method_name.to_string(), request_body, source))
+            Some(diag.emit_request_node(method_name.to_string(), request_body))
         } else {
             None
         };
@@ -801,9 +738,6 @@ impl ConnectionHandle {
             diag.associate_channels_with_request(&channels, request_id);
         }
 
-        #[cfg(feature = "diagnostics")]
-        let request_entity_handle = request_handle.as_ref().and_then(|h| h.entity_handle());
-
         let msg = DriverMessage::Call {
             conn_id: self.shared.conn_id,
             request_id,
@@ -815,20 +749,6 @@ impl ConnectionHandle {
         };
 
         let call_fut = async {
-            #[cfg(feature = "diagnostics")]
-            let send_driver_result =
-                if let Some(request_entity_handle) = request_entity_handle.as_ref() {
-                    moire::instrument_future_on(
-                        "roam.call.enqueue_driver",
-                        request_entity_handle,
-                        self.shared.driver_tx.send(msg),
-                        source,
-                    )
-                    .await
-                } else {
-                    self.shared.driver_tx.send(msg).await
-                };
-            #[cfg(not(feature = "diagnostics"))]
             let send_driver_result = self.shared.driver_tx.send(msg).await;
             send_driver_result.map_err(|_| TransportError::DriverGone)?;
 
@@ -895,20 +815,6 @@ impl ConnectionHandle {
                 }
             }
 
-            #[cfg(feature = "diagnostics")]
-            let response_result =
-                if let Some(request_entity_handle) = request_entity_handle.as_ref() {
-                    moire::instrument_future_on(
-                        "roam.call.await_response",
-                        request_entity_handle,
-                        response_rx.recv(),
-                        source,
-                    )
-                    .await
-                } else {
-                    response_rx.recv().await
-                };
-            #[cfg(not(feature = "diagnostics"))]
             let response_result = response_rx.recv().await;
             response_result
                 .map_err(|_| TransportError::DriverGone)?

@@ -28,7 +28,7 @@ pub async fn handle_websocket(
     let (mut ws_sink, mut ws_stream) = ws.split();
 
     // Channel for outgoing messages
-    let (outgoing_tx, mut outgoing_rx) = moire::channel!("ws_outgoing", 256);
+    let (outgoing_tx, mut outgoing_rx) = roam_session::runtime::channel("ws_outgoing", 256);
 
     // Create session state
     let session = Arc::new(std::sync::Mutex::new(WsSession::new(
@@ -39,7 +39,7 @@ pub async fn handle_websocket(
     // Spawn task to send outgoing messages
     let send_task = {
         let session = Arc::clone(&session);
-        moire::spawn_tracked!("bridge_ws_send_loop", async move {
+        roam_session::runtime::spawn("bridge_ws_send_loop", async move {
             while let Some(msg) = outgoing_rx.recv().await {
                 let json = match serde_json::to_string(&msg) {
                     Ok(j) => j,
@@ -219,7 +219,7 @@ async fn handle_request(
 
         // Spawn a task to run the streaming call (channels are already registered)
         let session_clone = Arc::clone(&session);
-        moire::spawn_tracked!("bridge_ws_streaming_call", async move {
+        roam_session::runtime::spawn("bridge_ws_streaming_call", async move {
             let result = run_streaming_call(session_clone.clone(), streaming_state).await;
 
             // Complete the call
@@ -235,7 +235,7 @@ async fn handle_request(
     } else {
         // Simple calls can be spawned directly
         let session_clone = Arc::clone(&session);
-        moire::spawn_tracked!("bridge_ws_simple_call", async move {
+        roam_session::runtime::spawn("bridge_ws_simple_call", async move {
             let result = handle_simple_call(
                 session_clone.clone(),
                 request_id,
@@ -304,9 +304,9 @@ struct StreamingCallState {
     request_id: u64,
     ws_to_roam_rx_map: HashMap<u64, (u64, &'static Shape)>,
     roam_to_ws_tx_map: HashMap<u64, (u64, &'static Shape)>,
-    roam_receivers: Vec<(u64, moire::Receiver<IncomingChannelMessage>)>,
+    roam_receivers: Vec<(u64, roam_session::runtime::Receiver<IncomingChannelMessage>)>,
     /// Response receiver - the call has already been sent when this is set
-    response_rx: moire::OneshotReceiver<Result<ResponseData, TransportError>>,
+    response_rx: roam_session::runtime::OneshotReceiver<Result<ResponseData, TransportError>>,
     return_shape: &'static Shape,
     error_shape: Option<&'static Shape>,
 }
@@ -391,9 +391,10 @@ async fn setup_streaming_call(
     let postcard_payload = crate::transcode::json_args_to_postcard(&args_json, &arg_shapes)?;
 
     // Set up channels for receiving data from roam (Tx channels)
-    let mut roam_receivers: Vec<(u64, moire::Receiver<IncomingChannelMessage>)> = Vec::new();
+    let mut roam_receivers: Vec<(u64, roam_session::runtime::Receiver<IncomingChannelMessage>)> =
+        Vec::new();
     for &roam_channel_id in roam_to_ws_tx_map.keys() {
-        let (tx, rx) = moire::channel!("ws_roam_incoming", 256);
+        let (tx, rx) = roam_session::runtime::channel("ws_roam_incoming", 256);
         handle.register_incoming(roam_channel_id, tx);
         roam_receivers.push((roam_channel_id, rx));
     }
@@ -410,7 +411,7 @@ async fn setup_streaming_call(
         session_guard.set_driver_tx(driver_tx.clone());
 
         for (&ws_channel_id, &(roam_channel_id, elem_shape)) in &ws_to_roam_rx_map {
-            let (ws_data_tx, _ws_data_rx) = moire::channel!("ws_data", 256);
+            let (ws_data_tx, _ws_data_rx) = roam_session::runtime::channel("ws_data", 256);
             session_guard.register_channel(
                 ws_channel_id,
                 request_id,
@@ -433,7 +434,7 @@ async fn setup_streaming_call(
 
     // Create the response channel and send the Call message IMMEDIATELY
     // This ensures the Request is queued before any Data messages can be forwarded
-    let (response_tx, response_rx) = moire::oneshot!("ws_streaming_response");
+    let (response_tx, response_rx) = roam_session::runtime::oneshot("ws_streaming_response");
     let roam_request_id = handle.alloc_request_id();
 
     let call_msg = roam_session::DriverMessage::Call {
@@ -490,7 +491,7 @@ async fn run_streaming_call(
     for (roam_channel_id, mut rx) in roam_receivers {
         let (ws_channel_id, elem_shape) = roam_to_ws_tx_map[&roam_channel_id];
         let outgoing_tx = outgoing_tx.clone();
-        moire::spawn_tracked!("bridge_ws_roam_to_ws_forward", async move {
+        roam_session::runtime::spawn("bridge_ws_roam_to_ws_forward", async move {
             while let Some(msg) = rx.recv().await {
                 match msg {
                     IncomingChannelMessage::Data(postcard_data) => {

@@ -2,7 +2,7 @@
 //!
 //! Implements `HostTracing` service to receive tracing records from cells.
 
-use moire::Mutex;
+use moire::sync::Mutex;
 use std::sync::Arc;
 
 use crate::record::TracingRecord;
@@ -28,9 +28,9 @@ pub struct TaggedRecord {
 /// instances (one per cell connection).
 pub struct HostTracingState {
     /// Channel for sending tagged records to consumers.
-    record_tx: moire::Sender<TaggedRecord>,
+    record_tx: moire::sync::mpsc::Sender<TaggedRecord>,
     /// Receiver end (taken by consumer).
-    record_rx: Mutex<Option<moire::Receiver<TaggedRecord>>>,
+    record_rx: Mutex<Option<moire::sync::mpsc::Receiver<TaggedRecord>>>,
     /// Current tracing configuration (shared across all cells).
     config: Mutex<TracingConfig>,
 }
@@ -41,7 +41,7 @@ impl HostTracingState {
     /// `buffer_size` is the capacity of the record channel.
     /// If the consumer is slow, newest records are dropped.
     pub fn new(buffer_size: usize) -> Arc<Self> {
-        let (record_tx, record_rx) = moire::channel!("trace_host_records", buffer_size);
+        let (record_tx, record_rx) = moire::sync::mpsc::channel("trace_host_records", buffer_size);
         Arc::new(Self {
             record_tx,
             record_rx: Mutex::new("HostTracingState.record_rx", Some(record_rx)),
@@ -53,7 +53,7 @@ impl HostTracingState {
     ///
     /// Call this once to get the stream of tagged records from all cells.
     /// Returns `None` if already taken.
-    pub fn take_receiver(&self) -> Option<moire::Receiver<TaggedRecord>> {
+    pub fn take_receiver(&self) -> Option<moire::sync::mpsc::Receiver<TaggedRecord>> {
         self.record_rx.lock().take()
     }
 

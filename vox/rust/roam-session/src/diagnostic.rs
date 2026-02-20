@@ -234,9 +234,6 @@ pub struct DiagnosticState {
     pub(crate) connection_correlation_id: Mutex<Option<String>>,
     /// Stable per-connection context id used for request/response context edges.
     pub(crate) connection_context_id: OnceLock<String>,
-    /// Connection scope handle used to attach request/response/channel entities.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) connection_scope: OnceLock<moire::ScopeHandle>,
     /// Monotonic revision for mutable connection-context metadata.
     pub(crate) connection_context_revision: AtomicU64,
     /// Last revision published to diagnostics metadata sinks.
@@ -352,8 +349,6 @@ impl DiagnosticState {
             }),
             connection_correlation_id: Mutex::new(None),
             connection_context_id: OnceLock::new(),
-            #[cfg(not(target_arch = "wasm32"))]
-            connection_scope: OnceLock::new(),
             connection_context_revision: AtomicU64::new(1),
             connection_context_published_revision: AtomicU64::new(0),
             connection_context_metadata: Mutex::new(BTreeMap::new()),
@@ -459,35 +454,6 @@ impl DiagnosticState {
                 )
             })
             .clone()
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn ensure_connection_scope(&self) -> moire::ScopeHandle {
-        self.connection_scope
-            .get_or_init(|| {
-                let identity = self.connection_identity();
-                let correlation = self
-                    .connection_correlation_id()
-                    .unwrap_or_else(|| self.rpc_connection_token());
-                moire::ScopeHandle::new(
-                    format!(
-                        "roam.connection.{correlation}:{}->{}",
-                        identity.src, identity.dst
-                    ),
-                    moire_types::ScopeBody::Connection(moire_types::ConnectionScopeBody {
-                        local_addr: None,
-                        peer_addr: None,
-                    }),
-                    crate::source_id_for_current_crate(),
-                )
-            })
-            .clone()
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn link_entity_to_connection_scope<S>(&self, entity: &moire::EntityHandle<S>) {
-        let scope = self.ensure_connection_scope();
-        entity.link_to_scope_handle(&scope);
     }
 
     /// Monotonic revision increment for mutable connection metadata.

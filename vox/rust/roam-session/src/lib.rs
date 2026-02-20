@@ -8,8 +8,6 @@
 #[macro_use]
 mod macros;
 
-::moire::facade!();
-
 pub mod diagnostic;
 pub mod diagnostic_snapshot;
 pub mod driver;
@@ -77,23 +75,6 @@ pub const MOIRE_CONNECTION_CORRELATION_ID_METADATA_KEY: &str = "moire.connection
 
 /// Re-export `Infallible` for use as the error type in infallible methods.
 pub use std::convert::Infallible;
-
-pub use ::moire::{SourceId, SourceLeft, SourceRight};
-
-/// Resolve a caller location against an explicit crate identity.
-#[track_caller]
-pub fn source_id_from_left(left: SourceLeft) -> SourceId {
-    left.join(SourceRight::caller()).into()
-}
-
-/// Source id for the current `roam-session` crate.
-#[track_caller]
-pub fn source_id_for_current_crate() -> SourceId {
-    source_id_from_left(SourceLeft::new(
-        env!("CARGO_MANIFEST_DIR"),
-        env!("CARGO_PKG_NAME"),
-    ))
-}
 
 #[cfg(test)]
 mod tests;

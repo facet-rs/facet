@@ -4,7 +4,6 @@ members = [
   "rust/roam",
   "rust/roam-wire",
   "rust/roam-frame",
-  "rust/roam-runtime",
   "rust/roam-session",
   "rust/roam-hash",
   "rust/roam-schema",

@@ -5,7 +5,6 @@
 
 use std::sync::Arc;
 
-use crate::moire::prelude::*;
 use crate::{
     ChannelRegistry, ConnectionHandle, Context, DriverMessage, IncomingChannelMessage,
     ServiceDispatcher, TransportError,
