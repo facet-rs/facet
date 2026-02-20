@@ -22,7 +22,7 @@ roam-wire.workspace = true
 roam-session.workspace = true
 facet-postcard.workspace = true
 facet-reflect.workspace = true
-peeps.workspace = true
+moire.workspace = true
 
 [dev-dependencies]
 spec-proto = { path = "../../spec/spec-proto" }

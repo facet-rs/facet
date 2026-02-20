@@ -5,12 +5,12 @@
 //!
 //! For message-based transports (WebSocket), use `roam_session` directly.
 
-use peeps::Mutex;
+use moire::Mutex;
 use std::future::Future;
 use std::io;
 use std::sync::Arc;
 
-use crate::peeps::prelude::*;
+use crate::moire::prelude::*;
 use facet::Facet;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::task::JoinHandle;
@@ -22,8 +22,8 @@ use roam_session::{
 };
 
 #[track_caller]
-fn source_id_here() -> peeps::SourceId {
-    crate::peeps::PEEPS_SOURCE_LEFT.resolve().into()
+fn source_id_here() -> moire::SourceId {
+    crate::moire::MOIRE_SOURCE_LEFT.resolve().into()
 }
 
 /// A factory that creates new byte-stream connections on demand.
@@ -197,7 +197,7 @@ where
     }
 
     async fn connect_internal(&self) -> Result<ClientState<C::Transport>, ConnectError> {
-        let stream = peeps::net::connect(self.connector.connect(), "roam-stream", "tcp")
+        let stream = moire::net::connect(self.connector.connect(), "roam-stream", "tcp")
             .await
             .map_err(ConnectError::ConnectFailed)?;
 
@@ -212,7 +212,7 @@ where
         // Any Connect requests from the server will be automatically rejected.
 
         let driver_handle =
-            peeps::spawn_tracked!("roam_stream_driver", async move { driver.run().await });
+            moire::spawn_tracked!("roam_stream_driver", async move { driver.run().await });
 
         Ok(ClientState {
             handle,
@@ -244,7 +244,7 @@ where
                     }
                     last_error = Some(e);
                     let backoff = self.retry_policy.backoff_for_attempt(attempt);
-                    peeps::sleep!(backoff, "reconnect.backoff").await;
+                    moire::sleep!(backoff, "reconnect.backoff").await;
                     continue;
                 }
                 Err(e) => return Err(e),
@@ -281,7 +281,7 @@ where
                         "connection closed",
                     ));
                     let backoff = self.retry_policy.backoff_for_attempt(attempt);
-                    peeps::sleep!(backoff, "reconnect.backoff").await;
+                    moire::sleep!(backoff, "reconnect.backoff").await;
                 }
             }
         }
@@ -312,7 +312,7 @@ where
                         return Err(TransportError::ConnectionClosed);
                     }
                     let backoff = self.retry_policy.backoff_for_attempt(attempt);
-                    peeps::sleep!(backoff, "reconnect.backoff").await;
+                    moire::sleep!(backoff, "reconnect.backoff").await;
                     continue;
                 }
                 Err(ConnectError::RetriesExhausted { .. }) => {
@@ -357,7 +357,7 @@ where
                     }
 
                     let backoff = self.retry_policy.backoff_for_attempt(attempt);
-                    peeps::sleep!(backoff, "reconnect.backoff").await;
+                    moire::sleep!(backoff, "reconnect.backoff").await;
                 }
             }
         }
@@ -388,7 +388,7 @@ where
         args_ptr: SendPtr,
         args_plan: &'static std::sync::Arc<roam_session::RpcPlan>,
         metadata: roam_wire::Metadata,
-        source: peeps::SourceId,
+        source: moire::SourceId,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send {
         let this = self.clone();
         let method_name = method_name.to_owned();
@@ -405,7 +405,7 @@ where
                             return Err(TransportError::ConnectionClosed);
                         }
                         let backoff = this.retry_policy.backoff_for_attempt(attempt);
-                        peeps::sleep!(backoff, "reconnect.backoff").await;
+                        moire::sleep!(backoff, "reconnect.backoff").await;
                         continue;
                     }
                     Err(ConnectError::RetriesExhausted { .. }) => {
@@ -447,7 +447,7 @@ where
                         }
 
                         let backoff = this.retry_policy.backoff_for_attempt(attempt);
-                        peeps::sleep!(backoff, "reconnect.backoff").await;
+                        moire::sleep!(backoff, "reconnect.backoff").await;
                     }
                 }
             }

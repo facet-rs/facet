@@ -12,5 +12,5 @@ description = "Runtime types (tokio vs non-tokio)"
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-peeps.workspace = true
+moire.workspace = true
 tokio.workspace = true

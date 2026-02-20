@@ -751,7 +751,7 @@ mod async_transport {
 
             // Wait on doorbell with timeout
             if let Some(doorbell) = &self.doorbell {
-                match peeps::timeout!(timeout, doorbell.wait(), "shm.doorbell.wait").await {
+                match moire::timeout!(timeout, doorbell.wait(), "shm.doorbell.wait").await {
                     Ok(Ok(())) => match self.try_recv() {
                         Ok(msg) => signal_and_return(&self.doorbell, msg).await,
                         Err(e) if e.kind() == io::ErrorKind::WouldBlock => Ok(None),

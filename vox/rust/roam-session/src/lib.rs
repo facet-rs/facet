@@ -8,7 +8,7 @@
 #[macro_use]
 mod macros;
 
-::peeps::facade!();
+::moire::facade!();
 
 pub mod diagnostic;
 pub mod diagnostic_snapshot;
@@ -66,19 +66,19 @@ pub use rpc_plan::*;
 
 pub(crate) const CHANNEL_SIZE: usize = 1024;
 pub(crate) const RX_STREAM_BUFFER_SIZE: usize = 1024;
-pub const PEEPS_TASK_ID_METADATA_KEY: &str = "peeps.task_id";
-pub const PEEPS_TASK_NAME_METADATA_KEY: &str = "peeps.task_name";
-pub const PEEPS_CHAIN_ID_METADATA_KEY: &str = "peeps.chain_id";
-pub const PEEPS_SPAN_ID_METADATA_KEY: &str = "peeps.span_id";
-pub const PEEPS_PARENT_SPAN_ID_METADATA_KEY: &str = "peeps.parent_span_id";
-pub const PEEPS_METHOD_NAME_METADATA_KEY: &str = "peeps.method_name";
-pub const PEEPS_REQUEST_ENTITY_ID_METADATA_KEY: &str = "peeps.request_entity_id";
-pub const PEEPS_CONNECTION_CORRELATION_ID_METADATA_KEY: &str = "peeps.connection_correlation_id";
+pub const MOIRE_TASK_ID_METADATA_KEY: &str = "moire.task_id";
+pub const MOIRE_TASK_NAME_METADATA_KEY: &str = "moire.task_name";
+pub const MOIRE_CHAIN_ID_METADATA_KEY: &str = "moire.chain_id";
+pub const MOIRE_SPAN_ID_METADATA_KEY: &str = "moire.span_id";
+pub const MOIRE_PARENT_SPAN_ID_METADATA_KEY: &str = "moire.parent_span_id";
+pub const MOIRE_METHOD_NAME_METADATA_KEY: &str = "moire.method_name";
+pub const MOIRE_REQUEST_ENTITY_ID_METADATA_KEY: &str = "moire.request_entity_id";
+pub const MOIRE_CONNECTION_CORRELATION_ID_METADATA_KEY: &str = "moire.connection_correlation_id";
 
 /// Re-export `Infallible` for use as the error type in infallible methods.
 pub use std::convert::Infallible;
 
-pub use ::peeps::{SourceId, SourceLeft, SourceRight};
+pub use ::moire::{SourceId, SourceLeft, SourceRight};
 
 /// Resolve a caller location against an explicit crate identity.
 #[track_caller]

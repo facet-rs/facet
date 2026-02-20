@@ -180,7 +180,7 @@ pub trait Caller: Clone + Send + Sync + 'static {
         args_ptr: SendPtr,
         args_plan: &'static Arc<RpcPlan>,
         metadata: roam_wire::Metadata,
-        source: peeps::SourceId,
+        source: moire::SourceId,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send;
 
     /// Make an RPC call using reflection (non-generic).
@@ -201,7 +201,7 @@ pub trait Caller: Clone + Send + Sync + 'static {
         args_ptr: SendPtr,
         args_plan: &'static Arc<RpcPlan>,
         metadata: roam_wire::Metadata,
-        source: peeps::SourceId,
+        source: moire::SourceId,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>>;
 
     /// Bind receivers for `Rx<T>` channels in the response using reflection (non-generic).
@@ -262,7 +262,7 @@ impl Caller for ConnectionHandle {
         args_ptr: SendPtr,
         args_plan: &'static Arc<RpcPlan>,
         metadata: roam_wire::Metadata,
-        source: peeps::SourceId,
+        source: moire::SourceId,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send {
         unsafe {
             ConnectionHandle::call_with_metadata_by_plan_with_source(
@@ -286,7 +286,7 @@ impl Caller for ConnectionHandle {
         args_ptr: SendPtr,
         args_plan: &'static Arc<RpcPlan>,
         metadata: roam_wire::Metadata,
-        source: peeps::SourceId,
+        source: moire::SourceId,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> {
         unsafe {
             ConnectionHandle::call_with_metadata_by_plan_with_source(
@@ -359,7 +359,7 @@ where
     ok_plan: &'static Arc<RpcPlan>,
     /// Precomputed plan for the Err type.
     err_plan: &'static Arc<RpcPlan>,
-    source: peeps::SourceId,
+    source: moire::SourceId,
     _phantom: PhantomData<fn() -> (Ok, Err)>,
 }
 
@@ -380,7 +380,7 @@ where
         args_plan: &'static Arc<RpcPlan>,
         ok_plan: &'static Arc<RpcPlan>,
         err_plan: &'static Arc<RpcPlan>,
-        source: peeps::SourceId,
+        source: moire::SourceId,
     ) -> Self {
         Self {
             caller,

@@ -1,8 +1,8 @@
 import Foundation
 
-private let peepsMethodNameMetadataKey = "peeps.method_name"
-private let peepsRequestEntityIdMetadataKey = "peeps.request_entity_id"
-private let peepsConnectionCorrelationIdMetadataKey = "peeps.connection_correlation_id"
+private let peepsMethodNameMetadataKey = "moire.method_name"
+private let peepsRequestEntityIdMetadataKey = "moire.request_entity_id"
+private let peepsConnectionCorrelationIdMetadataKey = "moire.connection_correlation_id"
 
 private func metadataString(_ metadata: [MetadataEntry], key: String) -> String? {
     for entry in metadata where entry.key == key {

@@ -1836,6 +1836,96 @@ dependencies = [
 ]
 
 [[package]]
+name = "moire"
+version = "0.1.0"
+dependencies = [
+ "moire-tokio",
+ "moire-wasm",
+]
+
+[[package]]
+name = "moire-runtime"
+version = "0.1.0"
+dependencies = [
+ "facet",
+ "facet-json",
+ "facet-value",
+ "moire-source",
+ "moire-sqlite-facet",
+ "moire-types",
+ "moire-wire",
+ "parking_lot",
+ "tokio",
+]
+
+[[package]]
+name = "moire-source"
+version = "0.1.0"
+dependencies = [
+ "camino",
+ "facet",
+ "rusqlite",
+]
+
+[[package]]
+name = "moire-sqlite-facet"
+version = "0.1.0"
+dependencies = [
+ "facet-json",
+ "facet-value",
+ "moire-source",
+ "moire-types",
+ "rusqlite",
+]
+
+[[package]]
+name = "moire-tokio"
+version = "0.1.0"
+dependencies = [
+ "facet-json",
+ "facet-value",
+ "moire-runtime",
+ "moire-source",
+ "moire-types",
+ "moire-wire",
+ "parking_lot",
+ "tokio",
+]
+
+[[package]]
+name = "moire-types"
+version = "0.1.0"
+dependencies = [
+ "facet",
+ "facet-format",
+ "facet-json",
+ "facet-value",
+ "moire-source",
+ "rusqlite",
+]
+
+[[package]]
+name = "moire-wasm"
+version = "0.1.0"
+dependencies = [
+ "async-channel",
+ "futures-channel",
+ "futures-util",
+ "gloo-timers",
+ "tokio",
+ "wasm-bindgen-futures",
+]
+
+[[package]]
+name = "moire-wire"
+version = "0.1.0"
+dependencies = [
+ "facet",
+ "facet-json",
+ "moire-types",
+]
+
+[[package]]
 name = "museair"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1994,96 +2084,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b332c50e4d07c0011fff51ea305374408319908908bc1dbed7a0ffaaf63a8151"
 dependencies = [
  "libc",
-]
-
-[[package]]
-name = "peeps"
-version = "0.1.0"
-dependencies = [
- "peeps-tokio",
- "peeps-wasm",
-]
-
-[[package]]
-name = "peeps-runtime"
-version = "0.1.0"
-dependencies = [
- "facet",
- "facet-json",
- "facet-value",
- "parking_lot",
- "peeps-source",
- "peeps-sqlite-facet",
- "peeps-types",
- "peeps-wire",
- "tokio",
-]
-
-[[package]]
-name = "peeps-source"
-version = "0.1.0"
-dependencies = [
- "camino",
- "facet",
- "rusqlite",
-]
-
-[[package]]
-name = "peeps-sqlite-facet"
-version = "0.1.0"
-dependencies = [
- "facet-json",
- "facet-value",
- "peeps-source",
- "peeps-types",
- "rusqlite",
-]
-
-[[package]]
-name = "peeps-tokio"
-version = "0.1.0"
-dependencies = [
- "facet-json",
- "facet-value",
- "parking_lot",
- "peeps-runtime",
- "peeps-source",
- "peeps-types",
- "peeps-wire",
- "tokio",
-]
-
-[[package]]
-name = "peeps-types"
-version = "0.1.0"
-dependencies = [
- "facet",
- "facet-format",
- "facet-json",
- "facet-value",
- "peeps-source",
- "rusqlite",
-]
-
-[[package]]
-name = "peeps-wasm"
-version = "0.1.0"
-dependencies = [
- "async-channel",
- "futures-channel",
- "futures-util",
- "gloo-timers",
- "tokio",
- "wasm-bindgen-futures",
-]
-
-[[package]]
-name = "peeps-wire"
-version = "0.1.0"
-dependencies = [
- "facet",
- "facet-json",
- "peeps-types",
 ]
 
 [[package]]
@@ -2449,7 +2449,7 @@ dependencies = [
  "facet-value",
  "futures-util",
  "http",
- "peeps",
+ "moire",
  "reqwest",
  "roam-hash",
  "roam-schema",
@@ -2468,7 +2468,7 @@ dependencies = [
 name = "roam-local"
 version = "3.0.0"
 dependencies = [
- "peeps",
+ "moire",
  "tokio",
 ]
 
@@ -2498,7 +2498,7 @@ dependencies = [
 name = "roam-runtime"
 version = "3.0.0"
 dependencies = [
- "peeps",
+ "moire",
  "tokio",
 ]
 
@@ -2539,8 +2539,8 @@ dependencies = [
  "futures-channel",
  "futures-util",
  "gloo-timers",
- "peeps",
- "peeps-types",
+ "moire",
+ "moire-types",
  "roam",
  "roam-frame",
  "roam-task-local",
@@ -2563,9 +2563,9 @@ dependencies = [
  "futures-util",
  "libc",
  "libproc",
+ "moire",
+ "moire-types",
  "once_cell",
- "peeps",
- "peeps-types",
  "roam",
  "roam-fdpass",
  "roam-frame",
@@ -2588,8 +2588,8 @@ dependencies = [
  "facet",
  "facet-postcard",
  "facet-reflect",
+ "moire",
  "once_cell",
- "peeps",
  "roam",
  "roam-session",
  "roam-wire",
@@ -2611,7 +2611,7 @@ dependencies = [
  "facet",
  "facet-json",
  "facet-pretty",
- "peeps",
+ "moire",
  "rand",
  "reqwest",
  "roam",
@@ -2628,7 +2628,7 @@ name = "roam-tracing"
 version = "3.0.0"
 dependencies = [
  "facet",
- "peeps",
+ "moire",
  "roam",
  "tokio",
  "tracing",
@@ -2644,7 +2644,7 @@ dependencies = [
  "futures-channel",
  "futures-util",
  "js-sys",
- "peeps",
+ "moire",
  "roam-session",
  "roam-stream",
  "roam-wire",
@@ -3007,7 +3007,7 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 name = "subject-rust"
 version = "3.0.0"
 dependencies = [
- "peeps",
+ "moire",
  "roam",
  "roam-stream",
  "spec-proto",

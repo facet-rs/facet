@@ -1,9 +1,9 @@
 //! Structured diagnostic snapshots for JSON serialization.
 //!
 //! The old inventory-based DiagnosticsSource approach has been replaced
-//! by direct registration of nodes/edges in the peeps registry.
+//! by direct registration of nodes/edges in the moire registry.
 
-use peeps_types::{ChannelDir, Direction};
+use moire_types::{ChannelDir, Direction};
 
 use crate::diagnostic::{ChannelDirection, RequestDirection};
 

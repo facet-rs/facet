@@ -7,9 +7,9 @@ private enum TestTransportError: Error {
     case sendFailed
 }
 
-private let peepsMethodNameMetadataKey = "peeps.method_name"
-private let peepsRequestEntityIdMetadataKey = "peeps.request_entity_id"
-private let peepsConnectionCorrelationIdMetadataKey = "peeps.connection_correlation_id"
+private let peepsMethodNameMetadataKey = "moire.method_name"
+private let peepsRequestEntityIdMetadataKey = "moire.request_entity_id"
+private let peepsConnectionCorrelationIdMetadataKey = "moire.connection_correlation_id"
 
 private enum InboundEvent: Sendable {
     case message(Message)

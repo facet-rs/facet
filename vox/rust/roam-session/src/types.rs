@@ -1,6 +1,6 @@
 use facet::Facet;
 
-use crate::peeps::prelude::*;
+use crate::moire::prelude::*;
 use crate::{
     ChannelError, ConnectionHandle, DispatchContext, DriverTxSlot, RX_STREAM_BUFFER_SIZE,
     ReceiverSlot, ServiceDispatcher, TransportError,

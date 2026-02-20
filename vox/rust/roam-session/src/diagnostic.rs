@@ -165,7 +165,7 @@ pub struct OpenChannel {
     pub direction: ChannelDirection,
     /// The request that opened this channel (if known).
     pub request_id: Option<u64>,
-    /// The peeps task that created/opened this channel.
+    /// The moire task that created/opened this channel.
     pub task_id: Option<u64>,
     /// Name of the task that created/opened this channel.
     pub task_name: Option<String>,
@@ -228,7 +228,7 @@ pub struct DiagnosticState {
     /// Vec of (channel_id, incoming_credit, outgoing_credit).
     pub(crate) channel_credits: Mutex<Vec<ChannelCreditInfo>>,
 
-    /// Connection identity used for peeps node/edge attributes.
+    /// Connection identity used for moire node/edge attributes.
     pub(crate) connection_identity: Mutex<ConnectionIdentity>,
     /// Stable correlation key shared by both peers for this link.
     pub(crate) connection_correlation_id: Mutex<Option<String>>,
@@ -236,7 +236,7 @@ pub struct DiagnosticState {
     pub(crate) connection_context_id: OnceLock<String>,
     /// Connection scope handle used to attach request/response/channel entities.
     #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) connection_scope: OnceLock<peeps::ScopeHandle>,
+    pub(crate) connection_scope: OnceLock<moire::ScopeHandle>,
     /// Monotonic revision for mutable connection-context metadata.
     pub(crate) connection_context_revision: AtomicU64,
     /// Last revision published to diagnostics metadata sinks.
@@ -462,19 +462,19 @@ impl DiagnosticState {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn ensure_connection_scope(&self) -> peeps::ScopeHandle {
+    pub fn ensure_connection_scope(&self) -> moire::ScopeHandle {
         self.connection_scope
             .get_or_init(|| {
                 let identity = self.connection_identity();
                 let correlation = self
                     .connection_correlation_id()
                     .unwrap_or_else(|| self.rpc_connection_token());
-                peeps::ScopeHandle::new(
+                moire::ScopeHandle::new(
                     format!(
                         "roam.connection.{correlation}:{}->{}",
                         identity.src, identity.dst
                     ),
-                    peeps_types::ScopeBody::Connection(peeps_types::ConnectionScopeBody {
+                    moire_types::ScopeBody::Connection(moire_types::ConnectionScopeBody {
                         local_addr: None,
                         peer_addr: None,
                     }),
@@ -485,7 +485,7 @@ impl DiagnosticState {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn link_entity_to_connection_scope<S>(&self, entity: &peeps::EntityHandle<S>) {
+    pub fn link_entity_to_connection_scope<S>(&self, entity: &moire::EntityHandle<S>) {
         let scope = self.ensure_connection_scope();
         entity.link_to_scope_handle(&scope);
     }
@@ -1216,7 +1216,7 @@ impl DiagnosticState {
                 let method_name = req
                     .metadata
                     .as_ref()
-                    .and_then(|meta| meta.get(crate::PEEPS_METHOD_NAME_METADATA_KEY))
+                    .and_then(|meta| meta.get(crate::MOIRE_METHOD_NAME_METADATA_KEY))
                     .cloned()
                     .unwrap_or_else(|| format!("method#0x{:x}", req.method_id));
                 let _ = write!(
@@ -1247,7 +1247,7 @@ impl DiagnosticState {
                 let method_name = req
                     .metadata
                     .as_ref()
-                    .and_then(|meta| meta.get(crate::PEEPS_METHOD_NAME_METADATA_KEY))
+                    .and_then(|meta| meta.get(crate::MOIRE_METHOD_NAME_METADATA_KEY))
                     .cloned()
                     .unwrap_or_else(|| format!("method#0x{:x}", req.method_id));
                 let _ = write!(

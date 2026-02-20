@@ -12,7 +12,7 @@ use std::time::Duration;
 // For oneshot, use futures-channel (async-channel doesn't have oneshot)
 pub use futures_channel::oneshot::Sender as OneshotSender;
 
-/// Wrapper around futures_channel oneshot Receiver to match peeps's API
+/// Wrapper around futures_channel oneshot Receiver to match moire's API
 /// (which requires `.recv().await` instead of just `.await`).
 pub struct OneshotReceiver<T>(futures_channel::oneshot::Receiver<T>);
 
@@ -27,7 +27,7 @@ impl<T> OneshotReceiver<T> {
 }
 
 // Wrapper around std::sync::Mutex that accepts a name for API compatibility
-// with peeps::Mutex on native. The name is ignored on wasm.
+// with moire::Mutex on native. The name is ignored on wasm.
 pub struct Mutex<T>(std::sync::Mutex<T>);
 
 impl<T> Mutex<T> {

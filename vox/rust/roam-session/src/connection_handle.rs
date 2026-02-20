@@ -7,7 +7,7 @@ use facet::Facet;
 use crate::request_response_spy::RequestResponseSpy;
 use facet_core::PtrMut;
 
-use crate::peeps::prelude::*;
+use crate::moire::prelude::*;
 use crate::{
     ChannelError, ChannelId, ChannelIdAllocator, ChannelRegistry, DriverMessage,
     IncomingChannelMessage, RX_STREAM_BUFFER_SIZE, ReceiverSlot, ResponseData, SenderSlot,
@@ -165,32 +165,32 @@ impl ConnectionHandle {
             }
         }
 
-        let parent_span = Self::metadata_string(&metadata, crate::PEEPS_SPAN_ID_METADATA_KEY);
+        let parent_span = Self::metadata_string(&metadata, crate::MOIRE_SPAN_ID_METADATA_KEY);
         let span_id = self.span_id_for_request(request_id);
-        let chain_id = Self::metadata_string(&metadata, crate::PEEPS_CHAIN_ID_METADATA_KEY)
+        let chain_id = Self::metadata_string(&metadata, crate::MOIRE_CHAIN_ID_METADATA_KEY)
             .unwrap_or_else(|| span_id.clone());
         Self::upsert_metadata_entry(
             &mut metadata,
-            crate::PEEPS_CHAIN_ID_METADATA_KEY,
+            crate::MOIRE_CHAIN_ID_METADATA_KEY,
             roam_wire::MetadataValue::String(chain_id),
             roam_wire::metadata_flags::NONE,
         );
         Self::upsert_metadata_entry(
             &mut metadata,
-            crate::PEEPS_SPAN_ID_METADATA_KEY,
+            crate::MOIRE_SPAN_ID_METADATA_KEY,
             roam_wire::MetadataValue::String(span_id.clone()),
             roam_wire::metadata_flags::NONE,
         );
         Self::upsert_metadata_entry(
             &mut metadata,
-            crate::PEEPS_METHOD_NAME_METADATA_KEY,
+            crate::MOIRE_METHOD_NAME_METADATA_KEY,
             roam_wire::MetadataValue::String(method_name.to_owned()),
             roam_wire::metadata_flags::NONE,
         );
         if let Some(parent_span) = parent_span {
             Self::upsert_metadata_entry(
                 &mut metadata,
-                crate::PEEPS_PARENT_SPAN_ID_METADATA_KEY,
+                crate::MOIRE_PARENT_SPAN_ID_METADATA_KEY,
                 roam_wire::MetadataValue::String(parent_span),
                 roam_wire::metadata_flags::NONE,
             );
@@ -200,7 +200,7 @@ impl ConnectionHandle {
         if let Some(task_id) = task_id {
             Self::upsert_metadata_entry(
                 &mut metadata,
-                crate::PEEPS_TASK_ID_METADATA_KEY,
+                crate::MOIRE_TASK_ID_METADATA_KEY,
                 roam_wire::MetadataValue::U64(task_id),
                 roam_wire::metadata_flags::NONE,
             );
@@ -208,7 +208,7 @@ impl ConnectionHandle {
         if let Some(ref task_name) = task_name {
             Self::upsert_metadata_entry(
                 &mut metadata,
-                crate::PEEPS_TASK_NAME_METADATA_KEY,
+                crate::MOIRE_TASK_NAME_METADATA_KEY,
                 roam_wire::MetadataValue::String(task_name.clone()),
                 roam_wire::metadata_flags::NONE,
             );
@@ -455,7 +455,7 @@ impl ConnectionHandle {
         args_ptr: *mut (),
         args_plan: &crate::RpcPlan,
         metadata: roam_wire::Metadata,
-        source: peeps::SourceId,
+        source: moire::SourceId,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send + '_ {
         let args_shape = args_plan.type_plan.root().shape;
 
@@ -704,7 +704,7 @@ impl ConnectionHandle {
         channels: Vec<u64>,
         payload: Vec<u8>,
         args_debug: Option<String>,
-        source: peeps::SourceId,
+        source: moire::SourceId,
     ) -> Result<ResponseData, TransportError> {
         self.call_raw_full_with_drains(
             method_id,
@@ -729,7 +729,7 @@ impl ConnectionHandle {
         payload: Vec<u8>,
         args_debug: Option<String>,
         drains: Vec<(ChannelId, Receiver<IncomingChannelMessage>)>,
-        source: peeps::SourceId,
+        source: moire::SourceId,
     ) -> Result<ResponseData, TransportError> {
         #[cfg(not(target_arch = "wasm32"))]
         let _request_permit = self.acquire_request_slot().await?;
@@ -761,10 +761,10 @@ impl ConnectionHandle {
             } else {
                 args_debug_str.clone()
             };
-            let request_body = peeps_types::RequestEntity {
+            let request_body = moire_types::RequestEntity {
                 service_name: String::from(service_name),
                 method_name: String::from(method_name_only),
-                args_json: peeps_types::Json::new(args_json),
+                args_json: moire_types::Json::new(args_json),
             };
             Some(diag.emit_request_node(method_name.to_string(), request_body, source))
         } else {
@@ -775,7 +775,7 @@ impl ConnectionHandle {
         if let Some(request_wire_id) = request_handle.as_ref().and_then(|h| h.id_for_wire()) {
             Self::upsert_metadata_entry(
                 &mut metadata,
-                crate::PEEPS_REQUEST_ENTITY_ID_METADATA_KEY,
+                crate::MOIRE_REQUEST_ENTITY_ID_METADATA_KEY,
                 roam_wire::MetadataValue::String(request_wire_id),
                 roam_wire::metadata_flags::NONE,
             );
@@ -818,7 +818,7 @@ impl ConnectionHandle {
             #[cfg(feature = "diagnostics")]
             let send_driver_result =
                 if let Some(request_entity_handle) = request_entity_handle.as_ref() {
-                    peeps::instrument_future_on(
+                    moire::instrument_future_on(
                         "roam.call.enqueue_driver",
                         request_entity_handle,
                         self.shared.driver_tx.send(msg),
@@ -898,7 +898,7 @@ impl ConnectionHandle {
             #[cfg(feature = "diagnostics")]
             let response_result =
                 if let Some(request_entity_handle) = request_entity_handle.as_ref() {
-                    peeps::instrument_future_on(
+                    moire::instrument_future_on(
                         "roam.call.await_response",
                         request_entity_handle,
                         response_rx.recv(),

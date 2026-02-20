@@ -3,51 +3,51 @@
 use std::future::Future;
 use std::time::Duration;
 
-// Re-export peeps Mutex (tokio::sync::Mutex is banned — causes deadlocks)
-pub use peeps::Mutex;
+// Re-export moire Mutex (tokio::sync::Mutex is banned — causes deadlocks)
+pub use moire::Mutex;
 
-// Re-export peeps channel types
-pub use peeps::{
+// Re-export moire channel types
+pub use moire::{
     OneshotReceiver, OneshotSender, Receiver, Sender, UnboundedReceiver, UnboundedSender,
 };
 
-// Re-export tokio error types (peeps uses the same ones)
+// Re-export tokio error types (moire uses the same ones)
 pub use tokio::sync::mpsc::error::SendError;
 
 /// Create a bounded mpsc channel.
 pub fn channel<T>(name: impl Into<String>, buffer: usize) -> (Sender<T>, Receiver<T>) {
     #[allow(deprecated)]
-    peeps::channel(name, buffer, peeps::Source::caller())
+    moire::channel(name, buffer, moire::Source::caller())
 }
 
 /// Create a bounded mpsc channel.
 pub fn bounded<T>(name: impl Into<String>, buffer: usize) -> (Sender<T>, Receiver<T>) {
     #[allow(deprecated)]
-    peeps::channel(name, buffer, peeps::Source::caller())
+    moire::channel(name, buffer, moire::Source::caller())
 }
 
 /// Create an unbounded mpsc channel.
 pub fn unbounded<T>(name: impl Into<String>) -> (UnboundedSender<T>, UnboundedReceiver<T>) {
     #[allow(deprecated)]
-    peeps::unbounded_channel(name, peeps::Source::caller())
+    moire::unbounded_channel(name, moire::Source::caller())
 }
 
 /// Create an unbounded mpsc channel.
 pub fn unbounded_channel<T>(name: impl Into<String>) -> (UnboundedSender<T>, UnboundedReceiver<T>) {
     #[allow(deprecated)]
-    peeps::unbounded_channel(name, peeps::Source::caller())
+    moire::unbounded_channel(name, moire::Source::caller())
 }
 
 /// Create a oneshot channel.
 pub fn oneshot<T>(name: impl Into<String>) -> (OneshotSender<T>, OneshotReceiver<T>) {
     #[allow(deprecated)]
-    peeps::oneshot_channel(name, peeps::Source::caller())
+    moire::oneshot_channel(name, moire::Source::caller())
 }
 
 /// Create a oneshot channel.
 pub fn oneshot_channel<T>(name: impl Into<String>) -> (OneshotSender<T>, OneshotReceiver<T>) {
     #[allow(deprecated)]
-    peeps::oneshot_channel(name, peeps::Source::caller())
+    moire::oneshot_channel(name, moire::Source::caller())
 }
 
 /// Handle that can be used to abort a spawned task.
@@ -79,7 +79,7 @@ where
     F: Future + Send + 'static,
     F::Output: Send + 'static,
 {
-    peeps::spawn_tracked!(name, future)
+    moire::spawn_tracked!(name, future)
 }
 
 /// Spawn a task and return an abort handle that can be used to cancel it.
@@ -91,7 +91,7 @@ pub fn spawn_with_abort<F>(name: &'static str, future: F) -> AbortHandle
 where
     F: Future<Output = ()> + Send + 'static,
 {
-    let handle = peeps::spawn_tracked!(name, future);
+    let handle = moire::spawn_tracked!(name, future);
     AbortHandle(handle.abort_handle())
 }
 
@@ -99,7 +99,7 @@ where
 #[track_caller]
 pub fn sleep(duration: Duration, label: impl Into<String>) -> impl Future<Output = ()> {
     #[allow(deprecated)]
-    peeps::sleep(duration, label)
+    moire::sleep(duration, label)
 }
 
 /// Run a future with a timeout.
@@ -118,6 +118,6 @@ where
 {
     #[allow(deprecated)]
     async move {
-        (peeps::timeout(duration, future, label).await).ok()
+        (moire::timeout(duration, future, label).await).ok()
     }
 }

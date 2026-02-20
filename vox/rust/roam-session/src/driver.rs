@@ -38,7 +38,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use facet::Facet;
 
-use crate::peeps::prelude::*;
+use crate::moire::prelude::*;
 #[cfg(feature = "diagnostics")]
 use crate::request_response_spy::{RequestResponseSpy, ResponseOutcome, TypedResponseHandle};
 use crate::runtime::{Mutex, Receiver, channel, sleep, spawn, spawn_with_abort};
@@ -195,7 +195,7 @@ impl HandshakeConfig {
         }
         if let Some(ref correlation_id) = self.connection_correlation_id {
             metadata.push((
-                crate::PEEPS_CONNECTION_CORRELATION_ID_METADATA_KEY.to_string(),
+                crate::MOIRE_CONNECTION_CORRELATION_ID_METADATA_KEY.to_string(),
                 roam_wire::MetadataValue::String(correlation_id.clone()),
                 0,
             ));
@@ -685,7 +685,7 @@ where
         args_ptr: crate::SendPtr,
         args_plan: &'static std::sync::Arc<crate::RpcPlan>,
         metadata: roam_wire::Metadata,
-        source: peeps::SourceId,
+        source: moire::SourceId,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send {
         // Capture self for use in async block
         let this = self.clone();
@@ -760,7 +760,7 @@ where
         args_ptr: crate::SendPtr,
         args_plan: &'static std::sync::Arc<crate::RpcPlan>,
         metadata: roam_wire::Metadata,
-        source: peeps::SourceId,
+        source: moire::SourceId,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> {
         // Capture self for use in async block
         let this = self.clone();
@@ -900,7 +900,7 @@ struct PendingResponse {
     #[cfg(not(target_arch = "wasm32"))]
     warned_stale: bool,
     #[cfg(feature = "diagnostics")]
-    tx_handle: peeps::EntityHandle,
+    tx_handle: moire::EntityHandle,
     tx: crate::runtime::OneshotSender<Result<ResponseData, TransportError>>,
 }
 
@@ -1036,13 +1036,13 @@ fn task_context_from_metadata(metadata: &roam_wire::Metadata) -> (Option<u64>, O
     let mut task_id = None;
     let mut task_name = None;
     for (key, value, _flags) in metadata {
-        if key == crate::PEEPS_TASK_ID_METADATA_KEY {
+        if key == crate::MOIRE_TASK_ID_METADATA_KEY {
             task_id = match value {
                 roam_wire::MetadataValue::U64(id) => Some(*id),
                 roam_wire::MetadataValue::String(s) => s.parse::<u64>().ok(),
                 roam_wire::MetadataValue::Bytes(_) => None,
             };
-        } else if key == crate::PEEPS_TASK_NAME_METADATA_KEY {
+        } else if key == crate::MOIRE_TASK_NAME_METADATA_KEY {
             task_name = match value {
                 roam_wire::MetadataValue::String(name) => Some(name.clone()),
                 roam_wire::MetadataValue::U64(id) => Some(id.to_string()),
@@ -1307,7 +1307,7 @@ where
                     payload,
                 };
                 #[cfg(feature = "diagnostics")]
-                peeps::instrument_future_on(
+                moire::instrument_future_on(
                     "roam.driver.send_request",
                     self.driver_rx.handle(),
                     self.io.send(&req),
@@ -1625,7 +1625,7 @@ where
                         #[cfg(feature = "diagnostics")]
                         let response_outcome = response_outcome_from_payload(&payload);
                         #[cfg(feature = "diagnostics")]
-                        let send_result = peeps::instrument_future_on(
+                        let send_result = moire::instrument_future_on(
                             "roam.driver.deliver_response",
                             &pending_response.tx_handle,
                             async {
@@ -1837,7 +1837,7 @@ where
 
             #[cfg(feature = "diagnostics")]
             if let Some(response_entity_handle) = response_entity_handle.as_ref() {
-                peeps::instrument_future_on(
+                moire::instrument_future_on(
                     "roam.driver.run_handler",
                     response_entity_handle,
                     run_handler,
@@ -2041,11 +2041,11 @@ where
         let Some(method_name) = diag.inflight_request_metadata_string(
             conn_id.raw(),
             request_id,
-            crate::PEEPS_METHOD_NAME_METADATA_KEY,
+            crate::MOIRE_METHOD_NAME_METADATA_KEY,
         ) else {
             error!(
                 conn_id = conn_id.raw(),
-                request_id, "missing required metadata peeps.method_name"
+                request_id, "missing required metadata moire.method_name"
             );
             return Err(self
                 .goodbye("diagnostics.response.missing-method-name")
@@ -2055,11 +2055,11 @@ where
         let Some(request_entity_id) = diag.inflight_request_metadata_string(
             conn_id.raw(),
             request_id,
-            crate::PEEPS_REQUEST_ENTITY_ID_METADATA_KEY,
+            crate::MOIRE_REQUEST_ENTITY_ID_METADATA_KEY,
         ) else {
             error!(
                 conn_id = conn_id.raw(),
-                request_id, "missing required metadata peeps.request_entity_id"
+                request_id, "missing required metadata moire.request_entity_id"
             );
             return Err(self
                 .goodbye("diagnostics.response.missing-request-entity-id")
@@ -2080,11 +2080,11 @@ where
             return Ok(None);
         };
 
-        let Some(method_name) = metadata_string(metadata, crate::PEEPS_METHOD_NAME_METADATA_KEY)
+        let Some(method_name) = metadata_string(metadata, crate::MOIRE_METHOD_NAME_METADATA_KEY)
         else {
             error!(
                 method_id,
-                "missing required metadata peeps.method_name on incoming request"
+                "missing required metadata moire.method_name on incoming request"
             );
             return Err(self
                 .goodbye("diagnostics.response.missing-method-name")
@@ -2092,11 +2092,11 @@ where
         };
 
         let Some(request_entity_id) =
-            metadata_string(metadata, crate::PEEPS_REQUEST_ENTITY_ID_METADATA_KEY)
+            metadata_string(metadata, crate::MOIRE_REQUEST_ENTITY_ID_METADATA_KEY)
         else {
             error!(
                 method_id,
-                "missing required metadata peeps.request_entity_id on incoming request"
+                "missing required metadata moire.request_entity_id on incoming request"
             );
             return Err(self
                 .goodbye("diagnostics.response.missing-request-entity-id")
@@ -2113,10 +2113,10 @@ where
         request_entity_id: &str,
     ) -> TypedResponseHandle {
         let (service_name, method_name) = split_method_parts(full_method_name.as_str());
-        let response_body = peeps_types::ResponseEntity {
+        let response_body = moire_types::ResponseEntity {
             service_name: String::from(service_name),
             method_name: String::from(method_name),
-            status: peeps_types::ResponseStatus::Pending,
+            status: moire_types::ResponseStatus::Pending,
         };
         diag.emit_response_node(
             full_method_name,
@@ -2357,7 +2357,7 @@ where
                     });
                 let correlation_id = metadata
                     .iter()
-                    .find(|(k, _, _)| k == crate::PEEPS_CONNECTION_CORRELATION_ID_METADATA_KEY)
+                    .find(|(k, _, _)| k == crate::MOIRE_CONNECTION_CORRELATION_ID_METADATA_KEY)
                     .and_then(|(_, v, _)| match v {
                         roam_wire::MetadataValue::String(s) => Some(s.clone()),
                         _ => None,

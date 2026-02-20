@@ -60,10 +60,10 @@ roam-websocket = { path = "rust/roam-websocket", version = "3.0.0" }
 shm-primitives = { path = "rust/shm-primitives", version = "3.0.0", default-features = false }
 ur-taking-me-with-you = { path = "rust/ur-taking-me-with-you", version = "3.0.0" }
 roam-task-local = { path = "rust/roam-task-local", version = "3.0.0" }
-peeps = { version = "0.1.0", git = "https://github.com/bearcove/peeps", branch = "main", features = [
+moire = { version = "0.1.0", git = "https://github.com/bearcove/moire", branch = "main", features = [
   "diagnostics",
 ] }
-peeps-types = { version = "0.1.0", git = "https://github.com/bearcove/peeps", branch = "main" }
+moire-types = { version = "0.1.0", git = "https://github.com/bearcove/moire", branch = "main" }
 
 bytes = "1"
 blake3 = "1.8"
@@ -116,10 +116,10 @@ ulid = "1"
 # facet-value = { path = "../facet/facet-value" }
 # facet-testhelpers = { path = "../facet/facet-testhelpers" }
 
-# Uncomment to develop peeps
-[patch."https://github.com/bearcove/peeps"]
-peeps = { path = "../peeps/crates/peeps" }
-peeps-types = { path = "../peeps/crates/peeps-types" }
+# Uncomment to develop moire
+[patch."https://github.com/bearcove/moire"]
+moire = { path = "../moire/crates/moire" }
+moire-types = { path = "../moire/crates/moire-types" }
 
 [profile.release]
 debug = 1

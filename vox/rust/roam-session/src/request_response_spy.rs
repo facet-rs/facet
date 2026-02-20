@@ -12,12 +12,12 @@ pub enum ResponseOutcome {
 #[derive(Clone, Default)]
 pub struct TypedRequestHandle {
     #[cfg(feature = "diagnostics")]
-    inner: Option<peeps::RpcRequestHandle>,
+    inner: Option<moire::RpcRequestHandle>,
 }
 
 impl TypedRequestHandle {
     #[cfg(feature = "diagnostics")]
-    fn from_inner(inner: peeps::RpcRequestHandle) -> Self {
+    fn from_inner(inner: moire::RpcRequestHandle) -> Self {
         Self { inner: Some(inner) }
     }
 
@@ -32,7 +32,7 @@ impl TypedRequestHandle {
         }
     }
 
-    pub fn entity_handle(&self) -> Option<peeps::EntityHandle> {
+    pub fn entity_handle(&self) -> Option<moire::EntityHandle> {
         #[cfg(feature = "diagnostics")]
         {
             return self.inner.as_ref().map(|h| h.handle().clone());
@@ -47,12 +47,12 @@ impl TypedRequestHandle {
 #[derive(Clone, Default)]
 pub struct TypedResponseHandle {
     #[cfg(feature = "diagnostics")]
-    inner: Option<peeps::EntityHandle<peeps_types::Response>>,
+    inner: Option<moire::EntityHandle<moire_types::Response>>,
 }
 
 impl TypedResponseHandle {
     #[cfg(feature = "diagnostics")]
-    fn from_inner(inner: peeps::EntityHandle<peeps_types::Response>) -> Self {
+    fn from_inner(inner: moire::EntityHandle<moire_types::Response>) -> Self {
         Self { inner: Some(inner) }
     }
 
@@ -75,18 +75,18 @@ impl TypedResponseHandle {
             let _ = handle.mutate(|body| {
                 body.status = match outcome {
                     ResponseOutcome::Ok => {
-                        peeps_types::ResponseStatus::Ok(peeps_types::Json::new("null"))
+                        moire_types::ResponseStatus::Ok(moire_types::Json::new("null"))
                     }
-                    ResponseOutcome::Error => peeps_types::ResponseStatus::Error(
-                        peeps_types::ResponseError::Internal(String::from("error")),
+                    ResponseOutcome::Error => moire_types::ResponseStatus::Error(
+                        moire_types::ResponseError::Internal(String::from("error")),
                     ),
-                    ResponseOutcome::Cancelled => peeps_types::ResponseStatus::Cancelled,
+                    ResponseOutcome::Cancelled => moire_types::ResponseStatus::Cancelled,
                 };
             });
         }
     }
 
-    pub fn entity_handle(&self) -> Option<peeps::EntityHandle<peeps_types::Response>> {
+    pub fn entity_handle(&self) -> Option<moire::EntityHandle<moire_types::Response>> {
         #[cfg(feature = "diagnostics")]
         {
             return self.inner.clone();
@@ -106,14 +106,14 @@ pub trait RequestResponseSpy {
     fn emit_request_node(
         &self,
         full_method_name: String,
-        body: peeps_types::RequestEntity,
-        source: peeps::SourceId,
+        body: moire_types::RequestEntity,
+        source: moire::SourceId,
     ) -> TypedRequestHandle;
     fn emit_response_node(
         &self,
         full_method_name: String,
-        body: peeps_types::ResponseEntity,
-        source: peeps::SourceId,
+        body: moire_types::ResponseEntity,
+        source: moire::SourceId,
         request_wire_id: Option<&str>,
     ) -> TypedResponseHandle;
 }
@@ -149,12 +149,12 @@ impl RequestResponseSpy for DiagnosticState {
     fn emit_request_node(
         &self,
         full_method_name: String,
-        body: peeps_types::RequestEntity,
-        source: peeps::SourceId,
+        body: moire_types::RequestEntity,
+        source: moire::SourceId,
     ) -> TypedRequestHandle {
         let _ = self.ensure_connection_context();
         self.refresh_connection_context_if_dirty();
-        let request = peeps::rpc_request_with_body(full_method_name, body, source);
+        let request = moire::rpc_request_with_body(full_method_name, body, source);
         self.link_entity_to_connection_scope(request.handle());
         TypedRequestHandle::from_inner(request)
     }
@@ -163,17 +163,17 @@ impl RequestResponseSpy for DiagnosticState {
     fn emit_response_node(
         &self,
         full_method_name: String,
-        body: peeps_types::ResponseEntity,
-        source: peeps::SourceId,
+        body: moire_types::ResponseEntity,
+        source: moire::SourceId,
         request_wire_id: Option<&str>,
     ) -> TypedResponseHandle {
         let _ = self.ensure_connection_context();
         self.refresh_connection_context_if_dirty();
         let response = if let Some(request_wire_id) = request_wire_id {
-            let request_ref = peeps::entity_ref_from_wire(request_wire_id.to_owned());
-            peeps::rpc_response_for_with_body(full_method_name, &request_ref, body, source)
+            let request_ref = moire::entity_ref_from_wire(request_wire_id.to_owned());
+            moire::rpc_response_for_with_body(full_method_name, &request_ref, body, source)
         } else {
-            peeps::rpc_response_with_body(full_method_name, body, source)
+            moire::rpc_response_with_body(full_method_name, body, source)
         };
         self.link_entity_to_connection_scope(&response);
         TypedResponseHandle::from_inner(response)
@@ -200,8 +200,8 @@ impl RequestResponseSpy for DiagnosticState {
     fn emit_request_node(
         &self,
         _full_method_name: String,
-        _body: peeps_types::RequestEntity,
-        _source: peeps::SourceId,
+        _body: moire_types::RequestEntity,
+        _source: moire::SourceId,
     ) -> TypedRequestHandle {
         TypedRequestHandle::default()
     }
@@ -210,8 +210,8 @@ impl RequestResponseSpy for DiagnosticState {
     fn emit_response_node(
         &self,
         _full_method_name: String,
-        _body: peeps_types::ResponseEntity,
-        _source: peeps::SourceId,
+        _body: moire_types::ResponseEntity,
+        _source: moire::SourceId,
         _request_wire_id: Option<&str>,
     ) -> TypedResponseHandle {
         TypedResponseHandle::default()

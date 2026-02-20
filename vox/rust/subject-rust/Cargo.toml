@@ -16,6 +16,6 @@ roam = { path = "../roam" }
 roam-stream = { path = "../roam-stream" }
 spec-proto = { path = "../../spec/spec-proto" }
 tokio = { workspace = true, features = ["rt"] }
-peeps.workspace = true
+moire.workspace = true
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

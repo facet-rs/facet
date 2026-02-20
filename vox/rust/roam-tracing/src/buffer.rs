@@ -3,8 +3,8 @@
 //! Provides a thread-safe, bounded buffer that drops oldest entries
 //! when full. This ensures tracing never blocks the application.
 
-use peeps::Mutex;
-use peeps::Notify;
+use moire::Mutex;
+use moire::Notify;
 use std::collections::VecDeque;
 
 /// A lossy bounded buffer that drops oldest entries when full.
@@ -28,7 +28,7 @@ impl<T> LossyBuffer<T> {
         Self {
             inner: Mutex::new("LossyBuffer.inner", VecDeque::with_capacity(capacity)),
             capacity,
-            notify: peeps::notify!("LossyBuffer.notify"),
+            notify: moire::notify!("LossyBuffer.notify"),
         }
     }
 

@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use crate::peeps::prelude::*;
+use crate::moire::prelude::*;
 use crate::{
     ChannelRegistry, ConnectionHandle, Context, DriverMessage, IncomingChannelMessage,
     ServiceDispatcher, TransportError,
@@ -81,7 +81,7 @@ impl ServiceDispatcher for ForwardingDispatcher {
                 .iter()
                 .find_map(|(k, v, _)| match (k.as_str(), v) {
                     (
-                        crate::PEEPS_METHOD_NAME_METADATA_KEY,
+                        crate::MOIRE_METHOD_NAME_METADATA_KEY,
                         roam_wire::MetadataValue::String(s),
                     ) => Some(s.clone()),
                     _ => None,

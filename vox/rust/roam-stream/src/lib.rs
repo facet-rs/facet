@@ -46,7 +46,7 @@
 //! let response = service.echo("hello").await?;
 //! ```
 
-::peeps::facade!();
+::moire::facade!();
 
 mod driver;
 mod framing;
