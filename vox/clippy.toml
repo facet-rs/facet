@@ -1,9 +1,7 @@
 disallowed-types = [
-  { path = "tokio::sync::Mutex", reason = "async mutexes cause deadlocks — use std::sync::Mutex or parking_lot::Mutex instead" },
-  { path = "tokio::sync::RwLock", reason = "async RwLocks cause deadlocks — use Mutex instead" },
-  { path = "std::sync::RwLock", reason = "RwLocks are banned — use Mutex instead" },
-  { path = "parking_lot::RwLock", reason = "RwLocks are banned — use Mutex instead" },
-  { path = "moire::AsyncMutex", reason = "async mutexes cause deadlocks — use moire::Mutex instead" },
-  { path = "moire::AsyncRwLock", reason = "async RwLocks cause deadlocks — use moire::Mutex instead" },
-  { path = "moire::RwLock", reason = "RwLocks are banned — use moire::Mutex instead" },
+  { path = "tokio::sync::Mutex", reason = "Use moire wrappers" },
+  { path = "tokio::sync::RwLock", reason = "Use moire wrappers" },
+
+  { path = "std::sync::RwLock", reason = "Use moire wrappers" },
+  { path = "parking_lot::RwLock", reason = "Use moire wrappers" },
 ]

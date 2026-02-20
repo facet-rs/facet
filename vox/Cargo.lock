@@ -2550,7 +2550,6 @@ dependencies = [
 name = "roam-session"
 version = "3.0.0"
 dependencies = [
- "async-channel",
  "facet",
  "facet-core",
  "facet-format",
@@ -2559,9 +2558,7 @@ dependencies = [
  "facet-postcard",
  "facet-pretty",
  "facet-reflect",
- "futures-channel",
  "futures-util",
- "gloo-timers",
  "moire",
  "moire-types",
  "roam",

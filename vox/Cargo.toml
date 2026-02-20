@@ -54,7 +54,6 @@ roam-schema = { path = "rust/roam-schema", version = "3.0.0" }
 roam-wire = { path = "rust/roam-wire", version = "3.0.0" }
 roam-session = { path = "rust/roam-session", version = "3.0.0" }
 roam-stream = { path = "rust/roam-stream", version = "3.0.0" }
-roam-memory = { path = "rust/roam-memory", version = "3.0.0" }
 roam-tracing = { path = "rust/roam-tracing", version = "3.0.0" }
 roam-codegen = { path = "rust/roam-codegen", version = "3.0.0" }
 roam-websocket = { path = "rust/roam-websocket", version = "3.0.0" }
@@ -90,12 +89,9 @@ facet-cargo-toml = { version = "0.43.0", git = "https://github.com/bearcove/face
 
 # Futures utilities
 futures-util = "0.3"
-futures-channel = "0.3"
-async-channel = "2.5"
 
 # WASM support
 wasm-bindgen-futures = "0.4"
-gloo-timers = { version = "0.3", features = ["futures"] }
 
 # Tracing
 tracing = "0.1"

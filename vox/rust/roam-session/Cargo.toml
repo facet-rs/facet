@@ -45,13 +45,10 @@ futures-util = { version = "0.3", default-features = false, features = [
 # WASM runtime
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures.workspace = true
-async-channel.workspace = true
-futures-channel.workspace = true
 futures-util = { version = "0.3", default-features = false, features = [
   "std",
   "async-await-macro",
 ] }
-gloo-timers.workspace = true
 
 [dev-dependencies]
 roam.workspace = true
