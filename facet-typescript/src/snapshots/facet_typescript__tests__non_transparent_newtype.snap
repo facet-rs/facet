@@ -1,0 +1,9 @@
+---
+source: facet-typescript/src/lib.rs
+expression: out
+---
+export interface Envelope {
+  id: BacktraceId;
+}
+
+export type BacktraceId = [number];
