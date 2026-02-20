@@ -690,7 +690,6 @@ impl ConnectionHandle {
         let args_debug_str = args_debug.as_deref().unwrap_or("").to_string();
 
         #[cfg(feature = "diagnostics")]
-        #[expect(clippy::manual_map, reason = "for track_caller compat")]
         let request_handle = if let Some(diag) = self.shared.diagnostic_state.as_deref() {
             let (service_name, method_name_only) = Self::split_method_parts(method_name);
             let args_json = if args_debug_str.is_empty() {
