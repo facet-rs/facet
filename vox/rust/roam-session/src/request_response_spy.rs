@@ -28,7 +28,7 @@ impl TypedRequestHandle {
     pub fn id_for_wire(&self) -> Option<String> {
         #[cfg(feature = "diagnostics")]
         {
-            return self.wire_id.clone();
+            self.wire_id.clone()
         }
         #[cfg(not(feature = "diagnostics"))]
         {

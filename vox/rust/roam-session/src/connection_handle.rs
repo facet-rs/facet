@@ -821,9 +821,7 @@ impl ConnectionHandle {
                 .map_err(|_| TransportError::ConnectionClosed)
         };
 
-        let result = call_fut.await;
-
-        result
+        call_fut.await
     }
 
     /// Open a new virtual connection on the link.
