@@ -1,4 +1,4 @@
-// Tracey configuration for roam
+@schema {id crate:tracey-config@1, cli tracey}
 
 specs (
     {

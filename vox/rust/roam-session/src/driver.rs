@@ -2275,10 +2275,16 @@ where
         }
     };
 
+    struct HelloParams {
+        max_payload_size: u32,
+        initial_channel_credit: u32,
+        max_concurrent_requests: u32,
+        name: Option<String>,
+        correlation_id: Option<String>,
+    }
+
     // Extract (max_payload, credit, max_concurrent, peer_name, correlation_id) from a Hello.
-    fn hello_params(
-        hello: &Hello,
-    ) -> Result<(u32, u32, u32, Option<String>, Option<String>), ConnectionError> {
+    fn hello_params(hello: &Hello) -> Result<HelloParams, ConnectionError> {
         match hello {
             Hello::V6 {
                 max_payload_size,
@@ -2300,22 +2306,32 @@ where
                         roam_wire::MetadataValue::String(s) => Some(s.clone()),
                         _ => None,
                     });
-                Ok((
-                    *max_payload_size,
-                    *initial_channel_credit,
-                    *max_concurrent_requests,
+                Ok(HelloParams {
+                    max_payload_size: *max_payload_size,
+                    initial_channel_credit: *initial_channel_credit,
+                    max_concurrent_requests: *max_concurrent_requests,
                     name,
                     correlation_id,
-                ))
+                })
             }
             _ => Err(ConnectionError::UnsupportedProtocolVersion),
         }
     }
 
-    let (our_max, our_credit, our_max_concurrent_requests, our_name, our_correlation_id) =
-        hello_params(&our_hello)?;
-    let (peer_max, peer_credit, peer_max_concurrent_requests, peer_name, peer_correlation_id) =
-        hello_params(&peer_hello)?;
+    let HelloParams {
+        max_payload_size: our_max,
+        initial_channel_credit: our_credit,
+        max_concurrent_requests: our_max_concurrent_requests,
+        name: our_name,
+        correlation_id: our_correlation_id,
+    } = hello_params(&our_hello)?;
+    let HelloParams {
+        max_payload_size: peer_max,
+        initial_channel_credit: peer_credit,
+        max_concurrent_requests: peer_max_concurrent_requests,
+        name: peer_name,
+        correlation_id: peer_correlation_id,
+    } = hello_params(&peer_hello)?;
     #[cfg(not(feature = "diagnostics"))]
     let _ = &our_name;
 
