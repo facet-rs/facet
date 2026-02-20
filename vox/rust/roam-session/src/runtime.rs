@@ -105,6 +105,6 @@ where
 {
     async move {
         let _ = label.into();
-        moire::time::timeout(duration, future).await
+        moire::time::timeout(duration, future).await.ok()
     }
 }

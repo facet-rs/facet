@@ -1,0 +1,22 @@
+[package]
+name = "roam-memory"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "In-memory message transport for roam RPC"
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[dependencies]
+roam-session.workspace = true
+roam-wire.workspace = true
+tokio = { workspace = true, features = ["sync", "time"] }
+moire.workspace = true
+
+[dev-dependencies]
+roam = { path = "../roam" }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

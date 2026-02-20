@@ -2503,6 +2503,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "roam-memory"
+version = "3.0.0"
+dependencies = [
+ "moire",
+ "roam",
+ "roam-session",
+ "roam-wire",
+ "tokio",
+]
+
+[[package]]
 name = "roam-miri-test"
 version = "3.0.0"
 dependencies = [

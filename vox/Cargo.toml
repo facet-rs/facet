@@ -14,6 +14,7 @@ members = [
   "rust/roam-macros",
   "rust/roam-macros-parse",
   "rust/roam-stream",
+  "rust/roam-memory",
   "rust/roam-local",
   "rust/roam-fdpass",
   "rust/roam-websocket",
@@ -53,6 +54,7 @@ roam-schema = { path = "rust/roam-schema", version = "3.0.0" }
 roam-wire = { path = "rust/roam-wire", version = "3.0.0" }
 roam-session = { path = "rust/roam-session", version = "3.0.0" }
 roam-stream = { path = "rust/roam-stream", version = "3.0.0" }
+roam-memory = { path = "rust/roam-memory", version = "3.0.0" }
 roam-tracing = { path = "rust/roam-tracing", version = "3.0.0" }
 roam-codegen = { path = "rust/roam-codegen", version = "3.0.0" }
 roam-websocket = { path = "rust/roam-websocket", version = "3.0.0" }
