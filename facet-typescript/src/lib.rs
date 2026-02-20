@@ -409,16 +409,6 @@ impl TypeScriptGenerator {
                 )
                 .unwrap();
             }
-            StructKind::TupleStruct if fields.len() == 1 => {
-                // Newtype - type alias to inner
-                let inner_type = self.type_for_shape(fields[0].shape.get());
-                writeln!(
-                    self.output,
-                    "export type {} = {};",
-                    exported_shape.type_identifier, inner_type
-                )
-                .unwrap();
-            }
             StructKind::TupleStruct | StructKind::Tuple => {
                 // Tuple as array type
                 let types: Vec<String> = fields
@@ -1548,5 +1538,40 @@ mod tests {
 
         let ts = to_typescript::<WithChronoDate>();
         insta::assert_snapshot!(ts);
+    }
+
+    #[test]
+    fn test_non_transparent_newtype_is_not_scalar_alias() {
+        #[derive(Facet)]
+        struct Envelope {
+            id: BacktraceId,
+        }
+
+        #[derive(Facet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        struct BacktraceId(u64);
+
+        let mut ts_gen = TypeScriptGenerator::new();
+        ts_gen.add_type::<Envelope>();
+        let out = ts_gen.finish();
+
+        assert!(
+            !out.contains("export type BacktraceId = number;"),
+            "bug: non-transparent tuple newtype generated scalar alias:\n{out}"
+        );
+        insta::assert_snapshot!("non_transparent_newtype", out);
+    }
+
+    #[test]
+    fn test_transparent_newtype_is_scalar_alias() {
+        #[derive(Facet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        #[facet(transparent)]
+        struct TransparentId(u64);
+
+        let ts = to_typescript::<TransparentId>();
+        assert!(
+            ts.contains("export type TransparentId = number;"),
+            "bug: transparent tuple newtype did not generate scalar alias:\n{ts}"
+        );
+        insta::assert_snapshot!("transparent_newtype", ts);
     }
 }
