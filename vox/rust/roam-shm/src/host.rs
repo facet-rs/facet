@@ -52,6 +52,14 @@ pub struct PollResult {
     /// The caller should ring the doorbell for each peer in this list to wake up
     /// guests that may be waiting for slots to become available (backpressure).
     pub slots_freed_for: Vec<PeerId>,
+
+    /// Peers whose G2H ring bytes were consumed during this poll.
+    ///
+    /// Per `r[shm.wakeup.producer-wait]`, the consumer (host) must signal the
+    /// doorbell after releasing bytes so that a guest blocked on `RingFull` can
+    /// retry. This includes ALL consumed messages (inline and slot-ref), not
+    /// just slot-ref messages tracked by `slots_freed_for`.
+    pub ring_consumed_from: Vec<PeerId>,
 }
 
 /// Backing memory for a SHM segment.
@@ -451,6 +459,7 @@ impl ShmHost {
             // Read frames from the G2H BipBuffer
             // shm[impl shm.ordering.ring-consume]
             let g2h = unsafe { self.g2h_bipbuf(peer_id) };
+            let mut consumed_bytes = false;
 
             loop {
                 let Some(readable) = g2h.try_read() else {
@@ -509,7 +518,16 @@ impl ShmHost {
                 }
 
                 // Release the consumed frame bytes
+                // shm[impl shm.wakeup.producer-wait]
                 g2h.release(total_len as u32);
+                consumed_bytes = true;
+            }
+
+            // Track peers whose G2H ring we consumed from, so the caller
+            // can signal the doorbell to wake guests blocked on RingFull.
+            // shm[impl shm.wakeup.producer-wait]
+            if consumed_bytes && !result.ring_consumed_from.contains(&peer_id) {
+                result.ring_consumed_from.push(peer_id);
             }
 
             // Update guest state

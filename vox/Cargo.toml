@@ -59,9 +59,7 @@ roam-websocket = { path = "rust/roam-websocket", version = "3.0.0" }
 shm-primitives = { path = "rust/shm-primitives", version = "3.0.0", default-features = false }
 ur-taking-me-with-you = { path = "rust/ur-taking-me-with-you", version = "3.0.0" }
 roam-task-local = { path = "rust/roam-task-local", version = "3.0.0" }
-moire = { version = "0.1.0", git = "https://github.com/bearcove/moire", branch = "main", features = [
-  "diagnostics",
-] }
+moire = { version = "0.1.0", git = "https://github.com/bearcove/moire", branch = "main" }
 moire-types = { version = "0.1.0", git = "https://github.com/bearcove/moire", branch = "main" }
 
 bytes = "1"

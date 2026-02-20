@@ -11,6 +11,9 @@ slow-timeout = { period = "60s" }
 [profile.loom]
 slow-timeout = { period = "10s", terminate-after = 3 }
 
+[profile.patient]
+slow-timeout = { period = "30s", terminate-after = 4 }
+
 [profile.default]
 # Fail fast - stop on first failure
 fail-fast = true

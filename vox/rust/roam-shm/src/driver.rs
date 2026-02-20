@@ -1956,6 +1956,8 @@ impl MultiPeerHostDriver {
         loop {
             trace!("top of loop, peers={}", self.peers.len());
             tokio::select! {
+                biased;
+
                 // Control commands (add peers dynamically)
                 Some(cmd) = self.control_rx.recv() => {
                     trace!("MultiPeerHostDriver: received control command");
@@ -1977,9 +1979,12 @@ impl MultiPeerHostDriver {
                     let result = self.host.poll();
                     trace!("MultiPeerHostDriver: poll returned {} messages", result.messages.len());
 
-                    // Ring doorbells for guests whose slots were freed (backpressure wakeup)
-                    for freed_peer_id in result.slots_freed_for {
-                        if let Some(doorbell) = self.doorbells.get(&freed_peer_id) {
+                    // Ring doorbells for guests whose G2H ring bytes were consumed.
+                    // Per r[shm.wakeup.producer-wait], the consumer (host) must signal
+                    // the doorbell after releasing bytes so guests blocked on RingFull
+                    // can retry. ring_consumed_from is a superset of slots_freed_for.
+                    for consumed_peer_id in &result.ring_consumed_from {
+                        if let Some(doorbell) = self.doorbells.get(consumed_peer_id) {
                             doorbell.signal().await;
                         }
                     }
