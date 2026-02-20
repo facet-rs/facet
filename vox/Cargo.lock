@@ -1941,6 +1941,7 @@ version = "0.1.0"
 dependencies = [
  "facet",
  "facet-json",
+ "moire-trace-types",
  "moire-types",
 ]
 

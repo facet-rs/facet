@@ -67,8 +67,8 @@ async fn verify_queuing_order_on_exhaustion() {
     // The second (large) will fail (queued).
     // Then we send a THIRD (small). It MUST be queued (ordering).
 
-    let large_payload = vec![0u8; 1000]; // Assume > 32 bytes (inline limit)
-    let small_payload = vec![0u8; 10]; // Assume <= 32 bytes
+    let large_payload = vec![0u8; 1000]; // clearly larger than overhead
+    let small_payload = vec![0u8; 10]; // clearly smaller than large; overhead is ~116 bytes
 
     // Msg 1: Large (Takes slot)
     // The Guest isn't consuming, so the slot stays allocated!
@@ -121,7 +121,7 @@ async fn verify_queuing_order_on_exhaustion() {
     // Read Msg 1
     let frame1 = guest.recv().expect("Msg 1 missing");
     assert!(
-        frame1.payload_bytes().len() > 100,
+        frame1.payload_bytes().len() > 500,
         "Msg 1 should be large, got {} bytes",
         frame1.payload_bytes().len()
     );
@@ -140,7 +140,7 @@ async fn verify_queuing_order_on_exhaustion() {
     // Check Msg 2
     let frame2 = guest.recv().expect("Msg 2 missing after retry");
     assert!(
-        frame2.payload_bytes().len() > 100,
+        frame2.payload_bytes().len() > 500,
         "Msg 2 should be large, got {} bytes",
         frame2.payload_bytes().len()
     );
@@ -149,7 +149,7 @@ async fn verify_queuing_order_on_exhaustion() {
     // Check Msg 3
     let frame3 = guest.recv().expect("Msg 3 missing after retry");
     assert!(
-        frame3.payload_bytes().len() < 100,
+        frame3.payload_bytes().len() < 500,
         "Msg 3 should be small, got {} bytes",
         frame3.payload_bytes().len()
     );
