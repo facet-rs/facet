@@ -279,7 +279,7 @@ impl ConnectionHandle {
                 channel_registry: crate::runtime::Mutex::new(
                     "ConnectionHandle.channel_registry",
                     channel_registry,
-                    peeps::SourceRight::caller(),
+                    crate::source_id_for_current_crate(),
                 ),
                 diagnostic_state,
                 #[cfg(not(target_arch = "wasm32"))]
@@ -360,7 +360,7 @@ impl ConnectionHandle {
         args: &mut T,
         args_plan: &crate::RpcPlan,
     ) -> Result<ResponseData, TransportError> {
-        let source = peeps::SourceRight::caller();
+        let source = crate::source_id_for_current_crate();
         let args_ptr = args as *mut T as *mut ();
         #[allow(unsafe_code)]
         unsafe {
@@ -390,7 +390,7 @@ impl ConnectionHandle {
         args_plan: &crate::RpcPlan,
         metadata: roam_wire::Metadata,
     ) -> Result<ResponseData, TransportError> {
-        let source = peeps::SourceRight::caller();
+        let source = crate::source_id_for_current_crate();
         let args_ptr = args as *mut T as *mut ();
         #[allow(unsafe_code)]
         unsafe {
@@ -426,7 +426,7 @@ impl ConnectionHandle {
         args_plan: &crate::RpcPlan,
         metadata: roam_wire::Metadata,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send + '_ {
-        let source = peeps::SourceRight::caller();
+        let source = crate::source_id_for_current_crate();
         // SAFETY: Forwarded unchanged; this wrapper only attaches source context.
         unsafe {
             self.call_with_metadata_by_plan_with_source(
@@ -455,7 +455,7 @@ impl ConnectionHandle {
         args_ptr: *mut (),
         args_plan: &crate::RpcPlan,
         metadata: roam_wire::Metadata,
-        source: peeps::SourceRight,
+        source: peeps::SourceId,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send + '_ {
         let args_shape = args_plan.type_plan.root().shape;
 
@@ -630,7 +630,7 @@ impl ConnectionHandle {
         method_name: &str,
         payload: Vec<u8>,
     ) -> Result<Vec<u8>, TransportError> {
-        let source = peeps::SourceRight::caller();
+        let source = crate::source_id_for_current_crate();
         self.call_raw_full(
             method_id,
             method_name,
@@ -656,7 +656,7 @@ impl ConnectionHandle {
         payload: Vec<u8>,
         args_debug: Option<String>,
     ) -> Result<ResponseData, TransportError> {
-        let source = peeps::SourceRight::caller();
+        let source = crate::source_id_for_current_crate();
         self.call_raw_full(
             method_id,
             method_name,
@@ -679,7 +679,7 @@ impl ConnectionHandle {
         payload: Vec<u8>,
         metadata: roam_wire::Metadata,
     ) -> Result<Vec<u8>, TransportError> {
-        let source = peeps::SourceRight::caller();
+        let source = crate::source_id_for_current_crate();
         self.call_raw_full(
             method_id,
             method_name,
@@ -704,7 +704,7 @@ impl ConnectionHandle {
         channels: Vec<u64>,
         payload: Vec<u8>,
         args_debug: Option<String>,
-        source: peeps::SourceRight,
+        source: peeps::SourceId,
     ) -> Result<ResponseData, TransportError> {
         self.call_raw_full_with_drains(
             method_id,
@@ -729,7 +729,7 @@ impl ConnectionHandle {
         payload: Vec<u8>,
         args_debug: Option<String>,
         drains: Vec<(ChannelId, Receiver<IncomingChannelMessage>)>,
-        source: peeps::SourceRight,
+        source: peeps::SourceId,
     ) -> Result<ResponseData, TransportError> {
         #[cfg(not(target_arch = "wasm32"))]
         let _request_permit = self.acquire_request_slot().await?;

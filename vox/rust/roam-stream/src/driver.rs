@@ -21,6 +21,11 @@ use roam_session::{
     RetryPolicy, SendPtr, ServiceDispatcher, TransportError,
 };
 
+#[track_caller]
+fn source_id_here() -> peeps::SourceId {
+    crate::peeps::PEEPS_SOURCE_LEFT.resolve().into()
+}
+
 /// A factory that creates new byte-stream connections on demand.
 ///
 /// Used by [`connect()`] for reconnection. The transport will be wrapped
@@ -87,16 +92,8 @@ where
         config,
         dispatcher,
         retry_policy: RetryPolicy::default(),
-        state: Arc::new(Mutex::new(
-            "Client.state",
-            None,
-            peeps::SourceRight::caller(),
-        )),
-        current_handle: Arc::new(Mutex::new(
-            "Client.current_handle",
-            None,
-            peeps::SourceRight::caller(),
-        )),
+        state: Arc::new(Mutex::new("Client.state", None, source_id_here())),
+        current_handle: Arc::new(Mutex::new("Client.current_handle", None, source_id_here())),
     }
 }
 
@@ -116,16 +113,8 @@ where
         config,
         dispatcher,
         retry_policy,
-        state: Arc::new(Mutex::new(
-            "Client.state",
-            None,
-            peeps::SourceRight::caller(),
-        )),
-        current_handle: Arc::new(Mutex::new(
-            "Client.current_handle",
-            None,
-            peeps::SourceRight::caller(),
-        )),
+        state: Arc::new(Mutex::new("Client.state", None, source_id_here())),
+        current_handle: Arc::new(Mutex::new("Client.current_handle", None, source_id_here())),
     }
 }
 
@@ -346,7 +335,7 @@ where
                     args_ptr,
                     args_plan,
                     metadata.clone(),
-                    peeps::SourceRight::caller(),
+                    source_id_here(),
                 )
                 .await
             };
@@ -399,7 +388,7 @@ where
         args_ptr: SendPtr,
         args_plan: &'static std::sync::Arc<roam_session::RpcPlan>,
         metadata: roam_wire::Metadata,
-        source: peeps::SourceRight,
+        source: peeps::SourceId,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send {
         let this = self.clone();
         let method_name = method_name.to_owned();

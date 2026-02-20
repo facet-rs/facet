@@ -478,14 +478,14 @@ impl DiagnosticState {
                         local_addr: None,
                         peer_addr: None,
                     }),
-                    peeps::SourceRight::caller(),
+                    crate::source_id_for_current_crate(),
                 )
             })
             .clone()
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn link_entity_to_connection_scope(&self, entity: &peeps::EntityHandle) {
+    pub fn link_entity_to_connection_scope<S>(&self, entity: &peeps::EntityHandle<S>) {
         let scope = self.ensure_connection_scope();
         entity.link_to_scope_handle(&scope);
     }

@@ -47,12 +47,12 @@ impl TypedRequestHandle {
 #[derive(Clone, Default)]
 pub struct TypedResponseHandle {
     #[cfg(feature = "diagnostics")]
-    inner: Option<peeps::RpcResponseHandle>,
+    inner: Option<peeps::EntityHandle<peeps_types::Response>>,
 }
 
 impl TypedResponseHandle {
     #[cfg(feature = "diagnostics")]
-    fn from_inner(inner: peeps::RpcResponseHandle) -> Self {
+    fn from_inner(inner: peeps::EntityHandle<peeps_types::Response>) -> Self {
         Self { inner: Some(inner) }
     }
 
@@ -72,18 +72,24 @@ impl TypedResponseHandle {
         let _ = outcome;
         #[cfg(feature = "diagnostics")]
         if let Some(handle) = &self.inner {
-            match outcome {
-                ResponseOutcome::Ok => handle.mark_ok(),
-                ResponseOutcome::Error => handle.mark_error(),
-                ResponseOutcome::Cancelled => handle.mark_cancelled(),
-            }
+            let _ = handle.mutate(|body| {
+                body.status = match outcome {
+                    ResponseOutcome::Ok => {
+                        peeps_types::ResponseStatus::Ok(peeps_types::Json::new("null"))
+                    }
+                    ResponseOutcome::Error => peeps_types::ResponseStatus::Error(
+                        peeps_types::ResponseError::Internal(String::from("error")),
+                    ),
+                    ResponseOutcome::Cancelled => peeps_types::ResponseStatus::Cancelled,
+                };
+            });
         }
     }
 
-    pub fn entity_handle(&self) -> Option<peeps::EntityHandle> {
+    pub fn entity_handle(&self) -> Option<peeps::EntityHandle<peeps_types::Response>> {
         #[cfg(feature = "diagnostics")]
         {
-            return self.inner.as_ref().map(|h| h.handle().clone());
+            return self.inner.clone();
         }
         #[cfg(not(feature = "diagnostics"))]
         {
@@ -101,13 +107,13 @@ pub trait RequestResponseSpy {
         &self,
         full_method_name: String,
         body: peeps_types::RequestEntity,
-        source: peeps::SourceRight,
+        source: peeps::SourceId,
     ) -> TypedRequestHandle;
     fn emit_response_node(
         &self,
         full_method_name: String,
         body: peeps_types::ResponseEntity,
-        source: peeps::SourceRight,
+        source: peeps::SourceId,
         request_wire_id: Option<&str>,
     ) -> TypedResponseHandle;
 }
@@ -144,7 +150,7 @@ impl RequestResponseSpy for DiagnosticState {
         &self,
         full_method_name: String,
         body: peeps_types::RequestEntity,
-        source: peeps::SourceRight,
+        source: peeps::SourceId,
     ) -> TypedRequestHandle {
         let _ = self.ensure_connection_context();
         self.refresh_connection_context_if_dirty();
@@ -158,7 +164,7 @@ impl RequestResponseSpy for DiagnosticState {
         &self,
         full_method_name: String,
         body: peeps_types::ResponseEntity,
-        source: peeps::SourceRight,
+        source: peeps::SourceId,
         request_wire_id: Option<&str>,
     ) -> TypedResponseHandle {
         let _ = self.ensure_connection_context();
@@ -169,7 +175,7 @@ impl RequestResponseSpy for DiagnosticState {
         } else {
             peeps::rpc_response_with_body(full_method_name, body, source)
         };
-        self.link_entity_to_connection_scope(response.handle());
+        self.link_entity_to_connection_scope(&response);
         TypedResponseHandle::from_inner(response)
     }
 }
@@ -195,7 +201,7 @@ impl RequestResponseSpy for DiagnosticState {
         &self,
         _full_method_name: String,
         _body: peeps_types::RequestEntity,
-        _source: peeps::SourceRight,
+        _source: peeps::SourceId,
     ) -> TypedRequestHandle {
         TypedRequestHandle::default()
     }
@@ -205,7 +211,7 @@ impl RequestResponseSpy for DiagnosticState {
         &self,
         _full_method_name: String,
         _body: peeps_types::ResponseEntity,
-        _source: peeps::SourceRight,
+        _source: peeps::SourceId,
         _request_wire_id: Option<&str>,
     ) -> TypedResponseHandle {
         TypedResponseHandle::default()

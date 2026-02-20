@@ -32,11 +32,11 @@ roam-wire.workspace = true
 roam-task-local.workspace = true
 tracing = { workspace = true, optional = true }
 ulid.workspace = true
+peeps.workspace = true
 
 # Native runtime
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio.workspace = true
-peeps.workspace = true
 futures-util = { version = "0.3", default-features = false, features = [
   "std",
   "async-await-macro",

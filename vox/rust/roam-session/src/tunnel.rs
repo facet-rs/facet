@@ -210,13 +210,17 @@ where
     let (reader, writer) = tokio::io::split(stream);
     let Tunnel { tx, rx } = tunnel;
 
-    let read_handle = peeps::spawn_tracked!("roam_tunnel_read", async move {
-        pump_read_to_tx(reader, tx, chunk_size).await
-    });
+    let read_handle = peeps::spawn_tracked(
+        "roam_tunnel_read",
+        async move { pump_read_to_tx(reader, tx, chunk_size).await },
+        crate::source_id_for_current_crate(),
+    );
 
-    let write_handle = peeps::spawn_tracked!("roam_tunnel_write", async move {
-        pump_rx_to_write(rx, writer).await
-    });
+    let write_handle = peeps::spawn_tracked(
+        "roam_tunnel_write",
+        async move { pump_rx_to_write(rx, writer).await },
+        crate::source_id_for_current_crate(),
+    );
 
     (read_handle, write_handle)
 }
