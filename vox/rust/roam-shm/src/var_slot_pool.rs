@@ -747,6 +747,18 @@ impl VarSlotPool {
         }
     }
 
+    /// Get the current state of a slot.
+    ///
+    /// Returns `None` if the handle is invalid.
+    pub fn slot_state(&self, handle: &VarSlotHandle) -> Option<SlotState> {
+        let meta = self.slot_meta_ext(
+            handle.class_idx as usize,
+            handle.extent_idx as usize,
+            handle.slot_idx,
+        )?;
+        Some(meta.state())
+    }
+
     /// Check if a slot has been freed (state is Free or generation has advanced).
     pub fn is_slot_free(&self, handle: &VarSlotHandle) -> bool {
         let Some(meta) = self.slot_meta_ext(

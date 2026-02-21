@@ -7,6 +7,9 @@ rust *args:
     cargo build --package subject-rust
     SUBJECT_CMD="./target/debug/subject-rust" cargo nextest run -p spec-tests {{ quote(args) }}
 
+rust-ffi:
+    cargo build --release -p roam-shm-ffi
+
 ts-typecheck:
     pnpm check
 
@@ -19,6 +22,7 @@ ts *args:
     SUBJECT_CMD="sh typescript/subject/subject-ts.sh" cargo nextest run -p spec-tests {{ quote(args) }}
 
 swift *args:
+    just rust-ffi
     swift build -c release --package-path swift/subject
     SUBJECT_CMD="sh swift/subject/subject-swift.sh" cargo nextest run -p spec-tests {{ quote(args) }}
 

@@ -1,10 +1,5 @@
 import Foundation
-import CRoamShm
-
-@inline(__always)
-func atomicLoadU32Relaxed(_ pointer: UnsafeRawPointer) -> UInt32 {
-    roam_atomic_load_u32_relaxed(pointer.assumingMemoryBound(to: UInt32.self))
-}
+import CRoamShmFfi
 
 @inline(__always)
 func atomicLoadU32Acquire(_ pointer: UnsafeRawPointer) -> UInt32 {

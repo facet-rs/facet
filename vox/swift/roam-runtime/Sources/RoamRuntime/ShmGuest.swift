@@ -1,4 +1,5 @@
 import Foundation
+import CRoamShmFfi
 #if os(macOS)
 import Darwin
 #endif
@@ -45,55 +46,39 @@ public enum ShmVarSlotFreeError: Error, Equatable {
     case invalidIndex
     case generationMismatch(expected: UInt32, actual: UInt32)
     case invalidState(expected: ShmSlotState, actual: ShmSlotState)
+    case ffiError
 }
 
 public final class ShmVarSlotPool: @unchecked Sendable {
     private static let sizeClassHeaderSize = 64
-    private static let varSlotMetaSize = 16
-    private static let freeListEnd = UInt64.max
-    private static let maxExtentsPerClass = 3
 
-    private let baseOffset: Int
-    private let classes: [ShmVarSlotClass]
-    private let extent0MetaOffsets: [Int]
-    private let extent0DataOffsets: [Int]
-
+    private let pool: OpaquePointer
     private var region: ShmRegion
 
     public init(region: ShmRegion, baseOffset: Int, classes: [ShmVarSlotClass]) {
         self.region = region
-        self.baseOffset = baseOffset
-        self.classes = classes
 
-        var metaOffsets: [Int] = []
-        var dataOffsets: [Int] = []
-        metaOffsets.reserveCapacity(classes.count)
-        dataOffsets.reserveCapacity(classes.count)
-
-        var offset = baseOffset + classes.count * Self.sizeClassHeaderSize
-        for cls in classes {
-            offset = alignUp(offset, to: Self.varSlotMetaSize)
-            metaOffsets.append(offset)
-            offset += Int(cls.count) * Self.varSlotMetaSize
-
-            offset = alignUp(offset, to: 64)
-            dataOffsets.append(offset)
-            offset += Int(cls.count) * Int(cls.slotSize)
+        let ffiClasses = classes.map { RoamSizeClass(slot_size: $0.slotSize, count: $0.count) }
+        self.pool = ffiClasses.withUnsafeBufferPointer { buf in
+            roam_var_slot_pool_attach(
+                region.basePointer().assumingMemoryBound(to: UInt8.self),
+                UInt(region.length),
+                UInt64(baseOffset),
+                buf.baseAddress,
+                UInt(buf.count)
+            )!
         }
+    }
 
-        self.extent0MetaOffsets = metaOffsets
-        self.extent0DataOffsets = dataOffsets
+    deinit {
+        roam_var_slot_pool_destroy(pool)
     }
 
     public static func calculateSize(classes: [ShmVarSlotClass]) -> Int {
-        var size = classes.count * sizeClassHeaderSize
-        for cls in classes {
-            size = alignUp(size, to: varSlotMetaSize)
-            size += Int(cls.count) * varSlotMetaSize
-            size = alignUp(size, to: 64)
-            size += Int(cls.count) * Int(cls.slotSize)
+        let ffiClasses = classes.map { RoamSizeClass(slot_size: $0.slotSize, count: $0.count) }
+        return ffiClasses.withUnsafeBufferPointer { buf in
+            Int(roam_var_slot_pool_calculate_size(buf.baseAddress, UInt(buf.count)))
         }
-        return alignUp(size, to: 64)
     }
 
     public static func loadClasses(region: ShmRegion, header: ShmSegmentHeader) throws -> [ShmVarSlotClass] {
@@ -119,339 +104,81 @@ public final class ShmVarSlotPool: @unchecked Sendable {
 
     public func updateRegion(_ region: ShmRegion) {
         self.region = region
+        roam_var_slot_pool_update_region(
+            pool,
+            region.basePointer().assumingMemoryBound(to: UInt8.self),
+            UInt(region.length)
+        )
     }
 
-    public func initialize() throws {
-        for classIdx in classes.indices {
-            try initializeClassHeader(classIdx)
-        }
-
-        for classIdx in classes.indices {
-            try initializeExtentSlots(classIdx: classIdx, extentIdx: 0)
-        }
+    public func initialize() {
+        roam_var_slot_pool_init(pool)
     }
 
-    public func alloc(size: UInt32, owner: UInt8) throws -> ShmVarSlotHandle? {
-        for (classIdx, cls) in classes.enumerated() where cls.slotSize >= size {
-            if let handle = try allocFromClass(classIdx: classIdx, owner: owner) {
-                return handle
-            }
+    public func alloc(size: UInt32, owner: UInt8) -> ShmVarSlotHandle? {
+        var out = RoamVarSlotHandle(class_idx: 0, extent_idx: 0, slot_idx: 0, generation: 0)
+        let result = roam_var_slot_pool_alloc(pool, size, owner, &out)
+        if result == 1 {
+            return ShmVarSlotHandle(
+                classIdx: out.class_idx,
+                extentIdx: out.extent_idx,
+                slotIdx: out.slot_idx,
+                generation: out.generation
+            )
         }
-        return nil
-    }
-
-    public func allocFromClass(classIdx: Int, owner: UInt8) throws -> ShmVarSlotHandle? {
-        guard classIdx >= 0 && classIdx < classes.count else {
-            return nil
-        }
-
-        let headerOffset = classHeaderOffset(classIdx)
-        let extentCountPtr = try region.pointer(at: headerOffset + 8)
-        let extentCount = Int(atomicLoadU32Acquire(UnsafeRawPointer(extentCountPtr)))
-
-        for extentIdx in 0..<extentCount {
-            if let handle = try allocFromExtent(classIdx: classIdx, extentIdx: extentIdx, owner: owner) {
-                return handle
-            }
-        }
-
         return nil
     }
 
     public func markInFlight(_ handle: ShmVarSlotHandle) throws {
-        try validateHandle(handle)
-        let meta = try metaPointer(handle)
-
-        let actual = atomicLoadU32Acquire(UnsafeRawPointer(meta))
-        if actual != handle.generation {
-            throw ShmVarSlotFreeError.generationMismatch(expected: handle.generation, actual: actual)
-        }
-
-        let statePtr = meta.advanced(by: 4)
-        var expected = ShmSlotState.allocated.rawValue
-        let ok = atomicCompareExchangeU32(statePtr, expected: &expected, desired: ShmSlotState.inFlight.rawValue)
-        if !ok {
-            throw ShmVarSlotFreeError.invalidState(
-                expected: .allocated,
-                actual: ShmSlotState(rawValue: expected) ?? .free
-            )
+        let result = roam_var_slot_pool_mark_in_flight(pool, toFfi(handle))
+        if result != 0 {
+            throw ShmVarSlotFreeError.ffiError
         }
     }
 
     public func free(_ handle: ShmVarSlotHandle) throws {
-        try free(handle, expectedState: .inFlight)
+        let result = roam_var_slot_pool_free(pool, toFfi(handle))
+        if result != 0 {
+            throw ShmVarSlotFreeError.ffiError
+        }
     }
 
     public func freeAllocated(_ handle: ShmVarSlotHandle) throws {
-        try free(handle, expectedState: .allocated)
+        let result = roam_var_slot_pool_free_allocated(pool, toFfi(handle))
+        if result != 0 {
+            throw ShmVarSlotFreeError.ffiError
+        }
     }
 
     public func slotSize(classIdx: UInt8) -> UInt32? {
-        classes[safe: Int(classIdx)]?.slotSize
+        let size = roam_var_slot_pool_slot_size(pool, classIdx)
+        return size > 0 ? size : nil
     }
 
-    public func payloadPointer(_ handle: ShmVarSlotHandle) throws -> UnsafeMutableRawPointer? {
-        guard let cls = classes[safe: Int(handle.classIdx)] else {
+    public func payloadPointer(_ handle: ShmVarSlotHandle) -> UnsafeMutableRawPointer? {
+        guard let ptr = roam_var_slot_pool_payload_ptr(pool, toFfi(handle)) else {
             return nil
         }
-        guard handle.slotIdx < cls.count else {
-            return nil
-        }
-
-        let extentIdx = Int(handle.extentIdx)
-        if extentIdx == 0 {
-            let offset = extent0DataOffsets[Int(handle.classIdx)] + Int(handle.slotIdx) * Int(cls.slotSize)
-            return try region.pointer(at: offset)
-        }
-
-        guard extentIdx < Self.maxExtentsPerClass else {
-            return nil
-        }
-
-        let headerOffset = classHeaderOffset(Int(handle.classIdx))
-        let extentOffsetPtr = try region.pointer(at: headerOffset + 40 + (extentIdx - 1) * 8)
-        let extentOffset = atomicLoadU64Acquire(UnsafeRawPointer(extentOffsetPtr))
-        guard extentOffset > 0 else {
-            return nil
-        }
-
-        let metaSize = Int(cls.count) * Self.varSlotMetaSize
-        let dataStart = Int(extentOffset) + 64 + alignUp(metaSize, to: 64)
-        let offset = dataStart + Int(handle.slotIdx) * Int(cls.slotSize)
-        return try region.pointer(at: offset)
+        return UnsafeMutableRawPointer(ptr)
     }
 
-    public func slotState(_ handle: ShmVarSlotHandle) throws -> ShmSlotState {
-        let meta = try metaPointer(handle)
-        let value = atomicLoadU32Acquire(UnsafeRawPointer(meta.advanced(by: 4)))
-        return ShmSlotState(rawValue: value) ?? .free
+    public func slotState(_ handle: ShmVarSlotHandle) -> ShmSlotState {
+        let raw = roam_var_slot_pool_slot_state(pool, toFfi(handle))
+        return ShmSlotState(rawValue: UInt32(max(raw, 0))) ?? .free
     }
 
-    public func recoverPeer(ownerPeer: UInt8) throws {
-        for classIdx in classes.indices {
-            let headerOffset = classHeaderOffset(classIdx)
-            let extentCount = Int(atomicLoadU32Acquire(UnsafeRawPointer(try region.pointer(at: headerOffset + 8))))
-            for extentIdx in 0..<extentCount {
-                for slotIdx in 0..<classes[classIdx].count {
-                    let handle = ShmVarSlotHandle(
-                        classIdx: UInt8(classIdx),
-                        extentIdx: UInt8(extentIdx),
-                        slotIdx: slotIdx,
-                        generation: 0
-                    )
-                    guard let meta = try payloadMetaPointer(for: handle) else {
-                        continue
-                    }
-                    let owner = atomicLoadU32Acquire(UnsafeRawPointer(meta.advanced(by: 8)))
-                    let state = atomicLoadU32Acquire(UnsafeRawPointer(meta.advanced(by: 4)))
-                    if owner == UInt32(ownerPeer), state != ShmSlotState.free.rawValue {
-                        atomicStoreU32Release(meta.advanced(by: 4), ShmSlotState.free.rawValue)
-                        try pushToFreeList(classIdx: classIdx, extentIdx: extentIdx, slotIdx: slotIdx)
-                    }
-                }
-            }
-        }
-    }
-
-    private func initializeClassHeader(_ classIdx: Int) throws {
-        let cls = classes[classIdx]
-        let headerOffset = classHeaderOffset(classIdx)
-        var header = [UInt8](repeating: 0, count: Self.sizeClassHeaderSize)
-        writeU32LE(cls.slotSize, to: &header, at: 0)
-        writeU32LE(cls.count, to: &header, at: 4)
-        writeU32LE(1, to: &header, at: 8)
-
-        let bytes = try region.mutableBytes(at: headerOffset, count: Self.sizeClassHeaderSize)
-        bytes.copyBytes(from: header)
-
-        for extent in 0..<Self.maxExtentsPerClass {
-            let freeHeadPtr = try region.pointer(at: headerOffset + 16 + extent * 8)
-            atomicStoreU64Release(freeHeadPtr, Self.freeListEnd)
-        }
-        for extent in 0..<(Self.maxExtentsPerClass - 1) {
-            let offsetPtr = try region.pointer(at: headerOffset + 40 + extent * 8)
-            atomicStoreU64Release(offsetPtr, 0)
-        }
-    }
-
-    private func initializeExtentSlots(classIdx: Int, extentIdx: Int) throws {
-        let cls = classes[classIdx]
-        for slot in 0..<cls.count {
-            guard let meta = try payloadMetaPointer(for: ShmVarSlotHandle(
-                classIdx: UInt8(classIdx),
-                extentIdx: UInt8(extentIdx),
-                slotIdx: slot,
-                generation: 0
-            )) else {
-                continue
-            }
-            atomicStoreU32Release(meta, 0)
-            atomicStoreU32Release(meta.advanced(by: 4), ShmSlotState.free.rawValue)
-            atomicStoreU32Release(meta.advanced(by: 8), 0)
-            let next = slot + 1 < cls.count ? slot + 1 : UInt32.max
-            atomicStoreU32Release(meta.advanced(by: 12), next)
-        }
-
-        let freeHeadPtr = try region.pointer(at: classHeaderOffset(classIdx) + 16 + extentIdx * 8)
-        if cls.count > 0 {
-            atomicStoreU64Release(freeHeadPtr, pack(index: 0, generation: 0))
-        }
-    }
-
-    private func allocFromExtent(classIdx: Int, extentIdx: Int, owner: UInt8) throws -> ShmVarSlotHandle? {
-        let freeHeadPtr = try region.pointer(at: classHeaderOffset(classIdx) + 16 + extentIdx * 8)
-
-        while true {
-            let head = atomicLoadU64Acquire(UnsafeRawPointer(freeHeadPtr))
-            if head == Self.freeListEnd {
-                return nil
-            }
-
-            let (index, tag) = unpack(head)
-            guard let meta = try payloadMetaPointer(for: ShmVarSlotHandle(
-                classIdx: UInt8(classIdx),
-                extentIdx: UInt8(extentIdx),
-                slotIdx: index,
-                generation: 0
-            )) else {
-                return nil
-            }
-
-            let next = atomicLoadU32Acquire(UnsafeRawPointer(meta.advanced(by: 12)))
-            let nextPacked: UInt64 = next == UInt32.max
-                ? Self.freeListEnd
-                : pack(index: next, generation: tag &+ 1)
-
-            var expected = head
-            let popped = atomicCompareExchangeU64(freeHeadPtr, expected: &expected, desired: nextPacked)
-            if !popped {
-                continue
-            }
-
-            let generation = atomicFetchAddU32(meta, 1) &+ 1
-            atomicStoreU32Release(meta.advanced(by: 4), ShmSlotState.allocated.rawValue)
-            atomicStoreU32Release(meta.advanced(by: 8), UInt32(owner))
-
-            return ShmVarSlotHandle(
-                classIdx: UInt8(classIdx),
-                extentIdx: UInt8(extentIdx),
-                slotIdx: index,
-                generation: generation
-            )
-        }
-    }
-
-    private func free(_ handle: ShmVarSlotHandle, expectedState: ShmSlotState) throws {
-        try validateHandle(handle)
-        let meta = try metaPointer(handle)
-
-        let actualGen = atomicLoadU32Acquire(UnsafeRawPointer(meta))
-        if actualGen != handle.generation {
-            throw ShmVarSlotFreeError.generationMismatch(expected: handle.generation, actual: actualGen)
-        }
-
-        let statePtr = meta.advanced(by: 4)
-        var expected = expectedState.rawValue
-        let ok = atomicCompareExchangeU32(statePtr, expected: &expected, desired: ShmSlotState.free.rawValue)
-        if !ok {
-            throw ShmVarSlotFreeError.invalidState(
-                expected: expectedState,
-                actual: ShmSlotState(rawValue: expected) ?? .free
-            )
-        }
-
-        try pushToFreeList(classIdx: Int(handle.classIdx), extentIdx: Int(handle.extentIdx), slotIdx: handle.slotIdx)
-    }
-
-    private func pushToFreeList(classIdx: Int, extentIdx: Int, slotIdx: UInt32) throws {
-        let freeHeadPtr = try region.pointer(at: classHeaderOffset(classIdx) + 16 + extentIdx * 8)
-        guard let meta = try payloadMetaPointer(for: ShmVarSlotHandle(
-            classIdx: UInt8(classIdx),
-            extentIdx: UInt8(extentIdx),
-            slotIdx: slotIdx,
-            generation: 0
-        )) else {
-            return
-        }
-
-        while true {
-            let head = atomicLoadU64Acquire(UnsafeRawPointer(freeHeadPtr))
-            let (headIndex, headGen): (UInt32, UInt32)
-            if head == Self.freeListEnd {
-                headIndex = UInt32.max
-                headGen = 0
-            } else {
-                (headIndex, headGen) = unpack(head)
-            }
-
-            atomicStoreU32Release(meta.advanced(by: 12), headIndex)
-            let newHead = pack(index: slotIdx, generation: headGen &+ 1)
-
-            var expected = head
-            if atomicCompareExchangeU64(freeHeadPtr, expected: &expected, desired: newHead) {
-                return
-            }
-        }
-    }
-
-    private func validateHandle(_ handle: ShmVarSlotHandle) throws {
-        guard Int(handle.classIdx) < classes.count else {
-            throw ShmVarSlotFreeError.invalidClass
-        }
-        let cls = classes[Int(handle.classIdx)]
-        if handle.slotIdx >= cls.count {
-            throw ShmVarSlotFreeError.invalidIndex
-        }
-    }
-
-    private func classHeaderOffset(_ classIdx: Int) -> Int {
-        baseOffset + classIdx * Self.sizeClassHeaderSize
-    }
-
-    private func payloadMetaPointer(for handle: ShmVarSlotHandle) throws -> UnsafeMutableRawPointer? {
-        guard let cls = classes[safe: Int(handle.classIdx)] else {
-            return nil
-        }
-        guard handle.slotIdx < cls.count else {
-            return nil
-        }
-
-        let extentIdx = Int(handle.extentIdx)
-        if extentIdx == 0 {
-            let offset = extent0MetaOffsets[Int(handle.classIdx)] + Int(handle.slotIdx) * Self.varSlotMetaSize
-            return try region.pointer(at: offset)
-        }
-
-        guard extentIdx < Self.maxExtentsPerClass else {
-            return nil
-        }
-
-        let headerOffset = classHeaderOffset(Int(handle.classIdx))
-        let extentOffsetPtr = try region.pointer(at: headerOffset + 40 + (extentIdx - 1) * 8)
-        let extentOffset = atomicLoadU64Acquire(UnsafeRawPointer(extentOffsetPtr))
-        guard extentOffset > 0 else {
-            return nil
-        }
-
-        let metaOffset = Int(extentOffset) + 64 + Int(handle.slotIdx) * Self.varSlotMetaSize
-        return try region.pointer(at: metaOffset)
-    }
-
-    private func metaPointer(_ handle: ShmVarSlotHandle) throws -> UnsafeMutableRawPointer {
-        guard let ptr = try payloadMetaPointer(for: handle) else {
-            throw ShmVarSlotFreeError.invalidIndex
-        }
-        return ptr
+    public func recoverPeer(ownerPeer: UInt8) {
+        roam_var_slot_pool_recover_peer(pool, ownerPeer)
     }
 
     @inline(__always)
-    private func pack(index: UInt32, generation: UInt32) -> UInt64 {
-        (UInt64(index) << 32) | UInt64(generation)
-    }
-
-    @inline(__always)
-    private func unpack(_ value: UInt64) -> (UInt32, UInt32) {
-        (UInt32(value >> 32), UInt32(truncatingIfNeeded: value))
+    private func toFfi(_ handle: ShmVarSlotHandle) -> RoamVarSlotHandle {
+        RoamVarSlotHandle(
+            class_idx: handle.classIdx,
+            extent_idx: handle.extentIdx,
+            slot_idx: handle.slotIdx,
+            generation: handle.generation
+        )
     }
 }
 
@@ -760,11 +487,11 @@ public final class ShmGuestRuntime: @unchecked Sendable {
             throw ShmGuestSendError.ringFull
         }
 
-        guard let handle = try slotPool.alloc(size: payloadLen, owner: peerId) else {
+        guard let handle = slotPool.alloc(size: payloadLen, owner: peerId) else {
             throw ShmGuestSendError.slotExhausted
         }
 
-        guard let payloadPtr = try slotPool.payloadPointer(handle) else {
+        guard let payloadPtr = slotPool.payloadPointer(handle) else {
             try? slotPool.freeAllocated(handle)
             throw ShmGuestSendError.slotError
         }
@@ -846,7 +573,7 @@ public final class ShmGuestRuntime: @unchecked Sendable {
                 throw ShmGuestReceiveError.payloadTooLarge
             }
 
-            guard let payloadPtr = try slotPool.payloadPointer(handle) else {
+            guard let payloadPtr = slotPool.payloadPointer(handle) else {
                 fatalError = true
                 throw ShmGuestReceiveError.slotError
             }
@@ -932,34 +659,10 @@ public final class ShmGuestRuntime: @unchecked Sendable {
 
 }
 
-private extension Array {
-    subscript(safe index: Int) -> Element? {
-        guard index >= 0 && index < count else {
-            return nil
-        }
-        return self[index]
-    }
-}
-
-@inline(__always)
-private func alignUp(_ value: Int, to alignment: Int) -> Int {
-    let mask = alignment - 1
-    return (value + mask) & ~mask
-}
-
 @inline(__always)
 private func readU32LE(_ bytes: [UInt8], _ at: Int) -> UInt32 {
     UInt32(bytes[at])
         | (UInt32(bytes[at + 1]) << 8)
         | (UInt32(bytes[at + 2]) << 16)
         | (UInt32(bytes[at + 3]) << 24)
-}
-
-@inline(__always)
-private func writeU32LE(_ value: UInt32, to bytes: inout [UInt8], at index: Int) {
-    let le = value.littleEndian
-    bytes[index] = UInt8(truncatingIfNeeded: le)
-    bytes[index + 1] = UInt8(truncatingIfNeeded: le >> 8)
-    bytes[index + 2] = UInt8(truncatingIfNeeded: le >> 16)
-    bytes[index + 3] = UInt8(truncatingIfNeeded: le >> 24)
 }

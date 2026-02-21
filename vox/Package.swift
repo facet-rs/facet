@@ -17,6 +17,7 @@ let package = Package(
             name: "RoamRuntime",
             dependencies: [
                 "CRoamShm",
+                "CRoamShmFfi",
                 .product(name: "NIO", package: "swift-nio"),
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),
@@ -27,6 +28,16 @@ let package = Package(
             name: "CRoamShm",
             path: "swift/roam-runtime/Sources/CRoamShm",
             publicHeadersPath: "include"
+        ),
+        .target(
+            name: "CRoamShmFfi",
+            path: "swift/roam-runtime/Sources/CRoamShmFfi",
+            publicHeadersPath: "include",
+            linkerSettings: [
+                // Consumer must build libroam_shm_ffi.a (cargo build --release -p roam-shm-ffi)
+                // and add its directory to LIBRARY_SEARCH_PATHS or pass -Xlinker -L<path>.
+                .linkedLibrary("roam_shm_ffi"),
+            ]
         ),
         .testTarget(
             name: "RoamRuntimeTests",

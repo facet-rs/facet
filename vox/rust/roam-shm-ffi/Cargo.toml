@@ -1,0 +1,22 @@
+[package]
+name = "roam-shm-ffi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "C bindings for roam shared-memory primitives"
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+shm-primitives = { workspace = true }
+roam-shm = { path = "../roam-shm" }
+
+[build-dependencies]
+cbindgen = "0.28"

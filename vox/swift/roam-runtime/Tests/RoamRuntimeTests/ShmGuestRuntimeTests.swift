@@ -64,7 +64,7 @@ private func makeSegmentFixture(
     headerBytes.copyBytes(from: header)
 
     let pool = ShmVarSlotPool(region: region, baseOffset: varPoolOffset, classes: classes)
-    try pool.initialize()
+    pool.initialize()
 
     var ringOffsets: [UInt8: Int] = [:]
 
@@ -138,19 +138,19 @@ struct ShmVarSlotPoolTests {
             classes: fixture.classes
         )
 
-        let first = try #require(try pool.alloc(size: 32, owner: 1))
+        let first = try #require(pool.alloc(size: 32, owner: 1))
         #expect(first.classIdx == 0)
-        #expect(try pool.slotState(first) == .allocated)
+        #expect(pool.slotState(first) == .allocated)
 
-        let second = try #require(try pool.alloc(size: 32, owner: 1))
+        let second = try #require(pool.alloc(size: 32, owner: 1))
         #expect(second.classIdx == 1)
 
         try pool.markInFlight(first)
-        #expect(try pool.slotState(first) == .inFlight)
+        #expect(pool.slotState(first) == .inFlight)
         try pool.free(first)
-        #expect(try pool.slotState(first) == .free)
+        #expect(pool.slotState(first) == .free)
 
-        let reused = try #require(try pool.alloc(size: 32, owner: 1))
+        let reused = try #require(pool.alloc(size: 32, owner: 1))
         #expect(reused.classIdx == 0)
         #expect(reused.generation > first.generation)
     }
@@ -188,7 +188,7 @@ struct ShmVarSlotPoolTests {
                     for _ in 0..<iterations {
                         if owned.isEmpty || (next() % 3 != 0) {
                             let size: UInt32 = (next() & 1) == 0 ? 48 : 180
-                            if let handle = try pool.alloc(size: size, owner: UInt8((worker % 3) + 1)) {
+                            if let handle = pool.alloc(size: size, owner: UInt8((worker % 3) + 1)) {
                                 if (next() & 1) == 0 {
                                     try pool.markInFlight(handle)
                                     try pool.free(handle)
@@ -199,7 +199,7 @@ struct ShmVarSlotPoolTests {
                         } else {
                             let idx = Int(next() % UInt64(owned.count))
                             let handle = owned.remove(at: idx)
-                            if try pool.slotState(handle) == .allocated {
+                            if pool.slotState(handle) == .allocated {
                                 try pool.markInFlight(handle)
                             }
                             try pool.free(handle)
@@ -207,7 +207,7 @@ struct ShmVarSlotPoolTests {
                     }
 
                     for handle in owned {
-                        switch try pool.slotState(handle) {
+                        switch pool.slotState(handle) {
                         case .allocated:
                             try pool.freeAllocated(handle)
                         case .inFlight:
@@ -364,7 +364,7 @@ struct ShmDoorbellAndPayloadTests {
             slotIdx: slotRef.slotIdx,
             generation: slotRef.slotGeneration
         )
-        let payloadPtr = try #require(try pool.payloadPointer(handle))
+        let payloadPtr = try #require(pool.payloadPointer(handle))
         let copied = Array(UnsafeRawBufferPointer(start: UnsafeRawPointer(payloadPtr), count: largePayload.count))
         #expect(copied == largePayload)
 

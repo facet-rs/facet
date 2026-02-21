@@ -6,6 +6,9 @@ license.workspace = true
 repository.workspace = true
 description = "WebSocket transport layer for roam RPC"
 
+[package.metadata.cargo-shear]
+ignored = ["getrandom"]
+
 [package.metadata]
 
 [package.metadata."docs.rs"]

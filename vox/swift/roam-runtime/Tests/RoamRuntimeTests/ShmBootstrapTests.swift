@@ -148,8 +148,11 @@ private func startBootstrapServer(
             removeTempDir(tmp)
         }
 
-        let client = accept(listener, nil, nil)
-        guard client >= 0 else {
+        var client: Int32
+        while true {
+            client = accept(listener, nil, nil)
+            if client >= 0 { break }
+            if errno == EINTR { continue }
             return
         }
         defer { close(client) }
@@ -219,36 +222,38 @@ private func XCTUnwrap<T>(_ value: T?) throws -> T {
 
 struct ShmBootstrapTests {
     @Test func receivesDoorbellFdViaScmRights() throws {
-        let sid = "123e4567-e89b-12d3-a456-426614174000"
+        for _ in 0..<100 {
+            let sid = "123e4567-e89b-12d3-a456-426614174000"
 
-        let file = open("/dev/null", O_RDONLY)
-        #expect(file >= 0)
-        defer { close(file) }
-        let shmFile = open("/dev/null", O_RDONLY)
-        #expect(shmFile >= 0)
-        defer { close(shmFile) }
+            let file = open("/dev/null", O_RDONLY)
+            #expect(file >= 0)
+            defer { close(file) }
+            let shmFile = open("/dev/null", O_RDONLY)
+            #expect(shmFile >= 0)
+            defer { close(shmFile) }
 
-        let server = try startBootstrapServer(
-            expectedSid: sid,
-            responseStatus: 0,
-            responsePeerId: 1,
-            responsePayload: "/tmp/test.shm",
-            sendDoorbellFd: file,
-            sendShmFd: shmFile
-        )
-        defer { server.thread.cancel() }
+            let server = try startBootstrapServer(
+                expectedSid: sid,
+                responseStatus: 0,
+                responsePeerId: 1,
+                responsePayload: "/tmp/test.shm",
+                sendDoorbellFd: file,
+                sendShmFd: shmFile
+            )
+            defer { server.thread.cancel() }
 
-        let ticket = try requestShmBootstrapTicket(controlSocketPath: server.socketPath, sid: sid)
+            let ticket = try requestShmBootstrapTicket(controlSocketPath: server.socketPath, sid: sid)
 
-        #expect(ticket.peerId == 1)
-        #expect(ticket.hubPath == "/tmp/test.shm")
+            #expect(ticket.peerId == 1)
+            #expect(ticket.hubPath == "/tmp/test.shm")
 
-        let flags = fcntl(ticket.doorbellFd, F_GETFD)
-        #expect(flags != -1)
-        let shmFlags = fcntl(ticket.shmFd, F_GETFD)
-        #expect(shmFlags != -1)
-        close(ticket.doorbellFd)
-        close(ticket.shmFd)
+            let flags = fcntl(ticket.doorbellFd, F_GETFD)
+            #expect(flags != -1)
+            let shmFlags = fcntl(ticket.shmFd, F_GETFD)
+            #expect(shmFlags != -1)
+            close(ticket.doorbellFd)
+            close(ticket.shmFd)
+        }
     }
 
     @Test func failsWhenNoFdIsPassed() throws {

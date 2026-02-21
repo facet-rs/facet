@@ -187,11 +187,14 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
+      - name: Build Rust FFI staticlib
+        run: cargo build --release -p roam-shm-ffi
+
       - name: Build subject
         run: swift build -c release --package-path swift/subject
 
       - name: Run RoamRuntime Swift tests
-        run: swift test
+        run: swift test -Xlinker -L$(pwd)/target/release
 
       - name: Run spec tests
         run: cargo nextest run -p spec-tests
@@ -218,11 +221,14 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
+      - name: Build Rust FFI staticlib
+        run: cargo build --release -p roam-shm-ffi
+
       - name: Build subject
         run: swift build -c release --package-path swift/subject
 
       - name: Run RoamRuntime Swift tests
-        run: swift test
+        run: swift test -Xlinker -L$(pwd)/target/release
 
       - name: Run spec tests
         run: cargo nextest run -p spec-tests

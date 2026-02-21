@@ -34,6 +34,33 @@ cargo xtask codegen --typescript
 just ts-codegen
 ```
 
+### Swift Development
+
+```bash
+# Run spec tests with Swift subject (builds Rust FFI lib automatically)
+just swift
+
+# Build just the Rust FFI staticlib
+just rust-ffi
+# or: cargo build --release -p roam-shm-ffi
+
+# Run roam-runtime unit tests
+cargo build --release -p roam-shm-ffi
+swift test --package-path swift/roam-runtime
+
+# Run SHM cross-language tests (Rust host, Swift guest)
+cargo nextest run -p roam-shm --test bootstrap_cross_language
+```
+
+#### Consuming RoamRuntime from another Swift package
+
+RoamRuntime depends on `libroam_shm_ffi.a`, a Rust staticlib. Consumers must:
+
+1. Build the staticlib: `cargo build --release -p roam-shm-ffi` (from the roam workspace root)
+2. Tell the linker where to find it:
+   - **SPM CLI**: `swift build -Xlinker -L<path-to-roam>/target/release`
+   - **Xcode**: Add `<path-to-roam>/target/release` to `LIBRARY_SEARCH_PATHS`
+
 ### Code Generation
 
 ```bash
@@ -64,6 +91,9 @@ cargo xtask doc
 ## Project Structure
 
 - `rust/` - Rust implementation (roam, roam-session, roam-codegen, etc.)
+- `swift/` - Swift implementation
+  - `roam-runtime/` - RoamRuntime Swift package (SHM transport, RPC, codegen)
+  - `subject/` - Test subject for compliance suite
 - `typescript/` - TypeScript implementation
   - `packages/roam-core/` - Core runtime
   - `packages/roam-tcp/` - TCP transport

@@ -1,5 +1,5 @@
 import Foundation
-import CRoamShm
+import CRoamShmFfi
 
 public enum ShmBipBufferError: Error, Equatable {
     case invalidCapacity
@@ -20,7 +20,7 @@ public struct ShmBipBufferHeaderView {
 public final class ShmBipBuffer: @unchecked Sendable {
     public let capacity: UInt32
 
-    private let headerPointer: UnsafeMutablePointer<roam_bipbuf_header_t>
+    private let headerPointer: UnsafeMutableRawPointer
     private let dataPointer: UnsafeMutableRawPointer
 
     public static func initialize(region: ShmRegion, headerOffset: Int, capacity: UInt32) throws -> ShmBipBuffer {
@@ -38,8 +38,7 @@ public final class ShmBipBuffer: @unchecked Sendable {
 
         let headerRaw = try region.pointer(at: headerOffset)
         memset(headerRaw, 0, shmBipbufHeaderSize)
-        let header = headerRaw.assumingMemoryBound(to: roam_bipbuf_header_t.self)
-        roam_bipbuf_init(header, capacity)
+        roam_bipbuf_init(headerRaw, capacity)
 
         return try attach(region: region, headerOffset: headerOffset)
     }
@@ -50,8 +49,7 @@ public final class ShmBipBuffer: @unchecked Sendable {
         }
 
         let headerRaw = try region.pointer(at: headerOffset)
-        let header = headerRaw.assumingMemoryBound(to: roam_bipbuf_header_t.self)
-        let capacity = roam_bipbuf_capacity(header)
+        let capacity = roam_bipbuf_capacity(headerRaw)
         guard capacity > 0 else {
             throw ShmBipBufferError.invalidCapacity
         }
@@ -62,14 +60,14 @@ public final class ShmBipBuffer: @unchecked Sendable {
         }
 
         return ShmBipBuffer(
-            headerPointer: header,
+            headerPointer: headerRaw,
             dataPointer: headerRaw.advanced(by: shmBipbufHeaderSize),
             capacity: capacity
         )
     }
 
     private init(
-        headerPointer: UnsafeMutablePointer<roam_bipbuf_header_t>,
+        headerPointer: UnsafeMutableRawPointer,
         dataPointer: UnsafeMutableRawPointer,
         capacity: UInt32
     ) {
