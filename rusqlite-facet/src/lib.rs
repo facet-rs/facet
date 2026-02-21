@@ -2,7 +2,7 @@ use facet::Facet;
 use facet_core::{Def, Shape, StructKind, Type, UserType};
 use facet_reflect::{AllocError, HasFields, Partial, Peek, ReflectError, ShapeMismatchError};
 use rusqlite::types::{Type as SqlType, Value as SqlValue, ValueRef};
-use rusqlite::{Row, Statement};
+use rusqlite::{Row, Rows, Statement};
 
 #[derive(Debug)]
 pub enum Error {
@@ -144,8 +144,29 @@ impl From<ShapeMismatchError> for Error {
 
 pub type Result<T> = core::result::Result<T, Error>;
 
+pub struct FacetRows<'stmt, T> {
+    rows: Rows<'stmt>,
+    _marker: core::marker::PhantomData<T>,
+}
+
+impl<T: Facet<'static>> Iterator for FacetRows<'_, T> {
+    type Item = Result<T>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.rows.next() {
+            Ok(Some(row)) => Some(from_row::<T>(row)),
+            Ok(None) => None,
+            Err(err) => Some(Err(Error::Sql(err))),
+        }
+    }
+}
+
 pub trait StatementFacetExt {
     fn facet_execute_ref<'p, P: Facet<'p> + ?Sized>(&mut self, params: &'p P) -> Result<usize>;
+    fn facet_query_iter_ref<'stmt, 'p, T: Facet<'static>, P: Facet<'p> + ?Sized>(
+        &'stmt mut self,
+        params: &'p P,
+    ) -> Result<FacetRows<'stmt, T>>;
     fn facet_query_ref<'p, T: Facet<'static>, P: Facet<'p> + ?Sized>(
         &mut self,
         params: &'p P,
@@ -163,6 +184,10 @@ pub trait StatementFacetExt {
         params: &'p P,
     ) -> Result<T>;
     fn facet_execute<P: Facet<'static>>(&mut self, params: P) -> Result<usize>;
+    fn facet_query_iter<'stmt, T: Facet<'static>, P: Facet<'static>>(
+        &'stmt mut self,
+        params: P,
+    ) -> Result<FacetRows<'stmt, T>>;
     fn facet_query<T: Facet<'static>, P: Facet<'static>>(&mut self, params: P) -> Result<Vec<T>>;
     fn facet_query_optional<T: Facet<'static>, P: Facet<'static>>(
         &mut self,
@@ -178,15 +203,24 @@ impl StatementFacetExt for Statement<'_> {
         Ok(self.raw_execute()?)
     }
 
+    fn facet_query_iter_ref<'stmt, 'p, T: Facet<'static>, P: Facet<'p> + ?Sized>(
+        &'stmt mut self,
+        params: &'p P,
+    ) -> Result<FacetRows<'stmt, T>> {
+        bind_facet_params_ref(self, params)?;
+        Ok(FacetRows {
+            rows: self.raw_query(),
+            _marker: core::marker::PhantomData,
+        })
+    }
+
     fn facet_query_ref<'p, T: Facet<'static>, P: Facet<'p> + ?Sized>(
         &mut self,
         params: &'p P,
     ) -> Result<Vec<T>> {
-        bind_facet_params_ref(self, params)?;
-        let mut rows = self.raw_query();
         let mut out = Vec::new();
-        while let Some(row) = rows.next()? {
-            out.push(from_row::<T>(row)?);
+        for row in self.facet_query_iter_ref::<T, P>(params)? {
+            out.push(row?);
         }
         Ok(out)
     }
@@ -232,12 +266,21 @@ impl StatementFacetExt for Statement<'_> {
         Ok(self.raw_execute()?)
     }
 
-    fn facet_query<T: Facet<'static>, P: Facet<'static>>(&mut self, params: P) -> Result<Vec<T>> {
+    fn facet_query_iter<'stmt, T: Facet<'static>, P: Facet<'static>>(
+        &'stmt mut self,
+        params: P,
+    ) -> Result<FacetRows<'stmt, T>> {
         bind_facet_params_static(self, &params)?;
-        let mut rows = self.raw_query();
+        Ok(FacetRows {
+            rows: self.raw_query(),
+            _marker: core::marker::PhantomData,
+        })
+    }
+
+    fn facet_query<T: Facet<'static>, P: Facet<'static>>(&mut self, params: P) -> Result<Vec<T>> {
         let mut out = Vec::new();
-        while let Some(row) = rows.next()? {
-            out.push(from_row::<T>(row)?);
+        for row in self.facet_query_iter::<T, P>(params)? {
+            out.push(row?);
         }
         Ok(out)
     }
@@ -770,6 +813,47 @@ mod tests {
         let mut stmt = conn.prepare("SELECT id FROM ids WHERE id = ?1").unwrap();
         let rows = stmt.facet_query_ref::<IdRow, [i64]>(&values[..]).unwrap();
         assert_eq!(rows, vec![IdRow { id: 7 }]);
+    }
+
+    #[test]
+    fn facet_query_iter_streams_rows() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute("CREATE TABLE nums (n INTEGER NOT NULL)", ())
+            .unwrap();
+        conn.execute("INSERT INTO nums (n) VALUES (1)", ()).unwrap();
+        conn.execute("INSERT INTO nums (n) VALUES (2)", ()).unwrap();
+
+        #[derive(Debug, Facet, PartialEq)]
+        struct NumRow {
+            n: i64,
+        }
+
+        let mut stmt = conn.prepare("SELECT n FROM nums ORDER BY n ASC").unwrap();
+        let mut iter = stmt.facet_query_iter::<NumRow, _>(()).unwrap();
+        assert_eq!(iter.next().unwrap().unwrap(), NumRow { n: 1 });
+        assert_eq!(iter.next().unwrap().unwrap(), NumRow { n: 2 });
+        assert!(iter.next().is_none());
+    }
+
+    #[test]
+    fn facet_query_iter_ref_streams_slice_params() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute("CREATE TABLE ids (id INTEGER NOT NULL)", ())
+            .unwrap();
+        conn.execute("INSERT INTO ids (id) VALUES (7)", ()).unwrap();
+
+        #[derive(Debug, Facet, PartialEq)]
+        struct IdRow {
+            id: i64,
+        }
+
+        let values = [7_i64];
+        let mut stmt = conn.prepare("SELECT id FROM ids WHERE id = ?1").unwrap();
+        let mut iter = stmt
+            .facet_query_iter_ref::<IdRow, [i64]>(&values[..])
+            .unwrap();
+        assert_eq!(iter.next().unwrap().unwrap(), IdRow { id: 7 });
+        assert!(iter.next().is_none());
     }
 
     #[test]
