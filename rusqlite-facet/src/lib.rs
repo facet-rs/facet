@@ -1,5 +1,5 @@
 use facet::Facet;
-use facet_core::{Shape, StructKind, Type, UserType};
+use facet_core::{Def, Shape, StructKind, Type, UserType};
 use facet_reflect::{AllocError, HasFields, Partial, Peek, ReflectError, ShapeMismatchError};
 use rusqlite::types::{Type as SqlType, Value as SqlValue, ValueRef};
 use rusqlite::{Row, Statement};
@@ -32,6 +32,10 @@ pub enum Error {
     },
     UnusedParamFields {
         fields: Vec<String>,
+    },
+    UnusedPositionalParams {
+        provided: usize,
+        used: usize,
     },
     OutOfRange {
         field: String,
@@ -68,6 +72,12 @@ impl core::fmt::Display for Error {
             }
             Error::UnusedParamFields { fields } => {
                 write!(f, "unused parameter fields: {}", fields.join(", "))
+            }
+            Error::UnusedPositionalParams { provided, used } => {
+                write!(
+                    f,
+                    "unused positional parameters: provided {provided}, used {used}"
+                )
             }
             Error::OutOfRange {
                 field,
@@ -122,19 +132,57 @@ impl From<ShapeMismatchError> for Error {
 pub type Result<T> = core::result::Result<T, Error>;
 
 pub trait StatementFacetExt {
+    fn facet_execute_ref<'p, P: Facet<'p> + ?Sized>(&mut self, params: &'p P) -> Result<usize>;
+    fn facet_query_ref<'p, T: Facet<'static>, P: Facet<'p> + ?Sized>(
+        &mut self,
+        params: &'p P,
+    ) -> Result<Vec<T>>;
+    fn facet_query_row_ref<'p, T: Facet<'static>, P: Facet<'p> + ?Sized>(
+        &mut self,
+        params: &'p P,
+    ) -> Result<T>;
     fn facet_execute<P: Facet<'static>>(&mut self, params: P) -> Result<usize>;
     fn facet_query<T: Facet<'static>, P: Facet<'static>>(&mut self, params: P) -> Result<Vec<T>>;
     fn facet_query_row<T: Facet<'static>, P: Facet<'static>>(&mut self, params: P) -> Result<T>;
 }
 
 impl StatementFacetExt for Statement<'_> {
+    fn facet_execute_ref<'p, P: Facet<'p> + ?Sized>(&mut self, params: &'p P) -> Result<usize> {
+        bind_facet_params_ref(self, params)?;
+        Ok(self.raw_execute()?)
+    }
+
+    fn facet_query_ref<'p, T: Facet<'static>, P: Facet<'p> + ?Sized>(
+        &mut self,
+        params: &'p P,
+    ) -> Result<Vec<T>> {
+        bind_facet_params_ref(self, params)?;
+        let mut rows = self.raw_query();
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? {
+            out.push(from_row::<T>(row)?);
+        }
+        Ok(out)
+    }
+
+    fn facet_query_row_ref<'p, T: Facet<'static>, P: Facet<'p> + ?Sized>(
+        &mut self,
+        params: &'p P,
+    ) -> Result<T> {
+        let mut rows = self.facet_query_ref::<T, P>(params)?;
+        if rows.len() != 1 {
+            return Err(Error::Sql(rusqlite::Error::QueryReturnedNoRows));
+        }
+        Ok(rows.remove(0))
+    }
+
     fn facet_execute<P: Facet<'static>>(&mut self, params: P) -> Result<usize> {
-        bind_facet_params(self, &params)?;
+        bind_facet_params_static(self, &params)?;
         Ok(self.raw_execute()?)
     }
 
     fn facet_query<T: Facet<'static>, P: Facet<'static>>(&mut self, params: P) -> Result<Vec<T>> {
-        bind_facet_params(self, &params)?;
+        bind_facet_params_static(self, &params)?;
         let mut rows = self.raw_query();
         let mut out = Vec::new();
         while let Some(row) = rows.next()? {
@@ -159,12 +207,34 @@ pub fn from_row<T: Facet<'static>>(row: &Row<'_>) -> Result<T> {
     Ok(heap_value.materialize()?)
 }
 
-fn bind_facet_params<P: Facet<'static>>(stmt: &mut Statement<'_>, params: &P) -> Result<()> {
+fn bind_facet_params_static<P: Facet<'static>>(stmt: &mut Statement<'_>, params: &P) -> Result<()> {
+    bind_facet_params_impl(stmt, Peek::new(params), P::SHAPE)
+}
+
+fn bind_facet_params_ref<'p, P: Facet<'p> + ?Sized>(
+    stmt: &mut Statement<'_>,
+    params: &'p P,
+) -> Result<()> {
+    bind_facet_params_impl(stmt, Peek::new(params), P::SHAPE)
+}
+
+fn bind_facet_params_impl(
+    stmt: &mut Statement<'_>,
+    peek: Peek<'_, '_>,
+    shape: &'static Shape,
+) -> Result<()> {
     stmt.clear_bindings();
 
-    let struct_peek = Peek::new(params)
+    if matches!(
+        peek.shape().def,
+        Def::List(_) | Def::Array(_) | Def::Slice(_)
+    ) {
+        return bind_list_like_params(stmt, peek);
+    }
+
+    let struct_peek = peek
         .into_struct()
-        .map_err(|_| Error::NotAStruct { shape: P::SHAPE })?;
+        .map_err(|_| Error::NotAStruct { shape })?;
 
     let mut field_names: Vec<String> = Vec::new();
     let mut field_values: Vec<SqlValue> = Vec::new();
@@ -244,7 +314,60 @@ fn bind_facet_params<P: Facet<'static>>(stmt: &mut Statement<'_>, params: &P) ->
     Ok(())
 }
 
-fn peek_to_sql_value(peek: Peek<'_, 'static>, field_name: &str) -> Result<SqlValue> {
+fn bind_list_like_params(stmt: &mut Statement<'_>, peek: Peek<'_, '_>) -> Result<()> {
+    let list_like = peek.into_list_like().map_err(Error::Reflect)?;
+    let mut values = Vec::with_capacity(list_like.len());
+    for value in list_like.iter() {
+        values.push(peek_to_sql_value(value, "positional_param")?);
+    }
+
+    let mut used = vec![false; values.len()];
+    let mut positional_cursor = 0usize;
+    for param_index in 1..=stmt.parameter_count() {
+        let value_index = if let Some(name) = stmt.parameter_name(param_index) {
+            if let Some(stripped) = name.strip_prefix('?') {
+                if stripped.is_empty() {
+                    let idx = positional_cursor;
+                    positional_cursor += 1;
+                    idx
+                } else {
+                    let raw = stripped
+                        .parse::<usize>()
+                        .map_err(|_| Error::MissingNamedParam {
+                            parameter: name.to_string(),
+                        })?;
+                    raw.saturating_sub(1)
+                }
+            } else {
+                return Err(Error::MissingNamedParam {
+                    parameter: name.to_string(),
+                });
+            }
+        } else {
+            let idx = positional_cursor;
+            positional_cursor += 1;
+            idx
+        };
+
+        let value = values
+            .get(value_index)
+            .ok_or(Error::UnnamedParameter { index: param_index })?;
+        stmt.raw_bind_parameter(param_index, value)?;
+        used[value_index] = true;
+    }
+
+    let used_count = used.iter().filter(|v| **v).count();
+    if used_count != values.len() {
+        return Err(Error::UnusedPositionalParams {
+            provided: values.len(),
+            used: used_count,
+        });
+    }
+
+    Ok(())
+}
+
+fn peek_to_sql_value(peek: Peek<'_, '_>, field_name: &str) -> Result<SqlValue> {
     if let Ok(option) = peek.into_option() {
         let Some(inner) = option.value() else {
             return Ok(SqlValue::Null);
@@ -526,5 +649,53 @@ mod tests {
                 label: None
             }]
         );
+    }
+
+    #[test]
+    fn facet_query_accepts_array_params() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute(
+            "CREATE TABLE pairs (left_id INTEGER NOT NULL, right_id INTEGER NOT NULL)",
+            (),
+        )
+        .unwrap();
+        conn.execute("INSERT INTO pairs (left_id, right_id) VALUES (10, 20)", ())
+            .unwrap();
+
+        #[derive(Debug, Facet, PartialEq)]
+        struct PairRow {
+            left_id: i64,
+            right_id: i64,
+        }
+
+        let mut stmt = conn
+            .prepare("SELECT left_id, right_id FROM pairs WHERE left_id = ?1 AND right_id = ?2")
+            .unwrap();
+        let rows = stmt.facet_query::<PairRow, _>([10_i64, 20_i64]).unwrap();
+        assert_eq!(
+            rows,
+            vec![PairRow {
+                left_id: 10,
+                right_id: 20
+            }]
+        );
+    }
+
+    #[test]
+    fn facet_query_ref_accepts_slice_params() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute("CREATE TABLE ids (id INTEGER NOT NULL)", ())
+            .unwrap();
+        conn.execute("INSERT INTO ids (id) VALUES (7)", ()).unwrap();
+
+        #[derive(Debug, Facet, PartialEq)]
+        struct IdRow {
+            id: i64,
+        }
+
+        let values = [7_i64];
+        let mut stmt = conn.prepare("SELECT id FROM ids WHERE id = ?1").unwrap();
+        let rows = stmt.facet_query_ref::<IdRow, [i64]>(&values[..]).unwrap();
+        assert_eq!(rows, vec![IdRow { id: 7 }]);
     }
 }
