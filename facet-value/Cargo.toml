@@ -1,6 +1,6 @@
 [package]
 name = "facet-value"
-version = "0.43.2"
+version = "0.44.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -20,9 +20,9 @@ alloc = ["facet-core/alloc", "facet-reflect/alloc", "dep:facet-reflect", "dep:fa
 bolero-inline-tests = ["alloc"]
 
 [dependencies]
-facet-core = { path = "../facet-core", version = "0.43.2", default-features = false }
-facet-format = { path = "../facet-format", version = "0.43.2", optional = true }
-facet-reflect = { path = "../facet-reflect", version = "0.43.2", default-features = false, optional = true }
+facet-core = { path = "../facet-core", version = "0.44.0", default-features = false }
+facet-format = { path = "../facet-format", version = "0.44.0", optional = true }
+facet-reflect = { path = "../facet-reflect", version = "0.44.0", default-features = false, optional = true }
 indexmap = { version = "2", optional = true }
 
 [dev-dependencies]
