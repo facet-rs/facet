@@ -37,6 +37,10 @@ pub enum Error {
         provided: usize,
         used: usize,
     },
+    TooManyRows {
+        expected: usize,
+        actual_at_least: usize,
+    },
     OutOfRange {
         field: String,
         source: i128,
@@ -77,6 +81,15 @@ impl core::fmt::Display for Error {
                 write!(
                     f,
                     "unused positional parameters: provided {provided}, used {used}"
+                )
+            }
+            Error::TooManyRows {
+                expected,
+                actual_at_least,
+            } => {
+                write!(
+                    f,
+                    "query returned too many rows: expected {expected}, got at least {actual_at_least}"
                 )
             }
             Error::OutOfRange {
@@ -137,12 +150,25 @@ pub trait StatementFacetExt {
         &mut self,
         params: &'p P,
     ) -> Result<Vec<T>>;
+    fn facet_query_optional_ref<'p, T: Facet<'static>, P: Facet<'p> + ?Sized>(
+        &mut self,
+        params: &'p P,
+    ) -> Result<Option<T>>;
+    fn facet_query_one_ref<'p, T: Facet<'static>, P: Facet<'p> + ?Sized>(
+        &mut self,
+        params: &'p P,
+    ) -> Result<T>;
     fn facet_query_row_ref<'p, T: Facet<'static>, P: Facet<'p> + ?Sized>(
         &mut self,
         params: &'p P,
     ) -> Result<T>;
     fn facet_execute<P: Facet<'static>>(&mut self, params: P) -> Result<usize>;
     fn facet_query<T: Facet<'static>, P: Facet<'static>>(&mut self, params: P) -> Result<Vec<T>>;
+    fn facet_query_optional<T: Facet<'static>, P: Facet<'static>>(
+        &mut self,
+        params: P,
+    ) -> Result<Option<T>>;
+    fn facet_query_one<T: Facet<'static>, P: Facet<'static>>(&mut self, params: P) -> Result<T>;
     fn facet_query_row<T: Facet<'static>, P: Facet<'static>>(&mut self, params: P) -> Result<T>;
 }
 
@@ -165,15 +191,40 @@ impl StatementFacetExt for Statement<'_> {
         Ok(out)
     }
 
+    fn facet_query_optional_ref<'p, T: Facet<'static>, P: Facet<'p> + ?Sized>(
+        &mut self,
+        params: &'p P,
+    ) -> Result<Option<T>> {
+        bind_facet_params_ref(self, params)?;
+        let mut rows = self.raw_query();
+        let Some(first_row) = rows.next()? else {
+            return Ok(None);
+        };
+        let first = from_row::<T>(first_row)?;
+        if rows.next()?.is_some() {
+            return Err(Error::TooManyRows {
+                expected: 1,
+                actual_at_least: 2,
+            });
+        }
+        Ok(Some(first))
+    }
+
+    fn facet_query_one_ref<'p, T: Facet<'static>, P: Facet<'p> + ?Sized>(
+        &mut self,
+        params: &'p P,
+    ) -> Result<T> {
+        match self.facet_query_optional_ref::<T, P>(params)? {
+            Some(row) => Ok(row),
+            None => Err(Error::Sql(rusqlite::Error::QueryReturnedNoRows)),
+        }
+    }
+
     fn facet_query_row_ref<'p, T: Facet<'static>, P: Facet<'p> + ?Sized>(
         &mut self,
         params: &'p P,
     ) -> Result<T> {
-        let mut rows = self.facet_query_ref::<T, P>(params)?;
-        if rows.len() != 1 {
-            return Err(Error::Sql(rusqlite::Error::QueryReturnedNoRows));
-        }
-        Ok(rows.remove(0))
+        self.facet_query_one_ref::<T, P>(params)
     }
 
     fn facet_execute<P: Facet<'static>>(&mut self, params: P) -> Result<usize> {
@@ -191,12 +242,34 @@ impl StatementFacetExt for Statement<'_> {
         Ok(out)
     }
 
-    fn facet_query_row<T: Facet<'static>, P: Facet<'static>>(&mut self, params: P) -> Result<T> {
-        let mut rows = self.facet_query::<T, P>(params)?;
-        if rows.len() != 1 {
-            return Err(Error::Sql(rusqlite::Error::QueryReturnedNoRows));
+    fn facet_query_optional<T: Facet<'static>, P: Facet<'static>>(
+        &mut self,
+        params: P,
+    ) -> Result<Option<T>> {
+        bind_facet_params_static(self, &params)?;
+        let mut rows = self.raw_query();
+        let Some(first_row) = rows.next()? else {
+            return Ok(None);
+        };
+        let first = from_row::<T>(first_row)?;
+        if rows.next()?.is_some() {
+            return Err(Error::TooManyRows {
+                expected: 1,
+                actual_at_least: 2,
+            });
         }
-        Ok(rows.remove(0))
+        Ok(Some(first))
+    }
+
+    fn facet_query_one<T: Facet<'static>, P: Facet<'static>>(&mut self, params: P) -> Result<T> {
+        match self.facet_query_optional::<T, P>(params)? {
+            Some(row) => Ok(row),
+            None => Err(Error::Sql(rusqlite::Error::QueryReturnedNoRows)),
+        }
+    }
+
+    fn facet_query_row<T: Facet<'static>, P: Facet<'static>>(&mut self, params: P) -> Result<T> {
+        self.facet_query_one::<T, P>(params)
     }
 }
 
@@ -559,7 +632,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::StatementFacetExt;
+    use super::{Error, StatementFacetExt};
     use facet::Facet;
     use rusqlite::Connection;
 
@@ -697,5 +770,88 @@ mod tests {
         let mut stmt = conn.prepare("SELECT id FROM ids WHERE id = ?1").unwrap();
         let rows = stmt.facet_query_ref::<IdRow, [i64]>(&values[..]).unwrap();
         assert_eq!(rows, vec![IdRow { id: 7 }]);
+    }
+
+    #[test]
+    fn facet_query_optional_returns_none_for_no_rows() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute("CREATE TABLE ids (id INTEGER NOT NULL)", ())
+            .unwrap();
+
+        #[derive(Facet)]
+        struct QueryId {
+            id: i64,
+        }
+
+        #[derive(Debug, Facet, PartialEq)]
+        struct IdRow {
+            id: i64,
+        }
+
+        let mut stmt = conn.prepare("SELECT id FROM ids WHERE id = :id").unwrap();
+        let row = stmt
+            .facet_query_optional::<IdRow, _>(QueryId { id: 99 })
+            .unwrap();
+        assert_eq!(row, None);
+    }
+
+    #[test]
+    fn facet_query_optional_errors_on_multiple_rows() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute("CREATE TABLE ids (id INTEGER NOT NULL)", ())
+            .unwrap();
+        conn.execute("INSERT INTO ids (id) VALUES (1)", ()).unwrap();
+        conn.execute("INSERT INTO ids (id) VALUES (1)", ()).unwrap();
+
+        #[derive(Facet)]
+        struct QueryId {
+            id: i64,
+        }
+
+        #[derive(Debug, Facet, PartialEq)]
+        struct IdRow {
+            id: i64,
+        }
+
+        let mut stmt = conn.prepare("SELECT id FROM ids WHERE id = :id").unwrap();
+        let err = stmt
+            .facet_query_optional::<IdRow, _>(QueryId { id: 1 })
+            .unwrap_err();
+        match err {
+            Error::TooManyRows {
+                expected,
+                actual_at_least,
+            } => {
+                assert_eq!(expected, 1);
+                assert_eq!(actual_at_least, 2);
+            }
+            _ => panic!("unexpected error: {err}"),
+        }
+    }
+
+    #[test]
+    fn facet_query_one_errors_on_no_rows() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute("CREATE TABLE ids (id INTEGER NOT NULL)", ())
+            .unwrap();
+
+        #[derive(Facet)]
+        struct QueryId {
+            id: i64,
+        }
+
+        #[derive(Debug, Facet, PartialEq)]
+        struct IdRow {
+            id: i64,
+        }
+
+        let mut stmt = conn.prepare("SELECT id FROM ids WHERE id = :id").unwrap();
+        let err = stmt
+            .facet_query_one::<IdRow, _>(QueryId { id: 1 })
+            .unwrap_err();
+        match err {
+            Error::Sql(rusqlite::Error::QueryReturnedNoRows) => {}
+            _ => panic!("unexpected error: {err}"),
+        }
     }
 }
